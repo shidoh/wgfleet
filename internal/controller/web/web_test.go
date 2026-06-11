@@ -1,0 +1,403 @@
+package web
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/shidoh/wgfleet/internal/controller/store"
+	"github.com/shidoh/wgfleet/internal/domain"
+)
+
+type stubRenderer struct {
+	spec domain.NodeSpec
+	err  error
+}
+
+func (s stubRenderer) RenderNodeSpec(context.Context, string) (domain.NodeSpec, error) {
+	return s.spec, s.err
+}
+
+func newTestHandler(t *testing.T, renderer SpecRenderer) (*Handler, store.Store) {
+	t.Helper()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	h, err := New(st, renderer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h, st
+}
+
+func seed(t *testing.T, st store.Store, n domain.Node) {
+	t.Helper()
+	if err := st.UpsertNode(context.Background(), n); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func get(t *testing.T, h http.Handler, path string) (*http.Response, string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	res := rec.Result()
+	body, _ := io.ReadAll(res.Body)
+	return res, string(body)
+}
+
+func TestIndexListsNodesWithStates(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, Region: "de", State: domain.StateReady})
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReconciling})
+
+	res, body := get(t, h, "/")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	for _, want := range []string{"exit-de-1", "master-xa-1", "wg", "fleet", `badge ready`, `badge reconciling`, "Ready", "Reconciling"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("index body missing %q", want)
+		}
+	}
+	// htmx live-refresh hook present.
+	if !strings.Contains(body, `hx-get="/partials/nodes"`) {
+		t.Error("index missing htmx live-refresh hook")
+	}
+}
+
+func TestIndexEmpty(t *testing.T) {
+	h, _ := newTestHandler(t, nil)
+	res, body := get(t, h, "/")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if !strings.Contains(body, "No nodes registered") {
+		t.Errorf("expected empty state, got:\n%s", body)
+	}
+}
+
+func TestNodesPartial(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+
+	res, body := get(t, h, "/partials/nodes")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	// Partial is the table only — no <html> shell.
+	if strings.Contains(body, "<html") {
+		t.Error("partial should not include the full layout")
+	}
+	if !strings.Contains(body, "exit-de-1") {
+		t.Error("partial missing node")
+	}
+}
+
+func TestNodeDetailWithStatusAndSpec(t *testing.T) {
+	spec := domain.NodeSpec{
+		Role:     domain.RoleExit,
+		Egress:   domain.EgressWARP,
+		WGServer: domain.WGServerSpec{ListenPort: 51820, AddressPool: "10.81.0.0/24", Address: "10.81.0.1", MTU: 1360},
+	}
+	h, st := newTestHandler(t, stubRenderer{spec: spec})
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, Region: "de", State: domain.StateReady, PublicIP: "198.51.100.7"})
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "exit-de-1", State: domain.StateReady, EgressIP: "104.16.0.1",
+		LastHandshake: time.Now().Add(-30 * time.Second),
+		Checks:        []domain.HealthCheck{{Name: "warp-egress", OK: true, Detail: "cloudflare"}, {Name: "dns", OK: false}},
+	})
+
+	res, body := get(t, h, "/nodes/exit-de-1")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	for _, want := range []string{
+		"exit-de-1", "198.51.100.7", // inventory
+		"104.16.0.1", "warp-egress", "cloudflare", // status + checks
+		"led ok", "led bad", // check leds
+		"role:      exit", "10.81.0.0/24", // rendered spec preview
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("detail body missing %q", want)
+		}
+	}
+}
+
+func TestNodeDetailNotFound(t *testing.T) {
+	h, _ := newTestHandler(t, nil)
+	res, _ := get(t, h, "/nodes/ghost")
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", res.StatusCode)
+	}
+}
+
+func TestStaticAssetsServed(t *testing.T) {
+	h, _ := newTestHandler(t, nil)
+	for _, path := range []string{"/static/app.css", "/static/htmx.min.js"} {
+		res, _ := get(t, h, path)
+		if res.StatusCode != http.StatusOK {
+			t.Errorf("%s status = %d", path, res.StatusCode)
+		}
+	}
+}
+
+func TestFormatSinceBuckets(t *testing.T) {
+	cases := map[time.Duration]string{
+		5 * time.Second:  "5s ago",
+		3 * time.Minute:  "3m ago",
+		2 * time.Hour:    "2h ago",
+		50 * time.Hour:   "2d ago",
+		-1 * time.Second: "just now",
+	}
+	for d, want := range cases {
+		if got := formatSince(d); got != want {
+			t.Errorf("formatSince(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+func post(t *testing.T, h http.Handler, path string) *http.Response {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, nil)
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	if hh, ok := h.(*Handler); ok {
+		req.Header.Set("X-CSRF-Token", hh.csrf)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Result()
+}
+
+func TestDrainUndrainActions(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+
+	res := post(t, h, "/nodes/exit-de-1/drain")
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("drain status = %d, want 303", res.StatusCode)
+	}
+	if n, _ := st.GetNode(context.Background(), "exit-de-1"); !n.Drain {
+		t.Error("drain action did not set the flag")
+	}
+
+	res = post(t, h, "/nodes/exit-de-1/undrain")
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("undrain status = %d", res.StatusCode)
+	}
+	if n, _ := st.GetNode(context.Background(), "exit-de-1"); n.Drain {
+		t.Error("undrain action did not clear the flag")
+	}
+}
+
+func TestDeleteAction(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+
+	res := post(t, h, "/nodes/exit-de-1/delete")
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("delete status = %d", res.StatusCode)
+	}
+	if _, err := st.GetNode(context.Background(), "exit-de-1"); err == nil {
+		t.Error("delete action did not remove the node")
+	}
+}
+
+func TestActionsRejectCrossSite(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+
+	req := httptest.NewRequest(http.MethodPost, "/nodes/exit-de-1/drain", nil)
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Result().StatusCode != http.StatusForbidden {
+		t.Errorf("cross-site POST = %d, want 403", rec.Result().StatusCode)
+	}
+	if n, _ := st.GetNode(context.Background(), "exit-de-1"); n.Drain {
+		t.Error("cross-site POST must not mutate")
+	}
+}
+
+func TestActionsRejectMissingCSRF(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+
+	// Same-origin (passes the Sec-Fetch check) but no CSRF token must still 403.
+	req := httptest.NewRequest(http.MethodPost, "/nodes/exit-de-1/drain", nil)
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Result().StatusCode != http.StatusForbidden {
+		t.Errorf("missing-CSRF POST = %d, want 403", rec.Result().StatusCode)
+	}
+	if n, _ := st.GetNode(context.Background(), "exit-de-1"); n.Drain {
+		t.Error("missing-CSRF POST must not mutate")
+	}
+
+	// A wrong token is rejected too.
+	req = httptest.NewRequest(http.MethodPost, "/nodes/exit-de-1/drain", nil)
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.Header.Set("X-CSRF-Token", "not-the-real-token")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Result().StatusCode != http.StatusForbidden {
+		t.Errorf("bad-CSRF POST = %d, want 403", rec.Result().StatusCode)
+	}
+}
+
+func TestActionFormsCarryCSRFToken(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+
+	res, body := get(t, h, "/nodes/exit-de-1")
+	if !strings.Contains(body, `name="csrf_token" value="`+h.csrf+`"`) {
+		t.Error("detail page forms missing CSRF token field")
+	}
+	var found bool
+	for _, c := range res.Cookies() {
+		if c.Name == csrfCookie && c.Value == h.csrf {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("detail page did not set the CSRF double-submit cookie")
+	}
+}
+
+func TestDetailShowsDrainButton(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+
+	_, body := get(t, h, "/nodes/exit-de-1")
+	if !strings.Contains(body, `action="/nodes/exit-de-1/drain"`) {
+		t.Error("detail page missing drain action")
+	}
+	if !strings.Contains(body, `action="/nodes/exit-de-1/delete"`) {
+		t.Error("detail page missing delete action")
+	}
+	// Once drained, show undrain + draining badge.
+	_ = st.SetNodeDrain(context.Background(), "exit-de-1", true)
+	_, body = get(t, h, "/nodes/exit-de-1")
+	if !strings.Contains(body, `action="/nodes/exit-de-1/undrain"`) {
+		t.Error("drained node should show undrain action")
+	}
+	if !strings.Contains(body, "badge draining") {
+		t.Error("drained node should show draining badge")
+	}
+}
+
+func TestDecommissionAction(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+
+	res := post(t, h, "/nodes/exit-de-1/decommission")
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("decommission status = %d", res.StatusCode)
+	}
+	if n, _ := st.GetNode(context.Background(), "exit-de-1"); !n.Decommission {
+		t.Error("decommission action did not set the flag")
+	}
+	_, body := get(t, h, "/nodes/exit-de-1")
+	if !strings.Contains(body, "badge decommissioning") {
+		t.Error("decommissioning node should show the badge")
+	}
+}
+
+type stubProv struct {
+	provisionable bool
+	triggered     string
+	err           error
+	manifest      []domain.Node
+}
+
+func (s *stubProv) Provisionable(string) bool { return s.provisionable }
+func (s *stubProv) TriggerAsync(id string) error {
+	s.triggered = id
+	return s.err
+}
+func (s *stubProv) ManifestNodes() []domain.Node { return s.manifest }
+
+func newProvHandler(t *testing.T, prov Provisioner) (*Handler, store.Store) {
+	t.Helper()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	h, err := New(st, nil, prov)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h, st
+}
+
+func TestProvisionAction(t *testing.T) {
+	prov := &stubProv{provisionable: true}
+	h, st := newProvHandler(t, prov)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StatePending})
+
+	res := post(t, h, "/nodes/exit-de-1/provision")
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("provision status = %d", res.StatusCode)
+	}
+	if prov.triggered != "exit-de-1" {
+		t.Errorf("TriggerAsync not called with the node id, got %q", prov.triggered)
+	}
+}
+
+func TestProvisionButtonShownForPending(t *testing.T) {
+	prov := &stubProv{provisionable: true}
+	h, st := newProvHandler(t, prov)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StatePending})
+
+	_, body := get(t, h, "/nodes/exit-de-1")
+	if !strings.Contains(body, `action="/nodes/exit-de-1/provision"`) {
+		t.Error("Pending provisionable node should show the Provision button")
+	}
+
+	// A Ready node should NOT offer provisioning.
+	_ = st.SetNodeState(context.Background(), "exit-de-1", domain.StateReady, "")
+	_, body = get(t, h, "/nodes/exit-de-1")
+	if strings.Contains(body, `action="/nodes/exit-de-1/provision"`) {
+		t.Error("Ready node should not show the Provision button")
+	}
+}
+
+func TestProvisionUnavailableWhenNoManager(t *testing.T) {
+	h, st := newTestHandler(t, nil) // prov is nil
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StatePending})
+	res := post(t, h, "/nodes/exit-de-1/provision")
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("provision without manager = %d, want 503", res.StatusCode)
+	}
+}
+
+func TestManifestNodeShownAsPending(t *testing.T) {
+	// A node declared in the manifest but absent from the store must appear
+	// (Pending) in the list and be viewable so it can be provisioned.
+	prov := &stubProv{
+		provisionable: true,
+		manifest:      []domain.Node{{ID: "exit-new", Name: "exit-new", Role: domain.RoleExit, State: domain.StatePending}},
+	}
+	h, _ := newProvHandler(t, prov)
+
+	_, list := get(t, h, "/")
+	if !strings.Contains(list, "exit-new") {
+		t.Error("manifest-only node should appear in the fleet list")
+	}
+	res, detail := get(t, h, "/nodes/exit-new")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("manifest node detail = %d, want 200", res.StatusCode)
+	}
+	if !strings.Contains(detail, `action="/nodes/exit-new/provision"`) {
+		t.Error("manifest-only node detail should offer provisioning")
+	}
+}

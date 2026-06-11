@@ -1,0 +1,198 @@
+package health
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os/exec"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/shidoh/wgfleet/internal/dnsfilter"
+	"github.com/shidoh/wgfleet/internal/domain"
+)
+
+// HandshakeMaxAge is the freshness threshold for a WG handshake. Older than this
+// and the tunnel is considered stale (an earlier finding: latency through the tunnel is
+// expected to be high, so we judge liveness by handshake age, not RTT).
+const HandshakeMaxAge = 3 * time.Minute
+
+// probeTimeout bounds each external probe.
+const probeTimeout = 8 * time.Second
+
+// DefaultExitProbes wires the real exec/http probes for an exit node from its
+// spec. These run system tools (awg, curl) and are therefore only meaningful on
+// a provisioned Linux node; they are not exercised on the dev box.
+func DefaultExitProbes(spec domain.NodeSpec) ExitProbes {
+	wgIface := "awg0"
+	egressIface := spec.Routing.EgressInterface
+	if egressIface == "" {
+		egressIface = "wgcf"
+	}
+	return ExitProbes{
+		HandshakeFresh: handshakeFreshProbe(wgIface),
+		WARPEgress:     warpEgressProbe(egressIface),
+		DNSResolves:    dnsResolvesProbe(dnsListenAddr(spec.DNS)),
+	}
+}
+
+// DefaultMasterProbes wires the real probes for a master node.
+func DefaultMasterProbes(spec domain.NodeSpec) MasterProbes {
+	var controller string
+	if spec.Master != nil {
+		controller = spec.Master.ExternalController
+	}
+	return MasterProbes{
+		WGServerUp: ifaceUpProbe("awg0"),
+		MihomoAPI:  mihomoAPIProbe(controller),
+	}
+}
+
+// handshakeFreshProbe checks the freshest handshake across peers via
+// `awg show <iface> latest-handshakes`.
+func handshakeFreshProbe(iface string) Probe {
+	return func(ctx context.Context) Result {
+		start := now()
+		out, err := runCmd(ctx, "awg", "show", iface, "latest-handshakes")
+		if err != nil {
+			return fail(fmt.Sprintf("awg show failed: %v", err))
+		}
+		newest := newestHandshake(out)
+		if newest == 0 {
+			return fail("no handshake yet")
+		}
+		age := time.Since(time.Unix(newest, 0))
+		if age > HandshakeMaxAge {
+			return fail(fmt.Sprintf("stale handshake (%s old)", age.Round(time.Second)))
+		}
+		return ok(fmt.Sprintf("%s ago", age.Round(time.Second)), since(start))
+	}
+}
+
+// warpEgressProbe confirms egress leaves via the WARP interface and that
+// Cloudflare reports warp=on.
+func warpEgressProbe(iface string) Probe {
+	return func(ctx context.Context) Result {
+		start := now()
+		out, err := runCmd(ctx, "curl", "-s", "--max-time", "5",
+			"--interface", iface, "https://www.cloudflare.com/cdn-cgi/trace")
+		if err != nil {
+			return fail(fmt.Sprintf("curl via %s failed: %v", iface, err))
+		}
+		if !strings.Contains(out, "warp=on") && !strings.Contains(out, "warp=plus") {
+			return fail("egress is not via WARP")
+		}
+		return ok("warp on", since(start))
+	}
+}
+
+// dnsListenAddr reconstructs the resolver's mgmt-address listen endpoint from
+// the spec (the renderer binds DNS on loopback + this address).
+func dnsListenAddr(spec domain.DNSFilterSpec) string {
+	if spec.MgmtAddr == "" {
+		return ""
+	}
+	port := spec.Ports.DNS
+	if port == 0 {
+		port = dnsfilter.DefaultDNSPort
+	}
+	return fmt.Sprintf("%s:%d", spec.MgmtAddr, port)
+}
+
+// dnsResolvesProbe checks the on-node DNS filter answers a query.
+func dnsResolvesProbe(listenAddr string) Probe {
+	host := hostOf(listenAddr)
+	return func(ctx context.Context) Result {
+		if host == "" {
+			return fail("no DNS listen address")
+		}
+		start := now()
+		if _, err := runCmd(ctx, "dig", "+short", "+timeout=3", "@"+host, "cloudflare.com"); err != nil {
+			return fail(fmt.Sprintf("dig @%s failed: %v", host, err))
+		}
+		return ok("resolves", since(start))
+	}
+}
+
+// ifaceUpProbe checks an interface exists and is up via `ip link show`.
+func ifaceUpProbe(iface string) Probe {
+	return func(ctx context.Context) Result {
+		start := now()
+		out, err := runCmd(ctx, "ip", "link", "show", iface)
+		if err != nil {
+			return fail(fmt.Sprintf("%s not found: %v", iface, err))
+		}
+		if !strings.Contains(out, "state UP") && !strings.Contains(out, "state UNKNOWN") {
+			return fail(iface + " is down")
+		}
+		return ok("up", since(start))
+	}
+}
+
+// mihomoAPIProbe checks the mihomo Clash API responds at /version.
+func mihomoAPIProbe(controller string) Probe {
+	return func(ctx context.Context) Result {
+		if controller == "" {
+			return fail("no external controller configured")
+		}
+		start := now()
+		ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+controller+"/version", nil)
+		if err != nil {
+			return fail(err.Error())
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return fail(fmt.Sprintf("mihomo api unreachable: %v", err))
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			return fail(fmt.Sprintf("mihomo api status %d", resp.StatusCode))
+		}
+		return ok("responding", since(start))
+	}
+}
+
+// --- helpers ---
+
+func runCmd(ctx context.Context, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	return string(out), err
+}
+
+// newestHandshake parses `awg show latest-handshakes` output (one
+// "<pubkey>\t<unix-seconds>" per line) and returns the largest timestamp.
+func newestHandshake(out string) int64 {
+	var newest int64
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		ts, err := strconv.ParseInt(fields[len(fields)-1], 10, 64)
+		if err != nil {
+			continue
+		}
+		if ts > newest {
+			newest = ts
+		}
+	}
+	return newest
+}
+
+func hostOf(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	if i := strings.LastIndex(addr, ":"); i > 0 {
+		return addr[:i]
+	}
+	return addr
+}
+
+func now() time.Time                  { return time.Now() }
+func since(t time.Time) time.Duration { return time.Since(t) }

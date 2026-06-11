@@ -1,0 +1,90 @@
+# Example controller config. Real IPs/keys are NOT committed: use *.local.yaml
+# or env/secret references. See docs/DESIGN.md §8.
+controller:
+  listen: "0.0.0.0:8443" # gRPC/HTTPS API for agents (mTLS)
+  # The dashboard and /metrics are UNAUTHENTICATED — their only protection is the
+  # bind address. The controller REFUSES to start if either binds 0.0.0.0/:: or a
+  # public IP; use a loopback or mgmt/ZT (RFC1918) address. Override with
+  # WGFLEET_ALLOW_PUBLIC_BIND=1 only behind your own firewall/reverse proxy.
+  webui: "10.20.25.254:9000" # read-only dashboard; bind mgmt/ZT only (empty disables)
+  store: "/var/lib/wgfleet/state.db"
+  metrics: "10.20.25.254:9300" # Prometheus /metrics; bind mgmt/ZT only (empty disables)
+  staleness_after: 3m # demote silent Ready/Reconciling nodes to Degraded after this (0=default, <0 disables)
+  agent_bin: /usr/local/bin/wgfleet-agent # binary installed during UI-triggered provisioning
+  pki:
+    ca_cert: "/etc/wgfleet/ca.crt"
+    # CA tooling (--init-pki / --issue-node) needs a file:// path it can read and
+    # write. In production keep this key behind a secret manager and 0600 perms.
+    ca_key: "file:///etc/wgfleet/ca.key"
+
+fleet:
+  zerotier_network: "8056c2e21c000001" # mgmt overlay nodes join during bootstrap
+  masters:
+    - name: master-xa-1
+      mgmt_addr: 10.20.25.254 # ZT overlay address
+      client_awg:
+        listen_port: 443 # standard UDP port is less conspicuous
+        address_pool: 10.80.0.0/24
+      routing:
+        direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+        direct_geo: [RU]
+        balance: health # round-robin | health
+      mihomo: # master data-plane tuning + custom-config hooks
+        sniffer_skip: ["+.themoviedb.org", "+.cloudfront.net"] # CDNs that break under sniffing
+        overrides: # deep-merged into the rendered mihomo config.yaml
+          log-level: info
+        extra_files: # provisioned alongside config.yaml (mihomo include files)
+          - path: direct-domains.yaml
+            content: |
+              payload:
+                - mycompany.example
+      compose: # master container stack (wg-easy + mihomo); empty fields use defaults
+        # Every dockerized component can pin image + tag. tag (optional) overrides
+        # any tag in the image; either may be omitted to inherit the default.
+        wg_easy_image: "ghcr.io/wg-easy/wg-easy" # default ghcr.io/wg-easy/wg-easy:15
+        wg_easy_tag: "15"
+        mihomo_image: "metacubex/mihomo" # default metacubex/mihomo:latest
+        mihomo_tag: "latest"
+        # client_dns: defaults to the exits' mgmt addresses (blocky)
+        client_allowed_ips: "1.0.0.0/8,8.0.0.0/7,..." # inverted RFC1918 list for clients
+      ssh: # bootstrap target (Phase 0/1 only; key path on the controller host)
+        host: 203.0.113.1
+        user: root
+        key_path: /etc/wgfleet/bootstrap_ed25519
+        # host_key pins the server's SSH host key (authorized_keys/known_hosts line).
+        # Bootstrap ships the node's mTLS private key over SSH, so without pinning a
+        # MITM can steal the node identity. Get it with `ssh-keyscan <host>`.
+        # host_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA..."
+
+  exits:
+    - name: exit-de-1
+      region: de
+      egress: warp # warp | direct
+      # warp_mtu: 1400 # pin the WARP interface MTU when the real path is < 1500 (an earlier finding: 1320-1420); 0/unset = computed 1440. Also lowers the client MTU so packets never fragment at egress.
+      # public_ip: 198.51.100.7 # WG endpoint the master dials this exit at; defaults to ssh.host. Set explicitly when SSH goes via a bastion or a forwarded local port (e.g. Lima).
+      address_pool: 10.81.0.0/24
+      mgmt_addr: 10.20.0.5 # ZT overlay address (admin/metrics/DNS bind)
+      dns_filter: true # run blocky (Docker); binds loopback + mgmt_addr ONLY (never public)
+      dns: # optional blocky tuning — safety (ZT-only binds) is enforced regardless
+        image: spx01/blocky # repository; pin a tag below or inline as repo:tag
+        tag: latest # explicit tag (overrides any tag in image); default spx01/blocky:latest
+        # upstreams: defaults to Quad9/Mullvad DoT + digitale-gesellschaft DoH
+        allowlist: ["*.example.com", "*.example.net"] # never blocked (platform infra auto-added)
+        # ports: { dns: 53, tls: 853, http: 4000 }  # bound on 127.0.0.1 + mgmt_addr only
+        overrides: # raw blocky YAML, deep-merged onto the rendered base
+          conditional: # split-horizon internal domains
+            mapping:
+              lab.lan: 10.20.2.1,10.20.2.2
+          blocking: # opt in to filtering (empty by default)
+            denylists:
+              ads: [https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.txt]
+            clientGroupsBlock:
+              default: [ads]
+      firewall:
+        as_blacklist: true
+        whitelist: [10.20.0.0/16] # mgmt overlay; real values from local config
+      ssh:
+        host: 198.51.100.7
+        user: root
+        key_path: /etc/wgfleet/bootstrap_ed25519
+        # host_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA..." # pin to prevent MITM (see master ssh above)

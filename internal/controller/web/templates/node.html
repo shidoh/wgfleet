@@ -1,0 +1,96 @@
+{{define "content"}}
+<div class="detail-head">
+  <a class="back" href="/">← fleet</a>
+  <h1>{{.Node.Name}}</h1>
+  <span class="role {{.Node.Role}}">{{.Node.Role}}</span>
+  <span class="badge {{lower .Node.State}}"><span class="led"></span>{{.Node.State}}</span>
+  {{if .Node.Drain}}<span class="badge draining"><span class="led"></span>draining</span>{{end}}
+  {{if .Node.Decommission}}<span class="badge decommissioning"><span class="led"></span>decommissioning</span>{{end}}
+  <span class="actions">
+    {{if .CanProvision}}
+    <form method="post" action="/nodes/{{.Node.ID}}/provision"
+          onsubmit="return confirm('Provision {{.Node.Name}}? SSH-bootstrap the node and install the agent.')">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="btn go">Provision</button>
+    </form>
+    {{end}}
+    {{if .Node.Drain}}
+    <form method="post" action="/nodes/{{.Node.ID}}/undrain">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="btn">Undrain</button>
+    </form>
+    {{else}}
+    <form method="post" action="/nodes/{{.Node.ID}}/drain"
+          onsubmit="return confirm('Drain {{.Node.Name}}? It stays a configured proxy but receives no new traffic.')">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="btn warn">Drain</button>
+    </form>
+    {{end}}
+    {{if not .Node.Decommission}}
+    <form method="post" action="/nodes/{{.Node.ID}}/decommission"
+          onsubmit="return confirm('Decommission {{.Node.Name}}? The agent will tear down its data plane (stop services, bring tunnels down). Drain it first.')">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="btn warn">Decommission</button>
+    </form>
+    {{end}}
+    <form method="post" action="/nodes/{{.Node.ID}}/delete"
+          onsubmit="return confirm('Delete {{.Node.Name}} from inventory? Decommission and tear it down first.')">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="btn danger">Delete</button>
+    </form>
+  </span>
+</div>
+
+{{if .Node.LastError}}<p class="error-note">⚠ {{.Node.LastError}}</p>{{end}}
+
+<div class="grid">
+  <div class="card">
+    <h2>Inventory</h2>
+    <dl class="kv">
+      <dt>ID</dt><dd>{{.Node.ID}}</dd>
+      <dt>Region</dt><dd class="dim">{{or .Node.Region "—"}}</dd>
+      <dt>Mgmt addr</dt><dd>{{or .Node.MgmtAddr "—"}}</dd>
+      <dt>Public IP</dt><dd>{{or .Node.PublicIP "—"}}</dd>
+      <dt>Public key</dt><dd class="dim">{{or .Node.PublicKey "— (not registered)"}}</dd>
+      <dt>Created</dt><dd class="dim">{{absTime .Node.CreatedAt}}</dd>
+      <dt>Last seen</dt><dd class="dim">{{relTime .Node.LastSeen}}</dd>
+    </dl>
+  </div>
+
+  <div class="card">
+    <h2>Status</h2>
+    {{if .HasStatus}}
+    <dl class="kv">
+      <dt>State</dt><dd>{{.Status.State}}</dd>
+      <dt>Egress IP</dt><dd>{{or .Status.EgressIP "—"}}</dd>
+      <dt>Last handshake</dt><dd class="dim">{{relTime .Status.LastHandshake}}</dd>
+      <dt>Reported</dt><dd class="dim">{{relTime .Status.ReportedAt}}</dd>
+    </dl>
+    {{if .Status.ReconcileError}}<p class="error-note">{{.Status.ReconcileError}}</p>{{end}}
+    {{if .Status.Checks}}
+    <h2 style="margin-top:1rem">Health checks</h2>
+    <ul class="checks">
+      {{range .Status.Checks}}
+      <li>
+        <span class="led {{if .OK}}ok{{else}}bad{{end}}"></span>
+        <span class="cname">{{.Name}}</span>
+        {{if .Detail}}<span class="cdetail">{{.Detail}}</span>{{end}}
+      </li>
+      {{end}}
+    </ul>
+    {{end}}
+    {{else}}
+    <p class="kv dim">No status reported yet.</p>
+    {{end}}
+  </div>
+
+  <div class="card full">
+    <h2>Rendered NodeSpec (desired state)</h2>
+    {{if .SpecErr}}
+    <p class="error-note">{{.SpecErr}}</p>
+    {{else}}
+    <pre class="spec">{{.SpecText}}</pre>
+    {{end}}
+  </div>
+</div>
+{{end}}

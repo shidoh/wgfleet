@@ -1,0 +1,11 @@
+# Example agent config. The agent is thin: identity + where the controller is.
+# Everything else comes from the NodeSpec it pulls. See docs/DESIGN.md §8.
+agent:
+  role: exit # master | exit
+  controller: "master-xa-1.mgmt:8443"
+  node_id: "exit-de-1"
+  reconcile_interval: 60s
+  identity:
+    cert: "/etc/wgfleet/node.crt" # issued at bootstrap
+    key: "/etc/wgfleet/node.key" # generated on-node, 0600, never leaves the box
+    ca: "/etc/wgfleet/ca.crt" # CA cert used to verify the controller

@@ -1,0 +1,25 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — wgfleet</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell">
+      <span class="brand">wg<span class="dot">·</span>fleet</span>
+      <span class="meta">control plane</span>
+      <span class="spacer"></span>
+      <span class="meta">{{.NodeCount}} node{{if ne .NodeCount 1}}s{{end}}</span>
+    </div>
+  </header>
+  <main>
+    <div class="shell">
+      {{template "content" .}}
+    </div>
+  </main>
+</body>
+</html>{{end}}

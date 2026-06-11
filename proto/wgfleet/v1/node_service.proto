@@ -1,0 +1,235 @@
+syntax = "proto3";
+
+package wgfleet.v1;
+
+option go_package = "github.com/shidoh/wgfleet/internal/api/pb;pb";
+
+// NodeService is the controller↔agent control channel. It runs over mutual TLS:
+// the agent's identity (node_id) is taken from its verified client-certificate
+// CN, NOT from request fields, so an agent cannot impersonate another node.
+service NodeService {
+  // Register announces a node to the controller after bootstrap and returns its
+  // assigned state. Idempotent — safe to call on every agent start.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // PublishPublicKey registers the node's WireGuard public key. The controller
+  // only ever stores public keys (key-broker model); private keys never leave
+  // the node.
+  rpc PublishPublicKey(PublishPublicKeyRequest) returns (PublishPublicKeyResponse);
+
+  // PullSpec returns the node's desired NodeSpec, rendered by the controller
+  // from fleet config + the registry of peer public keys.
+  rpc PullSpec(PullSpecRequest) returns (NodeSpec);
+
+  // ReportStatus streams health/status reports from the agent. The server
+  // acknowledges once the stream closes.
+  rpc ReportStatus(stream StatusReport) returns (ReportStatusAck);
+}
+
+message RegisterRequest {
+  string role = 1; // "master" | "exit"; cross-checked against inventory
+  string public_ip = 2; // discovered public IP for peer endpoints
+  string region = 3;
+  string mgmt_addr = 4; // node's management/ZT address (admin + metrics bind)
+}
+
+message RegisterResponse {
+  string node_id = 1; // echoed back (derived from cert CN)
+  string state = 2; // current NodeState
+}
+
+message PublishPublicKeyRequest {
+  string public_key = 1; // base64 WireGuard public key
+}
+
+message PublishPublicKeyResponse {
+  bool accepted = 1;
+}
+
+message PullSpecRequest {
+  // Empty: the node is identified by its client certificate.
+}
+
+message StatusReport {
+  string state = 1; // observed NodeState
+  string egress_ip = 2; // observed egress IP (should be Cloudflare for warp)
+  string reconcile_error = 3;
+  int64 last_handshake_unix = 4; // freshest WG handshake (unix seconds, 0 = none)
+  repeated HealthCheck checks = 5;
+}
+
+message HealthCheck {
+  string name = 1;
+  bool ok = 2;
+  string detail = 3;
+  int64 latency_ms = 4;
+}
+
+message ReportStatusAck {
+  uint32 received = 1; // number of reports the server processed
+}
+
+// ---- Desired-state messages (mirror internal/domain) ----
+
+message NodeSpec {
+  string role = 1;
+  string egress = 2;
+  WGServerSpec wg_server = 3;
+  repeated PeerSpec peers = 4;
+  DNSFilterSpec dns = 5;
+  FirewallSpec firewall = 6;
+  RoutingSpec routing = 7;
+  ExportersSpec exporters = 8;
+  MasterSpec master = 9; // master nodes only (mihomo data plane); unset for exits
+  bool decommission = 10; // tear the node down (reverse reconcile) instead of converging
+  int32 warp_mtu = 11; // exit warp egress: WARP interface MTU; 0 = compute (1440), set when the real WARP path is smaller (an earlier finding: 1320-1420)
+}
+
+// MasterSpec is the master node's mihomo data plane.
+message MasterSpec {
+  string bind_address = 1;
+  int32 redir_port = 2;
+  string external_controller = 3;
+  repeated ExitTunnel exit_tunnels = 4;
+  string balance = 5;
+  repeated string direct_cidrs = 6;
+  repeated string direct_geo = 7;
+  repeated string sniffer_skip = 8;
+  CustomConfig custom = 9;
+  ComposeSpec compose = 10;
+}
+
+// ComposeSpec is the master's container-stack desired state (wg-easy + mihomo).
+message ComposeSpec {
+  string wg_easy_image = 1;
+  string mihomo_image = 2;
+  string public_ip = 3;
+  int32 wg_easy_web_port = 4;
+  repeated string client_dns = 5;
+  string client_allowed_ips = 6;
+}
+
+// ExitTunnel is one master→exit mihomo WireGuard proxy.
+message ExitTunnel {
+  string name = 1;
+  string endpoint = 2; // "host:port"
+  string server_public_key = 3;
+  string preshared_key = 4; // optional secret
+  string tunnel_ip = 5;
+  int32 mtu = 6;
+  AWGParams awg = 7;
+  bool drained = 8; // kept as a proxy but excluded from the load-balance group
+}
+
+// CustomConfig carries operator overrides (JSON-encoded for arbitrary nesting)
+// and extra managed files.
+message CustomConfig {
+  string overrides_json = 1; // JSON object deep-merged into the rendered config
+  repeated ManagedFile files = 2;
+}
+
+message ManagedFile {
+  string path = 1;
+  string content = 2;
+  bool secret = 3;
+}
+
+message WGServerSpec {
+  int32 listen_port = 1;
+  string address_pool = 2;
+  string address = 3;
+  int32 mtu = 4;
+  AWGParams awg = 5; // AmneziaWG obfuscation for this interface; nil ⇒ vanilla WG
+}
+
+message PeerSpec {
+  string name = 1;
+  string public_key = 2;
+  string endpoint = 3; // host:port; empty if the peer dials us
+  repeated string allowed_ips = 4;
+  int32 keepalive = 5;
+  int32 mtu = 6;
+  // Peers carry no obfuscation params: AmneziaWG lives in [Interface] only.
+}
+
+// AWGHeader is a packet-header type range [min,max]; the four H ranges must not
+// overlap each other.
+message AWGHeader {
+  uint32 min = 1;
+  uint32 max = 2;
+}
+
+// AWGShared — MUST be identical on both ends of a tunnel: H1-H4 and S1-S4.
+message AWGShared {
+  AWGHeader h1 = 1;
+  AWGHeader h2 = 2;
+  AWGHeader h3 = 3;
+  AWGHeader h4 = 4;
+  int32 s1 = 5;
+  int32 s2 = 6;
+  int32 s3 = 7;
+  int32 s4 = 8;
+}
+
+// AWGLocal — MAY differ between the two ends: Jc/Jmin/Jmax and I1-I5.
+message AWGLocal {
+  int32 jc = 1;
+  int32 jmin = 2;
+  int32 jmax = 3;
+  string i1 = 4;
+  string i2 = 5;
+  string i3 = 6;
+  string i4 = 7;
+  string i5 = 8;
+}
+
+message AWGParams {
+  AWGShared shared = 1;
+  AWGLocal local = 2;
+}
+
+// DNSFilterSpec configures the exit's blocky resolver (run as a container).
+// Safety/structural fields are first-class; the rich surface (denylists,
+// conditional mappings, caching) rides in custom (overrides + extra files).
+message DNSFilterSpec {
+  bool enabled = 1;
+  string mgmt_addr = 2; // the ONLY non-loopback address blocky binds
+  repeated string upstreams = 3; // default upstream group; safe defaults if empty
+  DNSPorts ports = 4;
+  repeated BootstrapUpstream bootstrap_dns = 5;
+  repeated string allowlist = 6; // never-blocked domains (platform infra auto-added)
+  bool prometheus = 7;
+  string image = 8; // container image; default spx01/blocky
+  CustomConfig custom = 9;
+}
+
+message DNSPorts {
+  int32 dns = 1;   // default 53
+  int32 tls = 2;   // default 853 (0 disables)
+  int32 https = 3; // default 0 (disabled)
+  int32 http = 4;  // default 4000 (0 disables)
+}
+
+message BootstrapUpstream {
+  string upstream = 1;
+  repeated string ips = 2;
+}
+
+message FirewallSpec {
+  bool as_blacklist = 1;
+  repeated string whitelist = 2;
+  int32 wg_port = 3;
+}
+
+message RoutingSpec {
+  string egress_interface = 1;
+  repeated string direct_cidrs = 2;
+  string master_ip = 3;
+  int32 fwmark = 4;
+}
+
+message ExportersSpec {
+  bool node = 1;
+  bool wg = 2;
+  bool warp = 3;
+}

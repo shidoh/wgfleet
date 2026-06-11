@@ -1,0 +1,165 @@
+// Package routing renders the policy-routing intent (RoutingSpec) into a
+// deterministic, idempotent sequence of shell steps (ip rule/route, sysctl,
+// conntrack, nft mangle). It encodes the hard-won routing lessons directly
+// (docs/DESIGN.md #2–#5, #9) so the platform cannot reintroduce the failures we hit
+// by hand. Steps are returned as data; the reconcile layer wraps them as exec
+// actions, so dry-run shows the exact commands without running them.
+package routing
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/shidoh/wgfleet/internal/domain"
+)
+
+// clientTable is the routing table id that carries client traffic toward the
+// egress interface. Kept off the main table so management/handshake traffic
+// (which stays in main) is never pulled into WARP.
+const clientTable = 51820
+
+// fwmarkClient is the default fwmark for client-egress packets when the spec
+// does not set one. Marking is done by source port in nftables mangle, not by
+// CONNMARK — CONNMARK picked up stray marks from conntrack.
+const fwmarkClient = 0x1
+
+// ip-rule priorities. Each logical rule owns a fixed priority so it can be
+// replaced by a delete-by-pref then add: deleting by priority clears whatever
+// selector currently sits there (e.g. a stale master IP after the spec changed),
+// so re-applying never leaves a duplicate or an orphan.
+const (
+	prefMaster  = 100 // keep master-bound traffic on the main table
+	prefDirect0 = 110 // first direct-CIDR rule; CIDR i uses prefDirect0+i
+	prefFwmark  = 200 // keep WG replies/handshake (fwmark) on the main table
+	prefEgress  = 300 // send remaining traffic to the egress table
+)
+
+// Step is one idempotent routing command. BestEffort marks a step whose failure
+// must be tolerated (e.g. `ip rule del` of a rule that does not exist yet): the
+// reconcile layer wraps it so it never aborts the pass.
+type Step struct {
+	Summary    string
+	Argv       []string
+	BestEffort bool
+}
+
+// Render produces the ordered routing steps for spec on an exit node. The order
+// matters: relax rp_filter and flush conntrack first, then install rules, then
+// the egress default route last.
+func Render(spec domain.RoutingSpec) ([]Step, error) {
+	if spec.EgressInterface == "" {
+		// No egress interface ⇒ direct egress; nothing to policy-route.
+		return nil, nil
+	}
+	mark := spec.FwMark
+	if mark == 0 {
+		mark = fwmarkClient
+	}
+
+	var steps []Step
+
+	// an earlier finding: packets arrive on one interface and leave via another (wgcf);
+	// strict reverse-path filtering would drop them.
+	steps = append(steps,
+		sysctl("net.ipv4.conf.all.rp_filter", "0"),
+		sysctl("net.ipv4.conf.default.rp_filter", "0"),
+	)
+
+	// an earlier finding: stale conntrack entries remember the old path; flush so the new
+	// egress takes effect immediately instead of after a timeout.
+	steps = append(steps, Step{
+		Summary: "flush conntrack so routing changes take effect now",
+		Argv:    []string{"conntrack", "-D"},
+	})
+
+	// an earlier finding: traffic back to the master must stay direct, else the master
+	// sees a Cloudflare source and drops the peer.
+	if spec.MasterIP != "" {
+		steps = append(steps, ipRuleReplace(prefMaster,
+			fmt.Sprintf("keep traffic to master %s on the main table", spec.MasterIP),
+			"to", spec.MasterIP, "lookup", "main",
+		)...)
+	}
+
+	// an earlier finding: private/RU/own networks go direct, never through egress.
+	for i, cidr := range spec.DirectCIDRs {
+		steps = append(steps, ipRuleReplace(prefDirect0+i,
+			fmt.Sprintf("direct route for %s", cidr),
+			"to", cidr, "lookup", "main",
+		)...)
+	}
+
+	// an earlier finding: WG handshake/reply packets are marked by source port in
+	// nftables mangle and kept on the main table via this fwmark rule.
+	steps = append(steps, ipRuleReplace(prefFwmark,
+		fmt.Sprintf("keep fwmark 0x%x (WG replies/handshake) on main", mark),
+		"fwmark", fmt.Sprintf("0x%x", mark), "lookup", "main",
+	)...)
+
+	// Everything else: send client traffic to the egress interface via a
+	// dedicated table.
+	steps = append(steps, ipRuleReplace(prefEgress,
+		"send remaining traffic to the egress table",
+		"lookup", fmt.Sprintf("%d", clientTable),
+	)...)
+	steps = append(steps, Step{
+		Summary: fmt.Sprintf("default route via %s in table %d", spec.EgressInterface, clientTable),
+		Argv:    []string{"ip", "route", "replace", "default", "dev", spec.EgressInterface, "table", fmt.Sprintf("%d", clientTable)},
+	})
+
+	return steps, nil
+}
+
+// Script serializes steps into a deterministic, one-command-per-line blob. It is
+// the canonical text form of the routing intent: the reconcile layer writes it
+// to a state file and diffs it, so the routing commands (and the conntrack flush
+// in particular, an earlier finding) run only when the intent actually changes rather than
+// on every pass.
+func Script(steps []Step) string {
+	var b strings.Builder
+	for _, s := range steps {
+		b.WriteString(strings.Join(s.Argv, " "))
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// TeardownActions reverses Render: it flushes the egress routing table and
+// deletes the ip rules pointing at it, plus flushes conntrack so the old WARP
+// path is forgotten immediately (an earlier finding, in reverse). Used when an exit node
+// is decommissioned. The deletes tolerate "rule does not exist".
+func TeardownActions() []Step {
+	return []Step{
+		{Summary: fmt.Sprintf("flush egress routing table %d", clientTable),
+			Argv: []string{"ip", "route", "flush", "table", fmt.Sprintf("%d", clientTable)}},
+		{Summary: "remove egress-table rule",
+			Argv: []string{"ip", "rule", "del", "lookup", fmt.Sprintf("%d", clientTable)}},
+		{Summary: "flush conntrack (forget the WARP path)",
+			Argv: []string{"conntrack", "-F"}},
+	}
+}
+
+func sysctl(key, val string) Step {
+	return Step{
+		Summary: fmt.Sprintf("set %s=%s", key, val),
+		Argv:    []string{"sysctl", "-w", fmt.Sprintf("%s=%s", key, val)},
+	}
+}
+
+// ipRuleReplace renders a rule at a fixed priority as a delete-by-pref then add.
+// Deleting by priority (best-effort, tolerated when absent) clears whatever rule
+// currently occupies that pref — including one with a now-stale selector after
+// the spec changed — so the following add installs exactly one current copy and
+// nothing leaks across reconciles. selector is the match part (without "pref").
+func ipRuleReplace(pref int, summary string, selector ...string) []Step {
+	p := fmt.Sprintf("%d", pref)
+	add := append(append([]string{"ip", "rule", "add"}, selector...), "pref", p)
+	return []Step{
+		{
+			Summary:    fmt.Sprintf("clear any existing rule at pref %d", pref),
+			Argv:       []string{"ip", "rule", "del", "pref", p},
+			BestEffort: true,
+		},
+		{Summary: summary, Argv: add},
+	}
+}

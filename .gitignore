@@ -1,0 +1,43 @@
+# Binaries
+/bin/
+/dist/
+wgfleet-controller
+wgfleet-agent
+*.exe
+
+# Secrets — NEVER commit. WG private keys, CA keys, WARP creds, node identities.
+*.key
+*.pem
+*.crt
+!deploy/examples/*.example.crt
+secrets/
+*.sops.yaml
+*.age
+
+# Local state / runtime
+*.db
+*.db-wal
+*.db-shm
+state.db*
+
+# Local config overrides (real IPs/keys live here, not in git)
+controller.local.yaml
+agent.local.yaml
+fleet.local.yaml
+*.lima.yaml
+/etc-local/
+
+# Codegraph index (machine-local tool data)
+/.codegraph/
+
+# Go
+/vendor/
+*.test
+*.out
+coverage.*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

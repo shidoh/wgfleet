@@ -1,0 +1,18 @@
+# Reference systemd unit for the wgfleet node agent. The provisioner installs an
+# equivalent unit during bootstrap (internal/controller/provisioner/templates.go).
+[Unit]
+Description=wgfleet node agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/wgfleet-agent --config /etc/wgfleet/agent.yaml --log-format json
+Restart=on-failure
+RestartSec=5
+# The agent manages WireGuard/AmneziaWG interfaces, nftables and policy routing.
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

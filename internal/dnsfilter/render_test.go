@@ -1,0 +1,140 @@
+package dnsfilter
+
+import (
+	"strings"
+	"testing"
+
+	yaml "go.yaml.in/yaml/v3"
+
+	"github.com/shidoh/wgfleet/internal/domain"
+)
+
+func TestRenderBlockyBindsLoopbackAndMgmtOnly(t *testing.T) {
+	out, err := RenderBlocky(domain.DNSFilterSpec{
+		Enabled:    true,
+		MgmtAddr:   "10.20.4.10",
+		Prometheus: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatalf("render is not valid YAML: %v\n%s", err, out)
+	}
+
+	ports, _ := cfg["ports"].(map[string]any)
+	dns, _ := ports["dns"].([]any)
+	if len(dns) != 2 {
+		t.Fatalf("expected dns to bind exactly loopback + mgmt, got %v", dns)
+	}
+	if dns[0] != "127.0.0.1:53" || dns[1] != "10.20.4.10:53" {
+		t.Errorf("dns binds wrong addresses: %v", dns)
+	}
+	// Defense in depth: the public interface must never appear as a bind.
+	if strings.Contains(out, "0.0.0.0") {
+		t.Errorf("resolver must not bind 0.0.0.0:\n%s", out)
+	}
+
+	// Prometheus exposed when requested.
+	prom, _ := cfg["prometheus"].(map[string]any)
+	if prom["enable"] != true {
+		t.Errorf("expected prometheus enabled: %v", prom)
+	}
+
+	// Platform self-protection allowlist is always present.
+	if !strings.Contains(out, "zerotier.com") || !strings.Contains(out, "*.amnezia.org") {
+		t.Errorf("platform allowlist missing:\n%s", out)
+	}
+}
+
+func TestRenderBlockyDefaultsUpstreamsAndBootstrap(t *testing.T) {
+	out, err := RenderBlocky(domain.DNSFilterSpec{Enabled: true, MgmtAddr: "10.20.4.10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"tcp-tls:dns.quad9.net:853", "tcp-tls:dns.mullvad.net", "9.9.9.9"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected default %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderBlockyTLSDisabledWhenNegative(t *testing.T) {
+	out, err := RenderBlocky(domain.DNSFilterSpec{
+		Enabled:  true,
+		MgmtAddr: "10.20.4.10",
+		Ports:    domain.DNSPorts{TLS: -1, HTTP: -1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	_ = yaml.Unmarshal([]byte(out), &cfg)
+	ports, _ := cfg["ports"].(map[string]any)
+	if _, ok := ports["tls"]; ok {
+		t.Errorf("tls should be disabled when port < 0: %v", ports)
+	}
+	if _, ok := ports["http"]; ok {
+		t.Errorf("http should be disabled when port < 0: %v", ports)
+	}
+}
+
+func TestRenderBlockyOperatorOverridesDeepMerge(t *testing.T) {
+	out, err := RenderBlocky(domain.DNSFilterSpec{
+		Enabled:   true,
+		MgmtAddr:  "10.20.4.10",
+		Allowlist: []string{"*.example.com"},
+		Custom: domain.CustomConfig{
+			Overrides: map[string]any{
+				"conditional": map[string]any{
+					"mapping": map[string]any{"lab.lan": "10.20.2.1"},
+				},
+				"blocking": map[string]any{
+					"denylists":         map[string]any{"ads": []any{"https://example.test/pro.txt"}},
+					"clientGroupsBlock": map[string]any{"default": []any{"ads"}},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatalf("invalid YAML: %v", err)
+	}
+	// Operator override added.
+	cond, _ := cfg["conditional"].(map[string]any)
+	mapping, _ := cond["mapping"].(map[string]any)
+	if mapping["lab.lan"] != "10.20.2.1" {
+		t.Errorf("conditional override not applied: %v", cond)
+	}
+	// Deep-merge preserved the base allowlist while adding operator denylists.
+	blocking, _ := cfg["blocking"].(map[string]any)
+	if _, ok := blocking["allowlists"]; !ok {
+		t.Errorf("base allowlists clobbered by override: %v", blocking)
+	}
+	denylists, _ := blocking["denylists"].(map[string]any)
+	if denylists["ads"] == nil {
+		t.Errorf("operator denylists not merged: %v", blocking)
+	}
+	// Operator allowlist domain present alongside the platform set.
+	if !strings.Contains(out, "*.example.com") {
+		t.Errorf("operator allowlist domain missing:\n%s", out)
+	}
+}
+
+func TestRenderBlockyRequiresMgmtAddr(t *testing.T) {
+	if _, err := RenderBlocky(domain.DNSFilterSpec{Enabled: true}); err == nil {
+		t.Fatal("expected error without mgmt address (must not bind public iface)")
+	}
+}
+
+func TestRenderBlockyDisabled(t *testing.T) {
+	if _, err := RenderBlocky(domain.DNSFilterSpec{Enabled: false}); err == nil {
+		t.Fatal("expected error when filter disabled")
+	}
+}
