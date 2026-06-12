@@ -15,6 +15,15 @@ import (
 // DefaultWARPEndpoint is Cloudflare's WARP endpoint.
 const DefaultWARPEndpoint = "engage.cloudflareclient.com:2408"
 
+// WARPKeepaliveSeconds is the PersistentKeepalive on the WARP peer. An exit
+// reaching Cloudflare's anycast endpoint is effectively always behind NAT (a
+// datacenter NAT, and the host NAT in nested/Lima runs), so without keepalive the
+// tunnel's NAT mapping and handshake go cold whenever egress is idle — then the
+// next packet pays a full re-handshake, which makes the warp-egress health probe
+// time out and the node flap to Degraded. 25s is the standard WireGuard NAT-
+// traversal interval and keeps the mapping and handshake hot.
+const WARPKeepaliveSeconds = 25
+
 // WARPConfig is the material needed to render a wgcf.conf. PrivateKey and the
 // addresses come from `wgcf register` / `wgcf generate` on the node — each exit
 // registers its own (an earlier finding: one WARP private key per server). They are
@@ -72,6 +81,9 @@ func RenderWGCF(c WARPConfig) (string, error) {
 	b.WriteString("AllowedIPs = 0.0.0.0/0\n")
 	b.WriteString("AllowedIPs = ::/0\n")
 	fmt.Fprintf(&b, "Endpoint = %s\n", endpoint)
+	// Keep the NAT mapping and handshake warm so idle egress does not let the
+	// tunnel go cold (which flaps the warp-egress health check).
+	fmt.Fprintf(&b, "PersistentKeepalive = %d\n", WARPKeepaliveSeconds)
 	return b.String(), nil
 }
 

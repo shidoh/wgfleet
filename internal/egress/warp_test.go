@@ -33,6 +33,11 @@ func TestRenderWGCFEnforcesTableOff(t *testing.T) {
 	if !strings.Contains(out, "AllowedIPs = 0.0.0.0/0") {
 		t.Errorf("catch-all AllowedIPs missing:\n%s", out)
 	}
+	// Keepalive keeps the NAT mapping/handshake warm so idle egress does not flap
+	// the warp-egress health check.
+	if !strings.Contains(out, "PersistentKeepalive = 25") {
+		t.Errorf("WARP PersistentKeepalive missing (NAT traversal):\n%s", out)
+	}
 }
 
 func TestRenderWGCFRequiresComputedMTU(t *testing.T) {

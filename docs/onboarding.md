@@ -23,6 +23,12 @@ go build -o wgfleet-controller ./cmd/wgfleet-controller
 ./wgfleet-controller --config controller.yaml --init-pki
 ```
 
+> **`controller.listen` must be an address agents can reach.** It is baked into each
+> agent's config as the dial endpoint and seeds the server cert SAN. Bind the mgmt/ZT
+> address (e.g. `10.20.0.1:8443`). Bind `0.0.0.0` ONLY together with
+> `controller.advertise` (the reachable address — controller behind a NAT/LB/gateway);
+> otherwise agents are told to dial `0.0.0.0:8443`, which is undialable.
+
 Build the Linux agent that `--provision` installs on each node:
 
 ```sh
@@ -127,6 +133,14 @@ buttons or store flags.
 - **`mgmt_addr` is the ZeroTier IP**, planned in advance and assigned in ZT Central.
 - **WARP MTU**: if egress packets fragment / "first N requests fail", the real
   WARP path is below 1500 — pin `exits[].warp_mtu` (an earlier finding: 1320–1420).
+- **WARP blocked by the ISP**: if `warp-egress` stays red and the tunnel never comes up
+  (`wg show wgcf` → `0 B received`), it may be a path/provider block of UDP to
+  Cloudflare's WARP endpoint, not a wgfleet issue. Confirm with
+  `tcpdump -ni <egress-if> 'udp port 2408'` (handshake leaves, nothing returns) and a
+  **fresh `wgcf register` that also fails**. The fix is a different egress network for
+  the node; there is nothing to change in wgfleet. (The platform sets
+  `PersistentKeepalive = 25` on the WARP peer so an idle tunnel does not go cold and flap
+  the health check.)
 - **First real apply touches firewall/routing.** Use a VM with out-of-band console
   access for the first run; the baseline firewall + `Table = off` keep SSH/ZT
   reachable, but verify before depending on the box.

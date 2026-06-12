@@ -39,12 +39,19 @@ type ControllerConfig struct {
 
 // ControllerSection holds the controller's own runtime settings.
 type ControllerSection struct {
-	Listen   string     `koanf:"listen"`    // gRPC/HTTPS API for agents (mTLS)
-	WebUI    string     `koanf:"webui"`     // Web UI bind (deferred on MVP; reserved)
-	Store    string     `koanf:"store"`     // path to the sqlite state db
-	Metrics  string     `koanf:"metrics"`   // Prometheus /metrics bind (mgmt addr only)
-	AgentBin string     `koanf:"agent_bin"` // wgfleet-agent binary installed during UI-triggered provisioning
-	PKI      PKISection `koanf:"pki"`
+	Listen string `koanf:"listen"` // gRPC/HTTPS API for agents (mTLS)
+	// Advertise is the address agents dial to reach the controller when it differs
+	// from Listen — e.g. the controller binds 0.0.0.0 (or an overlay address) but
+	// is reached through a NAT/gateway/host address (a Lima host gateway, a
+	// published load-balancer). When set it (a) becomes the default endpoint baked
+	// into each agent's config and (b) seeds an extra SAN on the server cert so the
+	// agent's TLS handshake validates the dialed host. Empty ⇒ Listen is used.
+	Advertise string     `koanf:"advertise"`
+	WebUI     string     `koanf:"webui"`     // Web UI bind (deferred on MVP; reserved)
+	Store     string     `koanf:"store"`     // path to the sqlite state db
+	Metrics   string     `koanf:"metrics"`   // Prometheus /metrics bind (mgmt addr only)
+	AgentBin  string     `koanf:"agent_bin"` // wgfleet-agent binary installed during UI-triggered provisioning
+	PKI       PKISection `koanf:"pki"`
 	// StalenessAfter marks a Ready/Reconciling node Degraded when it has not
 	// reported status for this long (a silent/dead agent). 0 disables the sweep.
 	StalenessAfter time.Duration `koanf:"staleness_after"`

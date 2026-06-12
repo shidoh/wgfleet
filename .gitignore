@@ -1,8 +1,10 @@
-# Binaries
+# Binaries — anchor to repo root so these match the built executables only, NOT
+# the cmd/wgfleet-controller and cmd/wgfleet-agent source directories (an
+# unanchored pattern matches at every level and would exclude the main packages).
 /bin/
 /dist/
-wgfleet-controller
-wgfleet-agent
+/wgfleet-controller
+/wgfleet-agent
 *.exe
 
 # Secrets — NEVER commit. WG private keys, CA keys, WARP creds, node identities.

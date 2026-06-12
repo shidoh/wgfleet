@@ -11,6 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
+	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/wg"
 	"github.com/shidoh/wgfleet/internal/wgeasy"
@@ -122,6 +123,77 @@ func TestMasterExtraFilesWritten(t *testing.T) {
 	if !strings.Contains(string(got), "example.com") {
 		t.Errorf("extra file content wrong: %q", got)
 	}
+}
+
+// writeMasterCompose renders the master compose file exactly as composePlanner
+// would and writes it to disk, so a follow-up Plan sees an unchanged file.
+func writeMasterCompose(t *testing.T, path string, spec domain.NodeSpec) {
+	t.Helper()
+	yamlText, err := compose.RenderMasterCompose(compose.RenderInput{
+		Compose:          spec.Master.Compose,
+		ClientListenPort: spec.WGServer.ListenPort,
+		ClientPool:       spec.WGServer.AddressPool,
+		MgmtAddr:         masterMgmtAddr(spec),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(yamlText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// lastKind returns the Kind of the final action a planner produced.
+func lastKind(actions []reconcile.Action) reconcile.ActionKind {
+	return actions[len(actions)-1].Kind
+}
+
+func TestComposePlannerIdempotentAndEnsureUp(t *testing.T) {
+	spec, _ := masterSpec(t)
+
+	t.Run("file changed ⇒ up -d", func(t *testing.T) {
+		paths := testPaths(t) // compose file absent ⇒ create
+		pl := composePlanner{path: paths.Compose, up: func(string) bool { return true }}
+		actions, err := pl.Plan(context.Background(), spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := lastKind(actions); got != reconcile.ActionExec {
+			t.Fatalf("changed compose: want exec (up -d), got %q in %+v", got, actions)
+		}
+	})
+
+	t.Run("unchanged + up ⇒ no-change", func(t *testing.T) {
+		paths := testPaths(t)
+		writeMasterCompose(t, paths.Compose, spec)
+		pl := composePlanner{path: paths.Compose, up: func(string) bool { return true }}
+		actions, err := pl.Plan(context.Background(), spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := lastKind(actions); got != reconcile.ActionNoChange {
+			t.Fatalf("steady state must not churn: want no-change, got %q in %+v", got, actions)
+		}
+		if r := (reconcile.Report{Plans: []reconcile.Plan{{Actions: actions}}}); r.ChangeCount() != 0 {
+			t.Errorf("steady-state pass reports %d changes, want 0", r.ChangeCount())
+		}
+	})
+
+	t.Run("unchanged + down ⇒ up -d", func(t *testing.T) {
+		paths := testPaths(t)
+		writeMasterCompose(t, paths.Compose, spec)
+		pl := composePlanner{path: paths.Compose, up: func(string) bool { return false }}
+		actions, err := pl.Plan(context.Background(), spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := lastKind(actions); got != reconcile.ActionExec {
+			t.Fatalf("stack down must be brought up: want exec, got %q in %+v", got, actions)
+		}
+	})
 }
 
 func seedWGEasyDB(t *testing.T, path string) {

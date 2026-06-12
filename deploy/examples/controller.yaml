@@ -1,7 +1,13 @@
 # Example controller config. Real IPs/keys are NOT committed: use *.local.yaml
 # or env/secret references. See docs/DESIGN.md §8.
 controller:
-  listen: "0.0.0.0:8443" # gRPC/HTTPS API for agents (mTLS)
+  listen: "10.20.25.254:8443" # gRPC/HTTPS API for agents (mTLS); the mgmt/ZT address
+  # agents reach the controller at. This host is baked into each agent's config as its
+  # dial endpoint AND added to the server cert SANs, so it must be the address agents
+  # can actually reach. Bind 0.0.0.0 ONLY together with `advertise` below — otherwise
+  # agents are told to dial "0.0.0.0:8443" (undialable) and the cert has no usable SAN.
+  # advertise: "10.20.25.254:8443" # set when listen is 0.0.0.0 (controller behind a
+  #   NAT/LB/gateway): the address agents DIAL; its host seeds the cert SAN.
   # The dashboard and /metrics are UNAUTHENTICATED — their only protection is the
   # bind address. The controller REFUSES to start if either binds 0.0.0.0/:: or a
   # public IP; use a loopback or mgmt/ZT (RFC1918) address. Override with

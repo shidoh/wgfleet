@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/compose"
@@ -63,7 +65,10 @@ func composeRestart(file, service string) reconcile.Action {
 
 // --- container stack (docker-compose.yml + up -d) ---
 
-type composePlanner struct{ path string }
+type composePlanner struct {
+	path string
+	up   func(file string) bool // nil ⇒ real `docker compose ps` probe
+}
 
 func (composePlanner) Component() string { return "container stack (docker compose)" }
 
@@ -84,9 +89,59 @@ func (p composePlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 	if err != nil {
 		return nil, err
 	}
-	// Always ensure the stack is up (idempotent); a compose-file change pulls
-	// the new definition on the same up -d.
-	return []reconcile.Action{file, composeStart(p.path)}, nil
+	actions := []reconcile.Action{file}
+	switch {
+	case file.Changes():
+		// Definition changed: `up -d` recreates only the services whose config moved.
+		actions = append(actions, composeStart(p.path))
+	case !p.isUp():
+		// Definition unchanged but the stack is (partly) down — reboot, crash, or a
+		// prior up that failed: bring it up so reconcile converges to the running
+		// state, not just the on-disk config.
+		actions = append(actions, composeStart(p.path))
+	default:
+		// Steady state: `up -d` is a no-op at the docker level, but the reconcile
+		// engine still counts the exec as a change, which would show perpetual
+		// drift every pass. Skip it so an unchanged master reports a clean pass.
+		actions = append(actions, reconcile.NoChangeAction("docker compose", "container stack already up"))
+	}
+	return actions, nil
+}
+
+func (p composePlanner) isUp() bool {
+	if p.up == nil {
+		return composeStackUp(p.path)
+	}
+	return p.up(p.path)
+}
+
+// composeStackUp reports whether every service defined in the compose file is
+// currently running. Used to gate `up -d` so reconcile issues it only on a
+// definition change or when the stack is (partially) down, never on a timer.
+func composeStackUp(file string) bool {
+	defined := composeLineCount(file, "config", "--services")
+	if defined == 0 {
+		return false // no services parsed (missing/unreadable file) ⇒ not up
+	}
+	running := composeLineCount(file, "ps", "--status", "running", "--quiet")
+	return running >= defined
+}
+
+// composeLineCount runs `docker compose -f <file> <args...>` and counts the
+// non-empty output lines. Returns 0 on any error (treated as "not up").
+func composeLineCount(file string, args ...string) int {
+	full := append([]string{"compose", "-f", file}, args...)
+	out, err := exec.Command("docker", full...).Output()
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // masterMgmtAddr derives the master's mgmt address from the Clash external

@@ -418,7 +418,10 @@ override file values; `WGFLEET_`-prefixed env vars override too (e.g.
 
 ```yaml
 controller:
-  listen:  "0.0.0.0:8443"          # gRPC/mTLS API for agents
+  listen:  "10.20.25.254:8443"    # gRPC/mTLS API for agents — the mgmt/ZT address agents
+                                   # dial; baked into agent configs and the server cert SAN.
+  # advertise: "10.20.25.254:8443"  # only when listen is 0.0.0.0 (controller behind NAT/LB):
+                                   # the address agents actually dial; its host seeds the SAN.
   webui:   "10.20.25.254:9000"    # read-only dashboard; bind mgmt/ZT only (empty disables)
   metrics: "10.20.25.254:9300"    # Prometheus /metrics; bind mgmt/ZT only (empty disables)
   store:   "/var/lib/wgfleet/state.db"

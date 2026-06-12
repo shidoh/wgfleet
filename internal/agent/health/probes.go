@@ -11,6 +11,7 @@ import (
 
 	"github.com/shidoh/wgfleet/internal/dnsfilter"
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/wgeasy"
 )
 
 // HandshakeMaxAge is the freshness threshold for a WG handshake. Older than this
@@ -44,7 +45,11 @@ func DefaultMasterProbes(spec domain.NodeSpec) MasterProbes {
 		controller = spec.Master.ExternalController
 	}
 	return MasterProbes{
-		WGServerUp: ifaceUpProbe("awg0"),
+		// The master's client-facing interface is managed by wg-easy, which names
+		// it wg0 (wgeasy.DefaultInterface) — NOT awg0 (that is the exit's awg-quick
+		// interface). It is an AmneziaWG device, so `ip link show` sees it even
+		// though vanilla `wg show` would not.
+		WGServerUp: ifaceUpProbe(wgeasy.DefaultInterface),
 		MihomoAPI:  mihomoAPIProbe(controller),
 	}
 }
