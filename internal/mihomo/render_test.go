@@ -105,6 +105,53 @@ func TestRenderConfigStructure(t *testing.T) {
 	}
 }
 
+func TestRenderConfigExternalUIAndGeodata(t *testing.T) {
+	// sampleInput has external-controller set and DirectGeo=["RU"].
+	out, err := RenderConfig(sampleInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// External dashboard is served alongside the API, downloaded via DIRECT.
+	if cfg["external-ui"] != "ui" {
+		t.Errorf("external-ui = %v, want ui", cfg["external-ui"])
+	}
+	if cfg["external-ui-download-detour"] != "DIRECT" {
+		t.Errorf("external-ui-download-detour = %v, want DIRECT", cfg["external-ui-download-detour"])
+	}
+	if s, _ := cfg["external-ui-url"].(string); !strings.Contains(s, "zashboard") {
+		t.Errorf("external-ui-url = %v", cfg["external-ui-url"])
+	}
+
+	// Geo databases are configured because DirectGeo is set, so the GEOSITE/GEOIP
+	// rules can actually resolve.
+	if cfg["geodata-mode"] != true {
+		t.Errorf("geodata-mode = %v, want true", cfg["geodata-mode"])
+	}
+	geox, ok := cfg["geox-url"].(map[string]any)
+	if !ok || geox["geoip"] == nil || geox["geosite"] == nil {
+		t.Errorf("geox-url missing/incomplete: %v", cfg["geox-url"])
+	}
+
+	// Without geo rules, no geodata config and no UI when the API is off.
+	noGeo := sampleInput()
+	noGeo.Spec.DirectGeo = nil
+	noGeo.Spec.ExternalController = ""
+	out2, _ := RenderConfig(noGeo)
+	var cfg2 map[string]any
+	_ = yaml.Unmarshal([]byte(out2), &cfg2)
+	if _, ok := cfg2["geox-url"]; ok {
+		t.Error("geox-url should be absent when DirectGeo is empty")
+	}
+	if _, ok := cfg2["external-ui"]; ok {
+		t.Error("external-ui should be absent when external-controller is unset")
+	}
+}
+
 func TestRenderConfigDeterministic(t *testing.T) {
 	a, _ := RenderConfig(sampleInput())
 	b, _ := RenderConfig(sampleInput())

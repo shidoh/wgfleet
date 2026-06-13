@@ -26,9 +26,15 @@ const (
 	sLow  = 15 // S1/S2 recommended range
 	sHigh = 150
 
-	defaultJc   = 8
-	defaultJmin = 8
-	defaultJmax = 80
+	// Junk-packet decoy bounds. Jc/Jmin/Jmax MAY differ per end (the receiver
+	// drops the other end's junk by size, so the values need not match), so we
+	// derive them per-end from the seed to give every interface its own junk
+	// profile instead of a fleet-wide constant signature. The bounds stay inside
+	// the AmneziaWG recommendations (Jc 4-12) and keep the per-handshake junk
+	// overhead modest (Jmax well under the 1280 ceiling).
+	jcLow, jcHigh     = 4, 12  // junk packet count
+	jminLow, jminHigh = 8, 40  // lower bound of the junk size window
+	jGapLow, jGapHigh = 24, 88 // Jmax = Jmin + gap, so Jmin < Jmax always holds
 
 	// awgSignatureSlots is the number of I-packet slots (I1-I5) we fill.
 	awgSignatureSlots = 5
@@ -41,17 +47,31 @@ const (
 )
 
 // DeriveAWGLocal returns the local (per-end) AmneziaWG parameters for one end:
-// the junk-packet defaults plus generated I1-I5 signature templates keyed by
-// seed. Local params MAY differ between the two ends of a tunnel, so callers pass
+// the derived junk-packet decoy params (Jc/Jmin/Jmax) plus generated I1-I5
+// signature templates keyed by seed. Local params MAY differ between the two ends
+// of a tunnel, so callers pass
 // a per-end seed. kernel selects the CPS-tag set: true allows the <c>/<t> tags
 // (kernel-module interfaces via awg-quick); false restricts to <b>/<r>/<rc>/<rd>
 // for userspace WireGuard-Go (mihomo proxies, Amnezia clients).
 func DeriveAWGLocal(seed string, kernel bool) domain.AWGLocal {
 	sig := deriveSignatures(seed, kernel)
+	jc, jmin, jmax := deriveJunk(seed)
 	return domain.AWGLocal{
-		Jc: defaultJc, Jmin: defaultJmin, Jmax: defaultJmax,
+		Jc: jc, Jmin: jmin, Jmax: jmax,
 		I1: sig[0], I2: sig[1], I3: sig[2], I4: sig[3], I5: sig[4],
 	}
+}
+
+// deriveJunk derives this end's junk-packet decoy parameters (Jc/Jmin/Jmax) from
+// seed. It is keyed off a sub-seed independent of the I1-I5 signature bytes so the
+// junk profile and the signature profile vary independently. The result always
+// satisfies the domain invariants (Jc in [1,128], Jmin < Jmax ≤ 1280).
+func deriveJunk(seed string) (jc, jmin, jmax int) {
+	d := newDetStream(seed + "|junk")
+	jc = jcLow + d.intn(jcHigh-jcLow+1)
+	jmin = jminLow + d.intn(jminHigh-jminLow+1)
+	jmax = jmin + jGapLow + d.intn(jGapHigh-jGapLow+1)
+	return jc, jmin, jmax
 }
 
 // deriveSignatures generates the I1-I5 CPS templates from seed. Each slot is keyed
@@ -200,8 +220,8 @@ func DeriveAWGShared(seed string) domain.AWGShared {
 
 // DeriveAWGParamsForEnd returns one tunnel END's full AmneziaWG config: shared
 // params derived from the tunnel seed (byte-for-byte identical on both ends) plus
-// this end's local params (junk defaults + generated I1-I5 signatures) keyed by a
-// per-end seed, so the two ends differ as the spec allows. kernel=true enables the
+// this end's local params (derived junk decoy + generated I1-I5 signatures) keyed
+// by a per-end seed, so the two ends differ as the spec allows. kernel=true enables the
 // <c>/<t> CPS tags for kernel-module interfaces (awg-quick); false keeps the
 // signatures userspace-safe (mihomo proxies, Amnezia clients).
 func DeriveAWGParamsForEnd(tunnelSeed, endLabel string, kernel bool) domain.AWGParams {

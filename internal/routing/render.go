@@ -37,6 +37,13 @@ const (
 	prefEgress  = 300 // send remaining traffic to the egress table
 )
 
+// MaxDirectCIDRs caps the number of direct-CIDR rules. Each consumes priority
+// prefDirect0+i, so without a cap a large list would walk into prefFwmark (200)
+// and silently overwrite the fwmark rule that keeps WG handshake/reply traffic on
+// the main table — reintroducing an earlier finding (clients see a Cloudflare source and
+// drop, the master loses peers). The cap leaves a margin below prefFwmark.
+const MaxDirectCIDRs = prefFwmark - prefDirect0 - 10 // 80
+
 // Step is one idempotent routing command. BestEffort marks a step whose failure
 // must be tolerated (e.g. `ip rule del` of a rule that does not exist yet): the
 // reconcile layer wraps it so it never aborts the pass.
@@ -54,6 +61,11 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 		// No egress interface ⇒ direct egress; nothing to policy-route.
 		return nil, nil
 	}
+	if n := len(spec.DirectCIDRs); n > MaxDirectCIDRs {
+		// Defense in depth: config.Validate rejects this earlier, but never render a
+		// rule set whose priorities would collide with the fwmark rule.
+		return nil, fmt.Errorf("routing: %d direct CIDRs exceeds the max of %d (would collide with the fwmark rule)", n, MaxDirectCIDRs)
+	}
 	mark := spec.FwMark
 	if mark == 0 {
 		mark = fwmarkClient
@@ -69,10 +81,13 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 	)
 
 	// an earlier finding: stale conntrack entries remember the old path; flush so the new
-	// egress takes effect immediately instead of after a timeout.
+	// egress takes effect immediately instead of after a timeout. BestEffort:
+	// `conntrack -D` exits non-zero ("0 flow entries have been deleted") on a fresh
+	// node with an empty table, which must NOT abort the first routing reconcile.
 	steps = append(steps, Step{
-		Summary: "flush conntrack so routing changes take effect now",
-		Argv:    []string{"conntrack", "-D"},
+		Summary:    "flush conntrack so routing changes take effect now",
+		Argv:       []string{"conntrack", "-D"},
+		BestEffort: true,
 	})
 
 	// an earlier finding: traffic back to the master must stay direct, else the master

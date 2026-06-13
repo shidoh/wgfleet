@@ -101,8 +101,11 @@ func BuildPlan(in BootstrapInput) Plan {
 
 	// Phase 1d: join the mgmt overlay (ZeroTier) if configured.
 	if in.ZeroTierNetwork != "" {
+		// Quote the operator-supplied id even though config.Validate already
+		// constrains it to 16 hex chars: defense in depth, so this command is never
+		// a shell-injection sink regardless of how the value got here.
 		steps = append(steps,
-			runStep("join ZeroTier mgmt network", "zerotier-cli join "+in.ZeroTierNetwork))
+			runStep("join ZeroTier mgmt network", "zerotier-cli join "+shellQuote(in.ZeroTierNetwork)))
 	}
 
 	// Phase 1e: install the node's mTLS identity (cert/key/ca).

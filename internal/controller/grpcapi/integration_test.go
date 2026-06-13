@@ -115,7 +115,7 @@ func TestEndToEndExitOnboarding(t *testing.T) {
 	if _, err := master.Register(ctx, domain.RoleMaster, "203.0.113.1", "ru", "10.20.25.254"); err != nil {
 		t.Fatalf("master register: %v", err)
 	}
-	if err := master.PublishPublicKey(ctx, "MASTERPUB=="); err != nil {
+	if err := master.PublishPublicKey(ctx, "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc="); err != nil {
 		t.Fatalf("master publish: %v", err)
 	}
 
@@ -128,7 +128,7 @@ func TestEndToEndExitOnboarding(t *testing.T) {
 	if state != domain.StateReconciling {
 		t.Errorf("exit state after register = %q, want Reconciling", state)
 	}
-	if err := exit.PublishPublicKey(ctx, "EXITPUB=="); err != nil {
+	if err := exit.PublishPublicKey(ctx, "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY="); err != nil {
 		t.Fatalf("exit publish: %v", err)
 	}
 
@@ -139,7 +139,7 @@ func TestEndToEndExitOnboarding(t *testing.T) {
 	if spec.Role != domain.RoleExit || spec.Egress != domain.EgressWARP {
 		t.Fatalf("exit spec role/egress = %v/%v", spec.Role, spec.Egress)
 	}
-	if len(spec.Peers) != 1 || spec.Peers[0].Name != "master-xa-1" || spec.Peers[0].PublicKey != "MASTERPUB==" {
+	if len(spec.Peers) != 1 || spec.Peers[0].Name != "master-xa-1" || spec.Peers[0].PublicKey != "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=" {
 		t.Fatalf("exit spec peers = %+v", spec.Peers)
 	}
 	if err := spec.Validate(); err != nil {
@@ -155,7 +155,7 @@ func TestEndToEndExitOnboarding(t *testing.T) {
 		t.Fatalf("master spec mihomo tunnels = %+v", mspec.Master)
 	}
 	et := mspec.Master.ExitTunnels[0]
-	if et.Endpoint != "198.51.100.7:51820" || et.ServerPublicKey != "EXITPUB==" {
+	if et.Endpoint != "198.51.100.7:51820" || et.ServerPublicKey != "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=" {
 		t.Fatalf("master exit tunnel wrong: %+v", et)
 	}
 	if et.AWG == nil {
@@ -202,7 +202,7 @@ func TestIdentityIsFromCertNotRequest(t *testing.T) {
 	if _, err := exit.Register(ctx, domain.RoleExit, "198.51.100.7", "de", "10.20.0.5"); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	if err := exit.PublishPublicKey(ctx, "EXITPUB=="); err != nil {
+	if err := exit.PublishPublicKey(ctx, "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY="); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
 	// The pubkey must land on exit-de-1, proving identity came from the cert.
@@ -210,7 +210,7 @@ func TestIdentityIsFromCertNotRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if node.PublicKey != "EXITPUB==" {
+	if node.PublicKey != "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=" {
 		t.Errorf("pubkey landed on wrong node or missing: %q", node.PublicKey)
 	}
 }

@@ -94,6 +94,29 @@ func TestRenderDirectEgressIsNoop(t *testing.T) {
 	}
 }
 
+func TestRenderRejectsTooManyDirectCIDRs(t *testing.T) {
+	over := make([]string, MaxDirectCIDRs+1)
+	for i := range over {
+		over[i] = "10.0.0.0/8"
+	}
+	_, err := Render(domain.RoutingSpec{EgressInterface: "wgcf", DirectCIDRs: over})
+	if err == nil {
+		t.Fatal("expected error when direct CIDRs exceed the cap (would collide with fwmark rule)")
+	}
+
+	// The last direct-CIDR priority must stay strictly below the fwmark priority.
+	steps, err := Render(domain.RoutingSpec{
+		EgressInterface: "wgcf",
+		DirectCIDRs:     over[:MaxDirectCIDRs],
+	})
+	if err != nil {
+		t.Fatalf("at the cap should render: %v", err)
+	}
+	if !strings.Contains(argvJoin(steps), "fwmark") {
+		t.Error("fwmark rule missing at the cap")
+	}
+}
+
 func TestRenderDefaultsFwmark(t *testing.T) {
 	steps, _ := Render(domain.RoutingSpec{EgressInterface: "wgcf"})
 	if !strings.Contains(argvJoin(steps), "fwmark 0x1 lookup main") {

@@ -32,7 +32,11 @@ func ExitChecks(spec domain.NodeSpec, p ExitProbes) []Check {
 	if spec.Egress == domain.EgressWARP && p.WARPEgress != nil {
 		checks = append(checks, Check{Name: "warp-egress", Probe: p.WARPEgress})
 	}
-	if spec.DNS.Enabled && p.DNSResolves != nil {
+	// Only check DNS once the resolver has a listen address. The dnsPlanner defers
+	// (NoChangeAction) until the controller knows the node's mgmt addr; without
+	// this guard the check fires "no DNS listen address" and falsely marks the node
+	// Degraded during that startup window.
+	if spec.DNS.Enabled && spec.DNS.MgmtAddr != "" && p.DNSResolves != nil {
 		checks = append(checks, Check{Name: "dns-filter", Probe: p.DNSResolves})
 	}
 	return checks

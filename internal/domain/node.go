@@ -107,6 +107,12 @@ const (
 // censorship block without parsing the detail string.
 const CheckEgressReachability = "egress-reachability"
 
+// CheckSpecValid is the conventional name of the self-check the agent emits when
+// it refuses to apply an invalid desired spec. Its OK field is false with the
+// validation error as the detail, so the controller/UI surface why the node is in
+// Error rather than silently applying a broken config.
+const CheckSpecValid = "spec-valid"
+
 // EgressBlocked reports whether the agent classified this node's egress as
 // path/ISP-blocked — the censorship-block signal behind the UI badge and metric.
 func (s NodeStatus) EgressBlocked() bool {

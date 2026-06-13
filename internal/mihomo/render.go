@@ -24,6 +24,25 @@ import (
 // DefaultRedirPort is mihomo's redirect port when the spec leaves it unset.
 const DefaultRedirPort = 7895
 
+// External web dashboard for the Clash/mihomo RESTful API. When the API
+// (external-controller) is exposed, mihomo can also serve a static dashboard from
+// externalUIDir and fetch it on first run from externalUIURL via a DIRECT detour
+// (the master reaches GitHub on its own RU/direct path, not through an exit).
+const (
+	externalUIDir = "ui" // relative to mihomo's -d dir ⇒ /etc/mihomo/ui; served at /ui
+	// zashboard latest release (matches the operator's production config).
+	externalUIURL = "https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip"
+)
+
+// GEO database sources. The default mihomo geox URLs point at GitHub raw, which is
+// frequently throttled/blocked from a Russian master; the jsdelivr mirror is far
+// more reliable. Only emitted when geo rules are actually used (DirectGeo set),
+// otherwise mihomo would download geodata it never references.
+const (
+	geoIPURL   = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat"
+	geoSiteURL = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat"
+)
+
 // directNetworksPath is the included rule-provider file mihomo reads for the
 // DIRECT ipcidr set. It is provisioned as an extra managed file.
 const directNetworksPath = "/etc/mihomo/direct-networks.yaml"
@@ -104,6 +123,24 @@ func RenderConfig(in RenderInput) (string, error) {
 	}
 	if in.Spec.ExternalController != "" {
 		base["external-controller"] = in.Spec.ExternalController
+		// Serve the web dashboard alongside the API. Set an API `secret` via
+		// mihomo overrides to authenticate it — the controller binds the mgmt/ZT
+		// overlay, but the RESTful API is otherwise unauthenticated.
+		base["external-ui"] = externalUIDir
+		base["external-ui-url"] = externalUIURL
+		base["external-ui-download-detour"] = "DIRECT"
+	}
+
+	// GEOSITE/GEOIP rules need geo databases. Configure a reliable mirror and the
+	// dat format only when geo rules are actually emitted (DirectGeo set).
+	if len(in.Spec.DirectGeo) > 0 {
+		base["geodata-mode"] = true
+		base["geo-auto-update"] = true
+		base["geo-update-interval"] = 24
+		base["geox-url"] = map[string]any{
+			"geoip":   geoIPURL,
+			"geosite": geoSiteURL,
+		}
 	}
 
 	merged := deepMerge(base, in.Spec.Custom.Overrides)
@@ -261,7 +298,11 @@ func marshalYAML(v any) (string, error) {
 	if err := enc.Encode(v); err != nil {
 		return "", err
 	}
-	_ = enc.Close()
+	if err := enc.Close(); err != nil {
+		// Close flushes the final node; a truncated flush would write a corrupt
+		// config to disk. Surface it instead of shipping invalid YAML.
+		return "", fmt.Errorf("flush yaml: %w", err)
+	}
 	return b.String(), nil
 }
 

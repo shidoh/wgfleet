@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/compose"
@@ -45,6 +43,7 @@ func Planners(in Input) []reconcile.Planner {
 	return []reconcile.Planner{
 		composePlanner{path: in.Paths.Compose},
 		wgEasyPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface, compose: in.Paths.Compose},
+		wgEasyMetricsPlanner{dbPath: in.Paths.WGEasyDB},
 		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey},
 		extraFilesPlanner{dir: in.Paths.ExtraFilesDir},
 		masterNATPlanner{path: in.Paths.NFT, clientIface: in.ClientInterface, egressIface: in.EgressInterface},
@@ -110,38 +109,9 @@ func (p composePlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 
 func (p composePlanner) isUp() bool {
 	if p.up == nil {
-		return composeStackUp(p.path)
+		return compose.StackUp(p.path)
 	}
 	return p.up(p.path)
-}
-
-// composeStackUp reports whether every service defined in the compose file is
-// currently running. Used to gate `up -d` so reconcile issues it only on a
-// definition change or when the stack is (partially) down, never on a timer.
-func composeStackUp(file string) bool {
-	defined := composeLineCount(file, "config", "--services")
-	if defined == 0 {
-		return false // no services parsed (missing/unreadable file) ⇒ not up
-	}
-	running := composeLineCount(file, "ps", "--status", "running", "--quiet")
-	return running >= defined
-}
-
-// composeLineCount runs `docker compose -f <file> <args...>` and counts the
-// non-empty output lines. Returns 0 on any error (treated as "not up").
-func composeLineCount(file string, args ...string) int {
-	full := append([]string{"compose", "-f", file}, args...)
-	out, err := exec.Command("docker", full...).Output()
-	if err != nil {
-		return 0
-	}
-	n := 0
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.TrimSpace(line) != "" {
-			n++
-		}
-	}
-	return n
 }
 
 // masterMgmtAddr derives the master's mgmt address from the Clash external
@@ -206,6 +176,41 @@ func (p wgEasyPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 
 	// wg-easy regenerates its .conf from the DB on (re)start.
 	return []reconcile.Action{update, composeRestart(p.compose, "wg-easy")}, nil
+}
+
+// --- wg-easy Prometheus metrics (SQLite-backed, like the AWG planner) ---
+
+type wgEasyMetricsPlanner struct {
+	dbPath string
+}
+
+func (wgEasyMetricsPlanner) Component() string { return "wg-easy metrics" }
+
+func (p wgEasyMetricsPlanner) Plan(ctx context.Context, _ domain.NodeSpec) ([]reconcile.Action, error) {
+	// wg-easy must be set up first; if its DB is absent, defer (it appears once
+	// wg-easy runs) rather than failing the whole pass — same as the AWG planner.
+	if _, err := os.Stat(p.dbPath); os.IsNotExist(err) {
+		return []reconcile.Action{reconcile.NoChangeAction("wg-easy metrics",
+			"pending: wg-easy DB not found at "+p.dbPath)}, nil
+	}
+
+	enabled, found, err := wgeasy.ReadMetricsPrometheus(ctx, p.dbPath)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return []reconcile.Action{reconcile.NoChangeAction("wg-easy metrics",
+			"pending: wg-easy settings row not created yet")}, nil
+	}
+	if enabled {
+		return []reconcile.Action{reconcile.NoChangeAction("wg-easy metrics", "prometheus already enabled")}, nil
+	}
+
+	dbPath := p.dbPath
+	enable := reconcile.CustomAction(reconcile.ActionUpdate, "wg-easy prometheus metrics",
+		"enable the wg-easy Prometheus endpoint", wgeasy.EnablePrometheusSQL(),
+		func(ctx context.Context) error { return wgeasy.EnablePrometheus(ctx, dbPath) })
+	return []reconcile.Action{enable}, nil
 }
 
 // --- mihomo config + included direct-networks ---

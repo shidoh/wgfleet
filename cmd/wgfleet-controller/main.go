@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -70,19 +71,31 @@ func run() error {
 		cfg.Controller.Store = *storePath
 	}
 
-	caKeyPath, err := caKeyPath(cfg)
-	if err != nil {
-		return err
+	if *initPKI {
+		keyPath, err := caKeyPath(cfg)
+		if err != nil {
+			return err
+		}
+		return initCA(cfg.Controller.PKI.CACert, keyPath)
 	}
 
-	if *initPKI {
-		return initCA(cfg.Controller.PKI.CACert, caKeyPath)
+	// Every non-init path needs the CA loaded. Resolve the private key through the
+	// secret provider so a secret://-referenced key (SOPS/age) is decrypted in
+	// memory and never written to disk.
+	provider, err := config.NewSecretProvider(context.Background(), cfg)
+	if err != nil {
+		return fmt.Errorf("init secret provider: %w", err)
 	}
+	ca, err := loadCA(cfg, provider)
+	if err != nil {
+		return fmt.Errorf("load CA (run --init-pki first?): %w", err)
+	}
+
 	if *issueNode != "" {
-		return issueNodeBundle(cfg.Controller.PKI.CACert, caKeyPath, *issueNode, *issueOut)
+		return issueNodeBundle(ca, *issueNode, *issueOut)
 	}
 	if *provision != "" {
-		return provisionNode(cfg, caKeyPath, provisionOpts{
+		return provisionNode(cfg, ca, provisionOpts{
 			node:        *provision,
 			plan:        *plan,
 			agentBin:    *agentBin,
@@ -90,15 +103,38 @@ func run() error {
 		})
 	}
 
-	return serve(cfg, caKeyPath)
+	return serve(cfg, ca)
 }
 
-func serve(cfg *config.ControllerConfig, caKeyPath string) error {
-	ca, err := pki.LoadCAFromFiles(cfg.Controller.PKI.CACert, caKeyPath)
-	if err != nil {
-		return fmt.Errorf("load CA (run --init-pki first?): %w", err)
+// loadCA builds the fleet CA, resolving the private key through the secret
+// provider. A bare path or file:// key is read from disk (unchanged); any other
+// secret reference (secret://, env://) is resolved in memory via the provider so
+// the decrypted CA key never touches disk.
+func loadCA(cfg *config.ControllerConfig, provider config.SecretProvider) (*pki.CA, error) {
+	keyRef := cfg.Controller.PKI.CAKey
+	if !keyRef.IsReference() || strings.HasPrefix(string(keyRef), "file://") {
+		keyPath, err := caKeyPath(cfg)
+		if err != nil {
+			return nil, err
+		}
+		return pki.LoadCAFromFiles(cfg.Controller.PKI.CACert, keyPath)
 	}
+	certPEM, err := os.ReadFile(config.ExpandPath(cfg.Controller.PKI.CACert))
+	if err != nil {
+		return nil, fmt.Errorf("read CA cert %q: %w", cfg.Controller.PKI.CACert, err)
+	}
+	keyPEM, err := keyRef.Resolve(provider)
+	if err != nil {
+		return nil, fmt.Errorf("resolve CA key: %w", err)
+	}
+	ca, err := pki.LoadCA(certPEM, []byte(keyPEM))
+	if err != nil {
+		return nil, fmt.Errorf("load CA: %w", err)
+	}
+	return ca, nil
+}
 
+func serve(cfg *config.ControllerConfig, ca *pki.CA) error {
 	host := hostOf(cfg.Controller.Listen)
 	advertiseHost := hostOf(cfg.Controller.Advertise) // "" when advertise unset
 	serverKP, err := ca.IssueServerCert("wgfleet-controller", serverSANs(host, advertiseHost))
@@ -142,6 +178,9 @@ func serve(cfg *config.ControllerConfig, caKeyPath string) error {
 		AgentBinPath:       cfg.Controller.AgentBin,
 		ControllerEndpoint: controllerEndpoint(cfg.Controller),
 	}, slog.Default())
+	// Tie async provisioning jobs to the signal context so they abort on shutdown;
+	// Wait() (below) drains them before the store is closed.
+	provMgr.SetBaseContext(ctx)
 
 	var webSrv *http.Server
 	if cfg.Controller.WebUI != "" {
@@ -197,6 +236,10 @@ func serve(cfg *config.ControllerConfig, caKeyPath string) error {
 		if metricsSrv != nil {
 			_ = metricsSrv.Shutdown(shutdownCtx)
 		}
+		// Drain in-flight async provisioning jobs (ctx is already cancelled, so they
+		// abort promptly) before the deferred st.Close() runs — otherwise a job
+		// could write to a closed store.
+		provMgr.Wait()
 		return nil
 	case err := <-serveErr:
 		return fmt.Errorf("grpc serve: %w", err)
@@ -221,11 +264,7 @@ func initCA(certPath, keyPath string) error {
 	return nil
 }
 
-func issueNodeBundle(certPath, keyPath, nodeID, outDir string) error {
-	ca, err := pki.LoadCAFromFiles(certPath, keyPath)
-	if err != nil {
-		return fmt.Errorf("load CA: %w", err)
-	}
+func issueNodeBundle(ca *pki.CA, nodeID, outDir string) error {
 	if outDir == "" {
 		outDir = filepath.Join("pki", nodeID)
 	}

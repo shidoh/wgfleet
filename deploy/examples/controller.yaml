@@ -22,6 +22,16 @@ controller:
     # CA tooling (--init-pki / --issue-node) needs a file:// path it can read and
     # write. In production keep this key behind a secret manager and 0600 perms.
     ca_key: "file:///etc/wgfleet/ca.key"
+    # OR source the CA key from SOPS/age (see secrets below): the controller
+    # decrypts it in memory at startup — the plaintext key never touches disk.
+    # ca_key: "secret://ca-key"
+  # secrets: provider backing secret:// references. Omit for the env provider
+  # (secret://NAME -> $WGFLEET_SECRET_<NAME>). With sops_file, secret://NAME is
+  # resolved by decrypting a SOPS-encrypted YAML file once at startup and looking
+  # NAME up among its keys. Supply the age identity via SOPS_AGE_KEY_FILE in the
+  # controller's environment (systemd: EnvironmentFile). See docs/secrets-sops.md.
+  # secrets:
+  #   sops_file: "/etc/wgfleet/secrets.enc.yaml"
 
 fleet:
   zerotier_network: "8056c2e21c000001" # mgmt overlay nodes join during bootstrap
@@ -37,8 +47,14 @@ fleet:
         balance: health # round-robin | health
       mihomo: # master data-plane tuning + custom-config hooks
         sniffer_skip: ["+.themoviedb.org", "+.cloudfront.net"] # CDNs that break under sniffing
+        # The mihomo web dashboard (zashboard) is auto-served at <external-controller>/ui
+        # whenever the Clash API is enabled; geo databases are auto-configured (jsdelivr
+        # mirror) when direct_geo is set. The RESTful API is UNAUTHENTICATED by default —
+        # set a secret via overrides below (it binds the mgmt/ZT overlay, but anyone on it
+        # can otherwise control mihomo).
         overrides: # deep-merged into the rendered mihomo config.yaml
           log-level: info
+          # secret: "set-a-strong-api-secret-here" # authenticates the Clash API + dashboard
         extra_files: # provisioned alongside config.yaml (mihomo include files)
           - path: direct-domains.yaml
             content: |
@@ -49,6 +65,12 @@ fleet:
         # any tag in the image; either may be omitted to inherit the default.
         wg_easy_image: "ghcr.io/wg-easy/wg-easy" # default ghcr.io/wg-easy/wg-easy:15
         wg_easy_tag: "15"
+        # wg-easy admin UI (client management/QR) at http://<mgmt_addr>:<port>, mgmt/ZT only.
+        # The controller dashboard links to it from the master's detail page. On first run
+        # wg-easy shows a SETUP WIZARD (no INIT_USERNAME/INIT_PASSWORD ⇒ you create the admin
+        # there); there is no auto-generated password. Prometheus metrics are auto-enabled in
+        # wg-easy's DB by the agent (endpoint /metrics/prometheus on the port below).
+        # wg_easy_web_port: 44423 # default
         mihomo_image: "metacubex/mihomo" # default metacubex/mihomo:latest
         mihomo_tag: "latest"
         # client_dns: defaults to the exits' mgmt addresses (blocky)

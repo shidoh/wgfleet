@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,9 +83,15 @@ func ExecAction(summary string, cmd ...string) Action {
 func BestEffortExecAction(summary string, cmd ...string) Action {
 	a := ExecAction(summary, cmd...)
 	inner := a.apply
+	display := a.Display
 	a.apply = func(ctx context.Context) error {
 		if inner != nil {
-			_ = inner(ctx)
+			// Non-fatal, but never silent: a best-effort step that fails for a real
+			// reason (device busy, missing binary) must leave a trace, or the only
+			// visible symptom is a misleading failure in a later step.
+			if err := inner(ctx); err != nil {
+				slog.Warn("best-effort action failed (non-fatal)", "cmd", display, "err", err)
+			}
 		}
 		return nil
 	}

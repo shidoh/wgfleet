@@ -48,6 +48,14 @@ func (b *Broker) RegisterPublicKey(ctx context.Context, nodeID, publicKey string
 	if publicKey == "" {
 		return fmt.Errorf("keybroker: empty public key for %q", nodeID)
 	}
+	// Validate it is a real 32-byte Curve25519 key BEFORE storing it: this value is
+	// later rendered verbatim into peer WireGuard configs as `PublicKey = <value>`.
+	// A rogue but CA-authenticated node could otherwise publish a multi-line string
+	// that injects extra wg-quick directives (e.g. PostUp) into every peer's
+	// awg0.conf, which awg-quick executes — remote config injection on peers.
+	if !wg.ValidKey(publicKey) {
+		return fmt.Errorf("keybroker: malformed WireGuard public key for %q", nodeID)
+	}
 	return b.store.SetNodePublicKey(ctx, nodeID, publicKey)
 }
 

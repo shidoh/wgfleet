@@ -19,14 +19,9 @@ type provisionOpts struct {
 	ctlEndpoint string
 }
 
-// provisionNode SSH-bootstraps a fleet node from the CLI. It loads the CA and
-// runs the provision manager (the same path the Web UI uses) in plan or apply
-// mode synchronously.
-func provisionNode(cfg *config.ControllerConfig, caKeyPath string, opts provisionOpts) error {
-	ca, err := pki.LoadCAFromFiles(cfg.Controller.PKI.CACert, caKeyPath)
-	if err != nil {
-		return fmt.Errorf("load CA (run --init-pki first?): %w", err)
-	}
+// provisionNode SSH-bootstraps a fleet node from the CLI. It runs the provision
+// manager (the same path the Web UI uses) in plan or apply mode synchronously.
+func provisionNode(cfg *config.ControllerConfig, ca *pki.CA, opts provisionOpts) error {
 	endpoint := opts.ctlEndpoint
 	if endpoint == "" {
 		endpoint = controllerEndpoint(cfg.Controller)

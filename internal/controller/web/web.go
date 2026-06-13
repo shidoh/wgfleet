@@ -16,11 +16,13 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
 )
@@ -296,6 +298,7 @@ type nodeData struct {
 	SpecText     string
 	SpecErr      string
 	CanProvision bool
+	WGEasyURL    string // master only: link to its wg-easy admin UI (mgmt overlay)
 	CSRF         string // CSRF token embedded in the action forms
 }
 
@@ -318,7 +321,16 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 		data.HasStatus = true
 		data.Status = st
 	}
-	data.SpecText, data.SpecErr = h.specPreview(r.Context(), id)
+	// Render the desired spec once: for the preview text and, for a master, the
+	// wg-easy admin UI link.
+	if h.renderer == nil {
+		data.SpecErr = "spec preview unavailable"
+	} else if spec, err := h.renderer.RenderNodeSpec(r.Context(), id); err != nil {
+		data.SpecErr = "cannot render spec: " + err.Error()
+	} else {
+		data.SpecText = formatSpec(spec)
+		data.WGEasyURL = wgEasyURL(node, spec)
+	}
 	// Offer provisioning when the node can be bootstrapped and is not already
 	// active (Provisioning/Reconciling/Ready) — i.e. Pending or Error.
 	if h.prov != nil && h.prov.Provisionable(id) {
@@ -331,17 +343,22 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 	h.render(w, h.nodeTmpl, "layout", data)
 }
 
-// specPreview renders the node's desired NodeSpec as readable text, or an error
-// string suitable for display.
-func (h *Handler) specPreview(ctx context.Context, id string) (text, errMsg string) {
-	if h.renderer == nil {
-		return "", "spec preview unavailable"
+// wgEasyURL builds the master's wg-easy admin UI URL on the mgmt/ZT overlay, or
+// "" for non-masters or when the mgmt address is unknown. The port follows the
+// rendered compose spec (operator override) or the default.
+func wgEasyURL(node domain.Node, spec domain.NodeSpec) string {
+	if node.Role != domain.RoleMaster || node.MgmtAddr == "" {
+		return ""
 	}
-	spec, err := h.renderer.RenderNodeSpec(ctx, id)
-	if err != nil {
-		return "", "cannot render spec: " + err.Error()
+	host := node.MgmtAddr
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
 	}
-	return formatSpec(spec), ""
+	port := compose.DefaultWGEasyWebPort
+	if spec.Master != nil && spec.Master.Compose.WGEasyWebPort != 0 {
+		port = spec.Master.Compose.WGEasyWebPort
+	}
+	return fmt.Sprintf("http://%s:%d", host, port)
 }
 
 func (h *Handler) render(w http.ResponseWriter, tmpl *template.Template, name string, data any) {

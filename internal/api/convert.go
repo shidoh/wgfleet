@@ -6,6 +6,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	pb "github.com/shidoh/wgfleet/internal/api/pb/wgfleet/v1"
@@ -129,10 +130,14 @@ func customToProto(c domain.CustomConfig) *pb.CustomConfig {
 	}
 	out := &pb.CustomConfig{}
 	if len(c.Overrides) > 0 {
-		// Arbitrary nested overrides cross the wire as JSON. Marshal errors are
-		// impossible for the map[string]any we accept, but guarded for safety.
+		// Arbitrary nested overrides cross the wire as JSON. A marshal error is not
+		// expected for the map[string]any we accept, but if it ever happens, LOG it
+		// — silently dropping the overrides would render the node's config without
+		// the operator's customizations and no one would know why.
 		if b, err := json.Marshal(c.Overrides); err == nil {
 			out.OverridesJson = string(b)
+		} else {
+			slog.Error("dropping config overrides: JSON marshal failed", "err", err)
 		}
 	}
 	for _, f := range c.Files {
@@ -150,6 +155,10 @@ func customFromProto(c *pb.CustomConfig) domain.CustomConfig {
 		var m map[string]any
 		if err := json.Unmarshal([]byte(c.GetOverridesJson()), &m); err == nil {
 			out.Overrides = m
+		} else {
+			// A decode failure means the agent would reconcile without the operator's
+			// overrides — never silently; log so the divergence is diagnosable.
+			slog.Error("dropping config overrides: JSON unmarshal failed", "err", err)
 		}
 	}
 	for _, f := range c.GetFiles() {

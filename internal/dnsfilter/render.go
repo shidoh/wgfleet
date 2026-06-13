@@ -191,6 +191,10 @@ func marshalYAML(v any) (string, error) {
 	if err := enc.Encode(v); err != nil {
 		return "", err
 	}
-	_ = enc.Close()
+	if err := enc.Close(); err != nil {
+		// Close flushes the final node; a truncated flush would write a corrupt
+		// config to disk. Surface it instead of shipping invalid YAML.
+		return "", fmt.Errorf("flush yaml: %w", err)
+	}
 	return b.String(), nil
 }

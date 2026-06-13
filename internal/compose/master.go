@@ -30,7 +30,9 @@ const (
 const (
 	DefaultWGEasyImage = "ghcr.io/wg-easy/wg-easy:15"
 	DefaultMihomoImage = "metacubex/mihomo:latest"
-	defaultWebPort     = 44423
+	// DefaultWGEasyWebPort is the wg-easy admin UI port when the spec leaves it
+	// unset. Exported so the controller UI can build a link to it.
+	DefaultWGEasyWebPort = 44423
 )
 
 // RenderInput is everything needed to render the master compose file.
@@ -58,7 +60,7 @@ func RenderMasterCompose(in RenderInput) (string, error) {
 	mihomoImage := orDefault(c.MihomoImage, DefaultMihomoImage)
 	webPort := c.WGEasyWebPort
 	if webPort == 0 {
-		webPort = defaultWebPort
+		webPort = DefaultWGEasyWebPort
 	}
 
 	wgEasyEnv := []any{
@@ -139,6 +141,10 @@ func marshalYAML(v any) (string, error) {
 	if err := enc.Encode(v); err != nil {
 		return "", err
 	}
-	_ = enc.Close()
+	if err := enc.Close(); err != nil {
+		// Close flushes the final node; a truncated flush would write a corrupt
+		// config to disk. Surface it instead of shipping invalid YAML.
+		return "", fmt.Errorf("flush yaml: %w", err)
+	}
 	return b.String(), nil
 }

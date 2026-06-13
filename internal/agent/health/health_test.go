@@ -79,10 +79,17 @@ func TestExitChecksRespectSpec(t *testing.T) {
 		WARPEgress:     passing("warp"),
 		DNSResolves:    passing("dns"),
 	}
-	// WARP egress + DNS enabled ⇒ all three checks.
-	warpSpec := domain.NodeSpec{Role: domain.RoleExit, Egress: domain.EgressWARP, DNS: domain.DNSFilterSpec{Enabled: true}}
+	// WARP egress + DNS enabled (with a mgmt addr) ⇒ all three checks.
+	warpSpec := domain.NodeSpec{Role: domain.RoleExit, Egress: domain.EgressWARP, DNS: domain.DNSFilterSpec{Enabled: true, MgmtAddr: "10.20.0.5"}}
 	if names := checkNames(ExitChecks(warpSpec, probes)); len(names) != 3 {
 		t.Errorf("warp+dns exit: want 3 checks, got %v", names)
+	}
+
+	// DNS enabled but mgmt addr not yet known ⇒ the dns-filter check is deferred,
+	// so the node isn't falsely marked Degraded during the startup window.
+	dnsPendingSpec := domain.NodeSpec{Role: domain.RoleExit, Egress: domain.EgressWARP, DNS: domain.DNSFilterSpec{Enabled: true}}
+	if names := checkNames(ExitChecks(dnsPendingSpec, probes)); len(names) != 2 {
+		t.Errorf("dns pending (no mgmt addr): want 2 checks (no dns-filter), got %v", names)
 	}
 
 	// Direct egress, DNS off ⇒ only handshake.
@@ -109,7 +116,7 @@ func TestMasterChecks(t *testing.T) {
 }
 
 func TestEndToEndExitReady(t *testing.T) {
-	spec := domain.NodeSpec{Role: domain.RoleExit, Egress: domain.EgressWARP, DNS: domain.DNSFilterSpec{Enabled: true}}
+	spec := domain.NodeSpec{Role: domain.RoleExit, Egress: domain.EgressWARP, DNS: domain.DNSFilterSpec{Enabled: true, MgmtAddr: "10.20.0.5"}}
 	checks := ExitChecks(spec, ExitProbes{
 		HandshakeFresh: passing("12s"),
 		WARPEgress:     passing("104.16.0.1"),

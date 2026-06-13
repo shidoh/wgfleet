@@ -131,6 +131,23 @@ func TestNodeDetailWithStatusAndSpec(t *testing.T) {
 	}
 }
 
+func TestMasterDetailShowsWGEasyLink(t *testing.T) {
+	h, st := newTestHandler(t, stubRenderer{spec: domain.NodeSpec{Role: domain.RoleMaster}})
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, MgmtAddr: "10.20.25.254", State: domain.StateReady})
+
+	_, body := get(t, h, "/nodes/master-xa-1")
+	if !strings.Contains(body, "http://10.20.25.254:44423") {
+		t.Errorf("master detail missing wg-easy link to its mgmt addr:\n%s", body)
+	}
+
+	// An exit node must not show a wg-easy link.
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, MgmtAddr: "10.20.0.5", State: domain.StateReady})
+	_, body = get(t, h, "/nodes/exit-de-1")
+	if strings.Contains(body, ":44423") {
+		t.Error("exit detail should not show a wg-easy link")
+	}
+}
+
 func TestNodeDetailNotFound(t *testing.T) {
 	h, _ := newTestHandler(t, nil)
 	res, _ := get(t, h, "/nodes/ghost")

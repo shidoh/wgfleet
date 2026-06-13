@@ -161,6 +161,11 @@ func ifaceUpProbe(iface string) Probe {
 	}
 }
 
+// probeHTTPClient bounds health-check HTTP probes at the transport level too, not
+// just via the request context, so a stuck dial/TLS handshake can never outlive
+// the probe budget and stall the synchronous reconcile loop.
+var probeHTTPClient = &http.Client{Timeout: probeTimeout}
+
 // mihomoAPIProbe checks the mihomo Clash API responds at /version.
 func mihomoAPIProbe(controller string) Probe {
 	return func(ctx context.Context) Result {
@@ -174,7 +179,7 @@ func mihomoAPIProbe(controller string) Probe {
 		if err != nil {
 			return fail(err.Error())
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := probeHTTPClient.Do(req)
 		if err != nil {
 			return fail(fmt.Sprintf("mihomo api unreachable: %v", err))
 		}

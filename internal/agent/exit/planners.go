@@ -321,9 +321,17 @@ func routingApplied(r domain.RoutingSpec) bool {
 type dnsPlanner struct {
 	configPath  string
 	composePath string
+	up          func(file string) bool // nil ⇒ real `docker compose ps` probe
 }
 
 func (dnsPlanner) Component() string { return "dns filter (blocky)" }
+
+func (p dnsPlanner) isUp() bool {
+	if p.up == nil {
+		return compose.StackUp(p.composePath)
+	}
+	return p.up(p.composePath)
+}
 
 func (p dnsPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
 	if !spec.DNS.Enabled {
@@ -388,6 +396,17 @@ func (p dnsPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.A
 		// Config (or a mounted include) is a volume: restart blocky to reload.
 		actions = append(actions, reconcile.ExecAction("restart resolver",
 			"docker", "compose", "-f", p.composePath, "restart", "blocky"))
+	case !p.isUp():
+		// Definition and config unchanged but the resolver is (partly) down — a
+		// crash, reboot, or a prior up that failed. Bring it up so the reconcile
+		// loop self-heals a dead blocky instead of leaving the node Degraded until
+		// the operator intervenes (the convergence guarantee must hold for DNS too).
+		actions = append(actions, reconcile.ExecAction("bring blocky stack up (was down)",
+			"docker", "compose", "-f", p.composePath, "up", "-d"))
+	default:
+		// Steady state: everything in place and running. Record a no-change so the
+		// engine doesn't see a perpetual exec "change" every pass.
+		actions = append(actions, reconcile.NoChangeAction("dns filter", "resolver already up"))
 	}
 	return actions, nil
 }

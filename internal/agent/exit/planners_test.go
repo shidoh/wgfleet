@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
+	"github.com/shidoh/wgfleet/internal/compose"
+	"github.com/shidoh/wgfleet/internal/dnsfilter"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/egress"
 	"github.com/shidoh/wgfleet/internal/wg"
@@ -89,6 +91,60 @@ func TestExitPlanModeWritesNothing(t *testing.T) {
 	// Secrets must never appear in plan output.
 	if strings.Contains(out, priv) {
 		t.Error("plan output leaked the WG private key")
+	}
+}
+
+// TestDNSPlannerEnsureUpWhenDown verifies the reconcile loop self-heals a crashed
+// blocky container: with config and compose files unchanged but the stack down,
+// the planner re-issues `up -d`; with the stack up it reports no change.
+func TestDNSPlannerEnsureUpWhenDown(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+	composePath := filepath.Join(dir, "docker-compose.yml")
+	spec := domain.NodeSpec{DNS: domain.DNSFilterSpec{Enabled: true, MgmtAddr: "10.20.0.5"}}
+
+	// Pre-write the exact rendered artifacts so the file actions report no change,
+	// isolating the ensure-up branch from a config/compose change.
+	cfg, err := dnsfilter.RenderBlocky(spec.DNS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	composeYAML, err := compose.RenderBlockyCompose(compose.BlockyInput{Image: spec.DNS.Image, ConfigPath: cfgPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(composePath, []byte(composeYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	hasUp := func(actions []reconcile.Action) bool {
+		for _, a := range actions {
+			if a.Kind == reconcile.ActionExec && strings.Contains(a.Display, "up -d") {
+				return true
+			}
+		}
+		return false
+	}
+
+	down := dnsPlanner{configPath: cfgPath, composePath: composePath, up: func(string) bool { return false }}
+	actions, err := down.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasUp(actions) {
+		t.Error("stack down with unchanged config: expected an ensure-up `up -d` action")
+	}
+
+	up := dnsPlanner{configPath: cfgPath, composePath: composePath, up: func(string) bool { return true }}
+	actions, err = up.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasUp(actions) {
+		t.Error("stack already up with unchanged config: must not re-issue `up -d`")
 	}
 }
 

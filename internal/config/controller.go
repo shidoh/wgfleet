@@ -7,11 +7,16 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/routing"
 )
+
+// zerotierNetworkID matches a ZeroTier network id: exactly 16 hexadecimal digits.
+var zerotierNetworkID = regexp.MustCompile(`^[0-9a-fA-F]{16}$`)
 
 // ExpandPath expands a leading ~ or ~/ in a filesystem path to the user's home
 // directory. Config values are read directly with os.ReadFile, which does not
@@ -46,15 +51,24 @@ type ControllerSection struct {
 	// published load-balancer). When set it (a) becomes the default endpoint baked
 	// into each agent's config and (b) seeds an extra SAN on the server cert so the
 	// agent's TLS handshake validates the dialed host. Empty ⇒ Listen is used.
-	Advertise string     `koanf:"advertise"`
-	WebUI     string     `koanf:"webui"`     // Web UI bind (deferred on MVP; reserved)
-	Store     string     `koanf:"store"`     // path to the sqlite state db
-	Metrics   string     `koanf:"metrics"`   // Prometheus /metrics bind (mgmt addr only)
-	AgentBin  string     `koanf:"agent_bin"` // wgfleet-agent binary installed during UI-triggered provisioning
-	PKI       PKISection `koanf:"pki"`
+	Advertise string         `koanf:"advertise"`
+	WebUI     string         `koanf:"webui"`     // Web UI bind (deferred on MVP; reserved)
+	Store     string         `koanf:"store"`     // path to the sqlite state db
+	Metrics   string         `koanf:"metrics"`   // Prometheus /metrics bind (mgmt addr only)
+	AgentBin  string         `koanf:"agent_bin"` // wgfleet-agent binary installed during UI-triggered provisioning
+	PKI       PKISection     `koanf:"pki"`
+	Secrets   SecretsSection `koanf:"secrets"` // backing store for secret:// references
 	// StalenessAfter marks a Ready/Reconciling node Degraded when it has not
 	// reported status for this long (a silent/dead agent). 0 disables the sweep.
 	StalenessAfter time.Duration `koanf:"staleness_after"`
+}
+
+// SecretsSection configures the provider backing secret:// references. When
+// SOPSFile is set, secret://NAME is resolved by decrypting that SOPS-encrypted
+// YAML file (age/PGP/KMS recipients) at startup and looking NAME up among its
+// keys. Empty ⇒ the env-backed MVP provider (WGFLEET_SECRET_<NAME>).
+type SecretsSection struct {
+	SOPSFile string `koanf:"sops_file"` // path to a SOPS-encrypted YAML secrets file
 }
 
 // DefaultStalenessAfter is the default staleness threshold when unset (3× the
@@ -234,6 +248,19 @@ func (c ControllerConfig) Validate() error {
 	if c.Controller.PKI.CACert == "" {
 		errs = append(errs, errors.New("controller.pki.ca_cert is required for mTLS"))
 	}
+	// The ZeroTier network id is interpolated into a shell command on every node
+	// during bootstrap (`zerotier-cli join <id>`). Constrain it to the exact
+	// 16-hex-digit format so a malformed or malicious manifest value cannot inject
+	// shell commands that run as root on every provisioned node.
+	if id := c.Fleet.ZeroTierNetwork; id != "" && !zerotierNetworkID.MatchString(id) {
+		errs = append(errs, fmt.Errorf("fleet.zerotier_network %q is not a valid ZeroTier network id (16 hex chars)", id))
+	}
+	// The keybroker topology is single-master on MVP (open question #11): it peers
+	// every exit to Masters[0] only, so a second master would render specs that
+	// silently never establish. Fail loudly until multi-master lands.
+	if len(c.Fleet.Masters) > 1 {
+		errs = append(errs, fmt.Errorf("fleet: %d masters configured, but multi-master is not yet supported (keybroker peers exits to the first master only)", len(c.Fleet.Masters)))
+	}
 	// The Web UI and /metrics endpoints have no authentication; their only
 	// protection is binding the mgmt/ZT overlay (docs/DESIGN.md §9/§10). Refuse a
 	// public/unspecified bind so a misconfigured manifest can't silently expose
@@ -263,6 +290,11 @@ func (c ControllerConfig) Validate() error {
 		if p := m.ClientAWG.ListenPort; p != 0 && (p < 1 || p > 65535) {
 			errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.listen_port %d out of range", i, p))
 		}
+		// Each direct CIDR consumes a routing priority; too many collide with the
+		// fwmark rule that keeps WG handshake/reply traffic on the main table.
+		if n := len(m.Routing.DirectCIDRs); n > routing.MaxDirectCIDRs {
+			errs = append(errs, fmt.Errorf("fleet.masters[%d]: %d direct_cidrs exceeds the max of %d", i, n, routing.MaxDirectCIDRs))
+		}
 	}
 	for i, e := range c.Fleet.Exits {
 		if e.Name == "" {
@@ -288,6 +320,17 @@ func allowPublicBind() bool {
 	default:
 		return false
 	}
+}
+
+// RequireMgmtBind is the exported mgmt-bind guard for binaries other than the
+// controller — notably the agent's --metrics endpoint, which is just as
+// unauthenticated and leaks fleet topology if exposed. It honors the same
+// WGFLEET_ALLOW_PUBLIC_BIND override and treats an empty address as disabled.
+func RequireMgmtBind(field, listen string) error {
+	if allowPublicBind() {
+		return nil
+	}
+	return requireMgmtBind(field, listen)
 }
 
 // requireMgmtBind rejects a listen address that is reachable from the public

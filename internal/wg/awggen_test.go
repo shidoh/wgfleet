@@ -125,4 +125,75 @@ func TestDeriveEndsDifferButShareShared(t *testing.T) {
 	}
 }
 
+// TestDeriveJunkPerEnd verifies the junk decoy params (Jc/Jmin/Jmax) are derived
+// per-end (not a fleet-wide constant), stay within the domain invariants, and are
+// deterministic. The two ends of a tunnel may carry different junk profiles.
+func TestDeriveJunkPerEnd(t *testing.T) {
+	seed := TunnelSeed("exit-de-1", "master-xa-1", awgTestSalt)
+	exit := DeriveAWGParamsForEnd(seed, "exit", true)
+	master := DeriveAWGParamsForEnd(seed, "master", false)
+
+	for _, tc := range []struct {
+		end string
+		l   domain.AWGLocal
+	}{{"exit", exit.Local}, {"master", master.Local}} {
+		if tc.l.Jc < 1 || tc.l.Jc > 128 {
+			t.Errorf("%s: Jc %d outside [1,128]", tc.end, tc.l.Jc)
+		}
+		if !(tc.l.Jmin < tc.l.Jmax) || tc.l.Jmax > 1280 {
+			t.Errorf("%s: junk window %d-%d violates Jmin<Jmax≤1280", tc.end, tc.l.Jmin, tc.l.Jmax)
+		}
+	}
+
+	// Two ends should not share an identical junk profile in lockstep with the
+	// shared params — exercise that the per-end seed actually moves the values.
+	if exit.Local.Jc == master.Local.Jc &&
+		exit.Local.Jmin == master.Local.Jmin &&
+		exit.Local.Jmax == master.Local.Jmax {
+		t.Error("both ends derived an identical junk profile; per-end derivation is not varying")
+	}
+
+	// Deterministic: same inputs ⇒ same junk.
+	if again := DeriveAWGParamsForEnd(seed, "exit", true); again.Local.Jc != exit.Local.Jc ||
+		again.Local.Jmin != exit.Local.Jmin || again.Local.Jmax != exit.Local.Jmax {
+		t.Error("junk derivation must be deterministic")
+	}
+}
+
+// TestDeriveJunkNotFleetConstant confirms the junk profile actually varies across
+// tunnels (it is no longer a hardcoded 8/8/80 for every interface in the fleet).
+func TestDeriveJunkNotFleetConstant(t *testing.T) {
+	seen := make(map[[3]int]bool)
+	for i := 0; i < 200; i++ {
+		l := DeriveAWGLocal(string(rune(i))+"-tunnel|end|exit", false)
+		seen[[3]int{l.Jc, l.Jmin, l.Jmax}] = true
+	}
+	if len(seen) < 10 {
+		t.Errorf("junk profile barely varies across 200 seeds (%d distinct); decoy is too static", len(seen))
+	}
+}
+
+// FuzzDeriveAWGParamsForEnd hardens the generator: for ANY seed/label, derived
+// params must satisfy the kernel and (for the userspace profile) userspace
+// validation. This goes beyond the rune-indexed loops above.
+func FuzzDeriveAWGParamsForEnd(f *testing.F) {
+	f.Add("exit-de-1|master-xa-1|salt", "exit")
+	f.Add("", "")
+	f.Add("x", "master")
+	f.Fuzz(func(t *testing.T, seed, label string) {
+		kp := DeriveAWGParamsForEnd(seed, label, true)
+		if err := kp.Validate(); err != nil {
+			t.Fatalf("kernel params invalid for seed=%q label=%q: %v", seed, label, err)
+		}
+		up := DeriveAWGParamsForEnd(seed, label, false)
+		if err := up.ValidateUserspace(); err != nil {
+			t.Fatalf("userspace params invalid for seed=%q label=%q: %v", seed, label, err)
+		}
+		// Both ends must always agree on shared params for the same tunnel seed.
+		if other := DeriveAWGParamsForEnd(seed, label+"-other", true); other.Shared != kp.Shared {
+			t.Fatalf("shared params diverged for the same tunnel seed %q", seed)
+		}
+	})
+}
+
 const awgTestSalt = "wgfleet-awg-v1"

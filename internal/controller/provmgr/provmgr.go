@@ -31,17 +31,21 @@ type Options struct {
 
 // Manager runs provisioning jobs.
 type Manager struct {
-	store store.Store
-	ca    *pki.CA
-	fleet config.FleetSection
-	opts  Options
-	log   *slog.Logger
+	store   store.Store
+	ca      *pki.CA
+	fleet   config.FleetSection
+	opts    Options
+	log     *slog.Logger
+	baseCtx context.Context // parent for async jobs; cancelled on controller shutdown
 
 	mu       sync.Mutex
 	inflight map[string]bool
+	wg       sync.WaitGroup // tracks in-flight async jobs for graceful drain
 }
 
-// New builds a Manager. dial defaults to a real SSH dialer when nil.
+// New builds a Manager. dial defaults to a real SSH dialer when nil. Call
+// SetBaseContext with the controller's signal context so async jobs are
+// cancelled on shutdown; otherwise they run under context.Background().
 func New(st store.Store, ca *pki.CA, fleet config.FleetSection, opts Options, log *slog.Logger) *Manager {
 	if log == nil {
 		log = slog.Default()
@@ -51,8 +55,25 @@ func New(st store.Store, ca *pki.CA, fleet config.FleetSection, opts Options, lo
 			return provisioner.DialSSH(t, nil)
 		}
 	}
-	return &Manager{store: st, ca: ca, fleet: fleet, opts: opts, log: log, inflight: map[string]bool{}}
+	return &Manager{
+		store: st, ca: ca, fleet: fleet, opts: opts, log: log,
+		baseCtx: context.Background(), inflight: map[string]bool{},
+	}
 }
+
+// SetBaseContext sets the parent context for async provisioning jobs. Pass the
+// controller's signal context so jobs abort promptly on SIGTERM instead of
+// running on after the store is closed.
+func (m *Manager) SetBaseContext(ctx context.Context) {
+	if ctx != nil {
+		m.baseCtx = ctx
+	}
+}
+
+// Wait blocks until all in-flight async provisioning jobs have finished. Call it
+// during shutdown (after the base context is cancelled) before closing the store,
+// so a background job cannot write to a closed database.
+func (m *Manager) Wait() { m.wg.Wait() }
 
 // Provisionable reports whether a node exists in the fleet manifest with an SSH
 // target — i.e. whether it can be provisioned at all.
@@ -146,24 +167,36 @@ func (m *Manager) TriggerAsync(nodeID string) error {
 	m.mu.Unlock()
 
 	node, _, _ := m.findNode(nodeID)
-	bg := context.Background()
+	bg := m.baseCtx
 	if err := m.ensureNode(bg, node, domain.StateProvisioning); err != nil {
 		m.clearInflight(nodeID)
 		return fmt.Errorf("mark provisioning: %w", err)
 	}
 
+	m.wg.Add(1)
 	go func() {
+		defer m.wg.Done()
 		defer m.clearInflight(nodeID)
 		_, err := m.Provision(bg, nodeID, provisioner.ModeApply)
 		if err != nil {
 			m.log.Error("provisioning failed", "node", nodeID, "err", err)
-			_ = m.store.SetNodeState(bg, nodeID, domain.StateError, err.Error())
+			m.setState(bg, nodeID, domain.StateError, err.Error())
 			return
 		}
 		m.log.Info("provisioning applied; agent will take over", "node", nodeID)
-		_ = m.store.SetNodeState(bg, nodeID, domain.StateReconciling, "")
+		m.setState(bg, nodeID, domain.StateReconciling, "")
 	}()
 	return nil
+}
+
+// setState persists a node lifecycle transition, logging (never swallowing) a
+// store error so a failed transition — e.g. the store closed mid-shutdown — is
+// visible instead of leaving the node stuck in its prior state with no trace.
+func (m *Manager) setState(ctx context.Context, nodeID string, state domain.NodeState, detail string) {
+	if err := m.store.SetNodeState(ctx, nodeID, state, detail); err != nil {
+		m.log.Error("failed to persist provisioning state transition",
+			"node", nodeID, "state", state, "err", err)
+	}
 }
 
 // ensureNode upserts the node into inventory (from the manifest) at the given

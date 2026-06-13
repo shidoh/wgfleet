@@ -106,8 +106,13 @@ func run() error {
 		log:      slog.With("node", cfg.Agent.NodeID, "role", role),
 	}
 
-	// Agent /metrics (own reconcile/health counters). Bind mgmt/ZT only.
+	// Agent /metrics (own reconcile/health counters). Bind mgmt/ZT only: this
+	// endpoint is unauthenticated and leaks fleet topology (node id, role, egress
+	// IP, health) if exposed publicly, so refuse a public bind like the controller.
 	if *metricsBind != "" {
+		if err := config.RequireMgmtBind("--metrics", *metricsBind); err != nil {
+			return err
+		}
 		reg := metrics.NewRegistry()
 		a.metrics = metrics.NewAgentMetrics(reg, cfg.Agent.NodeID, role, time.Now())
 		metricsSrv := &http.Server{Addr: *metricsBind, Handler: metricsMux(reg)}
@@ -226,9 +231,23 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		return fmt.Errorf("pull spec: %w", err)
 	}
 	if err := spec.Validate(); err != nil {
-		// A partial spec (peers still registering) or a wrong one: surface it
-		// rather than applying garbage.
-		a.log.Warn("pulled spec not yet valid", "err", err)
+		// An invalid spec must never be applied: a zero WG port, bad egress, or an
+		// AWG-constraint violation would rewrite awg0.conf/nftables/routing into a
+		// broken state on a live node. In plan mode show the (invalid) plan so the
+		// operator can diagnose it; in apply mode refuse, report Error so the
+		// controller/UI see the reason, and keep the last-good config in place.
+		if plan {
+			a.log.Warn("pulled spec not yet valid (plan mode: showing anyway)", "err", err)
+		} else {
+			a.log.Error("refusing to apply invalid spec; keeping last-good config", "err", err)
+			repCtx, repCancel := context.WithTimeout(base, statusReportTimeout)
+			defer repCancel()
+			check := domain.HealthCheck{Name: domain.CheckSpecValid, OK: false, Detail: err.Error()}
+			if rerr := a.reportStatus(repCtx, domain.StateError, []domain.HealthCheck{check}, err); rerr != nil {
+				a.log.Error("failed to report invalid-spec state", "err", rerr)
+			}
+			return fmt.Errorf("invalid spec, not applied: %w", err)
+		}
 	}
 	if spec.Decommission {
 		return a.teardown(ctx, plan)
