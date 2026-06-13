@@ -67,6 +67,20 @@ func TestNodeSpecValidate(t *testing.T) {
 			mutate:  func(s *NodeSpec) { s.Peers[0].AllowedIPs = nil },
 			wantErr: "no allowed IPs",
 		},
+		{
+			name:    "egress chain with unimplemented method",
+			mutate:  func(s *NodeSpec) { s.EgressChain = []EgressMethod{EgressWARP, EgressReality} },
+			wantErr: "invalid/unimplemented method",
+		},
+		{
+			name:    "egress chain head must equal preferred",
+			mutate:  func(s *NodeSpec) { s.EgressChain = []EgressMethod{EgressDirect, EgressWARP} }, // Egress is warp
+			wantErr: "must equal the preferred egress",
+		},
+		{
+			name:   "valid egress chain",
+			mutate: func(s *NodeSpec) { s.EgressChain = []EgressMethod{EgressWARP, EgressDirect} },
+		},
 	}
 
 	for _, tt := range tests {
@@ -84,6 +98,31 @@ func TestNodeSpecValidate(t *testing.T) {
 				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
 			}
 		})
+	}
+}
+
+func TestEgressChainHelpers(t *testing.T) {
+	// Explicit chain is returned as-is.
+	chained := NodeSpec{Egress: EgressWARP, EgressChain: []EgressMethod{EgressWARP, EgressDirect}}
+	if got := chained.EgressMethods(); len(got) != 2 || got[0] != EgressWARP || got[1] != EgressDirect {
+		t.Errorf("EgressMethods = %v, want [warp direct]", got)
+	}
+	if !chained.EgressChainHas(EgressDirect) || !chained.EgressChainHas(EgressWARP) {
+		t.Error("chain should contain both warp and direct")
+	}
+
+	// No chain ⇒ single-entry [Egress].
+	single := NodeSpec{Egress: EgressWARP}
+	if got := single.EgressMethods(); len(got) != 1 || got[0] != EgressWARP {
+		t.Errorf("EgressMethods without chain = %v, want [warp]", got)
+	}
+	if single.EgressChainHas(EgressDirect) {
+		t.Error("a warp-only node must not report direct as a candidate")
+	}
+
+	// No egress at all ⇒ empty.
+	if got := (NodeSpec{}).EgressMethods(); got != nil {
+		t.Errorf("empty spec EgressMethods = %v, want nil", got)
 	}
 }
 

@@ -221,7 +221,10 @@ func TestRoutingIdempotentAfterApply(t *testing.T) {
 
 	// Second plan, unchanged intent: no routing command re-runs. In particular
 	// `conntrack -D` must NOT reappear — an earlier finding flushes on change, not per pass.
-	actions, err := routingPlanner{statePath: paths.RoutingState}.Plan(context.Background(), spec)
+	// Stub the kernel probe as healthy so this isolates the state-file gate from
+	// live-kernel drift repair (which has its own test).
+	healthy := func(domain.RoutingSpec) bool { return true }
+	actions, err := routingPlanner{statePath: paths.RoutingState, applied: healthy}.Plan(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,6 +254,57 @@ func TestRoutingIdempotentAfterApply(t *testing.T) {
 	}
 	if !sawChange || !sawConntrack {
 		t.Errorf("changed intent must re-run routing incl conntrack flush; change=%v conntrack=%v", sawChange, sawConntrack)
+	}
+}
+
+func TestRoutingRepairsLiveKernelDrift(t *testing.T) {
+	paths := testPaths(t)
+	spec, _ := exitSpec(t) // WARP egress + routing intent
+
+	// Record the intent so the state-file gate sees no change on later plans.
+	rec := func(applied func(domain.RoutingSpec) bool) routingPlanner {
+		return routingPlanner{statePath: paths.RoutingState, applied: applied}
+	}
+	eng := reconcile.NewEngine(nil, rec(func(domain.RoutingSpec) bool { return true }))
+	_, _ = eng.Reconcile(context.Background(), spec, reconcile.ModeApply)
+	if _, err := os.Stat(paths.RoutingState); err != nil {
+		t.Fatalf("routing state file should be written on first apply: %v", err)
+	}
+
+	// Healthy kernel + unchanged intent ⇒ steady no-change.
+	actions, err := rec(func(domain.RoutingSpec) bool { return true }).Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range actions {
+		if a.Changes() {
+			t.Errorf("healthy kernel must be no-change, got %s %s", a.Kind, a.Summary)
+		}
+	}
+
+	// Kernel drifted (rules flushed/edited by hand) while the intent and its state
+	// file are unchanged ⇒ re-apply the full idempotent set, conntrack flush and
+	// egress rule included.
+	actions, err = rec(func(domain.RoutingSpec) bool { return false }).Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var changes int
+	var sawConntrack, sawEgressRule bool
+	for _, a := range actions {
+		if a.Changes() {
+			changes++
+		}
+		if a.Changes() && strings.Contains(a.Summary, "conntrack") {
+			sawConntrack = true
+		}
+		if a.Changes() && strings.Contains(a.Summary, "egress table") {
+			sawEgressRule = true
+		}
+	}
+	if changes == 0 || !sawConntrack || !sawEgressRule {
+		t.Errorf("live-kernel drift must re-apply full set; changes=%d conntrack=%v egress=%v",
+			changes, sawConntrack, sawEgressRule)
 	}
 }
 

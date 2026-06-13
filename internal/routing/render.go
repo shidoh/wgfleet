@@ -8,15 +8,18 @@ package routing
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
-// clientTable is the routing table id that carries client traffic toward the
+// EgressTable is the routing table id that carries client traffic toward the
 // egress interface. Kept off the main table so management/handshake traffic
-// (which stays in main) is never pulled into WARP.
-const clientTable = 51820
+// (which stays in main) is never pulled into WARP. Exported because the
+// live-kernel drift probe queries `ip route show table <EgressTable>` to verify
+// the intent is still applied.
+const EgressTable = 51820
 
 // fwmarkClient is the default fwmark for client-egress packets when the spec
 // does not set one. Marking is done by source port in nftables mangle, not by
@@ -100,11 +103,11 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 	// dedicated table.
 	steps = append(steps, ipRuleReplace(prefEgress,
 		"send remaining traffic to the egress table",
-		"lookup", fmt.Sprintf("%d", clientTable),
+		"lookup", fmt.Sprintf("%d", EgressTable),
 	)...)
 	steps = append(steps, Step{
-		Summary: fmt.Sprintf("default route via %s in table %d", spec.EgressInterface, clientTable),
-		Argv:    []string{"ip", "route", "replace", "default", "dev", spec.EgressInterface, "table", fmt.Sprintf("%d", clientTable)},
+		Summary: fmt.Sprintf("default route via %s in table %d", spec.EgressInterface, EgressTable),
+		Argv:    []string{"ip", "route", "replace", "default", "dev", spec.EgressInterface, "table", fmt.Sprintf("%d", EgressTable)},
 	})
 
 	return steps, nil
@@ -130,13 +133,72 @@ func Script(steps []Step) string {
 // is decommissioned. The deletes tolerate "rule does not exist".
 func TeardownActions() []Step {
 	return []Step{
-		{Summary: fmt.Sprintf("flush egress routing table %d", clientTable),
-			Argv: []string{"ip", "route", "flush", "table", fmt.Sprintf("%d", clientTable)}},
+		{Summary: fmt.Sprintf("flush egress routing table %d", EgressTable),
+			Argv: []string{"ip", "route", "flush", "table", fmt.Sprintf("%d", EgressTable)}},
 		{Summary: "remove egress-table rule",
-			Argv: []string{"ip", "rule", "del", "lookup", fmt.Sprintf("%d", clientTable)}},
+			Argv: []string{"ip", "rule", "del", "lookup", fmt.Sprintf("%d", EgressTable)}},
 		{Summary: "flush conntrack (forget the WARP path)",
 			Argv: []string{"conntrack", "-F"}},
 	}
+}
+
+// ManagedPrefs returns the ip-rule priorities Render installs for spec, in the
+// same order. Exported so the live-kernel drift probe can verify every one is
+// still present in the kernel; a direct-egress spec installs none.
+func ManagedPrefs(spec domain.RoutingSpec) []int {
+	if spec.EgressInterface == "" {
+		return nil
+	}
+	var prefs []int
+	if spec.MasterIP != "" {
+		prefs = append(prefs, prefMaster)
+	}
+	for i := range spec.DirectCIDRs {
+		prefs = append(prefs, prefDirect0+i)
+	}
+	return append(prefs, prefFwmark, prefEgress)
+}
+
+// KernelReflects reports whether the live kernel still satisfies the routing
+// intent, given the raw output of `ip rule list` and `ip route show table
+// <EgressTable>`. It is the read-only counterpart to Render: every managed
+// ip-rule priority must be present and the egress table must hold a default
+// route via the egress interface. When it returns false the planner re-applies
+// the full idempotent set — this catches drift the state-file gate cannot (the
+// file still matches the intent while someone flushed or edited the kernel
+// rules by hand). Pure (no exec) so it is fully testable; the exec that captures
+// the two outputs lives in the agent. A direct-egress spec is trivially
+// reflected (nothing to route).
+func KernelReflects(spec domain.RoutingSpec, ruleList, egressRoutes string) bool {
+	if spec.EgressInterface == "" {
+		return true
+	}
+	present := parseRulePrefs(ruleList)
+	for _, p := range ManagedPrefs(spec) {
+		if !present[p] {
+			return false
+		}
+	}
+	return strings.Contains(egressRoutes, "default") &&
+		strings.Contains(egressRoutes, spec.EgressInterface)
+}
+
+// parseRulePrefs extracts the set of rule priorities present in `ip rule list`
+// output. Each line begins with the priority followed by a colon, e.g.
+// "300:\tfrom all lookup 51820"; lines without a leading numeric pref are
+// skipped.
+func parseRulePrefs(ruleList string) map[int]bool {
+	prefs := make(map[int]bool)
+	for _, line := range strings.Split(ruleList, "\n") {
+		field, _, found := strings.Cut(strings.TrimSpace(line), ":")
+		if !found {
+			continue
+		}
+		if p, err := strconv.Atoi(field); err == nil {
+			prefs[p] = true
+		}
+	}
+	return prefs
 }
 
 func sysctl(key, val string) Step {

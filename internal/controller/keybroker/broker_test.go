@@ -358,3 +358,40 @@ func TestWARPMTUOverrideLowersClientMTU(t *testing.T) {
 		t.Errorf("client MTU = %d, want 1340 (bound by the constrained exit WARP)", masterSpec.WGServer.MTU)
 	}
 }
+
+func TestRenderExitSpecEgressChain(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	fleet := config.FleetSection{
+		Exits: []config.ExitConfig{{
+			Name:           "exit-de-1",
+			Egress:         "warp",
+			EgressFallback: []string{"direct", "warp", "bogus"}, // dup + invalid dropped
+			AddressPool:    "10.81.0.0/24",
+		}},
+	}
+	b := New(st, fleet, log)
+	seedNode(t, st, "exit-de-1", "10.20.0.10", "203.0.113.10", "exitpub", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(context.Background(), "exit-de-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []domain.EgressMethod{domain.EgressWARP, domain.EgressDirect}
+	if len(spec.EgressChain) != len(want) {
+		t.Fatalf("egress chain = %v, want %v", spec.EgressChain, want)
+	}
+	for i := range want {
+		if spec.EgressChain[i] != want[i] {
+			t.Errorf("chain[%d] = %q, want %q", i, spec.EgressChain[i], want[i])
+		}
+	}
+	if spec.Egress != domain.EgressWARP {
+		t.Errorf("preferred egress = %q, want warp", spec.Egress)
+	}
+}

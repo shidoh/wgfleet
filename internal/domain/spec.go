@@ -13,15 +13,21 @@ const DefaultKeepaliveSeconds = 25
 // loop converges toward, idempotently and with dry-run support. It is rendered
 // by the controller from inventory + fleet config and pulled by the agent.
 type NodeSpec struct {
-	Role      Role
-	Egress    EgressMethod // exit nodes only
-	WGServer  WGServerSpec
-	Peers     []PeerSpec // rendered by the controller from registered pubkeys
-	DNS       DNSFilterSpec
-	Firewall  FirewallSpec
-	Routing   RoutingSpec
-	Exporters ExportersSpec
-	Master    *MasterSpec // master nodes only: mihomo data plane; nil for exits
+	Role   Role
+	Egress EgressMethod // exit nodes only: the PREFERRED egress (== EgressChain[0])
+	// EgressChain is the ordered egress priority list for censorship-adaptive
+	// failover (ADR-0017): index 0 is preferred (== Egress), later entries are
+	// fallbacks the agent switches to when the active one is blocked (ADR-0016).
+	// Empty ⇒ no failover (treated as [Egress]). The agent selects the active
+	// method within this chain; the controller only sets the intent.
+	EgressChain []EgressMethod
+	WGServer    WGServerSpec
+	Peers       []PeerSpec // rendered by the controller from registered pubkeys
+	DNS         DNSFilterSpec
+	Firewall    FirewallSpec
+	Routing     RoutingSpec
+	Exporters   ExportersSpec
+	Master      *MasterSpec // master nodes only: mihomo data plane; nil for exits
 	// WARPMTU is the MTU for the exit's WARP egress interface (warp egress only).
 	// 0 means compute it from the sequential model (1440); set it when the real
 	// WARP→Cloudflare path MTU is smaller than the physical link (an earlier finding: the
@@ -33,6 +39,36 @@ type NodeSpec struct {
 	// instead of converging it. Rendered when the node is flagged for removal.
 	Decommission bool
 }
+
+// EgressMethods returns the egress priority chain, falling back to a single-entry
+// [Egress] chain when none is set (a node with no configured failover).
+func (s NodeSpec) EgressMethods() []EgressMethod {
+	if len(s.EgressChain) > 0 {
+		return s.EgressChain
+	}
+	if s.Egress == "" {
+		return nil
+	}
+	return []EgressMethod{s.Egress}
+}
+
+// EgressChainHas reports whether m is a candidate egress for this node. The exit
+// WARP planner uses it to keep wgcf up while WARP is anywhere in the chain (so a
+// failed-over node can still probe WARP for recovery), not only when it is active.
+func (s NodeSpec) EgressChainHas(m EgressMethod) bool {
+	for _, c := range s.EgressMethods() {
+		if c == m {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckEgressActive is the conventional name of the self-check the exit agent
+// emits to report which egress method is currently active (its Detail is the
+// method). It rides the health-check channel so the active egress reaches the UI
+// and metrics without a NodeStatus schema change (ADR-0017).
+const CheckEgressActive = "egress-active"
 
 // WGServerSpec is the local AmneziaWG listener this node runs. All fleet-internal
 // tunnels (client↔master, master↔exit) are AmneziaWG, so AWG is populated for
@@ -154,6 +190,14 @@ func (s NodeSpec) Validate() error {
 	}
 	if s.Role == RoleExit && !s.Egress.Valid() {
 		errs = append(errs, fmt.Errorf("exit node has invalid egress %q", s.Egress))
+	}
+	for i, m := range s.EgressChain {
+		if !m.Valid() {
+			errs = append(errs, fmt.Errorf("egress chain[%d] has invalid/unimplemented method %q", i, m))
+		}
+	}
+	if len(s.EgressChain) > 0 && s.EgressChain[0] != s.Egress {
+		errs = append(errs, fmt.Errorf("egress chain[0] %q must equal the preferred egress %q", s.EgressChain[0], s.Egress))
 	}
 	if s.WGServer.ListenPort <= 0 || s.WGServer.ListenPort > 65535 {
 		errs = append(errs, fmt.Errorf("WG listen port %d out of range", s.WGServer.ListenPort))

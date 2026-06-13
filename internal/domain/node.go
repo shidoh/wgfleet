@@ -80,3 +80,52 @@ type HealthCheck struct {
 	Detail  string
 	Latency time.Duration
 }
+
+// EgressReachability classifies WHY an exit's egress is or is not working, so an
+// operator can tell a path/ISP block (the censorship signature) from a transient
+// downstream failure. It is observational only — the node's lifecycle State still
+// goes Degraded on a failed egress check; this adds the reason. It is the
+// detect-only foundation for censorship-adaptive transport failover (the agent
+// does not yet switch transport on it).
+type EgressReachability string
+
+const (
+	// EgressReachOK — egress confirmed leaving via WARP.
+	EgressReachOK EgressReachability = "ok"
+	// EgressReachDegraded — egress failing but the WARP tunnel is still reachable
+	// (a transient Cloudflare blip or a downstream issue, not a path block).
+	EgressReachDegraded EgressReachability = "degraded"
+	// EgressReachBlocked — egress failing AND the WARP path itself is unreachable
+	// (WG control packets to the Cloudflare endpoint are not getting through):
+	// the signature of an ISP/DPI block.
+	EgressReachBlocked EgressReachability = "blocked"
+)
+
+// CheckEgressReachability is the conventional name of the self-check the exit
+// agent emits to carry the egress classification across the wire. Its OK field is
+// false only when egress is classified blocked, so the UI/metrics can flag a
+// censorship block without parsing the detail string.
+const CheckEgressReachability = "egress-reachability"
+
+// EgressBlocked reports whether the agent classified this node's egress as
+// path/ISP-blocked — the censorship-block signal behind the UI badge and metric.
+func (s NodeStatus) EgressBlocked() bool {
+	for _, c := range s.Checks {
+		if c.Name == CheckEgressReachability {
+			return !c.OK
+		}
+	}
+	return false
+}
+
+// ActiveEgress returns the egress method the agent currently has active (from the
+// egress-active self-check, ADR-0017), or "" when not reported. It differs from
+// the preferred egress while the node is failed over.
+func (s NodeStatus) ActiveEgress() string {
+	for _, c := range s.Checks {
+		if c.Name == CheckEgressActive {
+			return c.Detail
+		}
+	}
+	return ""
+}

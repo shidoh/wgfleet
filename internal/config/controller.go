@@ -164,18 +164,19 @@ const DefaultExitListenPort = 51820
 
 // ExitConfig describes one exit node in the fleet manifest.
 type ExitConfig struct {
-	Name        string         `koanf:"name"`
-	Region      string         `koanf:"region"`
-	Egress      string         `koanf:"egress"`      // "warp" | "direct"
-	WARPMTU     int            `koanf:"warp_mtu"`    // WARP interface MTU; 0 ⇒ computed (1440). Set when the real WARP path is smaller (an earlier finding: 1320-1420)
-	PublicIP    string         `koanf:"public_ip"`   // public IP the master dials this exit at (WG endpoint); defaults to ssh.host when empty
-	ListenPort  int            `koanf:"listen_port"` // WG server port; 0 ⇒ DefaultExitListenPort
-	AddressPool string         `koanf:"address_pool"`
-	MgmtAddr    string         `koanf:"mgmt_addr"` // ZT overlay address (admin/metrics/DNS bind)
-	DNSFilter   bool           `koanf:"dns_filter"`
-	DNS         DNSConfig      `koanf:"dns"` // optional rich blocky tuning + custom config
-	Firewall    FirewallConfig `koanf:"firewall"`
-	SSH         SSHConfig      `koanf:"ssh"` // bootstrap target
+	Name           string         `koanf:"name"`
+	Region         string         `koanf:"region"`
+	Egress         string         `koanf:"egress"`          // "warp" | "direct" (preferred)
+	EgressFallback []string       `koanf:"egress_fallback"` // ordered fallbacks for censorship-adaptive failover (ADR-0017), e.g. [direct]; empty ⇒ no failover
+	WARPMTU        int            `koanf:"warp_mtu"`        // WARP interface MTU; 0 ⇒ computed (1440). Set when the real WARP path is smaller (an earlier finding: 1320-1420)
+	PublicIP       string         `koanf:"public_ip"`       // public IP the master dials this exit at (WG endpoint); defaults to ssh.host when empty
+	ListenPort     int            `koanf:"listen_port"`     // WG server port; 0 ⇒ DefaultExitListenPort
+	AddressPool    string         `koanf:"address_pool"`
+	MgmtAddr       string         `koanf:"mgmt_addr"` // ZT overlay address (admin/metrics/DNS bind)
+	DNSFilter      bool           `koanf:"dns_filter"`
+	DNS            DNSConfig      `koanf:"dns"` // optional rich blocky tuning + custom config
+	Firewall       FirewallConfig `koanf:"firewall"`
+	SSH            SSHConfig      `koanf:"ssh"` // bootstrap target
 }
 
 // DNSConfig is the operator's optional tuning for the exit's blocky resolver.

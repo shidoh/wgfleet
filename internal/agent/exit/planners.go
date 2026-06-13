@@ -157,9 +157,14 @@ type warpPlanner struct {
 func (warpPlanner) Component() string { return "warp egress (wgcf)" }
 
 func (p warpPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
-	if spec.Egress != domain.EgressWARP {
-		return nil, nil // direct egress: nothing to render
+	if !spec.EgressChainHas(domain.EgressWARP) {
+		return nil, nil // WARP not a candidate egress: nothing to render
 	}
+	// NB: wgcf is brought up whenever WARP is ANYWHERE in the chain, even while the
+	// node is failed over to a fallback (active egress != warp). The tunnel stays
+	// established (cheap, keepalive) but client traffic only routes through it when
+	// the routing planner points at it (active == warp), so recovery can be probed
+	// without disrupting client traffic (ADR-0017).
 	if p.warp == nil {
 		// No parsed credentials yet: register (once — one key per node, an earlier finding;
 		// --accept-tos avoids the interactive ToS prompt that fails on EOF) and
@@ -221,7 +226,12 @@ func (p warpPlanner) isUp() bool {
 
 // --- policy routing ---
 
-type routingPlanner struct{ statePath string }
+type routingPlanner struct {
+	statePath string
+	// applied reports whether the live kernel still reflects the routing intent.
+	// nil ⇒ a real `ip rule list` + `ip route show` probe; tests inject a stub.
+	applied func(domain.RoutingSpec) bool
+}
 
 func (routingPlanner) Component() string { return "policy routing" }
 
@@ -247,18 +257,63 @@ func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 		return nil, err
 	}
 	actions := []reconcile.Action{file}
-	if file.Changes() {
-		for _, s := range steps {
-			if s.BestEffort {
-				actions = append(actions, reconcile.BestEffortExecAction(s.Summary, s.Argv...))
-			} else {
-				actions = append(actions, reconcile.ExecAction(s.Summary, s.Argv...))
-			}
-		}
-	} else {
-		actions = append(actions, reconcile.NoChangeAction("policy routing", "intent unchanged; rules already applied"))
+	switch {
+	case file.Changes():
+		// Intent changed: apply the full set (incl. the conntrack flush).
+		actions = append(actions, routingExecActions(steps)...)
+	case !p.isApplied(spec.Routing):
+		// Intent unchanged but the live kernel no longer reflects it — someone
+		// flushed or edited `ip rule`/`ip route` by hand, or a partial state.
+		// Re-apply the full idempotent set to self-heal (ADR-0015 live-kernel
+		// drift repair). The conntrack flush rides along, which is correct: the
+		// path was effectively broken.
+		actions = append(actions, routingExecActions(steps)...)
+	default:
+		actions = append(actions, reconcile.NoChangeAction("policy routing", "intent unchanged; kernel reflects it"))
 	}
 	return actions, nil
+}
+
+func (p routingPlanner) isApplied(r domain.RoutingSpec) bool {
+	if p.applied == nil {
+		return routingApplied(r)
+	}
+	return p.applied(r)
+}
+
+// routingExecActions wraps routing steps as reconcile exec actions, honoring the
+// best-effort flag (e.g. `ip rule del` of a rule that is not there yet).
+func routingExecActions(steps []routing.Step) []reconcile.Action {
+	out := make([]reconcile.Action, 0, len(steps))
+	for _, s := range steps {
+		if s.BestEffort {
+			out = append(out, reconcile.BestEffortExecAction(s.Summary, s.Argv...))
+		} else {
+			out = append(out, reconcile.ExecAction(s.Summary, s.Argv...))
+		}
+	}
+	return out
+}
+
+// routingApplied is the real kernel probe behind routingPlanner.isApplied: it
+// captures `ip rule list` and `ip route show table <EgressTable>` and asks the
+// pure routing.KernelReflects whether the intent is still in force. Any exec
+// error (non-Linux dev box, missing iproute2) reports "not applied", so the
+// planner re-emits the apply steps — harmless in plan mode, self-healing on a
+// real node.
+func routingApplied(r domain.RoutingSpec) bool {
+	if r.EgressInterface == "" {
+		return true // direct egress: nothing to verify
+	}
+	rules, err := exec.Command("ip", "rule", "list").Output()
+	if err != nil {
+		return false
+	}
+	routes, err := exec.Command("ip", "route", "show", "table", fmt.Sprintf("%d", routing.EgressTable)).Output()
+	if err != nil {
+		return false
+	}
+	return routing.KernelReflects(r, string(rules), string(routes))
 }
 
 // --- dns filter ---

@@ -8,6 +8,12 @@ type ExitProbes struct {
 	HandshakeFresh Probe // freshest master↔exit WG handshake under threshold
 	WARPEgress     Probe // egress leaves via Cloudflare WARP
 	DNSResolves    Probe // on-node DNS filter resolves
+	// EgressConfirm actively checks whether the WARP path itself is reachable (the
+	// WG handshake to the Cloudflare endpoint is fresh). Run only when WARPEgress
+	// has failed repeatedly, it distinguishes an ISP/DPI block from a transient
+	// blip — see EgressClassifier. Non-destructive (read-only; never re-registers
+	// wgcf, which would churn the node's WARP account — an earlier finding).
+	EgressConfirm Probe
 }
 
 // MasterProbes are the injectable probes for a master node's self-checks.

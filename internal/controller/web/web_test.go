@@ -294,6 +294,51 @@ func TestDetailShowsDrainButton(t *testing.T) {
 	}
 }
 
+func TestDetailShowsEgressBlockedBadge(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateDegraded})
+
+	// No status yet ⇒ no badge.
+	if _, body := get(t, h, "/nodes/exit-de-1"); strings.Contains(body, "egress blocked") {
+		t.Error("node without status should not show the egress-blocked badge")
+	}
+
+	// A failing egress-reachability self-check ⇒ blocked badge.
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "exit-de-1",
+		State:  domain.StateDegraded,
+		Checks: []domain.HealthCheck{
+			{Name: domain.CheckEgressReachability, OK: false, Detail: "blocked: WARP path unreachable"},
+		},
+	})
+	if _, body := get(t, h, "/nodes/exit-de-1"); !strings.Contains(body, "egress blocked") {
+		t.Error("node with a failing egress-reachability check should show the egress-blocked badge")
+	}
+}
+
+func TestDetailShowsEgressFailoverBadge(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+
+	// Active egress = direct (failed over) ⇒ failover badge.
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "exit-de-1", State: domain.StateReady,
+		Checks: []domain.HealthCheck{{Name: domain.CheckEgressActive, OK: true, Detail: "direct"}},
+	})
+	if _, body := get(t, h, "/nodes/exit-de-1"); !strings.Contains(body, "egress: direct") {
+		t.Error("failed-over node should show the egress failover badge")
+	}
+
+	// Active egress = warp (preferred) ⇒ no failover badge.
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "exit-de-1", State: domain.StateReady,
+		Checks: []domain.HealthCheck{{Name: domain.CheckEgressActive, OK: true, Detail: "warp"}},
+	})
+	if _, body := get(t, h, "/nodes/exit-de-1"); strings.Contains(body, "egress: warp") {
+		t.Error("a node on the preferred egress should not show the failover badge")
+	}
+}
+
 func TestDecommissionAction(t *testing.T) {
 	h, st := newTestHandler(t, nil)
 	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})

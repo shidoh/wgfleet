@@ -35,6 +35,7 @@ func DefaultExitProbes(spec domain.NodeSpec) ExitProbes {
 		HandshakeFresh: handshakeFreshProbe(wgIface),
 		WARPEgress:     warpEgressProbe(egressIface),
 		DNSResolves:    dnsResolvesProbe(dnsListenAddr(spec.DNS)),
+		EgressConfirm:  warpHandshakeProbe(egressIface),
 	}
 }
 
@@ -89,6 +90,31 @@ func warpEgressProbe(iface string) Probe {
 			return fail("egress is not via WARP")
 		}
 		return ok("warp on", since(start))
+	}
+}
+
+// warpHandshakeProbe checks whether the WARP path itself is reachable by reading
+// the wgcf interface's latest handshake (`wg show <iface> latest-handshakes`).
+// wgcf is vanilla WireGuard, so `wg` (not `awg`) reads it. A fresh handshake means
+// WG control packets to the Cloudflare endpoint are getting through; a stale or
+// absent one is the signature of a path/ISP block. Read-only — it
+// never re-registers wgcf, so it cannot churn the node's WARP account.
+func warpHandshakeProbe(iface string) Probe {
+	return func(ctx context.Context) Result {
+		start := now()
+		out, err := runCmd(ctx, "wg", "show", iface, "latest-handshakes")
+		if err != nil {
+			return fail(fmt.Sprintf("wg show %s failed: %v", iface, err))
+		}
+		newest := newestHandshake(out)
+		if newest == 0 {
+			return fail("no WARP handshake")
+		}
+		age := time.Since(time.Unix(newest, 0))
+		if age > HandshakeMaxAge {
+			return fail(fmt.Sprintf("WARP handshake stale (%s old)", age.Round(time.Second)))
+		}
+		return ok(fmt.Sprintf("WARP handshake %s ago", age.Round(time.Second)), since(start))
 	}
 }
 

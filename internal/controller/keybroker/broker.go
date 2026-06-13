@@ -101,8 +101,9 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	}
 
 	spec := domain.NodeSpec{
-		Role:   domain.RoleExit,
-		Egress: egress,
+		Role:        domain.RoleExit,
+		Egress:      egress,
+		EgressChain: egressChain(exit),
 		WGServer: domain.WGServerSpec{
 			ListenPort:  port,
 			AddressPool: exit.AddressPool,
@@ -238,6 +239,26 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 
 	spec.Master = ms
 	return spec, nil
+}
+
+// egressChain builds the exit's egress priority chain (ADR-0017) from its
+// preferred egress plus operator-configured fallbacks: [egress, ...egress_fallback],
+// de-duplicated and keeping the preferred method first. Invalid/duplicate fallbacks
+// are dropped (NodeSpec.Validate rejects anything that slips through). An exit with
+// no fallbacks yields a single-entry chain ⇒ no failover, exactly as before.
+func egressChain(exit config.ExitConfig) []domain.EgressMethod {
+	preferred := domain.EgressMethod(exit.Egress)
+	chain := []domain.EgressMethod{preferred}
+	seen := map[domain.EgressMethod]bool{preferred: true}
+	for _, f := range exit.EgressFallback {
+		m := domain.EgressMethod(f)
+		if seen[m] || !m.Valid() {
+			continue
+		}
+		seen[m] = true
+		chain = append(chain, m)
+	}
+	return chain
 }
 
 // exitWARPMTU returns the MTU for an exit's WARP egress interface: the operator's

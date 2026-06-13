@@ -6,6 +6,8 @@
   <span class="badge {{lower .Node.State}}"><span class="led"></span>{{.Node.State}}</span>
   {{if .Node.Drain}}<span class="badge draining"><span class="led"></span>draining</span>{{end}}
   {{if .Node.Decommission}}<span class="badge decommissioning"><span class="led"></span>decommissioning</span>{{end}}
+  {{if and .HasStatus .Status.EgressBlocked}}<span class="badge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
+  {{if .HasStatus}}{{$e := .Status.ActiveEgress}}{{if and $e (ne $e "warp")}}<span class="badge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{$e}}</span>{{end}}{{end}}
   <span class="actions">
     {{if .CanProvision}}
     <form method="post" action="/nodes/{{.Node.ID}}/provision"

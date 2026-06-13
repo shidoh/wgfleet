@@ -100,3 +100,68 @@ func TestRenderDefaultsFwmark(t *testing.T) {
 		t.Error("expected default fwmark 0x1 when unset")
 	}
 }
+
+func TestManagedPrefsMatchRenderedRules(t *testing.T) {
+	spec := domain.RoutingSpec{
+		EgressInterface: "wgcf",
+		MasterIP:        "203.0.113.1",
+		DirectCIDRs:     []string{"10.0.0.0/8", "192.168.0.0/16"},
+	}
+	prefs := ManagedPrefs(spec)
+	// master + 2 direct CIDRs + fwmark + egress = 5 priorities.
+	if len(prefs) != 5 {
+		t.Fatalf("expected 5 managed prefs, got %d (%v)", len(prefs), prefs)
+	}
+	want := []int{prefMaster, prefDirect0, prefDirect0 + 1, prefFwmark, prefEgress}
+	for i, p := range want {
+		if prefs[i] != p {
+			t.Errorf("pref[%d] = %d, want %d", i, prefs[i], p)
+		}
+	}
+	// Direct-egress spec installs nothing.
+	if got := ManagedPrefs(domain.RoutingSpec{}); got != nil {
+		t.Errorf("direct egress should manage no prefs, got %v", got)
+	}
+}
+
+func TestKernelReflects(t *testing.T) {
+	spec := domain.RoutingSpec{
+		EgressInterface: "wgcf",
+		MasterIP:        "203.0.113.1",
+		DirectCIDRs:     []string{"10.0.0.0/8"},
+	}
+	// All four managed prefs (100 master, 110 direct, 200 fwmark, 300 egress).
+	fullRules := "0:\tfrom all lookup local\n" +
+		"100:\tfrom all to 203.0.113.1 lookup main\n" +
+		"110:\tfrom all to 10.0.0.0/8 lookup main\n" +
+		"200:\tfrom all fwmark 0x1 lookup main\n" +
+		"300:\tfrom all lookup 51820\n" +
+		"32766:\tfrom all lookup main\n"
+	egressRoute := "default dev wgcf scope link\n"
+
+	tests := []struct {
+		name   string
+		rules  string
+		routes string
+		want   bool
+	}{
+		{"all present", fullRules, egressRoute, true},
+		{"egress rule flushed", strings.Replace(fullRules, "300:\tfrom all lookup 51820\n", "", 1), egressRoute, false},
+		{"direct rule flushed", strings.Replace(fullRules, "110:\tfrom all to 10.0.0.0/8 lookup main\n", "", 1), egressRoute, false},
+		{"default route gone", fullRules, "", false},
+		{"wrong egress iface", fullRules, "default dev eth0 scope link\n", false},
+		{"empty kernel", "", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := KernelReflects(spec, tc.rules, tc.routes); got != tc.want {
+				t.Errorf("KernelReflects = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	// Direct-egress spec is trivially reflected regardless of kernel state.
+	if !KernelReflects(domain.RoutingSpec{}, "", "") {
+		t.Error("direct egress spec should always be reflected")
+	}
+}

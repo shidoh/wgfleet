@@ -18,6 +18,8 @@ type AgentMetrics struct {
 	checkUp           *prometheus.GaugeVec   // per self-check: 1 ok, 0 failing
 	driftTotal        *prometheus.CounterVec // per component: drift repairs since start
 	driftResources    prometheus.Gauge       // components repaired in the last pass
+	egressReach       *prometheus.GaugeVec   // info: current egress reachability as a label
+	egressActive      *prometheus.GaugeVec   // info: currently active egress method as a label
 	startTime         prometheus.Gauge
 
 	node string
@@ -54,6 +56,14 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Namespace: namespace, Subsystem: "agent", Name: "drift_resources",
 			Help: "Components that drifted and were repaired in the last reconcile pass.",
 		}),
+		egressReach: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "egress_reachability",
+			Help: "Current egress reachability classification as a label (ok|degraded|blocked); value is always 1. 'blocked' is the censorship-block signal.",
+		}, []string{"state"}),
+		egressActive: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "egress_active",
+			Help: "Currently active egress method as a label (warp|direct|...); value is always 1. Differs from the preferred egress while failed over (ADR-0017).",
+		}, []string{"method"}),
 		startTime: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "start_time_seconds",
 			Help: "Unix time the agent process started.",
@@ -61,7 +71,7 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 	}
 	m.startTime.Set(float64(now.Unix()))
 	reg.MustRegister(m.reconcileTotal, m.reconcileDuration, m.stateInfo, m.checkUp,
-		m.driftTotal, m.driftResources, m.startTime)
+		m.driftTotal, m.driftResources, m.egressReach, m.egressActive, m.startTime)
 	return m
 }
 
@@ -82,6 +92,27 @@ func (m *AgentMetrics) ObserveReconcile(d time.Duration, state domain.NodeState,
 	for _, c := range checks {
 		m.checkUp.WithLabelValues(c.Name).Set(boolToFloat(c.OK))
 	}
+}
+
+// ObserveEgress records the current egress reachability classification as a
+// single-valued info gauge (ok|degraded|blocked). A no-op for the empty class
+// (egress not WARP / nothing classified).
+func (m *AgentMetrics) ObserveEgress(reach domain.EgressReachability) {
+	if reach == "" {
+		return
+	}
+	m.egressReach.Reset()
+	m.egressReach.WithLabelValues(string(reach)).Set(1)
+}
+
+// ObserveEgressActive records the currently active egress method as a
+// single-valued info gauge. A no-op for the empty method.
+func (m *AgentMetrics) ObserveEgressActive(method domain.EgressMethod) {
+	if method == "" {
+		return
+	}
+	m.egressActive.Reset()
+	m.egressActive.WithLabelValues(string(method)).Set(1)
 }
 
 // ObserveDrift records that, on an unchanged desired spec, the named components

@@ -29,6 +29,9 @@ func SpecToProto(s domain.NodeSpec) *pb.NodeSpec {
 	out.Master = masterToProto(s.Master)
 	out.Decommission = s.Decommission
 	out.WarpMtu = int32(s.WARPMTU)
+	for _, m := range s.EgressChain {
+		out.EgressChain = append(out.EgressChain, string(m))
+	}
 	return out
 }
 
@@ -54,6 +57,9 @@ func SpecFromProto(p *pb.NodeSpec) domain.NodeSpec {
 	s.Master = masterFromProto(p.GetMaster())
 	s.Decommission = p.GetDecommission()
 	s.WARPMTU = int(p.GetWarpMtu())
+	for _, m := range p.GetEgressChain() {
+		s.EgressChain = append(s.EgressChain, domain.EgressMethod(m))
+	}
 	return s
 }
 

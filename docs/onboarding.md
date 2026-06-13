@@ -4,6 +4,10 @@ This runbook takes a fresh Ubuntu VM (root SSH only) to a managed wgfleet node.
 It assumes a single controller and the reference two-VM topology (one `master`,
 one `exit`); scale the per-node steps for more.
 
+> Running the controller and the master on the **same** box (no separate VM)?
+> See [colocated-controller-master.md](colocated-controller-master.md) — the
+> master is onboarded by hand (local cert issue) while exits stay SSH-provisioned.
+
 The work splits cleanly in two:
 
 - **OS prep** (`deploy/prepare-node.sh`) — the environmental / kernel-risky bits

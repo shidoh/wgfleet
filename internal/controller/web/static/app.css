@@ -129,6 +129,8 @@ main { padding: 1.75rem 0 4rem; }
 .badge.provisioning, .badge.reconciling { color: var(--provisioning); background: color-mix(in srgb, var(--provisioning) 12%, transparent); }
 .badge.draining { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
 .badge.decommissioning { color: var(--err); background: color-mix(in srgb, var(--err) 10%, transparent); border-color: color-mix(in srgb, var(--err) 30%, transparent); }
+.badge.blocked { color: var(--err); background: color-mix(in srgb, var(--err) 14%, transparent); border-color: color-mix(in srgb, var(--err) 40%, transparent); }
+.badge.failover { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
 
 /* Action buttons (detail head) */
 .detail-head .actions { margin-left: auto; display: flex; gap: 0.5rem; }

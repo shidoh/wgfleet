@@ -463,9 +463,10 @@ type NodeSpec struct {
 	Firewall      *FirewallSpec          `protobuf:"bytes,6,opt,name=firewall,proto3" json:"firewall,omitempty"`
 	Routing       *RoutingSpec           `protobuf:"bytes,7,opt,name=routing,proto3" json:"routing,omitempty"`
 	Exporters     *ExportersSpec         `protobuf:"bytes,8,opt,name=exporters,proto3" json:"exporters,omitempty"`
-	Master        *MasterSpec            `protobuf:"bytes,9,opt,name=master,proto3" json:"master,omitempty"`                    // master nodes only (mihomo data plane); unset for exits
-	Decommission  bool                   `protobuf:"varint,10,opt,name=decommission,proto3" json:"decommission,omitempty"`      // tear the node down (reverse reconcile) instead of converging
-	WarpMtu       int32                  `protobuf:"varint,11,opt,name=warp_mtu,json=warpMtu,proto3" json:"warp_mtu,omitempty"` // exit warp egress: WARP interface MTU; 0 = compute (1440), set when the real WARP path is smaller (an earlier finding: 1320-1420)
+	Master        *MasterSpec            `protobuf:"bytes,9,opt,name=master,proto3" json:"master,omitempty"`                               // master nodes only (mihomo data plane); unset for exits
+	Decommission  bool                   `protobuf:"varint,10,opt,name=decommission,proto3" json:"decommission,omitempty"`                 // tear the node down (reverse reconcile) instead of converging
+	WarpMtu       int32                  `protobuf:"varint,11,opt,name=warp_mtu,json=warpMtu,proto3" json:"warp_mtu,omitempty"`            // exit warp egress: WARP interface MTU; 0 = compute (1440), set when the real WARP path is smaller (an earlier finding: 1320-1420)
+	EgressChain   []string               `protobuf:"bytes,12,rep,name=egress_chain,json=egressChain,proto3" json:"egress_chain,omitempty"` // egress priority chain for censorship-adaptive failover (ADR-0017); [0] = preferred (== egress), later = fallbacks; empty ⇒ no failover
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -575,6 +576,13 @@ func (x *NodeSpec) GetWarpMtu() int32 {
 		return x.WarpMtu
 	}
 	return 0
+}
+
+func (x *NodeSpec) GetEgressChain() []string {
+	if x != nil {
+		return x.EgressChain
+	}
+	return nil
 }
 
 // MasterSpec is the master node's mihomo data plane.
@@ -1914,7 +1922,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\n" +
 	"latency_ms\x18\x04 \x01(\x03R\tlatencyMs\"-\n" +
 	"\x0fReportStatusAck\x12\x1a\n" +
-	"\breceived\x18\x01 \x01(\rR\breceived\"\xd7\x03\n" +
+	"\breceived\x18\x01 \x01(\rR\breceived\"\xfa\x03\n" +
 	"\bNodeSpec\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12\x16\n" +
 	"\x06egress\x18\x02 \x01(\tR\x06egress\x125\n" +
@@ -1927,7 +1935,8 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x06master\x18\t \x01(\v2\x16.wgfleet.v1.MasterSpecR\x06master\x12\"\n" +
 	"\fdecommission\x18\n" +
 	" \x01(\bR\fdecommission\x12\x19\n" +
-	"\bwarp_mtu\x18\v \x01(\x05R\awarpMtu\"\x9e\x03\n" +
+	"\bwarp_mtu\x18\v \x01(\x05R\awarpMtu\x12!\n" +
+	"\fegress_chain\x18\f \x03(\tR\vegressChain\"\x9e\x03\n" +
 	"\n" +
 	"MasterSpec\x12!\n" +
 	"\fbind_address\x18\x01 \x01(\tR\vbindAddress\x12\x1d\n" +

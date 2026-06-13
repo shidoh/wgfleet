@@ -30,6 +30,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/shidoh/wgfleet/internal/agent/client"
+	egressfo "github.com/shidoh/wgfleet/internal/agent/egress"
 	"github.com/shidoh/wgfleet/internal/agent/exit"
 	"github.com/shidoh/wgfleet/internal/agent/health"
 	"github.com/shidoh/wgfleet/internal/agent/master"
@@ -165,6 +166,15 @@ type agent struct {
 	// that changes resources while this is unchanged is config drift (the world
 	// diverged), not a rollout (a new spec). Empty until the first applied pass.
 	lastSpecPrint string
+
+	// egress classifies WARP egress reachability across passes (detect-only
+	// censorship-block signal); it tracks the consecutive-failure streak so a
+	// transient blip reads as degraded and only a confirmed path block as blocked.
+	egress health.EgressClassifier
+
+	// egressSel selects the active egress within the node's chain, switching to a
+	// fallback on a confirmed block and back on recovery (ADR-0017).
+	egressSel egressfo.Selector
 }
 
 // Reconcile-pass time budgets. A first-run apply legitimately takes minutes — it
@@ -224,6 +234,16 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		return a.teardown(ctx, plan)
 	}
 
+	// Censorship-adaptive failover (ADR-0017): converge to the agent-selected active
+	// egress within the chain, not blindly to the controller's preferred one. The
+	// selector defaults to the preferred egress until a confirmed block demotes it;
+	// EffectiveSpec is a no-op while the active egress is the preferred one.
+	activeEgress := spec.Egress
+	if a.role != domain.RoleMaster {
+		activeEgress = a.egressSel.Active(spec.EgressMethods())
+		spec = egressfo.EffectiveSpec(spec, activeEgress)
+	}
+
 	a.log.Info("reconcile pass", "mode", mode, "state", state,
 		"peers", len(spec.Peers), "egress", spec.Egress,
 		"wg_port", spec.WGServer.ListenPort, "mtu", spec.WGServer.MTU)
@@ -246,6 +266,40 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	// node moves to Ready/Degraded/Error rather than staying Reconciling.
 	checks := a.healthChecks(spec)
 	state, results := health.Evaluate(ctx, reconcileErr, checks)
+
+	// Egress reachability classification (detect-only censorship-block signal): on
+	// a persistent warp-egress failure, actively confirm whether the WARP path
+	// itself is reachable, telling an ISP/DPI block from a transient blip. It adds
+	// an egress-reachability self-check (crosses the wire ⇒ UI badge + metric) but
+	// does NOT change the lifecycle state — the node is already Degraded on a failed
+	// egress check; this only adds the reason.
+	var egressClass domain.EgressReachability
+	if a.role != domain.RoleMaster && reconcileErr == nil {
+		if class, chk := a.egress.Classify(ctx, results, health.DefaultExitProbes(spec).EgressConfirm); chk != nil {
+			egressClass = class
+			results = append(results, *chk)
+			if class == domain.EgressReachBlocked {
+				a.log.Warn("egress classified blocked (likely ISP/DPI block)", "detail", chk.Detail)
+			}
+			if a.metrics != nil {
+				a.metrics.ObserveEgress(class)
+			}
+		}
+
+		// Failover decision (ADR-0017): demote to a fallback on a confirmed block,
+		// promote back to the preferred egress after sustained recovery. The choice
+		// takes effect next pass via EffectiveSpec. The recovery probe tests the
+		// still-up wgcf interface, so it works even while failed over to direct.
+		next := a.egressSel.Step(ctx, spec.EgressMethods(), egressClass,
+			func(c context.Context) bool { return health.DefaultExitProbes(spec).WARPEgress(c).OK })
+		if next != activeEgress {
+			a.log.Info("egress failover", "from", activeEgress, "to", next, "chain", spec.EgressMethods())
+		}
+		results = append(results, domain.HealthCheck{Name: domain.CheckEgressActive, OK: true, Detail: string(next)})
+		if a.metrics != nil {
+			a.metrics.ObserveEgressActive(next)
+		}
+	}
 
 	// Drift detection: changes applied while the desired spec is UNCHANGED from
 	// the last applied pass mean the node diverged and we repaired it (config

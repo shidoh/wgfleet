@@ -65,7 +65,8 @@ fleet:
   exits:
     - name: exit-de-1
       region: de
-      egress: warp # warp | direct
+      egress: warp # warp | direct (preferred)
+      # egress_fallback: [direct] # censorship-adaptive failover (ADR-0017): when warp is blocked (ISP/DPI), the agent auto-switches to direct and back when warp recovers. Empty/unset = no failover. Exposes the node's datacenter IP while failed over.
       # warp_mtu: 1400 # pin the WARP interface MTU when the real path is < 1500 (an earlier finding: 1320-1420); 0/unset = computed 1440. Also lowers the client MTU so packets never fragment at egress.
       # public_ip: 198.51.100.7 # WG endpoint the master dials this exit at; defaults to ssh.host. Set explicitly when SSH goes via a bastion or a forwarded local port (e.g. Lima).
       address_pool: 10.81.0.0/24
