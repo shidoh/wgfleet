@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
@@ -147,32 +148,35 @@ func (p wgEasyPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 	if spec.WGServer.AWG == nil {
 		return []reconcile.Action{reconcile.NoChangeAction("wg-easy AWG", "no client AWG params")}, nil
 	}
-	desired := wgeasy.ColumnsFromParams(*spec.WGServer.AWG)
+	// Reconcile the obfuscation params AND the transport columns (port, pool, MTU):
+	// INIT_* env only seed those on first DB creation, so a manifest change to the
+	// client port/pool would never apply on a running node without writing the DB.
+	desired := wgeasy.ColumnsFromSpec(spec.WGServer)
 	display := wgeasy.RenderUpdateSQL(p.iface, desired)
 
 	// wg-easy must be set up first; if its DB is absent, surface a pending notice
 	// rather than failing the whole pass (the DB appears once wg-easy runs).
 	if _, err := os.Stat(p.dbPath); os.IsNotExist(err) {
-		return []reconcile.Action{reconcile.NoChangeAction("wg-easy AWG",
+		return []reconcile.Action{reconcile.NoChangeAction("wg-easy interface",
 			"pending: wg-easy DB not found at "+p.dbPath+" (set up wg-easy first)")}, nil
 	}
 
-	current, found, err := wgeasy.ReadAWG(ctx, p.dbPath, p.iface)
+	current, found, err := wgeasy.ReadInterface(ctx, p.dbPath, p.iface)
 	if err != nil {
 		return nil, err
 	}
 	if !found {
-		return []reconcile.Action{reconcile.NoChangeAction("wg-easy AWG",
+		return []reconcile.Action{reconcile.NoChangeAction("wg-easy interface",
 			"pending: wg-easy interface row not created yet")}, nil
 	}
 	if current == desired {
-		return []reconcile.Action{reconcile.NoChangeAction("wg-easy AWG", "interface obfuscation already current")}, nil
+		return []reconcile.Action{reconcile.NoChangeAction("wg-easy interface", "interface settings already current")}, nil
 	}
 
 	dbPath, iface := p.dbPath, p.iface
-	update := reconcile.CustomAction(reconcile.ActionUpdate, "wg-easy interface AWG",
-		"set client-facing obfuscation in wg-easy DB", display,
-		func(ctx context.Context) error { return wgeasy.UpdateAWG(ctx, dbPath, iface, desired) })
+	update := reconcile.CustomAction(reconcile.ActionUpdate, "wg-easy interface",
+		"set client-facing port/pool/MTU + obfuscation in wg-easy DB", display,
+		func(ctx context.Context) error { return wgeasy.UpdateInterface(ctx, dbPath, iface, desired) })
 
 	// wg-easy regenerates its .conf from the DB on (re)start.
 	return []reconcile.Action{update, composeRestart(p.compose, "wg-easy")}, nil
@@ -289,6 +293,9 @@ type masterNATPlanner struct {
 	path        string
 	clientIface string
 	egressIface string
+	// loaded reports whether the live kernel currently has the master NAT table.
+	// nil ⇒ a real `nft list table ip wgfleet_master` probe; tests inject a stub.
+	loaded func() bool
 }
 
 func (masterNATPlanner) Component() string { return "master NAT (nftables)" }
@@ -316,10 +323,34 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 		return nil, err
 	}
 	actions := []reconcile.Action{file}
-	if file.Changes() {
+	switch {
+	case file.Changes():
 		actions = append(actions, reconcile.ExecAction("apply master NAT atomically", "nft", "-f", p.path))
-	} else {
+	case !p.isLoaded():
+		// Ruleset unchanged but the kernel no longer has the table — a reboot cleared
+		// nft state, or someone flushed it by hand. Reload to self-heal (ADR-0015
+		// live-kernel drift repair, mirroring routingPlanner). Without this the master
+		// silently runs with no DNAT/MASQUERADE/drop-QUIC after a reboot while health
+		// checks still pass: a "Ready but broken" client ingress.
+		actions = append(actions, reconcile.ExecAction("reload master NAT (kernel table missing)", "nft", "-f", p.path))
+	default:
 		actions = append(actions, reconcile.NoChangeAction("nft -f", "ruleset already loaded"))
 	}
 	return actions, nil
+}
+
+func (p masterNATPlanner) isLoaded() bool {
+	if p.loaded == nil {
+		return masterNATLoaded()
+	}
+	return p.loaded()
+}
+
+// masterNATLoaded is the real kernel probe behind masterNATPlanner.isLoaded:
+// `nft list table ip wgfleet_master` succeeds only when the table is present.
+// Any exec error (table absent, non-Linux dev box, missing nft) reports "not
+// loaded", so the planner re-applies — harmless in plan mode, self-healing on a
+// real node.
+func masterNATLoaded() bool {
+	return exec.Command("nft", "list", "table", "ip", netfw.MasterNATTable).Run() == nil
 }

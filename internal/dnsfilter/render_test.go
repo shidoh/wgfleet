@@ -47,6 +47,23 @@ func TestRenderBlockyBindsLoopbackAndMgmtOnly(t *testing.T) {
 	if !strings.Contains(out, "zerotier.com") || !strings.Contains(out, "*.amnezia.org") {
 		t.Errorf("platform allowlist missing:\n%s", out)
 	}
+
+	// CRITICAL: the security allowlist must be an INLINE source — a single list
+	// entry holding all domains newline-joined — NOT one bare-string entry per
+	// domain. blocky reads each entry as a source reference; a bare domain becomes
+	// `file://domain`, fails to open, and the group loads empty (control plane
+	// unprotected). See the live `file://zerotier.com` open-failure that motivated
+	// this. So: exactly ONE element, a string containing every domain.
+	blocking, _ := cfg["blocking"].(map[string]any)
+	allow, _ := blocking["allowlists"].(map[string]any)
+	sec, _ := allow["security"].([]any)
+	if len(sec) != 1 {
+		t.Fatalf("security allowlist must be a single inline source, got %d entries: %v", len(sec), sec)
+	}
+	inline, ok := sec[0].(string)
+	if !ok || !strings.Contains(inline, "\n") || !strings.Contains(inline, "zerotier.com") {
+		t.Errorf("security allowlist must be a newline-joined inline block, got %q", sec[0])
+	}
 }
 
 func TestRenderBlockyDefaultsUpstreamsAndBootstrap(t *testing.T) {

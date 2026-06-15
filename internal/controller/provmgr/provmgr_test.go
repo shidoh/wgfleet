@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -167,6 +169,58 @@ func TestTriggerAsyncRejectsUnprovisionable(t *testing.T) {
 	m, _ := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) { return readyMock(), nil })
 	if err := m.TriggerAsync("ghost"); err == nil {
 		t.Error("unknown node should be rejected")
+	}
+}
+
+func TestUpgradeAgentUploadsBinaryAndRestarts(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "wgfleet-agent")
+	if err := os.WriteFile(bin, []byte("\x7fELF-fake-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mock := provisioner.NewMockRunner()
+	m, _ := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) { return mock, nil })
+	m.opts.AgentBinPath = bin
+
+	rep, err := m.UpgradeAgent(context.Background(), "exit-de-1", provisioner.ModeApply)
+	if err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+	if len(rep.Plan.Steps) == 0 {
+		t.Fatal("expected upgrade steps")
+	}
+	if got := mock.Uploaded["/usr/local/bin/wgfleet-agent"]; string(got) != "\x7fELF-fake-binary" {
+		t.Errorf("agent binary not uploaded, got %q", got)
+	}
+	if !mock.RanCommand("systemctl restart wgfleet-agent") {
+		t.Error("agent was not restarted")
+	}
+	// The upgrade must be lightweight: no full bootstrap (no hardening/deps).
+	if mock.RanCommand("sshd") || mock.RanCommand("get.docker.com") {
+		t.Error("upgrade should not re-run full bootstrap steps")
+	}
+}
+
+func TestUpgradeAgentRequiresBinary(t *testing.T) {
+	mock := provisioner.NewMockRunner()
+	m, _ := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) { return mock, nil })
+	// No AgentBinPath configured.
+	if _, err := m.UpgradeAgent(context.Background(), "exit-de-1", provisioner.ModeApply); err == nil {
+		t.Error("upgrade without a configured binary should error")
+	}
+}
+
+func TestUpgradeAgentPlanModeChangesNothing(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "wgfleet-agent")
+	_ = os.WriteFile(bin, []byte("bin"), 0o755)
+	mock := provisioner.NewMockRunner()
+	m, _ := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) { return mock, nil })
+	m.opts.AgentBinPath = bin
+
+	if _, err := m.UpgradeAgent(context.Background(), "exit-de-1", provisioner.ModePlan); err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(mock.Ran) != 0 || len(mock.Uploaded) != 0 {
+		t.Errorf("plan mode must not touch the node: ran=%v uploaded=%v", mock.Ran, mock.Uploaded)
 	}
 }
 

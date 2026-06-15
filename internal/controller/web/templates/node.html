@@ -8,12 +8,20 @@
   {{if .Node.Decommission}}<span class="badge decommissioning"><span class="led"></span>decommissioning</span>{{end}}
   {{if and .HasStatus .Status.EgressBlocked}}<span class="badge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
   {{if .HasStatus}}{{$e := .Status.ActiveEgress}}{{if and $e (ne $e "warp")}}<span class="badge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{$e}}</span>{{end}}{{end}}
+  {{if .WireSkew}}<span class="badge blocked" title="{{.WireSkew}}"><span class="led"></span>version skew</span>{{end}}
   <span class="actions">
     {{if .CanProvision}}
     <form method="post" action="/nodes/{{.Node.ID}}/provision"
           onsubmit="return confirm('Provision {{.Node.Name}}? SSH-bootstrap the node and install the agent.')">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <button class="btn go">Provision</button>
+    </form>
+    {{end}}
+    {{if .CanUpgrade}}
+    <form method="post" action="/nodes/{{.Node.ID}}/upgrade"
+          onsubmit="return confirm('Upgrade the agent on {{.Node.Name}}? Upload the new binary and restart the agent (data plane survives the restart).')">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="btn">Upgrade agent</button>
     </form>
     {{end}}
     {{if .Node.Drain}}
@@ -54,6 +62,7 @@
       <dt>Mgmt addr</dt><dd>{{or .Node.MgmtAddr "—"}}</dd>
       <dt>Public IP</dt><dd>{{or .Node.PublicIP "—"}}</dd>
       <dt>Public key</dt><dd class="dim">{{or .Node.PublicKey "— (not registered)"}}</dd>
+      <dt>Agent</dt><dd class="dim">{{if .Node.AgentVersion}}{{.Node.AgentVersion}} (wire v{{.Node.WireVersion}}){{else}}— (not reported){{end}}</dd>
       <dt>Created</dt><dd class="dim">{{absTime .Node.CreatedAt}}</dd>
       <dt>Last seen</dt><dd class="dim">{{relTime .Node.LastSeen}}</dd>
       {{if .WGEasyURL}}<dt>wg-easy</dt><dd><a class="extlink" href="{{.WGEasyURL}}" target="_blank" rel="noopener noreferrer">client admin UI ↗</a></dd>{{end}}

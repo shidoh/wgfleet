@@ -21,10 +21,24 @@ import (
 // the intent is still applied.
 const EgressTable = 51820
 
-// fwmarkClient is the default fwmark for client-egress packets when the spec
+// fwmarkClient is the default fwmark for WG handshake/reply packets when the spec
 // does not set one. Marking is done by source port in nftables mangle, not by
-// CONNMARK — CONNMARK picked up stray marks from conntrack.
+// CONNMARK — CONNMARK picked up stray marks from conntrack. The nft
+// mangle rule that actually SETS this mark is rendered by internal/netfw (it owns
+// the node's nft ruleset and knows the WG port); this package only adds the
+// matching `ip rule fwmark <mark> lookup main` so the two must agree on the value.
 const fwmarkClient = 0x1
+
+// EffectiveFwMark returns the fwmark a node uses to keep WG handshake/reply
+// traffic on the main table: the spec's value, or the default. Both the routing
+// ip-rule (here) and the nft mangle rule (netfw) resolve it through this, so the
+// mark that is SET matches the mark that is matched.
+func EffectiveFwMark(r domain.RoutingSpec) int {
+	if r.FwMark != 0 {
+		return r.FwMark
+	}
+	return fwmarkClient
+}
 
 // ip-rule priorities. Each logical rule owns a fixed priority so it can be
 // replaced by a delete-by-pref then add: deleting by priority clears whatever
@@ -66,10 +80,7 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 		// rule set whose priorities would collide with the fwmark rule.
 		return nil, fmt.Errorf("routing: %d direct CIDRs exceeds the max of %d (would collide with the fwmark rule)", n, MaxDirectCIDRs)
 	}
-	mark := spec.FwMark
-	if mark == 0 {
-		mark = fwmarkClient
-	}
+	mark := EffectiveFwMark(spec)
 
 	var steps []Step
 

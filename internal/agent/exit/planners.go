@@ -64,16 +64,29 @@ func ifaceName(confPath string) string {
 
 // --- firewall ---
 
-type firewallPlanner struct{ path string }
+type firewallPlanner struct {
+	path string
+	// loaded reports whether the live kernel has the exit firewall table.
+	// nil ⇒ a real `nft list table inet wgfleet` probe; tests inject a stub.
+	loaded func() bool
+}
 
 func (firewallPlanner) Component() string { return "firewall (nftables)" }
 
 func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
-	ruleset, err := netfw.RenderRuleset(netfw.RenderInput{
+	in := netfw.RenderInput{
 		Firewall: spec.Firewall,
 		Role:     spec.Role,
 		DropQUIC: spec.Role == domain.RoleMaster,
-	})
+	}
+	// On an egress-routed exit, mark this node's WG-server reply/handshake packets
+	// so the routing `ip rule fwmark` keeps them off the WARP interface (earlier findings
+	// ). The mark MUST match the routing ip-rule's, so both resolve it the same
+	// way. Direct egress ⇒ no egress interface ⇒ no mark needed.
+	if spec.Routing.EgressInterface != "" {
+		in.WGReplyMark = routing.EffectiveFwMark(spec.Routing)
+	}
+	ruleset, err := netfw.RenderRuleset(in)
 	if err != nil {
 		return nil, err
 	}
@@ -82,14 +95,34 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 		return nil, err
 	}
 	actions := []reconcile.Action{file}
-	// Only reload nftables when the ruleset actually changed; reloading is
-	// idempotent but showing it as a change on every pass would be noise.
-	if file.Changes() {
+	switch {
+	case file.Changes():
 		actions = append(actions, reconcile.ExecAction("apply ruleset atomically", "nft", "-f", p.path))
-	} else {
+	case !p.isLoaded():
+		// Ruleset unchanged but the kernel lost the table — a reboot, a manual flush,
+		// or a re-provision that re-applied the baseline. Reload to self-heal (ADR-0015
+		// pattern, mirroring masterNATPlanner/routingPlanner). Without this the exit
+		// would silently run with no whitelist/AS-blacklist while health checks pass.
+		actions = append(actions, reconcile.ExecAction("reload firewall (kernel table missing)", "nft", "-f", p.path))
+	default:
 		actions = append(actions, reconcile.NoChangeAction("nft -f", "ruleset already loaded"))
 	}
 	return actions, nil
+}
+
+func (p firewallPlanner) isLoaded() bool {
+	if p.loaded == nil {
+		return firewallLoaded()
+	}
+	return p.loaded()
+}
+
+// firewallLoaded is the real kernel probe behind firewallPlanner.isLoaded:
+// `nft list table inet wgfleet` succeeds only when the table is present. Any exec
+// error (table absent, non-Linux, missing nft) reports "not loaded" so the planner
+// re-applies — harmless in plan mode, self-healing on a real node.
+func firewallLoaded() bool {
+	return exec.Command("nft", "list", "table", "inet", netfw.ExitTable).Run() == nil
 }
 
 // --- wireguard / amneziawg interface ---

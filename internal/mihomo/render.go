@@ -30,8 +30,10 @@ const DefaultRedirPort = 7895
 // (the master reaches GitHub on its own RU/direct path, not through an exit).
 const (
 	externalUIDir = "ui" // relative to mihomo's -d dir ⇒ /etc/mihomo/ui; served at /ui
-	// zashboard latest release (matches the operator's production config).
-	externalUIURL = "https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip"
+	// DefaultDashboardURL is the built-in dashboard source (zashboard latest,
+	// matches the operator's production config). Operators can override it per
+	// master (MasterSpec.DashboardURL) with a mirror reachable from their network.
+	DefaultDashboardURL = "https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip"
 )
 
 // GEO database sources. The default mihomo geox URLs point at GitHub raw, which is
@@ -123,12 +125,23 @@ func RenderConfig(in RenderInput) (string, error) {
 	}
 	if in.Spec.ExternalController != "" {
 		base["external-controller"] = in.Spec.ExternalController
-		// Serve the web dashboard alongside the API. Set an API `secret` via
-		// mihomo overrides to authenticate it — the controller binds the mgmt/ZT
-		// overlay, but the RESTful API is otherwise unauthenticated.
-		base["external-ui"] = externalUIDir
-		base["external-ui-url"] = externalUIURL
-		base["external-ui-download-detour"] = "DIRECT"
+		// Serve the web dashboard alongside the API unless the operator disabled it.
+		// Set an API `secret` via mihomo overrides to authenticate it — the controller
+		// binds the mgmt/ZT overlay, but the RESTful API is otherwise unauthenticated.
+		// The dashboard is opt-out because mihomo downloads the UI zip on first run and
+		// will FAIL (and can panic) if the source host is unreachable — a real risk
+		// where the default host is blocked. Operators there set a reachable mirror
+		// (DashboardURL) or disable it (DashboardDisabled).
+		if !in.Spec.DashboardDisabled {
+			url := in.Spec.DashboardURL
+			if url == "" {
+				url = DefaultDashboardURL
+			}
+			base["external-ui"] = externalUIDir
+			base["external-ui-url"] = url
+		}
+		// Note: mihomo has no per-download detour for the external UI (no such config
+		// key exists in RawConfig), so we do not emit one — it would be silently ignored.
 	}
 
 	// GEOSITE/GEOIP rules need geo databases. Configure a reliable mirror and the
@@ -183,11 +196,10 @@ func renderProxies(in RenderInput) (proxies []any, lbMembers []string, err error
 			return nil, nil, fmt.Errorf("exit %q: missing server public key", t.Name)
 		}
 		peer := map[string]any{
-			"server":               host,
-			"port":                 port,
-			"public-key":           t.ServerPublicKey,
-			"allowed-ips":          []any{"0.0.0.0/0"},
-			"persistent-keepalive": 25,
+			"server":      host,
+			"port":        port,
+			"public-key":  t.ServerPublicKey,
+			"allowed-ips": []any{"0.0.0.0/0"},
 		}
 		if t.PresharedKey != "" {
 			peer["pre-shared-key"] = t.PresharedKey
@@ -198,7 +210,11 @@ func renderProxies(in RenderInput) (proxies []any, lbMembers []string, err error
 			"ip":          t.TunnelIP,
 			"private-key": in.PrivateKey,
 			"udp":         true,
-			"peers":       []any{peer},
+			// Keepalive is a PROXY-level field in mihomo (WireGuardOption); the peer
+			// struct has no such field, so a peer-level value is silently dropped and
+			// the master↔exit tunnel would idle out behind NAT.
+			"persistent-keepalive": 25,
+			"peers":                []any{peer},
 		}
 		if t.MTU > 0 {
 			proxy["mtu"] = t.MTU
@@ -245,15 +261,16 @@ func loadBalanceGroup(names []string, strategy string) map[string]any {
 	if strategy == "" {
 		strategy = "round-robin"
 	}
+	// `tolerance` is read only by url-test groups, never load-balance, so we do not
+	// emit it here — the health check (url/interval) is what drives load-balance.
 	return map[string]any{
-		"name":      "wg-best",
-		"type":      "load-balance",
-		"strategy":  strategy,
-		"proxies":   toAnySlice(names),
-		"url":       "http://cp.cloudflare.com/generate_204",
-		"interval":  60,
-		"lazy":      false,
-		"tolerance": 50,
+		"name":     "wg-best",
+		"type":     "load-balance",
+		"strategy": strategy,
+		"proxies":  toAnySlice(names),
+		"url":      "http://cp.cloudflare.com/generate_204",
+		"interval": 60,
+		"lazy":     false,
 	}
 }
 

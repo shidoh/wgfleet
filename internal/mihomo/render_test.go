@@ -88,11 +88,26 @@ func TestRenderConfigStructure(t *testing.T) {
 		t.Errorf("exit-a jc = %v, want 7 (per-tunnel local param)", awg["jc"])
 	}
 
+	// Keepalive is a PROXY-level field in mihomo, not a peer field — assert it sits
+	// on the proxy and NOT inside the peer (where mihomo would silently drop it).
+	if p0["persistent-keepalive"] != 25 {
+		t.Errorf("proxy[0] persistent-keepalive = %v, want 25 (proxy-level)", p0["persistent-keepalive"])
+	}
+	peers, _ := p0["peers"].([]any)
+	peer0, _ := peers[0].(map[string]any)
+	if _, ok := peer0["persistent-keepalive"]; ok {
+		t.Errorf("peer must NOT carry persistent-keepalive (no such mihomo peer field): %+v", peer0)
+	}
+
 	// Load-balance group over both exits.
 	groups, _ := cfg["proxy-groups"].([]any)
 	g0, _ := groups[0].(map[string]any)
 	if g0["type"] != "load-balance" || g0["strategy"] != "consistent-hashing" {
 		t.Errorf("LB group wrong: %+v", g0)
+	}
+	// `tolerance` is a url-test-only key; it must not appear on a load-balance group.
+	if _, ok := g0["tolerance"]; ok {
+		t.Errorf("load-balance group must not emit `tolerance` (url-test only): %+v", g0)
 	}
 
 	// Rules: direct-networks + RU geo + MATCH wg-best.
@@ -116,15 +131,16 @@ func TestRenderConfigExternalUIAndGeodata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// External dashboard is served alongside the API, downloaded via DIRECT.
+	// External dashboard is served alongside the API.
 	if cfg["external-ui"] != "ui" {
 		t.Errorf("external-ui = %v, want ui", cfg["external-ui"])
 	}
-	if cfg["external-ui-download-detour"] != "DIRECT" {
-		t.Errorf("external-ui-download-detour = %v, want DIRECT", cfg["external-ui-download-detour"])
+	// mihomo has no external-ui download-detour key — we must NOT emit one.
+	if _, ok := cfg["external-ui-download-detour"]; ok {
+		t.Errorf("external-ui-download-detour must not be emitted (no such mihomo key)")
 	}
-	if s, _ := cfg["external-ui-url"].(string); !strings.Contains(s, "zashboard") {
-		t.Errorf("external-ui-url = %v", cfg["external-ui-url"])
+	if cfg["external-ui-url"] != DefaultDashboardURL {
+		t.Errorf("external-ui-url = %v, want default %q", cfg["external-ui-url"], DefaultDashboardURL)
 	}
 
 	// Geo databases are configured because DirectGeo is set, so the GEOSITE/GEOIP
@@ -141,14 +157,51 @@ func TestRenderConfigExternalUIAndGeodata(t *testing.T) {
 	noGeo := sampleInput()
 	noGeo.Spec.DirectGeo = nil
 	noGeo.Spec.ExternalController = ""
-	out2, _ := RenderConfig(noGeo)
-	var cfg2 map[string]any
-	_ = yaml.Unmarshal([]byte(out2), &cfg2)
-	if _, ok := cfg2["geox-url"]; ok {
+	outNoGeo, _ := RenderConfig(noGeo)
+	var cfgNoGeo map[string]any
+	_ = yaml.Unmarshal([]byte(outNoGeo), &cfgNoGeo)
+	if _, ok := cfgNoGeo["geox-url"]; ok {
 		t.Error("geox-url should be absent when DirectGeo is empty")
 	}
-	if _, ok := cfg2["external-ui"]; ok {
+	if _, ok := cfgNoGeo["external-ui"]; ok {
 		t.Error("external-ui should be absent when external-controller is unset")
+	}
+}
+
+func TestRenderDashboardURLOverrideAndDisable(t *testing.T) {
+	// Operator override → custom mirror URL.
+	in := sampleInput()
+	in.Spec.DashboardURL = "https://mirror.example.ru/zashboard.zip"
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	_ = yaml.Unmarshal([]byte(out), &cfg)
+	if cfg["external-ui-url"] != "https://mirror.example.ru/zashboard.zip" {
+		t.Errorf("override not applied: external-ui-url = %v", cfg["external-ui-url"])
+	}
+	if cfg["external-ui"] != "ui" {
+		t.Errorf("dashboard should still be served with an override: %v", cfg["external-ui"])
+	}
+
+	// Disabled → no external-ui / external-ui-url, but the API still binds.
+	in2 := sampleInput()
+	in2.Spec.DashboardDisabled = true
+	out2, err := RenderConfig(in2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg2 map[string]any
+	_ = yaml.Unmarshal([]byte(out2), &cfg2)
+	if _, ok := cfg2["external-ui"]; ok {
+		t.Errorf("disabled dashboard must not emit external-ui")
+	}
+	if _, ok := cfg2["external-ui-url"]; ok {
+		t.Errorf("disabled dashboard must not emit external-ui-url")
+	}
+	if cfg2["external-controller"] != "10.20.25.254:9090" {
+		t.Errorf("API must still bind when only the dashboard is disabled: %v", cfg2["external-controller"])
 	}
 }
 

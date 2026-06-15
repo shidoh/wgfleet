@@ -98,6 +98,10 @@ message MasterSpec {
   repeated string sniffer_skip = 8;
   CustomConfig custom = 9;
   ComposeSpec compose = 10;
+  // Web dashboard controls (additive; an older agent ignores these and keeps the
+  // default-on dashboard — backward-compatible, so no wire-version bump needed).
+  bool dashboard_disabled = 11;
+  string dashboard_url = 12;
 }
 
 // ComposeSpec is the master's container-stack desired state (wg-easy + mihomo).

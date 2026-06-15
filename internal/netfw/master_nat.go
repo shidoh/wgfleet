@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+// MasterNATTable is the nft table name the master NAT ruleset lives in. Exported
+// so the agent can probe the live kernel for it (live-kernel reload gate) with
+// the exact same name the renderer emits.
+const MasterNATTable = "wgfleet_master"
+
 // MasterNATInput is the context for rendering the master's NAT/mangle ruleset.
 // On the master, client traffic arriving on the client WG interface is DNAT'd to
 // mihomo's redir-port, masqueraded outbound, and QUIC (UDP/443) is dropped so
@@ -34,7 +39,7 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	var b strings.Builder
 	b.WriteString("#!/usr/sbin/nft -f\n")
 	b.WriteString("# Rendered by wgfleet — master NAT (mihomo DNAT + MASQUERADE). Do not edit by hand.\n")
-	b.WriteString("table ip wgfleet_master {\n")
+	fmt.Fprintf(&b, "table ip %s {\n", MasterNATTable)
 
 	b.WriteString("\tchain prerouting {\n")
 	b.WriteString("\t\ttype nat hook prerouting priority dstnat; policy accept;\n")

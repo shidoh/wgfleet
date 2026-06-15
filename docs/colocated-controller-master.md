@@ -64,12 +64,22 @@ sudo zerotier-cli listnetworks  # authorize the node, assign it a stable managed
 
 ### 2. Install both binaries
 
+Co-location runs BOTH binaries on this box, so build both for the VM's
+architecture (`ARCH=amd64` default, `ARCH=arm64` for Graviton/Ampere). Build on a
+dev box and copy, or build on the VM (needs Go 1.26+):
+
 ```bash
-make agent-linux                                   # or build both for your arch
-sudo install -m755 dist/wgfleet-agent      /usr/local/bin/
-sudo install -m755 dist/wgfleet-controller /usr/local/bin/
+make agent-linux      ARCH=amd64     # → dist/wgfleet-agent-linux-amd64
+make controller-linux ARCH=amd64     # → dist/wgfleet-controller-linux-amd64
+sudo install -m755 dist/wgfleet-agent-linux-amd64      /usr/local/bin/wgfleet-agent
+sudo install -m755 dist/wgfleet-controller-linux-amd64 /usr/local/bin/wgfleet-controller
 sudo mkdir -p /etc/wgfleet /var/lib/wgfleet
 ```
+
+Both binaries stamp their build version from git via `-ldflags` (shown by
+`wgfleet-controller --version`); the wire-contract version they speak must match
+between controller and agent (ADR-0019 — for a co-located pair built from the same
+checkout they always do).
 
 ### 3. `controller.yaml`
 
@@ -91,15 +101,23 @@ fleet:
       public_ip: "<public-ip>"  # seeds wg-easy first run (INIT_HOST)
       client_awg: { listen_port: 443, address_pool: 10.80.0.0/24 }
       routing:   { direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16], direct_geo: [RU], balance: health }
+      mihomo:    { dashboard_disabled: false }  # mihomo fetches the web dashboard zip from GitHub on
+                                                # first run; if GitHub is blocked from this box it will
+                                                # FAIL/panic — then set dashboard_disabled: true, or
+                                                # dashboard_url: "<reachable-mirror>".
       compose:   { wg_easy_web_port: 51821 }
   exits:
     - name: exit-de-1           # provisioned later over SSH from this controller
       region: de
       egress: warp
       egress_fallback: [direct] # ADR-0017 censorship-adaptive failover
+      # warp_mtu: 1400          # pin if the real WARP path is < 1500
       address_pool: 10.81.0.0/24
       mgmt_addr: "<exit-mgmt>"
-      ssh: { host: "<exit-public-ip>", user: root, key_path: "~/.ssh/id_ed25519" }
+      ssh: { host: "<exit-public-ip>", port: 22, user: root, key_path: "~/.ssh/id_ed25519", host_key: "ssh-ed25519 AAAA..." }
+      # ssh.port: set it if the exit's SSH is not on 22 / reached via a forwarded port.
+      # ssh.host_key: pin it (ssh-keyscan -t ed25519 <exit-ip>) — bootstrap ships the node's
+      #               mTLS key over SSH, so an unpinned dial lets a MITM capture its identity.
 ```
 
 ### 4. Initialise the CA and issue the master's identity locally
@@ -195,4 +213,21 @@ sudo wgfleet-controller --config /etc/wgfleet/controller.yaml --provision exit-d
 - **One AmneziaWG kernel module** still required on this box for wg-easy's client-facing
   interface — `prepare-node.sh` installs it; don't skip OS prep just because it is "only
   the controller host".
+- **`wg-easy` shows `unhealthy` in `docker ps` — cosmetic.** Its built-in Docker
+  healthcheck runs `wg show`, which cannot enumerate AmneziaWG interfaces. The real
+  signal is the agent's `client-wg` health check (the controller marks the master `Ready`
+  off that). Don't chase the wg-easy container health flag.
+- **Pin a specific mihomo version** (`compose.mihomo_tag`, e.g. `v1.19.27`) for reproducible
+  deploys rather than `:latest` (the default is already pinned). The AmneziaWG obfuscation
+  params are derived safely by the platform — it floors `Jmin ≥ S4` so no junk packet is short
+  enough to trip the unguarded S4-strip in older `amneziawg-go` builds (this was a real
+  crash-loop: `Jmin=22` with `S4=52` panicked mihomo on a 41-byte junk packet; fixed in the
+  derivation, so the mihomo/kernel pairing no longer matters).
+- **mihomo dashboard download is a startup dependency.** mihomo fetches the dashboard zip
+  from GitHub on first run; if GitHub is unreachable from the master it fails and can
+  crash-loop. Set `masters[].mihomo.dashboard_disabled: true` (or a reachable
+  `dashboard_url`) on networks where GitHub is blocked. Default is on.
+- **Convergence takes a pass or two.** The master can only render its mihomo proxies once
+  each exit has registered its public key. Expect the master to sit at `Error`/`Degraded`
+  ("no exit tunnels yet") for ~1–2 reconcile intervals after first start, then go `Ready`.
 ```

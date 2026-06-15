@@ -139,6 +139,33 @@ func BuildPlan(in BootstrapInput) Plan {
 	return Plan{Node: in.Node.Name, Steps: steps}
 }
 
+// BuildUpgradePlan renders the minimal steps to roll a node's agent binary
+// forward: upload the new binary, then restart the service. It deliberately skips
+// the full bootstrap (hardening, deps, overlay, identity) — those are already in
+// place on a provisioned node. The data plane (containers, kernel WG interfaces)
+// survives an agent restart, so no drain is required; the reconcile loop simply
+// blips and resumes against the same desired state.
+func BuildUpgradePlan(in BootstrapInput) Plan {
+	var steps []Step
+	if len(in.AgentBinary) > 0 {
+		steps = append(steps, uploadStep(
+			fmt.Sprintf("upload wgfleet-agent binary (%d bytes)", len(in.AgentBinary)),
+			remoteAgentBin, in.AgentBinary, 0o755, "<binary>"))
+	} else {
+		steps = append(steps, checkStep("agent binary upload (provide via --agent-bin / controller.agent_bin)",
+			"upload "+remoteAgentBin,
+			func(context.Context, Runner) error {
+				return fmt.Errorf("no agent binary configured; set controller.agent_bin")
+			}))
+	}
+	steps = append(steps,
+		// restart picks up the freshly uploaded binary; enable keeps it sticky
+		// across reboots if a manual install ever left it disabled.
+		runStep("restart agent", "systemctl enable wgfleet-agent && systemctl restart wgfleet-agent"),
+	)
+	return Plan{Node: in.Node.Name, Steps: steps}
+}
+
 // wgcfVersion pins the wgcf release the bootstrap installs. Bump deliberately;
 // one PrivateKey = one WARP server, so the binary just registers.
 const wgcfVersion = "2.2.22"

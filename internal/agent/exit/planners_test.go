@@ -29,6 +29,67 @@ func testPaths(t *testing.T) Paths {
 	}
 }
 
+func TestFirewallReloadGate(t *testing.T) {
+	paths := testPaths(t)
+	spec, _ := exitSpec(t)
+
+	loaded := false
+	pl := firewallPlanner{path: paths.NFT, loaded: func() bool { return loaded }}
+
+	// First apply writes the ruleset file (the nft exec fails on a dev box, but the
+	// FileAction runs first).
+	eng := reconcile.NewEngine(nil, pl)
+	_, _ = eng.Reconcile(context.Background(), spec, reconcile.ModeApply)
+	if _, err := os.Stat(paths.NFT); err != nil {
+		t.Fatalf("firewall ruleset not written: %v", err)
+	}
+
+	// File unchanged + kernel table MISSING ⇒ reload.
+	acts, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasChangingSummary(acts, "reload firewall") {
+		t.Errorf("expected a reload action when the kernel table is missing, got %+v", acts)
+	}
+
+	// File unchanged + kernel table PRESENT ⇒ no change.
+	loaded = true
+	acts2, _ := pl.Plan(context.Background(), spec)
+	for _, a := range acts2 {
+		if a.Changes() {
+			t.Errorf("expected no-change when the kernel reflects the ruleset, got %+v", acts2)
+		}
+	}
+}
+
+func TestExitFirewallMarksWGRepliesOnEgress(t *testing.T) {
+	spec, _ := exitSpec(t) // Routing.EgressInterface = "wgcf"
+	acts, err := firewallPlanner{path: testPaths(t).NFT}.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(acts[0].Display, "udp sport 51820 meta mark set") {
+		t.Errorf("egress exit firewall must mark WG replies:\n%s", acts[0].Display)
+	}
+
+	// Direct egress (no egress interface) ⇒ no mark.
+	spec.Routing.EgressInterface = ""
+	acts2, _ := firewallPlanner{path: testPaths(t).NFT}.Plan(context.Background(), spec)
+	if strings.Contains(acts2[0].Display, "meta mark set") {
+		t.Errorf("direct-egress exit must not render a mark rule:\n%s", acts2[0].Display)
+	}
+}
+
+func hasChangingSummary(acts []reconcile.Action, substr string) bool {
+	for _, a := range acts {
+		if a.Changes() && strings.Contains(a.Summary, substr) {
+			return true
+		}
+	}
+	return false
+}
+
 func exitSpec(t *testing.T) (domain.NodeSpec, string) {
 	t.Helper()
 	kp, err := wg.GenerateKeyPair()

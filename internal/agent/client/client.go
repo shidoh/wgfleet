@@ -6,13 +6,16 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"strconv"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/shidoh/wgfleet/internal/api"
 	pb "github.com/shidoh/wgfleet/internal/api/pb/wgfleet/v1"
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/version"
 )
 
 // Client is a controller connection for one agent.
@@ -22,13 +25,38 @@ type Client struct {
 }
 
 // Dial connects to the controller at addr using the given mTLS config. It does
-// not block on connectivity; the first RPC establishes the connection.
+// not block on connectivity; the first RPC establishes the connection. Every RPC
+// carries the agent's build + wire version as metadata so the controller can gate
+// incompatible agents before acting (see internal/api/wire.go).
 func Dial(addr string, tlsCfg *tls.Config) (*Client, error) {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+	conn, err := grpc.NewClient(addr,
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithChainUnaryInterceptor(versionUnaryInterceptor),
+		grpc.WithChainStreamInterceptor(versionStreamInterceptor),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("dial controller %q: %w", addr, err)
 	}
 	return &Client{conn: conn, rpc: pb.NewNodeServiceClient(conn)}, nil
+}
+
+// versionContext appends the agent's wire + build version to the outgoing
+// metadata so the controller can read it on every RPC.
+func versionContext(ctx context.Context) context.Context {
+	return metadata.AppendToOutgoingContext(ctx,
+		api.MDWireVersion, strconv.FormatUint(uint64(api.WireContractVersion), 10),
+		api.MDAgentVersion, version.Short(),
+	)
+}
+
+func versionUnaryInterceptor(ctx context.Context, method string, req, reply any,
+	cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	return invoker(versionContext(ctx), method, req, reply, cc, opts...)
+}
+
+func versionStreamInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn,
+	method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	return streamer(versionContext(ctx), desc, cc, method, opts...)
 }
 
 // Close releases the underlying connection.

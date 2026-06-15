@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/grpcapi"
 	"github.com/shidoh/wgfleet/internal/controller/keybroker"
@@ -37,6 +38,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/controller/sweeper"
 	"github.com/shidoh/wgfleet/internal/controller/web"
 	"github.com/shidoh/wgfleet/internal/metrics"
+	"github.com/shidoh/wgfleet/internal/version"
 )
 
 func main() {
@@ -48,18 +50,27 @@ func main() {
 
 func run() error {
 	var (
-		configPath  = flag.String("config", "/etc/wgfleet/controller.yaml", "path to controller config")
-		logFormat   = flag.String("log-format", "text", "log format: text | json")
-		storePath   = flag.String("store", "", "override controller.store path")
-		initPKI     = flag.Bool("init-pki", false, "generate a CA at the configured pki paths and exit")
-		issueNode   = flag.String("issue-node", "", "issue an mTLS bundle for the given node ID and exit")
-		issueOut    = flag.String("issue-out", "", "output dir for --issue-node (default ./pki/<id>)")
-		provision   = flag.String("provision", "", "SSH-bootstrap the named fleet node, then exit")
-		plan        = flag.Bool("plan", false, "with --provision: dry-run, show the bootstrap plan and change nothing")
-		agentBin    = flag.String("agent-bin", "", "with --provision: path to the wgfleet-agent binary to install")
-		ctlEndpoint = flag.String("controller-endpoint", "", "with --provision: controller mTLS endpoint the agent dials (default controller.listen)")
+		configPath   = flag.String("config", "/etc/wgfleet/controller.yaml", "path to controller config")
+		logFormat    = flag.String("log-format", "text", "log format: text | json")
+		storePath    = flag.String("store", "", "override controller.store path")
+		initPKI      = flag.Bool("init-pki", false, "generate a CA at the configured pki paths and exit")
+		issueNode    = flag.String("issue-node", "", "issue an mTLS bundle for the given node ID and exit")
+		issueOut     = flag.String("issue-out", "", "output dir for --issue-node (default ./pki/<id>)")
+		provision    = flag.String("provision", "", "SSH-bootstrap the named fleet node, then exit")
+		upgradeAgent = flag.String("upgrade-agent", "", "roll the named node's agent binary forward (upload + restart) over SSH, then exit")
+		plan         = flag.Bool("plan", false, "with --provision/--upgrade-agent: dry-run, show the plan and change nothing")
+		agentBin     = flag.String("agent-bin", "", "with --provision/--upgrade-agent: path to the wgfleet-agent binary to install (default controller.agent_bin)")
+		ctlEndpoint  = flag.String("controller-endpoint", "", "with --provision: controller mTLS endpoint the agent dials (default controller.listen)")
+		showVersion  = flag.Bool("version", false, "print build version and exit")
 	)
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("wgfleet-controller", version.String())
+		fmt.Printf("wire-contract version %d (serves v%d..v%d)\n",
+			api.WireContractVersion, api.MinSupportedWire, api.WireContractVersion)
+		return nil
+	}
 
 	setupLogging(*logFormat)
 
@@ -101,6 +112,9 @@ func run() error {
 			agentBin:    *agentBin,
 			ctlEndpoint: *ctlEndpoint,
 		})
+	}
+	if *upgradeAgent != "" {
+		return upgradeAgentNode(cfg, ca, *upgradeAgent, *agentBin, *plan)
 	}
 
 	return serve(cfg, ca)
@@ -181,6 +195,8 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA) error {
 	// Tie async provisioning jobs to the signal context so they abort on shutdown;
 	// Wait() (below) drains them before the store is closed.
 	provMgr.SetBaseContext(ctx)
+	// Let the version gate auto-upgrade a too-old agent by pushing a fresh binary.
+	svc.SetUpgradeTrigger(provMgr)
 
 	var webSrv *http.Server
 	if cfg.Controller.WebUI != "" {

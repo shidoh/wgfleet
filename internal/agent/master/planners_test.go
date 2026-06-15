@@ -32,7 +32,7 @@ func masterSpec(t *testing.T) (domain.NodeSpec, string) {
 	spec := domain.NodeSpec{
 		Role: domain.RoleMaster,
 		WGServer: domain.WGServerSpec{
-			ListenPort: 443, AddressPool: "10.80.0.0/24",
+			ListenPort: 443, AddressPool: "10.80.0.0/24", MTU: 1360,
 		},
 		Master: &domain.MasterSpec{
 			BindAddress:        "10.80.0.1",
@@ -205,9 +205,11 @@ func seedWGEasyDB(t *testing.T, path string) {
 	defer db.Close()
 	if _, err := db.Exec(`CREATE TABLE interfaces_table (
 		name TEXT PRIMARY KEY,
+		port INTEGER DEFAULT 51820, ipv4_cidr TEXT DEFAULT '10.8.0.0/24', mtu INTEGER DEFAULT 1420,
 		j_c INTEGER DEFAULT 7, j_min INTEGER DEFAULT 10, j_max INTEGER DEFAULT 1000,
 		s1 INTEGER DEFAULT 128, s2 INTEGER DEFAULT 56, s3 INTEGER, s4 INTEGER,
-		h1 TEXT, h2 TEXT, h3 TEXT, h4 TEXT, i1 TEXT, private_key TEXT DEFAULT 'PRIV'
+		h1 TEXT, h2 TEXT, h3 TEXT, h4 TEXT,
+		i1 TEXT, i2 TEXT, i3 TEXT, i4 TEXT, i5 TEXT, private_key TEXT DEFAULT 'PRIV'
 	)`); err != nil {
 		t.Fatal(err)
 	}
@@ -254,12 +256,88 @@ func TestWGEasyPlannerUpdatesSeededDB(t *testing.T) {
 
 	// Apply the DB update directly (the restart exec would fail on a dev box),
 	// then re-plan ⇒ no change.
-	if err := wgeasy.UpdateAWG(context.Background(), paths.WGEasyDB, "wg0",
-		wgeasy.ColumnsFromParams(*spec.WGServer.AWG)); err != nil {
+	if err := wgeasy.UpdateInterface(context.Background(), paths.WGEasyDB, "wg0",
+		wgeasy.ColumnsFromSpec(spec.WGServer)); err != nil {
 		t.Fatal(err)
 	}
 	actions2, _ := pl.Plan(context.Background(), spec)
 	if len(actions2) != 1 || actions2[0].Changes() {
 		t.Errorf("second plan should be no-change, got %+v", actions2)
 	}
+}
+
+// TestWGEasyPlannerEnforcesPort proves a manifest port change is pushed into a
+// persisted wg-easy DB (the bug: INIT_PORT is ignored once the DB exists).
+func TestWGEasyPlannerEnforcesPort(t *testing.T) {
+	paths := testPaths(t)
+	seedWGEasyDB(t, paths.WGEasyDB) // seeds port=51820 (wg-easy default)
+	spec, _ := masterSpec(t)        // desired ListenPort=443
+	awg := wg.DeriveAWGParams(wg.TunnelSeed("master-xa-1", "clients", "salt"))
+	spec.WGServer.AWG = &awg
+
+	pl := wgEasyPlanner{dbPath: paths.WGEasyDB, iface: "wg0"}
+	if _, err := pl.Plan(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if err := wgeasy.UpdateInterface(context.Background(), paths.WGEasyDB, "wg0",
+		wgeasy.ColumnsFromSpec(spec.WGServer)); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := wgeasy.ReadInterface(context.Background(), paths.WGEasyDB, "wg0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Port != 443 {
+		t.Errorf("configured client port not enforced in DB: port=%d (want 443)", got.Port)
+	}
+}
+
+// TestMasterNATReloadGate covers the live-kernel reload gate: when the rendered
+// ruleset is unchanged but the kernel no longer has the table (post-reboot), the
+// planner must re-emit `nft -f`; when the kernel reflects it, it must not.
+func TestMasterNATReloadGate(t *testing.T) {
+	paths := testPaths(t)
+	spec, _ := masterSpec(t)
+
+	loaded := false
+	pl := masterNATPlanner{path: paths.NFT, clientIface: "wg0", egressIface: "eth0",
+		loaded: func() bool { return loaded }}
+
+	// First apply writes the ruleset file (the nft exec fails on a dev box, but the
+	// FileAction runs first, so the file lands).
+	eng := reconcile.NewEngine(nil, pl)
+	_, _ = eng.Reconcile(context.Background(), spec, reconcile.ModeApply)
+	if _, err := os.Stat(paths.NFT); err != nil {
+		t.Fatalf("NAT ruleset not written: %v", err)
+	}
+
+	// File unchanged + kernel table MISSING ⇒ reload.
+	acts, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasChangingSummary(acts, "reload master NAT") {
+		t.Errorf("expected a reload action when the kernel table is missing, got %+v", acts)
+	}
+
+	// File unchanged + kernel table PRESENT ⇒ no change.
+	loaded = true
+	acts2, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range acts2 {
+		if a.Changes() {
+			t.Errorf("expected no-change when the kernel reflects the ruleset, got %+v", acts2)
+		}
+	}
+}
+
+func hasChangingSummary(acts []reconcile.Action, substr string) bool {
+	for _, a := range acts {
+		if a.Changes() && strings.Contains(a.Summary, substr) {
+			return true
+		}
+	}
+	return false
 }

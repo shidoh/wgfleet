@@ -44,6 +44,47 @@ func planText(p Plan) string {
 	return b.String()
 }
 
+func TestUpgradePlanIsBinaryAndRestartOnly(t *testing.T) {
+	plan := BuildUpgradePlan(testInput())
+	txt := planText(plan)
+	if !strings.Contains(txt, remoteAgentBin) {
+		t.Errorf("upgrade plan does not upload the agent binary:\n%s", txt)
+	}
+	if !strings.Contains(txt, "restart wgfleet-agent") {
+		t.Errorf("upgrade plan does not restart the agent:\n%s", txt)
+	}
+	// It must NOT re-run bootstrap concerns.
+	for _, forbidden := range []string{"sshd", "nftables", "ZeroTier", "node certificate", "get.docker.com"} {
+		if strings.Contains(txt, forbidden) {
+			t.Errorf("upgrade plan should not include %q:\n%s", forbidden, txt)
+		}
+	}
+}
+
+func TestUpgradeApplyUploadsBinary(t *testing.T) {
+	r := NewMockRunner()
+	p := quietProvisioner()
+	if _, err := p.Upgrade(context.Background(), r, testInput(), ModeApply); err != nil {
+		t.Fatalf("upgrade apply: %v", err)
+	}
+	if _, ok := r.Uploaded[remoteAgentBin]; !ok {
+		t.Errorf("apply did not upload %s", remoteAgentBin)
+	}
+	if !r.RanCommand("restart wgfleet-agent") {
+		t.Error("apply did not restart the agent")
+	}
+}
+
+func TestUpgradeApplyFailsWithoutBinary(t *testing.T) {
+	r := NewMockRunner()
+	p := quietProvisioner()
+	in := testInput()
+	in.AgentBinary = nil
+	if _, err := p.Upgrade(context.Background(), r, in, ModeApply); err == nil {
+		t.Error("upgrade without a binary should fail")
+	}
+}
+
 func TestBootstrapInstallsWgcfAndDocker(t *testing.T) {
 	// A fresh exit VM: docker and wgcf are absent, so each gets its own step.
 	// wgcf is the arch-specific GitHub release (no apt package); docker via its

@@ -12,12 +12,23 @@ PROTO_SRC := $(shell find $(PROTO_DIR) -name '*.proto')
 ARCH      ?= amd64
 DIST      := dist
 
+# Build identity stamped into both binaries via -ldflags. VERSION comes from the
+# nearest git tag (falling back to "dev"); COMMIT is the short SHA with a "-dirty"
+# suffix when the tree has uncommitted changes; DATE is a UTC build timestamp.
+# This is the human/observability version, NOT the wire-compatibility key (that
+# is internal/api.WireContractVersion). See docs/upgrade.md.
+VERSION   ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
+COMMIT    ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)$(shell git diff --quiet 2>/dev/null || echo -dirty)
+DATE      ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+VPKG      := github.com/shidoh/wgfleet/internal/version
+LDFLAGS   := -X $(VPKG).Version=$(VERSION) -X $(VPKG).Commit=$(COMMIT) -X $(VPKG).BuildDate=$(DATE)
+
 .PHONY: all build test race vet fmt lint proto tidy clean agent-linux controller-linux
 
 all: fmt vet test build
 
 build:
-	$(GO) build ./...
+	$(GO) build -ldflags "$(LDFLAGS)" ./...
 
 test:
 	$(GO) test ./...
@@ -47,14 +58,14 @@ proto: $(PROTO_SRC)
 # and portable across distros.
 agent-linux:
 	@mkdir -p $(DIST)
-	GOOS=linux GOARCH=$(ARCH) CGO_ENABLED=0 $(GO) build \
+	GOOS=linux GOARCH=$(ARCH) CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
 		-o $(DIST)/wgfleet-agent-linux-$(ARCH) ./cmd/wgfleet-agent
 	@echo "built $(DIST)/wgfleet-agent-linux-$(ARCH)  (pass to: controller --provision <node> --agent-bin $(DIST)/wgfleet-agent-linux-$(ARCH))"
 
 # Build the Linux controller (useful when co-locating the control plane on a VM).
 controller-linux:
 	@mkdir -p $(DIST)
-	GOOS=linux GOARCH=$(ARCH) CGO_ENABLED=0 $(GO) build \
+	GOOS=linux GOARCH=$(ARCH) CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
 		-o $(DIST)/wgfleet-controller-linux-$(ARCH) ./cmd/wgfleet-controller
 	@echo "built $(DIST)/wgfleet-controller-linux-$(ARCH)"
 

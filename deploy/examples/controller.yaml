@@ -52,6 +52,10 @@ fleet:
         # mirror) when direct_geo is set. The RESTful API is UNAUTHENTICATED by default —
         # set a secret via overrides below (it binds the mgmt/ZT overlay, but anyone on it
         # can otherwise control mihomo).
+        # mihomo downloads the dashboard zip on first run from GitHub; where that host is
+        # blocked, point dashboard_url at a reachable mirror, or turn the dashboard off:
+        # dashboard_url: "https://your-mirror.example/zashboard-dist.zip"
+        # dashboard_disabled: false
         overrides: # deep-merged into the rendered mihomo config.yaml
           log-level: info
           # secret: "set-a-strong-api-secret-here" # authenticates the Clash API + dashboard
@@ -71,12 +75,17 @@ fleet:
         # there); there is no auto-generated password. Prometheus metrics are auto-enabled in
         # wg-easy's DB by the agent (endpoint /metrics/prometheus on the port below).
         # wg_easy_web_port: 44423 # default
-        mihomo_image: "metacubex/mihomo" # default metacubex/mihomo:latest
-        mihomo_tag: "latest"
+        mihomo_image: "metacubex/mihomo" # default metacubex/mihomo:v1.19.27 (pinned)
+        # Pin a specific version, NOT :latest, for reproducible/auditable deploys (#8).
+        # The platform derives crash-safe AmneziaWG params (it floors Jmin >= S4 so junk
+        # packets never underflow older amneziawg-go's S4-strip), so any mihomo/kernel
+        # pairing is fine — the pin is purely for reproducibility.
+        mihomo_tag: "v1.19.27"
         # client_dns: defaults to the exits' mgmt addresses (blocky)
         client_allowed_ips: "1.0.0.0/8,8.0.0.0/7,..." # inverted RFC1918 list for clients
       ssh: # bootstrap target (Phase 0/1 only; key path on the controller host)
         host: 203.0.113.1
+        # port: 22 # SSH port; set it if SSH is not on 22 or reached via a forwarded/bastion port
         user: root
         key_path: /etc/wgfleet/bootstrap_ed25519
         # host_key pins the server's SSH host key (authorized_keys/known_hosts line).
@@ -114,6 +123,7 @@ fleet:
         whitelist: [10.20.0.0/16] # mgmt overlay; real values from local config
       ssh:
         host: 198.51.100.7
+        # port: 22 # set if SSH is not on 22 or via a forwarded/bastion port
         user: root
         key_path: /etc/wgfleet/bootstrap_ed25519
         # host_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA..." # pin to prevent MITM (see master ssh above)

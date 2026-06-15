@@ -149,6 +149,72 @@ func (m *Manager) Provision(ctx context.Context, nodeID string, mode provisioner
 	return provisioner.New(m.log).Provision(ctx, runner, in, mode)
 }
 
+// UpgradeAgent rolls a node's agent binary forward in place (upload + restart)
+// over SSH, synchronously, returning the report. It reuses the node's manifest
+// SSH target — the same channel bootstrap used — so the controller must still
+// have SSH reach to the node. The mTLS identity is already on the node, so unlike
+// Provision this needs no CA work.
+func (m *Manager) UpgradeAgent(ctx context.Context, nodeID string, mode provisioner.Mode) (provisioner.Report, error) {
+	node, _, ok := m.findNode(nodeID)
+	if !ok {
+		return provisioner.Report{}, fmt.Errorf("node %q not found in fleet manifest", nodeID)
+	}
+	if node.SSH.Host == "" || node.SSH.KeyPath == "" {
+		return provisioner.Report{}, fmt.Errorf("node %q has no ssh target", nodeID)
+	}
+	if m.opts.AgentBinPath == "" {
+		return provisioner.Report{}, fmt.Errorf("no agent binary configured (set controller.agent_bin)")
+	}
+	bin, err := os.ReadFile(m.opts.AgentBinPath)
+	if err != nil {
+		return provisioner.Report{}, fmt.Errorf("read agent binary: %w", err)
+	}
+
+	runner, err := m.opts.Dial(node.SSH)
+	if err != nil {
+		return provisioner.Report{}, fmt.Errorf("ssh dial %q: %w", node.Name, err)
+	}
+	defer func() { _ = runner.Close() }()
+
+	in := provisioner.BootstrapInput{Node: node, AgentBinary: bin}
+	return provisioner.New(m.log).Upgrade(ctx, runner, in, mode)
+}
+
+// TriggerUpgrade starts a background agent upgrade for a node, deduped per node.
+// It satisfies grpcapi.UpgradeTrigger so the controller's version gate can roll
+// an incompatible (too-old) agent forward without operator action. It returns an
+// error only for synchronous preconditions (node unknown / not upgradable / a job
+// already in flight).
+func (m *Manager) TriggerUpgrade(nodeID string) error {
+	if !m.Provisionable(nodeID) {
+		return fmt.Errorf("node %q is not upgradable (missing fleet entry or ssh target)", nodeID)
+	}
+	if m.opts.AgentBinPath == "" {
+		return fmt.Errorf("no agent binary configured (set controller.agent_bin)")
+	}
+
+	m.mu.Lock()
+	if m.inflight[nodeID] {
+		m.mu.Unlock()
+		return fmt.Errorf("node %q already has a provisioning/upgrade job in flight", nodeID)
+	}
+	m.inflight[nodeID] = true
+	m.mu.Unlock()
+
+	bg := m.baseCtx
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		defer m.clearInflight(nodeID)
+		if _, err := m.UpgradeAgent(bg, nodeID, provisioner.ModeApply); err != nil {
+			m.log.Error("agent upgrade failed", "node", nodeID, "err", err)
+			return
+		}
+		m.log.Info("agent upgrade applied; restarted agent will re-register", "node", nodeID)
+	}()
+	return nil
+}
+
 // TriggerAsync starts an apply-mode provisioning job in the background. It
 // dedupes concurrent jobs per node, sets the node Provisioning immediately, then
 // transitions it to Reconciling on success (the agent takes over) or Error on

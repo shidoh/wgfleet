@@ -136,6 +136,13 @@ type MihomoConfig struct {
 	SnifferSkip []string          `koanf:"sniffer_skip"` // sniffer skip-domain
 	Overrides   map[string]any    `koanf:"overrides"`    // deep-merged into rendered config.yaml
 	ExtraFiles  []ExtraFileConfig `koanf:"extra_files"`  // additional managed files
+	// DashboardURL overrides the mihomo web-dashboard download source; empty ⇒ the
+	// built-in default (zashboard latest on GitHub). Point it at a reachable mirror
+	// where GitHub is blocked.
+	DashboardURL string `koanf:"dashboard_url"`
+	// DashboardDisabled turns the web dashboard off entirely (mihomo won't try to
+	// download the UI on first run). Default false ⇒ dashboard enabled.
+	DashboardDisabled bool `koanf:"dashboard_disabled"`
 }
 
 // ComposeConfig is the operator-facing master container-stack tuning. Empty
@@ -158,10 +165,23 @@ type ExtraFileConfig struct {
 	Secret  bool   `koanf:"secret"`
 }
 
+// DefaultMasterClientPort is the UDP port the master's client-facing AmneziaWG
+// server listens on when the manifest leaves client_awg.listen_port unset. 443
+// is the least conspicuous choice — client traffic blends with HTTPS.
+const DefaultMasterClientPort = 443
+
 // ClientAWGConfig is the client-facing AmneziaWG listener on a master.
 type ClientAWGConfig struct {
-	ListenPort  int    `koanf:"listen_port"`  // UDP; prefer 443/51820
+	ListenPort  int    `koanf:"listen_port"`  // UDP; 0 ⇒ DefaultMasterClientPort. Prefer 443/51820
 	AddressPool string `koanf:"address_pool"` // CIDR for client addresses
+}
+
+// ClientListenPort returns the configured master client port or the default.
+func (m MasterConfig) ClientListenPort() int {
+	if m.ClientAWG.ListenPort <= 0 {
+		return DefaultMasterClientPort
+	}
+	return m.ClientAWG.ListenPort
 }
 
 // MasterRouting captures the master's geo-routing / load-balancing intent.

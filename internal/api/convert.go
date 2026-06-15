@@ -76,6 +76,8 @@ func masterToProto(m *domain.MasterSpec) *pb.MasterSpec {
 		DirectCidrs:        append([]string(nil), m.DirectCIDRs...),
 		DirectGeo:          append([]string(nil), m.DirectGeo...),
 		SnifferSkip:        append([]string(nil), m.SnifferSkip...),
+		DashboardDisabled:  m.DashboardDisabled,
+		DashboardUrl:       m.DashboardURL,
 		Custom:             customToProto(m.Custom),
 		Compose:            composeToProto(m.Compose),
 	}
@@ -106,6 +108,8 @@ func masterFromProto(m *pb.MasterSpec) *domain.MasterSpec {
 		DirectCIDRs:        append([]string(nil), m.GetDirectCidrs()...),
 		DirectGeo:          append([]string(nil), m.GetDirectGeo()...),
 		SnifferSkip:        append([]string(nil), m.GetSnifferSkip()...),
+		DashboardDisabled:  m.GetDashboardDisabled(),
+		DashboardURL:       m.GetDashboardUrl(),
 		Custom:             customFromProto(m.GetCustom()),
 		Compose:            composeFromProto(m.GetCompose()),
 	}

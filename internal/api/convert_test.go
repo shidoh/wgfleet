@@ -136,6 +136,8 @@ func TestMasterSpecRoundTrip(t *testing.T) {
 			DirectCIDRs:        []string{"10.0.0.0/8"},
 			DirectGeo:          []string{"RU"},
 			SnifferSkip:        []string{"+.themoviedb.org"},
+			DashboardDisabled:  true,
+			DashboardURL:       "https://mirror.example.ru/zashboard.zip",
 			ExitTunnels: []domain.ExitTunnel{
 				{
 					Name: "exit-de-1", Endpoint: "198.51.100.7:51820",
@@ -157,6 +159,10 @@ func TestMasterSpecRoundTrip(t *testing.T) {
 	m := got.Master
 	if m.BindAddress != "10.80.0.1" || m.RedirPort != 7895 || m.Balance != "consistent-hashing" {
 		t.Errorf("master scalars mismatch: %+v", m)
+	}
+	// Dashboard controls must cross the wire (they were lost once — proto field gap).
+	if !m.DashboardDisabled || m.DashboardURL != "https://mirror.example.ru/zashboard.zip" {
+		t.Errorf("dashboard fields lost in round-trip: disabled=%v url=%q", m.DashboardDisabled, m.DashboardURL)
 	}
 	if len(m.ExitTunnels) != 1 {
 		t.Fatalf("exit tunnels = %d", len(m.ExitTunnels))

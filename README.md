@@ -158,30 +158,39 @@ MVP, in active development. Implemented and tested (`go test -race` green):
 | PKI: CA bootstrap, per-node cert issuance, mTLS configs | ✅ | `internal/controller/pki` |
 | Key broker: pubkey registry + topology/NodeSpec rendering | ✅ | `internal/controller/keybroker` |
 | Reconcile engine with first-class dry-run | ✅ | `internal/agent/reconcile` |
-| Exit data plane: awg-quick, wgcf (Table=off/MTU), routing, nftables | ✅ render; ⏳ apply unverified | `internal/agent/exit`, `internal/{wg,egress,routing,netfw}` |
+| Exit data plane: awg-quick, wgcf (Table=off/MTU), routing, nftables | ✅ | `internal/agent/exit`, `internal/{wg,egress,routing,netfw}` |
 | Exit DNS filter: blocky container, override-config, ZT-only binds | ✅ | `internal/dnsfilter`, `internal/compose` |
-| Master data plane: mihomo (proxies+LB+rules), NAT, custom config | ✅ render | `internal/agent/master`, `internal/mihomo` |
+| Master data plane: mihomo (proxies+LB+rules), NAT, custom config | ✅ | `internal/agent/master`, `internal/mihomo` |
 | Master client AWG via wg-easy SQLite DB | ✅ | `internal/wgeasy` |
-| Provisioner: SSH bootstrap (facts, preflight, plan) | ✅ plan; ⏳ live SSH on Linux | `internal/controller/provisioner` |
+| Provisioner: SSH bootstrap (facts, preflight, plan) | ✅ | `internal/controller/provisioner` |
 | Health checks → Ready/Degraded/Error | ✅ | `internal/agent/health` |
 | Web UI: dashboard + drain/undrain/delete actions | ✅ | `internal/controller/web` |
-| Prometheus `/metrics` (controller + agent) | ✅ | `internal/metrics` |
+| Prometheus `/metrics` (controller + agent) + wire/build version info | ✅ | `internal/metrics` |
+| Node upgrade procedure (agent binary roll-forward via SSH) | ✅ | `internal/controller/provisioner`, `internal/controller/provmgr` |
+| Wire-contract versioning (gRPC-metadata gate, auto-upgrade, store migrations) | ✅ | `internal/version`, `internal/api`, `internal/controller/grpcapi` |
+| AmneziaWG parameter generator (S1-S4, H1-H4, per-end Jc/Jmin/Jmax/I1-I5) | ✅ | `internal/wg` |
+| Secrets via SOPS/age (config.SOPSProvider, in-memory CA-key load) | ✅ | `internal/config` |
+| Egress-block detection + censorship-adaptive failover (warp → direct chain) | ✅ | `internal/agent/egress`, `internal/agent/health` |
+| Drift observability + live-kernel drift repair | ✅ | `internal/agent/reconcile`, `internal/routing` |
+| Health-based LB (mihomo native wg-best check) | ✅ | `internal/mihomo` |
 | Graceful drain (LB exclusion) | ✅ | store + keybroker + `internal/mihomo` |
 | Staleness sweep (silent node → Degraded) | ✅ | `internal/controller/sweeper` |
 | Master container lifecycle (compose up/restart) | ✅ | `internal/compose` + master planners |
 | Node teardown / decommission (reverse reconcile) | ✅ | `internal/agent/{exit,master}` teardown |
 | Provisioning from the UI (async) | ✅ | `internal/controller/provmgr` |
 
-**MVP Phase 1 is complete** — full node lifecycle from a blank VM to
-decommission, with observability. **Not yet:** config wipe on teardown, then
-Phase 2+ (drift auto-reconcile, health-based balancing, SOPS/age secrets,
-Reality/VLESS transport, native data plane).
+**MVP Phase 1 is complete.** **Phase 2 is complete** — drift auto-reconcile,
+health-based balancing, AmneziaWG parameter generator (S1-S4, per-end decoy),
+SOPS/age secrets, and auto-MTU calculator. **Phase 3 in progress** — egress-block
+detection and censorship-adaptive failover done; traffic-noise remaining. **Stabilization
+in progress** — upgrade procedure + wire-contract versioning (ADR-0019) complete.
 
-> **Dev-box caveat:** apply-side exec actions (`nft -f`, `awg-quick`, `ip`,
-> `wgcf`, `docker`) and live SSH need a Linux/root node. On the macOS dev box they
-> are rendered and unit-tested via mocks but not executed; an apply there honestly
-> reports `Error` at the first missing tool. All *rendering*, *dry-run*, PKI,
-> transport, store, metrics and UI run fully cross-platform.
+> **Platform note:** apply-side exec actions (`nft -f`, `awg-quick`, `ip`,
+> `wgcf`, `docker`) and live SSH are **validated on Linux** (live 2-VM Ubuntu 24.04
+> ARM64 runs 2026-06-11/12; ~13 real bugs fixed). On the macOS dev box they render
+> and unit-test via mocks but are not executed; an apply there reports `Error` at the
+> first missing tool. All *rendering*, *dry-run*, PKI, transport, store, metrics and
+> UI run fully cross-platform.
 
 ---
 
@@ -224,7 +233,13 @@ wgfleet/
 ├── deploy/
 │   ├── systemd/                unit templates
 │   └── examples/               example controller.yaml / agent.yaml
-└── docs/adr/                   architecture decision records (0001–0009)
+├── internal/version/           build version (stamped via -ldflags at compile)
+├── docs/
+│   ├── adr/                    architecture decision records (0001–0019)
+│   ├── onboarding.md           node provisioning walkthrough
+│   ├── colocated-controller-master.md  co-location on the master (default for small fleets)
+│   ├── secrets-sops.md         SOPS/age secret provider setup
+│   └── upgrade.md              agent binary upgrade procedure + wire-contract versioning
 ```
 
 ---
@@ -241,7 +256,12 @@ make race       # go test -race ./...
 make vet        # go vet ./...
 make fmt        # gofmt -w
 make proto      # regenerate gRPC from proto/ (needs protoc)
+make agent-linux ARCH=amd64     # agent binary for Linux (amd64 | arm64)
+make controller-linux ARCH=amd64 # controller binary for Linux
 ```
+
+The `agent-linux` / `controller-linux` targets produce versioned binaries in
+`dist/` with build version, commit and timestamp stamped via `-ldflags`.
 
 Or directly:
 
@@ -420,15 +440,19 @@ override file values; `WGFLEET_`-prefixed env vars override too (e.g.
 controller:
   listen:  "10.20.25.254:8443"    # gRPC/mTLS API for agents — the mgmt/ZT address agents
                                    # dial; baked into agent configs and the server cert SAN.
-  # advertise: "10.20.25.254:8443"  # only when listen is 0.0.0.0 (controller behind NAT/LB):
-                                   # the address agents actually dial; its host seeds the SAN.
+  advertise: "10.20.25.254:8443"  # when listen differs from the dialable address (e.g. controller
+                                   # behind NAT/gateway). becomes the default endpoint baked into
+                                   # agents and seeds an extra SAN on the server cert.
   webui:   "10.20.25.254:9000"    # read-only dashboard; bind mgmt/ZT only (empty disables)
   metrics: "10.20.25.254:9300"    # Prometheus /metrics; bind mgmt/ZT only (empty disables)
   store:   "/var/lib/wgfleet/state.db"
+  agent_bin: "/usr/local/bin/wgfleet-agent"  # agent binary installed during UI-triggered provisioning (optional)
   staleness_after: 3m              # silent Ready/Reconciling node → Degraded after this (0=default, <0 disables)
   pki:
     ca_cert: "/etc/wgfleet/ca.crt"
     ca_key:  "file:///etc/wgfleet/ca.key"   # CA tooling needs a file:// path; keep 0600 / secret manager
+  secrets:
+    sops_file: "/etc/wgfleet/secrets.enc.yaml"  # enables SOPS/age provider (optional; omit for env:// default)
 
 fleet:
   zerotier_network: "8056c2e21c000001"      # mgmt overlay nodes join at bootstrap
@@ -445,6 +469,8 @@ fleet:
         balance:      health                # round-robin | health
       mihomo:                               # master data-plane tuning + custom-config hooks
         sniffer_skip: ["+.themoviedb.org", "+.cloudfront.net"]  # CDNs that break under sniffing
+        dashboard_url: "https://mirror.example/zashboard"  # override mihomo web-dashboard URL (empty ⇒ default GitHub)
+        dashboard_disabled: false           # set true to disable the web dashboard entirely
         overrides:                          # deep-merged into the rendered mihomo config.yaml
           log-level: info
         extra_files:                        # provisioned alongside config.yaml (mihomo include files)
@@ -456,17 +482,21 @@ fleet:
         wg_easy_image: ghcr.io/wg-easy/wg-easy   # repository (default …:15)
         wg_easy_tag:   "15"                 # explicit tag overrides any tag in the image
         mihomo_image:  metacubex/mihomo
-        mihomo_tag:    latest
+        mihomo_tag:    v1.19.27             # pin a version (NOT :latest) for reproducibility (#8)
       ssh:                                  # bootstrap target (Phase 0/1 only)
         host: 203.0.113.1
+        port: 22                            # SSH port (optional; default 22)
         user: root
         key_path: /etc/wgfleet/bootstrap_ed25519
+        # host_key: "ssh-ed25519 AA..."    # (optional) pin the server SSH host key (strongly recommended)
 
   exits:
     - name: exit-de-1
       region: de
-      egress: warp                          # warp | direct
-      listen_port: 51820                    # WG server port (0 ⇒ 51820)
+      egress: warp                          # preferred egress method: warp | direct
+      egress_fallback: [direct]             # ordered fallbacks for censorship-adaptive failover (ADR-0017)
+      listen_port: 51820                    # WG server port; 0 ⇒ 51820
+      warp_mtu: 0                           # WARP interface MTU; 0 ⇒ computed 1440. Set if real path < 1500
       address_pool: 10.81.0.0/24
       mgmt_addr: 10.20.0.5                 # ZeroTier address (admin/metrics/DNS bind)
       dns_filter: true                      # blocky (Docker); binds loopback + mgmt_addr ONLY
@@ -485,8 +515,10 @@ fleet:
         whitelist: [10.20.0.0/16]
       ssh:
         host: 198.51.100.7
+        port: 22
         user: root
         key_path: /etc/wgfleet/bootstrap_ed25519
+        # host_key: "ssh-ed25519 AA..."
 ```
 
 Every dockerized component (wg-easy, mihomo, blocky) exposes an `image` +
@@ -520,8 +552,13 @@ that are secret use a scheme reference:
 |---|---|
 | `env://NAME` | read from environment variable `NAME` |
 | `file:///path` | read the (trimmed) contents of a `0600` file (group/other-readable files are rejected) |
-| `secret://name` | via the secret provider (MVP: `WGFLEET_SECRET_<NAME>` env; SOPS/age hook later) |
+| `secret://name` | via the configured secret provider: **SOPS/age** (when `controller.secrets.sops_file` is set) or env-backed `WGFLEET_SECRET_<NAME>` |
 | bare value | inline literal (dev only) |
+
+When `controller.secrets.sops_file` is set to a SOPS-encrypted YAML file (age/PGP/KMS),
+`secret://NAME` is resolved by decrypting the file at startup and looking up the key.
+**CA private keys can use `secret://` and are loaded in-memory** (never written to disk);
+the CA cert still reads from a `file://` path. (See `docs/secrets-sops.md` for setup.)
 
 WireGuard private keys are generated and persisted **on the node** (0600) and are
 never sent to the controller. `--state-dir <dir>` relocates them (and all managed
@@ -535,6 +572,7 @@ files) for non-root/dev runs.
 
 | Flag | Default | Description |
 |---|---|---|
+| `--version` | | print build version (Version, Commit, BuildDate) and exit |
 | `--config` | `/etc/wgfleet/controller.yaml` | config path |
 | `--log-format` | `text` | `text` \| `json` |
 | `--store` | (from config) | override `controller.store` |
@@ -542,9 +580,10 @@ files) for non-root/dev runs.
 | `--issue-node <id>` | | issue an mTLS bundle (`node.crt`/`node.key`/`ca.crt`) for a node, then exit |
 | `--issue-out <dir>` | `pki/<id>` | output dir for `--issue-node` |
 | `--provision <node>` | | SSH-bootstrap the named fleet node, then exit |
-| `--plan` | | with `--provision`: dry-run the bootstrap plan |
-| `--agent-bin <path>` | | with `--provision`: agent binary to install |
+| `--plan` | | with `--provision` or `--upgrade-agent`: dry-run, change nothing |
+| `--agent-bin <path>` | (from config) | with `--provision` or `--upgrade-agent`: agent binary to install |
 | `--controller-endpoint <addr>` | (from config) | with `--provision`: endpoint the agent will dial |
+| `--upgrade-agent <node>` | | roll the agent binary forward over SSH on the named node, then exit |
 
 No subcommand flags ⇒ serve the API + UI + metrics until signalled.
 
@@ -552,6 +591,7 @@ No subcommand flags ⇒ serve the API + UI + metrics until signalled.
 
 | Flag | Default | Description |
 |---|---|---|
+| `--version` | | print build version (Version, Commit, BuildDate) and exit |
 | `--config` | `/etc/wgfleet/agent.yaml` | config path |
 | `--log-format` | `text` | `text` \| `json` |
 | `--plan` | | dry-run: render the full plan, change nothing |
@@ -575,21 +615,21 @@ Plan output shows files (with secrets redacted), commands, and DB updates.
 
 ### Web dashboard
 
-`controller.webui` serves a read-only fleet view (bind the ZeroTier address):
+`controller.webui` serves a fleet view (bind the ZeroTier address):
 
 - Fleet list with a per-state summary and live refresh (htmx), state badges.
-- Per-node detail: inventory, latest status + health checks, and a preview of the
-  rendered desired `NodeSpec`.
-- **Provision** action (confirmed POST). Nodes declared in the manifest but not
-  yet provisioned appear as `Pending`; the button SSH-bootstraps them
-  asynchronously (the node goes `Provisioning` → the agent takes over → `Ready`).
-- **Drain → Decommission → Delete** lifecycle (confirmed POSTs):
-  - **Drain** keeps the node a configured proxy but removes it from the
-    load-balance group — existing connections survive, no new traffic (ADR-0010).
-  - **Decommission** tells the agent to tear down the data plane on its next
-    reconcile (bring tunnels/containers down, clear routing/firewall) — a
-    best-effort reverse reconcile (ADR-0012).
-  - **Delete** removes the node from inventory.
+- Per-node detail: inventory, latest status + health checks, rendered `NodeSpec` preview
+  (AWG params, peers, routing, firewall, DNS, master data plane, etc.), and a version-skew badge
+  (when agent's wire version is incompatible).
+- **Actions** (all confirmed POSTs with CSRF + same-origin checks):
+  - **Provision** — SSH-bootstrap a `Pending` node asynchronously (Pending → Provisioning → Ready).
+  - **Upgrade** — roll the agent binary forward over SSH without tearing down the data plane.
+  - **Drain** — keep the node as a configured proxy but remove it from load-balance;
+    existing connections survive, no new traffic (ADR-0010).
+  - **Undrain** — rejoin the load-balance group.
+  - **Decommission** — tell the agent to tear down the data plane on next reconcile
+    (stop services, clear routing/firewall, best-effort reverse reconcile; ADR-0012).
+  - **Delete** — remove the node from inventory.
 
 ### Metrics
 
@@ -599,12 +639,13 @@ the ZeroTier address only.
 **Controller** (a scrape-time projection of the state store):
 
 ```
-wgfleet_nodes{state="Ready"}                       # node count per lifecycle state
-wgfleet_node_info{node,role,region,state}          # inventory info (=1)
-wgfleet_node_last_report_age_seconds{node}         # since last status report
-wgfleet_node_reconcile_failed{node}                # 1 if last reconcile errored
-wgfleet_node_health_check{node,check}              # 1 ok / 0 failing
-wgfleet_node_egress_info{node,egress_ip}           # observed egress IP (=1)
+wgfleet_nodes{state="Ready"}                               # node count per lifecycle state
+wgfleet_node_info{node,role,region,state}                  # inventory info (=1)
+wgfleet_node_agent_info{node,agent_version,wire_version}   # agent build + wire version (=1)
+wgfleet_node_last_report_age_seconds{node}                 # since last status report
+wgfleet_node_reconcile_failed{node}                        # 1 if last reconcile errored
+wgfleet_node_health_check{node,check}                      # 1 ok / 0 failing
+wgfleet_node_egress_info{node,egress_ip}                   # observed egress IP (=1)
 ```
 
 **Agent** (its own reconcile/health counters):
@@ -614,6 +655,9 @@ wgfleet_agent_reconcile_total{result}              # success | error
 wgfleet_agent_reconcile_duration_seconds           # histogram
 wgfleet_agent_state_info{state}                    # current lifecycle state (=1)
 wgfleet_agent_health_check{check}                  # 1 ok / 0 failing
+wgfleet_agent_drift_total{component}               # count of unexpected config changes (drift-repairs)
+wgfleet_agent_egress_active{method}                # current active egress method (e.g. warp, direct)
+wgfleet_agent_egress_reachability{state}           # ok | degraded | blocked (censorship signal)
 wgfleet_agent_start_time_seconds                   # for uptime
 ```
 
@@ -623,6 +667,7 @@ After each apply reconcile the agent runs role-specific self-checks and reports
 the derived state:
 
 - **Exit checks:** `wg-handshake` (freshest handshake under 3m — an earlier finding),
+  `egress-reachability` (censorship signal: ok | degraded | blocked),
   `warp-egress` (egress via Cloudflare WARP, when `egress=warp`), `dns-filter`.
 - **Master checks:** `client-wg` (interface up), `mihomo-api` (Clash API
   `/version`).
@@ -644,14 +689,15 @@ These are enforced in code (`internal/domain/awg.go`) and **verified against the
 upstream kernel module + tools sources**. Getting them wrong silently breaks
 tunnels.
 
-- **Must be identical on both ends of a tunnel:** `S1–S4` and **`H1–H4`**.
-- **May differ per end:** `Jc`, `Jmin`, `Jmax` and **`I1–I5`**.
+- **Must be identical on both ends of a tunnel:** `S1–S4` (junk prefix sizes) and **`H1–H4`** (packet junk header ranges).
+- **May differ per end:** `Jc`, `Jmin`, `Jmax` (junk count, interval min/max) and **`I1–I5`** (CPS junk templates).
 - **`H1–H4` are ranges** (`min-max`, e.g. `15384729-145384729`); the four ranges
   **must not overlap** (kernel-enforced). Modelled as `AWGHeader{Min,Max}`.
 - **All obfuscation parameters live in `[Interface]`, never `[Peer]`.**
 - Limits: `1 ≤ Jc ≤ 128`; `Jmin < Jmax ≤ 1280`; `S1 ≤ 1132`; `S2 ≤ 1188`;
+  `S3 ≤ 1216` (cookie-reply junk, AmneziaWG 1.5); `S4 ≤ 1248` (transport junk);
   **`S1+56 ≠ S2`** (anti-detection; docs-only, we enforce it); `I` values are hex
-  blobs or CPS templates.
+  blobs or CPS templates (`<b>`, `<r>`, `<rc>`, `<rd>` for userspace; kernel also allows `<c>`, `<t>`).
 - **`<c>` / `<t>` CPS tags work in the kernel but break userspace WireGuard-Go**
   (mihomo proxies, Amnezia app clients) — so userspace configs use only
   `<b>/<r>/<rc>/<rd>`. Enforced via `ValidateUserspace()`.
@@ -662,12 +708,13 @@ tunnels.
 
 Per data plane:
 
-- **Exit** (server) — `awg-quick` config (kernel module).
+- **Exit** (server) — `awg-quick` config (kernel module); all S1-S4, H1-H4 identical across peers.
 - **Master ↔ exit** tunnels — `amnezia-wg-option` per mihomo `wireguard` proxy
-  (userspace; per-proxy params).
-- **Master ↔ client** — wg-easy interface, set by writing the obfuscation columns
-  into wg-easy's SQLite DB (it has no env/API hook for them; it propagates the
-  interface `S`/`H` to all client configs).
+  (userspace; each proxy gets derived S1-S4, H1-H4 plus its own Jc/Jmin/Jmax/I1-I5).
+- **Master ↔ client** — wg-easy interface, set by writing the structural parameters (S1-S4, H1-H4)
+  and the master's decoy params (Jc/Jmin/Jmax, I1-I5) into wg-easy's SQLite DB (it propagates
+  the interface params to all client configs; clients may have their own decoy when they apply
+  the config locally).
 
 ---
 
@@ -708,6 +755,12 @@ Full records in [`docs/adr/`](docs/adr/):
 | 0011 | **Master container lifecycle** via rendered docker-compose (wg-easy + mihomo) |
 | 0012 | **Node teardown** via a decommission signal + best-effort reverse reconcile |
 | 0013 | **Exit DNS filter as a managed blocky container**, override-driven config, ZT-only binds |
+| 0014 | **Sequential per-hop MTU model** (not nested); auto-calculation from tunnel chain |
+| 0015 | **Drift observability + idempotent routing + live-kernel drift repair** (health-based LB in mihomo) |
+| 0016 | **Egress-block detection** (non-destructive active confirmation; censorship signal) |
+| 0017 | **Censorship-adaptive egress failover** (agent auto-switches within egress chain, recover on grace) |
+| 0018 | **Secrets via SOPS/age** (config.SOPSProvider shells out to `sops -d`; CA key in-memory) |
+| 0019 | **Upgrade procedure + wire-contract versioning** (gRPC-metadata gate, reject+auto-upgrade, store migrations) |
 
 `docs/DESIGN.md` holds the full project context, the hard-won operational lessons, and
 the conventions. Upstream AmneziaWG sources used for verification live at
@@ -718,20 +771,27 @@ fork).
 
 ## 16. Roadmap
 
-**MVP (Phase 1) — remaining:**
+**Phase 1 ✅ complete** — full node lifecycle from provisioning to decommission
+(dry-run first-class throughout).
 
-- Provisioning *from* the Web UI (async, long-running — currently CLI-only).
-- Teardown / wipe of a drained node (stop services, remove WG state) — `delete`
-  currently only removes it from inventory.
-- Container lifecycle (mihomo / wg-easy up/restart as a thin exec wrapper).
-- Controller-side staleness sweep (no report in N intervals → Degraded).
+**Phase 2 ✅ complete** — drift auto-reconcile, health-based LB in mihomo,
+AmneziaWG parameter generator (S1-S4, per-end decoy Jc/Jmin/Jmax + I1-I5 with CPS validation
+and per-end seeds), auto-MTU sequential model, SOPS/age secrets, live-kernel drift repair.
 
-**Phase 2 — resilience & convenience:** drift-triggered auto-reconcile,
-health-based balancing, graceful drain, AWG parameter generator with validation,
-SOPS/age secrets, auto-MTU calculator along the tunnel chain.
+**Phase 3 (in progress)** — censorship-adaptive egress failover.
+- ✅ egress-block detection (ADR-0016) — non-destructive active confirmation signal.
+- ✅ auto-switch egress within chain (ADR-0017) — agent autonomous, controller sets chain.
+- ⏳ traffic-noise to decorrelate volume.
 
-**Phase 3 — transport/obfuscation:** Reality/VLESS transport between master and
-exit; traffic-noise to break volume correlation.
+**Stabilization (in progress)** — upgrade procedure + wire-contract versioning.
+- ✅ upgrade procedure + wire-contract versioning (ADR-0019) — gRPC-metadata gate on
+  Register/PullSpec, reject incompatible, auto-upgrade over SSH, versioned store migrations.
 
 **Phase 4 (optional) — native data plane:** replace some orchestrated tools with
 native Go (kernel WG via netlink, native nftables).
+
+**Phase 5 (optional) — HA control plane:** multi-master with leader election,
+raft/rqlite store, CA-key distribution model.
+
+**Wishlist:** Reality/VLESS as an **additional** master↔exit transport
+(not a WG replacement; when needed for DPI-resistant second transport).

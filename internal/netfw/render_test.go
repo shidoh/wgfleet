@@ -36,6 +36,56 @@ func TestRenderExitRuleset(t *testing.T) {
 	}
 }
 
+func TestRenderExitNoFlushSupersedesBaseline(t *testing.T) {
+	out, err := RenderRuleset(RenderInput{
+		Role:     domain.RoleExit,
+		Firewall: domain.FirewallSpec{WGPort: 51820},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Must NOT use the global flush (would wipe master NAT / other tables on a
+	// co-located node or a re-provision).
+	if strings.Contains(out, "flush ruleset") {
+		t.Errorf("exit firewall must not use `flush ruleset`:\n%s", out)
+	}
+	// Must supersede the baseline and atomically replace its own table.
+	for _, want := range []string{
+		"delete table inet wgfleet_baseline",
+		"delete table inet wgfleet",
+		"table inet wgfleet {",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("ruleset missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderExitMangleMark(t *testing.T) {
+	// With a mark + egress, the mangle rule that marks WG-server replies must appear.
+	out, err := RenderRuleset(RenderInput{
+		Role:        domain.RoleExit,
+		Firewall:    domain.FirewallSpec{WGPort: 51820},
+		WGReplyMark: 0x1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"type route hook output priority mangle",
+		"udp sport 51820 meta mark set 0x1",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("mangle mark rule missing %q:\n%s", want, out)
+		}
+	}
+	// Without a mark (direct egress), no mangle chain.
+	out2, _ := RenderRuleset(RenderInput{Role: domain.RoleExit, Firewall: domain.FirewallSpec{WGPort: 51820}})
+	if strings.Contains(out2, "mangle") {
+		t.Errorf("no mangle chain expected without WGReplyMark:\n%s", out2)
+	}
+}
+
 func TestRenderMasterDropsQUIC(t *testing.T) {
 	out, err := RenderRuleset(RenderInput{
 		Role:     domain.RoleMaster,

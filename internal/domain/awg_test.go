@@ -96,6 +96,26 @@ func TestAWGParamsValidate(t *testing.T) {
 			wantErr: "",
 		},
 		{
+			name:    "odd-length hex blob I value rejected",
+			mutate:  func(p *AWGParams) { p.Local.I1 = "0xabc" }, // kernel parse_b_tag rejects odd len
+			wantErr: "hex blob or CPS",
+		},
+		{
+			name:    "even-length hex blob I value ok",
+			mutate:  func(p *AWGParams) { p.Local.I1 = "0xabcd" },
+			wantErr: "",
+		},
+		{
+			name:    "S3/S4 within limits ok",
+			mutate:  func(p *AWGParams) { p.Shared.S3 = 117; p.Shared.S4 = 52 },
+			wantErr: "",
+		},
+		{
+			name:    "S4 over limit",
+			mutate:  func(p *AWGParams) { p.Shared.S4 = 5000 },
+			wantErr: "S4",
+		},
+		{
 			name:    "single-value header (Min==Max) ok",
 			mutate:  func(p *AWGParams) { p.Shared.H1 = AWGHeader{10, 10} },
 			wantErr: "",
@@ -126,5 +146,23 @@ func TestAWGHeaderString(t *testing.T) {
 	}
 	if got := (AWGHeader{42, 42}).String(); got != "42" {
 		t.Errorf("single-value string = %q, want 42", got)
+	}
+}
+
+func TestValidateUserspaceTags(t *testing.T) {
+	// <c>/<t> CPS tags work in the kernel but break userspace WireGuard-Go — rejected.
+	p := validAWG()
+	p.Local.I1 = "<b 0xdead><t>"
+	if err := p.Validate(); err != nil {
+		t.Fatalf("kernel Validate should allow <t>: %v", err)
+	}
+	if err := p.ValidateUserspace(); err == nil {
+		t.Error("ValidateUserspace must reject the <t> tag")
+	}
+	// S3/S4 (AmneziaWG 2.0 transport/cookie junk) ARE valid for userspace — both
+	// ends must just run a 2.0-compatible AmneziaWG (a deployment requirement, not a
+	// validation one). validAWG() carries non-zero S3/S4, so this also covers it.
+	if err := validAWG().ValidateUserspace(); err != nil {
+		t.Errorf("clean 2.0 params (incl. S3/S4) should pass ValidateUserspace: %v", err)
 	}
 }

@@ -31,6 +31,7 @@ type Service struct {
 	store    store.Store
 	renderer SpecRenderer
 	log      *slog.Logger
+	trigger  UpgradeTrigger // optional auto-upgrade hook; see SetUpgradeTrigger
 }
 
 var _ pb.NodeServiceServer = (*Service)(nil)
@@ -60,10 +61,14 @@ func (s *Service) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Re
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, err.Error())
 	}
+	if err := s.gateVersion(ctx, nodeID); err != nil {
+		return nil, err
+	}
 	role, err := domain.ParseRole(req.GetRole())
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "register %q: %v", nodeID, err)
 	}
+	wire, agentVersion := reportedVersions(ctx)
 
 	node, err := s.store.GetNode(ctx, nodeID)
 	switch {
@@ -85,6 +90,8 @@ func (s *Service) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Re
 	if req.GetMgmtAddr() != "" {
 		node.MgmtAddr = req.GetMgmtAddr()
 	}
+	node.AgentVersion = agentVersion
+	node.WireVersion = wire
 	if node.State == "" || node.State == domain.StatePending {
 		node.State = domain.StateReconciling
 	}
@@ -120,6 +127,9 @@ func (s *Service) PullSpec(ctx context.Context, _ *pb.PullSpecRequest) (*pb.Node
 	nodeID, err := NodeIDFromContext(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, err.Error())
+	}
+	if err := s.gateVersion(ctx, nodeID); err != nil {
+		return nil, err
 	}
 	spec, err := s.renderer.RenderNodeSpec(ctx, nodeID)
 	if err != nil {

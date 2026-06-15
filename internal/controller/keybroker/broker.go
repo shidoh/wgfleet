@@ -172,10 +172,11 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	// Client-facing AmneziaWG interface (wg-easy). Clients are configured
 	// out-of-band with the matching shared params (same derivation seed).
 	clientAWG := wg.DeriveAWGParams(wg.TunnelSeed(master.Name, "clients", awgSalt))
+	clientPort := master.ClientListenPort()
 	spec := domain.NodeSpec{
 		Role: domain.RoleMaster,
 		WGServer: domain.WGServerSpec{
-			ListenPort:  master.ClientAWG.ListenPort,
+			ListenPort:  clientPort,
 			AddressPool: master.ClientAWG.AddressPool,
 			// Client-facing AWG hop. Sequential model (ADR-0014): the client MTU is
 			// the minimum across every hop its payload traverses — client↔master and
@@ -185,17 +186,19 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			MTU: b.clientFacingMTU(),
 			AWG: &clientAWG,
 		},
-		Firewall:  domain.FirewallSpec{WGPort: master.ClientAWG.ListenPort},
+		Firewall:  domain.FirewallSpec{WGPort: clientPort},
 		Exporters: domain.ExportersSpec{Node: true, WG: true},
 	}
 
 	ms := &domain.MasterSpec{
-		Balance:     mihomoStrategy(master.Routing.Balance),
-		DirectCIDRs: append([]string(nil), master.Routing.DirectCIDRs...),
-		DirectGeo:   append([]string(nil), master.Routing.DirectGeo...),
-		SnifferSkip: append([]string(nil), master.Mihomo.SnifferSkip...),
-		RedirPort:   master.Mihomo.RedirPort,
-		Custom:      masterCustomConfig(master),
+		Balance:           mihomoStrategy(master.Routing.Balance),
+		DirectCIDRs:       append([]string(nil), master.Routing.DirectCIDRs...),
+		DirectGeo:         append([]string(nil), master.Routing.DirectGeo...),
+		SnifferSkip:       append([]string(nil), master.Mihomo.SnifferSkip...),
+		RedirPort:         master.Mihomo.RedirPort,
+		DashboardURL:      master.Mihomo.DashboardURL,
+		DashboardDisabled: master.Mihomo.DashboardDisabled,
+		Custom:            masterCustomConfig(master),
 	}
 	if addr, err := nthHost(master.ClientAWG.AddressPool, exitHostIndex); err == nil {
 		ms.BindAddress = addr.String() // master's own .1 in the client pool

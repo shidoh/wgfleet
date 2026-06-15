@@ -23,8 +23,26 @@ const (
 	hTop        = 2_000_000_000 // < 2^31, leaves headroom
 	hRangeWidth = 130_000_000   // matches the wg-easy example's ~130M-wide ranges
 
-	sLow  = 15 // S1/S2 recommended range
+	sLow  = 15 // S1/S2/S3 recommended range (handshake/cookie junk, no data-MTU impact)
 	sHigh = 150
+
+	// S4 (transport_packet_junk_size) is prepended to EVERY data packet, so unlike
+	// S1-S3 it consumes per-packet MTU. Keep the derived value strictly within the
+	// AmneziaWG MTU cushion (AWGExtraOverhead) with margin so a full-size data packet
+	// never fragments at the physical link. The TestS4FitsMTUCushion test
+	// guards s4High ≤ AWGExtraOverhead.
+	s4Low  = 16
+	s4High = AWGExtraOverhead - 16 // = 64; must stay ≤ AWGExtraOverhead
+
+	// junkS4Margin keeps Jmin a safe distance above S4 (see deriveJunk / the Jmin
+	// floor in DeriveAWGParamsForEnd). A receiver strips S4 bytes from an incoming
+	// junk packet before reading the 4-byte message type; amneziawg-go ≤ 20251104
+	// (shipped in mihomo up to ≥ v1.19.27) does this WITHOUT a length guard, so a junk
+	// packet shorter than S4+4 panics it (`slice bounds out of range [S4:len]` in
+	// handleTransport). Guaranteeing every junk packet ≥ S4 + margin avoids it on the
+	// buggy version (newer amneziawg-go added the guard). Verified live: with Jmin<S4
+	// the master↔exit tunnel crash-looped mihomo v1.19.27; flooring Jmin fixes it.
+	junkS4Margin = 8
 
 	// Junk-packet decoy bounds. Jc/Jmin/Jmax MAY differ per end (the receiver
 	// drops the other end's junk by size, so the values need not match), so we
@@ -211,10 +229,16 @@ func DeriveAWGShared(seed string) domain.AWGShared {
 			s2--
 		}
 	}
+	// S3 (cookie-reply junk) ranges like S1/S2. S4 (transport junk) rides every data
+	// packet, so it is bounded to the AWG MTU cushion (s4Low..s4High). Both are
+	// AmneziaWG 2.0 params, shared, derived from the same tunnel seed so both ends
+	// compute identical values (requires a 2.0-compatible AmneziaWG on both ends).
+	s3 := int(mapU32(uint32(sum[20])<<8|uint32(sum[21]), sLow, sHigh))
+	s4 := int(mapU32(uint32(sum[22])<<8|uint32(sum[23]), s4Low, s4High))
 
 	return domain.AWGShared{
 		H1: headers[0], H2: headers[1], H3: headers[2], H4: headers[3],
-		S1: s1, S2: s2, // S3/S4 default to 0 (valid)
+		S1: s1, S2: s2, S3: s3, S4: s4,
 	}
 }
 
@@ -225,10 +249,19 @@ func DeriveAWGShared(seed string) domain.AWGShared {
 // <c>/<t> CPS tags for kernel-module interfaces (awg-quick); false keeps the
 // signatures userspace-safe (mihomo proxies, Amnezia clients).
 func DeriveAWGParamsForEnd(tunnelSeed, endLabel string, kernel bool) domain.AWGParams {
-	return domain.AWGParams{
-		Shared: DeriveAWGShared(tunnelSeed),
-		Local:  DeriveAWGLocal(tunnelSeed+"|end|"+endLabel, kernel),
+	shared := DeriveAWGShared(tunnelSeed)
+	local := DeriveAWGLocal(tunnelSeed+"|end|"+endLabel, kernel)
+	// Floor Jmin above S4 so no junk packet this end SENDS is short enough to
+	// underflow a peer that strips S4 from incoming junk before length-checking it
+	// (amneziawg-go ≤20251104 bug; see junkS4Margin). S4 is shared, so flooring on
+	// the sending end protects the receiving end. Shift Jmax by the same amount to
+	// keep the Jmin<Jmax gap; both stay well under the 1280 ceiling.
+	if floor := shared.S4 + junkS4Margin; local.Jmin < floor {
+		shift := floor - local.Jmin
+		local.Jmin += shift
+		local.Jmax += shift
 	}
+	return domain.AWGParams{Shared: shared, Local: local}
 }
 
 // DeriveAWGParams is the back-compat single-seed form keyed by the tunnel seed

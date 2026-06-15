@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -35,11 +36,13 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/health"
 	"github.com/shidoh/wgfleet/internal/agent/master"
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
+	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/pki"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/egress"
 	"github.com/shidoh/wgfleet/internal/metrics"
+	"github.com/shidoh/wgfleet/internal/version"
 	"github.com/shidoh/wgfleet/internal/wg"
 )
 
@@ -67,8 +70,15 @@ func run() error {
 		mgmtAddr    = flag.String("mgmt-addr", "", "this node's mgmt/ZT address (admin + metrics + DNS bind)")
 		stateDir    = flag.String("state-dir", "", "root managed files under this dir instead of /etc (non-root/dev runs)")
 		metricsBind = flag.String("metrics", "", "bind address for the agent /metrics endpoint (mgmt/ZT only; empty disables)")
+		showVersion = flag.Bool("version", false, "print build version and exit")
 	)
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("wgfleet-agent", version.String())
+		fmt.Printf("wire-contract version %d\n", api.WireContractVersion)
+		return nil
+	}
 
 	setupLogging(*logFormat)
 
@@ -417,11 +427,41 @@ func (a *agent) planners(privateKey string) []reconcile.Planner {
 		if a.stateDir != "" {
 			mp = master.PathsUnder(a.stateDir)
 		}
-		return master.Planners(master.Input{Paths: mp, PrivateKey: privateKey})
+		// Detect the host uplink for the master NAT MASQUERADE rule rather than
+		// hardcoding "ens3": interface names vary by host (ens3 on many clouds, eth0
+		// on others/Lima), and a wrong oifname silently breaks client egress. Empty
+		// ⇒ master.Planners keeps the ens3 fallback.
+		return master.Planners(master.Input{
+			Paths:           mp,
+			PrivateKey:      privateKey,
+			EgressInterface: detectEgressIface(a.log),
+		})
 	}
 	in := exit.Input{Paths: a.paths, PrivateKey: privateKey}
 	in.WARP = a.readWARPProfile()
 	return exit.Planners(in)
+}
+
+// detectEgressIface returns the host's default-route interface (used as the
+// master NAT MASQUERADE uplink). It parses `ip route show default`. On any error
+// (no default route, non-Linux, missing iproute2) it returns "" so the caller
+// falls back to the compiled-in default — never a wrong guess.
+func detectEgressIface(log *slog.Logger) string {
+	out, err := exec.Command("ip", "route", "show", "default").Output()
+	if err != nil {
+		if log != nil {
+			log.Warn("could not detect egress interface from default route; using fallback", "err", err)
+		}
+		return ""
+	}
+	// "default via 192.168.5.2 dev eth0 proto dhcp ..." → take the token after "dev".
+	fields := strings.Fields(string(out))
+	for i, f := range fields {
+		if f == "dev" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
 }
 
 // readWARPProfile reads and parses the wgcf-profile.conf produced on-node by

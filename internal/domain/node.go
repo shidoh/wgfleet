@@ -55,6 +55,13 @@ type Node struct {
 	// reverse of reconcile. The operator drains, decommissions, then deletes.
 	Decommission bool
 
+	// AgentVersion is the build identity (version.Short()) the agent last reported
+	// over gRPC metadata; WireVersion is its protocol version. Both are observed,
+	// not desired — the controller records them to surface version skew in the UI
+	// and metrics and to gate incompatible agents. Empty/0 until first contact.
+	AgentVersion string
+	WireVersion  uint32
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	LastSeen  time.Time // last status report received from the agent

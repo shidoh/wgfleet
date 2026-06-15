@@ -27,6 +27,15 @@ type MasterSpec struct {
 	// SnifferSkip is the sniffer skip-domain list — CDNs/SNI-faking services that
 	// break under sniffing.
 	SnifferSkip []string
+	// DashboardDisabled turns off the mihomo external web dashboard entirely (no
+	// external-ui / external-ui-url emitted). Zero value = enabled, preserving the
+	// default. Set it where the dashboard download host is blocked so mihomo never
+	// attempts the (potentially failing/panic-inducing) startup download.
+	DashboardDisabled bool
+	// DashboardURL overrides where mihomo fetches the dashboard zip on first run.
+	// Empty = the built-in default (zashboard latest on GitHub). Point it at a
+	// reachable mirror when the default host is blocked.
+	DashboardURL string
 	// Custom holds operator overrides merged into the rendered config plus extra
 	// managed files (e.g. additional rule providers). See CustomConfig.
 	Custom CustomConfig

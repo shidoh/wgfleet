@@ -94,7 +94,7 @@ func RenderBlocky(spec domain.DNSFilterSpec) (string, error) {
 		// by default — the operator adds denylists + groups via overrides).
 		"blocking": map[string]any{
 			"allowlists": map[string]any{
-				"security": toAnySlice(allowlist(spec.Allowlist)),
+				"security": inlineList(allowlist(spec.Allowlist)),
 			},
 			"clientGroupsBlock": map[string]any{"default": []any{}},
 		},
@@ -174,6 +174,19 @@ func allowlist(operator []string) []string {
 		out = append(out, d)
 	}
 	return out
+}
+
+// inlineList renders domains as a blocky INLINE list source: a single list entry
+// holding all domains separated by newlines (yaml emits it as a block scalar).
+// Each entry in a blocky denylist/allowlist group is a SOURCE reference — a bare
+// domain string would be read as a file path (`file://domain`) and fail to load,
+// silently emptying the group. The inline form is the only way to embed literal
+// domains. Returns an empty list when there are no domains.
+func inlineList(domains []string) []any {
+	if len(domains) == 0 {
+		return []any{}
+	}
+	return []any{strings.Join(domains, "\n")}
 }
 
 func toAnySlice(in []string) []any {

@@ -58,7 +58,21 @@ func sampleParams() domain.AWGParams {
 			H4: domain.AWGHeader{Min: 1524719384, Max: 1654719384},
 			S1: 102, S2: 67, S3: 143, S4: 38,
 		},
-		Local: domain.AWGLocal{Jc: 5, Jmin: 60, Jmax: 900},
+		Local: domain.AWGLocal{
+			Jc: 5, Jmin: 60, Jmax: 900,
+			I1: "<b 0xc0ffee><r 12>", I2: "<b 0xdead><rd 8>", I3: "<rc 16>",
+			I4: "<b 0xbeef><r 4>", I5: "<rd 20>",
+		},
+	}
+}
+
+func sampleSpec() domain.WGServerSpec {
+	p := sampleParams()
+	return domain.WGServerSpec{
+		ListenPort:  443,
+		AddressPool: "10.80.0.0/24",
+		MTU:         1360,
+		AWG:         &p,
 	}
 }
 
@@ -70,17 +84,31 @@ func TestColumnsFromParams(t *testing.T) {
 	if c.S1 != 102 || c.Jc != 5 {
 		t.Errorf("S1/Jc mismatch: %+v", c)
 	}
+	// AWG-only mapper leaves the transport columns zero.
+	if c.Port != 0 || c.IPv4CIDR != "" || c.MTU != 0 {
+		t.Errorf("ColumnsFromParams must not set transport fields: %+v", c)
+	}
 }
 
-func TestUpdateAndReadAWG(t *testing.T) {
+func TestColumnsFromSpec(t *testing.T) {
+	c := ColumnsFromSpec(sampleSpec())
+	if c.Port != 443 || c.IPv4CIDR != "10.80.0.0/24" || c.MTU != 1360 {
+		t.Errorf("transport columns mismatch: %+v", c)
+	}
+	if c.S1 != 102 || c.Jc != 5 || c.H1 != "15384729-145384729" {
+		t.Errorf("AWG columns mismatch: %+v", c)
+	}
+}
+
+func TestUpdateAndReadInterface(t *testing.T) {
 	ctx := context.Background()
 	path := newWGEasyDB(t, true)
-	cols := ColumnsFromParams(sampleParams())
+	cols := ColumnsFromSpec(sampleSpec())
 
-	if err := UpdateAWG(ctx, path, "wg0", cols); err != nil {
+	if err := UpdateInterface(ctx, path, "wg0", cols); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	got, found, err := ReadAWG(ctx, path, "wg0")
+	got, found, err := ReadInterface(ctx, path, "wg0")
 	if err != nil || !found {
 		t.Fatalf("read: %v found=%v", err, found)
 	}
@@ -89,10 +117,10 @@ func TestUpdateAndReadAWG(t *testing.T) {
 	}
 }
 
-func TestReadAWGNotFound(t *testing.T) {
+func TestReadInterfaceNotFound(t *testing.T) {
 	// Table exists but no interface row ⇒ found=false, no error.
 	path := newWGEasyDB(t, false)
-	_, found, err := ReadAWG(context.Background(), path, "wg0")
+	_, found, err := ReadInterface(context.Background(), path, "wg0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,9 +129,9 @@ func TestReadAWGNotFound(t *testing.T) {
 	}
 }
 
-func TestUpdateAWGMissingRow(t *testing.T) {
+func TestUpdateInterfaceMissingRow(t *testing.T) {
 	path := newWGEasyDB(t, false)
-	err := UpdateAWG(context.Background(), path, "wg0", ColumnsFromParams(sampleParams()))
+	err := UpdateInterface(context.Background(), path, "wg0", ColumnsFromSpec(sampleSpec()))
 	if err == nil {
 		t.Fatal("expected error updating a non-existent interface")
 	}
@@ -112,15 +140,35 @@ func TestUpdateAWGMissingRow(t *testing.T) {
 	}
 }
 
-func TestUpdateDoesNotTouchKeysOrI(t *testing.T) {
+// TestUpdateEnforcesTransport proves a persisted DB seeded with wg-easy defaults
+// (port 51820, pool 10.80.0.0/24, mtu 1420) is reconciled to the desired spec —
+// the bug where INIT_* are ignored on an existing DB so the configured client
+// port never took effect.
+func TestUpdateEnforcesTransport(t *testing.T) {
+	ctx := context.Background()
+	path := newWGEasyDB(t, true) // seeds port=51820, mtu=1420 (wg-easy defaults)
+
+	if err := UpdateInterface(ctx, path, "wg0", ColumnsFromSpec(sampleSpec())); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := ReadInterface(ctx, path, "wg0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Port != 443 || got.MTU != 1360 {
+		t.Errorf("transport not enforced: port=%d mtu=%d (want 443/1360)", got.Port, got.MTU)
+	}
+}
+
+func TestUpdateDoesNotTouchKeys(t *testing.T) {
 	ctx := context.Background()
 	path := newWGEasyDB(t, true)
 
 	db, _ := sql.Open("sqlite", path)
-	_, _ = db.Exec(`UPDATE interfaces_table SET private_key='KEEP', i1='operator-i1' WHERE name='wg0'`)
+	_, _ = db.Exec(`UPDATE interfaces_table SET private_key='KEEP' WHERE name='wg0'`)
 	_ = db.Close()
 
-	if err := UpdateAWG(ctx, path, "wg0", ColumnsFromParams(sampleParams())); err != nil {
+	if err := UpdateInterface(ctx, path, "wg0", ColumnsFromSpec(sampleSpec())); err != nil {
 		t.Fatal(err)
 	}
 
@@ -129,16 +177,21 @@ func TestUpdateDoesNotTouchKeysOrI(t *testing.T) {
 	var priv, i1 string
 	_ = db2.QueryRow(`SELECT private_key, COALESCE(i1,'') FROM interfaces_table WHERE name='wg0'`).Scan(&priv, &i1)
 	if priv != "KEEP" {
-		t.Errorf("private_key was modified: %q", priv)
+		t.Errorf("private_key was modified: %q (wg-easy owns its identity)", priv)
 	}
-	if i1 != "operator-i1" {
-		t.Errorf("i1 was modified: %q (must not touch per-end I values)", i1)
+	// I1-I5 ARE now managed: the derived signature must be written, not left blank.
+	if i1 != "<b 0xc0ffee><r 12>" {
+		t.Errorf("i1 was not set to the derived signature: %q", i1)
 	}
 }
 
 func TestRenderUpdateSQL(t *testing.T) {
-	sql := RenderUpdateSQL("wg0", ColumnsFromParams(sampleParams()))
-	for _, want := range []string{"UPDATE interfaces_table", "j_c=5", "s1=102", "h1='15384729-145384729'", "WHERE name='wg0'"} {
+	sql := RenderUpdateSQL("wg0", ColumnsFromSpec(sampleSpec()))
+	for _, want := range []string{
+		"UPDATE interfaces_table", "port=443", "ipv4_cidr='10.80.0.0/24'", "mtu=1360",
+		"j_c=5", "s1=102", "s3=143", "s4=38", "h1='15384729-145384729'",
+		"i1='<b 0xc0ffee><r 12>'", "WHERE name='wg0'",
+	} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("rendered SQL missing %q:\n%s", want, sql)
 		}

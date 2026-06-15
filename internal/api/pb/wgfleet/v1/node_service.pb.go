@@ -598,8 +598,12 @@ type MasterSpec struct {
 	SnifferSkip        []string               `protobuf:"bytes,8,rep,name=sniffer_skip,json=snifferSkip,proto3" json:"sniffer_skip,omitempty"`
 	Custom             *CustomConfig          `protobuf:"bytes,9,opt,name=custom,proto3" json:"custom,omitempty"`
 	Compose            *ComposeSpec           `protobuf:"bytes,10,opt,name=compose,proto3" json:"compose,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Web dashboard controls (additive; an older agent ignores these and keeps the
+	// default-on dashboard — backward-compatible, so no wire-version bump needed).
+	DashboardDisabled bool   `protobuf:"varint,11,opt,name=dashboard_disabled,json=dashboardDisabled,proto3" json:"dashboard_disabled,omitempty"`
+	DashboardUrl      string `protobuf:"bytes,12,opt,name=dashboard_url,json=dashboardUrl,proto3" json:"dashboard_url,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *MasterSpec) Reset() {
@@ -700,6 +704,20 @@ func (x *MasterSpec) GetCompose() *ComposeSpec {
 		return x.Compose
 	}
 	return nil
+}
+
+func (x *MasterSpec) GetDashboardDisabled() bool {
+	if x != nil {
+		return x.DashboardDisabled
+	}
+	return false
+}
+
+func (x *MasterSpec) GetDashboardUrl() string {
+	if x != nil {
+		return x.DashboardUrl
+	}
+	return ""
 }
 
 // ComposeSpec is the master's container-stack desired state (wg-easy + mihomo).
@@ -1936,7 +1954,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\fdecommission\x18\n" +
 	" \x01(\bR\fdecommission\x12\x19\n" +
 	"\bwarp_mtu\x18\v \x01(\x05R\awarpMtu\x12!\n" +
-	"\fegress_chain\x18\f \x03(\tR\vegressChain\"\x9e\x03\n" +
+	"\fegress_chain\x18\f \x03(\tR\vegressChain\"\xf2\x03\n" +
 	"\n" +
 	"MasterSpec\x12!\n" +
 	"\fbind_address\x18\x01 \x01(\tR\vbindAddress\x12\x1d\n" +
@@ -1951,7 +1969,9 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\fsniffer_skip\x18\b \x03(\tR\vsnifferSkip\x120\n" +
 	"\x06custom\x18\t \x01(\v2\x18.wgfleet.v1.CustomConfigR\x06custom\x121\n" +
 	"\acompose\x18\n" +
-	" \x01(\v2\x17.wgfleet.v1.ComposeSpecR\acompose\"\xe7\x01\n" +
+	" \x01(\v2\x17.wgfleet.v1.ComposeSpecR\acompose\x12-\n" +
+	"\x12dashboard_disabled\x18\v \x01(\bR\x11dashboardDisabled\x12#\n" +
+	"\rdashboard_url\x18\f \x01(\tR\fdashboardUrl\"\xe7\x01\n" +
 	"\vComposeSpec\x12\"\n" +
 	"\rwg_easy_image\x18\x01 \x01(\tR\vwgEasyImage\x12!\n" +
 	"\fmihomo_image\x18\x02 \x01(\tR\vmihomoImage\x12\x1b\n" +

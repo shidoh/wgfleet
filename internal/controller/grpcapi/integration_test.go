@@ -25,6 +25,7 @@ import (
 type harness struct {
 	ca       *pki.CA
 	store    store.Store
+	svc      *grpcapi.Service
 	server   *grpc.Server
 	addr     string
 	discardL *slog.Logger
@@ -64,7 +65,7 @@ func newHarness(t *testing.T, fleet config.FleetSection) *harness {
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(srv.GracefulStop)
 
-	return &harness{ca: ca, store: st, server: srv, addr: ln.Addr().String(), discardL: log}
+	return &harness{ca: ca, store: st, svc: svc, server: srv, addr: ln.Addr().String(), discardL: log}
 }
 
 // agentFor issues a node cert (CN=nodeID) and dials the server as that node.

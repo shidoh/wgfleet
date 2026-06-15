@@ -23,15 +23,28 @@ const (
 	awgJcMin     = 1 // junk packet count: 1 ≤ Jc ≤ 128 (recommended 4-12)
 	awgJcMax     = 128
 	awgJMaxLimit = 1280 // Jmin < Jmax ≤ 1280 (kernel: Jmax < MESSAGE_MAX_SIZE)
-	awgS1Limit   = 1132 // S1 ≤ 1132 (kernel: S1 + MESSAGE_INITIATION_SIZE ≤ MESSAGE_MAX_SIZE)
-	awgS2Limit   = 1188 // S2 ≤ 1188 (kernel: S2 + MESSAGE_RESPONSE_SIZE ≤ MESSAGE_MAX_SIZE)
+	// S1-S4 PRACTICAL caps (assuming a 1280 MTU), mirroring the README's S1/S2
+	// reasoning (1280 minus the message size). The KERNEL only rejects when
+	// Sn + MESSAGE_*_SIZE > MESSAGE_MAX_SIZE (65535), i.e. ~65383+, so these caps are
+	// far stricter than the protocol minimum — deliberately, to avoid bloated junk.
+	// S4 additionally rides on EVERY data packet, so its fleet MTU-safe bound is
+	// enforced separately in the wg derivation (see wg.AWGExtraOverhead); this is
+	// only the protocol-sanity cap.
+	awgS1Limit = 1132 // S1: 1280 − 148 (MESSAGE_INITIATION)
+	awgS2Limit = 1188 // S2: 1280 − 92 (MESSAGE_RESPONSE)
+	awgS3Limit = 1216 // S3 (cookie-reply junk, AmneziaWG 1.5)
+	awgS4Limit = 1248 // S4 (transport junk, AmneziaWG 1.5)
 
 	// awgStringMaxLen mirrors the tools' MAX_AWG_STRING_LEN (5*1024) — the hard
 	// cap config.c enforces on H and I string values.
 	awgStringMaxLen = 5 * 1024
 )
 
-var hexBlob = regexp.MustCompile(`^(0x)?[0-9a-fA-F]*$`)
+// hexBlob matches an AmneziaWG I-value hex literal: optional 0x prefix then an
+// EVEN number of hex digits. The kernel's parse_b_tag rejects odd-length hex
+// (len % 2 != 0), so we reject it here too rather than letting it pass Validate
+// and fail at the kernel. An empty value is allowed (no I-packet in that slot).
+var hexBlob = regexp.MustCompile(`^(0x)?([0-9a-fA-F]{2})*$`)
 
 // AWGHeader is an AmneziaWG packet-header type range. AmneziaWG (1.5+) specifies
 // H1-H4 as ranges "Min-Max"; the four ranges must not overlap each other so the
@@ -133,6 +146,12 @@ func (p AWGParams) Validate() error {
 	if p.Shared.S2 < 0 || p.Shared.S2 > awgS2Limit {
 		errs = append(errs, fmt.Errorf("S2 %d out of range [0,%d]", p.Shared.S2, awgS2Limit))
 	}
+	if p.Shared.S3 < 0 || p.Shared.S3 > awgS3Limit {
+		errs = append(errs, fmt.Errorf("S3 %d out of range [0,%d]", p.Shared.S3, awgS3Limit))
+	}
+	if p.Shared.S4 < 0 || p.Shared.S4 > awgS4Limit {
+		errs = append(errs, fmt.Errorf("S4 %d out of range [0,%d]", p.Shared.S4, awgS4Limit))
+	}
 	// S1+56 ≠ S2 is a documented anti-detection recommendation (README/docs); the
 	// kernel does NOT enforce it, but we do, so we never emit a fingerprint-able
 	// size correlation between the init and response junk.
@@ -194,5 +213,9 @@ func (p AWGParams) ValidateUserspace() error {
 			return fmt.Errorf("%s uses a <c>/<t> tag, which breaks userspace WireGuard-Go (use only <b>/<r>/<rc>/<rd>)", sig.name)
 		}
 	}
+	// NOTE: S3/S4 (AmneziaWG 2.0 transport/cookie junk) ARE valid for userspace
+	// amneziawg-go — but BOTH ends must run a 2.0-compatible AmneziaWG, or the
+	// receiver crashes in handleTransport. That is a deployment/version requirement
+	// (docs/onboarding.md), not something this validator can check.
 	return nil
 }

@@ -34,4 +34,7 @@ var migrations = []string{
 		reconcile_error TEXT NOT NULL DEFAULT '',
 		checks_json     TEXT NOT NULL DEFAULT '[]'
 	)`,
+	// v3: record the agent's reported build + wire version for skew visibility.
+	`ALTER TABLE nodes ADD COLUMN agent_version TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE nodes ADD COLUMN wire_version INTEGER NOT NULL DEFAULT 0`,
 }

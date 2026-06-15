@@ -15,7 +15,10 @@ KbdInteractiveAuthentication no
 // reconcile later replaces this with the full per-role ruleset.
 const baselineNFT = `#!/usr/sbin/nft -f
 # Managed by wgfleet — baseline bootstrap firewall. Replaced by agent reconcile.
-flush ruleset
+# Replace ONLY our own table (atomic add/delete/create), never ` + "`flush ruleset`" + `:
+# a re-provision must not wipe the agent's live firewall / master NAT / other tables.
+table inet wgfleet_baseline
+delete table inet wgfleet_baseline
 
 table inet wgfleet_baseline {
 	chain input {

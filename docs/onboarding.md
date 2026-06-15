@@ -72,23 +72,42 @@ fleet:
   masters:
     - name: master-xa-1
       mgmt_addr: 10.20.0.10          # the ZeroTier managed IP from step 1
-      ssh: { host: 203.0.113.10, user: root, key_path: ~/.ssh/id_ed25519, host_key: "ssh-ed25519 AAAA..." }
+      public_ip: 203.0.113.10         # WG endpoint peers dial — see note below
+      ssh: { host: 203.0.113.10, port: 22, user: root, key_path: ~/.ssh/id_ed25519, host_key: "ssh-ed25519 AAAA..." }
       client_awg: { listen_port: 443, address_pool: 10.80.0.0/24 }
+      mihomo: { dashboard_disabled: false }   # see the dashboard gotcha below
   exits:
     - name: exit-de-1
       region: de
       egress: warp
+      egress_fallback: [direct]        # ADR-0017: auto-switch warp→direct if WARP is blocked
       # warp_mtu: 1400                 # pin if the real WARP path is < 1500
       address_pool: 10.81.0.0/24
       mgmt_addr: 10.20.0.11
-      ssh: { host: 198.51.100.7, user: root, key_path: ~/.ssh/id_ed25519, host_key: "ssh-ed25519 AAAA..." }
+      public_ip: 198.51.100.7          # WG endpoint the master dials this exit at
+      ssh: { host: 198.51.100.7, port: 22, user: root, key_path: ~/.ssh/id_ed25519, host_key: "ssh-ed25519 AAAA..." }
 ```
 
 > **Pin `ssh.host_key`.** Bootstrap ships the node's private mTLS key over SSH, so
 > an unpinned (trust-on-first-use) dial lets a MITM capture the node's identity.
 > Grab the key once the VM is up: `ssh-keyscan -t ed25519 <vm-ip>`.
+>
+> **`ssh.port`** defaults to 22 — set it if SSH is on another port or reached via a
+> forwarded port / bastion.
+>
+> **`public_ip` is the WG endpoint peers actually dial.** It defaults to `ssh.host`,
+> which is correct when you SSH straight to the node's public IP. Set it explicitly
+> when `ssh.host` is NOT the WG endpoint — a bastion, a NAT/forwarded SSH port, or a
+> private SSH path — otherwise the master would render an undialable tunnel endpoint.
 
 ## 3. Provision
+
+> **Start the controller FIRST (see §4), then provision.** Provisioning installs
+> the agent and starts it immediately (`systemctl enable --now`), and the agent
+> dials the controller on its very first reconcile. If the controller is not yet
+> serving, that first dial gets `connection refused` and the node sits in
+> `Error`/silent until the agent's next retry (`reconcile_interval`, default 60s).
+> It self-heals, but starting the controller first avoids the transient entirely.
 
 Always dry-run first — `--plan` renders the full bootstrap and changes nothing:
 
@@ -104,6 +123,10 @@ Repeat for `exit-de-1`. Provisioning issues the node's mTLS cert inline, hardens
 sshd, installs the baseline firewall, the apt deps, Docker and (on exits) wgcf,
 installs the agent + systemd unit, and starts it. The agent then reconciles.
 
+> `--agent-bin` overrides `controller.agent_bin` from the config; set either so the
+> provisioner knows which agent binary to install. Build it with `make agent-linux
+> [ARCH=arm64]` → `dist/wgfleet-agent-linux-<arch>`.
+>
 > Provisioning is also available from the read-only Web UI (a **Provision** button
 > on Pending/Error nodes) once the controller is running.
 
@@ -148,3 +171,19 @@ buttons or store flags.
 - **First real apply touches firewall/routing.** Use a VM with out-of-band console
   access for the first run; the baseline firewall + `Table = off` keep SSH/ZT
   reachable, but verify before depending on the box.
+- **Pin a specific mihomo version** (`compose.mihomo_tag`, e.g. `v1.19.27`), not `:latest` —
+  reproducible deploys (the default is already pinned). The AmneziaWG-param safety is handled
+  by the platform: it floors `Jmin ≥ S4` so no obfuscation junk packet is short enough to trip
+  the unguarded S4-strip in older `amneziawg-go` (mihomo) builds. (This was a real crash-loop —
+  our derivation once produced `Jmin=22` with `S4=52`, panicking mihomo on a 41-byte junk packet;
+  fixed in the derivation, so any mihomo/kernel pairing is safe now.)
+- **mihomo dashboard needs GitHub on first run.** The master's mihomo fetches the web
+  dashboard zip from GitHub on first start; if GitHub is unreachable it fails and can
+  crash-loop. Set `masters[].mihomo.dashboard_disabled: true` (or a reachable
+  `mihomo.dashboard_url`) where GitHub is blocked. Default is on.
+- **`wg-easy` shows `unhealthy` in `docker ps` — cosmetic.** Its Docker healthcheck runs
+  `wg show`, which can't see AmneziaWG interfaces. The real signal is the agent's
+  `client-wg` check; ignore the container flag.
+- **The master converges after the exits register.** It can't render its mihomo proxies
+  until each exit has published its public key, so on first start the master may show
+  `Error`/`Degraded` ("no exit tunnels yet") for ~1–2 reconcile intervals, then go `Ready`.

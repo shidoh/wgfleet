@@ -29,7 +29,12 @@ const (
 // the same canonical defaults the renderer falls back to.
 const (
 	DefaultWGEasyImage = "ghcr.io/wg-easy/wg-easy:15"
-	DefaultMihomoImage = "metacubex/mihomo:latest"
+	// Pinned, NOT :latest (docs/DESIGN.md #8) — reproducible/auditable deploys. v1.19.27 is the
+	// operator's known-good prod version. (The AWG-param safety that keeps mihomo's
+	// amneziawg-go from panicking is handled in the derivation: Jmin is floored ≥ S4, so no
+	// junk packet underflows its S4-strip — see internal/wg junkS4Margin. So this pin is
+	// for reproducibility, not a kernel↔mihomo version-match requirement.)
+	DefaultMihomoImage = "metacubex/mihomo:v1.19.27"
 	// DefaultWGEasyWebPort is the wg-easy admin UI port when the spec leaves it
 	// unset. Exported so the controller UI can build a link to it.
 	DefaultWGEasyWebPort = 44423
@@ -70,8 +75,15 @@ func RenderMasterCompose(in RenderInput) (string, error) {
 		"EXPERIMENTAL_AWG=true",
 		"OVERRIDE_AUTO_AWG=awg",
 	}
-	// First-run seeding (host/port/CIDR/DNS/allowed-ips). wg-easy ignores these
-	// after initial setup; the operator may remove them later.
+	// First-run seeding (host/port/CIDR/DNS/allowed-ips). wg-easy applies INIT_*
+	// only at first DB creation, AND several are conditionally gated in v15:
+	// INIT_IPV4_CIDR applies only when INIT_IPV6_CIDR is ALSO set, and
+	// INIT_HOST/INIT_PORT only inside the INIT_USERNAME+INIT_PASSWORD block — none of
+	// which we set (ADR-0008: operator runs the setup wizard). So INIT_IPV4_CIDR/
+	// INIT_HOST/INIT_PORT are effectively no-ops here; the port/pool/MTU are enforced
+	// authoritatively by the agent's direct DB write (internal/wgeasy ColumnsFromSpec).
+	// We still pass them as harmless intent + in case the operator later enables the
+	// unattended-setup vars. INIT_DNS/INIT_ALLOWED_IPS DO apply on first run.
 	if in.ClientPool != "" {
 		wgEasyEnv = append(wgEasyEnv, "INIT_ENABLED=true", "INIT_IPV4_CIDR="+in.ClientPool)
 	}

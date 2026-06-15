@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -46,6 +47,9 @@ type SpecRenderer interface {
 type Provisioner interface {
 	Provisionable(nodeID string) bool
 	TriggerAsync(nodeID string) error
+	// TriggerUpgrade rolls a node's agent binary forward (upload + restart) over
+	// SSH in the background.
+	TriggerUpgrade(nodeID string) error
 	// ManifestNodes returns declared-but-not-yet-provisioned nodes as Pending
 	// stubs, so the dashboard shows the full declared fleet.
 	ManifestNodes() []domain.Node
@@ -88,6 +92,7 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner) (*Handler, err
 	// Mutating actions. POST-only; guarded by the mgmt/ZT bind, a Sec-Fetch-Site
 	// check, and a CSRF token (form field or X-CSRF-Token header) — see guard().
 	h.mux.HandleFunc("POST /nodes/{id}/provision", h.handleProvision)
+	h.mux.HandleFunc("POST /nodes/{id}/upgrade", h.handleUpgrade)
 	h.mux.HandleFunc("POST /nodes/{id}/drain", h.handleDrain(true))
 	h.mux.HandleFunc("POST /nodes/{id}/undrain", h.handleDrain(false))
 	h.mux.HandleFunc("POST /nodes/{id}/decommission", h.handleDecommission)
@@ -108,6 +113,25 @@ func (h *Handler) handleProvision(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := h.prov.TriggerAsync(id); err != nil {
 		http.Error(w, "provision: "+err.Error(), http.StatusConflict)
+		return
+	}
+	http.Redirect(w, r, "/nodes/"+id, http.StatusSeeOther)
+}
+
+// handleUpgrade rolls a node's agent binary forward (upload + restart) over SSH
+// in the background. The data plane survives an agent restart, so this is
+// non-disruptive; the agent re-registers on the new version.
+func (h *Handler) handleUpgrade(w http.ResponseWriter, r *http.Request) {
+	if !h.guard(w, r) {
+		return
+	}
+	if h.prov == nil {
+		http.Error(w, "upgrade is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	id := r.PathValue("id")
+	if err := h.prov.TriggerUpgrade(id); err != nil {
+		http.Error(w, "upgrade: "+err.Error(), http.StatusConflict)
 		return
 	}
 	http.Redirect(w, r, "/nodes/"+id, http.StatusSeeOther)
@@ -298,7 +322,9 @@ type nodeData struct {
 	SpecText     string
 	SpecErr      string
 	CanProvision bool
+	CanUpgrade   bool   // node is provisioned + upgradable over SSH
 	WGEasyURL    string // master only: link to its wg-easy admin UI (mgmt overlay)
+	WireSkew     string // non-empty (reason) when the agent's wire version is incompatible
 	CSRF         string // CSRF token embedded in the action forms
 }
 
@@ -316,6 +342,11 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	data := nodeData{Title: node.Name, NodeCount: 1, Node: node, CSRF: h.csrf}
+	if node.WireVersion != 0 {
+		if compat := api.CheckWire(node.WireVersion); compat != api.WireCompatible {
+			data.WireSkew = api.IncompatibilityDetail(compat, node.WireVersion)
+		}
+	}
 
 	if st, err := h.store.GetStatus(r.Context(), id); err == nil {
 		data.HasStatus = true
@@ -337,6 +368,10 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 		switch node.State {
 		case domain.StatePending, domain.StateError, "":
 			data.CanProvision = true
+		default:
+			// An already-provisioned node (Reconciling/Ready/Degraded) can have its
+			// agent binary rolled forward in place.
+			data.CanUpgrade = true
 		}
 	}
 

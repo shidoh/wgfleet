@@ -56,6 +56,48 @@ func TestUpsertAndGetNode(t *testing.T) {
 	}
 }
 
+func TestUpsertRoundTripsAgentVersion(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	n := sampleNode()
+	n.AgentVersion = "v1.2.3+abc123"
+	n.WireVersion = 7
+	if err := s.UpsertNode(ctx, n); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	got, err := s.GetNode(ctx, n.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.AgentVersion != "v1.2.3+abc123" || got.WireVersion != 7 {
+		t.Errorf("agent version round-trip mismatch: %q wire=%d", got.AgentVersion, got.WireVersion)
+	}
+}
+
+func TestMigrateIsIdempotentAcrossReopen(t *testing.T) {
+	// A file-backed store, reopened, must re-run migrate() without error — the
+	// ALTER TABLE migrations would fail if run twice without user_version gating.
+	path := t.TempDir() + "/state.db"
+	s1, err := Open(path)
+	if err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+	if err := s1.UpsertNode(context.Background(), sampleNode()); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	_ = s1.Close()
+
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer func() { _ = s2.Close() }()
+	if _, err := s2.GetNode(context.Background(), "exit-de-1"); err != nil {
+		t.Fatalf("get after reopen: %v", err)
+	}
+}
+
 func TestUpsertPreservesCreatedAt(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

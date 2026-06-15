@@ -58,3 +58,35 @@ func provisionNode(cfg *config.ControllerConfig, ca *pki.CA, opts provisionOpts)
 	}
 	return nil
 }
+
+// upgradeAgentNode rolls a node's agent binary forward in place (upload +
+// restart) over SSH from the CLI, in plan or apply mode. The binary comes from
+// --agent-bin or, when unset, controller.agent_bin.
+func upgradeAgentNode(cfg *config.ControllerConfig, ca *pki.CA, node, agentBin string, plan bool) error {
+	if agentBin == "" {
+		agentBin = cfg.Controller.AgentBin
+	}
+
+	st, err := store.Open(cfg.Controller.Store)
+	if err != nil {
+		return fmt.Errorf("open store %q: %w", cfg.Controller.Store, err)
+	}
+	defer func() { _ = st.Close() }()
+
+	mgr := provmgr.New(st, ca, cfg.Fleet, provmgr.Options{AgentBinPath: agentBin}, slog.Default())
+
+	mode := provisioner.ModeApply
+	if plan {
+		mode = provisioner.ModePlan
+	}
+	report, err := mgr.UpgradeAgent(context.Background(), node, mode)
+	if err != nil {
+		return fmt.Errorf("upgrade %q: %w", node, err)
+	}
+	if plan {
+		fmt.Print(report.String())
+	} else {
+		slog.Info("agent upgrade applied", "node", node, "steps", len(report.Plan.Steps))
+	}
+	return nil
+}

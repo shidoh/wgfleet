@@ -16,6 +16,56 @@ func TestDeriveAWGParamsValid(t *testing.T) {
 	}
 }
 
+// TestDeriveAWGAllJunkSizesGenerated verifies the FULL S1-S4 set is derived
+// (none left at zero) across many seeds — S3/S4 (AmneziaWG 2.0) were once left 0,
+// producing "stub" configs. All four are shared, so both ends must agree.
+func TestDeriveAWGAllJunkSizesGenerated(t *testing.T) {
+	for i := 0; i < 1000; i++ {
+		s := DeriveAWGShared(string(rune(i)) + "|tunnel|salt")
+		if s.S1 == 0 || s.S2 == 0 || s.S3 == 0 || s.S4 == 0 {
+			t.Fatalf("seed %d: a junk size is zero (S1=%d S2=%d S3=%d S4=%d) — all must be generated",
+				i, s.S1, s.S2, s.S3, s.S4)
+		}
+	}
+}
+
+// TestS4FitsMTUCushion guards the S4↔MTU coupling: S4 junk is added to every data
+// packet, so the derived value must stay within the AmneziaWG MTU cushion or
+// full-size data packets fragment at the physical link.
+func TestS4FitsMTUCushion(t *testing.T) {
+	if s4High > AWGExtraOverhead {
+		t.Fatalf("s4High (%d) must be <= AWGExtraOverhead (%d) or data packets fragment", s4High, AWGExtraOverhead)
+	}
+	for i := 0; i < 1000; i++ {
+		s := DeriveAWGShared(string(rune(i)) + "|s4|salt")
+		if s.S4 < s4Low || s.S4 > s4High {
+			t.Fatalf("seed %d: S4=%d outside [%d,%d]", i, s.S4, s4Low, s4High)
+		}
+	}
+}
+
+// TestJminAboveS4 guards the amneziawg-go ≤20251104 crash: a junk packet shorter
+// than S4 underflows the receiver's S4-strip. Every derived end must have
+// Jmin ≥ S4 (+margin), so no junk packet this end sends can crash a buggy peer.
+func TestJminAboveS4(t *testing.T) {
+	for i := 0; i < 2000; i++ {
+		for _, end := range []string{"exit", "master", ""} {
+			p := DeriveAWGParamsForEnd(string(rune(i))+"|tun|salt", end, i%2 == 0)
+			if p.Local.Jmin < p.Shared.S4+junkS4Margin {
+				t.Fatalf("seed %d end %q: Jmin=%d < S4+margin=%d+%d", i, end, p.Local.Jmin, p.Shared.S4, junkS4Margin)
+			}
+			if p.Local.Jmin >= p.Local.Jmax || p.Local.Jmax > awgJMaxLimitTest {
+				t.Fatalf("seed %d end %q: bad Jmin/Jmax after floor: %d/%d", i, end, p.Local.Jmin, p.Local.Jmax)
+			}
+			if err := p.Validate(); err != nil {
+				t.Fatalf("seed %d end %q: invalid after Jmin floor: %v", i, end, err)
+			}
+		}
+	}
+}
+
+const awgJMaxLimitTest = 1280
+
 func TestDeriveAWGDeterministic(t *testing.T) {
 	seed := "exit-de-1|master-xa-1|salt"
 	a := DeriveAWGShared(seed)

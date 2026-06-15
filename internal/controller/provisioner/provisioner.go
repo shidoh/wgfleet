@@ -36,15 +36,25 @@ func (p *Provisioner) Provision(ctx context.Context, r Runner, in BootstrapInput
 	}
 	in.Facts = facts
 
-	plan := BuildPlan(in)
-	report := Report{Mode: mode, Plan: plan}
+	return p.run(ctx, r, BuildPlan(in), mode, "bootstrap")
+}
 
+// Upgrade rolls the node's agent binary forward in place (upload + restart),
+// without re-running the full bootstrap. In ModePlan it returns the plan without
+// touching the node. The caller supplies BootstrapInput.Node and AgentBinary;
+// the rest of BootstrapInput is unused here (identity/deps already on the node).
+func (p *Provisioner) Upgrade(ctx context.Context, r Runner, in BootstrapInput, mode Mode) (Report, error) {
+	return p.run(ctx, r, BuildUpgradePlan(in), mode, "upgrade")
+}
+
+// run executes (or, in ModePlan, just returns) an ordered plan over the Runner.
+func (p *Provisioner) run(ctx context.Context, r Runner, plan Plan, mode Mode, kind string) (Report, error) {
+	report := Report{Mode: mode, Plan: plan}
 	if mode != ModeApply {
 		return report, nil
 	}
-
 	for i, step := range plan.Steps {
-		p.log.Info("bootstrap step", "node", in.Node.Name, "step", i+1,
+		p.log.Info(kind+" step", "node", plan.Node, "step", i+1,
 			"kind", step.Kind, "summary", step.Summary)
 		if step.exec == nil {
 			continue
@@ -53,6 +63,6 @@ func (p *Provisioner) Provision(ctx context.Context, r Runner, in BootstrapInput
 			return report, fmt.Errorf("step %d (%s): %w", i+1, step.Summary, err)
 		}
 	}
-	p.log.Info("bootstrap complete", "node", in.Node.Name, "steps", len(plan.Steps))
+	p.log.Info(kind+" complete", "node", plan.Node, "steps", len(plan.Steps))
 	return report, nil
 }

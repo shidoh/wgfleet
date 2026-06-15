@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -32,6 +33,7 @@ type StoreCollector struct {
 	nodeReconcileNG *prometheus.Desc
 	nodeHealthCheck *prometheus.Desc
 	nodeEgressInfo  *prometheus.Desc
+	nodeAgentInfo   *prometheus.Desc
 }
 
 var _ prometheus.Collector = (*StoreCollector)(nil)
@@ -66,6 +68,10 @@ func NewStoreCollector(reg *prometheus.Registry, st store.Store) *StoreCollector
 			prometheus.BuildFQName(namespace, "node", "egress_info"),
 			"Observed egress IP as a label; value is always 1.",
 			[]string{"node", "egress_ip"}, nil),
+		nodeAgentInfo: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "node", "agent_info"),
+			"Agent build + wire version reported by the node; value is always 1.",
+			[]string{"node", "agent_version", "wire_version"}, nil),
 	}
 	reg.MustRegister(c)
 	return c
@@ -79,6 +85,7 @@ func (c *StoreCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.nodeReconcileNG
 	ch <- c.nodeHealthCheck
 	ch <- c.nodeEgressInfo
+	ch <- c.nodeAgentInfo
 }
 
 // Collect implements prometheus.Collector. Store errors yield no metrics for
@@ -105,6 +112,11 @@ func (c *StoreCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 		ch <- prometheus.MustNewConstMetric(c.nodeReconcileNG, prometheus.GaugeValue,
 			boolToFloat(n.LastError != ""), n.Name)
+
+		if n.AgentVersion != "" || n.WireVersion != 0 {
+			ch <- prometheus.MustNewConstMetric(c.nodeAgentInfo, prometheus.GaugeValue, 1,
+				n.Name, n.AgentVersion, strconv.FormatUint(uint64(n.WireVersion), 10))
+		}
 
 		c.collectStatus(ctx, ch, n.Name)
 	}

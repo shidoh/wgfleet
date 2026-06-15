@@ -48,11 +48,26 @@ func Open(path string) (*SQLiteStore, error) {
 	return s, nil
 }
 
+// migrate applies any migrations newer than the database's recorded schema
+// version, tracked in SQLite's PRAGMA user_version. This makes the migration
+// list properly append-only: non-idempotent statements (ALTER TABLE ADD COLUMN)
+// run exactly once. A pre-versioning database reports user_version 0; its first
+// two migrations are CREATE ... IF NOT EXISTS, so re-running them is harmless and
+// the upgrade is seamless.
 func (s *SQLiteStore) migrate(ctx context.Context) error {
-	for i, stmt := range migrations {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+	var version int
+	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	for i := version; i < len(migrations); i++ {
+		if _, err := s.db.ExecContext(ctx, migrations[i]); err != nil {
 			return fmt.Errorf("migration %d: %w", i, err)
 		}
+	}
+	// PRAGMA user_version does not accept bound parameters; len(migrations) is a
+	// trusted in-code constant, so the format is safe.
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", len(migrations))); err != nil {
+		return fmt.Errorf("set schema version: %w", err)
 	}
 	return nil
 }
@@ -73,8 +88,9 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 		INSERT INTO nodes (
 			id, name, role, region, mgmt_addr, public_ip, public_key, state,
 			drain, decommission, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
+			agent_version, wire_version,
 			created_at, updated_at, last_seen
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			name=excluded.name, role=excluded.role, region=excluded.region,
 			mgmt_addr=excluded.mgmt_addr, public_ip=excluded.public_ip,
@@ -83,11 +99,13 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 			last_error=excluded.last_error,
 			ssh_host=excluded.ssh_host, ssh_port=excluded.ssh_port,
 			ssh_user=excluded.ssh_user, ssh_key_path=excluded.ssh_key_path,
+			agent_version=excluded.agent_version, wire_version=excluded.wire_version,
 			updated_at=excluded.updated_at, last_seen=excluded.last_seen`
 	_, err := s.db.ExecContext(ctx, q,
 		n.ID, n.Name, string(n.Role), n.Region, n.MgmtAddr, n.PublicIP,
 		n.PublicKey, string(n.State), boolToInt(n.Drain), boolToInt(n.Decommission), n.LastError,
 		n.SSH.Host, n.SSH.Port, n.SSH.User, n.SSH.KeyPath,
+		n.AgentVersion, n.WireVersion,
 		fmtTime(orDefault(n.CreatedAt, now)), fmtTime(now), fmtTime(n.LastSeen),
 	)
 	if err != nil {
@@ -100,7 +118,7 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 func (s *SQLiteStore) GetNode(ctx context.Context, id string) (domain.Node, error) {
 	const q = `SELECT id, name, role, region, mgmt_addr, public_ip, public_key,
 		state, drain, decommission, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
-		created_at, updated_at, last_seen FROM nodes WHERE id = ?`
+		agent_version, wire_version, created_at, updated_at, last_seen FROM nodes WHERE id = ?`
 	return scanNode(s.db.QueryRowContext(ctx, q, id))
 }
 
@@ -108,7 +126,7 @@ func (s *SQLiteStore) GetNode(ctx context.Context, id string) (domain.Node, erro
 func (s *SQLiteStore) ListNodes(ctx context.Context) ([]domain.Node, error) {
 	const q = `SELECT id, name, role, region, mgmt_addr, public_ip, public_key,
 		state, drain, decommission, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
-		created_at, updated_at, last_seen FROM nodes ORDER BY name`
+		agent_version, wire_version, created_at, updated_at, last_seen FROM nodes ORDER BY name`
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("list nodes: %w", err)
@@ -258,6 +276,7 @@ func scanNode(row rowScanner) (domain.Node, error) {
 	err := row.Scan(
 		&n.ID, &n.Name, &roleS, &n.Region, &n.MgmtAddr, &n.PublicIP, &n.PublicKey,
 		&stateS, &drain, &decommission, &n.LastError, &n.SSH.Host, &n.SSH.Port, &n.SSH.User, &n.SSH.KeyPath,
+		&n.AgentVersion, &n.WireVersion,
 		&createdAt, &updatedAt, &seen,
 	)
 	if errors.Is(err, sql.ErrNoRows) {

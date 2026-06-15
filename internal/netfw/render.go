@@ -19,6 +19,15 @@ const (
 	quicHTTPSPort = 443  // QUIC/HTTPS over UDP, dropped on masters (an earlier finding context)
 )
 
+// baselineTable is the bootstrap firewall table name (provisioner/templates.go).
+// The exit firewall deletes it on apply, superseding it without a global flush.
+const baselineTable = "wgfleet_baseline"
+
+// ExitTable is the exit firewall's nft table name. Exported so the agent can
+// probe the live kernel for it (live-kernel reload gate) using the exact name the
+// renderer emits.
+const ExitTable = "wgfleet"
+
 // RenderInput is the context needed to render a node's firewall.
 type RenderInput struct {
 	Firewall domain.FirewallSpec
@@ -26,6 +35,13 @@ type RenderInput struct {
 	// DropQUIC drops inbound UDP/443 (QUIC). Masters do this so clients fall back
 	// to TCP paths the router can handle; exits leave it alone.
 	DropQUIC bool
+	// WGReplyMark, when non-zero, renders an nft mangle rule that marks this node's
+	// WG-server reply/handshake packets (source port = Firewall.WGPort) with the
+	// mark, so the routing `ip rule fwmark <mark> lookup main` keeps them OFF the
+	// egress (WARP) interface (an earlier finding: otherwise clients/the master see a
+	// Cloudflare source and drop the peer). Set only on egress-routed nodes; the
+	// value must equal routing.EffectiveFwMark for the same spec.
+	WGReplyMark int
 }
 
 // RenderRuleset renders an nftables script for in. The input chain defaults to
@@ -45,8 +61,17 @@ func RenderRuleset(in RenderInput) (string, error) {
 	var b strings.Builder
 	b.WriteString("#!/usr/sbin/nft -f\n")
 	b.WriteString("# Rendered by wgfleet — do not edit by hand.\n")
-	b.WriteString("flush ruleset\n\n")
-	b.WriteString("table inet wgfleet {\n")
+	// Supersede the bootstrap baseline (its allow-set is a subset of this firewall)
+	// and atomically replace our own table — WITHOUT `flush ruleset`, which would
+	// also wipe unrelated tables (e.g. the master NAT on a co-located node, or this
+	// table on a re-provision that re-applies the baseline). `table X` ensures the
+	// table exists so the following `delete` never fails; the whole script is one
+	// atomic nft transaction, so there is no window with no firewall.
+	fmt.Fprintf(&b, "table inet %s\n", baselineTable)
+	fmt.Fprintf(&b, "delete table inet %s\n", baselineTable)
+	fmt.Fprintf(&b, "table inet %s\n", ExitTable)
+	fmt.Fprintf(&b, "delete table inet %s\n\n", ExitTable)
+	fmt.Fprintf(&b, "table inet %s {\n", ExitTable)
 
 	if in.Firewall.ASBlacklist {
 		b.WriteString("\tset as_blacklist {\n")
@@ -90,6 +115,18 @@ func RenderRuleset(in RenderInput) (string, error) {
 	b.WriteString("\tchain output {\n")
 	b.WriteString("\t\ttype filter hook output priority 0; policy accept;\n")
 	b.WriteString("\t}\n")
+
+	// Mark WG-server reply/handshake packets so source routing keeps them direct
+	//. `type route hook output` re-runs the route lookup after the
+	// mark is set, so the routing `ip rule fwmark` actually diverts them to the main
+	// table instead of the egress (WARP) interface. Only emitted on egress-routed
+	// nodes (WGReplyMark != 0).
+	if in.WGReplyMark != 0 {
+		b.WriteString("\n\tchain mangle_output {\n")
+		b.WriteString("\t\ttype route hook output priority mangle; policy accept;\n")
+		fmt.Fprintf(&b, "\t\tmeta l4proto udp udp sport %d meta mark set 0x%x\n", in.Firewall.WGPort, in.WGReplyMark)
+		b.WriteString("\t}\n")
+	}
 
 	b.WriteString("}\n")
 	return b.String(), nil
