@@ -18,7 +18,6 @@ type MasterNATInput struct {
 	ClientInterface string // client WG interface, e.g. "wg0"
 	ClientCIDR      string // client WG pool, e.g. "10.80.0.0/24"
 	RedirAddr       string // mihomo redir target, e.g. "10.80.0.1:7895"
-	EgressInterface string // public uplink for MASQUERADE, e.g. "ens3"
 	// PrivateCIDRs are destinations that bypass the DNAT (kept DIRECT): RFC1918,
 	// CGNAT, mgmt overlay. Rendered as `ip daddr != <cidr>` guards.
 	PrivateCIDRs []string
@@ -29,9 +28,6 @@ type MasterNATInput struct {
 func RenderMasterNAT(in MasterNATInput) (string, error) {
 	if in.ClientInterface == "" || in.ClientCIDR == "" || in.RedirAddr == "" {
 		return "", fmt.Errorf("netfw master NAT: client interface, CIDR and redir addr are required")
-	}
-	if in.EgressInterface == "" {
-		return "", fmt.Errorf("netfw master NAT: egress interface is required for MASQUERADE")
 	}
 
 	guards := privateGuards(in.PrivateCIDRs)
@@ -51,7 +47,13 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 
 	b.WriteString("\tchain postrouting {\n")
 	b.WriteString("\t\ttype nat hook postrouting priority srcnat; policy accept;\n")
-	fmt.Fprintf(&b, "\t\tip saddr %s oifname %q masquerade\n", in.ClientCIDR, in.EgressInterface)
+	// MASQUERADE client traffic on EVERY egress except back into the client
+	// interface itself. Client packets leave by more than one uplink: the public
+	// link (internet) AND the mgmt/ZT overlay (DNS to the exits' blocky, internal
+	// nets). Pinning a single egress iface (e.g. ens3) silently breaks the overlay
+	// path — DNS dies because blocky sees the un-NAT'd client source and can't
+	// route the reply back (the reference deployment §3.12 masquerades both ens3 and the ZT iface).
+	fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q masquerade\n", in.ClientCIDR, in.ClientInterface)
 	b.WriteString("\t}\n")
 
 	b.WriteString("}\n")

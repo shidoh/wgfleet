@@ -3,6 +3,7 @@ package exit
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -41,11 +42,15 @@ func Planners(in Input) []reconcile.Planner {
 		up = ipLinkUp
 	}
 	return []reconcile.Planner{
-		firewallPlanner{path: in.Paths.NFT},
+		firewallPlanner{path: in.Paths.NFT, wgConf: in.Paths.WGConf},
 		wgPlanner{path: in.Paths.WGConf, privateKey: in.PrivateKey, up: up},
 		warpPlanner{path: in.Paths.WGCF, dir: in.Paths.WARPDir, warp: in.WARP, up: up},
 		routingPlanner{statePath: in.Paths.RoutingState},
 		dnsPlanner{configPath: in.Paths.DNS, composePath: in.Paths.DNSCompose},
+		// Last: blocky runs in Docker, which sets the nft FORWARD policy to DROP and
+		// would silently black-hole client traffic forwarded awg0→wgcf (an earlier finding,
+		// same as the master). Runs after dnsPlanner so the DOCKER-USER chain exists.
+		forwardPlanner{wgIface: wgIfaceName(in.Paths.WGConf)},
 	}
 }
 
@@ -62,10 +67,103 @@ func ifaceName(confPath string) string {
 	return strings.TrimSuffix(filepath.Base(confPath), ".conf")
 }
 
+// wgIfaceName is ifaceName but returns "" for an empty path (filepath.Base("")
+// is ".", which would otherwise leak a bogus interface name into the ruleset).
+func wgIfaceName(confPath string) string {
+	if confPath == "" {
+		return ""
+	}
+	return ifaceName(confPath)
+}
+
+// --- docker FORWARD accept ---
+
+// forwardPlanner keeps the exit forwarding client traffic despite Docker. The
+// blocky container makes Docker set the nft filter FORWARD policy to DROP and
+// accept only its own bridge traffic, so client packets routed awg0→wgcf are
+// dropped in the forward hook — the master↔exit AWG handshake stays healthy
+// (that is INPUT on awg0's port, not forward) while all transit silently dies.
+// The exit's own `inet wgfleet` forward chain (policy accept) cannot override
+// it: a drop in Docker's base chain is final regardless of an accept in another
+// at the same hook. The sanctioned fix is an ACCEPT in DOCKER-USER, which Docker
+// never flushes. Mirrors the master's forward planner with iface = awg0.
+type forwardPlanner struct {
+	wgIface string
+	// Probes (nil ⇒ real); injected in tests.
+	forwardOn   func() bool
+	chainExists func() bool
+	rulePresent func(m []string) bool
+}
+
+func (forwardPlanner) Component() string { return "exit forwarding (ip_forward + DOCKER-USER)" }
+
+func (p forwardPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]reconcile.Action, error) {
+	iface := p.wgIface
+	if iface == "" {
+		iface = "awg0"
+	}
+	var actions []reconcile.Action
+
+	if p.isForwardOn() {
+		actions = append(actions, reconcile.NoChangeAction("ip_forward", "already enabled"))
+	} else {
+		actions = append(actions, reconcile.ExecAction("enable IPv4 forwarding",
+			"sysctl", "-w", "net.ipv4.ip_forward=1"))
+	}
+
+	if !p.dockerUserExists() {
+		actions = append(actions, reconcile.NoChangeAction("DOCKER-USER",
+			"pending: DOCKER-USER chain not present yet (docker not up)"))
+		return actions, nil
+	}
+	rules := []struct {
+		summary string
+		match   []string
+	}{
+		{"accept client→egress forwarding (DOCKER-USER)", []string{"-i", iface, "-j", "ACCEPT"}},
+		{"accept return traffic to clients (DOCKER-USER)", []string{"-o", iface, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"}},
+	}
+	for _, r := range rules {
+		if p.isRulePresent(r.match) {
+			actions = append(actions, reconcile.NoChangeAction("DOCKER-USER", r.summary+" already present"))
+			continue
+		}
+		argv := append([]string{"iptables", "-I", "DOCKER-USER"}, r.match...)
+		actions = append(actions, reconcile.ExecAction(r.summary, argv...))
+	}
+	return actions, nil
+}
+
+func (p forwardPlanner) isForwardOn() bool {
+	if p.forwardOn != nil {
+		return p.forwardOn()
+	}
+	b, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward")
+	return err == nil && strings.TrimSpace(string(b)) == "1"
+}
+
+func (p forwardPlanner) dockerUserExists() bool {
+	if p.chainExists != nil {
+		return p.chainExists()
+	}
+	return exec.Command("iptables", "-S", "DOCKER-USER").Run() == nil
+}
+
+func (p forwardPlanner) isRulePresent(match []string) bool {
+	if p.rulePresent != nil {
+		return p.rulePresent(match)
+	}
+	argv := append([]string{"-C", "DOCKER-USER"}, match...)
+	return exec.Command("iptables", argv...).Run() == nil
+}
+
 // --- firewall ---
 
 type firewallPlanner struct {
 	path string
+	// wgConf is the exit WG config path; its basename is the interface name the
+	// MASQUERADE excludes (`oifname != <iface>`). Empty ⇒ the renderer defaults it.
+	wgConf string
 	// loaded reports whether the live kernel has the exit firewall table.
 	// nil ⇒ a real `nft list table inet wgfleet` probe; tests inject a stub.
 	loaded func() bool
@@ -78,6 +176,11 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 		Firewall: spec.Firewall,
 		Role:     spec.Role,
 		DropQUIC: spec.Role == domain.RoleMaster,
+		// SNAT client traffic on egress so packets leaving WARP carry the egress
+		// address, not the master's private tunnel IP (else the upstream drops them).
+		ClientCIDR:      spec.WGServer.AddressPool,
+		WGInterface:     wgIfaceName(p.wgConf),
+		EgressInterface: spec.Routing.EgressInterface,
 	}
 	// On an egress-routed exit, mark this node's WG-server reply/handshake packets
 	// so the routing `ip rule fwmark` keeps them off the WARP interface (earlier findings
@@ -269,7 +372,12 @@ type routingPlanner struct {
 func (routingPlanner) Component() string { return "policy routing" }
 
 func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
-	steps, err := routing.Render(spec.Routing)
+	// Scope the egress rule to THIS exit's client pool so only client traffic is
+	// WARP-routed — never the host's own. The pool is not a wire field;
+	// derive it agent-side from the WG server spec the agent already holds.
+	rspec := spec.Routing
+	rspec.ClientCIDR = spec.WGServer.AddressPool
+	steps, err := routing.Render(rspec)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +402,7 @@ func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 	case file.Changes():
 		// Intent changed: apply the full set (incl. the conntrack flush).
 		actions = append(actions, routingExecActions(steps)...)
-	case !p.isApplied(spec.Routing):
+	case !p.isApplied(rspec):
 		// Intent unchanged but the live kernel no longer reflects it — someone
 		// flushed or edited `ip rule`/`ip route` by hand, or a partial state.
 		// Re-apply the full idempotent set to self-heal (ADR-0015 live-kernel

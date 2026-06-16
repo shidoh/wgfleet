@@ -201,11 +201,12 @@ func composeFromProto(c *pb.ComposeSpec) domain.ComposeSpec {
 
 func wgServerToProto(w domain.WGServerSpec) *pb.WGServerSpec {
 	return &pb.WGServerSpec{
-		ListenPort:  int32(w.ListenPort),
-		AddressPool: w.AddressPool,
-		Address:     w.Address,
-		Mtu:         int32(w.MTU),
-		Awg:         awgToProto(w.AWG),
+		ListenPort:     int32(w.ListenPort),
+		AddressPool:    w.AddressPool,
+		Address:        w.Address,
+		Mtu:            int32(w.MTU),
+		Awg:            awgToProto(w.AWG),
+		ClientAwgLocal: awgLocalToProto(w.ClientAWGLocal),
 	}
 }
 
@@ -214,11 +215,12 @@ func wgServerFromProto(w *pb.WGServerSpec) domain.WGServerSpec {
 		return domain.WGServerSpec{}
 	}
 	return domain.WGServerSpec{
-		ListenPort:  int(w.GetListenPort()),
-		AddressPool: w.GetAddressPool(),
-		Address:     w.GetAddress(),
-		MTU:         int(w.GetMtu()),
-		AWG:         awgFromProto(w.GetAwg()),
+		ListenPort:     int(w.GetListenPort()),
+		AddressPool:    w.GetAddressPool(),
+		Address:        w.GetAddress(),
+		MTU:            int(w.GetMtu()),
+		AWG:            awgFromProto(w.GetAwg()),
+		ClientAWGLocal: awgLocalFromProto(w.GetClientAwgLocal()),
 	}
 }
 
@@ -255,10 +257,7 @@ func awgToProto(a *domain.AWGParams) *pb.AWGParams {
 			H3: headerToProto(s.H3), H4: headerToProto(s.H4),
 			S1: int32(s.S1), S2: int32(s.S2), S3: int32(s.S3), S4: int32(s.S4),
 		},
-		Local: &pb.AWGLocal{
-			Jc: int32(a.Local.Jc), Jmin: int32(a.Local.Jmin), Jmax: int32(a.Local.Jmax),
-			I1: a.Local.I1, I2: a.Local.I2, I3: a.Local.I3, I4: a.Local.I4, I5: a.Local.I5,
-		},
+		Local: awgLocalToProto(&a.Local),
 	}
 }
 
@@ -274,13 +273,30 @@ func awgFromProto(a *pb.AWGParams) *domain.AWGParams {
 			S1: int(s.GetS1()), S2: int(s.GetS2()), S3: int(s.GetS3()), S4: int(s.GetS4()),
 		}
 	}
-	if l := a.GetLocal(); l != nil {
-		out.Local = domain.AWGLocal{
-			Jc: int(l.GetJc()), Jmin: int(l.GetJmin()), Jmax: int(l.GetJmax()),
-			I1: l.GetI1(), I2: l.GetI2(), I3: l.GetI3(), I4: l.GetI4(), I5: l.GetI5(),
-		}
+	if l := awgLocalFromProto(a.GetLocal()); l != nil {
+		out.Local = *l
 	}
 	return &out
+}
+
+func awgLocalToProto(l *domain.AWGLocal) *pb.AWGLocal {
+	if l == nil {
+		return nil
+	}
+	return &pb.AWGLocal{
+		Jc: int32(l.Jc), Jmin: int32(l.Jmin), Jmax: int32(l.Jmax),
+		I1: l.I1, I2: l.I2, I3: l.I3, I4: l.I4, I5: l.I5,
+	}
+}
+
+func awgLocalFromProto(l *pb.AWGLocal) *domain.AWGLocal {
+	if l == nil {
+		return nil
+	}
+	return &domain.AWGLocal{
+		Jc: int(l.GetJc()), Jmin: int(l.GetJmin()), Jmax: int(l.GetJmax()),
+		I1: l.GetI1(), I2: l.GetI2(), I3: l.GetI3(), I4: l.GetI4(), I5: l.GetI5(),
+	}
 }
 
 func headerToProto(h domain.AWGHeader) *pb.AWGHeader {

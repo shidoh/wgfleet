@@ -20,6 +20,7 @@ type Paths struct {
 	ExtraFilesDir  string // base dir for operator extra files with relative paths
 	WGEasyDB       string // wg-easy SQLite db (client-facing AWG server)
 	Compose        string // docker-compose.yml for the container stack
+	WGEasyAdmin    string // wg-easy admin password file (agent-local, 0600; never crosses the wire)
 }
 
 // DefaultPaths returns the production-default file locations.
@@ -31,6 +32,7 @@ func DefaultPaths() Paths {
 		ExtraFilesDir:  "/etc/mihomo",
 		WGEasyDB:       wgeasy.DefaultDBPath,
 		Compose:        "/etc/wgfleet/docker-compose.yml",
+		WGEasyAdmin:    "/etc/wgfleet/wg-easy-admin-password",
 	}
 }
 
@@ -43,5 +45,6 @@ func PathsUnder(dir string) Paths {
 		ExtraFilesDir:  dir,
 		WGEasyDB:       filepath.Join(dir, "wg-easy.db"),
 		Compose:        filepath.Join(dir, "docker-compose.yml"),
+		WGEasyAdmin:    filepath.Join(dir, "wg-easy-admin-password"),
 	}
 }

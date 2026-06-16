@@ -41,9 +41,10 @@ func DefaultExitProbes(spec domain.NodeSpec) ExitProbes {
 
 // DefaultMasterProbes wires the real probes for a master node.
 func DefaultMasterProbes(spec domain.NodeSpec) MasterProbes {
-	var controller string
+	var controller, secret string
 	if spec.Master != nil {
 		controller = spec.Master.ExternalController
+		secret = clashSecret(spec.Master.Custom.Overrides)
 	}
 	return MasterProbes{
 		// The master's client-facing interface is managed by wg-easy, which names
@@ -51,8 +52,19 @@ func DefaultMasterProbes(spec domain.NodeSpec) MasterProbes {
 		// interface). It is an AmneziaWG device, so `ip link show` sees it even
 		// though vanilla `wg show` would not.
 		WGServerUp: ifaceUpProbe(wgeasy.DefaultInterface),
-		MihomoAPI:  mihomoAPIProbe(controller),
+		MihomoAPI:  mihomoAPIProbe(controller, secret),
 	}
+}
+
+// clashSecret extracts the mihomo Clash API `secret` from the operator's mihomo
+// overrides (the same map deep-merged into the rendered config), so the health
+// probe authenticates with exactly the secret the running mihomo enforces. Any
+// non-string or missing value yields "" (no auth header).
+func clashSecret(overrides map[string]any) string {
+	if s, ok := overrides["secret"].(string); ok {
+		return s
+	}
+	return ""
 }
 
 // handshakeFreshProbe checks the freshest handshake across peers via
@@ -166,8 +178,11 @@ func ifaceUpProbe(iface string) Probe {
 // the probe budget and stall the synchronous reconcile loop.
 var probeHTTPClient = &http.Client{Timeout: probeTimeout}
 
-// mihomoAPIProbe checks the mihomo Clash API responds at /version.
-func mihomoAPIProbe(controller string) Probe {
+// mihomoAPIProbe checks the mihomo Clash API responds at /version. When the
+// operator set an API `secret` (via mihomo.overrides), the RESTful API requires
+// `Authorization: Bearer <secret>` — without it mihomo answers 401 and the master
+// would flap to Degraded, so the probe authenticates with the same secret.
+func mihomoAPIProbe(controller, secret string) Probe {
 	return func(ctx context.Context) Result {
 		if controller == "" {
 			return fail("no external controller configured")
@@ -178,6 +193,9 @@ func mihomoAPIProbe(controller string) Probe {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+controller+"/version", nil)
 		if err != nil {
 			return fail(err.Error())
+		}
+		if secret != "" {
+			req.Header.Set("Authorization", "Bearer "+secret)
 		}
 		resp, err := probeHTTPClient.Do(req)
 		if err != nil {

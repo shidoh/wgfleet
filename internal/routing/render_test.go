@@ -22,6 +22,7 @@ func TestRenderWARPRouting(t *testing.T) {
 		DirectCIDRs:     []string{"10.0.0.0/8", "192.168.0.0/16"},
 		MasterIP:        "203.0.113.1",
 		FwMark:          0x1,
+		ClientCIDR:      "10.81.0.0/24",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +52,32 @@ func TestRenderWARPRouting(t *testing.T) {
 	// Egress default route in the dedicated table.
 	if !strings.Contains(all, "ip route replace default dev wgcf table 51820") {
 		t.Errorf("egress default route missing:\n%s", all)
+	}
+	// an earlier finding: the egress rule MUST be scoped to the client source subnet, never
+	// `from all` — else the host's own traffic is pulled into WARP and the node is
+	// cut off when WARP is down.
+	if !strings.Contains(all, "ip rule add from 10.81.0.0/24 lookup 51820") {
+		t.Errorf("egress rule not scoped to client subnet:\n%s", all)
+	}
+	if strings.Contains(all, "ip rule add lookup 51820") {
+		t.Errorf("egress rule is `from all` (no source scope) — would cut the host off WARP:\n%s", all)
+	}
+}
+
+// TestRenderNoClientCIDROmitsEgress: with no client source subnet, Render must
+// NOT emit the egress rule/route at all (it must never fall back to `from all`).
+func TestRenderNoClientCIDROmitsEgress(t *testing.T) {
+	steps, err := Render(domain.RoutingSpec{EgressInterface: "wgcf", MasterIP: "203.0.113.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := argvJoin(steps)
+	if strings.Contains(all, "lookup 51820") || strings.Contains(all, "table 51820") {
+		t.Errorf("no ClientCIDR ⇒ no egress rule/route, got:\n%s", all)
+	}
+	// The host-direct safety rules (master/fwmark) must still be present.
+	if !strings.Contains(all, "fwmark 0x1 lookup main") {
+		t.Errorf("safety rules missing:\n%s", all)
 	}
 }
 
@@ -129,6 +156,7 @@ func TestManagedPrefsMatchRenderedRules(t *testing.T) {
 		EgressInterface: "wgcf",
 		MasterIP:        "203.0.113.1",
 		DirectCIDRs:     []string{"10.0.0.0/8", "192.168.0.0/16"},
+		ClientCIDR:      "10.81.0.0/24",
 	}
 	prefs := ManagedPrefs(spec)
 	// master + 2 direct CIDRs + fwmark + egress = 5 priorities.
@@ -152,6 +180,7 @@ func TestKernelReflects(t *testing.T) {
 		EgressInterface: "wgcf",
 		MasterIP:        "203.0.113.1",
 		DirectCIDRs:     []string{"10.0.0.0/8"},
+		ClientCIDR:      "10.81.0.0/24",
 	}
 	// All four managed prefs (100 master, 110 direct, 200 fwmark, 300 egress).
 	fullRules := "0:\tfrom all lookup local\n" +

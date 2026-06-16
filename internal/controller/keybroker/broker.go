@@ -171,7 +171,14 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfig) (domain.NodeSpec, error) {
 	// Client-facing AmneziaWG interface (wg-easy). Clients are configured
 	// out-of-band with the matching shared params (same derivation seed).
-	clientAWG := wg.DeriveAWGParams(wg.TunnelSeed(master.Name, "clients", awgSalt))
+	clientSeed := wg.TunnelSeed(master.Name, "clients", awgSalt)
+	clientAWG := wg.DeriveAWGParams(clientSeed)
+	// The CLIENT end of this tunnel gets its OWN junk/signature profile, distinct
+	// from the server interface's (AWG permits Jc/Jmin/Jmax + I1-I5 to differ per
+	// end, so they must). Same seed ⇒ identical shared S/H (which clients derive
+	// from the interface); a different end label ⇒ different local decoy. kernel=
+	// false: clients are userspace (Amnezia), so signatures stay free of <c>/<t>.
+	clientPeer := wg.DeriveAWGParamsForEnd(clientSeed, "client", false)
 	clientPort := master.ClientListenPort()
 	spec := domain.NodeSpec{
 		Role: domain.RoleMaster,
@@ -183,8 +190,9 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			// master↔exit (AWG, 1360) and exit→WARP. With default WARP (1440) the AWG
 			// hop binds at 1360; if any exit pins a smaller WARP MTU, the
 			// client drops to it so packets never fragment at that exit's egress.
-			MTU: b.clientFacingMTU(),
-			AWG: &clientAWG,
+			MTU:            b.clientFacingMTU(),
+			AWG:            &clientAWG,
+			ClientAWGLocal: &clientPeer.Local,
 		},
 		Firewall:  domain.FirewallSpec{WGPort: clientPort},
 		Exporters: domain.ExportersSpec{Node: true, WG: true},
@@ -325,8 +333,13 @@ func (b *Broker) composeSpec(ctx context.Context, master config.MasterConfig) do
 			}
 		}
 	}
-	var publicIP string
-	if node, err := b.store.GetNode(ctx, master.Name); err == nil {
+	// PublicIP seeds wg-easy's INIT_HOST (the endpoint clients dial) and is needed
+	// for unattended setup to complete. Prefer the discovered address from the
+	// store; fall back to the manifest's public_ip so a co-located master (hand-
+	// onboarded, never SSH-provisioned, so PublicIP may be unset in the store) still
+	// gets a host.
+	publicIP := master.PublicIP
+	if node, err := b.store.GetNode(ctx, master.Name); err == nil && node.PublicIP != "" {
 		publicIP = node.PublicIP
 	}
 	return domain.ComposeSpec{

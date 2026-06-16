@@ -21,7 +21,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -44,6 +43,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/metrics"
 	"github.com/shidoh/wgfleet/internal/version"
 	"github.com/shidoh/wgfleet/internal/wg"
+	"github.com/shidoh/wgfleet/internal/wgeasy"
 )
 
 // metricsMux builds the agent's /metrics HTTP handler.
@@ -226,6 +226,22 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		a.log.Info("WG key absent; using an ephemeral key for the plan (apply would generate one)")
 	}
 
+	// Master only: resolve the wg-easy admin password that seeds unattended setup
+	// (so a fresh master never stops at the interactive wizard). Like the WG key it
+	// is persisted on first apply and generated ephemerally in plan mode; it never
+	// leaves the node (ADR-0008).
+	var adminUser, adminPass string
+	if a.role == domain.RoleMaster {
+		u, p, adminEph, aerr := a.ensureWGEasyAdmin(!plan)
+		if aerr != nil {
+			return fmt.Errorf("ensure wg-easy admin password: %w", aerr)
+		}
+		if adminEph && plan {
+			a.log.Info("wg-easy admin password absent; using an ephemeral one for the plan (apply would generate + persist it)")
+		}
+		adminUser, adminPass = u, p
+	}
+
 	state, err := a.client.Register(ctx, a.role, a.publicIP, "", a.mgmtAddr)
 	if err != nil {
 		return fmt.Errorf("register: %w", err)
@@ -277,7 +293,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		"peers", len(spec.Peers), "egress", spec.Egress,
 		"wg_port", spec.WGServer.ListenPort, "mtu", spec.WGServer.MTU)
 
-	engine := reconcile.NewEngine(a.log, a.planners(kp.PrivateKey)...)
+	engine := reconcile.NewEngine(a.log, a.planners(kp.PrivateKey, adminUser, adminPass)...)
 	start := time.Now()
 	report, reconcileErr := engine.Reconcile(ctx, spec, mode)
 	elapsed := time.Since(start)
@@ -409,59 +425,35 @@ func (a *agent) teardown(ctx context.Context, plan bool) error {
 
 func (a *agent) teardownPlanners() []reconcile.Planner {
 	if a.role == domain.RoleMaster {
-		mp := master.DefaultPaths()
-		if a.stateDir != "" {
-			mp = master.PathsUnder(a.stateDir)
-		}
-		return master.TeardownPlanners(mp)
+		return master.TeardownPlanners(a.masterPaths())
 	}
 	return exit.TeardownPlanners(a.paths)
+}
+
+// masterPaths returns the master-role on-node file locations, rooted under the
+// state dir for non-root/dev runs.
+func (a *agent) masterPaths() master.Paths {
+	if a.stateDir != "" {
+		return master.PathsUnder(a.stateDir)
+	}
+	return master.DefaultPaths()
 }
 
 // planners returns the role-appropriate reconcile planners. The master's data
 // plane is mihomo + NAT; the exit's is the WG/AWG interface + wgcf + routing +
 // nftables + DNS.
-func (a *agent) planners(privateKey string) []reconcile.Planner {
+func (a *agent) planners(privateKey, adminUser, adminPass string) []reconcile.Planner {
 	if a.role == domain.RoleMaster {
-		mp := master.DefaultPaths()
-		if a.stateDir != "" {
-			mp = master.PathsUnder(a.stateDir)
-		}
-		// Detect the host uplink for the master NAT MASQUERADE rule rather than
-		// hardcoding "ens3": interface names vary by host (ens3 on many clouds, eth0
-		// on others/Lima), and a wrong oifname silently breaks client egress. Empty
-		// ⇒ master.Planners keeps the ens3 fallback.
 		return master.Planners(master.Input{
-			Paths:           mp,
-			PrivateKey:      privateKey,
-			EgressInterface: detectEgressIface(a.log),
+			Paths:         a.masterPaths(),
+			PrivateKey:    privateKey,
+			AdminUsername: adminUser,
+			AdminPassword: adminPass,
 		})
 	}
 	in := exit.Input{Paths: a.paths, PrivateKey: privateKey}
 	in.WARP = a.readWARPProfile()
 	return exit.Planners(in)
-}
-
-// detectEgressIface returns the host's default-route interface (used as the
-// master NAT MASQUERADE uplink). It parses `ip route show default`. On any error
-// (no default route, non-Linux, missing iproute2) it returns "" so the caller
-// falls back to the compiled-in default — never a wrong guess.
-func detectEgressIface(log *slog.Logger) string {
-	out, err := exec.Command("ip", "route", "show", "default").Output()
-	if err != nil {
-		if log != nil {
-			log.Warn("could not detect egress interface from default route; using fallback", "err", err)
-		}
-		return ""
-	}
-	// "default via 192.168.5.2 dev eth0 proto dhcp ..." → take the token after "dev".
-	fields := strings.Fields(string(out))
-	for i, f := range fields {
-		if f == "dev" && i+1 < len(fields) {
-			return fields[i+1]
-		}
-	}
-	return ""
 }
 
 // readWARPProfile reads and parses the wgcf-profile.conf produced on-node by
@@ -514,6 +506,25 @@ func (a *agent) ensureWGKey(persist bool) (kp wg.KeyPair, ephemeral bool, err er
 	}
 	kp, err = wg.GenerateKeyPair()
 	return kp, true, err
+}
+
+// ensureWGEasyAdmin returns the wg-easy admin credentials that seed unattended
+// setup. With persist=true (apply mode) it loads or generates+persists the
+// password (0600, on-node only). With persist=false (plan mode) it loads an
+// existing password or generates an ephemeral one just for rendering, reporting
+// ephemeral=true, so dry-run never writes anything. The username is fixed
+// (wgeasy.AdminUsername); only the password is secret.
+func (a *agent) ensureWGEasyAdmin(persist bool) (user, pass string, ephemeral bool, err error) {
+	path := a.masterPaths().WGEasyAdmin
+	if persist {
+		pass, _, err = wgeasy.LoadOrCreateAdminPassword(path)
+		return wgeasy.AdminUsername, pass, false, err
+	}
+	if p, rerr := wgeasy.ReadAdminPassword(path); rerr == nil {
+		return wgeasy.AdminUsername, p, false, nil
+	}
+	pass, err = wgeasy.GeneratePassword()
+	return wgeasy.AdminUsername, pass, true, err
 }
 
 func buildClientTLS(cfg *config.AgentConfig) (*tls.Config, error) {

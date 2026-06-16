@@ -42,6 +42,21 @@ type RenderInput struct {
 	// Cloudflare source and drop the peer). Set only on egress-routed nodes; the
 	// value must equal routing.EffectiveFwMark for the same spec.
 	WGReplyMark int
+	// ClientCIDR is the exit's WG client pool. When set (exit role), a nat
+	// postrouting chain MASQUERADEs client-sourced traffic on egress so packets
+	// leaving WARP/wgcf carry the egress interface's address — without it client
+	// packets exit with a private source (the master's tunnel IP) and Cloudflare
+	// drops them / cannot route the reply back ("empty reply from server").
+	ClientCIDR string
+	// WGInterface is the exit's WG interface (e.g. "awg0"); the MASQUERADE excludes
+	// it (`oifname != <wg>`) so only client→egress traffic is SNAT'd, never replies
+	// looping back to clients.
+	WGInterface string
+	// EgressInterface is the WARP/wgcf interface. When set, an MSS clamp is rendered
+	// in the forward chain so TLS through the double encapsulation (client→master→
+	// exit→WARP) does not stall when PMTU discovery is blocked (an earlier finding; the reference deployment
+	// §4.10's `clamp-mss-to-pmtu`).
+	EgressInterface string
 }
 
 // RenderRuleset renders an nftables script for in. The input chain defaults to
@@ -110,6 +125,13 @@ func RenderRuleset(in RenderInput) (string, error) {
 
 	b.WriteString("\tchain forward {\n")
 	b.WriteString("\t\ttype filter hook forward priority 0; policy accept;\n")
+	// MSS clamp for TLS through the double encapsulation: client→master→exit→WARP
+	// nests WireGuard layers, and if PMTU discovery is blocked the oversized TLS
+	// records are dropped and handshakes stall ("empty reply"). Clamp the SYN MSS to
+	// the egress route MTU so both ends negotiate a size that fits.
+	if in.EgressInterface != "" {
+		fmt.Fprintf(&b, "\t\toifname %q tcp flags syn / syn,rst tcp option maxseg size set rt mtu\n", in.EgressInterface)
+	}
 	b.WriteString("\t}\n\n")
 
 	b.WriteString("\tchain output {\n")
@@ -125,6 +147,24 @@ func RenderRuleset(in RenderInput) (string, error) {
 		b.WriteString("\n\tchain mangle_output {\n")
 		b.WriteString("\t\ttype route hook output priority mangle; policy accept;\n")
 		fmt.Fprintf(&b, "\t\tmeta l4proto udp udp sport %d meta mark set 0x%x\n", in.Firewall.WGPort, in.WGReplyMark)
+		b.WriteString("\t}\n")
+	}
+
+	// MASQUERADE client-sourced traffic on egress (exit role). The exit forwards
+	// client traffic out WARP/wgcf (or, on a direct/failover exit, the uplink); the
+	// packets arrive with the master's tunnel IP as source (a private address), so
+	// without SNAT they leave with a private source and the upstream (Cloudflare for
+	// WARP) drops them and cannot route the reply back — the symptom is a TCP that
+	// connects but returns nothing. Scoped to the client pool and excluding the WG
+	// interface so only client→egress is translated, never replies back to clients.
+	if in.Role == domain.RoleExit && in.ClientCIDR != "" {
+		wg := in.WGInterface
+		if wg == "" {
+			wg = "awg0"
+		}
+		b.WriteString("\n\tchain postrouting {\n")
+		b.WriteString("\t\ttype nat hook postrouting priority srcnat; policy accept;\n")
+		fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q masquerade\n", in.ClientCIDR, wg)
 		b.WriteString("\t}\n")
 	}
 

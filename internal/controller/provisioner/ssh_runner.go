@@ -65,17 +65,25 @@ func DialSSH(target domain.SSHTarget, hostKey ssh.HostKeyCallback) (*SSHRunner, 
 	if err != nil {
 		return nil, fmt.Errorf("parse ssh key: %w", err)
 	}
+	var hostKeyAlgos []string
 	if hostKey == nil {
-		hostKey, err = hostKeyCallback(target)
+		hostKey, hostKeyAlgos, err = hostKeyCallback(target)
 		if err != nil {
 			return nil, err
 		}
 	}
 	cfg := &ssh.ClientConfig{
-		User:            target.User,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: hostKey,
-		Timeout:         15 * time.Second,
+		User: target.User,
+		Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		// HostKeyCallback pins/verifies the server key; HostKeyAlgorithms constrains
+		// negotiation to the pinned key's type. Without the latter, crypto/ssh
+		// advertises every host-key algorithm and the server may present a different
+		// key type (its RSA/ECDSA host key) than the pinned ed25519 one — which
+		// FixedHostKey then rejects as "host key mismatch" though the pin is correct.
+		// nil ⇒ crypto/ssh defaults (unpinned/TOFU and injected-callback paths).
+		HostKeyCallback:   hostKey,
+		HostKeyAlgorithms: hostKeyAlgos,
+		Timeout:           15 * time.Second,
 	}
 	addr := net.JoinHostPort(target.Host, strconv.Itoa(sshPort(target.Port)))
 	client, err := ssh.Dial("tcp", addr, cfg)
@@ -85,22 +93,54 @@ func DialSSH(target domain.SSHTarget, hostKey ssh.HostKeyCallback) (*SSHRunner, 
 	return &SSHRunner{client: client}, nil
 }
 
-// hostKeyCallback builds the SSH host-key verification callback for a target.
-// A pinned target.HostKey (an authorized_keys-style public-key line) is enforced
-// with FixedHostKey; an empty one degrades to trust-on-first-use, logged at WARN
-// so the insecure path is never silent.
-func hostKeyCallback(target domain.SSHTarget) (ssh.HostKeyCallback, error) {
+// hostKeyCallback builds the SSH host-key verification callback for a target,
+// plus the host-key algorithms to advertise. A pinned target.HostKey (an
+// authorized_keys-style public-key line) is enforced with FixedHostKey AND
+// constrains negotiation to that key's algorithm; an empty one — or an explicit
+// opt-out (target.InsecureIgnoreHostKey / WGFLEET_SSH_INSECURE_HOST_KEY) —
+// degrades to trust-on-first-use, logged at WARN so the insecure path is never
+// silent. The returned algorithm list is nil for the insecure/TOFU paths
+// (crypto/ssh defaults apply).
+func hostKeyCallback(target domain.SSHTarget) (ssh.HostKeyCallback, []string, error) {
+	if target.InsecureIgnoreHostKey || sshInsecureHostKeyEnv() {
+		slog.Warn("ssh host-key verification DISABLED for bootstrap "+
+			"(ssh.insecure_ignore_host_key or WGFLEET_SSH_INSECURE_HOST_KEY). The node's mTLS key is "+
+			"shipped over an unverified channel — a MITM could capture it. Pin ssh.host_key instead.",
+			"host", target.Host)
+		return ssh.InsecureIgnoreHostKey(), nil, nil //nolint:gosec // explicit, logged opt-out
+	}
 	if hk := strings.TrimSpace(target.HostKey); hk != "" {
 		pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(hk))
 		if err != nil {
-			return nil, fmt.Errorf("parse pinned ssh host key for %q: %w", target.Host, err)
+			return nil, nil, fmt.Errorf("parse pinned ssh host key for %q: %w", target.Host, err)
 		}
-		return ssh.FixedHostKey(pub), nil
+		return ssh.FixedHostKey(pub), hostKeyAlgorithmsFor(pub.Type()), nil
 	}
 	slog.Warn("ssh bootstrap host key is not pinned; accepting any host key (trust-on-first-use). "+
 		"A MITM on this dial could capture the node's mTLS identity — set ssh.host_key in the fleet manifest to pin it.",
 		"host", target.Host)
-	return ssh.InsecureIgnoreHostKey(), nil //nolint:gosec // explicit, logged TOFU fallback; see doc comment
+	return ssh.InsecureIgnoreHostKey(), nil, nil //nolint:gosec // explicit, logged TOFU fallback; see doc comment
+}
+
+// hostKeyAlgorithmsFor maps a pinned host key's type to the host-key algorithms
+// the client should advertise. For most types this is just the type itself; an
+// RSA key is expanded to the SHA-2 signature variants because modern servers
+// disable the SHA-1 "ssh-rsa" algorithm, which would otherwise fail negotiation.
+func hostKeyAlgorithmsFor(keyType string) []string {
+	if keyType == ssh.KeyAlgoRSA {
+		return []string{ssh.KeyAlgoRSASHA256, ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSA}
+	}
+	return []string{keyType}
+}
+
+// sshInsecureHostKeyEnv reports the fleet-wide host-key-verification opt-out.
+func sshInsecureHostKeyEnv() bool {
+	switch os.Getenv("WGFLEET_SSH_INSECURE_HOST_KEY") {
+	case "1", "true", "TRUE", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 // Run executes cmd and returns combined output.

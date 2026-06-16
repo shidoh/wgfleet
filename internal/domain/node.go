@@ -16,6 +16,12 @@ type SSHTarget struct {
 	// a MITM steal the node's control-plane identity — pin it whenever the key is
 	// known. Empty falls back to trust-on-first-use with a logged warning.
 	HostKey string
+	// InsecureIgnoreHostKey disables host-key verification entirely for this
+	// target (even when HostKey is set). It is an explicit, logged escape hatch
+	// for trusted networks / first-run bring-up where pinning is impractical —
+	// the same effect as an empty HostKey but stated intentionally. Prefer pinning
+	// HostKey; this trades away MITM protection on the bootstrap channel.
+	InsecureIgnoreHostKey bool
 }
 
 // Addr returns "host:port", substituting the default SSH port when unset.

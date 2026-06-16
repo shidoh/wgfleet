@@ -94,6 +94,72 @@ func TestRenderMasterComposeRequiresMgmt(t *testing.T) {
 	}
 }
 
+func TestRenderMasterComposeUnattendedSetup(t *testing.T) {
+	in := sampleInput()
+	in.AdminUsername = "admin"
+	in.AdminPassword = "s3cr3tP4ss"
+	out, err := RenderMasterCompose(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// All four INIT_* required by wg-easy to skip the setup wizard must be present.
+	for _, want := range []string{
+		"INIT_ENABLED=true", "INIT_USERNAME=admin", "INIT_PASSWORD=s3cr3tP4ss",
+		"INIT_HOST=203.0.113.20", "INIT_PORT=443",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("unattended-setup env missing %q:\n%s", want, out)
+		}
+	}
+	// INIT_ENABLED must appear exactly once (no duplicate from the pool + admin paths).
+	if n := strings.Count(out, "INIT_ENABLED=true"); n != 1 {
+		t.Errorf("INIT_ENABLED should appear once, got %d:\n%s", n, out)
+	}
+}
+
+func TestRenderMasterComposeUsernameDefault(t *testing.T) {
+	in := sampleInput()
+	in.AdminPassword = "pw" // username left empty
+	out, err := RenderMasterCompose(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "INIT_USERNAME=admin") {
+		t.Errorf("empty username should default to admin:\n%s", out)
+	}
+}
+
+func TestRenderMasterComposeNoAdminNoWizardBypass(t *testing.T) {
+	in := sampleInput() // no admin password
+	out, err := RenderMasterCompose(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "INIT_USERNAME=") || strings.Contains(out, "INIT_PASSWORD=") {
+		t.Errorf("no admin password ⇒ no INIT_USERNAME/INIT_PASSWORD (wizard fallback):\n%s", out)
+	}
+}
+
+func TestRedactComposeEnv(t *testing.T) {
+	in := sampleInput()
+	in.AdminPassword = "TOPSECRET123"
+	out, err := RenderMasterCompose(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	red := RedactComposeEnv(out)
+	if strings.Contains(red, "TOPSECRET123") {
+		t.Errorf("redacted output still contains the password:\n%s", red)
+	}
+	if !strings.Contains(red, "INIT_PASSWORD=<redacted>") {
+		t.Errorf("redacted output missing masked marker:\n%s", red)
+	}
+	// Non-secret env stays visible.
+	if !strings.Contains(red, "INIT_USERNAME=admin") {
+		t.Errorf("redaction should not touch non-secret env:\n%s", red)
+	}
+}
+
 func toStrings(s []any) []string {
 	out := make([]string, 0, len(s))
 	for _, v := range s {

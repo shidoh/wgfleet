@@ -38,6 +38,9 @@ const (
 	// DefaultWGEasyWebPort is the wg-easy admin UI port when the spec leaves it
 	// unset. Exported so the controller UI can build a link to it.
 	DefaultWGEasyWebPort = 44423
+	// defaultAdminUsername is the wg-easy admin account name used for unattended
+	// setup when the input leaves the username empty (matches wgeasy.AdminUsername).
+	defaultAdminUsername = "admin"
 )
 
 // RenderInput is everything needed to render the master compose file.
@@ -49,12 +52,18 @@ type RenderInput struct {
 	ClientPool       string
 	// MgmtAddr is the master's ZeroTier address; admin endpoints bind it only.
 	MgmtAddr string
+	// AdminUsername / AdminPassword drive wg-easy's unattended setup. They are
+	// resolved agent-locally (the password is generated and persisted on-node,
+	// never sent by the controller — ADR-0008). When the password is empty no
+	// admin is seeded and wg-easy falls back to its interactive setup wizard.
+	AdminUsername string
+	AdminPassword string
 }
 
 // RenderMasterCompose renders docker-compose.yml for the master stack. The
 // INIT_* environment variables seed wg-easy on first run only (it ignores them
-// once set up); obfuscation is configured separately by writing wg-easy's
-// SQLite DB (ADR-0008), since INIT_* cannot set it.
+// once set up); AmneziaWG obfuscation is configured separately by writing
+// wg-easy's SQLite DB (ADR-0008), since INIT_* cannot set it.
 func RenderMasterCompose(in RenderInput) (string, error) {
 	if in.MgmtAddr == "" {
 		return "", fmt.Errorf("compose render: master mgmt address is required")
@@ -75,23 +84,40 @@ func RenderMasterCompose(in RenderInput) (string, error) {
 		"EXPERIMENTAL_AWG=true",
 		"OVERRIDE_AUTO_AWG=awg",
 	}
-	// First-run seeding (host/port/CIDR/DNS/allowed-ips). wg-easy applies INIT_*
-	// only at first DB creation, AND several are conditionally gated in v15:
-	// INIT_IPV4_CIDR applies only when INIT_IPV6_CIDR is ALSO set, and
-	// INIT_HOST/INIT_PORT only inside the INIT_USERNAME+INIT_PASSWORD block — none of
-	// which we set (ADR-0008: operator runs the setup wizard). So INIT_IPV4_CIDR/
-	// INIT_HOST/INIT_PORT are effectively no-ops here; the port/pool/MTU are enforced
-	// authoritatively by the agent's direct DB write (internal/wgeasy ColumnsFromSpec).
-	// We still pass them as harmless intent + in case the operator later enables the
-	// unattended-setup vars. INIT_DNS/INIT_ALLOWED_IPS DO apply on first run.
+	// First-run seeding. wg-easy applies INIT_* ONLY at first DB creation (it
+	// ignores them once set up), and v15 gates them precisely (verified against
+	// wg-easy 15.3.0 src/server/database/sqlite.ts initialSetup):
+	//   - INIT_IPV4_CIDR applies only when INIT_IPV6_CIDR is ALSO set;
+	//   - INIT_DNS / INIT_ALLOWED_IPS apply on their own (client-config defaults);
+	//   - the setup WIZARD is skipped (setSetupStep(0)) ONLY when ALL of
+	//     INIT_USERNAME + INIT_PASSWORD + INIT_HOST + INIT_PORT are present.
+	// So to bring a fresh master up non-interactively we MUST supply the admin
+	// credentials together with host+port — otherwise wg-easy stops at its setup
+	// wizard asking for password/host/port (ADR-0008). The admin password is
+	// resolved agent-locally and never crosses the wire. The interface columns
+	// (port/pool/MTU + AmneziaWG obfuscation) are still enforced authoritatively by
+	// the agent's direct DB write afterwards (internal/wgeasy ColumnsFromSpec).
+	if in.ClientPool != "" || in.AdminPassword != "" {
+		wgEasyEnv = append(wgEasyEnv, "INIT_ENABLED=true")
+	}
 	if in.ClientPool != "" {
-		wgEasyEnv = append(wgEasyEnv, "INIT_ENABLED=true", "INIT_IPV4_CIDR="+in.ClientPool)
+		wgEasyEnv = append(wgEasyEnv, "INIT_IPV4_CIDR="+in.ClientPool)
 	}
 	if c.PublicIP != "" {
 		wgEasyEnv = append(wgEasyEnv, "INIT_HOST="+c.PublicIP)
 	}
 	if in.ClientListenPort > 0 {
 		wgEasyEnv = append(wgEasyEnv, fmt.Sprintf("INIT_PORT=%d", in.ClientListenPort))
+	}
+	if in.AdminPassword != "" {
+		user := in.AdminUsername
+		if user == "" {
+			user = defaultAdminUsername
+		}
+		wgEasyEnv = append(wgEasyEnv,
+			"INIT_USERNAME="+user,
+			"INIT_PASSWORD="+in.AdminPassword,
+		)
 	}
 	if len(c.ClientDNS) > 0 {
 		wgEasyEnv = append(wgEasyEnv, "INIT_DNS="+strings.Join(c.ClientDNS, ","))
@@ -144,6 +170,27 @@ func orDefault(v, def string) string {
 		return def
 	}
 	return v
+}
+
+// redactedEnvKeys are the wg-easy env entries whose values are secret and must be
+// masked in dry-run plan output / Web UI previews. The value still lands verbatim
+// in the on-disk compose file (root-only).
+var redactedEnvKeys = []string{"INIT_PASSWORD="}
+
+// RedactComposeEnv masks secret env values (e.g. INIT_PASSWORD) in a rendered
+// compose document so plan output and the Web UI never display them. It is the
+// reconcile.Redactor for the master compose FileAction.
+func RedactComposeEnv(yamlText string) string {
+	lines := strings.Split(yamlText, "\n")
+	for i, line := range lines {
+		for _, key := range redactedEnvKeys {
+			if idx := strings.Index(line, key); idx != -1 {
+				lines[i] = line[:idx+len(key)] + "<redacted>"
+				break
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func marshalYAML(v any) (string, error) {

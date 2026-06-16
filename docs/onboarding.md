@@ -42,7 +42,7 @@ make agent-linux ARCH=arm64   # for ARM VMs (Graviton, Apple-silicon Lima)
 
 ## 1. Prep each VM (OS-level)
 
-Get the ZeroTier network id (`controller.yaml → controller.zerotier_network`),
+Get the ZeroTier network id (`controller.yaml → fleet.zerotier_network`),
 then on **each** VM — directly, or as cloud-init user-data:
 
 ```sh
@@ -90,7 +90,14 @@ fleet:
 
 > **Pin `ssh.host_key`.** Bootstrap ships the node's private mTLS key over SSH, so
 > an unpinned (trust-on-first-use) dial lets a MITM capture the node's identity.
-> Grab the key once the VM is up: `ssh-keyscan -t ed25519 <vm-ip>`.
+> Grab the key once the VM is up: `ssh-keyscan -t ed25519 <vm-ip>` and paste the
+> `ssh-ed25519 AAAA...` part verbatim.
+>
+> **Need to skip host-key verification** (trusted network, fast bring-up, a stale
+> pin you can't fix right now)? Set `ssh.insecure_ignore_host_key: true` on that
+> node, or `WGFLEET_SSH_INSECURE_HOST_KEY=1` in the controller's environment for the
+> whole fleet. It's logged loudly and trades away MITM protection on the bootstrap
+> channel — prefer pinning.
 >
 > **`ssh.port`** defaults to 22 — set it if SSH is on another port or reached via a
 > forwarded port / bastion.
@@ -139,6 +146,11 @@ installs the agent + systemd unit, and starts it. The agent then reconciles.
 - **Web UI** (`controller.webui`, ZeroTier-only): node should move
   `Pending → Provisioning → Reconciling → Ready`, with per-check health.
 - **Metrics** (`controller.metrics`): `wgfleet_nodes{state="Ready"}`.
+- **wg-easy on the master comes up without the setup wizard.** The agent seeds its
+  unattended setup (admin user + host/port); the admin password is generated on the
+  master and never sent to the controller. Read it back to log into the wg-easy UI:
+  `sudo cat /etc/wgfleet/wg-easy-admin-password` (username `admin`). Set the master's
+  `public_ip` — it is wg-easy's `INIT_HOST` and is required for unattended setup.
 - An exit reaches `Ready` only when its self-checks pass: fresh WG handshake,
   WARP egress actually exits via Cloudflare, DNS filter resolves.
 

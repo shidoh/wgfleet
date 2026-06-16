@@ -321,7 +321,8 @@ func publicIP(explicit, sshHost string) string {
 func toSSHTarget(s config.SSHConfig) domain.SSHTarget {
 	return domain.SSHTarget{
 		Host: s.Host, Port: s.Port, User: s.User,
-		KeyPath: config.ExpandPath(s.KeyPath), // ~ is not expanded by os.ReadFile
-		HostKey: s.HostKey,
+		KeyPath:               config.ExpandPath(s.KeyPath), // ~ is not expanded by os.ReadFile
+		HostKey:               s.HostKey,
+		InsecureIgnoreHostKey: s.InsecureIgnoreHostKey,
 	}
 }

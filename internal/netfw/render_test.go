@@ -86,6 +86,41 @@ func TestRenderExitMangleMark(t *testing.T) {
 	}
 }
 
+func TestRenderExitEgressNAT(t *testing.T) {
+	// A WARP exit MASQUERADEs client traffic on egress (else packets leave with the
+	// master's private tunnel IP and the upstream drops them) and MSS-clamps TLS.
+	out, err := RenderRuleset(RenderInput{
+		Role:            domain.RoleExit,
+		Firewall:        domain.FirewallSpec{WGPort: 51820},
+		ClientCIDR:      "10.71.0.0/24",
+		WGInterface:     "awg0",
+		EgressInterface: "wgcf",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"type nat hook postrouting priority srcnat",
+		`ip saddr 10.71.0.0/24 oifname != "awg0" masquerade`,
+		`oifname "wgcf" tcp flags syn / syn,rst tcp option maxseg size set rt mtu`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("exit egress NAT/MSS missing %q:\n%s", want, out)
+		}
+	}
+
+	// No client pool ⇒ no masquerade chain (fail-safe; never SNAT blindly).
+	out2, _ := RenderRuleset(RenderInput{Role: domain.RoleExit, Firewall: domain.FirewallSpec{WGPort: 51820}})
+	if strings.Contains(out2, "masquerade") {
+		t.Errorf("no masquerade expected without ClientCIDR:\n%s", out2)
+	}
+	// A master never gets the exit masquerade here (it has its own NAT table).
+	out3, _ := RenderRuleset(RenderInput{Role: domain.RoleMaster, Firewall: domain.FirewallSpec{WGPort: 443}, ClientCIDR: "10.73.0.0/24"})
+	if strings.Contains(out3, "masquerade") {
+		t.Errorf("master ruleset must not carry the exit masquerade:\n%s", out3)
+	}
+}
+
 func TestRenderMasterDropsQUIC(t *testing.T) {
 	out, err := RenderRuleset(RenderInput{
 		Role:     domain.RoleMaster,

@@ -53,6 +53,15 @@ func formatWGServer(b *strings.Builder, w domain.WGServerSpec) {
 	}
 	fmt.Fprintf(b, "  mtu: %d\n", w.MTU)
 	formatAWG(b, "  ", w.AWG)
+	// The client end of this tunnel emits its OWN per-end decoy, distinct from the
+	// interface's. Show it so the operator can verify clients are not fingerprinted
+	// identically to the server.
+	if l := w.ClientAWGLocal; l != nil {
+		fmt.Fprintf(b, "  client awg junk (per-end, distinct from server): Jc=%d Jmin=%d Jmax=%d\n", l.Jc, l.Jmin, l.Jmax)
+		if sig := joinNonEmpty(l.I1, l.I2, l.I3, l.I4, l.I5); sig != "" {
+			fmt.Fprintf(b, "    client signatures: %s\n", sig)
+		}
+	}
 }
 
 // formatAWG renders the AmneziaWG obfuscation params in full. They are derived,

@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"net/netip"
 	"os"
@@ -115,6 +116,12 @@ type SSHConfig struct {
 	// private key over SSH, so without pinning a MITM on the bootstrap path can
 	// capture the node's identity. Empty falls back to trust-on-first-use.
 	HostKey string `koanf:"host_key"`
+	// InsecureIgnoreHostKey explicitly disables host-key verification for this
+	// node's bootstrap dial (even if host_key is set). Use on trusted networks or
+	// first-run bring-up where pinning is impractical; it trades away MITM
+	// protection on the channel that ships the node's mTLS key. The fleet-wide
+	// env override WGFLEET_SSH_INSECURE_HOST_KEY=1 does the same for every node.
+	InsecureIgnoreHostKey bool `koanf:"insecure_ignore_host_key"`
 }
 
 // MasterConfig describes one master node in the fleet manifest.
@@ -191,10 +198,26 @@ type MasterRouting struct {
 	Balance     string   `koanf:"balance"`      // "round-robin" | "health"
 }
 
-// DefaultExitListenPort is the UDP port an exit's WG server listens on when the
-// fleet manifest leaves listen_port unset. Standard ports are less conspicuous
-//.
-const DefaultExitListenPort = 51820
+// Exit WG listen-port derivation. When the manifest leaves listen_port unset, the
+// port is derived deterministically per exit within this range, so every exit
+// listens on a different, stable, non-obvious port (avoids fingerprinting the
+// whole fleet by a single fixed master↔exit port) instead of all sharing 51820.
+// The range stays below the Linux ephemeral range (32768+) and above privileged
+// ports; the value is stable per node name (the master must dial the same port
+// the exit binds, and the firewall must open it).
+const (
+	exitPortRangeLo = 20000
+	exitPortRangeHi = 32000
+)
+
+// derivedExitPort maps an exit name to a stable UDP port in [exitPortRangeLo,
+// exitPortRangeHi]. FNV-1a is enough: this is obfuscation/spread, not security.
+func derivedExitPort(name string) int {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+	span := uint32(exitPortRangeHi - exitPortRangeLo + 1)
+	return exitPortRangeLo + int(h.Sum32()%span)
+}
 
 // ExitConfig describes one exit node in the fleet manifest.
 type ExitConfig struct {
@@ -237,12 +260,14 @@ type DNSPortsConfig struct {
 	HTTP  int `koanf:"http"`
 }
 
-// WGListenPort returns the configured exit listen port or the default.
+// WGListenPort returns the operator-configured exit listen port, or a stable
+// per-node port derived from the exit name when unset (randomized within a
+// reasonable range so exits don't all share one fixed port).
 func (e ExitConfig) WGListenPort() int {
-	if e.ListenPort <= 0 {
-		return DefaultExitListenPort
+	if e.ListenPort > 0 {
+		return e.ListenPort
 	}
-	return e.ListenPort
+	return derivedExitPort(e.Name)
 }
 
 // FirewallConfig is the nftables policy intent for an exit node.

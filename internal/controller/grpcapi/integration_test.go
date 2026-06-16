@@ -2,6 +2,7 @@ package grpcapi_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -156,8 +157,9 @@ func TestEndToEndExitOnboarding(t *testing.T) {
 		t.Fatalf("master spec mihomo tunnels = %+v", mspec.Master)
 	}
 	et := mspec.Master.ExitTunnels[0]
-	if et.Endpoint != "198.51.100.7:51820" || et.ServerPublicKey != "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=" {
-		t.Fatalf("master exit tunnel wrong: %+v", et)
+	wantEndpoint := fmt.Sprintf("198.51.100.7:%d", config.ExitConfig{Name: "exit-de-1"}.WGListenPort())
+	if et.Endpoint != wantEndpoint || et.ServerPublicKey != "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=" {
+		t.Fatalf("master exit tunnel wrong: %+v (want endpoint %s)", et, wantEndpoint)
 	}
 	if et.AWG == nil {
 		t.Fatal("master exit tunnel must carry AWG params (crosses the wire)")

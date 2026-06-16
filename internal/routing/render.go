@@ -125,16 +125,23 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 		"fwmark", fmt.Sprintf("0x%x", mark), "lookup", "main",
 	)...)
 
-	// Everything else: send client traffic to the egress interface via a
-	// dedicated table.
-	steps = append(steps, ipRuleReplace(prefEgress,
-		"send remaining traffic to the egress table",
-		"lookup", fmt.Sprintf("%d", EgressTable),
-	)...)
-	steps = append(steps, Step{
-		Summary: fmt.Sprintf("default route via %s in table %d", spec.EgressInterface, EgressTable),
-		Argv:    []string{"ip", "route", "replace", "default", "dev", spec.EgressInterface, "table", fmt.Sprintf("%d", EgressTable)},
-	})
+	// Send CLIENT traffic (and only client traffic) to the egress table. The rule
+	// MUST be scoped `from <ClientCIDR>`: a bare `lookup` is `from all`, which pulls
+	// the node's OWN host traffic — SSH, DNS, image pulls, even the wgcf handshake
+	// to Cloudflare — into WARP, cutting the box off the moment WARP is down/blocked
+	// (an earlier finding; recovered only via the provider console). With no ClientCIDR we
+	// render NO egress rule rather than risk `from all`: client egress won't work,
+	// but the host stays reachable.
+	if spec.ClientCIDR != "" {
+		steps = append(steps, ipRuleReplace(prefEgress,
+			fmt.Sprintf("send client traffic (from %s) to the egress table", spec.ClientCIDR),
+			"from", spec.ClientCIDR, "lookup", fmt.Sprintf("%d", EgressTable),
+		)...)
+		steps = append(steps, Step{
+			Summary: fmt.Sprintf("default route via %s in table %d", spec.EgressInterface, EgressTable),
+			Argv:    []string{"ip", "route", "replace", "default", "dev", spec.EgressInterface, "table", fmt.Sprintf("%d", EgressTable)},
+		})
+	}
 
 	return steps, nil
 }
@@ -182,7 +189,13 @@ func ManagedPrefs(spec domain.RoutingSpec) []int {
 	for i := range spec.DirectCIDRs {
 		prefs = append(prefs, prefDirect0+i)
 	}
-	return append(prefs, prefFwmark, prefEgress)
+	prefs = append(prefs, prefFwmark)
+	// prefEgress is only installed when there is a client source subnet to scope it
+	// to (Render skips it otherwise), so only expect it then.
+	if spec.ClientCIDR != "" {
+		prefs = append(prefs, prefEgress)
+	}
+	return prefs
 }
 
 // KernelReflects reports whether the live kernel still satisfies the routing
@@ -204,6 +217,11 @@ func KernelReflects(spec domain.RoutingSpec, ruleList, egressRoutes string) bool
 		if !present[p] {
 			return false
 		}
+	}
+	// The egress default route only exists when client traffic is actually routed
+	// (ClientCIDR set); without it there is nothing to verify in the egress table.
+	if spec.ClientCIDR == "" {
+		return true
 	}
 	return strings.Contains(egressRoutes, "default") &&
 		strings.Contains(egressRoutes, spec.EgressInterface)

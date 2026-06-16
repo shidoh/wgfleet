@@ -58,8 +58,14 @@ Same kernel-risky prep as any node — the master's client-facing interface is
 AmneziaWG (kernel module), and the data plane runs in Docker:
 
 ```bash
-sudo ./deploy/prepare-node.sh   # AmneziaWG DKMS module + Docker + ZeroTier join
+sudo ./deploy/prepare-node.sh <zerotier-network-id>  # AmneziaWG DKMS module + ZeroTier join
 sudo zerotier-cli listnetworks  # authorize the node, assign it a stable managed IP = <mgmt>
+
+# prepare-node.sh deliberately does NOT install Docker — that is normally the
+# provisioner's job, but the controller does NOT SSH-provision this box (it can't
+# bootstrap itself). The master runs mihomo + wg-easy in Docker, so install the
+# engine by hand here — the exact step the provisioner runs on exits:
+curl -fsSL https://get.docker.com | sh
 ```
 
 ### 2. Install both binaries
@@ -95,6 +101,7 @@ controller:
     ca_cert: "/etc/wgfleet/ca.crt"
     ca_key:  "file:///etc/wgfleet/ca.key"   # file:// path (NOT secret://) so the CLI can sign certs
 fleet:
+  zerotier_network: "<zt-network-id>"  # 16-hex mgmt overlay id; exits join it during provisioning
   masters:
     - name: master-xa-1
       mgmt_addr: "<mgmt>"        # same ZT address as controller.listen host
@@ -118,6 +125,8 @@ fleet:
       # ssh.port: set it if the exit's SSH is not on 22 / reached via a forwarded port.
       # ssh.host_key: pin it (ssh-keyscan -t ed25519 <exit-ip>) — bootstrap ships the node's
       #               mTLS key over SSH, so an unpinned dial lets a MITM capture its identity.
+      # ssh.insecure_ignore_host_key: true — escape hatch to skip the check for this node
+      #               (or WGFLEET_SSH_INSECURE_HOST_KEY=1 fleet-wide). Logged; drops MITM protection.
 ```
 
 ### 4. Initialise the CA and issue the master's identity locally
@@ -143,6 +152,7 @@ agent:
   identity:
     cert: "/etc/wgfleet/node.crt"
     key:  "/etc/wgfleet/node.key"
+    ca:   "/etc/wgfleet/ca.crt"    # REQUIRED — verifies the controller; --issue-node wrote it above
 ```
 
 ### 6. systemd units (two services, one box)
@@ -189,12 +199,22 @@ sudo wgfleet-agent --config /etc/wgfleet/agent.yaml --plan \
 Open the Web UI on `http://127.0.0.1:9000` (tunnel it over SSH/ZT). The master should
 move `Reconciling → Ready` once wg-easy + mihomo are up and its self-checks pass.
 
+> **wg-easy comes up non-interactively (no setup wizard).** The agent seeds wg-easy's
+> unattended setup, so it does NOT prompt for a password/host/port. To log into the
+> wg-easy UI (`http://<mgmt>:<wg_easy_web_port>`), read the agent-generated admin
+> password off the master — it is never sent to the controller:
+> ```bash
+> sudo cat /etc/wgfleet/wg-easy-admin-password   # username: admin
+> ```
+> `public_ip` (step 3) must be set: it becomes wg-easy's `INIT_HOST` (the endpoint
+> clients dial) and is required for the unattended setup to complete.
+
 ### 8. Add the exits (normal flow, from this same controller)
 
 The exits are remote VMs, so they ARE provisioned over SSH by the controller:
 
 ```bash
-# On each exit VM first: sudo ./deploy/prepare-node.sh ; authorize + assign its ZT IP.
+# On each exit VM first: sudo ./deploy/prepare-node.sh <zerotier-network-id> ; authorize + assign its ZT IP.
 sudo wgfleet-controller --config /etc/wgfleet/controller.yaml --provision exit-de-1 --plan
 sudo wgfleet-controller --config /etc/wgfleet/controller.yaml --provision exit-de-1 \
      --agent-bin /usr/local/bin/wgfleet-agent

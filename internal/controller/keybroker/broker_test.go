@@ -2,6 +2,7 @@ package keybroker
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -80,8 +81,13 @@ func TestRenderExitSpec(t *testing.T) {
 	if spec.Role != domain.RoleExit || spec.Egress != domain.EgressWARP {
 		t.Fatalf("role/egress = %v/%v", spec.Role, spec.Egress)
 	}
-	if spec.WGServer.ListenPort != config.DefaultExitListenPort {
-		t.Errorf("listen port = %d, want default %d", spec.WGServer.ListenPort, config.DefaultExitListenPort)
+	// Unset listen_port ⇒ a stable per-node derived port (randomized, not 51820).
+	wantPort := config.ExitConfig{Name: "exit-de-1"}.WGListenPort()
+	if wantPort < 20000 || wantPort > 32000 {
+		t.Errorf("derived exit port %d out of the expected range", wantPort)
+	}
+	if spec.WGServer.ListenPort != wantPort {
+		t.Errorf("listen port = %d, want derived %d", spec.WGServer.ListenPort, wantPort)
 	}
 	if spec.WGServer.Address != "10.81.0.1" {
 		t.Errorf("exit address = %q, want 10.81.0.1", spec.WGServer.Address)
@@ -121,8 +127,8 @@ func TestRenderExitSpec(t *testing.T) {
 	if !spec.DNS.Enabled || spec.DNS.MgmtAddr != "10.20.0.5" || !spec.DNS.Prometheus {
 		t.Errorf("dns = %+v", spec.DNS)
 	}
-	if !spec.Firewall.ASBlacklist || spec.Firewall.WGPort != config.DefaultExitListenPort {
-		t.Errorf("firewall = %+v", spec.Firewall)
+	if !spec.Firewall.ASBlacklist || spec.Firewall.WGPort != wantPort {
+		t.Errorf("firewall = %+v (want WGPort %d)", spec.Firewall, wantPort)
 	}
 	if !spec.Exporters.WARP {
 		t.Error("WARP exporter should be enabled for warp egress")
@@ -166,8 +172,9 @@ func TestRenderMasterSpec(t *testing.T) {
 	if et.Name != "exit-de-1" || et.ServerPublicKey != "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=" {
 		t.Errorf("exit tunnel = %+v", et)
 	}
-	if et.Endpoint != "198.51.100.7:51820" {
-		t.Errorf("exit tunnel endpoint = %q", et.Endpoint)
+	wantEndpoint := fmt.Sprintf("198.51.100.7:%d", config.ExitConfig{Name: "exit-de-1"}.WGListenPort())
+	if et.Endpoint != wantEndpoint {
+		t.Errorf("exit tunnel endpoint = %q, want %q", et.Endpoint, wantEndpoint)
 	}
 	if et.TunnelIP != "10.81.0.2" {
 		t.Errorf("master tunnel IP = %q, want 10.81.0.2", et.TunnelIP)

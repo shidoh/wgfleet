@@ -489,6 +489,7 @@ fleet:
         user: root
         key_path: /etc/wgfleet/bootstrap_ed25519
         # host_key: "ssh-ed25519 AA..."    # (optional) pin the server SSH host key (strongly recommended)
+        # insecure_ignore_host_key: true   # skip host-key check for this node (or WGFLEET_SSH_INSECURE_HOST_KEY=1 fleet-wide)
 
   exits:
     - name: exit-de-1

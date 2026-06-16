@@ -80,7 +80,13 @@ type WGServerSpec struct {
 	AddressPool string     // CIDR the server hands out, e.g. "10.81.0.0/24"
 	Address     string     // this server's own address inside the pool
 	MTU         int        // computed along the tunnel chain, never guessed
-	AWG         *AWGParams // AmneziaWG obfuscation for this interface; nil ⇒ vanilla WG
+	AWG         *AWGParams // AmneziaWG obfuscation for this interface (server end); nil ⇒ vanilla WG
+	// ClientAWGLocal is the per-end decoy (Jc/Jmin/Jmax, I1-I5) the CLIENT side of
+	// this tunnel must emit. AWG permits these to differ per end, so where they may
+	// differ they MUST: clients get their own junk profile, distinct from the
+	// server interface's AWG.Local. The shared S1-S4/H1-H4 still come from AWG
+	// (clients derive them from the interface). nil ⇒ fall back to AWG.Local.
+	ClientAWGLocal *AWGLocal
 }
 
 // PeerSpec is one AmneziaWG peer as seen from a node. Peers carry no obfuscation
@@ -162,6 +168,13 @@ type RoutingSpec struct {
 	// FwMark marks WG-handshake/reply packets so source routing keeps them
 	// direct instead of sending them into WARP.
 	FwMark int
+	// ClientCIDR is the SOURCE subnet whose traffic is sent to the egress table.
+	// The egress ip-rule MUST be scoped `from <ClientCIDR>` — never `from all`, or
+	// the node's OWN host traffic (SSH, DNS, package/image pulls, the wgcf handshake
+	// itself) is pulled into WARP and the box is cut off when WARP is down (earlier findings
+	// ). It is the exit's WG pool, populated agent-side from WGServer.AddressPool
+	// (so it needs no wire field); empty ⇒ no egress rule is rendered (fail-safe).
+	ClientCIDR string
 }
 
 // ExportersSpec selects which Prometheus endpoints the agent runs. Host metrics

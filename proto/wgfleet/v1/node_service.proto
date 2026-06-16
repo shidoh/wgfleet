@@ -144,7 +144,13 @@ message WGServerSpec {
   string address_pool = 2;
   string address = 3;
   int32 mtu = 4;
-  AWGParams awg = 5; // AmneziaWG obfuscation for this interface; nil ⇒ vanilla WG
+  AWGParams awg = 5; // AmneziaWG obfuscation for this interface (server end); nil ⇒ vanilla WG
+  // client_awg_local is the per-end junk/signatures (Jc/Jmin/Jmax, I1-I5) the
+  // CLIENT side of this tunnel must emit. AWG allows these to differ per end, so
+  // where they may differ they MUST: clients get their own decoy, distinct from
+  // the server interface's (awg.local). The shared S1-S4/H1-H4 still come from awg
+  // (clients derive them from the interface). nil ⇒ fall back to awg.local.
+  AWGLocal client_awg_local = 6;
 }
 
 message PeerSpec {

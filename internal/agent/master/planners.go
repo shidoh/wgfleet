@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/compose"
@@ -21,16 +22,19 @@ import (
 type Input struct {
 	Paths      Paths
 	PrivateKey string
-	// ClientInterface / EgressInterface are the host interfaces the NAT rules
-	// reference. Defaults are applied when empty.
+	// ClientInterface is the client WG interface the NAT/forward rules reference.
+	// Default is applied when empty. (The master masquerades on every egress except
+	// this interface, so a separate egress iface no longer needs detecting.)
 	ClientInterface string
-	EgressInterface string
+	// AdminUsername / AdminPassword seed wg-easy's unattended setup (INIT_*), so a
+	// fresh master never stops at the interactive setup wizard. They are resolved
+	// agent-locally — the password is generated and persisted on-node and never
+	// sent by the controller (ADR-0008). Empty password ⇒ no unattended setup.
+	AdminUsername string
+	AdminPassword string
 }
 
-const (
-	defaultClientInterface = "wg0"
-	defaultEgressInterface = "ens3"
-)
+const defaultClientInterface = "wg0"
 
 // Planners returns the ordered master reconcilers: mihomo config + its included
 // files + operator extra files, then the NAT rules that wire clients into mihomo.
@@ -38,16 +42,15 @@ func Planners(in Input) []reconcile.Planner {
 	if in.ClientInterface == "" {
 		in.ClientInterface = defaultClientInterface
 	}
-	if in.EgressInterface == "" {
-		in.EgressInterface = defaultEgressInterface
-	}
 	return []reconcile.Planner{
-		composePlanner{path: in.Paths.Compose},
+		composePlanner{path: in.Paths.Compose, adminUser: in.AdminUsername, adminPass: in.AdminPassword},
 		wgEasyPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface, compose: in.Paths.Compose},
+		wgEasyUserConfigPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface},
 		wgEasyMetricsPlanner{dbPath: in.Paths.WGEasyDB},
 		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey},
 		extraFilesPlanner{dir: in.Paths.ExtraFilesDir},
-		masterNATPlanner{path: in.Paths.NFT, clientIface: in.ClientInterface, egressIface: in.EgressInterface},
+		masterNATPlanner{path: in.Paths.NFT, clientIface: in.ClientInterface},
+		masterForwardPlanner{clientIface: in.ClientInterface},
 	}
 }
 
@@ -66,8 +69,10 @@ func composeRestart(file, service string) reconcile.Action {
 // --- container stack (docker-compose.yml + up -d) ---
 
 type composePlanner struct {
-	path string
-	up   func(file string) bool // nil ⇒ real `docker compose ps` probe
+	path      string
+	adminUser string                 // wg-easy unattended-setup admin user (INIT_USERNAME)
+	adminPass string                 // wg-easy unattended-setup admin password (INIT_PASSWORD); agent-local
+	up        func(file string) bool // nil ⇒ real `docker compose ps` probe
 }
 
 func (composePlanner) Component() string { return "container stack (docker compose)" }
@@ -81,11 +86,16 @@ func (p composePlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 		ClientListenPort: spec.WGServer.ListenPort,
 		ClientPool:       spec.WGServer.AddressPool,
 		MgmtAddr:         masterMgmtAddr(spec),
+		AdminUsername:    p.adminUser,
+		AdminPassword:    p.adminPass,
 	})
 	if err != nil {
 		return nil, err
 	}
-	file, err := reconcile.FileAction(p.path, []byte(yamlText), 0o644, nil)
+	// Redact INIT_PASSWORD so the dry-run plan / Web UI preview never print the
+	// wg-easy admin password (it is written verbatim to the on-disk compose file,
+	// which is root-only).
+	file, err := reconcile.FileAction(p.path, []byte(yamlText), 0o644, compose.RedactComposeEnv)
 	if err != nil {
 		return nil, err
 	}
@@ -180,6 +190,59 @@ func (p wgEasyPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 
 	// wg-easy regenerates its .conf from the DB on (re)start.
 	return []reconcile.Action{update, composeRestart(p.compose, "wg-easy")}, nil
+}
+
+// --- wg-easy per-client defaults (SQLite-backed, ADR-0008) ---
+
+// wgEasyUserConfigPlanner reconciles wg-easy's user_configs_table: the defaults
+// wg-easy bakes into every generated client config (endpoint host/port, MTU, DNS,
+// allowed-IPs, and the client-side AmneziaWG junk j_c/j_min/j_max). INIT_* seed
+// only some of these and only at first DB creation; the client junk is not
+// seedable at all and its schema default underflows our transport-junk size S4, so
+// we enforce them by direct DB write (sibling of wgEasyPlanner).
+type wgEasyUserConfigPlanner struct {
+	dbPath string
+	iface  string
+}
+
+func (wgEasyUserConfigPlanner) Component() string { return "wg-easy client defaults" }
+
+func (p wgEasyUserConfigPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
+	if spec.Master == nil {
+		return nil, fmt.Errorf("wg-easy user config: node has no master spec")
+	}
+	if _, err := os.Stat(p.dbPath); os.IsNotExist(err) {
+		return []reconcile.Action{reconcile.NoChangeAction("wg-easy client defaults",
+			"pending: wg-easy DB not found at "+p.dbPath)}, nil
+	}
+	current, found, err := wgeasy.ReadUserConfig(ctx, p.dbPath, p.iface)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return []reconcile.Action{reconcile.NoChangeAction("wg-easy client defaults",
+			"pending: wg-easy user-config row not created yet")}, nil
+	}
+
+	cc := spec.Master.Compose
+	var allowedIPs []string
+	for _, ip := range strings.Split(cc.ClientAllowedIPs, ",") {
+		if ip = strings.TrimSpace(ip); ip != "" {
+			allowedIPs = append(allowedIPs, ip)
+		}
+	}
+	desired := wgeasy.DesiredUserConfig(current, spec.WGServer, cc.PublicIP, cc.ClientDNS, allowedIPs)
+	if desired.Equal(current) {
+		return []reconcile.Action{reconcile.NoChangeAction("wg-easy client defaults", "client defaults already current")}, nil
+	}
+
+	dbPath, iface := p.dbPath, p.iface
+	update := reconcile.CustomAction(reconcile.ActionUpdate, "wg-easy client defaults",
+		"set client-facing DNS/allowed-IPs/MTU/host/port + client AWG junk in wg-easy DB",
+		wgeasy.RenderUserConfigUpdateSQL(iface, desired),
+		func(ctx context.Context) error { return wgeasy.UpdateUserConfig(ctx, dbPath, iface, desired) })
+	// No restart: wg-easy reads user_configs live when generating client configs.
+	return []reconcile.Action{update}, nil
 }
 
 // --- wg-easy Prometheus metrics (SQLite-backed, like the AWG planner) ---
@@ -292,7 +355,6 @@ func (p extraFilesPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reco
 type masterNATPlanner struct {
 	path        string
 	clientIface string
-	egressIface string
 	// loaded reports whether the live kernel currently has the master NAT table.
 	// nil ⇒ a real `nft list table ip wgfleet_master` probe; tests inject a stub.
 	loaded func() bool
@@ -312,7 +374,6 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 		ClientInterface: p.clientIface,
 		ClientCIDR:      spec.WGServer.AddressPool,
 		RedirAddr:       fmt.Sprintf("%s:%d", spec.Master.BindAddress, redir),
-		EgressInterface: p.egressIface,
 		PrivateCIDRs:    spec.Master.DirectCIDRs,
 	})
 	if err != nil {
@@ -353,4 +414,105 @@ func (p masterNATPlanner) isLoaded() bool {
 // real node.
 func masterNATLoaded() bool {
 	return exec.Command("nft", "list", "table", "ip", netfw.MasterNATTable).Run() == nil
+}
+
+// --- master forwarding (ip_forward + docker FORWARD accept) ---
+
+// masterForwardPlanner makes the master actually forward client traffic. Two
+// kernel facts conspire against it:
+//
+//  1. Docker sets the filter FORWARD policy to DROP and only accepts its own
+//     bridge traffic, so client packets routed wg0→uplink are dropped. wg-easy's
+//     own `FORWARD -i wg0 -j ACCEPT` is emitted via the container's iptables,
+//     which on a modern host is iptables-LEGACY — invisible to Docker's nft
+//     FORWARD chain, so it does not help. The sanctioned override is the
+//     DOCKER-USER chain (Docker never flushes it); an ACCEPT there makes the
+//     FORWARD base chain return accept instead of hitting the drop policy. A
+//     separate nft base chain cannot help: a drop in Docker's chain is final
+//     regardless of an accept in another base chain at the same hook.
+//  2. IPv4 forwarding must be on. Docker enables it, but the master data plane
+//     should not depend on that side effect, so we assert it too.
+//
+// Only TCP is DNAT'd to mihomo (a local address ⇒ INPUT, not FORWARD); ICMP, DNS
+// and other UDP are plain-forwarded, so without this they silently black-hole
+// while the AmneziaWG handshake looks healthy.
+type masterForwardPlanner struct {
+	clientIface string
+	// Probes (nil ⇒ real). Injected in tests.
+	forwardOn   func() bool           // ip_forward == 1
+	chainExists func() bool           // DOCKER-USER chain present (Docker up)
+	rulePresent func(m []string) bool // iptables -C DOCKER-USER <m>
+}
+
+func (masterForwardPlanner) Component() string { return "master forwarding (ip_forward + DOCKER-USER)" }
+
+// dockerUserRule is one DOCKER-USER accept we maintain, with its match args (the
+// part after `-I DOCKER-USER`) and a human summary.
+type dockerUserRule struct {
+	summary string
+	match   []string
+}
+
+func masterForwardRules(iface string) []dockerUserRule {
+	return []dockerUserRule{
+		{"accept client→uplink forwarding (DOCKER-USER)", []string{"-i", iface, "-j", "ACCEPT"}},
+		{"accept return traffic to clients (DOCKER-USER)", []string{"-o", iface, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"}},
+	}
+}
+
+func (p masterForwardPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]reconcile.Action, error) {
+	iface := p.clientIface
+	if iface == "" {
+		iface = defaultClientInterface
+	}
+	var actions []reconcile.Action
+
+	// 1. IPv4 forwarding.
+	if p.isForwardOn() {
+		actions = append(actions, reconcile.NoChangeAction("ip_forward", "already enabled"))
+	} else {
+		actions = append(actions, reconcile.ExecAction("enable IPv4 forwarding",
+			"sysctl", "-w", "net.ipv4.ip_forward=1"))
+	}
+
+	// 2. DOCKER-USER accept rules. The chain only exists once Docker is up; until
+	// then defer rather than fail the pass (the compose planner brings Docker up
+	// earlier in the same reconcile, so it converges next pass at the latest).
+	if !p.dockerUserExists() {
+		actions = append(actions, reconcile.NoChangeAction("DOCKER-USER",
+			"pending: DOCKER-USER chain not present yet (docker not up)"))
+		return actions, nil
+	}
+	for _, r := range masterForwardRules(iface) {
+		if p.isRulePresent(r.match) {
+			actions = append(actions, reconcile.NoChangeAction("DOCKER-USER", r.summary+" already present"))
+			continue
+		}
+		argv := append([]string{"iptables", "-I", "DOCKER-USER"}, r.match...)
+		actions = append(actions, reconcile.ExecAction(r.summary, argv...))
+	}
+	return actions, nil
+}
+
+func (p masterForwardPlanner) isForwardOn() bool {
+	if p.forwardOn != nil {
+		return p.forwardOn()
+	}
+	b, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward")
+	return err == nil && strings.TrimSpace(string(b)) == "1"
+}
+
+func (p masterForwardPlanner) dockerUserExists() bool {
+	if p.chainExists != nil {
+		return p.chainExists()
+	}
+	return exec.Command("iptables", "-S", "DOCKER-USER").Run() == nil
+}
+
+func (p masterForwardPlanner) isRulePresent(match []string) bool {
+	if p.rulePresent != nil {
+		return p.rulePresent(match)
+	}
+	argv := append([]string{"-C", "DOCKER-USER"}, match...)
+	return exec.Command("iptables", argv...).Run() == nil
 }
