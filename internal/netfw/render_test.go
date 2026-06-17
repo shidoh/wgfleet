@@ -29,10 +29,28 @@ func TestRenderExitRuleset(t *testing.T) {
 		"tcp dport 22 accept",
 		"udp dport 9993 accept",
 		"udp dport 51820 accept",
+		// Fail-safe: the management overlay interface is trusted wholesale so a
+		// missing mgmt entry in the whitelist can never lock management out.
+		`iifname "zt*" accept`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("ruleset missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestRenderTrustsMgmtOverlayWithoutWhitelist(t *testing.T) {
+	// Even with an empty whitelist, the overlay interface must be accepted — this is
+	// the robustness fix: a node stays reachable over ZeroTier regardless of config.
+	out, err := RenderRuleset(RenderInput{
+		Role:     domain.RoleExit,
+		Firewall: domain.FirewallSpec{WGPort: 51820},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `iifname "zt*" accept`) {
+		t.Errorf("overlay accept must be present even with no whitelist:\n%s", out)
 	}
 }
 
@@ -121,17 +139,61 @@ func TestRenderExitEgressNAT(t *testing.T) {
 	}
 }
 
-func TestRenderMasterDropsQUIC(t *testing.T) {
+func TestRenderOverlayMSSClamp(t *testing.T) {
+	// With OverlayMSS set, a postrouting MSS clamp on the overlay interface appears
+	// (control-plane insurance against a too-large ZeroTier MTU).
+	out, err := RenderRuleset(RenderInput{
+		Role:       domain.RoleExit,
+		Firewall:   domain.FirewallSpec{WGPort: 51820},
+		OverlayMSS: 1240,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"type filter hook postrouting priority mangle",
+		`oifname "zt*" tcp flags syn / syn,rst tcp option maxseg size set 1240`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("overlay MSS clamp missing %q:\n%s", want, out)
+		}
+	}
+
+	// Disabled (0) ⇒ no clamp.
+	out2, _ := RenderRuleset(RenderInput{Role: domain.RoleExit, Firewall: domain.FirewallSpec{WGPort: 51820}})
+	if strings.Contains(out2, "maxseg size set 1240") {
+		t.Errorf("no overlay clamp expected when OverlayMSS is 0:\n%s", out2)
+	}
+}
+
+func TestRenderMasterInputFirewall(t *testing.T) {
+	// The master reuses RenderRuleset for its input filter: drop policy, overlay +
+	// SSH + client WG port open, NO masquerade (that is the exit's; the master NATs
+	// in a separate table) and NO QUIC drop in the input chain (client QUIC is
+	// dropped at the NAT prerouting layer, see master_nat.go).
 	out, err := RenderRuleset(RenderInput{
 		Role:     domain.RoleMaster,
-		DropQUIC: true,
 		Firewall: domain.FirewallSpec{WGPort: 443},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "udp dport 443 drop") {
-		t.Errorf("master should drop QUIC/UDP-443:\n%s", out)
+	for _, want := range []string{
+		"table inet wgfleet",
+		"policy drop;",
+		`iifname "zt*" accept`,
+		"tcp dport 22 accept",
+		"udp dport 443 accept", // client AWG listener
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("master input firewall missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "udp dport 443 drop") {
+		t.Errorf("master input chain must not drop its own WG/client port:\n%s", out)
+	}
+	if strings.Contains(out, "masquerade") {
+		t.Errorf("master input firewall must not carry the exit masquerade:\n%s", out)
 	}
 }
 

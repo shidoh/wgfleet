@@ -92,6 +92,13 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	port := exit.WGListenPort()
 	egress := domain.EgressMethod(exit.Egress)
 
+	// The management overlay (ZeroTier) must be trusted on every exit without the
+	// operator hand-listing it: route it DIRECT so client→mgmt traffic (e.g. DNS to
+	// blocky on a sibling exit) never gets pulled into WARP, and
+	// accept it in the firewall so admin/metrics/controller reach the node over the
+	// overlay. Derived from fleet.mgmt_subnet or the nodes' mgmt_addr /32s.
+	mgmtCIDRs := b.fleet.MgmtCIDRs()
+
 	// The exit's server carries the master↔exit tunnel. It is AmneziaWG over its
 	// own physical link, so its MTU subtracts one AWG-obfuscated layer (sequential
 	// model, ADR-0014; an earlier finding).
@@ -126,7 +133,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		DNS:     b.renderDNS(ctx, exit),
 		Firewall: domain.FirewallSpec{
 			ASBlacklist: exit.Firewall.ASBlacklist,
-			Whitelist:   append([]string(nil), exit.Firewall.Whitelist...),
+			Whitelist:   mergeUnique(exit.Firewall.Whitelist, mgmtCIDRs),
 			WGPort:      port,
 		},
 		Exporters: domain.ExportersSpec{Node: true, WG: true, WARP: egress == domain.EgressWARP},
@@ -156,7 +163,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	// path back to the master must stay direct (an earlier finding–#5).
 	spec.Routing = domain.RoutingSpec{
 		MasterIP:    masterNode.PublicIP,
-		DirectCIDRs: b.masterDirectCIDRs(master),
+		DirectCIDRs: mergeUnique(b.masterDirectCIDRs(master), mgmtCIDRs),
 	}
 	if egress == domain.EgressWARP {
 		spec.Routing.EgressInterface = "wgcf"
@@ -194,7 +201,11 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			AWG:            &clientAWG,
 			ClientAWGLocal: &clientPeer.Local,
 		},
-		Firewall:  domain.FirewallSpec{WGPort: clientPort},
+		// The master now reconciles an input firewall too (drop policy). Trust the
+		// mgmt overlay in its whitelist as well (the iifname "zt*" accept already
+		// covers ZT inbound; this also allows any non-overlay mgmt sources the
+		// operator lists). WGPort opens the client-facing AWG listener.
+		Firewall:  domain.FirewallSpec{WGPort: clientPort, Whitelist: b.fleet.MgmtCIDRs()},
 		Exporters: domain.ExportersSpec{Node: true, WG: true},
 	}
 
@@ -410,6 +421,35 @@ func (b *Broker) lookupPubKey(ctx context.Context, name string) (domain.Node, st
 
 func (b *Broker) masterDirectCIDRs(m config.MasterConfig) []string {
 	return append([]string(nil), m.Routing.DirectCIDRs...)
+}
+
+// mergeUnique concatenates a and b, dropping empties and duplicates while keeping
+// first-seen order. Returns nil when the result is empty so callers preserve the
+// previous "unset" semantics rather than an empty non-nil slice.
+func mergeUnique(a, b []string) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	var out []string
+	for _, s := range a {
+		if s == "" {
+			continue
+		}
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	for _, s := range b {
+		if s == "" {
+			continue
+		}
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
 }
 
 func (b *Broker) findExit(name string) (config.ExitConfig, bool) {

@@ -17,6 +17,7 @@ type Paths struct {
 	MihomoConfig   string // mihomo config.yaml
 	DirectNetworks string // included direct-networks.yaml
 	NFT            string // master NAT ruleset
+	FirewallNFT    string // master input-firewall ruleset (inet wgfleet)
 	ExtraFilesDir  string // base dir for operator extra files with relative paths
 	WGEasyDB       string // wg-easy SQLite db (client-facing AWG server)
 	Compose        string // docker-compose.yml for the container stack
@@ -29,6 +30,7 @@ func DefaultPaths() Paths {
 		MihomoConfig:   "/etc/mihomo/config.yaml",
 		DirectNetworks: "/etc/mihomo/direct-networks.yaml",
 		NFT:            "/etc/wgfleet/wgfleet-master.nft",
+		FirewallNFT:    "/etc/wgfleet/wgfleet.nft",
 		ExtraFilesDir:  "/etc/mihomo",
 		WGEasyDB:       wgeasy.DefaultDBPath,
 		Compose:        "/etc/wgfleet/docker-compose.yml",
@@ -42,6 +44,7 @@ func PathsUnder(dir string) Paths {
 		MihomoConfig:   filepath.Join(dir, "config.yaml"),
 		DirectNetworks: filepath.Join(dir, "direct-networks.yaml"),
 		NFT:            filepath.Join(dir, "wgfleet-master.nft"),
+		FirewallNFT:    filepath.Join(dir, "wgfleet.nft"),
 		ExtraFilesDir:  dir,
 		WGEasyDB:       filepath.Join(dir, "wg-easy.db"),
 		Compose:        filepath.Join(dir, "docker-compose.yml"),

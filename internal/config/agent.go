@@ -26,6 +26,13 @@ type AgentSection struct {
 	NodeID            string          `koanf:"node_id"`            // stable node identifier
 	ReconcileInterval time.Duration   `koanf:"reconcile_interval"` // e.g. "60s"
 	Identity          IdentitySection `koanf:"identity"`
+	// MgmtOverlayMSS, when > 0, clamps TCP MSS on the ZeroTier overlay interface to
+	// this value (rendered into the node firewall). Control-plane insurance: keeps
+	// the agent↔controller mTLS handshake working even if the ZeroTier MTU is left at
+	// its 2800 default while the underlay path is smaller (large TLS records would
+	// otherwise be black-holed). Agent-local on purpose — it must not depend on the
+	// channel it protects. Recommended 1240 (matches a 1280 overlay MTU); 0 disables.
+	MgmtOverlayMSS int `koanf:"mgmt_overlay_mss"`
 }
 
 // IdentitySection holds the node's mTLS client certificate material. The key is
@@ -61,6 +68,12 @@ func (a AgentConfig) Validate() error {
 	}
 	if a.Agent.Identity.CA == "" {
 		errs = append(errs, errors.New("agent.identity.ca is required to verify the controller"))
+	}
+	// A TCP MSS clamp must be a sane segment size. 0 disables; otherwise keep it in a
+	// reasonable band (a too-small clamp wrecks throughput, a too-large one fails to
+	// fit the overlay path it is meant to protect).
+	if m := a.Agent.MgmtOverlayMSS; m != 0 && (m < 536 || m > 1460) {
+		errs = append(errs, fmt.Errorf("agent.mgmt_overlay_mss %d out of range (0 to disable, else 536..1460)", m))
 	}
 	return errors.Join(errs...)
 }

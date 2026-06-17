@@ -5,6 +5,11 @@ agent:
   controller: "master-xa-1.mgmt:8443"
   node_id: "exit-de-1"
   reconcile_interval: 60s
+  # mgmt_overlay_mss: clamp TCP MSS on the ZeroTier interface (control-plane
+  # insurance; keeps the mTLS handshake working if the overlay MTU is left at 2800).
+  # Usually baked in from the controller's fleet.mgmt_overlay_mss at provisioning;
+  # 1240 matches a 1280 overlay MTU. Omit / 0 to disable.
+  # mgmt_overlay_mss: 1240
   identity:
     cert: "/etc/wgfleet/node.crt" # issued at bootstrap
     key: "/etc/wgfleet/node.key" # generated on-node, 0600, never leaves the box

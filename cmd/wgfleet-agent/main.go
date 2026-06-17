@@ -449,9 +449,10 @@ func (a *agent) planners(privateKey, adminUser, adminPass string) []reconcile.Pl
 			PrivateKey:    privateKey,
 			AdminUsername: adminUser,
 			AdminPassword: adminPass,
+			OverlayMSS:    a.cfg.Agent.MgmtOverlayMSS,
 		})
 	}
-	in := exit.Input{Paths: a.paths, PrivateKey: privateKey}
+	in := exit.Input{Paths: a.paths, PrivateKey: privateKey, OverlayMSS: a.cfg.Agent.MgmtOverlayMSS}
 	in.WARP = a.readWARPProfile()
 	return exit.Planners(in)
 }

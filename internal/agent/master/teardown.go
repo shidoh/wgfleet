@@ -8,8 +8,8 @@ import (
 )
 
 // TeardownPlanners returns the reverse-of-reconcile planners for a master node:
-// bring the container stack down and remove the master NAT table. Run when the
-// node is decommissioned.
+// bring the container stack down and remove the master NAT + input-firewall tables.
+// Run when the node is decommissioned.
 func TeardownPlanners(p Paths) []reconcile.Planner {
 	return []reconcile.Planner{
 		masterTeardownPlanner{paths: p},
@@ -26,6 +26,8 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 			"docker", "compose", "-f", p.paths.Compose, "down"),
 		reconcile.BestEffortExecAction("remove master NAT table",
 			"nft", "delete", "table", "ip", "wgfleet_master"),
+		reconcile.BestEffortExecAction("remove master input-firewall table",
+			"nft", "delete", "table", "inet", "wgfleet"),
 	}
 
 	// Wipe the rendered config and the wg-easy DB once the stack is down: on
@@ -35,6 +37,7 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 		{p.paths.MihomoConfig, "mihomo config"},
 		{p.paths.DirectNetworks, "direct-networks include"},
 		{p.paths.NFT, "master NAT ruleset"},
+		{p.paths.FirewallNFT, "master input-firewall ruleset"},
 		{p.paths.Compose, "container compose file"},
 		{p.paths.WGEasyDB, "wg-easy client database"},
 	}

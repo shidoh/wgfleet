@@ -31,6 +31,9 @@ type Input struct {
 	// config file is unchanged (after a reboot, or a previously failed `up`).
 	// nil ⇒ a real `ip link show` check; tests inject a stub.
 	IfaceUp func(name string) bool
+	// OverlayMSS clamps TCP MSS on the mgmt overlay (control-plane insurance);
+	// 0 disables. See config.AgentSection.MgmtOverlayMSS and netfw.RenderInput.
+	OverlayMSS int
 }
 
 // Planners returns the ordered exit reconcilers: firewall first (so the box is
@@ -42,7 +45,7 @@ func Planners(in Input) []reconcile.Planner {
 		up = ipLinkUp
 	}
 	return []reconcile.Planner{
-		firewallPlanner{path: in.Paths.NFT, wgConf: in.Paths.WGConf},
+		firewallPlanner{path: in.Paths.NFT, wgConf: in.Paths.WGConf, overlayMSS: in.OverlayMSS},
 		wgPlanner{path: in.Paths.WGConf, privateKey: in.PrivateKey, up: up},
 		warpPlanner{path: in.Paths.WGCF, dir: in.Paths.WARPDir, warp: in.WARP, up: up},
 		routingPlanner{statePath: in.Paths.RoutingState},
@@ -164,6 +167,8 @@ type firewallPlanner struct {
 	// wgConf is the exit WG config path; its basename is the interface name the
 	// MASQUERADE excludes (`oifname != <iface>`). Empty ⇒ the renderer defaults it.
 	wgConf string
+	// overlayMSS clamps TCP MSS on the mgmt overlay (0 ⇒ no clamp).
+	overlayMSS int
 	// loaded reports whether the live kernel has the exit firewall table.
 	// nil ⇒ a real `nft list table inet wgfleet` probe; tests inject a stub.
 	loaded func() bool
@@ -175,12 +180,12 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	in := netfw.RenderInput{
 		Firewall: spec.Firewall,
 		Role:     spec.Role,
-		DropQUIC: spec.Role == domain.RoleMaster,
 		// SNAT client traffic on egress so packets leaving WARP carry the egress
 		// address, not the master's private tunnel IP (else the upstream drops them).
 		ClientCIDR:      spec.WGServer.AddressPool,
 		WGInterface:     wgIfaceName(p.wgConf),
 		EgressInterface: spec.Routing.EgressInterface,
+		OverlayMSS:      p.overlayMSS,
 	}
 	// On an egress-routed exit, mark this node's WG-server reply/handshake packets
 	// so the routing `ip rule fwmark` keeps them off the WARP interface (earlier findings

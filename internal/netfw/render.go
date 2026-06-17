@@ -14,16 +14,28 @@ import (
 
 // Well-known ports kept open on every managed node's input chain.
 const (
-	sshPort       = 22
-	zeroTierPort  = 9993 // ZeroTier control/data (UDP)
-	quicHTTPSPort = 443  // QUIC/HTTPS over UDP, dropped on masters (an earlier finding context)
+	sshPort      = 22
+	zeroTierPort = 9993 // ZeroTier control/data (UDP)
 )
+
+// mgmtOverlayIface is the nft iifname glob matching the management-overlay
+// interfaces (ZeroTier's ztXXXXXXXX). Inbound on the overlay is accepted wholesale:
+// it is the trust boundary for all management — admin UI, metrics, controller gRPC,
+// fleet-internal DNS (docs/DESIGN.md §9/§10) — and the operator reaches nodes over it.
+// Accepting the interface is a fail-safe so a missing mgmt entry in the whitelist
+// can never lock management out (the failure mode that left a rebooted node
+// unreachable until ZeroTier re-converged). If the mgmt overlay is ever abstracted
+// off ZeroTier (open question #5), change it here.
+const mgmtOverlayIface = "zt*"
 
 // baselineTable is the bootstrap firewall table name (provisioner/templates.go).
 // The exit firewall deletes it on apply, superseding it without a global flush.
 const baselineTable = "wgfleet_baseline"
 
-// ExitTable is the exit firewall's nft table name. Exported so the agent can
+// ExitTable is the per-node input-firewall nft table name. Both roles reuse it
+// (a node is exactly one role, so there is no collision): the exit's full ruleset
+// and the master's input filter both render into `inet wgfleet`. The master's NAT
+// lives in a separate table (MasterNATTable, family ip). Exported so the agent can
 // probe the live kernel for it (live-kernel reload gate) using the exact name the
 // renderer emits.
 const ExitTable = "wgfleet"
@@ -32,9 +44,6 @@ const ExitTable = "wgfleet"
 type RenderInput struct {
 	Firewall domain.FirewallSpec
 	Role     domain.Role
-	// DropQUIC drops inbound UDP/443 (QUIC). Masters do this so clients fall back
-	// to TCP paths the router can handle; exits leave it alone.
-	DropQUIC bool
 	// WGReplyMark, when non-zero, renders an nft mangle rule that marks this node's
 	// WG-server reply/handshake packets (source port = Firewall.WGPort) with the
 	// mark, so the routing `ip rule fwmark <mark> lookup main` keeps them OFF the
@@ -57,10 +66,23 @@ type RenderInput struct {
 	// exit→WARP) does not stall when PMTU discovery is blocked (an earlier finding; the reference deployment
 	// §4.10's `clamp-mss-to-pmtu`).
 	EgressInterface string
+	// OverlayMSS, when > 0, renders a postrouting MSS clamp on the management overlay
+	// interface (`zt*`): every TCP SYN leaving over ZeroTier has its MSS capped to
+	// this fixed value. It is insurance for the control plane (the agent↔controller
+	// mTLS channel rides the overlay): if the ZeroTier MTU is left/reset at its 2800
+	// default while the underlay path is smaller, large TLS-handshake records (the
+	// server certificate) get black-holed and `register` fails with a handshake
+	// deadline — exactly the failure we hit. A FIXED clamp (not `rt mtu`, which would
+	// read the wrong 2800 interface MTU) keeps the channel working regardless. The
+	// clamp only lowers an MSS, so it is a no-op when the overlay MTU is already
+	// correct. Agent-local (not from the wire) so it cannot depend on the very
+	// channel it protects.
+	OverlayMSS int
 }
 
 // RenderRuleset renders an nftables script for in. The input chain defaults to
-// drop: only established/related, loopback, the whitelist, SSH, ZeroTier and the
+// drop: only established/related, loopback, the management overlay (ZeroTier
+// interface, fail-safe), the whitelist, SSH, the ZeroTier transport port and the
 // WG port are accepted. An AS-blacklist set is declared (and dropped early) when
 // enabled; it is populated out-of-band from ASN feeds, so the rule references an
 // initially empty set rather than inlining thousands of prefixes.
@@ -109,6 +131,8 @@ func RenderRuleset(in RenderInput) (string, error) {
 	b.WriteString("\t\tct state established,related accept\n")
 	b.WriteString("\t\tct state invalid drop\n")
 	b.WriteString("\t\tiif \"lo\" accept\n")
+	// Trust the management overlay wholesale (fail-safe; see mgmtOverlayIface).
+	fmt.Fprintf(&b, "\t\tiifname %q accept\n", mgmtOverlayIface)
 	b.WriteString("\t\tip saddr @whitelist accept\n")
 	if in.Firewall.ASBlacklist {
 		b.WriteString("\t\tip saddr @as_blacklist drop\n")
@@ -118,9 +142,6 @@ func RenderRuleset(in RenderInput) (string, error) {
 	fmt.Fprintf(&b, "\t\tudp dport %d accept\n", in.Firewall.WGPort)
 	b.WriteString("\t\ticmp type echo-request accept\n")
 	b.WriteString("\t\ticmpv6 type { echo-request, nd-neighbor-solicit, nd-router-advert, nd-neighbor-advert } accept\n")
-	if in.DropQUIC {
-		fmt.Fprintf(&b, "\t\tudp dport %d drop\n", quicHTTPSPort)
-	}
 	b.WriteString("\t}\n\n")
 
 	b.WriteString("\tchain forward {\n")
@@ -147,6 +168,18 @@ func RenderRuleset(in RenderInput) (string, error) {
 		b.WriteString("\n\tchain mangle_output {\n")
 		b.WriteString("\t\ttype route hook output priority mangle; policy accept;\n")
 		fmt.Fprintf(&b, "\t\tmeta l4proto udp udp sport %d meta mark set 0x%x\n", in.Firewall.WGPort, in.WGReplyMark)
+		b.WriteString("\t}\n")
+	}
+
+	// Clamp TCP MSS on the management overlay (control-plane insurance, see
+	// OverlayMSS). Postrouting catches locally-originated SYNs (the agent dialing the
+	// controller) as well as any forwarded traffic. A FIXED size, not `rt mtu`: the
+	// whole point is to survive a too-large ZeroTier interface MTU, so reading the
+	// interface MTU would defeat it.
+	if in.OverlayMSS > 0 {
+		b.WriteString("\n\tchain mgmt_overlay_mss {\n")
+		b.WriteString("\t\ttype filter hook postrouting priority mangle; policy accept;\n")
+		fmt.Fprintf(&b, "\t\toifname %q tcp flags syn / syn,rst tcp option maxseg size set %d\n", mgmtOverlayIface, in.OverlayMSS)
 		b.WriteString("\t}\n")
 	}
 

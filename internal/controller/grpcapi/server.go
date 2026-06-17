@@ -6,10 +6,12 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
 	"github.com/shidoh/wgfleet/internal/api"
@@ -47,7 +49,24 @@ func NewService(st store.Store, renderer SpecRenderer, log *slog.Logger) *Servic
 // NewServer builds a gRPC server with mTLS credentials and the NodeService
 // registered. The caller owns the listener and calls Serve/GracefulStop.
 func NewServer(tlsCfg *tls.Config, svc *Service) *grpc.Server {
-	s := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
+	s := grpc.NewServer(
+		grpc.Creds(credentials.NewTLS(tlsCfg)),
+		// Tolerate the agents' client keepalive pings. Agents ping while idle between
+		// reconciles so a dead control channel is detected and torn down fast; without
+		// a permissive enforcement policy the server GOAWAYs a client that pings "too
+		// often" (default MinTime 5m, no pings without a stream), which would defeat
+		// the keepalive. MinTime must be ≤ the client's keepalive Time (30s).
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             15 * time.Second,
+			PermitWithoutStream: true,
+		}),
+		// Proactively probe idle agent connections so the controller sheds half-open
+		// ones (an agent that vanished on a flaky overlay) instead of pinning them.
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    60 * time.Second,
+			Timeout: 20 * time.Second,
+		}),
+	)
 	pb.RegisterNodeServiceServer(s, svc)
 	return s
 }

@@ -35,6 +35,20 @@ controller:
 
 fleet:
   zerotier_network: "8056c2e21c000001" # mgmt overlay nodes join during bootstrap
+  # mgmt_subnet: the ZeroTier overlay CIDR. When set, every exit routes it DIRECT
+  # (never via WARP — an earlier finding) and accepts it in its firewall, automatically.
+  # Leave unset to derive trust from each node's mgmt_addr /32 instead. Either way the
+  # exit firewall also accepts the overlay interface wholesale (iifname "zt*") as a
+  # fail-safe, so a rebooted node stays reachable over ZeroTier regardless of this.
+  mgmt_subnet: 10.20.0.0/16
+  # mgmt_overlay_mss: control-plane insurance. Baked into every agent.yaml at
+  # provisioning; the agent clamps TCP MSS on the ZeroTier interface to this value so
+  # the agent↔controller mTLS handshake keeps working even if the ZeroTier MTU is left
+  # at its 2800 default while the underlay path is smaller (large TLS records would
+  # otherwise be black-holed → "handshake deadline exceeded"). 1240 matches a 1280
+  # overlay MTU. The clamp only lowers an MSS, so it is a no-op when the MTU is already
+  # correct. The real fix is still a correct ZeroTier MTU; this just survives a reset.
+  mgmt_overlay_mss: 1240
   masters:
     - name: master-xa-1
       mgmt_addr: 10.20.25.254 # ZT overlay address

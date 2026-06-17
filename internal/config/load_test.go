@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -132,6 +133,27 @@ func TestAgentIntervalDefault(t *testing.T) {
 	var cfg AgentConfig
 	if cfg.Interval() != DefaultReconcileInterval {
 		t.Errorf("default interval = %v, want %v", cfg.Interval(), DefaultReconcileInterval)
+	}
+}
+
+func TestAgentValidatesOverlayMSS(t *testing.T) {
+	base := AgentConfig{Agent: AgentSection{
+		Role: "exit", Controller: "c:8443", NodeID: "n",
+		Identity: IdentitySection{Cert: "/c", Key: "/k", CA: "/ca"},
+	}}
+	for _, ok := range []int{0, 536, 1240, 1460} {
+		cfg := base
+		cfg.Agent.MgmtOverlayMSS = ok
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("mgmt_overlay_mss %d rejected unexpectedly: %v", ok, err)
+		}
+	}
+	for _, bad := range []int{1, 535, 1461, 9000} {
+		cfg := base
+		cfg.Agent.MgmtOverlayMSS = bad
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "mgmt_overlay_mss") {
+			t.Errorf("mgmt_overlay_mss %d should be rejected, got %v", bad, err)
+		}
 	}
 }
 

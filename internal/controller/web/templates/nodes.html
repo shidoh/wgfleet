@@ -35,7 +35,7 @@
       <td class="mono">{{or .Region "—"}}</td>
       <td>
         <span class="badge {{lower .State}}"><span class="led"></span>{{.State}}</span>
-        {{if .Drain}}<span class="badge draining"><span class="led"></span>draining</span>{{end}}
+        {{if .Drain}}<span class="badge draining" title="Temporarily out of routing (reversible; node untouched)"><span class="led"></span>out of routing</span>{{end}}
       </td>
       <td class="mono">{{or .MgmtAddr "—"}}</td>
       <td class="mono">{{or .PublicIP "—"}}</td>

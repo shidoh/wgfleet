@@ -7,9 +7,12 @@ import (
 	"crypto/tls"
 	"fmt"
 	"strconv"
+	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 
 	"github.com/shidoh/wgfleet/internal/api"
@@ -33,6 +36,28 @@ func Dial(addr string, tlsCfg *tls.Config) (*Client, error) {
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithChainUnaryInterceptor(versionUnaryInterceptor),
 		grpc.WithChainStreamInterceptor(versionStreamInterceptor),
+		// Recover from control-plane blips in seconds, not the gRPC default of up to
+		// ~120s: cap the reconnect backoff so a node that briefly lost the controller
+		// (an overlay MTU/relay hiccup, a controller restart) re-registers promptly
+		// once the path is back, instead of flapping Degraded while it waits out a
+		// long backoff.
+		grpc.WithConnectParams(grpc.ConnectParams{
+			Backoff: backoff.Config{
+				BaseDelay:  1 * time.Second,
+				Multiplier: 1.6,
+				Jitter:     0.2,
+				MaxDelay:   20 * time.Second,
+			},
+			MinConnectTimeout: 20 * time.Second,
+		}),
+		// Keep the idle connection warm and detect a dead one proactively, so the next
+		// reconcile does not stall on a half-open socket. Time (30s) is ≥ the server's
+		// enforced MinTime (15s), so the server never GOAWAYs us for pinging too fast.
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                30 * time.Second,
+			Timeout:             20 * time.Second,
+			PermitWithoutStream: true,
+		}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("dial controller %q: %w", addr, err)

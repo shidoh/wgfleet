@@ -101,6 +101,54 @@ type FleetSection struct {
 	Exits   []ExitConfig   `koanf:"exits"`
 	// ZeroTierNetwork is the mgmt overlay network nodes join during bootstrap.
 	ZeroTierNetwork string `koanf:"zerotier_network"`
+	// MgmtSubnet is the CIDR of the management overlay (ZeroTier). When set it is
+	// the authoritative trust scope the platform applies WITHOUT the operator
+	// hand-listing it on every node: exits route it DIRECT (never via WARP — earlier findings
+	// ) and accept it in their firewall. Empty ⇒ the broker derives the scope
+	// from the individual mgmt_addr /32s of every fleet node (see MgmtCIDRs).
+	MgmtSubnet string `koanf:"mgmt_subnet"`
+	// MgmtOverlayMSS, when > 0, is baked into every node's agent.yaml at provisioning
+	// time (agent.mgmt_overlay_mss) so the agent clamps TCP MSS on the ZeroTier
+	// interface. Control-plane insurance: keeps the agent↔controller mTLS handshake
+	// working even if the ZeroTier MTU is left at its 2800 default while the underlay
+	// path is smaller. Recommended 1240 (matches a 1280 overlay MTU); 0 disables.
+	MgmtOverlayMSS int `koanf:"mgmt_overlay_mss"`
+}
+
+// MgmtCIDRs returns the management-overlay address scope the platform trusts for
+// routing-direct and firewall-accept. It is the explicit MgmtSubnet when set,
+// otherwise the host route (/32 or /128) of every master/exit mgmt_addr that
+// parses as an IP, de-duplicated in a stable order (masters first, then exits).
+// This is what makes ZeroTier reachability robust without the operator listing the
+// overlay in each exit's whitelist/direct_cidrs by hand.
+func (f FleetSection) MgmtCIDRs() []string {
+	if s := strings.TrimSpace(f.MgmtSubnet); s != "" {
+		if p, err := netip.ParsePrefix(s); err == nil {
+			return []string{p.Masked().String()}
+		}
+	}
+	addrs := make([]string, 0, len(f.Masters)+len(f.Exits))
+	for _, m := range f.Masters {
+		addrs = append(addrs, m.MgmtAddr)
+	}
+	for _, e := range f.Exits {
+		addrs = append(addrs, e.MgmtAddr)
+	}
+	var out []string
+	seen := make(map[string]struct{}, len(addrs))
+	for _, a := range addrs {
+		addr, err := netip.ParseAddr(strings.TrimSpace(a))
+		if err != nil {
+			continue
+		}
+		cidr := netip.PrefixFrom(addr, addr.BitLen()).String()
+		if _, dup := seen[cidr]; dup {
+			continue
+		}
+		seen[cidr] = struct{}{}
+		out = append(out, cidr)
+	}
+	return out
 }
 
 // SSHConfig is the bootstrap SSH target for a node (Phase 0/1 only; management
@@ -299,6 +347,17 @@ func (c ControllerConfig) Validate() error {
 	// shell commands that run as root on every provisioned node.
 	if id := c.Fleet.ZeroTierNetwork; id != "" && !zerotierNetworkID.MatchString(id) {
 		errs = append(errs, fmt.Errorf("fleet.zerotier_network %q is not a valid ZeroTier network id (16 hex chars)", id))
+	}
+	// MgmtSubnet, when set, is rendered into routing direct-CIDR rules and the
+	// firewall whitelist on every exit; reject a malformed value at startup rather
+	// than letting it silently fall back to per-node /32s (or break the renderer).
+	if s := c.Fleet.MgmtSubnet; s != "" {
+		if _, err := netip.ParsePrefix(s); err != nil {
+			errs = append(errs, fmt.Errorf("fleet.mgmt_subnet %q is not a valid CIDR: %w", s, err))
+		}
+	}
+	if m := c.Fleet.MgmtOverlayMSS; m != 0 && (m < 536 || m > 1460) {
+		errs = append(errs, fmt.Errorf("fleet.mgmt_overlay_mss %d out of range (0 to disable, else 536..1460)", m))
 	}
 	// The keybroker topology is single-master on MVP (open question #11): it peers
 	// every exit to Masters[0] only, so a second master would render specs that

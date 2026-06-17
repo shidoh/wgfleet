@@ -4,7 +4,7 @@
   <h1>{{.Node.Name}}</h1>
   <span class="role {{.Node.Role}}">{{.Node.Role}}</span>
   <span class="badge {{lower .Node.State}}"><span class="led"></span>{{.Node.State}}</span>
-  {{if .Node.Drain}}<span class="badge draining"><span class="led"></span>draining</span>{{end}}
+  {{if .Node.Drain}}<span class="badge draining" title="Temporarily out of routing (no new traffic). Node untouched; reversible with one click (Undrain)."><span class="led"></span>out of routing</span>{{end}}
   {{if .Node.Decommission}}<span class="badge decommissioning"><span class="led"></span>decommissioning</span>{{end}}
   {{if and .HasStatus .Status.EgressBlocked}}<span class="badge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
   {{if .HasStatus}}{{$e := .Status.ActiveEgress}}{{if and $e (ne $e "warp")}}<span class="badge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{$e}}</span>{{end}}{{end}}
@@ -25,15 +25,17 @@
     </form>
     {{end}}
     {{if .Node.Drain}}
+    {{/* Fast, one-click reverse: no confirm. Prominent so a suspended node is
+         obviously easy to bring back. Hot-reloads mihomo — other clients undisturbed. */}}
     <form method="post" action="/nodes/{{.Node.ID}}/undrain">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <button class="btn">Undrain</button>
+      <button class="btn go" title="Bring this node back into routing. Instant (mihomo hot reload); no node change.">↩ Resume routing</button>
     </form>
     {{else}}
     <form method="post" action="/nodes/{{.Node.ID}}/drain"
-          onsubmit="return confirm('Drain {{.Node.Name}}? It stays a configured proxy but receives no new traffic.')">
+          onsubmit="return confirm('Suspend {{.Node.Name}} from routing? New traffic stops going to it (for a flaky node). The node is NOT changed or wiped, and it is applied by hot-reloading mihomo so other clients keep their connections. Reverse instantly with “Resume routing”.')">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <button class="btn warn">Drain</button>
+      <button class="btn warn" title="Temporarily pull this node out of routing (reversible; no node change).">Suspend from routing</button>
     </form>
     {{end}}
     {{if not .Node.Decommission}}

@@ -2,6 +2,7 @@ package master
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -32,6 +33,9 @@ type Input struct {
 	// sent by the controller (ADR-0008). Empty password ⇒ no unattended setup.
 	AdminUsername string
 	AdminPassword string
+	// OverlayMSS clamps TCP MSS on the mgmt overlay (control-plane insurance);
+	// 0 disables. See config.AgentSection.MgmtOverlayMSS and netfw.RenderInput.
+	OverlayMSS int
 }
 
 const defaultClientInterface = "wg0"
@@ -43,6 +47,9 @@ func Planners(in Input) []reconcile.Planner {
 		in.ClientInterface = defaultClientInterface
 	}
 	return []reconcile.Planner{
+		// Input firewall first: bring the drop policy up before the services, the same
+		// ordering the bootstrap uses ("firewall before traffic").
+		firewallPlanner{path: in.Paths.FirewallNFT, overlayMSS: in.OverlayMSS},
 		composePlanner{path: in.Paths.Compose, adminUser: in.AdminUsername, adminPass: in.AdminPassword},
 		wgEasyPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface, compose: in.Paths.Compose},
 		wgEasyUserConfigPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface},
@@ -285,6 +292,10 @@ func (p wgEasyMetricsPlanner) Plan(ctx context.Context, _ domain.NodeSpec) ([]re
 type mihomoPlanner struct {
 	paths      Paths
 	privateKey string
+	// reload hot-applies the config via the Clash API (nil ⇒ the real mihomo.Reload);
+	// injected in tests. Preferred over a container restart so a routine change like
+	// draining one exit does not drop every client's connection.
+	reload func(ctx context.Context, controllerAddr, secret string, cfgYAML []byte) error
 }
 
 func (mihomoPlanner) Component() string { return "mihomo (data plane)" }
@@ -312,13 +323,73 @@ func (p mihomoPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcil
 	}
 
 	actions := []reconcile.Action{configAction, directAction}
-	// Restart the mihomo container only when its config changed.
 	if configAction.Changes() || directAction.Changes() {
-		actions = append(actions, composeRestart(p.paths.Compose, "mihomo"))
+		actions = append(actions, p.applyConfigAction(spec, []byte(cfg)))
 	} else {
 		actions = append(actions, reconcile.NoChangeAction("mihomo", "config already current"))
 	}
 	return actions, nil
+}
+
+// applyConfigAction makes a running mihomo pick up the freshly written config. It
+// prefers an in-process hot reload via the Clash API (no container restart, so
+// existing client connections survive — draining one exit must not disconnect
+// everyone), and falls back to `docker compose restart mihomo` only when the API is
+// unreachable (mihomo down / mid-start). A config the controller actively REJECTS is
+// surfaced as an error WITHOUT a restart, so the previous good config keeps running.
+func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML []byte) reconcile.Action {
+	reload := p.reload
+	if reload == nil {
+		reload = mihomo.Reload
+	}
+	addr := spec.Master.ExternalController
+	secret := clashSecret(spec.Master)
+	compose := p.paths.Compose
+
+	display := fmt.Sprintf("PUT http://%s/configs (hot reload; fallback: docker compose restart mihomo)",
+		orPlaceholder(addr, "<external-controller>"))
+	apply := func(ctx context.Context) error {
+		err := reload(ctx, addr, secret, cfgYAML)
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, mihomo.ErrUnreachable):
+			// Not reachable (down / mid-start): restart so it reads the fresh file.
+			// Heavier (drops connections) but rare — the compose planner already
+			// brought the stack up earlier in the same pass.
+			c := exec.CommandContext(ctx, "docker", "compose", "-f", compose, "restart", "mihomo")
+			if out, rerr := c.CombinedOutput(); rerr != nil {
+				return fmt.Errorf("mihomo reload unreachable (%v) and restart failed: %w: %s",
+					err, rerr, strings.TrimSpace(string(out)))
+			}
+			return nil
+		default:
+			// Reachable but rejected the config: leave the old config running.
+			return err
+		}
+	}
+	return reconcile.CustomAction(reconcile.ActionUpdate, "mihomo",
+		"reload mihomo config in place (Clash API; existing connections preserved)", display, apply)
+}
+
+// clashSecret extracts the Clash API secret from the operator's mihomo overrides
+// (where it is configured), so the agent can authenticate its reload call. Empty
+// when no secret is set (the API is then bound to mgmt only and unauthenticated).
+func clashSecret(ms *domain.MasterSpec) string {
+	if ms == nil || ms.Custom.Overrides == nil {
+		return ""
+	}
+	if s, ok := ms.Custom.Overrides["secret"].(string); ok {
+		return s
+	}
+	return ""
+}
+
+func orPlaceholder(s, placeholder string) string {
+	if s == "" {
+		return placeholder
+	}
+	return s
 }
 
 // --- operator extra files (CustomConfig.Files) ---
@@ -348,6 +419,71 @@ func (p extraFilesPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reco
 		actions = append(actions, a)
 	}
 	return actions, nil
+}
+
+// --- master input firewall (nftables filter, mirrors the exit) ---
+
+// firewallPlanner reconciles the master's input-filter firewall. Unlike the exit,
+// the master previously had NO reconciled input firewall — only the bootstrap
+// baseline, which is lost on reboot and never re-applied — so after a reboot the
+// master ran with no input policy until re-provisioned. It renders the shared
+// netfw input chain with Role=master (drop policy; overlay/SSH/client-port open; no
+// masquerade — that stays in the exit ruleset; the master's own NAT is a separate
+// table) and self-heals like masterNATPlanner when the kernel loses the table.
+type firewallPlanner struct {
+	path string
+	// overlayMSS clamps TCP MSS on the mgmt overlay (0 ⇒ no clamp).
+	overlayMSS int
+	// loaded reports whether the live kernel has the input-firewall table.
+	// nil ⇒ a real `nft list table inet wgfleet` probe; tests inject a stub.
+	loaded func() bool
+}
+
+func (firewallPlanner) Component() string { return "master firewall (nftables)" }
+
+func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
+	ruleset, err := netfw.RenderRuleset(netfw.RenderInput{
+		Firewall:   spec.Firewall,
+		Role:       domain.RoleMaster,
+		OverlayMSS: p.overlayMSS,
+	})
+	if err != nil {
+		return nil, err
+	}
+	file, err := reconcile.FileAction(p.path, []byte(ruleset), 0o644, nil)
+	if err != nil {
+		return nil, err
+	}
+	actions := []reconcile.Action{file}
+	switch {
+	case file.Changes():
+		actions = append(actions, reconcile.ExecAction("apply master firewall atomically", "nft", "-f", p.path))
+	case !p.isLoaded():
+		// Ruleset unchanged but the kernel lost the table — a reboot cleared nft
+		// state, or the baseline was re-applied by a re-provision. Reload to self-heal
+		// (ADR-0015 / ADR-0020). Without this the master silently runs with no input
+		// firewall after a reboot while health checks still pass.
+		actions = append(actions, reconcile.ExecAction("reload master firewall (kernel table missing)", "nft", "-f", p.path))
+	default:
+		actions = append(actions, reconcile.NoChangeAction("nft -f", "ruleset already loaded"))
+	}
+	return actions, nil
+}
+
+func (p firewallPlanner) isLoaded() bool {
+	if p.loaded == nil {
+		return firewallLoaded()
+	}
+	return p.loaded()
+}
+
+// firewallLoaded is the real kernel probe behind firewallPlanner.isLoaded:
+// `nft list table inet wgfleet` succeeds only when the input-firewall table is
+// present. Any exec error (table absent, non-Linux dev box, missing nft) reports
+// "not loaded", so the planner re-applies — harmless in plan mode, self-healing on
+// a real node.
+func firewallLoaded() bool {
+	return exec.Command("nft", "list", "table", "inet", netfw.ExitTable).Run() == nil
 }
 
 // --- master NAT (DNAT clients → mihomo, MASQUERADE, drop QUIC) ---

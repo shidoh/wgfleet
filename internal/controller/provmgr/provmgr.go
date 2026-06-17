@@ -131,6 +131,7 @@ func (m *Manager) Provision(ctx context.Context, nodeID string, mode provisioner
 		CACert:             m.ca.CertPEM(),
 		ControllerEndpoint: m.opts.ControllerEndpoint,
 		ZeroTierNetwork:    m.fleet.ZeroTierNetwork,
+		MgmtOverlayMSS:     m.fleet.MgmtOverlayMSS,
 	}
 	if m.opts.AgentBinPath != "" {
 		bin, err := os.ReadFile(m.opts.AgentBinPath)

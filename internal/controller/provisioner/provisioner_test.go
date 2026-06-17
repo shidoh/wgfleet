@@ -216,6 +216,23 @@ func TestAgentYAMLRendersIdentityPaths(t *testing.T) {
 			t.Errorf("agent.yaml missing %q:\n%s", want, yaml)
 		}
 	}
+	// No overlay MSS configured ⇒ the key is omitted entirely.
+	if strings.Contains(yaml, "mgmt_overlay_mss") {
+		t.Errorf("mgmt_overlay_mss should be absent when unset:\n%s", yaml)
+	}
+}
+
+func TestAgentYAMLBakesOverlayMSS(t *testing.T) {
+	in := testInput()
+	in.MgmtOverlayMSS = 1240
+	yaml := renderAgentYAML(in)
+	if !strings.Contains(yaml, "mgmt_overlay_mss: 1240") {
+		t.Errorf("agent.yaml should carry the overlay MSS clamp:\n%s", yaml)
+	}
+	// Must stay inside the agent: block and not break the identity block below it.
+	if !strings.Contains(yaml, "  identity:") {
+		t.Errorf("agent.yaml malformed after injecting overlay MSS:\n%s", yaml)
+	}
 }
 
 // --- helpers ---

@@ -27,6 +27,9 @@ type BootstrapInput struct {
 	ControllerEndpoint string
 	// ZeroTierNetwork is the mgmt overlay network to join (empty ⇒ skip).
 	ZeroTierNetwork string
+	// MgmtOverlayMSS, when > 0, is baked into the node's agent.yaml as
+	// agent.mgmt_overlay_mss (TCP MSS clamp on the overlay; control-plane insurance).
+	MgmtOverlayMSS int
 }
 
 // Remote paths the bootstrap writes to. Kept here so plan and apply agree.
@@ -186,16 +189,22 @@ func wgcfInstallCmd(arch string) string {
 }
 
 func renderAgentYAML(in BootstrapInput) string {
+	var overlay string
+	if in.MgmtOverlayMSS > 0 {
+		// Baked in from fleet config so the clamp is agent-local: it must not depend on
+		// the control channel it protects (see config.AgentSection.MgmtOverlayMSS).
+		overlay = fmt.Sprintf("  mgmt_overlay_mss: %d\n", in.MgmtOverlayMSS)
+	}
 	return fmt.Sprintf(`agent:
   role: %s
   controller: %q
   node_id: %q
   reconcile_interval: 60s
-  identity:
+%s  identity:
     cert: %q
     key: %q
     ca: %q
-`, in.Node.Role, in.ControllerEndpoint, in.Node.ID,
+`, in.Node.Role, in.ControllerEndpoint, in.Node.ID, overlay,
 		remoteNodeCert, remoteNodeKey, remoteCACert)
 }
 

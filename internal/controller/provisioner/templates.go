@@ -11,8 +11,11 @@ KbdInteractiveAuthentication no
 `
 
 // baselineNFT is the minimal firewall installed BEFORE the node accepts traffic
-// (Phase 1): only SSH, ZeroTier and the WG port are reachable. The agent's
-// reconcile later replaces this with the full per-role ruleset.
+// (Phase 1): only SSH, the management overlay (ZeroTier), and the WG port are
+// reachable. The agent's reconcile later replaces this with the full per-role
+// ruleset — but the master's agent does not re-apply an input firewall, so this
+// baseline (which trusts the overlay) is also what keeps the master's mgmt surface
+// reachable across reboots.
 const baselineNFT = `#!/usr/sbin/nft -f
 # Managed by wgfleet — baseline bootstrap firewall. Replaced by agent reconcile.
 # Replace ONLY our own table (atomic add/delete/create), never ` + "`flush ruleset`" + `:
@@ -26,6 +29,7 @@ table inet wgfleet_baseline {
 		ct state established,related accept
 		ct state invalid drop
 		iif "lo" accept
+		iifname "zt*" accept
 		tcp dport 22 accept
 		udp dport 9993 accept
 		udp dport 51820 accept

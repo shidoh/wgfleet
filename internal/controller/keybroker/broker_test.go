@@ -138,6 +138,74 @@ func TestRenderExitSpec(t *testing.T) {
 	}
 }
 
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// The exit must trust the mgmt overlay without the operator hand-listing it:
+// derived from node mgmt_addrs when fleet.mgmt_subnet is unset (the master's
+// /32 here), it lands in BOTH the firewall whitelist and the routing direct-CIDRs.
+func TestRenderExitSpecTrustsMgmtOverlay(t *testing.T) {
+	ctx := context.Background()
+	b, st := newBroker(t)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(ctx, "exit-de-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	const mgmt = "10.20.25.254/32" // master's mgmt_addr as a host route
+	if !contains(spec.Firewall.Whitelist, mgmt) {
+		t.Errorf("mgmt overlay missing from firewall whitelist: %v", spec.Firewall.Whitelist)
+	}
+	if !contains(spec.Firewall.Whitelist, "10.20.0.0/16") {
+		t.Errorf("operator whitelist entry dropped: %v", spec.Firewall.Whitelist)
+	}
+	if !contains(spec.Routing.DirectCIDRs, mgmt) {
+		t.Errorf("mgmt overlay missing from direct CIDRs: %v", spec.Routing.DirectCIDRs)
+	}
+	// Operator's direct CIDRs are preserved.
+	for _, want := range []string{"10.0.0.0/8", "192.168.0.0/16"} {
+		if !contains(spec.Routing.DirectCIDRs, want) {
+			t.Errorf("operator direct CIDR %q dropped: %v", want, spec.Routing.DirectCIDRs)
+		}
+	}
+}
+
+// An explicit fleet.mgmt_subnet is the authoritative scope: the whole overlay
+// subnet (not per-node /32s) is trusted for routing-direct and firewall-accept.
+func TestRenderExitSpecMgmtSubnetWins(t *testing.T) {
+	ctx := context.Background()
+	fleet := testFleet()
+	fleet.MgmtSubnet = "10.20.0.0/16"
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	b := New(st, fleet, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(ctx, "exit-de-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !contains(spec.Routing.DirectCIDRs, "10.20.0.0/16") {
+		t.Errorf("mgmt subnet missing from direct CIDRs: %v", spec.Routing.DirectCIDRs)
+	}
+	// The per-node /32 must NOT appear — the subnet supersedes it.
+	if contains(spec.Routing.DirectCIDRs, "10.20.25.254/32") {
+		t.Errorf("per-node /32 leaked when subnet is set: %v", spec.Routing.DirectCIDRs)
+	}
+}
+
 func TestRenderMasterSpec(t *testing.T) {
 	ctx := context.Background()
 	b, st := newBroker(t)
@@ -153,6 +221,14 @@ func TestRenderMasterSpec(t *testing.T) {
 	}
 	if spec.WGServer.ListenPort != 443 || spec.WGServer.AddressPool != "10.80.0.0/24" {
 		t.Errorf("client AWG server = %+v", spec.WGServer)
+	}
+	// The master now reconciles an input firewall: it must open the client port and
+	// trust the mgmt overlay (so the input-drop policy never locks management out).
+	if spec.Firewall.WGPort != 443 {
+		t.Errorf("master firewall WGPort = %d, want 443", spec.Firewall.WGPort)
+	}
+	if !contains(spec.Firewall.Whitelist, "10.20.25.254/32") {
+		t.Errorf("master firewall whitelist missing mgmt overlay: %v", spec.Firewall.Whitelist)
 	}
 	// The exit must appear as a mihomo exit tunnel (not a kernel peer).
 	if spec.Master == nil {

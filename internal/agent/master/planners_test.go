@@ -3,6 +3,7 @@ package master
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +35,7 @@ func masterSpec(t *testing.T) (domain.NodeSpec, string) {
 		WGServer: domain.WGServerSpec{
 			ListenPort: 443, AddressPool: "10.80.0.0/24", MTU: 1360,
 		},
+		Firewall: domain.FirewallSpec{WGPort: 443},
 		Master: &domain.MasterSpec{
 			BindAddress:        "10.80.0.1",
 			RedirPort:          7895,
@@ -64,7 +66,7 @@ func TestMasterPlanModeWritesNothing(t *testing.T) {
 		t.Fatalf("plan: %v", err)
 	}
 
-	for _, p := range []string{paths.MihomoConfig, paths.DirectNetworks, paths.NFT} {
+	for _, p := range []string{paths.MihomoConfig, paths.DirectNetworks, paths.NFT, paths.FirewallNFT} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Errorf("plan mode wrote %s; dry-run must not mutate", p)
 		}
@@ -74,6 +76,7 @@ func TestMasterPlanModeWritesNothing(t *testing.T) {
 	for _, want := range []string{
 		"mihomo (data plane)", "type: wireguard", "amnezia-wg-option",
 		"master NAT (nftables)", "dnat to 10.80.0.1:7895", "udp dport 443 drop",
+		"master firewall (nftables)", `iifname "zt*" accept`,
 		"direct-domains.yaml",
 		"container stack (docker compose)", "wg-easy", "mihomo", "EXPERIMENTAL_AWG=true",
 	} {
@@ -91,9 +94,10 @@ func TestMasterApplyWritesMihomoConfig(t *testing.T) {
 	paths := testPaths(t)
 	spec, priv := masterSpec(t)
 
-	// Isolate the mihomo planner so its FileActions run before the (failing on a
-	// dev box) systemctl exec.
-	eng := reconcile.NewEngine(nil, mihomoPlanner{paths: paths, privateKey: priv})
+	// Isolate the mihomo planner. Stub the reload so the apply does not dial the
+	// (non-routable on a dev box) mgmt controller; the FileActions still run.
+	noReload := func(context.Context, string, string, []byte) error { return nil }
+	eng := reconcile.NewEngine(nil, mihomoPlanner{paths: paths, privateKey: priv, reload: noReload})
 	_, _ = eng.Reconcile(context.Background(), spec, reconcile.ModeApply)
 
 	data, err := os.ReadFile(paths.MihomoConfig)
@@ -105,6 +109,67 @@ func TestMasterApplyWritesMihomoConfig(t *testing.T) {
 	}
 	if _, err := os.Stat(paths.DirectNetworks); err != nil {
 		t.Errorf("direct-networks.yaml not written: %v", err)
+	}
+}
+
+// TestMihomoReloadPreferredOverRestart proves a config change (e.g. draining an
+// exit) is hot-reloaded via the Clash API rather than restarting the container —
+// the whole point of the change, so other clients keep their connections.
+func TestMihomoReloadPreferredOverRestart(t *testing.T) {
+	paths := testPaths(t)
+	spec, priv := masterSpec(t)
+
+	var reloadCalls int
+	var gotSecret string
+	reload := func(_ context.Context, addr, secret string, cfg []byte) error {
+		reloadCalls++
+		gotSecret = secret
+		if addr == "" || len(cfg) == 0 {
+			t.Errorf("reload got addr=%q cfgLen=%d", addr, len(cfg))
+		}
+		return nil
+	}
+	// A Clash API secret set via overrides must reach the reload call.
+	spec.Master.Custom.Overrides = map[string]any{"secret": "topsecret"}
+
+	pl := mihomoPlanner{paths: paths, privateKey: priv, reload: reload}
+	if _, err := reconcile.NewEngine(nil, pl).Reconcile(context.Background(), spec, reconcile.ModeApply); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if reloadCalls != 1 {
+		t.Errorf("expected exactly one hot reload, got %d", reloadCalls)
+	}
+	if gotSecret != "topsecret" {
+		t.Errorf("clash secret not forwarded from overrides: %q", gotSecret)
+	}
+
+	// Second pass, config unchanged ⇒ no reload (and no restart).
+	reloadCalls = 0
+	if _, err := pl.Plan(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	acts, _ := pl.Plan(context.Background(), spec)
+	for _, a := range acts {
+		if a.Changes() && strings.Contains(a.Summary, "reload") {
+			t.Errorf("unchanged config must not reload mihomo: %+v", a)
+		}
+	}
+}
+
+// TestMihomoRejectedConfigNotRestarted proves a config mihomo REJECTS (a non-
+// transport error) surfaces as a reconcile error WITHOUT a fallback restart, so the
+// previous good config keeps running instead of restarting into a bad one.
+func TestMihomoRejectedConfigNotRestarted(t *testing.T) {
+	paths := testPaths(t)
+	spec, priv := masterSpec(t)
+
+	rejected := errors.New("controller rejected config (HTTP 400)")
+	reload := func(context.Context, string, string, []byte) error { return rejected }
+
+	pl := mihomoPlanner{paths: paths, privateKey: priv, reload: reload}
+	_, err := reconcile.NewEngine(nil, pl).Reconcile(context.Background(), spec, reconcile.ModeApply)
+	if err == nil || !strings.Contains(err.Error(), "rejected") {
+		t.Fatalf("expected the rejection to surface as a reconcile error, got %v", err)
 	}
 }
 
@@ -317,6 +382,52 @@ func TestMasterNATReloadGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !hasChangingSummary(acts, "reload master NAT") {
+		t.Errorf("expected a reload action when the kernel table is missing, got %+v", acts)
+	}
+
+	// File unchanged + kernel table PRESENT ⇒ no change.
+	loaded = true
+	acts2, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range acts2 {
+		if a.Changes() {
+			t.Errorf("expected no-change when the kernel reflects the ruleset, got %+v", acts2)
+		}
+	}
+}
+
+// TestMasterFirewallReloadGate covers the master input-firewall planner's
+// live-kernel reload gate (the gap this work closed: the master had no reconciled
+// input firewall, so a reboot left it with none until re-provisioned).
+func TestMasterFirewallReloadGate(t *testing.T) {
+	paths := testPaths(t)
+	spec, _ := masterSpec(t)
+
+	loaded := false
+	pl := firewallPlanner{path: paths.FirewallNFT, loaded: func() bool { return loaded }}
+
+	// First apply writes the ruleset file (the nft exec fails on a dev box, but the
+	// FileAction runs first, so the file lands).
+	eng := reconcile.NewEngine(nil, pl)
+	_, _ = eng.Reconcile(context.Background(), spec, reconcile.ModeApply)
+	data, err := os.ReadFile(paths.FirewallNFT)
+	if err != nil {
+		t.Fatalf("firewall ruleset not written: %v", err)
+	}
+	for _, want := range []string{"table inet wgfleet", "policy drop;", `iifname "zt*" accept`, "udp dport 443 accept"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("master firewall ruleset missing %q:\n%s", want, data)
+		}
+	}
+
+	// File unchanged + kernel table MISSING ⇒ reload (post-reboot self-heal).
+	acts, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasChangingSummary(acts, "reload master firewall") {
 		t.Errorf("expected a reload action when the kernel table is missing, got %+v", acts)
 	}
 
