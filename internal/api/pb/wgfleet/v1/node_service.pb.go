@@ -602,8 +602,12 @@ type MasterSpec struct {
 	// default-on dashboard — backward-compatible, so no wire-version bump needed).
 	DashboardDisabled bool   `protobuf:"varint,11,opt,name=dashboard_disabled,json=dashboardDisabled,proto3" json:"dashboard_disabled,omitempty"`
 	DashboardUrl      string `protobuf:"bytes,12,opt,name=dashboard_url,json=dashboardUrl,proto3" json:"dashboard_url,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// TCP ports on the master mgmt address the client pool may reach (admin UIs:
+	// controller Web UI, mihomo dashboard, wg-easy). Additive; an older agent ignores
+	// it and keeps the strict default — backward-compatible, no wire-version bump.
+	ClientAdminPorts []int32 `protobuf:"varint,13,rep,packed,name=client_admin_ports,json=clientAdminPorts,proto3" json:"client_admin_ports,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *MasterSpec) Reset() {
@@ -718,6 +722,13 @@ func (x *MasterSpec) GetDashboardUrl() string {
 		return x.DashboardUrl
 	}
 	return ""
+}
+
+func (x *MasterSpec) GetClientAdminPorts() []int32 {
+	if x != nil {
+		return x.ClientAdminPorts
+	}
+	return nil
 }
 
 // ComposeSpec is the master's container-stack desired state (wg-easy + mihomo).
@@ -1967,7 +1978,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\fdecommission\x18\n" +
 	" \x01(\bR\fdecommission\x12\x19\n" +
 	"\bwarp_mtu\x18\v \x01(\x05R\awarpMtu\x12!\n" +
-	"\fegress_chain\x18\f \x03(\tR\vegressChain\"\xf2\x03\n" +
+	"\fegress_chain\x18\f \x03(\tR\vegressChain\"\xa0\x04\n" +
 	"\n" +
 	"MasterSpec\x12!\n" +
 	"\fbind_address\x18\x01 \x01(\tR\vbindAddress\x12\x1d\n" +
@@ -1984,7 +1995,8 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\acompose\x18\n" +
 	" \x01(\v2\x17.wgfleet.v1.ComposeSpecR\acompose\x12-\n" +
 	"\x12dashboard_disabled\x18\v \x01(\bR\x11dashboardDisabled\x12#\n" +
-	"\rdashboard_url\x18\f \x01(\tR\fdashboardUrl\"\xe7\x01\n" +
+	"\rdashboard_url\x18\f \x01(\tR\fdashboardUrl\x12,\n" +
+	"\x12client_admin_ports\x18\r \x03(\x05R\x10clientAdminPorts\"\xe7\x01\n" +
 	"\vComposeSpec\x12\"\n" +
 	"\rwg_easy_image\x18\x01 \x01(\tR\vwgEasyImage\x12!\n" +
 	"\fmihomo_image\x18\x02 \x01(\tR\vmihomoImage\x12\x1b\n" +

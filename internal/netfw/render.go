@@ -92,6 +92,12 @@ type RenderInput struct {
 	// accept to this interface keeps clients off the master's other local services
 	// (Clash API, wg-easy UI) — only the redirect port is opened, only from clients.
 	RedirInterface string
+	// ClientAdminPorts are TCP ports (master role) the client pool is allowed to
+	// reach on the master's own address: the admin UIs (controller Web UI, mihomo
+	// dashboard) that bind the mgmt overlay only. Each renders an accept scoped to
+	// the client interface (RedirInterface, default "wg0"), opt-in per master. Empty
+	// ⇒ the strict default where only the mgmt overlay reaches admin services.
+	ClientAdminPorts []int
 	// ClampMSS, when > 0 (exit role), clamps forwarded TCP SYN/SYN-ACK MSS in BOTH
 	// directions to this value. Client traffic crosses the master↔exit tunnel
 	// (WGServer.MTU, e.g. 1360) AND the egress (WARP). The egress leg alone is NOT
@@ -103,6 +109,21 @@ type RenderInput struct {
 	// egress) − 40) bounds both directions; `rt mtu` cannot, since it only sees the
 	// immediate egress interface, not the tighter return hop.
 	ClampMSS int
+	// ClientMSS, when > 0 (master role), clamps TCP MSS on traffic leaving toward the
+	// client interface (RedirInterface, default "wg0") to this fixed value. The master
+	// is the only node that sees ALL client traffic AND knows the true client MTU (the
+	// minimum across every hop — client↔master, master↔exit, exit→WARP — i.e.
+	// spec.WGServer.MTU). The exit's ClampMSS only bounds the exit/WARP hops, so it can
+	// advertise an MSS sized for the looser 1360 master↔exit tunnel that then
+	// black-holes on the tighter 1320 client hop; and master-LOCAL traffic (SSH to the
+	// master host, the mgmt-bound admin UIs) is forwarded by nothing and so is clamped
+	// nowhere. Without this, large server→client segments (SSH KEX, dashboard HTML, any
+	// sustained download) black-hole while pings/DNS/short requests survive — the
+	// "connects but hangs / can't SSH to the master / throughput stalls" symptom
+	//. A postrouting clamp catches both forwarded and locally
+	// originated SYN/SYN-ACK toward the client; it only lowers an MSS, so it is a no-op
+	// when nothing exceeds it. Value = spec.WGServer.MTU − 40.
+	ClientMSS int
 }
 
 // RenderRuleset renders an nftables script for in. The input chain defaults to
@@ -111,6 +132,18 @@ type RenderInput struct {
 // WG port are accepted. An AS-blacklist set is declared (and dropped early) when
 // enabled; it is populated out-of-band from ASN feeds, so the rule references an
 // initially empty set rather than inlining thousands of prefixes.
+// mssClampExpr renders the nft match+statement that clamps the TCP MSS of SYN /
+// SYN-ACK packets DOWN to mss. The `tcp option maxseg size > mss` guard is ESSENTIAL:
+// nft's `tcp option maxseg size set` is UNCONDITIONAL (unlike iptables
+// --clamp-mss-to-pmtu), so without the guard it RAISES a peer's already-smaller MSS
+// up to mss. That black-holes large segments whenever the real path is tighter than
+// mss — observed live 2026-06-18 when the client MTU was lowered to 1280 (advertising
+// MSS ~1240) and the clamp set it back to 1280/1320, so TLS certs and downloads died
+// while ping/DNS survived. With the guard the rule only ever lowers — a true clamp.
+func mssClampExpr(mss int) string {
+	return fmt.Sprintf("tcp flags syn / syn,rst tcp option maxseg size > %d tcp option maxseg size set %d", mss, mss)
+}
+
 func RenderRuleset(in RenderInput) (string, error) {
 	if in.Firewall.WGPort <= 0 || in.Firewall.WGPort > 65535 {
 		return "", fmt.Errorf("netfw render: invalid WG port %d", in.Firewall.WGPort)
@@ -169,12 +202,25 @@ func RenderRuleset(in RenderInput) (string, error) {
 	// port reach mihomo. After DNAT the destination is the master's own address, so
 	// the packet hits this INPUT chain; without this accept the drop policy swallows
 	// every redirected web connection while ICMP/DNS still work (an earlier finding sibling).
-	if in.Role == domain.RoleMaster && in.RedirPort > 0 {
+	if in.Role == domain.RoleMaster {
 		redirIface := in.RedirInterface
 		if redirIface == "" {
 			redirIface = "wg0"
 		}
-		fmt.Fprintf(&b, "\t\tiifname %q tcp dport %d accept\n", redirIface, in.RedirPort)
+		if in.RedirPort > 0 {
+			fmt.Fprintf(&b, "\t\tiifname %q tcp dport %d accept\n", redirIface, in.RedirPort)
+		}
+		// Opt-in: expose admin UIs (controller Web UI, mihomo dashboard) bound to the
+		// mgmt overlay to the client pool. Without these the drop policy swallows
+		// client TCP to those ports (clients get pings/DNS/web but no dashboards). The
+		// destination must also bypass the client→mihomo DNAT, which it does when the
+		// mgmt address sits under the master's DirectCIDRs (e.g. 172.16.0.0/12).
+		for _, port := range in.ClientAdminPorts {
+			if port <= 0 || port > 65535 {
+				continue
+			}
+			fmt.Fprintf(&b, "\t\tiifname %q tcp dport %d accept\n", redirIface, port)
+		}
 	}
 	b.WriteString("\t\ticmp type echo-request accept\n")
 	b.WriteString("\t\ticmpv6 type { echo-request, nd-neighbor-solicit, nd-router-advert, nd-neighbor-advert } accept\n")
@@ -186,7 +232,7 @@ func RenderRuleset(in RenderInput) (string, error) {
 	// (client→master→exit→WARP). Clamp BOTH directions to a fixed size bounded by the
 	// tightest tunnel along the client path — not just the egress (see ClampMSS).
 	if in.ClampMSS > 0 {
-		fmt.Fprintf(&b, "\t\ttcp flags syn / syn,rst tcp option maxseg size set %d\n", in.ClampMSS)
+		fmt.Fprintf(&b, "\t\t%s\n", mssClampExpr(in.ClampMSS))
 	}
 	b.WriteString("\t}\n\n")
 
@@ -214,7 +260,40 @@ func RenderRuleset(in RenderInput) (string, error) {
 	if in.OverlayMSS > 0 {
 		b.WriteString("\n\tchain mgmt_overlay_mss {\n")
 		b.WriteString("\t\ttype filter hook postrouting priority mangle; policy accept;\n")
-		fmt.Fprintf(&b, "\t\toifname %q tcp flags syn / syn,rst tcp option maxseg size set %d\n", mgmtOverlayIface, in.OverlayMSS)
+		fmt.Fprintf(&b, "\t\toifname %q %s\n", mgmtOverlayIface, mssClampExpr(in.OverlayMSS))
+		b.WriteString("\t}\n")
+	}
+
+	// Clamp TCP MSS toward the client interface to the true client-path MTU (master
+	// role; see ClientMSS). The master is the single choke point that sees every
+	// client flow — to the internet via an exit, to the master's own services, and to
+	// the mgmt overlay — and the only one that knows the tightest hop. Postrouting on
+	// the client interface catches the master→client SYN-ACK for ALL of them
+	// (locally-terminated and forwarded), so large segments never black-hole on the
+	// tight client tunnel. Without it the exit's own clamp is too loose for the client
+	// hop and master-local traffic is unclamped entirely.
+	//
+	// Clamp in BOTH directions across the client interface. Postrouting (oifname)
+	// rewrites the master→client SYN-ACK MSS — bounding what the CLIENT sends — while
+	// prerouting (iifname) rewrites the client→master SYN MSS, bounding what the MASTER
+	// sends back. Both are needed: the reported black-hole is large MASTER→client
+	// segments (download data, the SSH server's KEX, dashboard HTML), which are limited
+	// by the MSS the CLIENT advertised in its SYN, so that incoming SYN must be clamped
+	// too. A forward-hook clamp (as on the exit) would catch forwarded traffic but miss
+	// master-LOCAL connections (sshd, the admin UIs) that terminate on the host and
+	// never traverse FORWARD; prerouting+postrouting covers local and forwarded alike.
+	if in.Role == domain.RoleMaster && in.ClientMSS > 0 {
+		clientIface := in.RedirInterface
+		if clientIface == "" {
+			clientIface = "wg0"
+		}
+		b.WriteString("\n\tchain client_mss_in {\n")
+		b.WriteString("\t\ttype filter hook prerouting priority mangle; policy accept;\n")
+		fmt.Fprintf(&b, "\t\tiifname %q %s\n", clientIface, mssClampExpr(in.ClientMSS))
+		b.WriteString("\t}\n")
+		b.WriteString("\n\tchain client_mss_out {\n")
+		b.WriteString("\t\ttype filter hook postrouting priority mangle; policy accept;\n")
+		fmt.Fprintf(&b, "\t\toifname %q %s\n", clientIface, mssClampExpr(in.ClientMSS))
 		b.WriteString("\t}\n")
 	}
 

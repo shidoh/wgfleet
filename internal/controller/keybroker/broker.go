@@ -217,6 +217,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		RedirPort:         master.Mihomo.RedirPort,
 		DashboardURL:      master.Mihomo.DashboardURL,
 		DashboardDisabled: master.Mihomo.DashboardDisabled,
+		ClientAdminPorts:  append([]int(nil), master.ClientAdminPorts...),
 		Custom:            masterCustomConfig(master),
 	}
 	if addr, err := nthHost(master.ClientAWG.AddressPool, exitHostIndex); err == nil {
@@ -246,6 +247,16 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		endpoint := ""
 		if addr, err := netip.ParseAddr(exitNode.PublicIP); err == nil {
 			endpoint = netip.AddrPortFrom(addr, uint16(exit.WGListenPort())).String()
+			// Route client traffic to this exit's OWN public IP DIRECT (master uplink),
+			// never through mihomo→wg-best→WARP. Without this, SSH/management to an
+			// exit's public IP breaks on a full-tunnel client, and traffic to the exit's
+			// own address would hairpin out WARP back to itself. The master already
+			// reaches exit endpoints directly — that is how the master↔exit tunnel dials.
+			bits := 32
+			if addr.Is6() {
+				bits = 128
+			}
+			ms.DirectCIDRs = append(ms.DirectCIDRs, netip.PrefixFrom(addr, bits).String())
 		} else if exitNode.PublicIP != "" {
 			b.log.Warn("exit has unparseable public IP; omitting from master proxies",
 				"exit", exit.Name, "public_ip", exitNode.PublicIP)

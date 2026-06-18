@@ -129,6 +129,13 @@ func formatMaster(b *strings.Builder, m *domain.MasterSpec) {
 	if len(m.SnifferSkip) > 0 {
 		fmt.Fprintf(b, "  sniffer skip: %s\n", strings.Join(m.SnifferSkip, ", "))
 	}
+	if len(m.ClientAdminPorts) > 0 {
+		ports := make([]string, len(m.ClientAdminPorts))
+		for i, p := range m.ClientAdminPorts {
+			ports[i] = fmt.Sprintf("%d", p)
+		}
+		fmt.Fprintf(b, "  client admin ports (clients reach admin UIs): %s\n", strings.Join(ports, ", "))
+	}
 	fmt.Fprintf(b, "  exit tunnels: %d\n", len(m.ExitTunnels))
 	for _, t := range m.ExitTunnels {
 		drained := ""

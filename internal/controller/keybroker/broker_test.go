@@ -248,6 +248,11 @@ func TestRenderMasterSpec(t *testing.T) {
 	if et.Name != "exit-de-1" || et.ServerPublicKey != "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=" {
 		t.Errorf("exit tunnel = %+v", et)
 	}
+	// The exit's own public IP must route DIRECT (not via wg-best/WARP) so client
+	// SSH/management to it works on a full-tunnel client and never hairpins out WARP.
+	if !contains(m.DirectCIDRs, "198.51.100.7/32") {
+		t.Errorf("exit public IP missing from master DIRECT cidrs: %v", m.DirectCIDRs)
+	}
 	wantEndpoint := fmt.Sprintf("198.51.100.7:%d", config.ExitConfig{Name: "exit-de-1"}.WGListenPort())
 	if et.Endpoint != wantEndpoint {
 		t.Errorf("exit tunnel endpoint = %q, want %q", et.Endpoint, wantEndpoint)

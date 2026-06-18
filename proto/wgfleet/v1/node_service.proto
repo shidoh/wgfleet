@@ -102,6 +102,10 @@ message MasterSpec {
   // default-on dashboard — backward-compatible, so no wire-version bump needed).
   bool dashboard_disabled = 11;
   string dashboard_url = 12;
+  // TCP ports on the master mgmt address the client pool may reach (admin UIs:
+  // controller Web UI, mihomo dashboard, wg-easy). Additive; an older agent ignores
+  // it and keeps the strict default — backward-compatible, no wire-version bump.
+  repeated int32 client_admin_ports = 13;
 }
 
 // ComposeSpec is the master's container-stack desired state (wg-easy + mihomo).

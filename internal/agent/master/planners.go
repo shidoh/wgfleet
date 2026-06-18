@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
+	"github.com/shidoh/wgfleet/internal/agent/tuning"
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/mihomo"
@@ -40,6 +41,10 @@ type Input struct {
 
 const defaultClientInterface = "wg0"
 
+// mssTCPIPOverhead is the IPv4 + TCP header size subtracted from the path MTU to
+// get the MSS to advertise (20 + 20). Matches the exit's ClampMSS derivation.
+const mssTCPIPOverhead = 40
+
 // Planners returns the ordered master reconcilers: mihomo config + its included
 // files + operator extra files, then the NAT rules that wire clients into mihomo.
 func Planners(in Input) []reconcile.Planner {
@@ -47,7 +52,9 @@ func Planners(in Input) []reconcile.Planner {
 		in.ClientInterface = defaultClientInterface
 	}
 	return []reconcile.Planner{
-		// Input firewall first: bring the drop policy up before the services, the same
+		// Node tuning first (BBR congestion control); cheap, independent of the rest.
+		tuning.BBRPlanner(),
+		// Input firewall: bring the drop policy up before the services, the same
 		// ordering the bootstrap uses ("firewall before traffic").
 		firewallPlanner{path: in.Paths.FirewallNFT, overlayMSS: in.OverlayMSS, clientIface: in.ClientInterface},
 		composePlanner{path: in.Paths.Compose, adminUser: in.AdminUsername, adminPass: in.AdminPassword},
@@ -458,12 +465,27 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	if spec.Master != nil && spec.Master.RedirPort != 0 {
 		redir = spec.Master.RedirPort
 	}
+	var adminPorts []int
+	if spec.Master != nil {
+		adminPorts = spec.Master.ClientAdminPorts
+	}
+	// Clamp client-facing TCP MSS to the true client-path MTU (the minimum across all
+	// hops, which the controller already computed into WGServer.MTU). The master is
+	// the only node that sees every client flow and knows this value; without it the
+	// exit's looser clamp and the unclamped master-local path black-hole large
+	// segments (an earlier finding, see netfw.RenderInput.ClientMSS).
+	clientMSS := 0
+	if spec.WGServer.MTU > 0 {
+		clientMSS = spec.WGServer.MTU - mssTCPIPOverhead
+	}
 	ruleset, err := netfw.RenderRuleset(netfw.RenderInput{
-		Firewall:       spec.Firewall,
-		Role:           domain.RoleMaster,
-		OverlayMSS:     p.overlayMSS,
-		RedirPort:      redir,
-		RedirInterface: p.clientIface,
+		Firewall:         spec.Firewall,
+		Role:             domain.RoleMaster,
+		OverlayMSS:       p.overlayMSS,
+		RedirPort:        redir,
+		RedirInterface:   p.clientIface,
+		ClientAdminPorts: adminPorts,
+		ClientMSS:        clientMSS,
 	})
 	if err != nil {
 		return nil, err

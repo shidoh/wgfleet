@@ -88,14 +88,15 @@ func TestExitFirewallClampsMSSBothWays(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Tunnel MTU 1440 binds (WARP unset) ⇒ clamp 1400, bidirectional (no oifname).
-	if want := "tcp flags syn / syn,rst tcp option maxseg size set 1400"; !strings.Contains(acts[0].Display, want) {
+	// Guarded (`> N`) so it only lowers, never raises a smaller client MSS.
+	if want := "tcp flags syn / syn,rst tcp option maxseg size > 1400 tcp option maxseg size set 1400"; !strings.Contains(acts[0].Display, want) {
 		t.Errorf("exit firewall must clamp MSS both ways to %q:\n%s", want, acts[0].Display)
 	}
 
 	// A constrained WARP path (WARPMTU < tunnel MTU) binds instead.
 	spec.WARPMTU = 1280
 	acts2, _ := firewallPlanner{path: testPaths(t).NFT}.Plan(context.Background(), spec)
-	if want := "maxseg size set 1240"; !strings.Contains(acts2[0].Display, want) { // 1280 - 40
+	if want := "maxseg size > 1240 tcp option maxseg size set 1240"; !strings.Contains(acts2[0].Display, want) { // 1280 - 40
 		t.Errorf("constrained WARPMTU must bind the clamp (want %q):\n%s", want, acts2[0].Display)
 	}
 }

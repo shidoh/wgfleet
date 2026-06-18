@@ -88,6 +88,39 @@ func TestProvisionPersistsInventory(t *testing.T) {
 	}
 }
 
+func TestProvisionClearsDecommissionAndDrain(t *testing.T) {
+	mock := readyMock()
+	m, st := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) { return mock, nil })
+	ctx := context.Background()
+
+	// First provision creates the inventory row.
+	if _, err := m.Provision(ctx, "exit-de-1", provisioner.ModeApply); err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+	// Operator decommissions (and drains) the node.
+	if err := st.SetNodeDecommission(ctx, "exit-de-1", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetNodeDrain(ctx, "exit-de-1", true); err != nil {
+		t.Fatal(err)
+	}
+	// Re-provisioning must CLEAR both, or the keybroker keeps rendering
+	// Decommission=true and the agent tears down on every reconcile (never comes back).
+	if _, err := m.Provision(ctx, "exit-de-1", provisioner.ModeApply); err != nil {
+		t.Fatalf("re-provision: %v", err)
+	}
+	node, err := st.GetNode(ctx, "exit-de-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.Decommission {
+		t.Error("Decommission must be cleared on re-provision (else the agent tears down forever)")
+	}
+	if node.Drain {
+		t.Error("Drain must be cleared on re-provision")
+	}
+}
+
 func TestProvisionPlanModeDoesNotPersist(t *testing.T) {
 	mock := readyMock()
 	m, st := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) { return mock, nil })

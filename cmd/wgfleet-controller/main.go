@@ -229,6 +229,9 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA) error {
 	}
 
 	slog.Info("controller serving",
+		"version", version.Version,
+		"commit", version.Commit,
+		"wire", api.WireContractVersion,
 		"listen", cfg.Controller.Listen,
 		"webui", cfg.Controller.WebUI,
 		"metrics", cfg.Controller.Metrics,

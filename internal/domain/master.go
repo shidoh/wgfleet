@@ -38,6 +38,17 @@ type MasterSpec struct {
 	// Empty = the built-in default (zashboard latest on GitHub). Point it at a
 	// reachable mirror when the default host is blocked.
 	DashboardURL string
+	// ClientAdminPorts are TCP ports on the master's mgmt address that the VPN
+	// client pool is allowed to reach (opt-in). The admin UIs — the controller Web
+	// UI and the mihomo dashboard — bind the mgmt overlay only, and the master input
+	// firewall (drop policy) otherwise drops client TCP to them, so clients get
+	// pings/DNS/web but cannot open the dashboards. Listing a port here renders an
+	// `iifname <client-iface> tcp dport <p> accept` in the master input chain.
+	// This deliberately relaxes the "admin on the mgmt overlay only" posture — set
+	// it only for ports clients are meant to see. The destination must also bypass
+	// the client→mihomo DNAT, which it does whenever the mgmt address falls under
+	// DirectCIDRs (e.g. 172.16.0.0/12 covers a 10.20.x mgmt overlay).
+	ClientAdminPorts []int
 	// Custom holds operator overrides merged into the rendered config plus extra
 	// managed files (e.g. additional rule providers). See CustomConfig.
 	Custom CustomConfig

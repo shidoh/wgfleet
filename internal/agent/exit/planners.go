@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
+	"github.com/shidoh/wgfleet/internal/agent/tuning"
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/dnsfilter"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -45,6 +46,8 @@ func Planners(in Input) []reconcile.Planner {
 		up = ipLinkUp
 	}
 	return []reconcile.Planner{
+		// Node tuning first (BBR congestion control); cheap, independent of the rest.
+		tuning.BBRPlanner(),
 		firewallPlanner{path: in.Paths.NFT, wgConf: in.Paths.WGConf, overlayMSS: in.OverlayMSS},
 		wgPlanner{path: in.Paths.WGConf, privateKey: in.PrivateKey, up: up},
 		warpPlanner{path: in.Paths.WGCF, dir: in.Paths.WARPDir, warp: in.WARP, up: up},

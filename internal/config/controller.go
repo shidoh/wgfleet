@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -29,8 +30,18 @@ func ExpandPath(p string) string {
 		return p
 	}
 	home, err := os.UserHomeDir()
-	if err != nil {
-		return p
+	if err != nil || home == "" {
+		// os.UserHomeDir reads $HOME, which systemd often leaves UNSET for services
+		// (notably root services with no User=), so it fails there. Fall back to the
+		// passwd database via os/user, which still yields e.g. /root — without this the
+		// controller's "~/.ssh/id_ed25519" key path stays literally "~/…" and every SSH
+		// dial (provision AND the UI/auto agent upgrade) fails "no such file or
+		// directory". Only give up (return p) if even the passwd lookup has no home.
+		u, uerr := user.Current()
+		if uerr != nil || u.HomeDir == "" {
+			return p
+		}
+		home = u.HomeDir
 	}
 	return filepath.Join(home, strings.TrimPrefix(p, "~"))
 }
@@ -182,6 +193,11 @@ type MasterConfig struct {
 	Mihomo    MihomoConfig    `koanf:"mihomo"`  // master data-plane (mihomo) tuning
 	Compose   ComposeConfig   `koanf:"compose"` // master container stack tuning
 	SSH       SSHConfig       `koanf:"ssh"`     // bootstrap target
+	// ClientAdminPorts opens admin UI ports (controller Web UI, mihomo dashboard)
+	// on the master's mgmt address to the VPN client pool. Opt-in: empty keeps the
+	// strict default (admin reachable only over the mgmt overlay). See
+	// domain.MasterSpec.ClientAdminPorts for the security trade-off.
+	ClientAdminPorts []int `koanf:"client_admin_ports"`
 }
 
 // MihomoConfig is the operator-facing mihomo tuning for a master, including the

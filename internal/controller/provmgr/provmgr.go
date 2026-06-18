@@ -267,11 +267,19 @@ func (m *Manager) setState(ctx context.Context, nodeID string, state domain.Node
 }
 
 // ensureNode upserts the node into inventory (from the manifest) at the given
-// state, preserving an existing row's identity.
+// state, preserving an existing row's identity. It is only ever called to START
+// provisioning, which means "bring this node UP" — so it CLEARS any pending
+// teardown (Decommission) or Drain intent. Without this, re-provisioning a
+// decommissioned node leaves Decommission=true in the store; the keybroker keeps
+// rendering NodeSpec.Decommission=true, and the (still mTLS-identified) agent tears
+// its data plane down on every reconcile instead of converging — an endless
+// "decommission complete" loop that never comes back up (observed live 2026-06-18).
 func (m *Manager) ensureNode(ctx context.Context, node domain.Node, state domain.NodeState) error {
 	if existing, err := m.store.GetNode(ctx, node.ID); err == nil {
 		existing.State = state
 		existing.LastError = ""
+		existing.Decommission = false
+		existing.Drain = false
 		return m.store.UpsertNode(ctx, existing)
 	}
 	node.State = state

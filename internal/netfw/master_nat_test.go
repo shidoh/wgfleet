@@ -17,6 +17,9 @@ func TestRenderMasterNAT(t *testing.T) {
 	}
 	for _, want := range []string{
 		"table ip wgfleet_master",
+		// Atomic replace (delete-first) so re-applies don't accumulate duplicate
+		// DNAT/masquerade rules or leave stale ones from an older binary.
+		"delete table ip wgfleet_master",
 		`iifname "wg0" ip daddr != 10.0.0.0/8 ip daddr != 172.16.0.0/12 ip daddr != 192.168.0.0/16 udp dport 443 drop`,
 		`ip protocol tcp dnat to 10.80.0.1:7895`,
 		// Masquerade on every egress except back into the client interface, so the

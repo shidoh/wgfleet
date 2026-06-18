@@ -138,6 +138,7 @@ func TestMasterSpecRoundTrip(t *testing.T) {
 			SnifferSkip:        []string{"+.themoviedb.org"},
 			DashboardDisabled:  true,
 			DashboardURL:       "https://mirror.example.ru/zashboard.zip",
+			ClientAdminPorts:   []int{9000, 9090, 51821},
 			ExitTunnels: []domain.ExitTunnel{
 				{
 					Name: "exit-de-1", Endpoint: "198.51.100.7:51820",
@@ -163,6 +164,11 @@ func TestMasterSpecRoundTrip(t *testing.T) {
 	// Dashboard controls must cross the wire (they were lost once — proto field gap).
 	if !m.DashboardDisabled || m.DashboardURL != "https://mirror.example.ru/zashboard.zip" {
 		t.Errorf("dashboard fields lost in round-trip: disabled=%v url=%q", m.DashboardDisabled, m.DashboardURL)
+	}
+	// Client admin ports must cross the wire too — they were lost once (proto field
+	// gap): the controller served them but the agent rendered no firewall accepts.
+	if len(m.ClientAdminPorts) != 3 || m.ClientAdminPorts[0] != 9000 || m.ClientAdminPorts[2] != 51821 {
+		t.Errorf("client admin ports lost in round-trip: %v", m.ClientAdminPorts)
 	}
 	if len(m.ExitTunnels) != 1 {
 		t.Fatalf("exit tunnels = %d", len(m.ExitTunnels))

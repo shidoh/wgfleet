@@ -138,7 +138,9 @@ func run() error {
 		}()
 	}
 
-	a.log.Info("agent starting", "controller", cfg.Agent.Controller, "interval", cfg.Interval(), "plan", *plan)
+	a.log.Info("agent starting",
+		"version", version.Version, "commit", version.Commit, "wire", api.WireContractVersion,
+		"controller", cfg.Agent.Controller, "interval", cfg.Interval(), "plan", *plan)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

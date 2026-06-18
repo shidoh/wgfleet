@@ -35,6 +35,15 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	var b strings.Builder
 	b.WriteString("#!/usr/sbin/nft -f\n")
 	b.WriteString("# Rendered by wgfleet — master NAT (mihomo DNAT + MASQUERADE). Do not edit by hand.\n")
+	// Atomically REPLACE our table rather than appending to it. Without the
+	// delete-first idiom, `nft -f` adds the chains' rules to the EXISTING chains on
+	// every re-apply, so DNAT/masquerade rules accumulate and stale rules from an
+	// older binary (e.g. a previous `oifname "ens3"` masquerade) linger forever
+	// (observed live 2026-06-18). `table` ensures it exists so `delete` never fails;
+	// the whole script is one atomic nft transaction, so there is no unprotected
+	// window. Mirrors RenderRuleset's handling of the filter table.
+	fmt.Fprintf(&b, "table ip %s\n", MasterNATTable)
+	fmt.Fprintf(&b, "delete table ip %s\n", MasterNATTable)
 	fmt.Fprintf(&b, "table ip %s {\n", MasterNATTable)
 
 	b.WriteString("\tchain prerouting {\n")

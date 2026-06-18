@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
@@ -57,9 +58,15 @@ var _ Runner = (*SSHRunner)(nil)
 // private key over this channel (a MITM on an unpinned dial can steal the node's
 // identity). Pin ssh.host_key in the fleet manifest in production.
 func DialSSH(target domain.SSHTarget, hostKey ssh.HostKeyCallback) (*SSHRunner, error) {
-	keyPEM, err := os.ReadFile(target.KeyPath)
+	// Expand a leading ~ here, at the single point every dial path funnels through
+	// (provision, facts, AND the UI/auto upgrade) — os.ReadFile does not understand
+	// the shell ~ convention, so an operator's "~/.ssh/id_ed25519" would otherwise
+	// fail with "no such file or directory" on the upgrade path, which dials with the
+	// node's raw manifest KeyPath rather than a pre-expanded one.
+	keyPath := config.ExpandPath(target.KeyPath)
+	keyPEM, err := os.ReadFile(keyPath)
 	if err != nil {
-		return nil, fmt.Errorf("read ssh key %q: %w", target.KeyPath, err)
+		return nil, fmt.Errorf("read ssh key %q: %w", keyPath, err)
 	}
 	signer, err := ssh.ParsePrivateKey(keyPEM)
 	if err != nil {

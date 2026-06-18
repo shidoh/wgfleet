@@ -78,6 +78,7 @@ func masterToProto(m *domain.MasterSpec) *pb.MasterSpec {
 		SnifferSkip:        append([]string(nil), m.SnifferSkip...),
 		DashboardDisabled:  m.DashboardDisabled,
 		DashboardUrl:       m.DashboardURL,
+		ClientAdminPorts:   intsToInt32s(m.ClientAdminPorts),
 		Custom:             customToProto(m.Custom),
 		Compose:            composeToProto(m.Compose),
 	}
@@ -110,6 +111,7 @@ func masterFromProto(m *pb.MasterSpec) *domain.MasterSpec {
 		SnifferSkip:        append([]string(nil), m.GetSnifferSkip()...),
 		DashboardDisabled:  m.GetDashboardDisabled(),
 		DashboardURL:       m.GetDashboardUrl(),
+		ClientAdminPorts:   int32sToInts(m.GetClientAdminPorts()),
 		Custom:             customFromProto(m.GetCustom()),
 		Compose:            composeFromProto(m.GetCompose()),
 	}
@@ -447,4 +449,28 @@ func StatusToProto(s domain.NodeStatus) *pb.StatusReport {
 		})
 	}
 	return r
+}
+
+// intsToInt32s / int32sToInts bridge domain []int and proto []int32 (proto has no
+// plain int). Nil in ⇒ nil out, preserving "unset" semantics across the wire.
+func intsToInt32s(in []int) []int32 {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]int32, len(in))
+	for i, v := range in {
+		out[i] = int32(v)
+	}
+	return out
+}
+
+func int32sToInts(in []int32) []int {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]int, len(in))
+	for i, v := range in {
+		out[i] = int(v)
+	}
+	return out
 }
