@@ -58,7 +58,7 @@ fleet:
       routing:
         direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
         direct_geo: [RU]
-        balance: health # round-robin | health
+        balance: url-test # url-test (best exit) | consistent-hashing | round-robin | sticky-sessions | fallback
       mihomo: # master data-plane tuning + custom-config hooks
         sniffer_skip: ["+.themoviedb.org", "+.cloudfront.net"] # CDNs that break under sniffing
         # The mihomo web dashboard (zashboard) is auto-served at <external-controller>/ui

@@ -113,6 +113,7 @@ func TestRenderExitEgressNAT(t *testing.T) {
 		ClientCIDR:      "10.71.0.0/24",
 		WGInterface:     "awg0",
 		EgressInterface: "wgcf",
+		ClampMSS:        1320,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -120,11 +121,21 @@ func TestRenderExitEgressNAT(t *testing.T) {
 	for _, want := range []string{
 		"type nat hook postrouting priority srcnat",
 		`ip saddr 10.71.0.0/24 oifname != "awg0" masquerade`,
-		`oifname "wgcf" tcp flags syn / syn,rst tcp option maxseg size set rt mtu`,
+		// Bidirectional fixed MSS clamp (no oifname filter), not the old egress-only
+		// `oifname wgcf rt mtu` which left the return path through awg0 unclamped.
+		`tcp flags syn / syn,rst tcp option maxseg size set 1320`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("exit egress NAT/MSS missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "maxseg size set rt mtu") {
+		t.Errorf("egress-only rt-mtu clamp must be gone (replaced by bidirectional clamp):\n%s", out)
+	}
+	// No ClampMSS ⇒ no forward MSS clamp.
+	out0, _ := RenderRuleset(RenderInput{Role: domain.RoleExit, Firewall: domain.FirewallSpec{WGPort: 51820}, ClientCIDR: "10.71.0.0/24", WGInterface: "awg0", EgressInterface: "wgcf"})
+	if strings.Contains(out0, "maxseg") {
+		t.Errorf("no MSS clamp expected when ClampMSS is 0:\n%s", out0)
 	}
 
 	// No client pool ⇒ no masquerade chain (fail-safe; never SNAT blindly).
@@ -194,6 +205,44 @@ func TestRenderMasterInputFirewall(t *testing.T) {
 	}
 	if strings.Contains(out, "masquerade") {
 		t.Errorf("master input firewall must not carry the exit masquerade:\n%s", out)
+	}
+}
+
+func TestRenderMasterAcceptsRedirPort(t *testing.T) {
+	// Client TCP is DNAT'd to the local mihomo redir port and lands on the INPUT
+	// hook; with the drop policy the redirected SYN must be explicitly accepted, or
+	// clients get pings/DNS but no web. The accept is scoped to the client interface.
+	out, err := RenderRuleset(RenderInput{
+		Role:           domain.RoleMaster,
+		Firewall:       domain.FirewallSpec{WGPort: 443},
+		RedirPort:      7895,
+		RedirInterface: "wg0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `iifname "wg0" tcp dport 7895 accept`; !strings.Contains(out, want) {
+		t.Errorf("master input firewall missing redir accept %q:\n%s", want, out)
+	}
+
+	// Default interface when unset.
+	out2, _ := RenderRuleset(RenderInput{
+		Role:      domain.RoleMaster,
+		Firewall:  domain.FirewallSpec{WGPort: 443},
+		RedirPort: 7895,
+	})
+	if want := `iifname "wg0" tcp dport 7895 accept`; !strings.Contains(out2, want) {
+		t.Errorf("master input firewall missing default-interface redir accept %q:\n%s", want, out2)
+	}
+
+	// Exit role and zero port never emit the redirect accept.
+	out3, _ := RenderRuleset(RenderInput{Role: domain.RoleMaster, Firewall: domain.FirewallSpec{WGPort: 443}})
+	if strings.Contains(out3, "dport 7895") {
+		t.Errorf("no redir accept expected when RedirPort is zero:\n%s", out3)
+	}
+	out4, _ := RenderRuleset(RenderInput{Role: domain.RoleExit, Firewall: domain.FirewallSpec{WGPort: 51820}, RedirPort: 7895})
+	if strings.Contains(out4, "dport 7895") {
+		t.Errorf("redir accept is master-only, must not appear on exit:\n%s", out4)
 	}
 }
 

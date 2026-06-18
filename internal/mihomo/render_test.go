@@ -49,6 +49,65 @@ func sampleInput() RenderInput {
 	}
 }
 
+func wgBestGroupOf(t *testing.T, balance string) map[string]any {
+	t.Helper()
+	in := sampleInput()
+	in.Spec.Balance = balance
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatalf("render(%q): %v", balance, err)
+	}
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	groups, _ := cfg["proxy-groups"].([]any)
+	g, _ := groups[0].(map[string]any)
+	return g
+}
+
+func TestRenderWGBestGroupKinds(t *testing.T) {
+	// url-test → its own group type with a tolerance, no load-balance strategy.
+	ut := wgBestGroupOf(t, "url-test")
+	if ut["type"] != "url-test" {
+		t.Errorf("url-test: type = %v, want url-test", ut["type"])
+	}
+	if ut["tolerance"] != urlTestToleranceMS {
+		t.Errorf("url-test: tolerance = %v, want %d", ut["tolerance"], urlTestToleranceMS)
+	}
+	if _, ok := ut["strategy"]; ok {
+		t.Errorf("url-test must not carry a load-balance strategy: %+v", ut)
+	}
+
+	// fallback → its own type, no strategy/tolerance.
+	fb := wgBestGroupOf(t, "fallback")
+	if fb["type"] != "fallback" {
+		t.Errorf("fallback: type = %v, want fallback", fb["type"])
+	}
+	if _, ok := fb["strategy"]; ok {
+		t.Errorf("fallback must not carry a strategy: %+v", fb)
+	}
+
+	// sticky-sessions / round-robin / empty → load-balance with that strategy.
+	for in, want := range map[string]string{"sticky-sessions": "sticky-sessions", "round-robin": "round-robin", "": "round-robin"} {
+		g := wgBestGroupOf(t, in)
+		if g["type"] != "load-balance" || g["strategy"] != want {
+			t.Errorf("balance %q → %+v, want load-balance/%s", in, g, want)
+		}
+		if _, ok := g["tolerance"]; ok {
+			t.Errorf("load-balance must not emit tolerance: %+v", g)
+		}
+	}
+
+	// Every kind keeps the health check that evicts dead exits.
+	for _, b := range []string{"url-test", "fallback", "consistent-hashing"} {
+		g := wgBestGroupOf(t, b)
+		if g["url"] == nil || g["interval"] == nil {
+			t.Errorf("balance %q lost its health check: %+v", b, g)
+		}
+	}
+}
+
 func TestRenderConfigStructure(t *testing.T) {
 	out, err := RenderConfig(sampleInput())
 	if err != nil {
@@ -131,16 +190,17 @@ func TestRenderConfigExternalUIAndGeodata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// External dashboard is served alongside the API.
+	// The dashboard dir is served alongside the API, but the config must NOT carry a
+	// download URL or detour: the agent populates the dir and mihomo only serves it
+	// (mihomo's own download follows the proxy rules and stalls — see dashboardPlanner).
 	if cfg["external-ui"] != "ui" {
 		t.Errorf("external-ui = %v, want ui", cfg["external-ui"])
 	}
-	// mihomo has no external-ui download-detour key — we must NOT emit one.
-	if _, ok := cfg["external-ui-download-detour"]; ok {
-		t.Errorf("external-ui-download-detour must not be emitted (no such mihomo key)")
+	if _, ok := cfg["external-ui-url"]; ok {
+		t.Errorf("external-ui-url must not be emitted (agent downloads the dashboard)")
 	}
-	if cfg["external-ui-url"] != DefaultDashboardURL {
-		t.Errorf("external-ui-url = %v, want default %q", cfg["external-ui-url"], DefaultDashboardURL)
+	if _, ok := cfg["external-ui-download-detour"]; ok {
+		t.Errorf("external-ui-download-detour must not be emitted")
 	}
 
 	// Geo databases are configured because DirectGeo is set, so the GEOSITE/GEOIP
@@ -169,20 +229,21 @@ func TestRenderConfigExternalUIAndGeodata(t *testing.T) {
 }
 
 func TestRenderDashboardURLOverrideAndDisable(t *testing.T) {
-	// Operator override → custom mirror URL.
+	// A DashboardURL override drives the AGENT's download, not the rendered config:
+	// the config still just serves the dir, and never carries the URL.
 	in := sampleInput()
-	in.Spec.DashboardURL = "https://mirror.example.ru/zashboard.zip"
+	in.Spec.DashboardURL = "https://mirror.example.ru/metacubexd.tgz"
 	out, err := RenderConfig(in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var cfg map[string]any
 	_ = yaml.Unmarshal([]byte(out), &cfg)
-	if cfg["external-ui-url"] != "https://mirror.example.ru/zashboard.zip" {
-		t.Errorf("override not applied: external-ui-url = %v", cfg["external-ui-url"])
-	}
 	if cfg["external-ui"] != "ui" {
 		t.Errorf("dashboard should still be served with an override: %v", cfg["external-ui"])
+	}
+	if _, ok := cfg["external-ui-url"]; ok {
+		t.Errorf("external-ui-url must never be emitted, even with a DashboardURL override")
 	}
 
 	// Disabled → no external-ui / external-ui-url, but the API still binds.
@@ -199,6 +260,9 @@ func TestRenderDashboardURLOverrideAndDisable(t *testing.T) {
 	}
 	if _, ok := cfg2["external-ui-url"]; ok {
 		t.Errorf("disabled dashboard must not emit external-ui-url")
+	}
+	if _, ok := cfg2["external-ui-download-detour"]; ok {
+		t.Errorf("disabled dashboard must not emit external-ui-download-detour")
 	}
 	if cfg2["external-controller"] != "10.20.25.254:9090" {
 		t.Errorf("API must still bind when only the dashboard is disabled: %v", cfg2["external-controller"])

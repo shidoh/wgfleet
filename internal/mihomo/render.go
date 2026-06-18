@@ -30,10 +30,11 @@ const DefaultRedirPort = 7895
 // (the master reaches GitHub on its own RU/direct path, not through an exit).
 const (
 	externalUIDir = "ui" // relative to mihomo's -d dir ⇒ /etc/mihomo/ui; served at /ui
-	// DefaultDashboardURL is the built-in dashboard source (zashboard latest,
-	// matches the operator's production config). Operators can override it per
-	// master (MasterSpec.DashboardURL) with a mirror reachable from their network.
-	DefaultDashboardURL = "https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip"
+	// DefaultDashboardURL is the built-in dashboard source (metacubexd, pinned). A
+	// pinned release (not "latest") keeps deploys reproducible; bump deliberately.
+	// Operators can override it per master (MasterSpec.DashboardURL) with a mirror
+	// reachable from their network, or a different version/dashboard.
+	DefaultDashboardURL = "https://github.com/MetaCubeX/metacubexd/releases/download/v1.256.0/compressed-dist.tgz"
 )
 
 // GEO database sources. The default mihomo geox URLs point at GitHub raw, which is
@@ -120,7 +121,7 @@ func RenderConfig(in RenderInput) (string, error) {
 			},
 		},
 		"proxies":      proxies,
-		"proxy-groups": []any{loadBalanceGroup(lbMembers, in.Spec.Balance)},
+		"proxy-groups": []any{wgBestGroup(lbMembers, in.Spec.Balance)},
 		"rules":        renderRules(in.Spec),
 	}
 	if in.Spec.ExternalController != "" {
@@ -128,20 +129,18 @@ func RenderConfig(in RenderInput) (string, error) {
 		// Serve the web dashboard alongside the API unless the operator disabled it.
 		// Set an API `secret` via mihomo overrides to authenticate it — the controller
 		// binds the mgmt/ZT overlay, but the RESTful API is otherwise unauthenticated.
-		// The dashboard is opt-out because mihomo downloads the UI zip on first run and
-		// will FAIL (and can panic) if the source host is unreachable — a real risk
-		// where the default host is blocked. Operators there set a reachable mirror
-		// (DashboardURL) or disable it (DashboardDisabled).
+		//
+		// We emit external-ui (the dir to serve) but deliberately NOT external-ui-url:
+		// the AGENT downloads and unpacks the dashboard into that dir (see master
+		// dashboardPlanner). mihomo's own download follows the proxy rules (MATCH →
+		// wg-best → exit → WARP) and its external-ui-download-detour is not honored by
+		// the running build, so on a blocked/RU master the download TLS-times-out even
+		// though the host reaches GitHub directly. Letting the agent fetch it (host has
+		// the direct path) and having mihomo only serve the static dir sidesteps that
+		// entirely. DashboardURL/DashboardDisabled drive the agent, not this config.
 		if !in.Spec.DashboardDisabled {
-			url := in.Spec.DashboardURL
-			if url == "" {
-				url = DefaultDashboardURL
-			}
 			base["external-ui"] = externalUIDir
-			base["external-ui-url"] = url
 		}
-		// Note: mihomo has no per-download detour for the external UI (no such config
-		// key exists in RawConfig), so we do not emit one — it would be silently ignored.
 	}
 
 	// GEOSITE/GEOIP rules need geo databases. Configure a reliable mirror and the
@@ -257,21 +256,40 @@ func awgOption(p domain.AWGParams) map[string]any {
 	return opt
 }
 
-func loadBalanceGroup(names []string, strategy string) map[string]any {
-	if strategy == "" {
-		strategy = "round-robin"
-	}
-	// `tolerance` is read only by url-test groups, never load-balance, so we do not
-	// emit it here — the health check (url/interval) is what drives load-balance.
-	return map[string]any{
+// urlTestToleranceMS is the latency hysteresis for the url-test group: a better
+// exit must beat the current one by more than this to trigger a switch. Tunnel
+// round-trips are inherently high (full WG path to the probe — an earlier finding), so a
+// generous tolerance prevents flapping between two similar exits.
+const urlTestToleranceMS = 150
+
+// wgBestGroup renders the master's exit-selection group. `balance` selects the
+// mihomo group kind: url-test (lowest-latency exit) and fallback (first-healthy,
+// ordered) are their own group TYPES; everything else is a load-balance with the
+// given strategy (round-robin default, or consistent-hashing / sticky-sessions).
+// All kinds share the same health check (url/interval) that detects dead exits.
+func wgBestGroup(names []string, balance string) map[string]any {
+	g := map[string]any{
 		"name":     "wg-best",
-		"type":     "load-balance",
-		"strategy": strategy,
 		"proxies":  toAnySlice(names),
 		"url":      "http://cp.cloudflare.com/generate_204",
 		"interval": 60,
 		"lazy":     false,
 	}
+	switch balance {
+	case "url-test":
+		g["type"] = "url-test"
+		g["tolerance"] = urlTestToleranceMS
+	case "fallback":
+		g["type"] = "fallback"
+	default:
+		g["type"] = "load-balance"
+		strategy := balance
+		if strategy == "" {
+			strategy = "round-robin"
+		}
+		g["strategy"] = strategy
+	}
+	return g
 }
 
 func renderRules(spec domain.MasterSpec) []any {

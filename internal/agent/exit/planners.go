@@ -70,6 +70,10 @@ func ifaceName(confPath string) string {
 	return strings.TrimSuffix(filepath.Base(confPath), ".conf")
 }
 
+// tcpIPHeaderBytes is the IPv4 (20) + TCP (20) header overhead subtracted from a
+// tunnel MTU to derive the MSS to clamp to.
+const tcpIPHeaderBytes = 40
+
 // wgIfaceName is ifaceName but returns "" for an empty path (filepath.Base("")
 // is ".", which would otherwise leak a bogus interface name into the ruleset).
 func wgIfaceName(confPath string) string {
@@ -193,6 +197,17 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	// way. Direct egress ⇒ no egress interface ⇒ no mark needed.
 	if spec.Routing.EgressInterface != "" {
 		in.WGReplyMark = routing.EffectiveFwMark(spec.Routing)
+	}
+	// Clamp forwarded TCP MSS (both directions) to the tightest tunnel on the client
+	// path: the master↔exit tunnel (WGServer.MTU) or, if smaller, a constrained WARP
+	// path (WARPMTU). Without it the server's response segments — sized for the looser
+	// egress — black-hole on the return through the master↔exit tunnel.
+	if spec.Role == domain.RoleExit && spec.WGServer.MTU > 0 {
+		clampMTU := spec.WGServer.MTU
+		if spec.WARPMTU > 0 && spec.WARPMTU < clampMTU {
+			clampMTU = spec.WARPMTU
+		}
+		in.ClampMSS = clampMTU - tcpIPHeaderBytes
 	}
 	ruleset, err := netfw.RenderRuleset(in)
 	if err != nil {

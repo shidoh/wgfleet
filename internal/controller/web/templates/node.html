@@ -68,6 +68,7 @@
       <dt>Created</dt><dd class="dim">{{absTime .Node.CreatedAt}}</dd>
       <dt>Last seen</dt><dd class="dim">{{relTime .Node.LastSeen}}</dd>
       {{if .WGEasyURL}}<dt>wg-easy</dt><dd><a class="extlink" href="{{.WGEasyURL}}" target="_blank" rel="noopener noreferrer">client admin UI ↗</a></dd>{{end}}
+      {{if .MihomoURL}}<dt>mihomo</dt><dd><a class="extlink" href="{{.MihomoURL}}" target="_blank" rel="noopener noreferrer">router dashboard ↗</a></dd>{{end}}
     </dl>
   </div>
 

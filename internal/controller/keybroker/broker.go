@@ -320,12 +320,16 @@ func (b *Broker) clientFacingMTU() int {
 // mihomoStrategy maps the fleet balance setting to a mihomo load-balance
 // strategy. "health" has no direct mihomo equivalent, so it maps to
 // consistent-hashing (sticky per-destination), which is the closest behaviour.
+// mihomoStrategy normalizes the manifest's `balance` to the value the mihomo
+// renderer understands for the wg-best group. "health" is a back-compat alias for
+// consistent-hashing; url-test/fallback/sticky-sessions/consistent-hashing pass
+// through; anything else (incl. empty) defaults to round-robin.
 func mihomoStrategy(balance string) string {
 	switch balance {
-	case "round-robin":
-		return "round-robin"
 	case "health", "consistent-hashing":
 		return "consistent-hashing"
+	case "sticky-sessions", "url-test", "fallback", "round-robin":
+		return balance
 	default:
 		return "round-robin"
 	}

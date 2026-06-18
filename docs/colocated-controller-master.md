@@ -108,10 +108,10 @@ fleet:
       public_ip: "<public-ip>"  # seeds wg-easy first run (INIT_HOST)
       client_awg: { listen_port: 443, address_pool: 10.80.0.0/24 }
       routing:   { direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16], direct_geo: [RU], balance: health }
-      mihomo:    { dashboard_disabled: false }  # mihomo fetches the web dashboard zip from GitHub on
-                                                # first run; if GitHub is blocked from this box it will
-                                                # FAIL/panic — then set dashboard_disabled: true, or
-                                                # dashboard_url: "<reachable-mirror>".
+      mihomo:    { dashboard_disabled: false }  # metacubexd dashboard, downloaded via a DIRECT detour
+                                                # (the master reaches GitHub on its own path, not via an
+                                                # exit). If GitHub is blocked even directly from this box,
+                                                # set dashboard_disabled: true or dashboard_url: "<mirror>".
       compose:   { wg_easy_web_port: 51821 }
   exits:
     - name: exit-de-1           # provisioned later over SSH from this controller
@@ -220,6 +220,27 @@ sudo wgfleet-controller --config /etc/wgfleet/controller.yaml --provision exit-d
      --agent-bin /usr/local/bin/wgfleet-agent
 ```
 
+### 9. Upgrading the binaries later
+
+The exits update their agent via the controller (Web UI upgrade button /
+`controller --upgrade-agent <node>`, over SSH). The co-located master has **no
+such path** — it is not SSH-provisioned and cannot bootstrap itself — so use
+`deploy/deploy-master.sh`, the master's equivalent. It cross-builds on your
+machine, copies over SSH, installs ETXTBSY-safe (temp + atomic rename over the
+running binary) and restarts the services:
+
+```bash
+# both binaries (default); or --agent / --controller for one
+deploy/deploy-master.sh root@<master-host>
+deploy/deploy-master.sh root@<master-host> --plan     # dry-run, build + show intent
+```
+
+When deploying **both**, it installs/restarts the agent FIRST, then the
+controller: a controller restart re-reads the fleet manifest and serves a new
+spec, and the already-updated agent then reconciles it correctly. If a manifest
+change adds a mihomo `file` rule-provider (e.g. `direct-domains`), update the
+agent before the controller restart so the file is written before mihomo reloads.
+
 ## Gotchas
 
 - **Cert SAN must cover the dialed host.** The agent dials `<mgmt>:8443`; `controller.listen`
@@ -243,11 +264,25 @@ sudo wgfleet-controller --config /etc/wgfleet/controller.yaml --provision exit-d
   enough to trip the unguarded S4-strip in older `amneziawg-go` builds (this was a real
   crash-loop: `Jmin=22` with `S4=52` panicked mihomo on a 41-byte junk packet; fixed in the
   derivation, so the mihomo/kernel pairing no longer matters).
-- **mihomo dashboard download is a startup dependency.** mihomo fetches the dashboard zip
-  from GitHub on first run; if GitHub is unreachable from the master it fails and can
-  crash-loop. Set `masters[].mihomo.dashboard_disabled: true` (or a reachable
-  `dashboard_url`) on networks where GitHub is blocked. Default is on.
+- **mihomo's own downloads (dashboard, geo `.dat`) follow the proxy rules and stall.** Routed
+  through the default rules (`MATCH wg-best` → exit → WARP) a GitHub download TLS-times-out even
+  though GitHub is reachable DIRECT from the master in <1s, and mihomo's `external-ui-download-detour`
+  is NOT honored by the running build. So neither is left to mihomo:
+  - **Dashboard**: the agent (`master dashboardPlanner`) downloads + unpacks it into `/etc/mihomo/ui`
+    over the host's direct path; mihomo only serves the static dir (the renderer emits `external-ui`
+    with no `external-ui-url`). `dashboard_url` / `dashboard_disabled` drive the agent.
+  - **Geo**: keep `geo-auto-update: false` and serve RU geo via `.mrs` HTTP rule-providers with
+    `proxy: DIRECT` (they auto-update over the direct path) — see the prodmatch example.
+
+  If GitHub is blocked even directly from the master, set `dashboard_disabled: true`.
 - **Convergence takes a pass or two.** The master can only render its mihomo proxies once
   each exit has registered its public key. Expect the master to sit at `Error`/`Degraded`
   ("no exit tunnels yet") for ~1–2 reconcile intervals after first start, then go `Ready`.
+- **"Clients get pings/DNS but no web" = the input firewall is dropping the mihomo
+  redirect.** Client TCP is DNAT'd to the local mihomo redir port (a master address),
+  so it lands on the INPUT hook, not FORWARD. The master input firewall must accept
+  `iifname "wg0" tcp dport <redir-port>` or the drop policy swallows every web
+  connection while ICMP (accepted) and DNS (forwarded to an exit) still work. The
+  agent renders this automatically (ADR-0020); the symptom only appears with a stale
+  agent that predates the fix.
 ```

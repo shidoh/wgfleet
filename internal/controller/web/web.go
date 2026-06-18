@@ -324,6 +324,7 @@ type nodeData struct {
 	CanProvision bool
 	CanUpgrade   bool   // node is provisioned + upgradable over SSH
 	WGEasyURL    string // master only: link to its wg-easy admin UI (mgmt overlay)
+	MihomoURL    string // master only: link to its mihomo (Clash) web dashboard (mgmt overlay)
 	WireSkew     string // non-empty (reason) when the agent's wire version is incompatible
 	CSRF         string // CSRF token embedded in the action forms
 }
@@ -361,6 +362,7 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 	} else {
 		data.SpecText = formatSpec(spec)
 		data.WGEasyURL = wgEasyURL(node, spec)
+		data.MihomoURL = mihomoURL(node, spec)
 	}
 	// Offer provisioning when the node can be bootstrapped and is not already
 	// active (Provisioning/Reconciling/Ready) — i.e. Pending or Error.
@@ -394,6 +396,29 @@ func wgEasyURL(node domain.Node, spec domain.NodeSpec) string {
 		port = spec.Master.Compose.WGEasyWebPort
 	}
 	return fmt.Sprintf("http://%s:%d", host, port)
+}
+
+// mihomoURL builds the master's mihomo (Clash) web dashboard URL on the mgmt/ZT
+// overlay, or "" for non-masters, when the API is not exposed, or when the
+// dashboard is disabled. The dashboard is served at <external-controller>/ui; the
+// port comes from the external-controller listener, the host from MgmtAddr (so a
+// 0.0.0.0 bind still yields a reachable link).
+func mihomoURL(node domain.Node, spec domain.NodeSpec) string {
+	if node.Role != domain.RoleMaster || node.MgmtAddr == "" || spec.Master == nil {
+		return ""
+	}
+	if spec.Master.ExternalController == "" || spec.Master.DashboardDisabled {
+		return ""
+	}
+	host := node.MgmtAddr
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	_, port, err := net.SplitHostPort(spec.Master.ExternalController)
+	if err != nil || port == "" {
+		return ""
+	}
+	return fmt.Sprintf("http://%s:%s/ui", host, port)
 }
 
 func (h *Handler) render(w http.ResponseWriter, tmpl *template.Template, name string, data any) {

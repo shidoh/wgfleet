@@ -19,6 +19,7 @@ type Paths struct {
 	NFT            string // master NAT ruleset
 	FirewallNFT    string // master input-firewall ruleset (inet wgfleet)
 	ExtraFilesDir  string // base dir for operator extra files with relative paths
+	UIDir          string // mihomo external-ui dir; the agent populates it (see dashboardPlanner)
 	WGEasyDB       string // wg-easy SQLite db (client-facing AWG server)
 	Compose        string // docker-compose.yml for the container stack
 	WGEasyAdmin    string // wg-easy admin password file (agent-local, 0600; never crosses the wire)
@@ -32,6 +33,7 @@ func DefaultPaths() Paths {
 		NFT:            "/etc/wgfleet/wgfleet-master.nft",
 		FirewallNFT:    "/etc/wgfleet/wgfleet.nft",
 		ExtraFilesDir:  "/etc/mihomo",
+		UIDir:          "/etc/mihomo/ui",
 		WGEasyDB:       wgeasy.DefaultDBPath,
 		Compose:        "/etc/wgfleet/docker-compose.yml",
 		WGEasyAdmin:    "/etc/wgfleet/wg-easy-admin-password",
@@ -46,6 +48,7 @@ func PathsUnder(dir string) Paths {
 		NFT:            filepath.Join(dir, "wgfleet-master.nft"),
 		FirewallNFT:    filepath.Join(dir, "wgfleet.nft"),
 		ExtraFilesDir:  dir,
+		UIDir:          filepath.Join(dir, "ui"),
 		WGEasyDB:       filepath.Join(dir, "wg-easy.db"),
 		Compose:        filepath.Join(dir, "docker-compose.yml"),
 		WGEasyAdmin:    filepath.Join(dir, "wg-easy-admin-password"),

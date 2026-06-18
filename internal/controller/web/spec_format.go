@@ -115,9 +115,9 @@ func formatMaster(b *strings.Builder, m *domain.MasterSpec) {
 		case m.DashboardDisabled:
 			b.WriteString("  dashboard: disabled\n")
 		case m.DashboardURL != "":
-			fmt.Fprintf(b, "  dashboard: %s (custom)\n", m.DashboardURL)
+			fmt.Fprintf(b, "  dashboard: %s (custom, agent-served)\n", m.DashboardURL)
 		default:
-			b.WriteString("  dashboard: default (zashboard/github)\n")
+			b.WriteString("  dashboard: metacubexd (default, agent-served)\n")
 		}
 	}
 	if len(m.DirectCIDRs) > 0 {

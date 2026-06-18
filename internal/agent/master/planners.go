@@ -49,13 +49,20 @@ func Planners(in Input) []reconcile.Planner {
 	return []reconcile.Planner{
 		// Input firewall first: bring the drop policy up before the services, the same
 		// ordering the bootstrap uses ("firewall before traffic").
-		firewallPlanner{path: in.Paths.FirewallNFT, overlayMSS: in.OverlayMSS},
+		firewallPlanner{path: in.Paths.FirewallNFT, overlayMSS: in.OverlayMSS, clientIface: in.ClientInterface},
 		composePlanner{path: in.Paths.Compose, adminUser: in.AdminUsername, adminPass: in.AdminPassword},
 		wgEasyPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface, compose: in.Paths.Compose},
 		wgEasyUserConfigPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface},
 		wgEasyMetricsPlanner{dbPath: in.Paths.WGEasyDB},
-		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey},
+		// Extra files (operator rule-provider lists like direct-domains.yaml) MUST be
+		// written before mihomo renders + hot-reloads its config, which references them
+		// as `file` rule-providers — otherwise the first reload points at a missing
+		// file and mihomo can reject the new config.
 		extraFilesPlanner{dir: in.Paths.ExtraFilesDir},
+		// Dashboard before mihomo too: the agent populates the external-ui dir (mihomo
+		// only serves it, never downloads — see dashboardPlanner).
+		dashboardPlanner{uiDir: in.Paths.UIDir},
+		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey},
 		masterNATPlanner{path: in.Paths.NFT, clientIface: in.ClientInterface},
 		masterForwardPlanner{clientIface: in.ClientInterface},
 	}
@@ -434,6 +441,9 @@ type firewallPlanner struct {
 	path string
 	// overlayMSS clamps TCP MSS on the mgmt overlay (0 ⇒ no clamp).
 	overlayMSS int
+	// clientIface is the client-facing WG interface ("wg0") whose DNAT'd TCP must be
+	// accepted into the local mihomo redir port (see RenderInput.RedirInterface).
+	clientIface string
 	// loaded reports whether the live kernel has the input-firewall table.
 	// nil ⇒ a real `nft list table inet wgfleet` probe; tests inject a stub.
 	loaded func() bool
@@ -442,10 +452,18 @@ type firewallPlanner struct {
 func (firewallPlanner) Component() string { return "master firewall (nftables)" }
 
 func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
+	// The redirect the input firewall must open matches masterNATPlanner's DNAT
+	// target, so resolve the redir port the same way (spec, else mihomo default).
+	redir := mihomo.DefaultRedirPort
+	if spec.Master != nil && spec.Master.RedirPort != 0 {
+		redir = spec.Master.RedirPort
+	}
 	ruleset, err := netfw.RenderRuleset(netfw.RenderInput{
-		Firewall:   spec.Firewall,
-		Role:       domain.RoleMaster,
-		OverlayMSS: p.overlayMSS,
+		Firewall:       spec.Firewall,
+		Role:           domain.RoleMaster,
+		OverlayMSS:     p.overlayMSS,
+		RedirPort:      redir,
+		RedirInterface: p.clientIface,
 	})
 	if err != nil {
 		return nil, err

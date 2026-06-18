@@ -78,6 +78,31 @@ type RenderInput struct {
 	// correct. Agent-local (not from the wire) so it cannot depend on the very
 	// channel it protects.
 	OverlayMSS int
+	// RedirMark identifies the master's client→mihomo redirect for the input chain.
+	// On the master, client TCP is DNAT'd in prerouting to the mihomo redir port at
+	// the master's OWN address (BindAddress) ⇒ after DNAT the packet routes to the
+	// INPUT hook, not FORWARD. With the drop-policy input chain (ADR-0020) the
+	// redirected SYN matches no accept rule and is dropped — clients then get pings
+	// and DNS (ICMP/forwarded) but no web (every TCP black-holes before mihomo even
+	// sees it). When RedirPort > 0 (master role) an accept for
+	// `iifname <RedirInterface> tcp dport <RedirPort>` lets the redirect through.
+	RedirPort int
+	// RedirInterface is the client-facing WG interface whose DNAT'd TCP must reach
+	// the local mihomo redir port (master role; defaults to "wg0"). Scoping the
+	// accept to this interface keeps clients off the master's other local services
+	// (Clash API, wg-easy UI) — only the redirect port is opened, only from clients.
+	RedirInterface string
+	// ClampMSS, when > 0 (exit role), clamps forwarded TCP SYN/SYN-ACK MSS in BOTH
+	// directions to this value. Client traffic crosses the master↔exit tunnel
+	// (WGServer.MTU, e.g. 1360) AND the egress (WARP). The egress leg alone is NOT
+	// the binding hop: clamping only there (the old `oifname <egress> rt mtu` rule)
+	// let the server advertise an MSS sized for the looser egress, so its response
+	// segments black-holed on the RETURN through the tighter master↔exit tunnel —
+	// the classic "connects but empty reply / timeouts" PMTU blackhole (an earlier finding;
+	// verified live 2026-06-18: clamp 1320 fixed it). A fixed value (= min(tunnel,
+	// egress) − 40) bounds both directions; `rt mtu` cannot, since it only sees the
+	// immediate egress interface, not the tighter return hop.
+	ClampMSS int
 }
 
 // RenderRuleset renders an nftables script for in. The input chain defaults to
@@ -140,18 +165,28 @@ func RenderRuleset(in RenderInput) (string, error) {
 	fmt.Fprintf(&b, "\t\ttcp dport %d accept\n", sshPort)
 	fmt.Fprintf(&b, "\t\tudp dport %d accept\n", zeroTierPort)
 	fmt.Fprintf(&b, "\t\tudp dport %d accept\n", in.Firewall.WGPort)
+	// Master only: let client TCP that prerouting DNAT'd to the local mihomo redir
+	// port reach mihomo. After DNAT the destination is the master's own address, so
+	// the packet hits this INPUT chain; without this accept the drop policy swallows
+	// every redirected web connection while ICMP/DNS still work (an earlier finding sibling).
+	if in.Role == domain.RoleMaster && in.RedirPort > 0 {
+		redirIface := in.RedirInterface
+		if redirIface == "" {
+			redirIface = "wg0"
+		}
+		fmt.Fprintf(&b, "\t\tiifname %q tcp dport %d accept\n", redirIface, in.RedirPort)
+	}
 	b.WriteString("\t\ticmp type echo-request accept\n")
 	b.WriteString("\t\ticmpv6 type { echo-request, nd-neighbor-solicit, nd-router-advert, nd-neighbor-advert } accept\n")
 	b.WriteString("\t}\n\n")
 
 	b.WriteString("\tchain forward {\n")
 	b.WriteString("\t\ttype filter hook forward priority 0; policy accept;\n")
-	// MSS clamp for TLS through the double encapsulation: client→master→exit→WARP
-	// nests WireGuard layers, and if PMTU discovery is blocked the oversized TLS
-	// records are dropped and handshakes stall ("empty reply"). Clamp the SYN MSS to
-	// the egress route MTU so both ends negotiate a size that fits.
-	if in.EgressInterface != "" {
-		fmt.Fprintf(&b, "\t\toifname %q tcp flags syn / syn,rst tcp option maxseg size set rt mtu\n", in.EgressInterface)
+	// MSS clamp for TLS/large transfers through the nested encapsulation
+	// (client→master→exit→WARP). Clamp BOTH directions to a fixed size bounded by the
+	// tightest tunnel along the client path — not just the egress (see ClampMSS).
+	if in.ClampMSS > 0 {
+		fmt.Fprintf(&b, "\t\ttcp flags syn / syn,rst tcp option maxseg size set %d\n", in.ClampMSS)
 	}
 	b.WriteString("\t}\n\n")
 

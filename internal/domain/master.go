@@ -17,7 +17,9 @@ type MasterSpec struct {
 	ExternalController string
 	// ExitTunnels is one mihomo WireGuard proxy per exit.
 	ExitTunnels []ExitTunnel
-	// Balance is the load-balance strategy ("round-robin" | "consistent-hashing").
+	// Balance selects the wg-best exit-selection kind: a load-balance strategy
+	// ("round-robin" | "consistent-hashing" | "sticky-sessions") or a distinct group
+	// type ("url-test" | "fallback"). Empty ⇒ round-robin. See mihomo.wgBestGroup.
 	Balance string
 	// DirectCIDRs route via DIRECT (RU/private/own networks), never via an exit.
 	// Rendered both into the rules and the included direct-networks file.

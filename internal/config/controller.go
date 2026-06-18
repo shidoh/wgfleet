@@ -243,7 +243,14 @@ func (m MasterConfig) ClientListenPort() int {
 type MasterRouting struct {
 	DirectCIDRs []string `koanf:"direct_cidrs"` // routed DIRECT, never via an exit
 	DirectGeo   []string `koanf:"direct_geo"`   // geo codes routed DIRECT, e.g. ["RU"]
-	Balance     string   `koanf:"balance"`      // "round-robin" | "health"
+	// Balance selects how the master's wg-best group picks an exit:
+	//   round-robin        — load-balance, every connection cycles exits (default)
+	//   consistent-hashing — load-balance, same dst → same exit (session stability)
+	//   health (alias)     — same as consistent-hashing (back-compat)
+	//   sticky-sessions    — load-balance, same src+dst → same exit
+	//   url-test           — route everything through the lowest-latency exit (auto-best)
+	//   fallback           — primary exit, fail over to the next on timeout
+	Balance string `koanf:"balance"`
 }
 
 // Exit WG listen-port derivation. When the manifest leaves listen_port unset, the
@@ -325,9 +332,23 @@ type FirewallConfig struct {
 }
 
 const (
-	balanceRoundRobin = "round-robin"
-	balanceHealth     = "health"
+	balanceRoundRobin        = "round-robin"
+	balanceHealth            = "health" // alias for consistent-hashing (back-compat)
+	balanceConsistentHashing = "consistent-hashing"
+	balanceStickySessions    = "sticky-sessions"
+	balanceURLTest           = "url-test"
+	balanceFallback          = "fallback"
 )
+
+// validBalances is the set the manifest may specify for a master's wg-best group.
+var validBalances = map[string]struct{}{
+	balanceRoundRobin:        {},
+	balanceHealth:            {},
+	balanceConsistentHashing: {},
+	balanceStickySessions:    {},
+	balanceURLTest:           {},
+	balanceFallback:          {},
+}
 
 // Validate checks the controller config for boundary violations before use.
 func (c ControllerConfig) Validate() error {
@@ -388,8 +409,10 @@ func (c ControllerConfig) Validate() error {
 			errs = append(errs, fmt.Errorf("fleet: duplicate node name %q", m.Name))
 		}
 		seen[m.Name] = struct{}{}
-		if b := m.Routing.Balance; b != "" && b != balanceRoundRobin && b != balanceHealth {
-			errs = append(errs, fmt.Errorf("fleet.masters[%d]: invalid balance %q", i, b))
+		if b := m.Routing.Balance; b != "" {
+			if _, ok := validBalances[b]; !ok {
+				errs = append(errs, fmt.Errorf("fleet.masters[%d]: invalid balance %q", i, b))
+			}
 		}
 		if p := m.ClientAWG.ListenPort; p != 0 && (p < 1 || p > 65535) {
 			errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.listen_port %d out of range", i, p))
