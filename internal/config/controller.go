@@ -15,6 +15,7 @@ import (
 
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/routing"
+	"github.com/shidoh/wgfleet/internal/wg"
 )
 
 // zerotierNetworkID matches a ZeroTier network id: exactly 16 hexadecimal digits.
@@ -292,19 +293,30 @@ func derivedExitPort(name string) int {
 
 // ExitConfig describes one exit node in the fleet manifest.
 type ExitConfig struct {
-	Name           string         `koanf:"name"`
-	Region         string         `koanf:"region"`
-	Egress         string         `koanf:"egress"`          // "warp" | "direct" (preferred)
-	EgressFallback []string       `koanf:"egress_fallback"` // ordered fallbacks for censorship-adaptive failover (ADR-0017), e.g. [direct]; empty ⇒ no failover
-	WARPMTU        int            `koanf:"warp_mtu"`        // WARP interface MTU; 0 ⇒ computed (1440). Set when the real WARP path is smaller (an earlier finding: 1320-1420)
-	PublicIP       string         `koanf:"public_ip"`       // public IP the master dials this exit at (WG endpoint); defaults to ssh.host when empty
-	ListenPort     int            `koanf:"listen_port"`     // WG server port; 0 ⇒ DefaultExitListenPort
-	AddressPool    string         `koanf:"address_pool"`
-	MgmtAddr       string         `koanf:"mgmt_addr"` // ZT overlay address (admin/metrics/DNS bind)
-	DNSFilter      bool           `koanf:"dns_filter"`
-	DNS            DNSConfig      `koanf:"dns"` // optional rich blocky tuning + custom config
-	Firewall       FirewallConfig `koanf:"firewall"`
-	SSH            SSHConfig      `koanf:"ssh"` // bootstrap target
+	Name           string   `koanf:"name"`
+	Region         string   `koanf:"region"`
+	Egress         string   `koanf:"egress"`          // "warp" | "direct" (preferred)
+	EgressFallback []string `koanf:"egress_fallback"` // ordered fallbacks for censorship-adaptive failover (ADR-0017), e.g. [direct]; empty ⇒ no failover
+	WARPMTU        int      `koanf:"warp_mtu"`        // WARP interface MTU; 0 ⇒ computed (1440). Set when the real WARP path is smaller (an earlier finding: 1320-1420)
+	// LinkMTU is the physical/path MTU of the master↔exit link — the largest packet
+	// that reaches this exit without fragmentation. Measure it with `ping -M do -s N
+	// <exit-ip>` from the master (path MTU = largest passing N + 28) and set the
+	// result here. 0 ⇒ assume 1500. When an exit's real path is below 1500 (a DC
+	// overlay, PPPoE, a narrow transit), the master↔exit AmneziaWG carrier packets
+	// (tunnel MTU + ~140 obfuscation overhead) black-hole on that path — the
+	// "tunnel up but intermittently hangs" symptom. Setting LinkMTU
+	// lowers BOTH ends of this exit's tunnel AND the client interface (so client
+	// payloads never exceed what survives the narrowest exit, ADR-0014 sequential
+	// model), exactly as warp_mtu does for the WARP leg.
+	LinkMTU     int            `koanf:"link_mtu"`
+	PublicIP    string         `koanf:"public_ip"`   // public IP the master dials this exit at (WG endpoint); defaults to ssh.host when empty
+	ListenPort  int            `koanf:"listen_port"` // WG server port; 0 ⇒ DefaultExitListenPort
+	AddressPool string         `koanf:"address_pool"`
+	MgmtAddr    string         `koanf:"mgmt_addr"` // ZT overlay address (admin/metrics/DNS bind)
+	DNSFilter   bool           `koanf:"dns_filter"`
+	DNS         DNSConfig      `koanf:"dns"` // optional rich blocky tuning + custom config
+	Firewall    FirewallConfig `koanf:"firewall"`
+	SSH         SSHConfig      `koanf:"ssh"` // bootstrap target
 }
 
 // DNSConfig is the operator's optional tuning for the exit's blocky resolver.
@@ -438,6 +450,23 @@ func (c ControllerConfig) Validate() error {
 		if n := len(m.Routing.DirectCIDRs); n > routing.MaxDirectCIDRs {
 			errs = append(errs, fmt.Errorf("fleet.masters[%d]: %d direct_cidrs exceeds the max of %d", i, n, routing.MaxDirectCIDRs))
 		}
+		// direct_cidrs are interpolated verbatim into the master's nft NAT ruleset
+		// (`ip daddr != <cidr>` guards) and policy-routing rules; reject any non-CIDR
+		// value so a typo or crafted manifest string cannot inject into the rendered
+		// nft script that runs as root (CRITICAL — mirrors the whitelist's parse).
+		for _, c := range m.Routing.DirectCIDRs {
+			if c = strings.TrimSpace(c); c == "" {
+				continue
+			}
+			if _, err := netip.ParsePrefix(c); err != nil {
+				errs = append(errs, fmt.Errorf("fleet.masters[%d]: direct_cidrs entry %q is not a valid CIDR: %w", i, c, err))
+			}
+		}
+		if m.ClientAWG.AddressPool != "" {
+			if _, err := netip.ParsePrefix(m.ClientAWG.AddressPool); err != nil {
+				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.address_pool %q is not a valid CIDR: %w", i, m.ClientAWG.AddressPool, err))
+			}
+		}
 	}
 	for i, e := range c.Fleet.Exits {
 		if e.Name == "" {
@@ -449,6 +478,25 @@ func (c ControllerConfig) Validate() error {
 		seen[e.Name] = struct{}{}
 		if !domain.EgressMethod(e.Egress).Valid() {
 			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): invalid egress %q", i, e.Name, e.Egress))
+		}
+		// link_mtu is the physical master↔exit path MTU; a link below the IPv6
+		// minimum (1280) can't carry the tunnel reliably, and above 1500 is never a
+		// real Ethernet path. 0 means "assume 1500".
+		if m := e.LinkMTU; m != 0 && (m < wg.MinTunnelMTU || m > wg.DefaultPhysicalMTU) {
+			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): link_mtu %d out of range (0 to assume %d, else %d..%d)",
+				i, e.Name, m, wg.DefaultPhysicalMTU, wg.MinTunnelMTU, wg.DefaultPhysicalMTU))
+		}
+		if m := e.WARPMTU; m != 0 && (m < wg.MinTunnelMTU || m > wg.DefaultPhysicalMTU) {
+			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): warp_mtu %d out of range (0 to compute, else %d..%d)",
+				i, e.Name, m, wg.MinTunnelMTU, wg.DefaultPhysicalMTU))
+		}
+		// address_pool is interpolated verbatim into the exit's nft MASQUERADE rule
+		// (ClientCIDR) and policy-routing scope; reject a non-CIDR value so a typo or
+		// crafted manifest string can never inject into the rendered nft/ip ruleset.
+		if e.AddressPool != "" {
+			if _, err := netip.ParsePrefix(e.AddressPool); err != nil {
+				errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): address_pool %q is not a valid CIDR: %w", i, e.Name, e.AddressPool, err))
+			}
 		}
 	}
 	return errors.Join(errs...)

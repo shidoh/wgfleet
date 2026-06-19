@@ -305,13 +305,20 @@ func RenderRuleset(in RenderInput) (string, error) {
 	// connects but returns nothing. Scoped to the client pool and excluding the WG
 	// interface so only client→egress is translated, never replies back to clients.
 	if in.Role == domain.RoleExit && in.ClientCIDR != "" {
+		// Canonicalize the client pool from its parsed form so a malformed or crafted
+		// ClientCIDR can never inject nft syntax into the rendered ruleset (it is run
+		// as root via `nft -f`). Mirrors splitWhitelist's parse-and-re-emit.
+		pool, err := canonicalPrefix(in.ClientCIDR)
+		if err != nil {
+			return "", fmt.Errorf("netfw render: invalid client CIDR %q: %w", in.ClientCIDR, err)
+		}
 		wg := in.WGInterface
 		if wg == "" {
 			wg = "awg0"
 		}
 		b.WriteString("\n\tchain postrouting {\n")
 		b.WriteString("\t\ttype nat hook postrouting priority srcnat; policy accept;\n")
-		fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q masquerade\n", in.ClientCIDR, wg)
+		fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q masquerade\n", pool, wg)
 		b.WriteString("\t}\n")
 	}
 
@@ -344,6 +351,18 @@ func splitWhitelist(entries []string) ([]string, error) {
 		v4 = append(v4, canonical)
 	}
 	return v4, nil
+}
+
+// canonicalPrefix parses a CIDR string and returns its canonical masked form
+// (e.g. "10.81.0.7/24" → "10.81.0.0/24"). Re-emitting the parsed value — never
+// the raw input — guarantees the rendered nft rule cannot contain injected
+// syntax. Shared by the exit MASQUERADE (ClientCIDR) and the master NAT guards.
+func canonicalPrefix(cidr string) (string, error) {
+	p, err := netip.ParsePrefix(strings.TrimSpace(cidr))
+	if err != nil {
+		return "", err
+	}
+	return p.Masked().String(), nil
 }
 
 // parseWhitelistEntry parses a single whitelist entry as either a bare IP address

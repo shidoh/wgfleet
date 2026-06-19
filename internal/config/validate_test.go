@@ -117,6 +117,48 @@ func TestMgmtCIDRs(t *testing.T) {
 	}
 }
 
+func TestValidateExitLinkMTU(t *testing.T) {
+	for _, ok := range []int{0, 1280, 1400, 1500} {
+		cfg := baseValidController()
+		cfg.Fleet.Exits = []ExitConfig{{Name: "e1", Egress: "warp", LinkMTU: ok}}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("link_mtu %d rejected unexpectedly: %v", ok, err)
+		}
+	}
+	for _, bad := range []int{100, 1279, 1501} {
+		cfg := baseValidController()
+		cfg.Fleet.Exits = []ExitConfig{{Name: "e1", Egress: "warp", LinkMTU: bad}}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "link_mtu") {
+			t.Errorf("link_mtu %d should be rejected, got %v", bad, err)
+		}
+	}
+}
+
+func TestValidateRejectsCIDRInjection(t *testing.T) {
+	// Master direct_cidrs feed the nft NAT `ip daddr != <cidr>` guards (run as root);
+	// a crafted value that would inject nft syntax must be rejected before render.
+	cfg := baseValidController()
+	cfg.Fleet.Masters = []MasterConfig{{Name: "m1", Routing: MasterRouting{DirectCIDRs: []string{"10.0.0.0/8 ; flush ruleset"}}}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "direct_cidrs") {
+		t.Fatalf("expected direct_cidrs CIDR rejection, got %v", err)
+	}
+
+	// Exit address_pool feeds the exit MASQUERADE ClientCIDR — same injection vector.
+	cfg = baseValidController()
+	cfg.Fleet.Exits = []ExitConfig{{Name: "e1", Egress: "warp", AddressPool: "10.81.0.0/24 evil"}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "address_pool") {
+		t.Fatalf("expected address_pool CIDR rejection, got %v", err)
+	}
+
+	// A well-formed CIDR list still passes.
+	cfg = baseValidController()
+	cfg.Fleet.Masters = []MasterConfig{{Name: "m1", Routing: MasterRouting{DirectCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}}}
+	cfg.Fleet.Exits = []ExitConfig{{Name: "e1", Egress: "warp", AddressPool: "10.81.0.0/24"}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid CIDRs rejected: %v", err)
+	}
+}
+
 func TestValidateDirectCIDRsCap(t *testing.T) {
 	over := make([]string, routing.MaxDirectCIDRs+1)
 	for i := range over {

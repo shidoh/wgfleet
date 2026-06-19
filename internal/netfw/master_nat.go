@@ -30,7 +30,16 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 		return "", fmt.Errorf("netfw master NAT: client interface, CIDR and redir addr are required")
 	}
 
-	guards := privateGuards(in.PrivateCIDRs)
+	guards, err := privateGuards(in.PrivateCIDRs)
+	if err != nil {
+		return "", err
+	}
+	// Canonicalize the client pool from its parsed form so a malformed or crafted
+	// ClientCIDR can never inject nft syntax into this root-applied ruleset.
+	clientCIDR, err := canonicalPrefix(in.ClientCIDR)
+	if err != nil {
+		return "", fmt.Errorf("netfw master NAT: invalid client CIDR %q: %w", in.ClientCIDR, err)
+	}
 
 	var b strings.Builder
 	b.WriteString("#!/usr/sbin/nft -f\n")
@@ -62,7 +71,7 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// nets). Pinning a single egress iface (e.g. ens3) silently breaks the overlay
 	// path — DNS dies because blocky sees the un-NAT'd client source and can't
 	// route the reply back (the reference deployment §3.12 masquerades both ens3 and the ZT iface).
-	fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q masquerade\n", in.ClientCIDR, in.ClientInterface)
+	fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q masquerade\n", clientCIDR, in.ClientInterface)
 	b.WriteString("\t}\n")
 
 	b.WriteString("}\n")
@@ -70,15 +79,22 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 }
 
 // privateGuards renders the `ip daddr != <cidr>` guard chain that keeps private
-// destinations out of the DNAT/drop rules.
-func privateGuards(cidrs []string) string {
+// destinations out of the DNAT/drop rules. Each CIDR is parsed and re-emitted in
+// canonical form (never the raw input), so a malformed or crafted direct-CIDR
+// value cannot inject nft syntax into this root-applied ruleset (CRITICAL —
+// these come from the operator manifest's direct_cidrs + derived mgmt CIDRs).
+func privateGuards(cidrs []string) (string, error) {
 	var b strings.Builder
 	for _, c := range cidrs {
 		c = strings.TrimSpace(c)
 		if c == "" {
 			continue
 		}
-		fmt.Fprintf(&b, " ip daddr != %s", c)
+		canon, err := canonicalPrefix(c)
+		if err != nil {
+			return "", fmt.Errorf("netfw master NAT: invalid private CIDR %q: %w", c, err)
+		}
+		fmt.Fprintf(&b, " ip daddr != %s", canon)
 	}
-	return b.String()
+	return b.String(), nil
 }

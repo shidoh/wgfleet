@@ -460,6 +460,54 @@ func TestWARPMTUOverrideLowersClientMTU(t *testing.T) {
 	}
 }
 
+func TestExitLinkMTULowersTunnelAndClientMTU(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	fleet := testFleet()
+	// The exit sits on a narrow path (master→exit ping caps near 1400); pin link_mtu
+	// so the master↔exit AmneziaWG carrier packets fit instead of black-holing (the
+	// "tunnel up but intermittently hangs" symptom, an earlier finding).
+	fleet.Exits[0].LinkMTU = 1400
+	b := New(st, fleet, log)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+	const wantTunnel = 1400 - 140 // one AmneziaWG layer over the 1400 link
+
+	// Exit awg0 server MTU drops to the link-derived tunnel MTU.
+	exitSpec, err := b.RenderNodeSpec(ctx, "exit-de-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exitSpec.WGServer.MTU != wantTunnel {
+		t.Errorf("exit server MTU = %d, want %d (1400 link - 140 AWG)", exitSpec.WGServer.MTU, wantTunnel)
+	}
+
+	masterSpec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The master's mihomo proxy for this exit must match the exit's server MTU — both
+	// ends of the master↔exit tunnel derive from the same link_mtu.
+	if len(masterSpec.Master.ExitTunnels) == 0 {
+		t.Fatal("master should have one exit tunnel")
+	}
+	if got := masterSpec.Master.ExitTunnels[0].MTU; got != wantTunnel {
+		t.Errorf("master↔exit proxy MTU = %d, want %d (must match exit server)", got, wantTunnel)
+	}
+	// The client interface drops to the narrowest hop so a full client packet never
+	// exceeds what the master↔exit tunnel carries (sequential model, ADR-0014).
+	if masterSpec.WGServer.MTU != wantTunnel {
+		t.Errorf("client MTU = %d, want %d (bound by the narrow exit link)", masterSpec.WGServer.MTU, wantTunnel)
+	}
+}
+
 func TestRenderExitSpecEgressChain(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {

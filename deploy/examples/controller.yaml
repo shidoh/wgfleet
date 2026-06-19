@@ -124,6 +124,7 @@ fleet:
       egress: warp # warp | direct (preferred)
       # egress_fallback: [direct] # censorship-adaptive failover (ADR-0017): when warp is blocked (ISP/DPI), the agent auto-switches to direct and back when warp recovers. Empty/unset = no failover. Exposes the node's datacenter IP while failed over.
       # warp_mtu: 1400 # pin the WARP interface MTU when the real path is < 1500 (an earlier finding: 1320-1420); 0/unset = computed 1440. Also lowers the client MTU so packets never fragment at egress.
+      # link_mtu: 1400 # physical/path MTU of the MASTER↔EXIT link when it is < 1500 (a DC overlay, PPPoE, narrow transit). Measure from the master: `ping -M do -s N <exit-ip>` — path MTU = largest passing N + 28. Lowers BOTH ends of this exit's master↔exit tunnel AND the client MTU so the AmneziaWG carrier packets fit instead of black-holing (the "tunnel up but intermittently hangs" symptom). 0/unset = assume 1500.
       # public_ip: 198.51.100.7 # WG endpoint the master dials this exit at; defaults to ssh.host. Set explicitly when SSH goes via a bastion or a forwarded local port (e.g. Lima).
       address_pool: 10.81.0.0/24
       mgmt_addr: 10.20.0.5 # ZT overlay address (admin/metrics/DNS bind)

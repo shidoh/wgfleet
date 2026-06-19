@@ -32,6 +32,46 @@ func TestRenderMasterNAT(t *testing.T) {
 	}
 }
 
+func TestRenderMasterNATRejectsCIDRInjection(t *testing.T) {
+	// A crafted direct-CIDR value must never reach the rendered nft script verbatim:
+	// it is parsed and re-emitted canonically, so injection attempts fail the render.
+	if _, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+		PrivateCIDRs:    []string{"10.0.0.0/8 ; flush ruleset"},
+	}); err == nil {
+		t.Fatal("expected error for nft-injecting private CIDR")
+	}
+	// A bad client CIDR is likewise rejected.
+	if _, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "not-a-cidr",
+		RedirAddr:       "10.80.0.1:7895",
+	}); err == nil {
+		t.Fatal("expected error for malformed client CIDR")
+	}
+}
+
+func TestRenderMasterNATCanonicalizesCIDRs(t *testing.T) {
+	// A host-bit-dirty CIDR is masked to its canonical network form in the output.
+	out, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.7/24", // host bits set
+		RedirAddr:       "10.80.0.1:7895",
+		PrivateCIDRs:    []string{"10.1.2.3/8"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "ip saddr 10.80.0.0/24") {
+		t.Errorf("client CIDR not canonicalized to 10.80.0.0/24:\n%s", out)
+	}
+	if !strings.Contains(out, "ip daddr != 10.0.0.0/8") {
+		t.Errorf("private CIDR not canonicalized to 10.0.0.0/8:\n%s", out)
+	}
+}
+
 func TestRenderMasterNATRequiresFields(t *testing.T) {
 	if _, err := RenderMasterNAT(MasterNATInput{ClientInterface: "wg0"}); err == nil {
 		t.Fatal("expected error for missing CIDR/redir")

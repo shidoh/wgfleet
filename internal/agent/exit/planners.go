@@ -385,6 +385,12 @@ func (p warpPlanner) isUp() bool {
 
 // --- policy routing ---
 
+// directEgressMarker is the routing state-file content for a direct-egress exit.
+// It is deliberately a comment line that can never appear in a routing Script
+// (which holds ip rule/route/conntrack/sysctl commands), so the WARP↔direct
+// transition is always a content change the FileAction gate detects.
+const directEgressMarker = "# direct egress: no policy routing\n"
+
 type routingPlanner struct {
 	statePath string
 	// applied reports whether the live kernel still reflects the routing intent.
@@ -405,9 +411,25 @@ func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 		return nil, err
 	}
 	if len(steps) == 0 {
-		return []reconcile.Action{
-			reconcile.NoChangeAction("policy routing", "direct egress, no policy routing"),
-		}, nil
+		// Direct egress runs no policy routing — but if the state file currently holds
+		// a WARP ruleset, the active egress just switched WARP→direct (a censorship
+		// failover, ADR-0017). routing.Render can't see that transition (it sees only
+		// the new direct intent and returns nothing), so flush conntrack here: flows
+		// pinned to the now-dead WARP path must re-resolve at once instead of black-
+		// holing for up to the conntrack timeout. The state-file marker
+		// makes it a one-shot — it fires only the pass the intent actually changes.
+		file, err := reconcile.FileAction(p.statePath, []byte(directEgressMarker), 0o644, nil)
+		if err != nil {
+			return nil, err
+		}
+		actions := []reconcile.Action{file}
+		if file.Changes() {
+			actions = append(actions, reconcile.BestEffortExecAction(
+				"flush conntrack on egress switch to direct", "conntrack", "-D"))
+		} else {
+			actions = append(actions, reconcile.NoChangeAction("policy routing", "direct egress, no policy routing"))
+		}
+		return actions, nil
 	}
 
 	// Gate the routing commands on a state file describing the desired intent.

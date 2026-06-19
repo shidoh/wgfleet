@@ -394,6 +394,48 @@ func TestRoutingIdempotentAfterApply(t *testing.T) {
 	}
 }
 
+func TestRoutingFlushesConntrackOnSwitchToDirect(t *testing.T) {
+	paths := testPaths(t)
+	warp, _ := exitSpec(t) // WARP egress + routing intent
+
+	// Record the WARP routing intent so the state file holds the WARP ruleset.
+	eng := reconcile.NewEngine(nil, routingPlanner{statePath: paths.RoutingState})
+	_, _ = eng.Reconcile(context.Background(), warp, reconcile.ModeApply)
+
+	// Failover WARP→direct: routing.Render yields no steps, but the transition must
+	// flush conntrack once so flows pinned to the now-dead WARP path re-resolve
+	// immediately instead of black-holing for the conntrack timeout (an earlier finding, M-3).
+	direct := warp
+	direct.Egress = domain.EgressDirect
+	direct.Routing.EgressInterface = ""
+	actions, err := routingPlanner{statePath: paths.RoutingState}.Plan(context.Background(), direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawConntrack bool
+	for _, a := range actions {
+		if strings.Contains(a.Summary, "conntrack") {
+			sawConntrack = true
+		}
+	}
+	if !sawConntrack {
+		t.Error("WARP→direct transition must flush conntrack once")
+	}
+
+	// Persist the direct marker, then a steady direct pass must NOT re-flush.
+	eng2 := reconcile.NewEngine(nil, routingPlanner{statePath: paths.RoutingState})
+	_, _ = eng2.Reconcile(context.Background(), direct, reconcile.ModeApply)
+	steady, err := routingPlanner{statePath: paths.RoutingState}.Plan(context.Background(), direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range steady {
+		if strings.Contains(a.Summary, "conntrack") {
+			t.Error("steady direct egress must not re-flush conntrack (an earlier finding: on change only)")
+		}
+	}
+}
+
 func TestRoutingRepairsLiveKernelDrift(t *testing.T) {
 	paths := testPaths(t)
 	spec, _ := exitSpec(t) // WARP egress + routing intent

@@ -101,8 +101,9 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 
 	// The exit's server carries the master↔exit tunnel. It is AmneziaWG over its
 	// own physical link, so its MTU subtracts one AWG-obfuscated layer (sequential
-	// model, ADR-0014; an earlier finding).
-	serverMTU := wg.FleetTunnelMTU(true, exitAddr.Is6())
+	// model, ADR-0014; an earlier finding). When the operator pins link_mtu (the exit's
+	// real path is below 1500), the tunnel drops accordingly so carrier packets fit.
+	serverMTU := exitTunnelMTU(exit, exitAddr.Is6())
 
 	// AmneziaWG obfuscation for the master↔exit tunnel: derived deterministically
 	// from the tunnel identity so both ends compute the identical shared params
@@ -272,9 +273,11 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			Endpoint:        endpoint,
 			ServerPublicKey: exitPub,
 			TunnelIP:        masterAddr.String(),
-			MTU:             wg.FleetTunnelMTU(true, masterAddr.Is6()),
-			AWG:             &awg,
-			Drained:         exitNode.Drain, // kept as a proxy, out of the LB group
+			// Must match the exit's awg0 server MTU (serverMTU in renderExitSpec); both
+			// derive from this exit's link_mtu so a narrow path lowers both ends.
+			MTU:     exitTunnelMTU(exit, masterAddr.Is6()),
+			AWG:     &awg,
+			Drained: exitNode.Drain, // kept as a proxy, out of the LB group
 		})
 	}
 
@@ -312,18 +315,41 @@ func exitWARPMTU(exit config.ExitConfig) int {
 	return wg.FleetTunnelMTU(false, false)
 }
 
+// exitLinkMTU returns the physical/path MTU of the master↔exit link: the
+// operator-measured link_mtu, or DefaultPhysicalMTU (1500) when unset. The
+// master↔exit AmneziaWG tunnel MTU is this minus one AWG layer (exitTunnelMTU);
+// an exit on a narrow path (link_mtu < 1500) thus gets a smaller tunnel so its
+// carrier packets never black-hole.
+func exitLinkMTU(exit config.ExitConfig) int {
+	if exit.LinkMTU > 0 {
+		return exit.LinkMTU
+	}
+	return wg.DefaultPhysicalMTU
+}
+
+// exitTunnelMTU returns the master↔exit AmneziaWG tunnel MTU for an exit: its
+// physical link MTU minus one AWG-obfuscated WG layer. Both ends of the tunnel
+// (the exit's awg0 server and the master's mihomo proxy) use this same value, and
+// the client interface drops to the smallest of them (clientFacingMTU) so client
+// payloads never exceed what the narrowest exit's link carries.
+func exitTunnelMTU(exit config.ExitConfig, ipv6 bool) int {
+	return wg.TunnelMTU(exitLinkMTU(exit), true, ipv6)
+}
+
 // clientFacingMTU is the MTU the master hands to VPN clients: the minimum across
-// every hop a client payload traverses. The fleet AWG hops bind at 1360; a
-// warp-egress exit that pins a smaller WARP MTU lowers it further so
-// client packets never fragment at that exit's egress. Direct-egress exits carry
-// no WARP constraint and are skipped.
+// every hop a client payload traverses. The client↔master AWG hop binds at 1360;
+// each master↔exit AWG hop may be narrower if that exit's link_mtu is below 1500
+//, and a warp-egress exit that pins a smaller WARP MTU lowers it
+// further. Taking the min keeps client packets from fragmenting at the narrowest
+// downstream hop (sequential model, ADR-0014).
 func (b *Broker) clientFacingMTU() int {
-	mtu := wg.FleetTunnelMTU(true, false) // client↔master AWG hop (== master↔exit)
+	mtu := wg.FleetTunnelMTU(true, false) // client↔master AWG hop
 	for _, exit := range b.fleet.Exits {
-		if domain.EgressMethod(exit.Egress) != domain.EgressWARP {
-			continue
+		// master↔exit AWG hop — this exit's physical link may be narrower than 1500.
+		mtu = wg.MinMTU(mtu, exitTunnelMTU(exit, false))
+		if domain.EgressMethod(exit.Egress) == domain.EgressWARP {
+			mtu = wg.MinMTU(mtu, exitWARPMTU(exit))
 		}
-		mtu = wg.MinMTU(mtu, exitWARPMTU(exit))
 	}
 	return mtu
 }
