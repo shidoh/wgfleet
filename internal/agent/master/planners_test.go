@@ -56,6 +56,61 @@ func masterSpec(t *testing.T) (domain.NodeSpec, string) {
 	return spec, kp.PrivateKey
 }
 
+func TestMihomoRedirPlannerRestartsWhenListenerDown(t *testing.T) {
+	spec, _ := masterSpec(t) // BindAddress 10.80.0.1, RedirPort 7895
+	pl := mihomoRedirPlanner{
+		compose:   "/etc/mihomo/docker-compose.yml",
+		listening: func(string) bool { return false }, // mihomo lost its redir bind
+		localUp:   func(string) bool { return true },  // but wg0/10.80.0.1 is up
+	}
+	acts, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(acts) != 1 || acts[0].Kind != reconcile.ActionUpdate {
+		t.Fatalf("want one update (restart) action, got %+v", acts)
+	}
+	if !strings.Contains(acts[0].Display, "restart mihomo") {
+		t.Fatalf("expected a restart command, got display %q", acts[0].Display)
+	}
+}
+
+func TestMihomoRedirPlannerNoOpWhenListening(t *testing.T) {
+	spec, _ := masterSpec(t)
+	pl := mihomoRedirPlanner{
+		listening: func(string) bool { return true },
+		localUp:   func(string) bool { return true },
+	}
+	acts, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(acts) != 1 || acts[0].Kind != reconcile.ActionNoChange {
+		t.Fatalf("want no-change when the listener is up, got %+v", acts)
+	}
+}
+
+// While the bind address is not yet up locally (wg0/wg-easy down or mid-recreate)
+// the planner must defer — never probe, never restart — so it cannot thrash mihomo.
+func TestMihomoRedirPlannerDefersWhenBindAddrDown(t *testing.T) {
+	spec, _ := masterSpec(t)
+	probed := false
+	pl := mihomoRedirPlanner{
+		listening: func(string) bool { probed = true; return false },
+		localUp:   func(string) bool { return false },
+	}
+	acts, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(acts) != 1 || acts[0].Kind != reconcile.ActionNoChange {
+		t.Fatalf("want deferred no-change when bind addr not local, got %+v", acts)
+	}
+	if probed {
+		t.Fatal("must not probe the listener before the bind address is up locally")
+	}
+}
+
 func TestMasterPlanModeWritesNothing(t *testing.T) {
 	paths := testPaths(t)
 	spec, priv := masterSpec(t)

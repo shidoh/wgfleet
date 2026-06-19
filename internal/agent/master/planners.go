@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/agent/tuning"
@@ -72,6 +76,11 @@ func Planners(in Input) []reconcile.Planner {
 		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey},
 		masterNATPlanner{path: in.Paths.NFT, clientIface: in.ClientInterface},
 		masterForwardPlanner{clientIface: in.ClientInterface},
+		// Last: ensure mihomo's redirect listener is actually bound. It runs after the
+		// stack is up and wg0 exists, and self-heals the case where mihomo silently
+		// lost its redir bind (the client iface was recreated under it, e.g. a wg-easy
+		// restart flapped the bind address) — DNAT'd client TCP black-holes otherwise.
+		mihomoRedirPlanner{compose: in.Paths.Compose},
 	}
 }
 
@@ -404,6 +413,114 @@ func orPlaceholder(s, placeholder string) string {
 		return placeholder
 	}
 	return s
+}
+
+// --- mihomo redirect-listener self-heal ---
+
+// mihomoRedirPlanner verifies that mihomo is actually listening on its transparent
+// redirect port (<BindAddress>:<RedirPort>) — the target masterNATPlanner DNATs all
+// client TCP to. mihomo binds that listener to the client gateway IP (e.g.
+// 10.73.0.1, the wg0 address); if the client interface is recreated under a running
+// mihomo (a wg-easy restart flaps the address), mihomo silently loses the bind and
+// does NOT re-bind on its own. The container still reports "up" and its config is
+// unchanged, so neither composePlanner nor mihomoPlanner notices — but every DNAT'd
+// client TCP connection now black-holes (pings and the WG handshake keep working,
+// which makes it look healthy). When the listener is down we restart mihomo to
+// rebind. Guarded by a local-address check so we never thrash while wg0 itself is
+// still down (the wg-easy/compose planners bring it back first).
+type mihomoRedirPlanner struct {
+	compose string
+	// listening reports whether something accepts TCP at addr; nil ⇒ a real dial.
+	listening func(addr string) bool
+	// localUp reports whether host is assigned to a local interface; nil ⇒ real check.
+	localUp func(host string) bool
+}
+
+func (mihomoRedirPlanner) Component() string { return "mihomo redirect listener" }
+
+func (p mihomoRedirPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
+	if spec.Master == nil {
+		return nil, fmt.Errorf("mihomo redir: node has no master spec")
+	}
+	bindHost := strings.TrimSpace(spec.Master.BindAddress)
+	if bindHost == "" {
+		return []reconcile.Action{reconcile.NoChangeAction("mihomo redirect listener",
+			"no bind address in spec")}, nil
+	}
+	redir := mihomo.DefaultRedirPort
+	if spec.Master.RedirPort != 0 {
+		redir = spec.Master.RedirPort
+	}
+	addr := net.JoinHostPort(bindHost, strconv.Itoa(redir))
+
+	localUp := p.localUp
+	if localUp == nil {
+		localUp = localAddrPresent
+	}
+	// If the bind address isn't up on a local interface yet (wg0/wg-easy down or
+	// mid-recreate), restarting mihomo can't bind it and would loop — defer to the
+	// wg-easy/compose planners and re-check next pass.
+	if !localUp(bindHost) {
+		return []reconcile.Action{reconcile.NoChangeAction("mihomo redirect listener",
+			"deferred: bind address "+bindHost+" not up locally yet")}, nil
+	}
+
+	listening := p.listening
+	if listening == nil {
+		listening = tcpListening
+	}
+	if listening(addr) {
+		return []reconcile.Action{reconcile.NoChangeAction("mihomo redirect listener",
+			"listening on "+addr)}, nil
+	}
+
+	compose := p.compose
+	restart := reconcile.CustomAction(reconcile.ActionUpdate, "mihomo redirect listener",
+		"redir listener down on "+addr+" — restart mihomo to rebind",
+		"docker compose -f "+compose+" restart mihomo",
+		func(ctx context.Context) error {
+			c := exec.CommandContext(ctx, "docker", "compose", "-f", compose, "restart", "mihomo")
+			if out, err := c.CombinedOutput(); err != nil {
+				return fmt.Errorf("restart mihomo: %w: %s", err, strings.TrimSpace(string(out)))
+			}
+			return nil
+		})
+	return []reconcile.Action{restart}, nil
+}
+
+// tcpListening reports whether something accepts a TCP connection at addr within a
+// short timeout. A successful connect (even if immediately closed) proves the
+// listener is bound; connection-refused / no-route means it is not.
+func tcpListening(addr string) bool {
+	c, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	_ = c.Close()
+	return true
+}
+
+// localAddrPresent reports whether host is currently assigned to a local interface.
+func localAddrPresent(host string) bool {
+	target, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	target = target.Unmap()
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, a := range addrs {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		if got, ok := netip.AddrFromSlice(ipnet.IP); ok && got.Unmap() == target {
+			return true
+		}
+	}
+	return false
 }
 
 // --- operator extra files (CustomConfig.Files) ---
