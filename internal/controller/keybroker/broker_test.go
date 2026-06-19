@@ -508,6 +508,88 @@ func TestExitLinkMTULowersTunnelAndClientMTU(t *testing.T) {
 	}
 }
 
+func TestExitSpecThroughputFields(t *testing.T) {
+	ctx := context.Background()
+	b, st := newBroker(t)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(ctx, "exit-de-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Default fleet floor (250 KB/s) is rendered as bytes/sec into the spec.
+	if want := config.DefaultMinEgressThroughputKBytes * 1024; spec.EgressThroughputMinBps != want {
+		t.Errorf("EgressThroughputMinBps = %d, want %d", spec.EgressThroughputMinBps, want)
+	}
+}
+
+func recordThroughputDegraded(t *testing.T, st store.Store, id string, ok bool) {
+	t.Helper()
+	if err := st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: id, State: domain.StateReady,
+		Checks: []domain.HealthCheck{{Name: domain.CheckEgressThroughput, OK: ok, Detail: "test"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func tunnelByName(tunnels []domain.ExitTunnel, name string) (domain.ExitTunnel, bool) {
+	for _, x := range tunnels {
+		if x.Name == name {
+			return x, true
+		}
+	}
+	return domain.ExitTunnel{}, false
+}
+
+func TestAutoSuspendThroughputDegraded(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	fleet := testFleet()
+	fleet.Exits = append(fleet.Exits, config.ExitConfig{Name: "exit-de-2", Egress: "warp", AddressPool: "10.82.0.0/24"})
+	b := New(st, fleet, log)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+	seedNode(t, st, "exit-de-2", "10.20.0.6", "198.51.100.8", "bGm5lqV2yYt8m6Dl0sFhT4xQ0r9p7zX1cV2bN3mK4U=", domain.RoleExit)
+
+	// exit-de-2 reports throughput-degraded; exit-de-1 is healthy.
+	recordThroughputDegraded(t, st, "exit-de-1", true)
+	recordThroughputDegraded(t, st, "exit-de-2", false)
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t1, _ := tunnelByName(spec.Master.ExitTunnels, "exit-de-1")
+	t2, _ := tunnelByName(spec.Master.ExitTunnels, "exit-de-2")
+	if t1.Drained {
+		t.Error("healthy exit-de-1 must stay in the LB group")
+	}
+	if !t2.Drained {
+		t.Error("throughput-degraded exit-de-2 must be auto-suspended from the LB group")
+	}
+
+	// Last-exit guard: if BOTH exits are degraded, neither is suspended (a throttled
+	// exit beats a black hole).
+	recordThroughputDegraded(t, st, "exit-de-1", false)
+	spec, err = b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, x := range spec.Master.ExitTunnels {
+		if x.Drained {
+			t.Errorf("all-degraded: %s must NOT be auto-suspended (last-exit guard)", x.Name)
+		}
+	}
+}
+
 func TestRenderExitSpecEgressChain(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {

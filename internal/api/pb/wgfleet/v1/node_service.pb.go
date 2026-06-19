@@ -454,21 +454,23 @@ func (x *ReportStatusAck) GetReceived() uint32 {
 }
 
 type NodeSpec struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Role          string                 `protobuf:"bytes,1,opt,name=role,proto3" json:"role,omitempty"`
-	Egress        string                 `protobuf:"bytes,2,opt,name=egress,proto3" json:"egress,omitempty"`
-	WgServer      *WGServerSpec          `protobuf:"bytes,3,opt,name=wg_server,json=wgServer,proto3" json:"wg_server,omitempty"`
-	Peers         []*PeerSpec            `protobuf:"bytes,4,rep,name=peers,proto3" json:"peers,omitempty"`
-	Dns           *DNSFilterSpec         `protobuf:"bytes,5,opt,name=dns,proto3" json:"dns,omitempty"`
-	Firewall      *FirewallSpec          `protobuf:"bytes,6,opt,name=firewall,proto3" json:"firewall,omitempty"`
-	Routing       *RoutingSpec           `protobuf:"bytes,7,opt,name=routing,proto3" json:"routing,omitempty"`
-	Exporters     *ExportersSpec         `protobuf:"bytes,8,opt,name=exporters,proto3" json:"exporters,omitempty"`
-	Master        *MasterSpec            `protobuf:"bytes,9,opt,name=master,proto3" json:"master,omitempty"`                               // master nodes only (mihomo data plane); unset for exits
-	Decommission  bool                   `protobuf:"varint,10,opt,name=decommission,proto3" json:"decommission,omitempty"`                 // tear the node down (reverse reconcile) instead of converging
-	WarpMtu       int32                  `protobuf:"varint,11,opt,name=warp_mtu,json=warpMtu,proto3" json:"warp_mtu,omitempty"`            // exit warp egress: WARP interface MTU; 0 = compute (1440), set when the real WARP path is smaller (an earlier finding: 1320-1420)
-	EgressChain   []string               `protobuf:"bytes,12,rep,name=egress_chain,json=egressChain,proto3" json:"egress_chain,omitempty"` // egress priority chain for censorship-adaptive failover (ADR-0017); [0] = preferred (== egress), later = fallbacks; empty ⇒ no failover
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                    protoimpl.MessageState `protogen:"open.v1"`
+	Role                     string                 `protobuf:"bytes,1,opt,name=role,proto3" json:"role,omitempty"`
+	Egress                   string                 `protobuf:"bytes,2,opt,name=egress,proto3" json:"egress,omitempty"`
+	WgServer                 *WGServerSpec          `protobuf:"bytes,3,opt,name=wg_server,json=wgServer,proto3" json:"wg_server,omitempty"`
+	Peers                    []*PeerSpec            `protobuf:"bytes,4,rep,name=peers,proto3" json:"peers,omitempty"`
+	Dns                      *DNSFilterSpec         `protobuf:"bytes,5,opt,name=dns,proto3" json:"dns,omitempty"`
+	Firewall                 *FirewallSpec          `protobuf:"bytes,6,opt,name=firewall,proto3" json:"firewall,omitempty"`
+	Routing                  *RoutingSpec           `protobuf:"bytes,7,opt,name=routing,proto3" json:"routing,omitempty"`
+	Exporters                *ExportersSpec         `protobuf:"bytes,8,opt,name=exporters,proto3" json:"exporters,omitempty"`
+	Master                   *MasterSpec            `protobuf:"bytes,9,opt,name=master,proto3" json:"master,omitempty"`                                                                          // master nodes only (mihomo data plane); unset for exits
+	Decommission             bool                   `protobuf:"varint,10,opt,name=decommission,proto3" json:"decommission,omitempty"`                                                            // tear the node down (reverse reconcile) instead of converging
+	WarpMtu                  int32                  `protobuf:"varint,11,opt,name=warp_mtu,json=warpMtu,proto3" json:"warp_mtu,omitempty"`                                                       // exit warp egress: WARP interface MTU; 0 = compute (1440), set when the real WARP path is smaller (an earlier finding: 1320-1420)
+	EgressChain              []string               `protobuf:"bytes,12,rep,name=egress_chain,json=egressChain,proto3" json:"egress_chain,omitempty"`                                            // egress priority chain for censorship-adaptive failover (ADR-0017); [0] = preferred (== egress), later = fallbacks; empty ⇒ no failover
+	EgressThroughputMinBps   int32                  `protobuf:"varint,13,opt,name=egress_throughput_min_bps,json=egressThroughputMinBps,proto3" json:"egress_throughput_min_bps,omitempty"`      // exit egress throughput floor in bytes/sec; 0 = watchdog disabled (ADR-0021)
+	EgressThroughputProbeUrl string                 `protobuf:"bytes,14,opt,name=egress_throughput_probe_url,json=egressThroughputProbeUrl,proto3" json:"egress_throughput_probe_url,omitempty"` // URL the throughput watchdog downloads through the active egress; empty = agent default
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *NodeSpec) Reset() {
@@ -583,6 +585,20 @@ func (x *NodeSpec) GetEgressChain() []string {
 		return x.EgressChain
 	}
 	return nil
+}
+
+func (x *NodeSpec) GetEgressThroughputMinBps() int32 {
+	if x != nil {
+		return x.EgressThroughputMinBps
+	}
+	return 0
+}
+
+func (x *NodeSpec) GetEgressThroughputProbeUrl() string {
+	if x != nil {
+		return x.EgressThroughputProbeUrl
+	}
+	return ""
 }
 
 // MasterSpec is the master node's mihomo data plane.
@@ -1964,7 +1980,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\n" +
 	"latency_ms\x18\x04 \x01(\x03R\tlatencyMs\"-\n" +
 	"\x0fReportStatusAck\x12\x1a\n" +
-	"\breceived\x18\x01 \x01(\rR\breceived\"\xfa\x03\n" +
+	"\breceived\x18\x01 \x01(\rR\breceived\"\xf4\x04\n" +
 	"\bNodeSpec\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12\x16\n" +
 	"\x06egress\x18\x02 \x01(\tR\x06egress\x125\n" +
@@ -1978,7 +1994,9 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\fdecommission\x18\n" +
 	" \x01(\bR\fdecommission\x12\x19\n" +
 	"\bwarp_mtu\x18\v \x01(\x05R\awarpMtu\x12!\n" +
-	"\fegress_chain\x18\f \x03(\tR\vegressChain\"\xa0\x04\n" +
+	"\fegress_chain\x18\f \x03(\tR\vegressChain\x129\n" +
+	"\x19egress_throughput_min_bps\x18\r \x01(\x05R\x16egressThroughputMinBps\x12=\n" +
+	"\x1begress_throughput_probe_url\x18\x0e \x01(\tR\x18egressThroughputProbeUrl\"\xa0\x04\n" +
 	"\n" +
 	"MasterSpec\x12!\n" +
 	"\fbind_address\x18\x01 \x01(\tR\vbindAddress\x12\x1d\n" +

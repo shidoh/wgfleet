@@ -60,7 +60,11 @@ func TestNodeSpecRoundTrip(t *testing.T) {
 			MasterIP:        "203.0.113.1",
 			FwMark:          0x1,
 		},
-		Exporters: domain.ExportersSpec{Node: true, WG: true, WARP: true},
+		Exporters:                domain.ExportersSpec{Node: true, WG: true, WARP: true},
+		WARPMTU:                  1380,
+		EgressChain:              []domain.EgressMethod{domain.EgressWARP, domain.EgressDirect},
+		EgressThroughputMinBps:   256000,
+		EgressThroughputProbeURL: "https://speed.cloudflare.com/__down?bytes=262144",
 	}
 
 	got := SpecFromProto(SpecToProto(spec))

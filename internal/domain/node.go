@@ -137,6 +137,20 @@ func (s NodeStatus) EgressBlocked() bool {
 	return false
 }
 
+// EgressThroughputDegraded reports whether the agent classified this node's active
+// egress as throughput-degraded (the egress-throughput self-check is present and
+// failing, ADR-0021). The keybroker reads this to auto-suspend the exit from the
+// master LB group. False when the check is absent (watchdog disabled / not yet
+// reported), so a node never auto-suspends on missing data.
+func (s NodeStatus) EgressThroughputDegraded() bool {
+	for _, c := range s.Checks {
+		if c.Name == CheckEgressThroughput {
+			return !c.OK
+		}
+	}
+	return false
+}
+
 // ActiveEgress returns the egress method the agent currently has active (from the
 // egress-active self-check, ADR-0017), or "" when not reported. It differs from
 // the preferred egress while the node is failed over.

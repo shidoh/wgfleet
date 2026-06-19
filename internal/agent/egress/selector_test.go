@@ -28,15 +28,15 @@ func TestSelectorDemotesOnBlock(t *testing.T) {
 	var s Selector
 
 	// ok keeps warp.
-	if got := s.Step(ctx, warpDirect, domain.EgressReachOK, recoverer(false)); got != domain.EgressWARP {
+	if got := s.Step(ctx, warpDirect, domain.EgressReachOK, false, recoverer(false)); got != domain.EgressWARP {
 		t.Fatalf("ok must stay on warp, got %q", got)
 	}
 	// degraded keeps warp (transient).
-	if got := s.Step(ctx, warpDirect, domain.EgressReachDegraded, recoverer(false)); got != domain.EgressWARP {
+	if got := s.Step(ctx, warpDirect, domain.EgressReachDegraded, false, recoverer(false)); got != domain.EgressWARP {
 		t.Fatalf("degraded must stay on warp, got %q", got)
 	}
 	// blocked demotes to direct.
-	if got := s.Step(ctx, warpDirect, domain.EgressReachBlocked, recoverer(false)); got != domain.EgressDirect {
+	if got := s.Step(ctx, warpDirect, domain.EgressReachBlocked, false, recoverer(false)); got != domain.EgressDirect {
 		t.Fatalf("blocked must demote to direct, got %q", got)
 	}
 	if got := s.Active(warpDirect); got != domain.EgressDirect {
@@ -48,8 +48,25 @@ func TestSelectorNoFallbackStaysPut(t *testing.T) {
 	ctx := context.Background()
 	var s Selector
 	chain := []domain.EgressMethod{domain.EgressWARP} // no fallback
-	if got := s.Step(ctx, chain, domain.EgressReachBlocked, recoverer(false)); got != domain.EgressWARP {
+	if got := s.Step(ctx, chain, domain.EgressReachBlocked, false, recoverer(false)); got != domain.EgressWARP {
 		t.Errorf("blocked with no fallback must stay on warp, got %q", got)
+	}
+}
+
+func TestSelectorDemotesOnThroughputCollapse(t *testing.T) {
+	ctx := context.Background()
+	var s Selector
+	// Reachability is fine (ok), but throughput collapsed ⇒ demote to the fallback
+	// anyway — a fast direct path beats a throttled WARP (ADR-0021, the exit-3 case).
+	if got := s.Step(ctx, warpDirect, domain.EgressReachOK, true, recoverer(false)); got != domain.EgressDirect {
+		t.Fatalf("throughput collapse must demote to direct, got %q", got)
+	}
+	// With no fallback, a throughput collapse keeps the exit put (controller
+	// auto-suspends it from the LB instead).
+	var s2 Selector
+	chain := []domain.EgressMethod{domain.EgressWARP}
+	if got := s2.Step(ctx, chain, domain.EgressReachOK, true, recoverer(false)); got != domain.EgressWARP {
+		t.Errorf("throughput collapse with no fallback must stay put, got %q", got)
 	}
 }
 
@@ -57,14 +74,14 @@ func TestSelectorPromotesAfterSustainedRecovery(t *testing.T) {
 	ctx := context.Background()
 	s := Selector{RecoverPasses: 2}
 	// Demote first.
-	s.Step(ctx, warpDirect, domain.EgressReachBlocked, recoverer(false))
+	s.Step(ctx, warpDirect, domain.EgressReachBlocked, false, recoverer(false))
 
 	// One recovery success is not enough (needs 2 consecutive).
-	if got := s.Step(ctx, warpDirect, "", recoverer(true)); got != domain.EgressDirect {
+	if got := s.Step(ctx, warpDirect, "", false, recoverer(true)); got != domain.EgressDirect {
 		t.Fatalf("single recovery must not promote yet, got %q", got)
 	}
 	// Second consecutive success promotes back to warp.
-	if got := s.Step(ctx, warpDirect, "", recoverer(true)); got != domain.EgressWARP {
+	if got := s.Step(ctx, warpDirect, "", false, recoverer(true)); got != domain.EgressWARP {
 		t.Fatalf("sustained recovery must promote to warp, got %q", got)
 	}
 }
@@ -72,14 +89,14 @@ func TestSelectorPromotesAfterSustainedRecovery(t *testing.T) {
 func TestSelectorRecoveryStreakResetsOnFailure(t *testing.T) {
 	ctx := context.Background()
 	s := Selector{RecoverPasses: 2}
-	s.Step(ctx, warpDirect, domain.EgressReachBlocked, recoverer(false)) // → direct
+	s.Step(ctx, warpDirect, domain.EgressReachBlocked, false, recoverer(false)) // → direct
 
-	s.Step(ctx, warpDirect, "", recoverer(true))  // 1 success
-	s.Step(ctx, warpDirect, "", recoverer(false)) // resets streak
-	if got := s.Step(ctx, warpDirect, "", recoverer(true)); got != domain.EgressDirect {
+	s.Step(ctx, warpDirect, "", false, recoverer(true))  // 1 success
+	s.Step(ctx, warpDirect, "", false, recoverer(false)) // resets streak
+	if got := s.Step(ctx, warpDirect, "", false, recoverer(true)); got != domain.EgressDirect {
 		t.Fatalf("streak should have reset; one success must not promote, got %q", got)
 	}
-	if got := s.Step(ctx, warpDirect, "", recoverer(true)); got != domain.EgressWARP {
+	if got := s.Step(ctx, warpDirect, "", false, recoverer(true)); got != domain.EgressWARP {
 		t.Fatalf("two fresh consecutive successes must promote, got %q", got)
 	}
 }

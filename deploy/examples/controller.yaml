@@ -49,6 +49,19 @@ fleet:
   # overlay MTU. The clamp only lowers an MSS, so it is a no-op when the MTU is already
   # correct. The real fix is still a correct ZeroTier MTU; this just survives a reset.
   mgmt_overlay_mss: 1240
+  # min_egress_throughput_kbytes: egress throughput floor in KB/s (ADR-0021). mihomo's
+  # url-test is latency-only and cannot see a throttled exit (a node with 88ms latency
+  # but 25 KB/s gets rated BEST and parked on). Each exit measures real throughput; a
+  # sustained collapse fails over to a fallback egress (if configured) and/or the
+  # controller auto-suspends the exit from the LB (never the last healthy one). A
+  # healthy WARP exit does tens of MB/s, so 250 separates broken nodes with huge margin.
+  # Unset ⇒ 250 (watchdog ON). Set NEGATIVE to disable fleet-wide. Per-exit override
+  # below. Tune up/down freely; it is just a floor.
+  min_egress_throughput_kbytes: 250
+  # egress_throughput_probe_url: what each exit downloads (through its active egress) to
+  # measure throughput. Default is a ~256 KiB Cloudflare speed object. Override for a
+  # stricter, non-Cloudflare target.
+  # egress_throughput_probe_url: "https://speed.cloudflare.com/__down?bytes=262144"
   masters:
     - name: master-xa-1
       mgmt_addr: 10.20.25.254 # ZT overlay address
@@ -122,9 +135,10 @@ fleet:
     - name: exit-de-1
       region: de
       egress: warp # warp | direct (preferred)
-      # egress_fallback: [direct] # censorship-adaptive failover (ADR-0017): when warp is blocked (ISP/DPI), the agent auto-switches to direct and back when warp recovers. Empty/unset = no failover. Exposes the node's datacenter IP while failed over.
+      # egress_fallback: deliberately NOT set. ADR-0017 would auto-switch warp→direct when WARP is blocked/throttled, but DIRECT egress exits under the node's datacenter IP (exposes the server). With no fallback, a blocked/throttled exit is instead auto-suspended from the LB (ADR-0021) — it stops carrying client traffic without ever revealing its IP. Only set egress_fallback once you have a non-exposing fallback transport (e.g. Reality, wishlist).
       # warp_mtu: 1400 # pin the WARP interface MTU when the real path is < 1500 (an earlier finding: 1320-1420); 0/unset = computed 1440. Also lowers the client MTU so packets never fragment at egress.
       # link_mtu: 1400 # physical/path MTU of the MASTER↔EXIT link when it is < 1500 (a DC overlay, PPPoE, narrow transit). Measure from the master: `ping -M do -s N <exit-ip>` — path MTU = largest passing N + 28. Lowers BOTH ends of this exit's master↔exit tunnel AND the client MTU so the AmneziaWG carrier packets fit instead of black-holing (the "tunnel up but intermittently hangs" symptom). 0/unset = assume 1500.
+      # min_egress_throughput_kbytes: 250 # per-exit override of the fleet egress throughput floor (ADR-0021). >0 custom floor, 0 inherit the fleet default, NEGATIVE disables the watchdog for this exit (e.g. a deliberately low-bandwidth node).
       # public_ip: 198.51.100.7 # WG endpoint the master dials this exit at; defaults to ssh.host. Set explicitly when SSH goes via a bastion or a forwarded local port (e.g. Lima).
       address_pool: 10.81.0.0/24
       mgmt_addr: 10.20.0.5 # ZT overlay address (admin/metrics/DNS bind)

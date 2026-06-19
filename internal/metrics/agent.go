@@ -20,6 +20,7 @@ type AgentMetrics struct {
 	driftResources    prometheus.Gauge       // components repaired in the last pass
 	egressReach       *prometheus.GaugeVec   // info: current egress reachability as a label
 	egressActive      *prometheus.GaugeVec   // info: currently active egress method as a label
+	egressThroughput  prometheus.Gauge       // last measured egress throughput, bytes/sec
 	startTime         prometheus.Gauge
 
 	node string
@@ -64,6 +65,10 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Namespace: namespace, Subsystem: "agent", Name: "egress_active",
 			Help: "Currently active egress method as a label (warp|direct|...); value is always 1. Differs from the preferred egress while failed over (ADR-0017).",
 		}, []string{"method"}),
+		egressThroughput: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "egress_throughput_bytes",
+			Help: "Last measured egress throughput in bytes/sec (ADR-0021). A sustained collapse below the configured floor auto-suspends the exit from the LB.",
+		}),
 		startTime: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "start_time_seconds",
 			Help: "Unix time the agent process started.",
@@ -71,7 +76,7 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 	}
 	m.startTime.Set(float64(now.Unix()))
 	reg.MustRegister(m.reconcileTotal, m.reconcileDuration, m.stateInfo, m.checkUp,
-		m.driftTotal, m.driftResources, m.egressReach, m.egressActive, m.startTime)
+		m.driftTotal, m.driftResources, m.egressReach, m.egressActive, m.egressThroughput, m.startTime)
 	return m
 }
 
@@ -113,6 +118,11 @@ func (m *AgentMetrics) ObserveEgressActive(method domain.EgressMethod) {
 	}
 	m.egressActive.Reset()
 	m.egressActive.WithLabelValues(string(method)).Set(1)
+}
+
+// ObserveEgressThroughput records the last measured egress throughput (bytes/sec).
+func (m *AgentMetrics) ObserveEgressThroughput(bytesPerSec float64) {
+	m.egressThroughput.Set(bytesPerSec)
 }
 
 // ObserveDrift records that, on an unchanged desired spec, the named components

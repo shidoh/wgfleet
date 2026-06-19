@@ -131,7 +131,13 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		// MTU can be below 1500; the operator pins it per exit via
 		// warp_mtu, else it is the computed 1440. The exit's WARP planner uses this.
 		WARPMTU: exitWARPMTU(exit),
-		DNS:     b.renderDNS(ctx, exit),
+		// Egress throughput watchdog (ADR-0021): the agent measures real throughput on
+		// the active egress and reports it; a sustained collapse fails over to a
+		// fallback (if any) and/or the controller auto-suspends the exit from the LB.
+		// 0 ⇒ watchdog disabled for this exit (per-exit or fleet override).
+		EgressThroughputMinBps:   b.fleet.EgressThroughputFloorKBytes(exit) * 1024,
+		EgressThroughputProbeURL: b.fleet.EgressThroughputProbeURL,
+		DNS:                      b.renderDNS(ctx, exit),
 		Firewall: domain.FirewallSpec{
 			ASBlacklist: exit.Firewall.ASBlacklist,
 			Whitelist:   mergeUnique(exit.Firewall.Whitelist, mgmtCIDRs),
@@ -229,6 +235,8 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	}
 	ms.Compose = b.composeSpec(ctx, master)
 
+	autoSuspend := b.throughputAutoSuspend(ctx)
+
 	for _, exit := range b.fleet.Exits {
 		exitNode, exitPub := b.lookupPubKey(ctx, exit.Name)
 		if exitPub == "" {
@@ -275,14 +283,45 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			TunnelIP:        masterAddr.String(),
 			// Must match the exit's awg0 server MTU (serverMTU in renderExitSpec); both
 			// derive from this exit's link_mtu so a narrow path lowers both ends.
-			MTU:     exitTunnelMTU(exit, masterAddr.Is6()),
-			AWG:     &awg,
-			Drained: exitNode.Drain, // kept as a proxy, out of the LB group
+			MTU: exitTunnelMTU(exit, masterAddr.Is6()),
+			AWG: &awg,
+			// Out of the LB group (kept as a proxy) when the operator drained it OR the
+			// throughput watchdog auto-suspended it (ADR-0021).
+			Drained: exitNode.Drain || autoSuspend[exit.Name],
 		})
 	}
 
 	spec.Master = ms
 	return spec, nil
+}
+
+// throughputAutoSuspend returns the set of exit names to auto-suspend from the LB
+// group because the throughput watchdog reported their active egress sustained-
+// degraded (ADR-0021). It NEVER empties the group: an exit is auto-suspended only
+// if at least one healthy exit (not degraded, not admin-drained) would remain — a
+// throttled exit still beats a black hole when every node is bad. The degraded
+// signal is the exit's own hysteresis-smoothed egress-throughput check, read from
+// its latest stored status; a missing status reads as not-degraded (fail-safe).
+func (b *Broker) throughputAutoSuspend(ctx context.Context) map[string]bool {
+	degraded := make(map[string]bool)
+	healthy := 0
+	for _, exit := range b.fleet.Exits {
+		node, pub := b.lookupPubKey(ctx, exit.Name)
+		if pub == "" || node.Decommission {
+			continue
+		}
+		st, err := b.store.GetStatus(ctx, exit.Name)
+		switch {
+		case err == nil && st.EgressThroughputDegraded():
+			degraded[exit.Name] = true
+		case !node.Drain:
+			healthy++
+		}
+	}
+	if healthy == 0 {
+		return nil // keep every exit in the LB rather than black-hole all clients
+	}
+	return degraded
 }
 
 // egressChain builds the exit's egress priority chain (ADR-0017) from its

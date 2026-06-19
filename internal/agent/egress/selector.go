@@ -51,8 +51,13 @@ func (s *Selector) Active(chain []domain.EgressMethod) domain.EgressMethod {
 // Step advances the selector after a pass and returns the active egress to
 // converge to next. class is the egress classification of the ACTIVE egress
 // (ADR-0016): it is only meaningful (non-empty) while the active egress is WARP.
-// recover is used only on a fallback to probe the preferred egress.
-func (s *Selector) Step(ctx context.Context, chain []domain.EgressMethod, class domain.EgressReachability, recover RecoverProbe) domain.EgressMethod {
+// throughputDegraded is the throughput watchdog's verdict on the active egress
+// (ADR-0021): a sustained-throttled path triggers the same demotion as a block,
+// because a fast fallback (e.g. direct) beats a working-but-throttled preferred
+// egress. recover is used only on a fallback to probe the preferred egress — for a
+// throughput failover it should test the preferred egress's throughput, not just
+// its reachability, so a still-throttled path is not promoted back.
+func (s *Selector) Step(ctx context.Context, chain []domain.EgressMethod, class domain.EgressReachability, throughputDegraded bool, recover RecoverProbe) domain.EgressMethod {
 	if len(chain) == 0 {
 		return s.active
 	}
@@ -62,8 +67,9 @@ func (s *Selector) Step(ctx context.Context, chain []domain.EgressMethod, class 
 	}
 
 	if s.active == preferred {
-		// On the preferred egress: demote on a confirmed block if a fallback exists.
-		if class == domain.EgressReachBlocked {
+		// On the preferred egress: demote on a confirmed block OR a sustained
+		// throughput collapse, if a fallback exists.
+		if class == domain.EgressReachBlocked || throughputDegraded {
 			if next, ok := nextAfter(chain, s.active); ok {
 				s.active = next
 				s.recovers = 0

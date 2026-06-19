@@ -117,7 +117,6 @@ fleet:
     - name: exit-de-1           # provisioned later over SSH from this controller
       region: de
       egress: warp
-      egress_fallback: [direct] # ADR-0017 censorship-adaptive failover
       # warp_mtu: 1400          # pin if the real WARP path is < 1500
       address_pool: 10.81.0.0/24
       mgmt_addr: "<exit-mgmt>"

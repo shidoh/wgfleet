@@ -192,6 +192,11 @@ type agent struct {
 	// egressSel selects the active egress within the node's chain, switching to a
 	// fallback on a confirmed block and back on recovery (ADR-0017).
 	egressSel egressfo.Selector
+
+	// throughput watches the active egress's real throughput across passes (ADR-0021),
+	// smoothing a sustained collapse — which mihomo's latency-only url-test cannot
+	// see — into a stable signal that drives failover and controller-side LB suspend.
+	throughput health.ThroughputWatchdog
 }
 
 // Reconcile-pass time budgets. A first-run apply legitimately takes minutes — it
@@ -333,12 +338,49 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			}
 		}
 
-		// Failover decision (ADR-0017): demote to a fallback on a confirmed block,
-		// promote back to the preferred egress after sustained recovery. The choice
-		// takes effect next pass via EffectiveSpec. The recovery probe tests the
-		// still-up wgcf interface, so it works even while failed over to direct.
-		next := a.egressSel.Step(ctx, spec.EgressMethods(), egressClass,
-			func(c context.Context) bool { return health.DefaultExitProbes(spec).WARPEgress(c).OK })
+		// Throughput watchdog (ADR-0021): measure the ACTIVE egress's real bandwidth.
+		// mihomo's url-test is latency-only, so a throttled-but-reachable exit (low
+		// throughput, fine RTT — the exit-3 case) is invisible to it. A sustained
+		// collapse (hysteresis-smoothed) drives both the failover below and the
+		// controller's LB auto-suspend (which reads the reported egress-throughput
+		// check). 0 floor ⇒ watchdog disabled.
+		var throughputDegraded bool
+		a.throughput.MinBytesPerSec = float64(spec.EgressThroughputMinBps)
+		if spec.EgressThroughputMinBps > 0 {
+			probe := health.NewThroughputProbe(spec.Routing.EgressInterface, spec.EgressThroughputProbeURL)
+			deg, chk := a.throughput.Observe(ctx, probe)
+			throughputDegraded = deg
+			results = append(results, chk)
+			if deg {
+				a.log.Warn("egress throughput-degraded (throttled path)", "detail", chk.Detail)
+			}
+			if a.metrics != nil {
+				a.metrics.ObserveEgressThroughput(a.throughput.LastBytesPerSec())
+			}
+			// A reachable-but-throttled exit passes warp-egress, so Evaluate would call
+			// it Ready; surface the throughput collapse as Degraded so it shows in the
+			// node list/metrics, matching the LB auto-suspend the controller applies.
+			if throughputDegraded && state == domain.StateReady {
+				state = domain.StateDegraded
+			}
+		}
+
+		// Failover decision (ADR-0017 + ADR-0021): demote to a fallback on a confirmed
+		// block OR a sustained throughput collapse; promote back to the preferred egress
+		// after sustained recovery. The choice takes effect next pass via EffectiveSpec.
+		// The recovery probe tests the still-up wgcf interface for BOTH reachability and
+		// throughput, so a still-throttled WARP is not promoted back.
+		next := a.egressSel.Step(ctx, spec.EgressMethods(), egressClass, throughputDegraded,
+			func(c context.Context) bool {
+				if !health.DefaultExitProbes(spec).WARPEgress(c).OK {
+					return false
+				}
+				if spec.EgressThroughputMinBps <= 0 {
+					return true
+				}
+				rate, err := health.NewThroughputProbe(egressfo.WARPInterface, spec.EgressThroughputProbeURL)(c)
+				return err == nil && rate >= float64(spec.EgressThroughputMinBps)
+			})
 		if next != activeEgress {
 			a.log.Info("egress failover", "from", activeEgress, "to", next, "chain", spec.EgressMethods())
 		}

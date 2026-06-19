@@ -125,6 +125,40 @@ type FleetSection struct {
 	// working even if the ZeroTier MTU is left at its 2800 default while the underlay
 	// path is smaller. Recommended 1240 (matches a 1280 overlay MTU); 0 disables.
 	MgmtOverlayMSS int `koanf:"mgmt_overlay_mss"`
+	// MinEgressThroughputKBytes is the fleet-wide egress throughput floor in KB/s
+	// (kilobytes/sec) below which an exit's active egress is considered degraded
+	// (ADR-0021). mihomo's url-test is latency-only and cannot see a throttled exit
+	// (the exit-3 case: 88ms latency but 25 KB/s), so the platform measures throughput
+	// per exit and removes the throttled ones from the LB. 0 disables the watchdog
+	// fleet-wide. Default applied when unset is DefaultMinEgressThroughputKBytes.
+	// A healthy WARP exit does tens of MB/s, so 250 cleanly separates broken nodes.
+	MinEgressThroughputKBytes int `koanf:"min_egress_throughput_kbytes"`
+	// EgressThroughputProbeURL overrides the URL each exit downloads to measure its
+	// egress throughput. Empty ⇒ the agent default (health.DefaultThroughputProbeURL).
+	EgressThroughputProbeURL string `koanf:"egress_throughput_probe_url"`
+}
+
+// DefaultMinEgressThroughputKBytes is the egress throughput floor applied when the
+// fleet leaves min_egress_throughput_kbytes unset (0). Set the fleet key to a
+// NEGATIVE value to disable the watchdog entirely.
+const DefaultMinEgressThroughputKBytes = 250
+
+// EgressThroughputFloorKBytes resolves the throughput floor (KB/s) for one exit:
+// the exit's own override when set (>0), else the fleet default (0 ⇒
+// DefaultMinEgressThroughputKBytes). A negative value at either level disables the
+// watchdog for that exit and returns 0 (watchdog off). The keybroker converts the
+// result to bytes/sec for the NodeSpec.
+func (f FleetSection) EgressThroughputFloorKBytes(e ExitConfig) int {
+	if e.MinEgressThroughputKBytes < 0 || f.MinEgressThroughputKBytes < 0 && e.MinEgressThroughputKBytes == 0 {
+		return 0 // explicitly disabled at exit or fleet level
+	}
+	if e.MinEgressThroughputKBytes > 0 {
+		return e.MinEgressThroughputKBytes
+	}
+	if f.MinEgressThroughputKBytes > 0 {
+		return f.MinEgressThroughputKBytes
+	}
+	return DefaultMinEgressThroughputKBytes
 }
 
 // MgmtCIDRs returns the management-overlay address scope the platform trusts for
@@ -308,15 +342,19 @@ type ExitConfig struct {
 	// lowers BOTH ends of this exit's tunnel AND the client interface (so client
 	// payloads never exceed what survives the narrowest exit, ADR-0014 sequential
 	// model), exactly as warp_mtu does for the WARP leg.
-	LinkMTU     int            `koanf:"link_mtu"`
-	PublicIP    string         `koanf:"public_ip"`   // public IP the master dials this exit at (WG endpoint); defaults to ssh.host when empty
-	ListenPort  int            `koanf:"listen_port"` // WG server port; 0 ⇒ DefaultExitListenPort
-	AddressPool string         `koanf:"address_pool"`
-	MgmtAddr    string         `koanf:"mgmt_addr"` // ZT overlay address (admin/metrics/DNS bind)
-	DNSFilter   bool           `koanf:"dns_filter"`
-	DNS         DNSConfig      `koanf:"dns"` // optional rich blocky tuning + custom config
-	Firewall    FirewallConfig `koanf:"firewall"`
-	SSH         SSHConfig      `koanf:"ssh"` // bootstrap target
+	LinkMTU int `koanf:"link_mtu"`
+	// MinEgressThroughputKBytes overrides the fleet egress throughput floor (KB/s)
+	// for this exit (ADR-0021): >0 custom floor, 0 inherits the fleet default,
+	// negative disables the watchdog for this exit. See FleetSection.
+	MinEgressThroughputKBytes int            `koanf:"min_egress_throughput_kbytes"`
+	PublicIP                  string         `koanf:"public_ip"`   // public IP the master dials this exit at (WG endpoint); defaults to ssh.host when empty
+	ListenPort                int            `koanf:"listen_port"` // WG server port; 0 ⇒ DefaultExitListenPort
+	AddressPool               string         `koanf:"address_pool"`
+	MgmtAddr                  string         `koanf:"mgmt_addr"` // ZT overlay address (admin/metrics/DNS bind)
+	DNSFilter                 bool           `koanf:"dns_filter"`
+	DNS                       DNSConfig      `koanf:"dns"` // optional rich blocky tuning + custom config
+	Firewall                  FirewallConfig `koanf:"firewall"`
+	SSH                       SSHConfig      `koanf:"ssh"` // bootstrap target
 }
 
 // DNSConfig is the operator's optional tuning for the exit's blocky resolver.

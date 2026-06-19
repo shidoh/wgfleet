@@ -7,6 +7,7 @@
   {{if .Node.Drain}}<span class="badge draining" title="Temporarily out of routing (no new traffic). Node untouched; reversible with one click (Undrain)."><span class="led"></span>out of routing</span>{{end}}
   {{if .Node.Decommission}}<span class="badge decommissioning"><span class="led"></span>decommissioning</span>{{end}}
   {{if and .HasStatus .Status.EgressBlocked}}<span class="badge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
+  {{if and .HasStatus .Status.EgressThroughputDegraded}}<span class="badge draining" title="Egress throughput below the floor — auto-suspended from the load balancer (ADR-0021)"><span class="led"></span>low egress throughput</span>{{end}}
   {{if .HasStatus}}{{$e := .Status.ActiveEgress}}{{if and $e (ne $e "warp")}}<span class="badge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{$e}}</span>{{end}}{{end}}
   {{if .WireSkew}}<span class="badge blocked" title="{{.WireSkew}}"><span class="led"></span>version skew</span>{{end}}
   <span class="actions">

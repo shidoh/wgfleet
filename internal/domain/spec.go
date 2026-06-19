@@ -35,6 +35,16 @@ type NodeSpec struct {
 	// folds the smallest exit WARP MTU into the client-facing MTU so client
 	// packets never fragment at egress.
 	WARPMTU int
+	// EgressThroughputMinBps is the egress throughput floor in bytes/sec below which
+	// the exit's active egress is considered throughput-degraded (a slow/throttled
+	// path that small-packet health checks — and mihomo's latency-only url-test —
+	// cannot see). 0 disables the throughput watchdog. When degraded, the agent
+	// fails over to a fallback egress if one exists (ADR-0017) and the controller
+	// auto-suspends the exit from the master LB group (ADR-0021).
+	EgressThroughputMinBps int
+	// EgressThroughputProbeURL is the URL the throughput watchdog downloads through
+	// the active egress interface to measure bytes/sec. Empty ⇒ the agent default.
+	EgressThroughputProbeURL string
 	// Decommission tells the agent to tear the node down (reverse reconcile)
 	// instead of converging it. Rendered when the node is flagged for removal.
 	Decommission bool
@@ -69,6 +79,14 @@ func (s NodeSpec) EgressChainHas(m EgressMethod) bool {
 // method). It rides the health-check channel so the active egress reaches the UI
 // and metrics without a NodeStatus schema change (ADR-0017).
 const CheckEgressActive = "egress-active"
+
+// CheckEgressThroughput is the conventional name of the self-check the exit agent
+// emits to report whether its active egress meets the throughput floor (ADR-0021).
+// Its OK field is false only once throughput is SUSTAINED-degraded (the watchdog's
+// hysteresis has tripped), so the controller can read this single boolean to
+// auto-suspend the exit from the LB group without re-deriving the streak. Detail
+// carries the last measured rate. Absent when the watchdog is disabled.
+const CheckEgressThroughput = "egress-throughput"
 
 // WGServerSpec is the local AmneziaWG listener this node runs. All fleet-internal
 // tunnels (client↔master, master↔exit) are AmneziaWG, so AWG is populated for

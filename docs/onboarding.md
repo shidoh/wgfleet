@@ -80,7 +80,6 @@ fleet:
     - name: exit-de-1
       region: de
       egress: warp
-      egress_fallback: [direct]        # ADR-0017: auto-switch warp→direct if WARP is blocked
       # warp_mtu: 1400                 # pin if the real WARP path is < 1500
       address_pool: 10.81.0.0/24
       mgmt_addr: 10.20.0.11
