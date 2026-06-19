@@ -166,6 +166,22 @@ func RenderConfig(in RenderInput) (string, error) {
 
 	merged := deepMerge(base, in.Spec.Custom.Overrides)
 
+	// Defense-in-depth: mihomo must never proxy a connection destined to its own redir
+	// bind address. The bind IP (e.g. 10.73.0.1) falls under direct-networks' 10/8, so
+	// anything that reaches the redir port locally would be matched DIRECT and dialed
+	// straight back into the redir port — a self-amplifying connection storm that pins
+	// the master's CPU. Reject it as the FIRST rule, injected AFTER the override merge
+	// so an operator `rules` override (which replaces the list) cannot drop the guard.
+	if bindHost := strings.TrimSpace(in.Spec.BindAddress); bindHost != "" {
+		bits := 32
+		if ip := net.ParseIP(bindHost); ip != nil && ip.To4() == nil {
+			bits = 128
+		}
+		reject := fmt.Sprintf("IP-CIDR,%s/%d,REJECT,no-resolve", bindHost, bits)
+		existing, _ := merged["rules"].([]any)
+		merged["rules"] = append([]any{reject}, existing...)
+	}
+
 	out, err := marshalYAML(merged)
 	if err != nil {
 		return "", fmt.Errorf("mihomo render: %w", err)

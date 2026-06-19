@@ -131,6 +131,38 @@ func TestRenderConfigHealthInterval(t *testing.T) {
 	}
 }
 
+func TestRenderConfigRejectsOwnRedirAddress(t *testing.T) {
+	want := "IP-CIDR,10.80.0.1/32,REJECT,no-resolve" // sampleInput BindAddress
+
+	firstRule := func(in RenderInput) any {
+		out, err := RenderConfig(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg map[string]any
+		if err := yaml.Unmarshal([]byte(out), &cfg); err != nil {
+			t.Fatal(err)
+		}
+		rules, _ := cfg["rules"].([]any)
+		if len(rules) == 0 {
+			t.Fatal("no rules rendered")
+		}
+		return rules[0]
+	}
+
+	// Base: the reject of the bind address is the first rule.
+	if got := firstRule(sampleInput()); got != want {
+		t.Fatalf("first rule = %v, want %q", got, want)
+	}
+	// It must survive an operator rules-override (which replaces the whole list),
+	// since the guard is injected after the override merge.
+	in := sampleInput()
+	in.Spec.Custom.Overrides = map[string]any{"rules": []any{"MATCH,wg-best"}}
+	if got := firstRule(in); got != want {
+		t.Fatalf("reject must survive a rules override as first rule, got %v", got)
+	}
+}
+
 func TestRenderConfigStructure(t *testing.T) {
 	out, err := RenderConfig(sampleInput())
 	if err != nil {
