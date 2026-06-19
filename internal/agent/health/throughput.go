@@ -132,14 +132,19 @@ func (w *ThroughputWatchdog) Observe(ctx context.Context, passiveBytesPerSec flo
 	}
 
 	rate := passiveBytesPerSec
-	source := "live traffic"
+	detail := fmt.Sprintf("live %s", kbPerSec(passiveBytesPerSec))
 	if rate < w.MinBytesPerSec && probe != nil {
-		// Under the floor on real traffic — actively probe the (idle) link.
-		if pr, err := probe(ctx); err == nil && pr > rate {
-			rate, source = pr, "probe"
-		} else if err != nil && passiveBytesPerSec <= 0 {
-			// No live traffic AND the probe failed to measure → unreachable/broken path.
-			source = "probe error: " + err.Error()
+		// Under the floor on real traffic — actively probe the (idle) link, where the
+		// probe is uncontended and accurate. Showing BOTH numbers makes it clear the
+		// verdict isn't "idle link punished": an idle link is only degraded when the
+		// probe ALSO comes up short.
+		if pr, err := probe(ctx); err != nil {
+			detail += ", probe failed: " + err.Error()
+		} else {
+			detail += fmt.Sprintf(", probe %s", kbPerSec(pr))
+			if pr > rate {
+				rate = pr
+			}
 		}
 	}
 	if rate < 0 {
@@ -148,7 +153,7 @@ func (w *ThroughputWatchdog) Observe(ctx context.Context, passiveBytesPerSec flo
 	w.lastRate = rate
 	healthy := rate >= w.MinBytesPerSec
 
-	measured := fmt.Sprintf("%s via %s (min %s)", kbPerSec(rate), source, kbPerSec(w.MinBytesPerSec))
+	measured := detail + fmt.Sprintf(" (min %s)", kbPerSec(w.MinBytesPerSec))
 
 	if healthy {
 		w.good++
@@ -164,7 +169,7 @@ func (w *ThroughputWatchdog) Observe(ctx context.Context, passiveBytesPerSec flo
 		}
 	}
 
-	detail := measured
+	detail = measured
 	if w.degraded {
 		detail = "throughput-degraded: " + measured
 	} else if !healthy {
