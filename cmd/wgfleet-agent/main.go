@@ -54,6 +54,32 @@ func metricsMux(reg *prometheus.Registry) http.Handler {
 	return mux
 }
 
+// metricsBindAttempts / metricsBindRetryDelay bound how long the metrics server
+// waits for its mgmt/overlay address to appear before giving up (≈60s total).
+const (
+	metricsBindAttempts   = 12
+	metricsBindRetryDelay = 5 * time.Second
+)
+
+// listenWithRetry opens a TCP listener on addr, retrying on failure (the overlay
+// address may not be assigned yet at startup). It returns the listener once bound,
+// or the last error after attempts are exhausted.
+func listenWithRetry(addr string, attempts int, delay time.Duration, log *slog.Logger) (net.Listener, error) {
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		ln, err := net.Listen("tcp", addr)
+		if err == nil {
+			return ln, nil
+		}
+		lastErr = err
+		if attempt < attempts {
+			log.Warn("metrics bind failed, retrying", "addr", addr, "attempt", attempt, "err", err)
+			time.Sleep(delay)
+		}
+	}
+	return nil, lastErr
+}
+
 // resolveMetricsBind decides the agent /metrics bind address. An explicit
 // --metrics value wins; "off"/"none"/"-" disables it; empty defaults to
 // mgmtAddr:DefaultAgentMetricsPort so metrics come up without a flag whenever the
@@ -155,7 +181,16 @@ func run() error {
 		metrics.RegisterBuildInfo(reg, "agent", version.Version, version.Commit)
 		metricsSrv := &http.Server{Addr: bind, Handler: metricsMux(reg)}
 		go func() {
-			if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			// The mgmt/overlay (ZeroTier) address may not be on an interface yet at agent
+			// start — the ZT daemon assigns it slightly later — so the first bind can fail
+			// with "cannot assign requested address". Retry instead of leaving /metrics
+			// silently down until the next agent restart.
+			ln, err := listenWithRetry(bind, metricsBindAttempts, metricsBindRetryDelay, a.log)
+			if err != nil {
+				a.log.Error("metrics server: gave up binding", "addr", bind, "err", err)
+				return
+			}
+			if err := metricsSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				a.log.Error("metrics server error", "err", err)
 			}
 		}()
