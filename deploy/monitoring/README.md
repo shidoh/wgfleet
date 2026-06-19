@@ -10,7 +10,11 @@ the public interface — the code refuses a public bind).
 |---|---|
 | `grafana-dashboard.json` | Grafana dashboard — import it. |
 | `servicemonitor.yaml` | Prometheus-Operator `ServiceMonitor` + headless `Service`/`Endpoints` for the controller and the agents. Edit the ZT addresses. |
-| `scrapeconfig.yaml` | Simpler alternative using the `ScrapeConfig` CRD (operator ≥ v0.65). Use EITHER this OR `servicemonitor.yaml`. |
+| `scrapeconfig.yaml` | Prometheus-Operator `ScrapeConfig` CRD (operator ≥ v0.65) — static targets, no Service plumbing. |
+| `vmstaticscrape.yaml` | VictoriaMetrics-Operator `VMStaticScrape` CRD — for a `vmagent`. Edit the ZT addresses. |
+
+Pick the one that matches your stack: `ServiceMonitor`/`ScrapeConfig` for
+Prometheus-Operator, `VMStaticScrape` for VictoriaMetrics-Operator.
 
 ## Metrics ports
 
@@ -42,15 +46,20 @@ The Prometheus pods must be able to **reach the ZT addresses** — join the clus
 to the ZeroTier network, or route the ZT subnet to the Prometheus pods. Then:
 
 ```sh
-kubectl apply -f servicemonitor.yaml     # or: kubectl apply -f scrapeconfig.yaml
+kubectl apply -f servicemonitor.yaml     # Prometheus-Operator (Service/Endpoints)
+kubectl apply -f scrapeconfig.yaml       # Prometheus-Operator (ScrapeConfig CRD)
+kubectl apply -f vmstaticscrape.yaml     # VictoriaMetrics-Operator (vmagent)
 ```
 
 Edit before applying:
-- the **ZT addresses** in the `Endpoints` (or `staticConfigs.targets`),
+- the **ZT addresses** in the `Endpoints` / `staticConfigs.targets` / `targetEndpoints.targets`,
 - the **namespace** (defaults to `monitoring`),
-- the ServiceMonitor/ScrapeConfig **`release` label** so it matches your
-  Prometheus `serviceMonitorSelector` / `scrapeConfigSelector` (kube-prometheus-stack
-  uses the Helm release name).
+- the discovery selector label so your scraper picks it up:
+  - Prometheus-Operator: the **`release` label** must match
+    `serviceMonitorSelector` / `scrapeConfigSelector` (kube-prometheus-stack uses
+    the Helm release name).
+  - VictoriaMetrics-Operator: the VMStaticScrape label must match the vmagent's
+    **`staticScrapeSelector`** (or set the vmagent `selectAllByDefault: true`).
 
 Verify targets are `UP` under Prometheus → Status → Targets.
 
