@@ -111,11 +111,17 @@ type ThroughputWatchdog struct {
 // first Observe or on a probe error), for the agent's rate gauge.
 func (w *ThroughputWatchdog) LastBytesPerSec() float64 { return w.lastRate }
 
-// Observe runs the probe, updates the streak, and returns whether the egress is
+// Observe decides health from the BEST evidence of throughput and updates the
+// streak. passiveBytesPerSec is the real traffic already moving on the active
+// egress this pass (rx+tx delta / elapsed, measured by the agent); probe is a lazy
+// active download. A link saturated by legitimate client traffic proves itself
+// passively, so the active probe is SKIPPED for it — that avoids falsely degrading
+// a busy-but-healthy exit (the probe would lose the bandwidth race and read low,
+// the false-positive the operator flagged). The probe runs ONLY when real traffic
+// is below the floor, i.e. on an idle/under-floor link where it is uncontended and
+// accurate. healthy = max(passive, probe) >= floor. Returns whether the egress is
 // (now) throughput-degraded plus the self-check to report (CheckEgressThroughput).
-// The check's OK mirrors the smoothed degraded state, so the controller reads one
-// boolean; Detail carries the last measured rate and the streak.
-func (w *ThroughputWatchdog) Observe(ctx context.Context, probe ThroughputProbe) (bool, domain.HealthCheck) {
+func (w *ThroughputWatchdog) Observe(ctx context.Context, passiveBytesPerSec float64, probe ThroughputProbe) (bool, domain.HealthCheck) {
 	degradeAfter := w.DegradeAfter
 	if degradeAfter <= 0 {
 		degradeAfter = DefaultThroughputDegradeAfter
@@ -125,16 +131,24 @@ func (w *ThroughputWatchdog) Observe(ctx context.Context, probe ThroughputProbe)
 		recoverAfter = DefaultThroughputRecoverAfter
 	}
 
-	rate, err := probe(ctx)
-	w.lastRate = rate
-	healthy := err == nil && rate >= w.MinBytesPerSec
-
-	var measured string
-	if err != nil {
-		measured = "probe error: " + err.Error()
-	} else {
-		measured = fmt.Sprintf("%s (min %s)", kbPerSec(rate), kbPerSec(w.MinBytesPerSec))
+	rate := passiveBytesPerSec
+	source := "live traffic"
+	if rate < w.MinBytesPerSec && probe != nil {
+		// Under the floor on real traffic — actively probe the (idle) link.
+		if pr, err := probe(ctx); err == nil && pr > rate {
+			rate, source = pr, "probe"
+		} else if err != nil && passiveBytesPerSec <= 0 {
+			// No live traffic AND the probe failed to measure → unreachable/broken path.
+			source = "probe error: " + err.Error()
+		}
 	}
+	if rate < 0 {
+		rate = 0
+	}
+	w.lastRate = rate
+	healthy := rate >= w.MinBytesPerSec
+
+	measured := fmt.Sprintf("%s via %s (min %s)", kbPerSec(rate), source, kbPerSec(w.MinBytesPerSec))
 
 	if healthy {
 		w.good++

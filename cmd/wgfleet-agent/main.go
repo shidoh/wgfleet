@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -197,6 +198,11 @@ type agent struct {
 	// smoothing a sustained collapse — which mihomo's latency-only url-test cannot
 	// see — into a stable signal that drives failover and controller-side LB suspend.
 	throughput health.ThroughputWatchdog
+	// Previous egress interface byte counter + timestamp, for the PASSIVE throughput
+	// measurement that lets a busy link prove itself without an active probe.
+	egressBytesPrev uint64
+	egressBytesAt   time.Time
+	egressIfacePrev string
 }
 
 // Reconcile-pass time budgets. A first-run apply legitimately takes minutes — it
@@ -347,8 +353,13 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		var throughputDegraded bool
 		a.throughput.MinBytesPerSec = float64(spec.EgressThroughputMinBps)
 		if spec.EgressThroughputMinBps > 0 {
+			// Passive measurement first: real traffic already on the egress interface
+			// proves the exit's throughput. A link saturated by a legitimate heavy
+			// download reads high here, so the watchdog never actively probes it — that
+			// is what stops a busy-but-healthy exit from being falsely auto-suspended.
+			passive := a.passiveEgressBytesPerSec(spec.Routing.EgressInterface)
 			probe := health.NewThroughputProbe(spec.Routing.EgressInterface, spec.EgressThroughputProbeURL)
-			deg, chk := a.throughput.Observe(ctx, probe)
+			deg, chk := a.throughput.Observe(ctx, passive, probe)
 			throughputDegraded = deg
 			results = append(results, chk)
 			if deg {
@@ -442,6 +453,54 @@ func (a *agent) healthChecks(spec domain.NodeSpec) []health.Check {
 		return health.MasterChecks(spec, health.DefaultMasterProbes(spec))
 	}
 	return health.ExitChecks(spec, health.DefaultExitProbes(spec))
+}
+
+// passiveEgressBytesPerSec returns the real throughput on the active egress
+// interface since the last pass (rx+tx delta / elapsed), or 0 when it cannot be
+// measured (first pass, the interface changed, direct egress with no dedicated
+// interface, a counter reset, or unreadable counters). For WARP egress the wgcf
+// interface carries ONLY client egress traffic (the host's own traffic goes direct),
+// so this is a clean measure of how much the exit is actually moving — a saturated
+// link reads high, letting the watchdog prove it healthy without an active probe.
+func (a *agent) passiveEgressBytesPerSec(iface string) float64 {
+	now := time.Now()
+	cur, ok := readIfaceBytes(iface)
+	prevBytes, prevAt, prevIface := a.egressBytesPrev, a.egressBytesAt, a.egressIfacePrev
+	a.egressBytesPrev, a.egressBytesAt, a.egressIfacePrev = cur, now, iface
+	if !ok || iface == "" || iface != prevIface || prevAt.IsZero() {
+		return 0
+	}
+	elapsed := now.Sub(prevAt).Seconds()
+	if elapsed <= 0 || cur < prevBytes {
+		return 0 // clock skew or a counter reset (interface re-created)
+	}
+	return float64(cur-prevBytes) / elapsed
+}
+
+// readIfaceBytes returns rx+tx bytes for iface from /sys, or (0,false) when it
+// cannot be read (non-Linux dev box, missing interface, empty name).
+func readIfaceBytes(iface string) (uint64, bool) {
+	if iface == "" {
+		return 0, false
+	}
+	rx, ok1 := readCounter("/sys/class/net/" + iface + "/statistics/rx_bytes")
+	tx, ok2 := readCounter("/sys/class/net/" + iface + "/statistics/tx_bytes")
+	if !ok1 || !ok2 {
+		return 0, false
+	}
+	return rx + tx, true
+}
+
+func readCounter(path string) (uint64, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // teardown reverses the node's data plane (decommission). In plan mode it prints
