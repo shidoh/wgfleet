@@ -108,6 +108,29 @@ func TestRenderWGBestGroupKinds(t *testing.T) {
 	}
 }
 
+func TestRenderConfigHealthInterval(t *testing.T) {
+	// Unset → DefaultHealthInterval.
+	if g := wgBestGroupOf(t, "url-test"); g["interval"] != DefaultHealthInterval {
+		t.Errorf("default health interval = %v, want %d", g["interval"], DefaultHealthInterval)
+	}
+	// Set → rendered verbatim (seconds).
+	in := sampleInput()
+	in.Spec.HealthCheckInterval = 30
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	groups, _ := cfg["proxy-groups"].([]any)
+	g, _ := groups[0].(map[string]any)
+	if g["interval"] != 30 {
+		t.Errorf("custom health interval = %v, want 30", g["interval"])
+	}
+}
+
 func TestRenderConfigStructure(t *testing.T) {
 	out, err := RenderConfig(sampleInput())
 	if err != nil {

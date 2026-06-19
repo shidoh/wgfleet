@@ -21,6 +21,9 @@ type MasterSpec struct {
 	// ("round-robin" | "consistent-hashing" | "sticky-sessions") or a distinct group
 	// type ("url-test" | "fallback"). Empty ⇒ round-robin. See mihomo.wgBestGroup.
 	Balance string
+	// HealthCheckInterval is how often (seconds) mihomo health-checks the exits in
+	// wg-best to detect/route around dead ones. 0 ⇒ mihomo.DefaultHealthInterval.
+	HealthCheckInterval int
 	// DirectCIDRs route via DIRECT (RU/private/own networks), never via an exit.
 	// Rendered both into the rules and the included direct-networks file.
 	DirectCIDRs []string

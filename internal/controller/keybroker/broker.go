@@ -218,15 +218,16 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	}
 
 	ms := &domain.MasterSpec{
-		Balance:           mihomoStrategy(master.Routing.Balance),
-		DirectCIDRs:       append([]string(nil), master.Routing.DirectCIDRs...),
-		DirectGeo:         append([]string(nil), master.Routing.DirectGeo...),
-		SnifferSkip:       append([]string(nil), master.Mihomo.SnifferSkip...),
-		RedirPort:         master.Mihomo.RedirPort,
-		DashboardURL:      master.Mihomo.DashboardURL,
-		DashboardDisabled: master.Mihomo.DashboardDisabled,
-		ClientAdminPorts:  append([]int(nil), master.ClientAdminPorts...),
-		Custom:            masterCustomConfig(master),
+		Balance:             mihomoStrategy(master.Routing.Balance),
+		HealthCheckInterval: int(master.Mihomo.HealthInterval.Seconds()),
+		DirectCIDRs:         append([]string(nil), master.Routing.DirectCIDRs...),
+		DirectGeo:           append([]string(nil), master.Routing.DirectGeo...),
+		SnifferSkip:         append([]string(nil), master.Mihomo.SnifferSkip...),
+		RedirPort:           master.Mihomo.RedirPort,
+		DashboardURL:        master.Mihomo.DashboardURL,
+		DashboardDisabled:   master.Mihomo.DashboardDisabled,
+		ClientAdminPorts:    append([]int(nil), master.ClientAdminPorts...),
+		Custom:              masterCustomConfig(master),
 	}
 	if addr, err := nthHost(master.ClientAWG.AddressPool, exitHostIndex); err == nil {
 		ms.BindAddress = addr.String() // master's own .1 in the client pool

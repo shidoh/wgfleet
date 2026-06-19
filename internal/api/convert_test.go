@@ -133,16 +133,17 @@ func TestMasterSpecRoundTrip(t *testing.T) {
 		Role:     domain.RoleMaster,
 		WGServer: domain.WGServerSpec{ListenPort: 443, AddressPool: "10.80.0.0/24"},
 		Master: &domain.MasterSpec{
-			BindAddress:        "10.80.0.1",
-			RedirPort:          7895,
-			ExternalController: "10.20.25.254:9090",
-			Balance:            "consistent-hashing",
-			DirectCIDRs:        []string{"10.0.0.0/8"},
-			DirectGeo:          []string{"RU"},
-			SnifferSkip:        []string{"+.themoviedb.org"},
-			DashboardDisabled:  true,
-			DashboardURL:       "https://mirror.example.ru/zashboard.zip",
-			ClientAdminPorts:   []int{9000, 9090, 51821},
+			BindAddress:         "10.80.0.1",
+			RedirPort:           7895,
+			ExternalController:  "10.20.25.254:9090",
+			Balance:             "consistent-hashing",
+			HealthCheckInterval: 30,
+			DirectCIDRs:         []string{"10.0.0.0/8"},
+			DirectGeo:           []string{"RU"},
+			SnifferSkip:         []string{"+.themoviedb.org"},
+			DashboardDisabled:   true,
+			DashboardURL:        "https://mirror.example.ru/zashboard.zip",
+			ClientAdminPorts:    []int{9000, 9090, 51821},
 			ExitTunnels: []domain.ExitTunnel{
 				{
 					Name: "exit-de-1", Endpoint: "198.51.100.7:51820",
@@ -164,6 +165,9 @@ func TestMasterSpecRoundTrip(t *testing.T) {
 	m := got.Master
 	if m.BindAddress != "10.80.0.1" || m.RedirPort != 7895 || m.Balance != "consistent-hashing" {
 		t.Errorf("master scalars mismatch: %+v", m)
+	}
+	if m.HealthCheckInterval != 30 {
+		t.Errorf("health_check_interval lost in round-trip: %d", m.HealthCheckInterval)
 	}
 	// Dashboard controls must cross the wire (they were lost once — proto field gap).
 	if !m.DashboardDisabled || m.DashboardURL != "https://mirror.example.ru/zashboard.zip" {

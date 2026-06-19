@@ -253,10 +253,14 @@ type MasterConfig struct {
 // MihomoConfig is the operator-facing mihomo tuning for a master, including the
 // generic config-customization hooks (overrides + extra files).
 type MihomoConfig struct {
-	RedirPort   int               `koanf:"redir_port"`   // 0 ⇒ mihomo.DefaultRedirPort
-	SnifferSkip []string          `koanf:"sniffer_skip"` // sniffer skip-domain
-	Overrides   map[string]any    `koanf:"overrides"`    // deep-merged into rendered config.yaml
-	ExtraFiles  []ExtraFileConfig `koanf:"extra_files"`  // additional managed files
+	RedirPort int `koanf:"redir_port"` // 0 ⇒ mihomo.DefaultRedirPort
+	// HealthInterval is how often mihomo health-checks the exits in wg-best (detect /
+	// route around dead exits). 0/unset ⇒ mihomo.DefaultHealthInterval (60s). Lower it
+	// to fail over off a dead exit faster. Rendered to seconds in the proxy group.
+	HealthInterval time.Duration     `koanf:"health_interval"`
+	SnifferSkip    []string          `koanf:"sniffer_skip"` // sniffer skip-domain
+	Overrides      map[string]any    `koanf:"overrides"`    // deep-merged into rendered config.yaml
+	ExtraFiles     []ExtraFileConfig `koanf:"extra_files"`  // additional managed files
 	// DashboardURL overrides the mihomo web-dashboard download source; empty ⇒ the
 	// built-in default (zashboard latest on GitHub). Point it at a reachable mirror
 	// where GitHub is blocked.
@@ -466,6 +470,11 @@ func (c ControllerConfig) Validate() error {
 	// and drift repair lag. Keep it in a sane band; 0/unset uses the default.
 	if d := c.Fleet.ReconcileInterval; d != 0 && (d < 5*time.Second || d > time.Hour) {
 		errs = append(errs, fmt.Errorf("fleet.reconcile_interval %s out of range (0 for default, else 5s..1h)", d))
+	}
+	for _, m := range c.Fleet.Masters {
+		if d := m.Mihomo.HealthInterval; d != 0 && (d < 5*time.Second || d > time.Hour) {
+			errs = append(errs, fmt.Errorf("masters[%q].mihomo.health_interval %s out of range (0 for default, else 5s..1h)", m.Name, d))
+		}
 	}
 	// The keybroker topology is single-master on MVP (open question #11): it peers
 	// every exit to Masters[0] only, so a second master would render specs that

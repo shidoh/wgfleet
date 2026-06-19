@@ -87,6 +87,10 @@ fleet:
       # client_admin_ports: [9000, 9090]
       mihomo: # master data-plane tuning + custom-config hooks
         sniffer_skip: ["+.themoviedb.org", "+.cloudfront.net"] # CDNs that break under sniffing
+        # health_interval: how often mihomo health-checks the exits in wg-best to detect
+        # and route around dead ones. Unset ⇒ 60s. Range 5s..1h. Lower it to fail over off
+        # a dead exit faster (at the cost of more frequent url-test probes through the tunnels).
+        health_interval: 30s
         # The mihomo web dashboard (zashboard) is auto-served at <external-controller>/ui
         # whenever the Clash API is enabled; geo databases are auto-configured (jsdelivr
         # mirror) when direct_geo is set. The RESTful API is UNAUTHENTICATED by default —

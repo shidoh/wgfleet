@@ -24,6 +24,10 @@ import (
 // DefaultRedirPort is mihomo's redirect port when the spec leaves it unset.
 const DefaultRedirPort = 7895
 
+// DefaultHealthInterval is the wg-best health-check cadence (seconds) when the spec
+// leaves HealthCheckInterval unset.
+const DefaultHealthInterval = 60
+
 // External web dashboard for the Clash/mihomo RESTful API. When the API
 // (external-controller) is exposed, mihomo can also serve a static dashboard from
 // externalUIDir and fetch it on first run from externalUIURL via a DIRECT detour
@@ -86,6 +90,11 @@ func RenderConfig(in RenderInput) (string, error) {
 		redir = DefaultRedirPort
 	}
 
+	healthInterval := in.Spec.HealthCheckInterval
+	if healthInterval <= 0 {
+		healthInterval = DefaultHealthInterval
+	}
+
 	base := map[string]any{
 		"mode":         "rule",
 		"log-level":    "info",
@@ -121,7 +130,7 @@ func RenderConfig(in RenderInput) (string, error) {
 			},
 		},
 		"proxies":      proxies,
-		"proxy-groups": []any{wgBestGroup(lbMembers, in.Spec.Balance)},
+		"proxy-groups": []any{wgBestGroup(lbMembers, in.Spec.Balance, healthInterval)},
 		"rules":        renderRules(in.Spec),
 	}
 	if in.Spec.ExternalController != "" {
@@ -267,12 +276,13 @@ const urlTestToleranceMS = 150
 // ordered) are their own group TYPES; everything else is a load-balance with the
 // given strategy (round-robin default, or consistent-hashing / sticky-sessions).
 // All kinds share the same health check (url/interval) that detects dead exits.
-func wgBestGroup(names []string, balance string) map[string]any {
+// healthInterval is the check cadence in seconds.
+func wgBestGroup(names []string, balance string, healthInterval int) map[string]any {
 	g := map[string]any{
 		"name":     "wg-best",
 		"proxies":  toAnySlice(names),
 		"url":      "http://cp.cloudflare.com/generate_204",
-		"interval": 60,
+		"interval": healthInterval,
 		"lazy":     false,
 	}
 	switch balance {

@@ -108,6 +108,10 @@ message MasterSpec {
   // controller Web UI, mihomo dashboard, wg-easy). Additive; an older agent ignores
   // it and keeps the strict default — backward-compatible, no wire-version bump.
   repeated int32 client_admin_ports = 13;
+  // wg-best health-check cadence in seconds (detect/route around dead exits).
+  // 0 ⇒ the agent's mihomo.DefaultHealthInterval. Additive; an older agent ignores
+  // it and keeps the 60s default — backward-compatible, no wire-version bump.
+  int32 health_check_interval = 14;
 }
 
 // ComposeSpec is the master's container-stack desired state (wg-easy + mihomo).

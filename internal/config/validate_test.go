@@ -109,6 +109,24 @@ func TestAgentReconcileInterval(t *testing.T) {
 	}
 }
 
+func TestValidateMihomoHealthInterval(t *testing.T) {
+	withInterval := func(d time.Duration) ControllerConfig {
+		cfg := baseValidController()
+		cfg.Fleet.Masters = []MasterConfig{{Name: "m", Mihomo: MihomoConfig{HealthInterval: d}}}
+		return cfg
+	}
+	for _, ok := range []time.Duration{0, 5 * time.Second, 30 * time.Second, time.Hour} {
+		if err := withInterval(ok).Validate(); err != nil {
+			t.Errorf("health_interval %s rejected unexpectedly: %v", ok, err)
+		}
+	}
+	for _, bad := range []time.Duration{time.Second, 2 * time.Hour} {
+		if err := withInterval(bad).Validate(); err == nil || !strings.Contains(err.Error(), "health_interval") {
+			t.Errorf("health_interval %s should be rejected, got %v", bad, err)
+		}
+	}
+}
+
 func TestMgmtCIDRs(t *testing.T) {
 	// Explicit subnet wins and is normalized (host bits masked).
 	f := FleetSection{MgmtSubnet: "10.20.10.5/16"}

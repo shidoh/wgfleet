@@ -622,8 +622,12 @@ type MasterSpec struct {
 	// controller Web UI, mihomo dashboard, wg-easy). Additive; an older agent ignores
 	// it and keeps the strict default — backward-compatible, no wire-version bump.
 	ClientAdminPorts []int32 `protobuf:"varint,13,rep,packed,name=client_admin_ports,json=clientAdminPorts,proto3" json:"client_admin_ports,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// wg-best health-check cadence in seconds (detect/route around dead exits).
+	// 0 ⇒ the agent's mihomo.DefaultHealthInterval. Additive; an older agent ignores
+	// it and keeps the 60s default — backward-compatible, no wire-version bump.
+	HealthCheckInterval int32 `protobuf:"varint,14,opt,name=health_check_interval,json=healthCheckInterval,proto3" json:"health_check_interval,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *MasterSpec) Reset() {
@@ -745,6 +749,13 @@ func (x *MasterSpec) GetClientAdminPorts() []int32 {
 		return x.ClientAdminPorts
 	}
 	return nil
+}
+
+func (x *MasterSpec) GetHealthCheckInterval() int32 {
+	if x != nil {
+		return x.HealthCheckInterval
+	}
+	return 0
 }
 
 // ComposeSpec is the master's container-stack desired state (wg-easy + mihomo).
@@ -1996,7 +2007,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\bwarp_mtu\x18\v \x01(\x05R\awarpMtu\x12!\n" +
 	"\fegress_chain\x18\f \x03(\tR\vegressChain\x129\n" +
 	"\x19egress_throughput_min_bps\x18\r \x01(\x05R\x16egressThroughputMinBps\x12=\n" +
-	"\x1begress_throughput_probe_url\x18\x0e \x01(\tR\x18egressThroughputProbeUrl\"\xa0\x04\n" +
+	"\x1begress_throughput_probe_url\x18\x0e \x01(\tR\x18egressThroughputProbeUrl\"\xd4\x04\n" +
 	"\n" +
 	"MasterSpec\x12!\n" +
 	"\fbind_address\x18\x01 \x01(\tR\vbindAddress\x12\x1d\n" +
@@ -2014,7 +2025,8 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	" \x01(\v2\x17.wgfleet.v1.ComposeSpecR\acompose\x12-\n" +
 	"\x12dashboard_disabled\x18\v \x01(\bR\x11dashboardDisabled\x12#\n" +
 	"\rdashboard_url\x18\f \x01(\tR\fdashboardUrl\x12,\n" +
-	"\x12client_admin_ports\x18\r \x03(\x05R\x10clientAdminPorts\"\xe7\x01\n" +
+	"\x12client_admin_ports\x18\r \x03(\x05R\x10clientAdminPorts\x122\n" +
+	"\x15health_check_interval\x18\x0e \x01(\x05R\x13healthCheckInterval\"\xe7\x01\n" +
 	"\vComposeSpec\x12\"\n" +
 	"\rwg_easy_image\x18\x01 \x01(\tR\vwgEasyImage\x12!\n" +
 	"\fmihomo_image\x18\x02 \x01(\tR\vmihomoImage\x12\x1b\n" +

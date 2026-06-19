@@ -73,18 +73,19 @@ func masterToProto(m *domain.MasterSpec) *pb.MasterSpec {
 		return nil
 	}
 	out := &pb.MasterSpec{
-		BindAddress:        m.BindAddress,
-		RedirPort:          int32(m.RedirPort),
-		ExternalController: m.ExternalController,
-		Balance:            m.Balance,
-		DirectCidrs:        append([]string(nil), m.DirectCIDRs...),
-		DirectGeo:          append([]string(nil), m.DirectGeo...),
-		SnifferSkip:        append([]string(nil), m.SnifferSkip...),
-		DashboardDisabled:  m.DashboardDisabled,
-		DashboardUrl:       m.DashboardURL,
-		ClientAdminPorts:   intsToInt32s(m.ClientAdminPorts),
-		Custom:             customToProto(m.Custom),
-		Compose:            composeToProto(m.Compose),
+		BindAddress:         m.BindAddress,
+		RedirPort:           int32(m.RedirPort),
+		ExternalController:  m.ExternalController,
+		Balance:             m.Balance,
+		HealthCheckInterval: int32(m.HealthCheckInterval),
+		DirectCidrs:         append([]string(nil), m.DirectCIDRs...),
+		DirectGeo:           append([]string(nil), m.DirectGeo...),
+		SnifferSkip:         append([]string(nil), m.SnifferSkip...),
+		DashboardDisabled:   m.DashboardDisabled,
+		DashboardUrl:        m.DashboardURL,
+		ClientAdminPorts:    intsToInt32s(m.ClientAdminPorts),
+		Custom:              customToProto(m.Custom),
+		Compose:             composeToProto(m.Compose),
 	}
 	for _, t := range m.ExitTunnels {
 		out.ExitTunnels = append(out.ExitTunnels, &pb.ExitTunnel{
@@ -106,18 +107,19 @@ func masterFromProto(m *pb.MasterSpec) *domain.MasterSpec {
 		return nil
 	}
 	out := &domain.MasterSpec{
-		BindAddress:        m.GetBindAddress(),
-		RedirPort:          int(m.GetRedirPort()),
-		ExternalController: m.GetExternalController(),
-		Balance:            m.GetBalance(),
-		DirectCIDRs:        append([]string(nil), m.GetDirectCidrs()...),
-		DirectGeo:          append([]string(nil), m.GetDirectGeo()...),
-		SnifferSkip:        append([]string(nil), m.GetSnifferSkip()...),
-		DashboardDisabled:  m.GetDashboardDisabled(),
-		DashboardURL:       m.GetDashboardUrl(),
-		ClientAdminPorts:   int32sToInts(m.GetClientAdminPorts()),
-		Custom:             customFromProto(m.GetCustom()),
-		Compose:            composeFromProto(m.GetCompose()),
+		BindAddress:         m.GetBindAddress(),
+		RedirPort:           int(m.GetRedirPort()),
+		ExternalController:  m.GetExternalController(),
+		Balance:             m.GetBalance(),
+		HealthCheckInterval: int(m.GetHealthCheckInterval()),
+		DirectCIDRs:         append([]string(nil), m.GetDirectCidrs()...),
+		DirectGeo:           append([]string(nil), m.GetDirectGeo()...),
+		SnifferSkip:         append([]string(nil), m.GetSnifferSkip()...),
+		DashboardDisabled:   m.GetDashboardDisabled(),
+		DashboardURL:        m.GetDashboardUrl(),
+		ClientAdminPorts:    int32sToInts(m.GetClientAdminPorts()),
+		Custom:              customFromProto(m.GetCustom()),
+		Compose:             composeFromProto(m.GetCompose()),
 	}
 	for _, t := range m.GetExitTunnels() {
 		out.ExitTunnels = append(out.ExitTunnels, domain.ExitTunnel{
