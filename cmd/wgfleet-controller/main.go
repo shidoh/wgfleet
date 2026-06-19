@@ -218,6 +218,7 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA) error {
 	if cfg.Controller.Metrics != "" {
 		reg := metrics.NewRegistry()
 		metrics.NewStoreCollector(reg, st)
+		metrics.RegisterBuildInfo(reg, "controller", version.Version, version.Commit)
 		mux := http.NewServeMux()
 		mux.Handle("GET /metrics", metrics.Handler(reg))
 		metricsSrv = &http.Server{Addr: cfg.Controller.Metrics, Handler: mux}

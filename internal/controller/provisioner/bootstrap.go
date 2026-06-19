@@ -3,6 +3,9 @@ package provisioner
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
+	"strings"
 
 	"github.com/shidoh/wgfleet/internal/controller/pki"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -130,7 +133,7 @@ func BuildPlan(in BootstrapInput) Plan {
 			"upload "+remoteAgentBin, func(context.Context, Runner) error { return nil }))
 	}
 	steps = append(steps,
-		uploadStep("install systemd unit", remoteUnit, []byte(systemdUnit), 0o644, systemdUnit),
+		uploadStep("install systemd unit", remoteUnit, []byte(renderSystemdUnit(in)), 0o644, renderSystemdUnit(in)),
 		runStep("reload systemd", "systemctl daemon-reload"),
 		// restart (not `enable --now`): on a re-provision the agent is already
 		// running, and `enable --now` would NOT restart it, so the freshly uploaded
@@ -186,6 +189,18 @@ func wgcfInstallCmd(arch string) string {
 	url := fmt.Sprintf("https://github.com/ViRb3/wgcf/releases/download/v%s/wgcf_%s_linux_%s",
 		wgcfVersion, wgcfVersion, a)
 	return fmt.Sprintf("curl -fsSL -o /usr/local/bin/wgcf %q && chmod +x /usr/local/bin/wgcf", url)
+}
+
+// renderSystemdUnit fills the agent unit, adding `--metrics <mgmt-addr>:9301` when
+// the node has a mgmt/ZeroTier address so its Prometheus endpoint comes up bound to
+// the overlay (never public — the agent refuses a public metrics bind). Without a
+// mgmt addr, no metrics flag is added.
+func renderSystemdUnit(in BootstrapInput) string {
+	flags := ""
+	if addr := strings.TrimSpace(in.Node.MgmtAddr); addr != "" {
+		flags = " --metrics " + net.JoinHostPort(addr, strconv.Itoa(AgentMetricsPort))
+	}
+	return fmt.Sprintf(systemdUnitTemplate, flags)
 }
 
 func renderAgentYAML(in BootstrapInput) string {

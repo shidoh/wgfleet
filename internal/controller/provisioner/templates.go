@@ -41,15 +41,21 @@ table inet wgfleet_baseline {
 }
 `
 
-// systemdUnit runs the agent as a reconcile daemon, restarting on failure.
-const systemdUnit = `[Unit]
+// AgentMetricsPort is the port the agent's Prometheus /metrics endpoint binds on
+// the node's mgmt/ZeroTier address (the controller's own /metrics is 9300). Kept
+// off 9300 so a co-located controller+agent (master) doesn't collide.
+const AgentMetricsPort = 9301
+
+// systemdUnitTemplate runs the agent as a reconcile daemon, restarting on failure.
+// %s is the ExecStart flags tail (so the metrics flag can be added per node).
+const systemdUnitTemplate = `[Unit]
 Description=wgfleet node agent
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/wgfleet-agent --config /etc/wgfleet/agent.yaml --log-format json
+ExecStart=/usr/local/bin/wgfleet-agent --config /etc/wgfleet/agent.yaml --log-format json%s
 Restart=on-failure
 RestartSec=5
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW

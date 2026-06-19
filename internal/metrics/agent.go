@@ -21,69 +21,83 @@ type AgentMetrics struct {
 	egressReach       *prometheus.GaugeVec   // info: current egress reachability as a label
 	egressActive      *prometheus.GaugeVec   // info: currently active egress method as a label
 	egressThroughput  prometheus.Gauge       // last measured egress throughput, bytes/sec
+	reconcileChanges  prometheus.Gauge       // resources changed in the last pass
+	checkLatency      *prometheus.GaugeVec   // per self-check: probe latency, seconds
 	startTime         prometheus.Gauge
 
 	node string
 	role domain.Role
 }
 
-// NewAgentMetrics builds and registers the agent metrics on reg, labelled with
-// the node identity. now is used to stamp the process start time.
+// NewAgentMetrics builds and registers the agent metrics on reg. Every series
+// carries the node + role as constant labels, so a Prometheus that scrapes each
+// node's /metrics over its ZT address still groups cleanly by node in dashboards
+// (no reliance on the instance address). now stamps the process start time.
 func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, now time.Time) *AgentMetrics {
+	cl := prometheus.Labels{"node": node, "role": string(role)}
 	m := &AgentMetrics{
 		node: node,
 		role: role,
 		reconcileTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "reconcile_total",
-			Help: "Reconcile passes by result.",
+			Help: "Reconcile passes by result.", ConstLabels: cl,
 		}, []string{"result"}),
 		reconcileDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "reconcile_duration_seconds",
-			Help: "Duration of a reconcile pass.", Buckets: prometheus.DefBuckets,
+			Help: "Duration of a reconcile pass.", Buckets: prometheus.DefBuckets, ConstLabels: cl,
 		}),
 		stateInfo: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "state_info",
-			Help: "Current node lifecycle state as a label; value is always 1.",
+			Help: "Current node lifecycle state as a label; value is always 1.", ConstLabels: cl,
 		}, []string{"state"}),
 		checkUp: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "health_check",
-			Help: "Result of a self-check: 1 ok, 0 failing.",
+			Help: "Result of a self-check: 1 ok, 0 failing.", ConstLabels: cl,
+		}, []string{"check"}),
+		checkLatency: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "health_check_latency_seconds",
+			Help: "Latency of a self-check's probe in seconds (e.g. egress RTT, DNS resolve).", ConstLabels: cl,
 		}, []string{"check"}),
 		driftTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "drift_total",
-			Help: "Components repaired after convergence (config drift), by component.",
+			Help: "Components repaired after convergence (config drift), by component.", ConstLabels: cl,
 		}, []string{"component"}),
 		driftResources: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "drift_resources",
-			Help: "Components that drifted and were repaired in the last reconcile pass.",
+			Help: "Components that drifted and were repaired in the last reconcile pass.", ConstLabels: cl,
+		}),
+		reconcileChanges: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "reconcile_changes",
+			Help: "Resources changed in the last reconcile pass (0 on a steady, fully-converged node).", ConstLabels: cl,
 		}),
 		egressReach: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "egress_reachability",
-			Help: "Current egress reachability classification as a label (ok|degraded|blocked); value is always 1. 'blocked' is the censorship-block signal.",
+			Help: "Current egress reachability classification as a label (ok|degraded|blocked); value is always 1. 'blocked' is the censorship-block signal.", ConstLabels: cl,
 		}, []string{"state"}),
 		egressActive: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "egress_active",
-			Help: "Currently active egress method as a label (warp|direct|...); value is always 1. Differs from the preferred egress while failed over (ADR-0017).",
+			Help: "Currently active egress method as a label (warp|direct|...); value is always 1. Differs from the preferred egress while failed over (ADR-0017).", ConstLabels: cl,
 		}, []string{"method"}),
 		egressThroughput: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "egress_throughput_bytes",
-			Help: "Last measured egress throughput in bytes/sec (ADR-0021). A sustained collapse below the configured floor auto-suspends the exit from the LB.",
+			Help: "Last measured egress throughput in bytes/sec (ADR-0021). A sustained collapse below the configured floor auto-suspends the exit from the LB.", ConstLabels: cl,
 		}),
 		startTime: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "start_time_seconds",
-			Help: "Unix time the agent process started.",
+			Help: "Unix time the agent process started.", ConstLabels: cl,
 		}),
 	}
 	m.startTime.Set(float64(now.Unix()))
-	reg.MustRegister(m.reconcileTotal, m.reconcileDuration, m.stateInfo, m.checkUp,
-		m.driftTotal, m.driftResources, m.egressReach, m.egressActive, m.egressThroughput, m.startTime)
+	reg.MustRegister(m.reconcileTotal, m.reconcileDuration, m.stateInfo, m.checkUp, m.checkLatency,
+		m.driftTotal, m.driftResources, m.reconcileChanges, m.egressReach, m.egressActive, m.egressThroughput, m.startTime)
 	return m
 }
 
-// ObserveReconcile records the outcome of one reconcile pass: duration, result,
-// the derived state, and per-check results.
-func (m *AgentMetrics) ObserveReconcile(d time.Duration, state domain.NodeState, checks []domain.HealthCheck, reconcileErr error) {
+// ObserveReconcile records the outcome of one reconcile pass: duration, the number
+// of resources changed, result, the derived state, and per-check results + latency.
+func (m *AgentMetrics) ObserveReconcile(d time.Duration, changes int, state domain.NodeState, checks []domain.HealthCheck, reconcileErr error) {
 	m.reconcileDuration.Observe(d.Seconds())
+	m.reconcileChanges.Set(float64(changes))
 	if reconcileErr != nil {
 		m.reconcileTotal.WithLabelValues("error").Inc()
 	} else {
@@ -96,6 +110,9 @@ func (m *AgentMetrics) ObserveReconcile(d time.Duration, state domain.NodeState,
 
 	for _, c := range checks {
 		m.checkUp.WithLabelValues(c.Name).Set(boolToFloat(c.OK))
+		if c.Latency > 0 {
+			m.checkLatency.WithLabelValues(c.Name).Set(c.Latency.Seconds())
+		}
 	}
 }
 

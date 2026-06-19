@@ -27,13 +27,15 @@ type StoreCollector struct {
 	store store.Store
 	now   func() time.Time
 
-	nodesByState    *prometheus.Desc
-	nodeInfo        *prometheus.Desc
-	nodeLastReport  *prometheus.Desc
-	nodeReconcileNG *prometheus.Desc
-	nodeHealthCheck *prometheus.Desc
-	nodeEgressInfo  *prometheus.Desc
-	nodeAgentInfo   *prometheus.Desc
+	nodesByState     *prometheus.Desc
+	nodeInfo         *prometheus.Desc
+	nodeLastReport   *prometheus.Desc
+	nodeReconcileNG  *prometheus.Desc
+	nodeHealthCheck  *prometheus.Desc
+	nodeEgressInfo   *prometheus.Desc
+	nodeAgentInfo    *prometheus.Desc
+	nodeDrain        *prometheus.Desc
+	nodeDecommission *prometheus.Desc
 }
 
 var _ prometheus.Collector = (*StoreCollector)(nil)
@@ -72,6 +74,14 @@ func NewStoreCollector(reg *prometheus.Registry, st store.Store) *StoreCollector
 			prometheus.BuildFQName(namespace, "node", "agent_info"),
 			"Agent build + wire version reported by the node; value is always 1.",
 			[]string{"node", "agent_version", "wire_version"}, nil),
+		nodeDrain: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "node", "drain"),
+			"1 if the node is administratively drained (out of the LB, connections preserved), else 0.",
+			[]string{"node"}, nil),
+		nodeDecommission: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "node", "decommission"),
+			"1 if the node is flagged for decommission (data plane torn down), else 0.",
+			[]string{"node"}, nil),
 	}
 	reg.MustRegister(c)
 	return c
@@ -86,6 +96,8 @@ func (c *StoreCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.nodeHealthCheck
 	ch <- c.nodeEgressInfo
 	ch <- c.nodeAgentInfo
+	ch <- c.nodeDrain
+	ch <- c.nodeDecommission
 }
 
 // Collect implements prometheus.Collector. Store errors yield no metrics for
@@ -112,6 +124,10 @@ func (c *StoreCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 		ch <- prometheus.MustNewConstMetric(c.nodeReconcileNG, prometheus.GaugeValue,
 			boolToFloat(n.LastError != ""), n.Name)
+		ch <- prometheus.MustNewConstMetric(c.nodeDrain, prometheus.GaugeValue,
+			boolToFloat(n.Drain), n.Name)
+		ch <- prometheus.MustNewConstMetric(c.nodeDecommission, prometheus.GaugeValue,
+			boolToFloat(n.Decommission), n.Name)
 
 		if n.AgentVersion != "" || n.WireVersion != 0 {
 			ch <- prometheus.MustNewConstMetric(c.nodeAgentInfo, prometheus.GaugeValue, 1,

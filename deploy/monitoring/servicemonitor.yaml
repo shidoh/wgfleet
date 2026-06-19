@@ -1,0 +1,134 @@
+# wgfleet — Prometheus Operator scrape config for an off-cluster fleet.
+#
+# The controller and agents expose /metrics ONLY on their mgmt/ZeroTier address
+# (never public). To scrape them from a Prometheus running in Kubernetes, the
+# cluster must be able to reach those ZT addresses (join the cluster nodes to the
+# ZeroTier network, or route the ZT subnet to the Prometheus pods).
+#
+# This file defines, for the controller and for the agents, a headless Service
+# (no selector) + a hand-written Endpoints object listing the ZT addresses +
+# a ServiceMonitor that selects the Service. The ONLY thing you edit is the ZT
+# addresses in the two Endpoints objects (and the namespace + the ServiceMonitor
+# `release` label so your Prometheus picks them up).
+#
+# Ports: controller metrics = 9300 (controller.yaml `controller.metrics`), agent
+# metrics = 9301 (the agent's `--metrics <zt-addr>:9301`; enable it per node).
+#
+# Apply:  kubectl apply -f servicemonitor.yaml
+---
+########################################################################
+# Controller (one target: the controller's ZT address, port 9300)
+########################################################################
+apiVersion: v1
+kind: Service
+metadata:
+  name: wgfleet-controller
+  namespace: monitoring # <-- your Prometheus namespace
+  labels:
+    app.kubernetes.io/name: wgfleet
+    app.kubernetes.io/component: controller
+spec:
+  clusterIP: None
+  ports:
+    - name: metrics
+      port: 9300
+      targetPort: 9300
+      protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: wgfleet-controller # MUST equal the Service name above
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: wgfleet
+    app.kubernetes.io/component: controller
+subsets:
+  - addresses:
+      - ip: 10.20.3.10 # <-- EDIT: controller ZT address
+    ports:
+      - name: metrics
+        port: 9300
+        protocol: TCP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: wgfleet-controller
+  namespace: monitoring
+  labels:
+    # <-- EDIT: must match your Prometheus `spec.serviceMonitorSelector`
+    # (kube-prometheus-stack: the Helm release name, e.g. release: kube-prometheus-stack)
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames: [monitoring]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wgfleet
+      app.kubernetes.io/component: controller
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scheme: http
+---
+########################################################################
+# Agents (one target per node: each node's ZT address, port 9301)
+# Requires the agent started with `--metrics <node-zt-addr>:9301`.
+########################################################################
+apiVersion: v1
+kind: Service
+metadata:
+  name: wgfleet-agents
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: wgfleet
+    app.kubernetes.io/component: agent
+spec:
+  clusterIP: None
+  ports:
+    - name: metrics
+      port: 9301
+      targetPort: 9301
+      protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: wgfleet-agents # MUST equal the Service name above
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: wgfleet
+    app.kubernetes.io/component: agent
+subsets:
+  # <-- EDIT: one entry per node's ZT address. All share the single metrics port.
+  - addresses:
+      - ip: 10.20.3.10 # master-xa-1
+      - ip: 10.20.3.20 # exit-1
+      - ip: 10.20.3.21 # exit-1cnode004-pl-1
+      - ip: 10.20.3.22 # exit-pn8-de-1
+    ports:
+      - name: metrics
+        port: 9301
+        protocol: TCP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: wgfleet-agents
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack # <-- EDIT (see above)
+spec:
+  namespaceSelector:
+    matchNames: [monitoring]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wgfleet
+      app.kubernetes.io/component: agent
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scheme: http

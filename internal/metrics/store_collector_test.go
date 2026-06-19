@@ -140,13 +140,13 @@ func TestAgentMetricsObserve(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewAgentMetrics(reg, "exit-de-1", domain.RoleExit, time.Unix(1_700_000_000, 0))
 
-	m.ObserveReconcile(120*time.Millisecond, domain.StateReady,
+	m.ObserveReconcile(120*time.Millisecond, 3, domain.StateReady,
 		[]domain.HealthCheck{{Name: "warp-egress", OK: true}, {Name: "dns-filter", OK: false}}, nil)
 
 	wantState := `
 # HELP wgfleet_agent_state_info Current node lifecycle state as a label; value is always 1.
 # TYPE wgfleet_agent_state_info gauge
-wgfleet_agent_state_info{state="Ready"} 1
+wgfleet_agent_state_info{node="exit-de-1",role="exit",state="Ready"} 1
 `
 	if err := testutil.GatherAndCompare(reg, strings.NewReader(wantState), "wgfleet_agent_state_info"); err != nil {
 		t.Error(err)
@@ -154,8 +154,8 @@ wgfleet_agent_state_info{state="Ready"} 1
 	wantChecks := `
 # HELP wgfleet_agent_health_check Result of a self-check: 1 ok, 0 failing.
 # TYPE wgfleet_agent_health_check gauge
-wgfleet_agent_health_check{check="dns-filter"} 0
-wgfleet_agent_health_check{check="warp-egress"} 1
+wgfleet_agent_health_check{check="dns-filter",node="exit-de-1",role="exit"} 0
+wgfleet_agent_health_check{check="warp-egress",node="exit-de-1",role="exit"} 1
 `
 	if err := testutil.GatherAndCompare(reg, strings.NewReader(wantChecks), "wgfleet_agent_health_check"); err != nil {
 		t.Error(err)
@@ -163,9 +163,12 @@ wgfleet_agent_health_check{check="warp-egress"} 1
 	if got := testutil.ToFloat64(m.reconcileTotal.WithLabelValues("success")); got != 1 {
 		t.Errorf("reconcile success counter = %v", got)
 	}
+	if got := testutil.ToFloat64(m.reconcileChanges); got != 3 {
+		t.Errorf("reconcile_changes = %v, want 3", got)
+	}
 
 	// A failing reconcile updates state to Error and bumps the error counter.
-	m.ObserveReconcile(5*time.Millisecond, domain.StateError, nil, errContext)
+	m.ObserveReconcile(5*time.Millisecond, 0, domain.StateError, nil, errContext)
 	if got := testutil.ToFloat64(m.reconcileTotal.WithLabelValues("error")); got != 1 {
 		t.Errorf("reconcile error counter = %v", got)
 	}

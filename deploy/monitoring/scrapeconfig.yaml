@@ -1,0 +1,43 @@
+# wgfleet — Prometheus Operator ScrapeConfig (CRD) alternative.
+#
+# If your prometheus-operator is >= v0.65, the ScrapeConfig CRD scrapes static
+# external targets directly — no Service/Endpoints plumbing. This is the simplest
+# "just list the ZT addresses" option. Use EITHER this OR servicemonitor.yaml.
+#
+# Apply:  kubectl apply -f scrapeconfig.yaml
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: wgfleet-controller
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack # <-- match Prometheus spec.scrapeConfigSelector
+spec:
+  metricsPath: /metrics
+  scrapeInterval: 30s
+  staticConfigs:
+    - targets:
+        - 10.20.3.10:9300 # <-- EDIT: controller ZT address : metrics port
+      labels:
+        component: controller
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: wgfleet-agents
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  metricsPath: /metrics
+  scrapeInterval: 30s
+  staticConfigs:
+    # <-- EDIT: one ZT address per node, all on the agent metrics port 9301.
+    - targets:
+        - 10.20.3.10:9301 # master-xa-1
+        - 10.20.3.20:9301 # exit-1
+        - 10.20.3.21:9301 # exit-1cnode004-pl-1
+        - 10.20.3.22:9301 # exit-pn8-de-1
+      labels:
+        component: agent

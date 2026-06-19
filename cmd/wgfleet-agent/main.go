@@ -126,6 +126,7 @@ func run() error {
 		}
 		reg := metrics.NewRegistry()
 		a.metrics = metrics.NewAgentMetrics(reg, cfg.Agent.NodeID, role, time.Now())
+		metrics.RegisterBuildInfo(reg, "agent", version.Version, version.Commit)
 		metricsSrv := &http.Server{Addr: *metricsBind, Handler: metricsMux(reg)}
 		go func() {
 			if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -415,7 +416,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		a.log.Warn("config drift detected and repaired", "components", drifted, "count", len(drifted))
 	}
 	if a.metrics != nil {
-		a.metrics.ObserveReconcile(elapsed, state, results, reconcileErr)
+		a.metrics.ObserveReconcile(elapsed, report.ChangeCount(), state, results, reconcileErr)
 		a.metrics.ObserveDrift(drifted)
 	}
 	a.log.Info("reconcile applied",
