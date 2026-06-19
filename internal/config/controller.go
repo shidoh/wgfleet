@@ -137,6 +137,20 @@ type FleetSection struct {
 	// EgressThroughputProbeURL overrides the URL each exit downloads to measure its
 	// egress throughput. Empty ⇒ the agent default (health.DefaultThroughputProbeURL).
 	EgressThroughputProbeURL string `koanf:"egress_throughput_probe_url"`
+	// ReconcileInterval is the fleet-wide agent reconcile cadence baked into every
+	// node's agent.yaml at provisioning (agent.reconcile_interval). It governs how
+	// fast drift and self-heal land. 0/unset ⇒ DefaultReconcileInterval. A per-node
+	// agent.yaml value still overrides it. Resolve via AgentReconcileInterval.
+	ReconcileInterval time.Duration `koanf:"reconcile_interval"`
+}
+
+// AgentReconcileInterval returns the fleet-wide agent reconcile interval, or the
+// default when unset. The provisioner bakes the result into each agent.yaml.
+func (f FleetSection) AgentReconcileInterval() time.Duration {
+	if f.ReconcileInterval <= 0 {
+		return DefaultReconcileInterval
+	}
+	return f.ReconcileInterval
 }
 
 // DefaultMinEgressThroughputKBytes is the egress throughput floor applied when the
@@ -446,6 +460,12 @@ func (c ControllerConfig) Validate() error {
 	}
 	if m := c.Fleet.MgmtOverlayMSS; m != 0 && (m < 536 || m > 1460) {
 		errs = append(errs, fmt.Errorf("fleet.mgmt_overlay_mss %d out of range (0 to disable, else 536..1460)", m))
+	}
+	// A reconcile interval that is too tight hammers the control plane and the local
+	// data plane (every pass probes docker/nft/listeners); too loose makes self-heal
+	// and drift repair lag. Keep it in a sane band; 0/unset uses the default.
+	if d := c.Fleet.ReconcileInterval; d != 0 && (d < 5*time.Second || d > time.Hour) {
+		errs = append(errs, fmt.Errorf("fleet.reconcile_interval %s out of range (0 for default, else 5s..1h)", d))
 	}
 	// The keybroker topology is single-master on MVP (open question #11): it peers
 	// every exit to Masters[0] only, so a second master would render specs that

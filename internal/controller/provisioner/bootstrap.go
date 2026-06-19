@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/controller/pki"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -31,6 +32,11 @@ type BootstrapInput struct {
 	// MgmtOverlayMSS, when > 0, is baked into the node's agent.yaml as
 	// agent.mgmt_overlay_mss (TCP MSS clamp on the overlay; control-plane insurance).
 	MgmtOverlayMSS int
+	// ReconcileInterval, when > 0, is baked into agent.yaml as
+	// agent.reconcile_interval (the agent's reconcile/self-heal cadence). 0 ⇒ omit
+	// the key and let the agent use its built-in default. The controller resolves
+	// this from fleet.reconcile_interval (config.FleetSection.AgentReconcileInterval).
+	ReconcileInterval time.Duration
 }
 
 // Remote paths the bootstrap writes to. Kept here so plan and apply agree.
@@ -206,6 +212,11 @@ func renderAgentYAML(in BootstrapInput) string {
 		// off-public surfaces. See config.AgentSection.MgmtAddr.
 		extra += fmt.Sprintf("  mgmt_addr: %q\n", addr)
 	}
+	if in.ReconcileInterval > 0 {
+		// Fleet-wide reconcile/self-heal cadence (fleet.reconcile_interval). Omitted
+		// when 0 so the agent falls back to its built-in default.
+		extra += fmt.Sprintf("  reconcile_interval: %s\n", in.ReconcileInterval)
+	}
 	if in.MgmtOverlayMSS > 0 {
 		// Baked in from fleet config so the clamp is agent-local: it must not depend on
 		// the control channel it protects (see config.AgentSection.MgmtOverlayMSS).
@@ -215,7 +226,6 @@ func renderAgentYAML(in BootstrapInput) string {
   role: %s
   controller: %q
   node_id: %q
-  reconcile_interval: 60s
 %s  identity:
     cert: %q
     key: %q

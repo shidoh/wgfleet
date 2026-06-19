@@ -62,6 +62,11 @@ fleet:
   # measure throughput. Default is a ~256 KiB Cloudflare speed object. Override for a
   # stricter, non-Cloudflare target.
   # egress_throughput_probe_url: "https://speed.cloudflare.com/__down?bytes=262144"
+  # reconcile_interval: the agent reconcile / self-heal cadence baked into every
+  # agent.yaml at provisioning. Lower = faster drift + dead-listener repair (e.g. the
+  # mihomo redirect self-heal) at the cost of more frequent docker/nft/listener probes.
+  # Unset ⇒ 30s. Range 5s..1h. A per-node agent.yaml reconcile_interval still overrides.
+  reconcile_interval: 30s
   masters:
     - name: master-xa-1
       mgmt_addr: 10.20.25.254 # ZT overlay address

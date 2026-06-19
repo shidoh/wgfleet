@@ -8,8 +8,11 @@ import (
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
-// DefaultReconcileInterval is used when agent.reconcile_interval is unset.
-const DefaultReconcileInterval = 60 * time.Second
+// DefaultReconcileInterval is used when agent.reconcile_interval is unset. It sets
+// the agent's convergence/self-heal cadence (how fast drift and dead-listener
+// repair land), so it is kept tight; override per-fleet via fleet.reconcile_interval
+// or per-node via agent.reconcile_interval.
+const DefaultReconcileInterval = 30 * time.Second
 
 // DefaultAgentMetricsPort is the port the agent's Prometheus /metrics endpoint
 // binds on the node's mgmt/overlay (ZeroTier) address by default. Kept distinct

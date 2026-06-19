@@ -3,6 +3,7 @@ package provisioner
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/domain"
 )
@@ -29,6 +30,23 @@ func TestRenderAgentYAMLOmitsMgmtAddrWhenEmpty(t *testing.T) {
 	}
 	if got := renderAgentYAML(in); strings.Contains(got, "mgmt_addr:") {
 		t.Fatalf("agent.yaml should omit mgmt_addr when unset:\n%s", got)
+	}
+}
+
+func TestRenderAgentYAMLBakesReconcileInterval(t *testing.T) {
+	base := BootstrapInput{
+		Node:               domain.Node{ID: "exit-de-1", Role: domain.RoleExit},
+		ControllerEndpoint: "master-xa-1.mgmt:8443",
+	}
+	// Set: the fleet value is baked verbatim.
+	in := base
+	in.ReconcileInterval = 30 * time.Second
+	if got := renderAgentYAML(in); !strings.Contains(got, "reconcile_interval: 30s") {
+		t.Fatalf("agent.yaml missing reconcile_interval: 30s:\n%s", got)
+	}
+	// Unset: the key is omitted so the agent uses its built-in default.
+	if got := renderAgentYAML(base); strings.Contains(got, "reconcile_interval:") {
+		t.Fatalf("agent.yaml should omit reconcile_interval when unset:\n%s", got)
 	}
 }
 

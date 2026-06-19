@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/routing"
 )
@@ -79,6 +80,32 @@ func TestValidateMgmtOverlayMSS(t *testing.T) {
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "mgmt_overlay_mss") {
 			t.Errorf("mgmt_overlay_mss %d should be rejected, got %v", bad, err)
 		}
+	}
+}
+
+func TestValidateReconcileInterval(t *testing.T) {
+	for _, ok := range []time.Duration{0, 5 * time.Second, 30 * time.Second, time.Hour} {
+		cfg := baseValidController()
+		cfg.Fleet.ReconcileInterval = ok
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("reconcile_interval %s rejected unexpectedly: %v", ok, err)
+		}
+	}
+	for _, bad := range []time.Duration{time.Second, 4 * time.Second, 2 * time.Hour} {
+		cfg := baseValidController()
+		cfg.Fleet.ReconcileInterval = bad
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "reconcile_interval") {
+			t.Errorf("reconcile_interval %s should be rejected, got %v", bad, err)
+		}
+	}
+}
+
+func TestAgentReconcileInterval(t *testing.T) {
+	if got := (FleetSection{}).AgentReconcileInterval(); got != DefaultReconcileInterval {
+		t.Errorf("unset: got %s, want default %s", got, DefaultReconcileInterval)
+	}
+	if got := (FleetSection{ReconcileInterval: 45 * time.Second}).AgentReconcileInterval(); got != 45*time.Second {
+		t.Errorf("set: got %s, want 45s", got)
 	}
 }
 

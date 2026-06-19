@@ -132,6 +132,7 @@ func (m *Manager) Provision(ctx context.Context, nodeID string, mode provisioner
 		ControllerEndpoint: m.opts.ControllerEndpoint,
 		ZeroTierNetwork:    m.fleet.ZeroTierNetwork,
 		MgmtOverlayMSS:     m.fleet.MgmtOverlayMSS,
+		ReconcileInterval:  m.fleet.AgentReconcileInterval(),
 	}
 	if m.opts.AgentBinPath != "" {
 		bin, err := os.ReadFile(m.opts.AgentBinPath)
