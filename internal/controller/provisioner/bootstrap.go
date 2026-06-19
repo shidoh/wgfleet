@@ -132,8 +132,9 @@ func BuildPlan(in BootstrapInput) Plan {
 		steps = append(steps, checkStep("agent binary install (provide via --agent-bin)",
 			"upload "+remoteAgentBin, func(context.Context, Runner) error { return nil }))
 	}
+	unit := renderSystemdUnit(in)
 	steps = append(steps,
-		uploadStep("install systemd unit", remoteUnit, []byte(renderSystemdUnit(in)), 0o644, renderSystemdUnit(in)),
+		uploadStep("install systemd unit", remoteUnit, []byte(unit), 0o644, unit),
 		runStep("reload systemd", "systemctl daemon-reload"),
 		// restart (not `enable --now`): on a re-provision the agent is already
 		// running, and `enable --now` would NOT restart it, so the freshly uploaded

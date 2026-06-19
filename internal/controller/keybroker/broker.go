@@ -10,6 +10,7 @@ package keybroker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -298,10 +299,12 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 // throughputAutoSuspend returns the set of exit names to auto-suspend from the LB
 // group because the throughput watchdog reported their active egress sustained-
 // degraded (ADR-0021). It NEVER empties the group: an exit is auto-suspended only
-// if at least one healthy exit (not degraded, not admin-drained) would remain — a
-// throttled exit still beats a black hole when every node is bad. The degraded
-// signal is the exit's own hysteresis-smoothed egress-throughput check, read from
-// its latest stored status; a missing status reads as not-degraded (fail-safe).
+// if at least one PROVEN-healthy exit (reported, not degraded, not admin-drained)
+// would remain — a throttled exit still beats a black hole when every node is bad.
+// An exit with no status yet (Pending/Provisioning) is neither degraded nor counted
+// healthy: it must not satisfy the last-exit guard, or two limping-but-reporting
+// exits could be suspended in favour of one that may never come up. The degraded
+// signal is the exit's own hysteresis-smoothed egress-throughput check.
 func (b *Broker) throughputAutoSuspend(ctx context.Context) map[string]bool {
 	degraded := make(map[string]bool)
 	healthy := 0
@@ -311,8 +314,15 @@ func (b *Broker) throughputAutoSuspend(ctx context.Context) map[string]bool {
 			continue
 		}
 		st, err := b.store.GetStatus(ctx, exit.Name)
+		if err != nil {
+			if !errors.Is(err, store.ErrNotFound) {
+				b.log.Warn("auto-suspend: status read failed; treating exit as unknown",
+					"exit", exit.Name, "err", err)
+			}
+			continue // no status ⇒ neither degraded nor counted toward the guard
+		}
 		switch {
-		case err == nil && st.EgressThroughputDegraded():
+		case st.EgressThroughputDegraded():
 			degraded[exit.Name] = true
 		case !node.Drain:
 			healthy++

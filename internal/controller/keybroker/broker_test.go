@@ -590,6 +590,28 @@ func TestAutoSuspendThroughputDegraded(t *testing.T) {
 	}
 }
 
+func TestAutoSuspendSingleExitGuard(t *testing.T) {
+	ctx := context.Background()
+	b, st := newBroker(t) // testFleet has exactly one exit
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+	// The only exit reports throughput-degraded — it MUST stay in the LB (suspending
+	// it would black-hole all clients; the last-exit guard forbids it).
+	recordThroughputDegraded(t, st, "exit-de-1", false)
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	x, ok := tunnelByName(spec.Master.ExitTunnels, "exit-de-1")
+	if !ok {
+		t.Fatal("expected the single exit tunnel")
+	}
+	if x.Drained {
+		t.Error("the only exit must never be auto-suspended (last-exit guard)")
+	}
+}
+
 func TestRenderExitSpecEgressChain(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {

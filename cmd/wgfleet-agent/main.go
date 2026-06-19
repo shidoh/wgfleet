@@ -361,6 +361,10 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			passive := a.passiveEgressBytesPerSec(spec.Routing.EgressInterface)
 			probe := health.NewThroughputProbe(spec.Routing.EgressInterface, spec.EgressThroughputProbeURL)
 			deg, chk := a.throughput.Observe(ctx, passive, probe)
+			// Re-baseline the byte counter AFTER the probe so the probe's own ~256 KiB
+			// (when it ran) are not counted as "live traffic" in next pass's passive
+			// measurement — the watchdog must not measure its own probe (network review H1).
+			a.resnapshotEgressBytes(spec.Routing.EgressInterface)
 			throughputDegraded = deg
 			results = append(results, chk)
 			if deg {
@@ -476,6 +480,18 @@ func (a *agent) passiveEgressBytesPerSec(iface string) float64 {
 		return 0 // clock skew or a counter reset (interface re-created)
 	}
 	return float64(cur-prevBytes) / elapsed
+}
+
+// resnapshotEgressBytes re-bases the passive byte counter to NOW after the active
+// probe has run, so the probe's own ~256 KiB are excluded from the next pass's
+// passive delta (the watchdog must not count its own probe as live traffic). A
+// no-op when the counter is unreadable, keeping the prior baseline.
+func (a *agent) resnapshotEgressBytes(iface string) {
+	if cur, ok := readIfaceBytes(iface); ok {
+		a.egressBytesPrev = cur
+		a.egressBytesAt = time.Now()
+		a.egressIfacePrev = iface
+	}
 }
 
 // readIfaceBytes returns rx+tx bytes for iface from /sys, or (0,false) when it

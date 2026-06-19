@@ -134,6 +134,58 @@ func TestValidateExitLinkMTU(t *testing.T) {
 	}
 }
 
+func TestValidateExitWARPMTU(t *testing.T) {
+	for _, ok := range []int{0, 1280, 1380, 1500} {
+		cfg := baseValidController()
+		cfg.Fleet.Exits = []ExitConfig{{Name: "e1", Egress: "warp", WARPMTU: ok}}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("warp_mtu %d rejected unexpectedly: %v", ok, err)
+		}
+	}
+	for _, bad := range []int{100, 1279, 1501} {
+		cfg := baseValidController()
+		cfg.Fleet.Exits = []ExitConfig{{Name: "e1", Egress: "warp", WARPMTU: bad}}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "warp_mtu") {
+			t.Errorf("warp_mtu %d should be rejected, got %v", bad, err)
+		}
+	}
+}
+
+func TestValidateMgmtAddr(t *testing.T) {
+	for _, ok := range []string{"", "10.20.3.20", "fd00::1"} {
+		cfg := baseValidController()
+		cfg.Fleet.Exits = []ExitConfig{{Name: "e1", Egress: "warp", MgmtAddr: ok}}
+		cfg.Fleet.Masters = []MasterConfig{{Name: "m1", MgmtAddr: ok}}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("mgmt_addr %q rejected unexpectedly: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"not-an-ip", "10.20.3.20\nExecStart=/bin/evil", "10.20.3.20 evil", "host:9301"} {
+		cfg := baseValidController()
+		cfg.Fleet.Exits = []ExitConfig{{Name: "e1", Egress: "warp", MgmtAddr: bad}}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "mgmt_addr") {
+			t.Errorf("mgmt_addr %q should be rejected, got %v", bad, err)
+		}
+	}
+}
+
+func TestValidateProbeURL(t *testing.T) {
+	for _, ok := range []string{"", "https://speed.cloudflare.com/__down?bytes=262144", "http://example.com/x"} {
+		cfg := baseValidController()
+		cfg.Fleet.EgressThroughputProbeURL = ok
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("probe_url %q rejected unexpectedly: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"file:///etc/passwd", "ftp://x/y", "http://", "://nohost", "169.254.169.254"} {
+		cfg := baseValidController()
+		cfg.Fleet.EgressThroughputProbeURL = bad
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "egress_throughput_probe_url") {
+			t.Errorf("probe_url %q should be rejected, got %v", bad, err)
+		}
+	}
+}
+
 func TestValidateRejectsCIDRInjection(t *testing.T) {
 	// Master direct_cidrs feed the nft NAT `ip daddr != <cidr>` guards (run as root);
 	// a crafted value that would inject nft syntax must be rejected before render.
@@ -148,6 +200,13 @@ func TestValidateRejectsCIDRInjection(t *testing.T) {
 	cfg.Fleet.Exits = []ExitConfig{{Name: "e1", Egress: "warp", AddressPool: "10.81.0.0/24 evil"}}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "address_pool") {
 		t.Fatalf("expected address_pool CIDR rejection, got %v", err)
+	}
+
+	// Master client_awg.address_pool feeds the master NAT ClientCIDR — same vector.
+	cfg = baseValidController()
+	cfg.Fleet.Masters = []MasterConfig{{Name: "m1", ClientAWG: ClientAWGConfig{AddressPool: "10.80.0.0/24; flush ruleset"}}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "client_awg.address_pool") {
+		t.Fatalf("expected client_awg.address_pool CIDR rejection, got %v", err)
 	}
 
 	// A well-formed CIDR list still passes.

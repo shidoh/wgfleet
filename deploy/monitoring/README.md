@@ -30,10 +30,10 @@ node's ZT address (the agent already knows it via `--mgmt-addr`):
 
 ```ini
 # /etc/systemd/system/wgfleet-agent.service.d/metrics.conf  (drop-in)
+# Replace 10.20.0.20 with THIS node's ZT/mgmt address.
 [Service]
-Environment=
 ExecStart=
-ExecStart=/usr/local/bin/wgfleet-agent --config /etc/wgfleet/agent.yaml --log-format json --metrics ${ZT_ADDR}:9301
+ExecStart=/usr/local/bin/wgfleet-agent --config /etc/wgfleet/agent.yaml --log-format json --metrics 10.20.0.20:9301
 ```
 
 then `systemctl daemon-reload && systemctl restart wgfleet-agent`. New nodes get

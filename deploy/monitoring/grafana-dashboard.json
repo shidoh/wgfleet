@@ -193,17 +193,18 @@
       },
       "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false, "reducer": ["sum"], "fields": "" } },
       "transformations": [
-        { "id": "merge", "options": {} },
+        { "id": "joinByField", "options": { "byField": "node", "mode": "outer" } },
         { "id": "organize", "options": {
-          "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true, "Value #info": true, "Value #age": true, "Value #ver": true, "Value #drain": true, "Value #egress": true, "wire_version": true },
-          "renameByName": { "node": "node", "role": "role", "region": "region", "state": "state", "agent_version": "agent", "egress_ip": "egress IP", "Value #age": "last_report_age" },
-          "indexByName": { "node": 0, "role": 1, "region": 2, "state": 3, "agent_version": 4, "egress_ip": 5 }
+          "excludeByName": { "Time": true, "Time 1": true, "Time 2": true, "Time 3": true, "Time 4": true, "Time 5": true, "__name__": true, "job": true, "instance": true, "Value #info": true, "Value #ver": true, "Value #egress": true, "wire_version": true },
+          "renameByName": { "agent_version": "agent", "egress_ip": "egress IP", "Value #age": "last_report_age", "Value #drain": "drain" },
+          "indexByName": { "node": 0, "role": 1, "region": 2, "state": 3, "agent_version": 4, "egress_ip": 5, "Value #age": 6, "Value #drain": 7 }
         } }
       ],
       "targets": [
         { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "wgfleet_node_info{node=~\"$node\"}", "format": "table", "instant": true, "refId": "info" },
         { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "wgfleet_node_agent_info{node=~\"$node\"}", "format": "table", "instant": true, "refId": "ver" },
         { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "wgfleet_node_egress_info{node=~\"$node\"}", "format": "table", "instant": true, "refId": "egress" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "wgfleet_node_last_report_age_seconds{node=~\"$node\"}", "format": "table", "instant": true, "refId": "age" },
         { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "wgfleet_node_drain{node=~\"$node\"}", "format": "table", "instant": true, "refId": "drain" }
       ]
     },
@@ -236,7 +237,7 @@
     {
       "type": "timeseries",
       "title": "Egress throughput per exit",
-      "description": "Measured egress bandwidth (passive live traffic, or an active probe on an idle link). The dashed line is the configured floor (250 KB/s default); a sustained collapse below it auto-suspends the exit from the LB.",
+      "description": "Measured egress bandwidth (passive live traffic, or an active probe on an idle link). The dashed line is the configured floor (250 KiB/s default); a sustained collapse below it auto-suspends the exit from the LB.",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 8, "w": 16, "x": 0, "y": 29 },
       "id": 41,
@@ -245,14 +246,16 @@
       "targets": [ { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "wgfleet_agent_egress_throughput_bytes{node=~\"$node\"}", "legendFormat": "{{node}}", "refId": "A" } ]
     },
     {
-      "type": "state-timeline",
+      "type": "table",
       "title": "Active egress method",
+      "description": "Which egress each exit is currently using (warp / direct). Differs from the preferred egress while failed over (ADR-0017).",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 29 },
       "id": 42,
-      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 80, "lineWidth": 0, "spanNulls": true }, "mappings": [] }, "overrides": [] },
-      "options": { "alignValue": "left", "legend": { "displayMode": "list", "placement": "bottom", "showLegend": false }, "mergeValues": true, "rowHeight": 0.9, "showValue": "always", "tooltip": { "mode": "single", "sort": "none" } },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "wgfleet_agent_egress_active{node=~\"$node\"} == 1", "legendFormat": "{{node}}", "refId": "A" } ]
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false }, "mappings": [] }, "overrides": [ { "matcher": { "id": "byName", "options": "method" }, "properties": [ { "id": "custom.cellOptions", "value": { "type": "color-text" } }, { "id": "mappings", "value": [ { "type": "value", "options": { "warp": { "color": "green", "index": 0 }, "direct": { "color": "yellow", "index": 1 } } } ] } ] } ] },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false, "reducer": ["sum"], "fields": "" } },
+      "transformations": [ { "id": "organize", "options": { "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true, "instance": true, "role": true }, "renameByName": {}, "indexByName": { "node": 0, "method": 1 } } } ],
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "wgfleet_agent_egress_active{node=~\"$node\"}", "format": "table", "instant": true, "refId": "A" } ]
     },
     {
       "type": "row",

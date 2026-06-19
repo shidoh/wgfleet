@@ -182,7 +182,8 @@ func (w *ThroughputWatchdog) Observe(ctx context.Context, passiveBytesPerSec flo
 	}
 }
 
-// kbPerSec formats a bytes/sec rate as a human KB/s string.
+// kbPerSec formats a bytes/sec rate as a human KiB/s string (the floor is
+// kbytes×1024, so the display unit is binary KiB to match exactly).
 func kbPerSec(bps float64) string {
-	return fmt.Sprintf("%.0f KB/s", bps/1024)
+	return fmt.Sprintf("%.0f KiB/s", bps/1024)
 }

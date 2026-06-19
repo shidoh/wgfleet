@@ -45,7 +45,7 @@ metadata:
     app.kubernetes.io/component: controller
 subsets:
   - addresses:
-      - ip: 10.20.3.10 # <-- EDIT: controller ZT address
+      - ip: 10.20.0.1 # <-- EDIT: controller ZT address
     ports:
       - name: metrics
         port: 9300
@@ -104,10 +104,10 @@ metadata:
 subsets:
   # <-- EDIT: one entry per node's ZT address. All share the single metrics port.
   - addresses:
-      - ip: 10.20.3.10 # master-xa-1
-      - ip: 10.20.3.20 # exit-1
-      - ip: 10.20.3.21 # exit-1cnode004-pl-1
-      - ip: 10.20.3.22 # exit-pn8-de-1
+      - ip: 10.20.0.1 # master
+      - ip: 10.20.0.2 # exit-1
+      - ip: 10.20.0.3 # exit-2
+      - ip: 10.20.0.4 # exit-3
     ports:
       - name: metrics
         port: 9301

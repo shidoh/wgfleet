@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -125,8 +126,8 @@ type FleetSection struct {
 	// working even if the ZeroTier MTU is left at its 2800 default while the underlay
 	// path is smaller. Recommended 1240 (matches a 1280 overlay MTU); 0 disables.
 	MgmtOverlayMSS int `koanf:"mgmt_overlay_mss"`
-	// MinEgressThroughputKBytes is the fleet-wide egress throughput floor in KB/s
-	// (kilobytes/sec) below which an exit's active egress is considered degraded
+	// MinEgressThroughputKBytes is the fleet-wide egress throughput floor in KiB/s
+	// (the value is multiplied by 1024 to bytes/sec) below which an exit's active egress is considered degraded
 	// (ADR-0021). mihomo's url-test is latency-only and cannot see a throttled exit
 	// (the exit-3 case: 88ms latency but 25 KB/s), so the platform measures throughput
 	// per exit and removes the throttled ones from the LB. 0 disables the watchdog
@@ -149,7 +150,7 @@ const DefaultMinEgressThroughputKBytes = 250
 // watchdog for that exit and returns 0 (watchdog off). The keybroker converts the
 // result to bytes/sec for the NodeSpec.
 func (f FleetSection) EgressThroughputFloorKBytes(e ExitConfig) int {
-	if e.MinEgressThroughputKBytes < 0 || f.MinEgressThroughputKBytes < 0 && e.MinEgressThroughputKBytes == 0 {
+	if e.MinEgressThroughputKBytes < 0 || (f.MinEgressThroughputKBytes < 0 && e.MinEgressThroughputKBytes == 0) {
 		return 0 // explicitly disabled at exit or fleet level
 	}
 	if e.MinEgressThroughputKBytes > 0 {
@@ -505,6 +506,9 @@ func (c ControllerConfig) Validate() error {
 				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.address_pool %q is not a valid CIDR: %w", i, m.ClientAWG.AddressPool, err))
 			}
 		}
+		if err := validateMgmtAddr(m.MgmtAddr); err != nil {
+			errs = append(errs, fmt.Errorf("fleet.masters[%d]: %w", i, err))
+		}
 	}
 	for i, e := range c.Fleet.Exits {
 		if e.Name == "" {
@@ -536,8 +540,48 @@ func (c ControllerConfig) Validate() error {
 				errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): address_pool %q is not a valid CIDR: %w", i, e.Name, e.AddressPool, err))
 			}
 		}
+		if err := validateMgmtAddr(e.MgmtAddr); err != nil {
+			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): %w", i, e.Name, err))
+		}
+	}
+	if err := validateProbeURL(c.Fleet.EgressThroughputProbeURL); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
+}
+
+// validateMgmtAddr rejects a non-empty mgmt_addr that is not a bare IP. The value
+// is baked into the agent's systemd ExecStart (--metrics <addr>:9301), used as a
+// bind address, and built into URLs; requiring a plain IP both catches typos and
+// closes a systemd-unit / shell injection vector (a newline or space in the addr).
+func validateMgmtAddr(addr string) error {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return nil
+	}
+	if _, err := netip.ParseAddr(addr); err != nil {
+		return fmt.Errorf("mgmt_addr %q is not a valid IP address: %w", addr, err)
+	}
+	return nil
+}
+
+// validateProbeURL rejects a non-empty egress_throughput_probe_url that is not a
+// plain http(s) URL with a host. The exit fetches it with curl through its egress;
+// restricting the scheme/host stops a file:// read or an internal-metadata SSRF
+// from a crafted manifest (ADR-0021).
+func validateProbeURL(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("fleet.egress_throughput_probe_url %q is not a valid URL: %w", raw, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("fleet.egress_throughput_probe_url %q must be an http(s) URL with a host", raw)
+	}
+	return nil
 }
 
 // allowPublicBind reports whether the operator has explicitly opted out of the
