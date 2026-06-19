@@ -3,8 +3,6 @@ package provisioner
 import (
 	"context"
 	"fmt"
-	"net"
-	"strconv"
 	"strings"
 
 	"github.com/shidoh/wgfleet/internal/controller/pki"
@@ -192,24 +190,26 @@ func wgcfInstallCmd(arch string) string {
 	return fmt.Sprintf("curl -fsSL -o /usr/local/bin/wgcf %q && chmod +x /usr/local/bin/wgcf", url)
 }
 
-// renderSystemdUnit fills the agent unit, adding `--metrics <mgmt-addr>:9301` when
-// the node has a mgmt/ZeroTier address so its Prometheus endpoint comes up bound to
-// the overlay (never public — the agent refuses a public metrics bind). Without a
-// mgmt addr, no metrics flag is added.
-func renderSystemdUnit(in BootstrapInput) string {
-	flags := ""
-	if addr := strings.TrimSpace(in.Node.MgmtAddr); addr != "" {
-		flags = " --metrics " + net.JoinHostPort(addr, strconv.Itoa(AgentMetricsPort))
-	}
-	return fmt.Sprintf(systemdUnitTemplate, flags)
+// renderSystemdUnit fills the agent unit. It carries no per-node launch flags: the
+// agent reads its identity from agent.yaml and defaults its Prometheus /metrics
+// endpoint to <mgmt_addr>:9301 (written into agent.yaml below), so the unit stays
+// generic and identical across the fleet.
+func renderSystemdUnit(BootstrapInput) string {
+	return fmt.Sprintf(systemdUnitTemplate, "")
 }
 
 func renderAgentYAML(in BootstrapInput) string {
-	var overlay string
+	var extra string
+	if addr := strings.TrimSpace(in.Node.MgmtAddr); addr != "" {
+		// Config-driven mgmt address: the agent binds its /metrics endpoint to
+		// mgmt_addr:9301 by default (no launch flag needed) and uses it for other
+		// off-public surfaces. See config.AgentSection.MgmtAddr.
+		extra += fmt.Sprintf("  mgmt_addr: %q\n", addr)
+	}
 	if in.MgmtOverlayMSS > 0 {
 		// Baked in from fleet config so the clamp is agent-local: it must not depend on
 		// the control channel it protects (see config.AgentSection.MgmtOverlayMSS).
-		overlay = fmt.Sprintf("  mgmt_overlay_mss: %d\n", in.MgmtOverlayMSS)
+		extra += fmt.Sprintf("  mgmt_overlay_mss: %d\n", in.MgmtOverlayMSS)
 	}
 	return fmt.Sprintf(`agent:
   role: %s
@@ -220,7 +220,7 @@ func renderAgentYAML(in BootstrapInput) string {
     cert: %q
     key: %q
     ca: %q
-`, in.Node.Role, in.ControllerEndpoint, in.Node.ID, overlay,
+`, in.Node.Role, in.ControllerEndpoint, in.Node.ID, extra,
 		remoteNodeCert, remoteNodeKey, remoteCACert)
 }
 

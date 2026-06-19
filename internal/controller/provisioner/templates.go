@@ -41,13 +41,13 @@ table inet wgfleet_baseline {
 }
 `
 
-// AgentMetricsPort is the port the agent's Prometheus /metrics endpoint binds on
-// the node's mgmt/ZeroTier address (the controller's own /metrics is 9300). Kept
-// off 9300 so a co-located controller+agent (master) doesn't collide.
-const AgentMetricsPort = 9301
+// The agent's Prometheus /metrics endpoint binds on the node's mgmt/overlay address
+// at config.DefaultAgentMetricsPort by default (kept off the controller's 9300 so a
+// co-located controller+agent does not collide). The agent derives that bind from
+// agent.yaml's mgmt_addr — no per-node launch flag — so the unit stays generic.
 
 // systemdUnitTemplate runs the agent as a reconcile daemon, restarting on failure.
-// %s is the ExecStart flags tail (so the metrics flag can be added per node).
+// %s is an ExecStart flags tail, currently always empty (the unit is generic).
 const systemdUnitTemplate = `[Unit]
 Description=wgfleet node agent
 After=network-online.target

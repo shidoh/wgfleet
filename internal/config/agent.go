@@ -11,6 +11,12 @@ import (
 // DefaultReconcileInterval is used when agent.reconcile_interval is unset.
 const DefaultReconcileInterval = 60 * time.Second
 
+// DefaultAgentMetricsPort is the port the agent's Prometheus /metrics endpoint
+// binds on the node's mgmt/overlay (ZeroTier) address by default. Kept distinct
+// from the controller's own /metrics (9300) so a co-located controller+agent
+// (master) does not collide. The --metrics flag overrides the full bind address.
+const DefaultAgentMetricsPort = 9301
+
 // AgentConfig is the top-level config for a wgfleet-agent process, loaded from
 // agent.yaml. The agent is deliberately thin: it only needs to know who it is
 // and where the controller lives; the rest of its behavior comes from the
@@ -26,6 +32,13 @@ type AgentSection struct {
 	NodeID            string          `koanf:"node_id"`            // stable node identifier
 	ReconcileInterval time.Duration   `koanf:"reconcile_interval"` // e.g. "60s"
 	Identity          IdentitySection `koanf:"identity"`
+	// MgmtAddr is this node's management/overlay (ZeroTier) address. It is the bind
+	// address for agent surfaces that must stay off the public interface — today the
+	// Prometheus /metrics endpoint, which the agent binds to
+	// MgmtAddr:DefaultAgentMetricsPort by default (so metrics come up without an
+	// explicit flag). The --metrics flag overrides the full bind; --metrics off
+	// disables it. The --mgmt-addr flag overrides this value.
+	MgmtAddr string `koanf:"mgmt_addr"`
 	// MgmtOverlayMSS, when > 0, clamps TCP MSS on the ZeroTier overlay interface to
 	// this value (rendered into the node firewall). Control-plane insurance: keeps
 	// the agent↔controller mTLS handshake working even if the ZeroTier MTU is left at

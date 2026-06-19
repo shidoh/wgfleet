@@ -5,6 +5,11 @@ agent:
   controller: "master-xa-1.mgmt:8443"
   node_id: "exit-de-1"
   reconcile_interval: 60s
+  # mgmt_addr: this node's mgmt/overlay (ZeroTier) address. The agent binds its
+  # Prometheus /metrics endpoint to mgmt_addr:9301 by default (no launch flag) and
+  # uses it for other off-public surfaces. Baked in at provisioning. The --metrics
+  # flag overrides the bind; --metrics off disables it.
+  mgmt_addr: "10.20.3.22"
   # mgmt_overlay_mss: clamp TCP MSS on the ZeroTier interface (control-plane
   # insurance; keeps the mTLS handshake working if the overlay MTU is left at 2800).
   # Usually baked in from the controller's fleet.mgmt_overlay_mss at provisioning;

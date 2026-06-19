@@ -7,9 +7,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Add `--metrics <mgmt-addr>:9301` to expose Prometheus /metrics on the mgmt/ZT
-# address (the provisioner does this automatically from the node's mgmt_addr; see
-# deploy/monitoring/). It is refused on a public bind.
+# The agent exposes Prometheus /metrics on <mgmt_addr>:9301 by default, reading
+# mgmt_addr from agent.yaml — no per-node flag needed (see deploy/monitoring/).
+# Override with `--metrics <addr>` (refused on a public bind); `--metrics off`
+# disables it. The unit stays generic across the fleet.
 ExecStart=/usr/local/bin/wgfleet-agent --config /etc/wgfleet/agent.yaml --log-format json
 Restart=on-failure
 RestartSec=5

@@ -54,6 +54,24 @@ func metricsMux(reg *prometheus.Registry) http.Handler {
 	return mux
 }
 
+// resolveMetricsBind decides the agent /metrics bind address. An explicit
+// --metrics value wins; "off"/"none"/"-" disables it; empty defaults to
+// mgmtAddr:DefaultAgentMetricsPort so metrics come up without a flag whenever the
+// node knows its mgmt/overlay address. Returns "" when metrics must not start.
+func resolveMetricsBind(flagVal, mgmtAddr string) string {
+	switch strings.ToLower(strings.TrimSpace(flagVal)) {
+	case "off", "none", "-":
+		return ""
+	case "":
+		if mgmtAddr == "" {
+			return ""
+		}
+		return net.JoinHostPort(mgmtAddr, strconv.Itoa(config.DefaultAgentMetricsPort))
+	default:
+		return strings.TrimSpace(flagVal)
+	}
+}
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("agent exited with error", "err", err)
@@ -70,7 +88,7 @@ func run() error {
 		publicIP    = flag.String("public-ip", "", "this node's public IP to advertise (peer endpoint)")
 		mgmtAddr    = flag.String("mgmt-addr", "", "this node's mgmt/ZT address (admin + metrics + DNS bind)")
 		stateDir    = flag.String("state-dir", "", "root managed files under this dir instead of /etc (non-root/dev runs)")
-		metricsBind = flag.String("metrics", "", "bind address for the agent /metrics endpoint (mgmt/ZT only; empty disables)")
+		metricsBind = flag.String("metrics", "", "override the agent /metrics bind (mgmt/ZT only); default <mgmt-addr>:9301, 'off' disables")
 		showVersion = flag.Bool("version", false, "print build version and exit")
 	)
 	flag.Parse()
@@ -102,6 +120,13 @@ func run() error {
 	}
 	defer func() { _ = conn.Close() }()
 
+	// Resolve the mgmt/overlay address: the --mgmt-addr flag overrides agent.yaml's
+	// mgmt_addr. It is the bind for the metrics endpoint and other off-public surfaces.
+	mgmt := strings.TrimSpace(*mgmtAddr)
+	if mgmt == "" {
+		mgmt = strings.TrimSpace(cfg.Agent.MgmtAddr)
+	}
+
 	paths := exit.DefaultPaths()
 	if *stateDir != "" {
 		paths = exit.PathsUnder(*stateDir)
@@ -110,24 +135,25 @@ func run() error {
 		cfg:      cfg,
 		role:     role,
 		publicIP: *publicIP,
-		mgmtAddr: *mgmtAddr,
+		mgmtAddr: mgmt,
 		stateDir: *stateDir,
 		paths:    paths,
 		client:   conn,
 		log:      slog.With("node", cfg.Agent.NodeID, "role", role),
 	}
 
-	// Agent /metrics (own reconcile/health counters). Bind mgmt/ZT only: this
-	// endpoint is unauthenticated and leaks fleet topology (node id, role, egress
-	// IP, health) if exposed publicly, so refuse a public bind like the controller.
-	if *metricsBind != "" {
-		if err := config.RequireMgmtBind("--metrics", *metricsBind); err != nil {
+	// Agent /metrics (own reconcile/health counters). Defaults to mgmt:9301 so the
+	// endpoint comes up without an explicit flag; --metrics overrides, 'off' disables.
+	// Bind mgmt/ZT only: this endpoint is unauthenticated and leaks fleet topology
+	// (node id, role, egress IP, health) if exposed publicly, so refuse a public bind.
+	if bind := resolveMetricsBind(*metricsBind, mgmt); bind != "" {
+		if err := config.RequireMgmtBind("--metrics", bind); err != nil {
 			return err
 		}
 		reg := metrics.NewRegistry()
 		a.metrics = metrics.NewAgentMetrics(reg, cfg.Agent.NodeID, role, time.Now())
 		metrics.RegisterBuildInfo(reg, "agent", version.Version, version.Commit)
-		metricsSrv := &http.Server{Addr: *metricsBind, Handler: metricsMux(reg)}
+		metricsSrv := &http.Server{Addr: bind, Handler: metricsMux(reg)}
 		go func() {
 			if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				a.log.Error("metrics server error", "err", err)
