@@ -85,10 +85,14 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 	var steps []Step
 
 	// an earlier finding: packets arrive on one interface and leave via another (wgcf);
-	// strict reverse-path filtering would drop them.
+	// strict reverse-path filtering would drop them. The kernel uses
+	// max(conf.all.rp_filter, conf.<iface>.rp_filter) per ingress, so all=0 alone is
+	// NOT enough when a host hardening drop-in pins default.rp_filter=2 — the egress
+	// interface inherits 2 at creation and wins over all=0. Pin the egress iface to 0.
 	steps = append(steps,
 		sysctl("net.ipv4.conf.all.rp_filter", "0"),
 		sysctl("net.ipv4.conf.default.rp_filter", "0"),
+		sysctl("net.ipv4.conf."+spec.EgressInterface+".rp_filter", "0"),
 	)
 
 	// an earlier finding: stale conntrack entries remember the old path; flush so the new

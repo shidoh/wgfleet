@@ -11,6 +11,7 @@ package version
 import (
 	"fmt"
 	"runtime"
+	"strings"
 )
 
 // These are overridden at build time:
@@ -35,6 +36,12 @@ func String() string {
 func Short() string {
 	if Commit == "none" || Commit == "" {
 		return Version
+	}
+	// Without git tags the Makefile stamps both Version and Commit from the same
+	// short SHA, so they are identical or differ only by a "-dirty" suffix. Avoid the
+	// redundant "sha+sha" — prefer the commit, which carries the dirty marker.
+	if Commit == Version || strings.HasPrefix(Commit, Version) {
+		return Commit
 	}
 	return fmt.Sprintf("%s+%s", Version, Commit)
 }

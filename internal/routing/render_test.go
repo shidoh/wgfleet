@@ -29,9 +29,13 @@ func TestRenderWARPRouting(t *testing.T) {
 	}
 	all := argvJoin(steps)
 
-	// an earlier finding: rp_filter relaxed.
+	// an earlier finding: rp_filter relaxed on all AND the egress interface (the kernel takes
+	// max(all, iface), so a host drop-in pinning the iface to 2 would otherwise win).
 	if !strings.Contains(all, "sysctl -w net.ipv4.conf.all.rp_filter=0") {
-		t.Errorf("missing rp_filter=0:\n%s", all)
+		t.Errorf("missing all.rp_filter=0:\n%s", all)
+	}
+	if !strings.Contains(all, "sysctl -w net.ipv4.conf.wgcf.rp_filter=0") {
+		t.Errorf("missing per-egress-iface rp_filter=0:\n%s", all)
 	}
 	// an earlier finding: conntrack flushed.
 	if !strings.Contains(all, "conntrack -D") {
