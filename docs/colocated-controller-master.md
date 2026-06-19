@@ -147,7 +147,8 @@ agent:
   role: master
   controller: "<mgmt>:8443"     # the local controller, via the node's own ZT IP
   node_id: "master-xa-1"        # must match masters[].name (and the issued cert CN)
-  reconcile_interval: 60s
+  mgmt_addr: "<mgmt>"           # ZT address; agent binds /metrics to <mgmt>:9301 by default
+  reconcile_interval: 30s
   identity:
     cert: "/etc/wgfleet/node.crt"
     key:  "/etc/wgfleet/node.key"
@@ -175,8 +176,10 @@ Description=wgfleet agent (master)
 After=network-online.target wgfleet-controller.service docker.service
 Wants=wgfleet-controller.service
 [Service]
-ExecStart=/usr/local/bin/wgfleet-agent --config /etc/wgfleet/agent.yaml \
-          --mgmt-addr <mgmt> --public-ip <public-ip> --metrics <mgmt>:9301
+# Generic unit (no per-node flags): mgmt_addr comes from agent.yaml (drives the
+# default <mgmt>:9301 metrics bind), and the master's public_ip is taken from the
+# manifest masters[] entry. Add `--metrics off` to disable metrics.
+ExecStart=/usr/local/bin/wgfleet-agent --config /etc/wgfleet/agent.yaml --log-format json
 Restart=on-failure
 [Install]
 WantedBy=multi-user.target
@@ -257,8 +260,9 @@ agent before the controller restart so the file is written before mihomo reloads
   healthcheck runs `wg show`, which cannot enumerate AmneziaWG interfaces. The real
   signal is the agent's `client-wg` health check (the controller marks the master `Ready`
   off that). Don't chase the wg-easy container health flag.
-- **Pin a specific mihomo version** (`compose.mihomo_tag`, e.g. `v1.19.27`) for reproducible
-  deploys rather than `:latest` (the default is already pinned). The AmneziaWG obfuscation
+- **Pin the mihomo version**, not `:latest`. ⚠️ The code default `v1.19.27` **crash-loops on
+  AmneziaWG-2.0 master↔exit junk**; set `compose.mihomo_tag: Alpha` (has the length guard, as the
+  running fleet does) until a fixed pinned tag ships. The AmneziaWG obfuscation
   params are derived safely by the platform — it floors `Jmin ≥ S4` so no junk packet is short
   enough to trip the unguarded S4-strip in older `amneziawg-go` builds (this was a real
   crash-loop: `Jmin=22` with `S4=52` panicked mihomo on a 41-byte junk packet; fixed in the

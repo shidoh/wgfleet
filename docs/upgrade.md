@@ -70,7 +70,7 @@ plane refusing service does not break the data plane.
 3. **Roll the agents.** Three equivalent ways — pick one:
 
    - **Automatic:** do nothing; the gate auto-upgrades each too-old agent on its
-     next `Register` (every `reconcile_interval`, default 60s).
+     next `Register` (every `reconcile_interval`, default 30s).
    - **Per node, explicitly:**
 
      ```

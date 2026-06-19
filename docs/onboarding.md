@@ -112,7 +112,7 @@ fleet:
 > the agent and starts it immediately (`systemctl enable --now`), and the agent
 > dials the controller on its very first reconcile. If the controller is not yet
 > serving, that first dial gets `connection refused` and the node sits in
-> `Error`/silent until the agent's next retry (`reconcile_interval`, default 60s).
+> `Error`/silent until the agent's next retry (`reconcile_interval`, default 30s).
 > It self-heals, but starting the controller first avoids the transient entirely.
 
 Always dry-run first — `--plan` renders the full bootstrap and changes nothing:
@@ -182,8 +182,10 @@ buttons or store flags.
 - **First real apply touches firewall/routing.** Use a VM with out-of-band console
   access for the first run; the baseline firewall + `Table = off` keep SSH/ZT
   reachable, but verify before depending on the box.
-- **Pin a specific mihomo version** (`compose.mihomo_tag`, e.g. `v1.19.27`), not `:latest` —
-  reproducible deploys (the default is already pinned). The AmneziaWG-param safety is handled
+- **Pin the mihomo version**, not `:latest`. ⚠️ The code default `v1.19.27` **crash-loops
+  on AmneziaWG-2.0 master↔exit junk** (the running fleet sets `compose.mihomo_tag: Alpha`,
+  which has the length guard); use `Alpha` (or a known-good build) until a fixed pinned tag
+  ships. The AmneziaWG-param safety is otherwise handled
   by the platform: it floors `Jmin ≥ S4` so no obfuscation junk packet is short enough to trip
   the unguarded S4-strip in older `amneziawg-go` (mihomo) builds. (This was a real crash-loop —
   our derivation once produced `Jmin=22` with `S4=52`, panicking mihomo on a 41-byte junk packet;

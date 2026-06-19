@@ -456,6 +456,8 @@ controller:
 
 fleet:
   zerotier_network: "8056c2e21c000001"      # mgmt overlay nodes join at bootstrap
+  reconcile_interval: 30s                    # fleet-wide agent reconcile/self-heal cadence
+                                             #   (default 30s; baked into each agent.yaml)
 
   masters:
     - name: master-xa-1
@@ -466,8 +468,9 @@ fleet:
       routing:
         direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
         direct_geo:   [RU]                  # GEOSITE/GEOIP → DIRECT
-        balance:      health                # round-robin | health
+        balance:      url-test              # round-robin | consistent-hashing (alias: health) | sticky-sessions | url-test | fallback
       mihomo:                               # master data-plane tuning + custom-config hooks
+        health_interval: 30s                # how often mihomo health-checks exits to route around dead ones (default 60s)
         sniffer_skip: ["+.themoviedb.org", "+.cloudfront.net"]  # CDNs that break under sniffing
         dashboard_url: "https://mirror.example/zashboard"  # override mihomo web-dashboard URL (empty ⇒ default GitHub)
         dashboard_disabled: false           # set true to disable the web dashboard entirely
@@ -482,7 +485,8 @@ fleet:
         wg_easy_image: ghcr.io/wg-easy/wg-easy   # repository (default …:15)
         wg_easy_tag:   "15"                 # explicit tag overrides any tag in the image
         mihomo_image:  metacubex/mihomo
-        mihomo_tag:    v1.19.27             # pin a version (NOT :latest) for reproducibility (#8)
+        mihomo_tag:    "Alpha"              # pin a version (NOT :latest) (#8). Use Alpha: stable
+                                            #   v1.19.27 crash-loops on AmneziaWG-2.0 master↔exit junk
       ssh:                                  # bootstrap target (Phase 0/1 only)
         host: 203.0.113.1
         port: 22                            # SSH port (optional; default 22)
@@ -537,7 +541,9 @@ agent:
   role: exit                       # master | exit
   controller: "master-xa-1.mgmt:8443"
   node_id: "exit-de-1"
-  reconcile_interval: 60s          # default 60s
+  mgmt_addr: "10.20.0.5"          # mgmt/ZT address; the agent binds /metrics to
+                                   #   <mgmt_addr>:9301 by default (no flag needed)
+  reconcile_interval: 30s          # default 30s; set fleet-wide via fleet.reconcile_interval
   identity:
     cert: "/etc/wgfleet/node.crt"  # issued at bootstrap
     key:  "/etc/wgfleet/node.key"  # generated on-node, 0600, never leaves the box
@@ -598,11 +604,11 @@ No subcommand flags ⇒ serve the API + UI + metrics until signalled.
 | `--plan` | | dry-run: render the full plan, change nothing |
 | `--once` | | run a single reconcile pass and exit |
 | `--public-ip <ip>` | | this node's public IP to advertise (peer endpoint) |
-| `--mgmt-addr <ip>` | | mgmt/ZT address (admin + DNS bind) |
+| `--mgmt-addr <ip>` | (from `agent.yaml`) | mgmt/ZT address (metrics + admin + DNS bind); overrides `agent.mgmt_addr` |
 | `--state-dir <dir>` | | root managed files under `<dir>` instead of `/etc` (non-root/dev) |
-| `--metrics <addr>` | | bind the agent `/metrics` endpoint (mgmt/ZT only; empty disables) |
+| `--metrics <addr>` | `<mgmt_addr>:9301` | override the agent `/metrics` bind (mgmt/ZT only); `off` disables |
 
-No `--once` ⇒ run as a daemon, reconciling on the configured interval.
+No `--once` ⇒ run as a daemon, reconciling on the configured interval (default 30s).
 
 ---
 
@@ -634,8 +640,10 @@ Plan output shows files (with secrets redacted), commands, and DB updates.
 
 ### Metrics
 
-`controller.metrics` and `wgfleet-agent --metrics` expose Prometheus text. Bind
-the ZeroTier address only.
+The controller (`controller.metrics`) and every agent expose Prometheus text on
+the ZeroTier address only. The agent endpoint is **on by default** at
+`<mgmt_addr>:9301` (from `agent.mgmt_addr`); `--metrics <addr>` overrides the bind
+and `--metrics off` disables it.
 
 **Controller** (a scrape-time projection of the state store):
 

@@ -120,11 +120,12 @@ fleet:
         # wg-easy's DB by the agent (endpoint /metrics/prometheus on the port below).
         # wg_easy_web_port: 44423 # default
         mihomo_image: "metacubex/mihomo" # default metacubex/mihomo:v1.19.27 (pinned)
-        # Pin a specific version, NOT :latest, for reproducible/auditable deploys (#8).
-        # The platform derives crash-safe AmneziaWG params (it floors Jmin >= S4 so junk
-        # packets never underflow older amneziawg-go's S4-strip), so any mihomo/kernel
-        # pairing is fine — the pin is purely for reproducibility.
-        mihomo_tag: "v1.19.27"
+        # Pin a specific version, NOT :latest (#8). ⚠️ The default v1.19.27 CRASH-LOOPS on
+        # AmneziaWG-2.0 master↔exit junk — its amneziawg-go lacks the S4 length guard and
+        # panics on short packets. Use "Alpha" (has the guard), as the running fleet does,
+        # until a fixed pinned tag ships. The platform also floors Jmin >= S4, but that
+        # alone does NOT save v1.19.27 (it also panics on short non-junk packets).
+        mihomo_tag: "Alpha"
         # client_dns: defaults to the exits' mgmt addresses (blocky)
         client_allowed_ips: "1.0.0.0/8,8.0.0.0/7,..." # inverted RFC1918 list for clients
       ssh: # bootstrap target (Phase 0/1 only; key path on the controller host)

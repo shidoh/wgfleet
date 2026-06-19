@@ -4,7 +4,7 @@ agent:
   role: exit # master | exit
   controller: "master-xa-1.mgmt:8443"
   node_id: "exit-de-1"
-  reconcile_interval: 60s
+  reconcile_interval: 30s
   # mgmt_addr: this node's mgmt/overlay (ZeroTier) address. The agent binds its
   # Prometheus /metrics endpoint to mgmt_addr:9301 by default (no launch flag) and
   # uses it for other off-public surfaces. Baked in at provisioning. The --metrics
