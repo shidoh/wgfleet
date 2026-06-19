@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/agent/tuning"
@@ -430,7 +429,8 @@ func orPlaceholder(s, placeholder string) string {
 // still down (the wg-easy/compose planners bring it back first).
 type mihomoRedirPlanner struct {
 	compose string
-	// listening reports whether something accepts TCP at addr; nil ⇒ a real dial.
+	// listening reports whether a TCP socket is LISTENing on addr; nil ⇒ a passive
+	// socket-table read (socketListening). It must never open a connection to addr.
 	listening func(addr string) bool
 	// localUp reports whether host is assigned to a local interface; nil ⇒ real check.
 	localUp func(host string) bool
@@ -467,7 +467,7 @@ func (p mihomoRedirPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]rec
 
 	listening := p.listening
 	if listening == nil {
-		listening = tcpListening
+		listening = socketListening
 	}
 	if listening(addr) {
 		return []reconcile.Action{reconcile.NoChangeAction("mihomo redirect listener",
@@ -488,16 +488,36 @@ func (p mihomoRedirPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]rec
 	return []reconcile.Action{restart}, nil
 }
 
-// tcpListening reports whether something accepts a TCP connection at addr within a
-// short timeout. A successful connect (even if immediately closed) proves the
-// listener is bound; connection-refused / no-route means it is not.
-func tcpListening(addr string) bool {
-	c, err := net.DialTimeout("tcp", addr, 2*time.Second)
+// socketListening reports whether a TCP socket is LISTENing on addr (host:port),
+// read passively from the kernel socket table.
+//
+// It MUST NOT open a connection to addr. The redir port is a transparent proxy: a
+// probe connection to it gets proxied by mihomo, and because the probe is not DNAT'd
+// its original destination is the redir address itself, which the direct-networks
+// rule matches — so mihomo dials DIRECT back into its own redir port, igniting a
+// self-amplifying connection storm that pins the master's CPU. A passive socket-table
+// read avoids that entirely. Fails safe to true (an unreadable probe must never
+// trigger a needless mihomo restart).
+func socketListening(addr string) bool {
+	out, err := exec.Command("ss", "-ltnH").CombinedOutput()
 	if err != nil {
-		return false
+		return true // can't tell → assume up; never falsely restart mihomo
 	}
-	_ = c.Close()
-	return true
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return true
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 {
+			continue
+		}
+		switch f[3] { // ss "Local Address:Port" column
+		case addr, "0.0.0.0:" + port, "*:" + port, "[::]:" + port:
+			return true
+		}
+	}
+	return false
 }
 
 // localAddrPresent reports whether host is currently assigned to a local interface.
