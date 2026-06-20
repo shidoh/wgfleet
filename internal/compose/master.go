@@ -31,10 +31,9 @@ const (
 	DefaultWGEasyImage = "ghcr.io/wg-easy/wg-easy:15"
 	// Pinned, NOT :latest (docs/DESIGN.md #8) — reproducible/auditable deploys. v1.19.27 is the
 	// operator's known-good prod version. (The AWG-param safety that keeps mihomo's
-	// amneziawg-go from dropping small control packets is handled in the derivation: the
-	// junk-decoy window is placed strictly above the small-control transport band so a
-	// decoy never aliases a real SYN/FIN/ACK — see internal/wg an earlier finding / controlBandBytes.
-	// This pin is for reproducibility, not a kernel↔mihomo version-match requirement.)
+	// amneziawg-go from panicking is handled in the derivation: Jmin is floored ≥ S4, so no
+	// junk packet underflows its S4-strip — see internal/wg junkS4Margin. So this pin is
+	// for reproducibility, not a kernel↔mihomo version-match requirement.)
 	DefaultMihomoImage = "metacubex/mihomo:v1.19.27"
 	// DefaultWGEasyWebPort is the wg-easy admin UI port when the spec leaves it
 	// unset. Exported so the controller UI can build a link to it.
