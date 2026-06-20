@@ -180,12 +180,38 @@ func quicInitialPacket(d *detStream) string {
 	return b.String()
 }
 
-// stunBindingPacket mimics a STUN Binding Request (RFC 5389): type 0x0001, length
-// 0, the fixed magic cookie 0x2112A442, and a 96-bit random transaction ID. This is
-// the canonical WebRTC/ICE connectivity-check packet; real ones are uniform, so the
-// mimicry is indistinguishable from genuine STUN.
-func stunBindingPacket(_ *detStream) string {
-	return litBytes(0x00, 0x01, 0x00, 0x00, 0x21, 0x12, 0xa4, 0x42) + "<r 12>"
+// stunAttrTypes are real STUN/ICE attribute types we attach to a Binding Request:
+// SOFTWARE, USERNAME, PRIORITY, ICE-CONTROLLING, USE-CANDIDATE (RFC 5389/5245).
+var stunAttrTypes = []uint16{0x8022, 0x0006, 0x0024, 0x802a, 0x0025}
+
+// stunBindingPacket mimics a STUN Binding Request (RFC 5389): type 0x0001, the magic
+// cookie 0x2112A442, a 96-bit random transaction ID, then 1-3 varied attributes of
+// varied length — exactly the shape of a WebRTC/ICE connectivity check. The attribute
+// count, types and lengths are keyed off d, so each I-slot (and each tunnel end, and
+// each tunnel) is a distinct-but-valid STUN packet rather than a static byte string.
+func stunBindingPacket(d *detStream) string {
+	nAttr := 1 + d.intn(3) // 1..3 attributes
+	type attr struct {
+		typ  uint16
+		vlen int
+	}
+	attrs := make([]attr, nAttr)
+	msgLen := 0
+	for i := range attrs {
+		vlen := 4 + d.intn(16)*4 // 4..64, 4-aligned ⇒ no padding
+		attrs[i] = attr{stunAttrTypes[d.intn(len(stunAttrTypes))], vlen}
+		msgLen += 4 + vlen // attribute header (4) + value
+	}
+
+	var b strings.Builder
+	// Binding Request (0x0001) + message length + magic cookie 0x2112A442.
+	b.WriteString(litBytes(0x00, 0x01, byte(msgLen>>8), byte(msgLen), 0x21, 0x12, 0xa4, 0x42))
+	b.WriteString("<r 12>") // 96-bit transaction ID
+	for _, a := range attrs {
+		b.WriteString(litBytes(byte(a.typ>>8), byte(a.typ), byte(a.vlen>>8), byte(a.vlen)))
+		b.WriteString(fmt.Sprintf("<rc %d>", a.vlen)) // attribute value (ASCII text)
+	}
+	return b.String()
 }
 
 // dtlsClientHelloPacket mimics a DTLS 1.2 handshake record carrying a ClientHello
@@ -193,9 +219,20 @@ func stunBindingPacket(_ *detStream) string {
 // length, then handshake type 1 (ClientHello) and its opaque body. The 0x16 0xFEFD
 // prefix is the DTLS signature a DPI keys on (WebRTC media / some VPNs).
 func dtlsClientHelloPacket(d *detStream) string {
-	body := 80 + d.intn(120) // 80..200 ClientHello body bytes
-	return litBytes(0x16, 0xfe, 0xfd, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00) +
-		"<r 2>" + litBytes(0x01) + fmt.Sprintf("<r %d>", body)
+	cookieLen := d.intn(33)  // DTLS HelloVerify cookie, 0..32 bytes (RFC 6347)
+	body := 60 + d.intn(140) // remaining ClientHello body (version/random/cipher suites/...)
+	var b strings.Builder
+	// Record: handshake (0x16), DTLS 1.2 (0xFEFD), epoch 0, sequence 0, length.
+	b.WriteString(litBytes(0x16, 0xfe, 0xfd, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00))
+	b.WriteString("<r 2>")                   // record length
+	b.WriteString(litBytes(0x01))            // handshake type = ClientHello
+	b.WriteString("<r 3>")                   // handshake length
+	b.WriteString(litBytes(byte(cookieLen))) // cookie length octet
+	if cookieLen > 0 {
+		b.WriteString(fmt.Sprintf("<r %d>", cookieLen)) // cookie bytes
+	}
+	b.WriteString(fmt.Sprintf("<r %d>", body))
+	return b.String()
 }
 
 // detStream is a deterministic byte stream seeded by a string: an unbounded

@@ -175,7 +175,7 @@ func TestICoverProtocolMimicry(t *testing.T) {
 		switch {
 		case strings.HasPrefix(i1, "<b 0x16fefd"): // DTLS 1.2 handshake record
 			return "dtls"
-		case strings.HasPrefix(i1, "<b 0x000100002112a442"): // STUN binding request + magic cookie
+		case strings.HasPrefix(i1, "<b 0x0001"): // STUN Binding Request (type 0x0001)
 			return "stun"
 		case strings.HasPrefix(i1, "<b 0xc") && strings.Contains(i1, "00000001"): // QUIC v1 Initial
 			return "quic"
@@ -185,6 +185,7 @@ func TestICoverProtocolMimicry(t *testing.T) {
 	}
 
 	protos := map[string]bool{}
+	fleetI1 := map[string]bool{}
 	for i := 0; i < 300; i++ {
 		seed := string(rune(i)) + "-tunnel"
 		for _, kernel := range []bool{true, false} {
@@ -198,21 +199,36 @@ func TestICoverProtocolMimicry(t *testing.T) {
 			if proto == "" {
 				t.Fatalf("seed %q I1 matches no cover protocol: %q", seed, loc.I1)
 			}
-			// Every slot must carry the SAME cover protocol (a flow is one protocol).
-			for k, s := range []string{loc.I1, loc.I2, loc.I3, loc.I4, loc.I5} {
+			slots := []string{loc.I1, loc.I2, loc.I3, loc.I4, loc.I5}
+			distinct := map[string]bool{}
+			for k, s := range slots {
 				if strings.Contains(s, "<c>") || strings.Contains(s, "<t>") {
 					t.Fatalf("seed %q I%d uses <c>/<t> (breaks protocol mimicry): %q", seed, k+1, s)
 				}
-				if classify(s) != proto {
+				if classify(s) != proto { // every slot is the SAME protocol (a flow is one protocol)
 					t.Fatalf("seed %q I%d is a different protocol than I1 (%s): %q", seed, k+1, proto, s)
 				}
+				distinct[s] = true
+			}
+			// The five slots must NOT all be one static byte string (the bug fixed
+			// here: a fixed STUN template made every slot — and both ends — identical).
+			if len(distinct) < 2 {
+				t.Errorf("seed %q kernel=%v: I1-I5 are all identical (%q) — per-slot field variation broken", seed, kernel, loc.I1)
 			}
 			protos[proto] = true
+			fleetI1[loc.I1] = true
 		}
 	}
-	// Over 300 seeds we must see real variation across the cover protocols.
+	// Over 300 seeds we must see real variation across the cover protocols AND across
+	// I1 templates (no fleet-wide static fingerprint).
 	if len(protos) < 2 {
 		t.Errorf("cover protocol barely varies across seeds: saw %v", protos)
+	}
+	// I1 must be highly varied across the 300 distinct tunnel seeds (no static
+	// fleet-wide fingerprint). Some collision is fine — the templates still look like
+	// genuine QUIC/STUN/DTLS — but the bulk must differ.
+	if len(fleetI1) < 250 {
+		t.Errorf("I1 templates barely vary across the fleet: only %d distinct of 300 seeds", len(fleetI1))
 	}
 }
 
@@ -226,8 +242,10 @@ func TestDeriveEndsDifferButShareShared(t *testing.T) {
 	if exit.Shared != master.Shared {
 		t.Fatal("both ends must share identical S/H params")
 	}
-	if exit.Local.I1 == master.Local.I1 {
-		t.Fatal("the two ends should derive distinct I1 signatures")
+	exitI := exit.Local.I1 + exit.Local.I2 + exit.Local.I3 + exit.Local.I4 + exit.Local.I5
+	masterI := master.Local.I1 + master.Local.I2 + master.Local.I3 + master.Local.I4 + master.Local.I5
+	if exitI == masterI {
+		t.Fatal("the two ends should derive distinct I-packet signatures")
 	}
 	// Idempotent: same inputs ⇒ same output (no reconcile churn).
 	if again := DeriveAWGParamsForEnd(seed, "exit", true); again.Local != exit.Local {
