@@ -165,38 +165,54 @@ func TestDeriveSignaturesAlwaysGenerated(t *testing.T) {
 	}
 }
 
-// TestKernelVsUserspaceTags confirms userspace signatures never use <c>/<t> while
-// kernel signatures may, and both validate under the matching domain check.
-func TestKernelVsUserspaceTags(t *testing.T) {
-	const seed = "exit-de-1|master-xa-1|salt"
-
-	// Userspace: must pass ValidateUserspace and contain no <c>/<t>.
-	us := domain.AWGParams{Shared: DeriveAWGShared(seed), Local: DeriveAWGLocal(seed+"|end|master", false)}
-	if err := us.ValidateUserspace(); err != nil {
-		t.Fatalf("userspace params must validate: %v", err)
+// TestICoverProtocolMimicry verifies the I-packets imitate a REAL UDP protocol
+// (QUIC / STUN / DTLS) rather than random noise: every slot of a tunnel carries the
+// SAME cover protocol's wire signature, the choice VARIES across tunnels, and the
+// templates are userspace-safe (no <c>/<t>, which would corrupt the protocol layout)
+// so both the kernel and userspace profiles validate identically.
+func TestICoverProtocolMimicry(t *testing.T) {
+	classify := func(i1 string) string {
+		switch {
+		case strings.HasPrefix(i1, "<b 0x16fefd"): // DTLS 1.2 handshake record
+			return "dtls"
+		case strings.HasPrefix(i1, "<b 0x000100002112a442"): // STUN binding request + magic cookie
+			return "stun"
+		case strings.HasPrefix(i1, "<b 0xc") && strings.Contains(i1, "00000001"): // QUIC v1 Initial
+			return "quic"
+		default:
+			return ""
+		}
 	}
 
-	// Kernel: must pass the kernel Validate. Search enough seeds to observe at
-	// least one <c>/<t> tag — proving the kernel profile actually emits them.
-	sawKernelTag := false
-	for i := 0; i < 200 && !sawKernelTag; i++ {
-		s := DeriveAWGShared(seed)
-		loc := DeriveAWGLocal(seed+"|k"+string(rune(i)), true)
-		kp := domain.AWGParams{Shared: s, Local: loc}
-		if err := kp.Validate(); err != nil {
-			t.Fatalf("kernel params must validate: %v", err)
-		}
-		joined := loc.I1 + loc.I2 + loc.I3 + loc.I4 + loc.I5
-		if strings.Contains(joined, "<c>") || strings.Contains(joined, "<t>") {
-			sawKernelTag = true
-			// That same template, treated as userspace, must be rejected.
-			if err := kp.ValidateUserspace(); err == nil {
-				t.Fatal("kernel <c>/<t> signature must fail ValidateUserspace")
+	protos := map[string]bool{}
+	for i := 0; i < 300; i++ {
+		seed := string(rune(i)) + "-tunnel"
+		for _, kernel := range []bool{true, false} {
+			loc := DeriveAWGLocal(seed, kernel)
+			kp := domain.AWGParams{Shared: DeriveAWGShared(seed), Local: loc}
+			// Both profiles must be userspace-safe (mimicry uses no <c>/<t>).
+			if err := kp.ValidateUserspace(); err != nil {
+				t.Fatalf("seed %q kernel=%v: mimicry must validate userspace: %v", seed, kernel, err)
 			}
+			proto := classify(loc.I1)
+			if proto == "" {
+				t.Fatalf("seed %q I1 matches no cover protocol: %q", seed, loc.I1)
+			}
+			// Every slot must carry the SAME cover protocol (a flow is one protocol).
+			for k, s := range []string{loc.I1, loc.I2, loc.I3, loc.I4, loc.I5} {
+				if strings.Contains(s, "<c>") || strings.Contains(s, "<t>") {
+					t.Fatalf("seed %q I%d uses <c>/<t> (breaks protocol mimicry): %q", seed, k+1, s)
+				}
+				if classify(s) != proto {
+					t.Fatalf("seed %q I%d is a different protocol than I1 (%s): %q", seed, k+1, proto, s)
+				}
+			}
+			protos[proto] = true
 		}
 	}
-	if !sawKernelTag {
-		t.Fatal("kernel profile never produced a <c>/<t> tag across 200 seeds")
+	// Over 300 seeds we must see real variation across the cover protocols.
+	if len(protos) < 2 {
+		t.Errorf("cover protocol barely varies across seeds: saw %v", protos)
 	}
 }
 

@@ -70,14 +70,12 @@ const (
 	jminLow, jminHigh = 8, 40  // lower bound of the junk size window
 	jGapLow, jGapHigh = 24, 88 // Jmax = Jmin + gap, so Jmin < Jmax always holds
 
-	// awgSignatureSlots is the number of I-packet slots (I1-I5) we fill.
+	// awgSignatureSlots is the number of I-packet (I1-I5) slots we fill — all with
+	// packets mimicking ONE cover protocol per tunnel-end (see deriveSignatures).
 	awgSignatureSlots = 5
-	// Bounds for generated CPS templates (kept well under MESSAGE_MAX_SIZE and the
-	// tools' MAX_AWG_STRING_LEN so the kernel/userspace parsers always accept them).
-	bPrefixMinBytes  = 2 // literal "magic" prefix length, in bytes
-	bPrefixSpanBytes = 4 // prefix is bPrefixMin .. bPrefixMin+span-1 bytes
-	padMinBytes      = 4 // random-pad tag length lower bound
-	padSpanBytes     = 45
+	// coverProtocolCount is how many real UDP protocols the I-packets can imitate
+	// (QUIC Initial / STUN binding / DTLS ClientHello). One is chosen per tunnel-end.
+	coverProtocolCount = 3
 )
 
 // DeriveAWGLocal returns the local (per-end) AmneziaWG parameters for one end:
@@ -108,78 +106,96 @@ func deriveJunk(seed string) (jc, jmin, jmax int) {
 	return jc, jmin, jmax
 }
 
-// deriveSignatures generates the I1-I5 CPS templates from seed. Each slot is keyed
-// independently so the five packets differ from one another.
+// deriveSignatures generates the I1-I5 CPS templates from seed. The I-packets are
+// emitted BEFORE the WireGuard handshake to disguise the opening datagrams as some
+// other protocol — this is where the obfuscation actually lives. Instead of random
+// noise we mimic a REAL UDP protocol: one cover protocol (QUIC / STUN / DTLS) is
+// chosen per tunnel-end from the seed, and every I-slot is a structurally-valid
+// packet of that protocol whose variable fields (connection IDs, transaction IDs,
+// opaque payloads) vary per slot. A passive DPI then classifies the flow as that
+// protocol — QUIC and WebRTC being ubiquitous and impractical to block — rather
+// than as a VPN handshake. Per-end protocol choice + per-slot field variation means
+// no two interfaces share a static fingerprint. The `kernel` profile no longer
+// differs (the <c>/<t> tags would corrupt a real protocol's byte layout, so we use
+// only <b>/<r> — valid for kernel and userspace alike).
+//
+// Grammar (verified against amneziawg-linux-kernel-module junk.c jp_parse_tags):
+// the literal `<b 0xHEX>` carries the protocol's fixed wire signature; `<r N>`
+// stands in for the opaque/encrypted variable bytes the receiver fills fresh on
+// every handshake — stable structure, varying content.
 func deriveSignatures(seed string, kernel bool) [awgSignatureSlots]string {
+	_ = kernel // both profiles are identical now: realistic mimicry uses no <c>/<t>
+	proto := newDetStream(seed + "|cover").intn(coverProtocolCount)
 	var out [awgSignatureSlots]string
 	for k := 0; k < awgSignatureSlots; k++ {
-		out[k] = cpsTemplate(fmt.Sprintf("%s|I%d", seed, k+1), kernel)
+		out[k] = coverPacket(proto, newDetStream(fmt.Sprintf("%s|I%d", seed, k+1)))
 	}
 	return out
 }
 
-// cpsTemplate builds one deterministic AmneziaWG CPS (Custom Packet Signature)
-// template. I-packets are emitted before the handshake to disguise the first
-// datagrams as some other protocol — this is where the obfuscation actually
-// lives. The grammar is verified against the upstream kernel parser
-// (amneziawg-linux-kernel-module junk.c, jp_parse_tags):
-//
-//	<b 0xHEX>  literal bytes (even-length hex, prefixed 0x) — a stable per-end
-//	           "magic" header that mimics a fixed protocol signature
-//	<r N>      N random bytes     <rc N> N random ASCII letters   <rd N> N digits
-//	<c>        4-byte packet counter      <t> 4-byte unix time
-//
-// <c>/<t> are KERNEL-ONLY: userspace WireGuard-Go cannot parse them, so userspace
-// ends restrict to <b>/<r>/<rc>/<rd>. A receiver drops junk regardless of its
-// content, so a kernel end may use <c>/<t> even when its peer is userspace.
-//
-// The literal prefix is deterministic (a fixed per-end signature); the random
-// tags carry only a length, so the kernel fills fresh bytes on every handshake —
-// stable structure, varying content.
-func cpsTemplate(seed string, kernel bool) string {
-	d := newDetStream(seed)
-	var b strings.Builder
+// coverPacket builds one I-packet template imitating the chosen cover protocol,
+// with its variable fields keyed off d.
+func coverPacket(proto int, d *detStream) string {
+	switch proto {
+	case 0:
+		return quicInitialPacket(d)
+	case 1:
+		return stunBindingPacket(d)
+	default:
+		return dtlsClientHelloPacket(d)
+	}
+}
 
-	// 1. Leading literal "magic" prefix.
-	blen := bPrefixMinBytes + d.intn(bPrefixSpanBytes)
+// litBytes renders a CPS literal tag (<b 0x..>) from raw bytes.
+func litBytes(bs ...byte) string {
+	var b strings.Builder
 	b.WriteString("<b 0x")
-	for i := 0; i < blen; i++ {
-		fmt.Fprintf(&b, "%02x", d.next())
+	for _, x := range bs {
+		fmt.Fprintf(&b, "%02x", x)
 	}
 	b.WriteString(">")
-
-	// 2. A randomized padding tag (content reshuffled every handshake).
-	b.WriteString(randPadTag(d))
-
-	// 3. Optional evolving field (kernel only): a counter or timestamp makes the
-	//    junk look like a live protocol rather than static noise.
-	if kernel && d.intn(2) == 0 {
-		if d.intn(2) == 0 {
-			b.WriteString("<c>")
-		} else {
-			b.WriteString("<t>")
-		}
-	}
-
-	// 4. Optional trailing pad.
-	if d.intn(2) == 0 {
-		b.WriteString(randPadTag(d))
-	}
 	return b.String()
 }
 
-// randPadTag returns a random-content padding tag (<r>/<rc>/<rd>) with a
-// deterministic length; the kernel fills the bytes fresh per handshake.
-func randPadTag(d *detStream) string {
-	n := padMinBytes + d.intn(padSpanBytes)
-	switch d.intn(3) {
-	case 0:
-		return fmt.Sprintf("<r %d>", n)
-	case 1:
-		return fmt.Sprintf("<rc %d>", n)
-	default:
-		return fmt.Sprintf("<rd %d>", n)
+// quicInitialPacket mimics a QUIC v1 long-header Initial packet (RFC 9000 §17.2.2):
+// first byte 0b11000000|protected, Version 0x00000001, Destination/Source
+// Connection IDs, a zero Token Length, then the (encrypted) length+packet-number+
+// payload as opaque random bytes. The long-header form + version is what a DPI
+// fingerprints as QUIC/HTTP3.
+func quicInitialPacket(d *detStream) string {
+	byte0 := byte(0xc0 | d.intn(16)) // long header, fixed bit, Initial type, protected low bits
+	dcidLen := 4 + d.intn(13)        // 4..16 (typical DCID lengths)
+	scidLen := d.intn(13)            // 0..12
+	payload := 40 + d.intn(121)      // 40..160 opaque bytes
+
+	var b strings.Builder
+	b.WriteString(litBytes(byte0, 0x00, 0x00, 0x00, 0x01, byte(dcidLen))) // byte0 + version + DCID len
+	b.WriteString(fmt.Sprintf("<r %d>", dcidLen))                         // Destination Connection ID
+	b.WriteString(litBytes(byte(scidLen)))                                // SCID len
+	if scidLen > 0 {
+		b.WriteString(fmt.Sprintf("<r %d>", scidLen)) // Source Connection ID
 	}
+	b.WriteString(litBytes(0x00))                 // Token Length = 0
+	b.WriteString(fmt.Sprintf("<r %d>", payload)) // length + packet number + protected payload
+	return b.String()
+}
+
+// stunBindingPacket mimics a STUN Binding Request (RFC 5389): type 0x0001, length
+// 0, the fixed magic cookie 0x2112A442, and a 96-bit random transaction ID. This is
+// the canonical WebRTC/ICE connectivity-check packet; real ones are uniform, so the
+// mimicry is indistinguishable from genuine STUN.
+func stunBindingPacket(_ *detStream) string {
+	return litBytes(0x00, 0x01, 0x00, 0x00, 0x21, 0x12, 0xa4, 0x42) + "<r 12>"
+}
+
+// dtlsClientHelloPacket mimics a DTLS 1.2 handshake record carrying a ClientHello
+// (RFC 6347): record type 22 (handshake), version 0xFEFD, epoch/sequence 0, a 2-byte
+// length, then handshake type 1 (ClientHello) and its opaque body. The 0x16 0xFEFD
+// prefix is the DTLS signature a DPI keys on (WebRTC media / some VPNs).
+func dtlsClientHelloPacket(d *detStream) string {
+	body := 80 + d.intn(120) // 80..200 ClientHello body bytes
+	return litBytes(0x16, 0xfe, 0xfd, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00) +
+		"<r 2>" + litBytes(0x01) + fmt.Sprintf("<r %d>", body)
 }
 
 // detStream is a deterministic byte stream seeded by a string: an unbounded
