@@ -44,22 +44,52 @@ func TestS4FitsMTUCushion(t *testing.T) {
 	}
 }
 
-// TestJminAboveS4 guards the amneziawg-go ≤20251104 crash: a junk packet shorter
-// than S4 underflows the receiver's S4-strip. Every derived end must have
-// Jmin ≥ S4 (+margin), so no junk packet this end sends can crash a buggy peer.
-func TestJminAboveS4(t *testing.T) {
+// TestJunkWindowClearsControlBand guards an earlier finding: every derived end's junk-decoy
+// window must NOT overlap the small-control transport band [32+S4, 32+S4+128], or
+// amneziawg-go's size classifier confuses real SYN/FIN/ACK packets with same-size
+// decoys and drops them (~50% of NEW connections stall; bulk data is fine). The
+// generator must always place the window strictly ABOVE the band, for both ends.
+// (This also subsumes the old "Jmin ≥ S4" crash guard — the floor is now far above.)
+func TestJunkWindowClearsControlBand(t *testing.T) {
 	for i := 0; i < 2000; i++ {
 		for _, end := range []string{"exit", "master", ""} {
 			p := DeriveAWGParamsForEnd(string(rune(i))+"|tun|salt", end, i%2 == 0)
-			if p.Local.Jmin < p.Shared.S4+junkS4Margin {
-				t.Fatalf("seed %d end %q: Jmin=%d < S4+margin=%d+%d", i, end, p.Local.Jmin, p.Shared.S4, junkS4Margin)
+			if !junkWindowClearsControlBand(p.Shared.S4, p.Local.Jmin, p.Local.Jmax) {
+				t.Fatalf("seed %d end %q: junk window [%d,%d] overlaps control band for S4=%d (32+S4=%d)",
+					i, end, p.Local.Jmin, p.Local.Jmax, p.Shared.S4, 32+p.Shared.S4)
+			}
+			// The generator always uses the above-band placement.
+			if p.Local.Jmin <= 32+p.Shared.S4+controlBandBytes {
+				t.Fatalf("seed %d end %q: Jmin=%d not above control band top %d (S4=%d)",
+					i, end, p.Local.Jmin, 32+p.Shared.S4+controlBandBytes, p.Shared.S4)
 			}
 			if p.Local.Jmin >= p.Local.Jmax || p.Local.Jmax > awgJMaxLimitTest {
-				t.Fatalf("seed %d end %q: bad Jmin/Jmax after floor: %d/%d", i, end, p.Local.Jmin, p.Local.Jmax)
+				t.Fatalf("seed %d end %q: bad Jmin/Jmax: %d/%d", i, end, p.Local.Jmin, p.Local.Jmax)
 			}
 			if err := p.Validate(); err != nil {
-				t.Fatalf("seed %d end %q: invalid after Jmin floor: %v", i, end, err)
+				t.Fatalf("seed %d end %q: invalid: %v", i, end, err)
 			}
+		}
+	}
+}
+
+// TestJunkBandPredicateOracle pins the size-aliasing predicate against the three
+// live data points that diagnosed an earlier finding: two failing parameter sets and the
+// one that fixed it (only S4 was raised, lifting the transport sizes clear of the
+// junk window). It documents the exact condition the generator must avoid.
+func TestJunkBandPredicateOracle(t *testing.T) {
+	for _, c := range []struct {
+		name           string
+		s4, jmin, jmax int
+		wantClears     bool // true ⇒ safe (no decoy/control aliasing)
+	}{
+		{"exit-2-orig-FAIL", 39, 47, 95, false},    // 32+39=71 ∈ [47,95]
+		{"exit-1-FAIL", 62, 70, 121, false},        // 32+62=94 ∈ [70,121]
+		{"exit-2-patched-PASS", 100, 47, 95, true}, // 32+100=132 > 95 (window below band)
+	} {
+		if got := junkWindowClearsControlBand(c.s4, c.jmin, c.jmax); got != c.wantClears {
+			t.Errorf("%s: junkWindowClearsControlBand(S4=%d,[%d,%d]) = %v, want %v",
+				c.name, c.s4, c.jmin, c.jmax, got, c.wantClears)
 		}
 	}
 }

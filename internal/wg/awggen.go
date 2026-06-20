@@ -34,25 +34,41 @@ const (
 	s4Low  = 16
 	s4High = AWGExtraOverhead - 16 // = 64; must stay ≤ AWGExtraOverhead
 
-	// junkS4Margin keeps Jmin a safe distance above S4 (see deriveJunk / the Jmin
-	// floor in DeriveAWGParamsForEnd). A receiver strips S4 bytes from an incoming
-	// junk packet before reading the 4-byte message type; amneziawg-go ≤ 20251104
-	// (shipped in mihomo up to ≥ v1.19.27) does this WITHOUT a length guard, so a junk
-	// packet shorter than S4+4 panics it (`slice bounds out of range [S4:len]` in
-	// handleTransport). Guaranteeing every junk packet ≥ S4 + margin avoids it on the
-	// buggy version (newer amneziawg-go added the guard). Verified live: with Jmin<S4
-	// the master↔exit tunnel crash-looped mihomo v1.19.27; flooring Jmin fixes it.
-	junkS4Margin = 8
+	// Junk-decoy window placement. AmneziaWG 2.0 prepends S4 bytes to
+	// EVERY transport packet, so a transport packet's wire size is 32+S4 (empty /
+	// keepalive) and 32+S4+16k (data, k 16-byte payload blocks). Junk-decoy packets
+	// are emitted at random sizes in [Jmin,Jmax]. amneziawg-go classifies an incoming
+	// packet by its WIRE SIZE first (noise.packetSizeToMsgType): when the SMALL-
+	// control transport band — empty/keepalive (32+S4) up through small TCP control
+	// packets (SYN/FIN/ACK + a little payload) — overlaps [Jmin,Jmax], a real control
+	// packet and a same-size decoy become indistinguishable and the receiver
+	// intermittently DROPS the real one. Symptom: ~50% of NEW connections stall (lost
+	// SYN/FIN) while bulk data — far above the window — flows fine. The junk window
+	// MUST therefore sit strictly ABOVE the control band. The old code floored Jmin at
+	// S4+8, i.e. INSIDE the band (the bug); production-safe profiles keep Jmin well
+	// above (≈393). Verified live + against amneziawg-go source. This floor also
+	// subsumes the older crash guard (a junk packet shorter than S4+4 underflowed the
+	// pre-guard receiver's S4-strip): the window now starts far above S4.
+	//
+	// controlBandBytes is the protected span above the empty-transport size (covers
+	// SYN/FIN/ACK and a few small-payload transport sizes); junkBandGap is extra
+	// headroom between the band top and the junk floor.
+	controlBandBytes = 128
+	junkBandGap      = 16
+	// awgJunkCeil caps Jmax (domain invariant Jmax ≤ 1280; a decoy of that size plus
+	// IP/UDP still fits comfortably under a 1500 physical path).
+	awgJunkCeil = 1280
 
-	// Junk-packet decoy bounds. Jc/Jmin/Jmax MAY differ per end (the receiver
-	// drops the other end's junk by size, so the values need not match), so we
-	// derive them per-end from the seed to give every interface its own junk
-	// profile instead of a fleet-wide constant signature. The bounds stay inside
-	// the AmneziaWG recommendations (Jc 4-12) and keep the per-handshake junk
-	// overhead modest (Jmax well under the 1280 ceiling).
-	jcLow, jcHigh     = 4, 12  // junk packet count
-	jminLow, jminHigh = 8, 40  // lower bound of the junk size window
-	jGapLow, jGapHigh = 24, 88 // Jmax = Jmin + gap, so Jmin < Jmax always holds
+	// Junk-packet decoy bounds. Jc and the window jitter/span MAY differ per end (the
+	// receiver discards the other end's junk by content, not size, so the values need
+	// not match), so we derive them per-end. The window's ABSOLUTE floor is set from
+	// the shared S4 in DeriveAWGParamsForEnd (clearing the control band); jJitterSpan
+	// spreads that floor a little per end, and jSpan* give a wide, production-like
+	// window so decoy sizes vary like real traffic.
+	jcLow, jcHigh = 4, 12 // junk packet count
+	jJitterSpan   = 97    // per-end floor jitter: 0..96
+	jSpanBase     = 384   // junk-window width base
+	jSpanJitter   = 256   // + 0..255 → width 384..639 (≈ prod's 393→970 span)
 
 	// awgSignatureSlots is the number of I-packet slots (I1-I5) we fill.
 	awgSignatureSlots = 5
@@ -80,16 +96,29 @@ func DeriveAWGLocal(seed string, kernel bool) domain.AWGLocal {
 	}
 }
 
-// deriveJunk derives this end's junk-packet decoy parameters (Jc/Jmin/Jmax) from
-// seed. It is keyed off a sub-seed independent of the I1-I5 signature bytes so the
-// junk profile and the signature profile vary independently. The result always
-// satisfies the domain invariants (Jc in [1,128], Jmin < Jmax ≤ 1280).
+// deriveJunk derives this end's junk-packet count and the RAW (pre-placement)
+// decoy window: a per-end floor jitter (returned as jmin, 0..96) plus a wide span
+// (jmax-jmin). DeriveAWGParamsForEnd lifts the window above the control band using
+// the shared S4 — the jmin here is an offset, not the final floor. It
+// is keyed off a sub-seed independent of the I1-I5 signature bytes so the junk and
+// signature profiles vary independently.
 func deriveJunk(seed string) (jc, jmin, jmax int) {
 	d := newDetStream(seed + "|junk")
 	jc = jcLow + d.intn(jcHigh-jcLow+1)
-	jmin = jminLow + d.intn(jminHigh-jminLow+1)
-	jmax = jmin + jGapLow + d.intn(jGapHigh-jGapLow+1)
+	jmin = d.intn(jJitterSpan) // 0..96 per-end jitter; placed above the band later
+	jmax = jmin + jSpanBase + d.intn(jSpanJitter)
 	return jc, jmin, jmax
+}
+
+// junkWindowClearsControlBand reports whether a junk-decoy window [jmin,jmax] does
+// NOT overlap the small-control transport band [32+S4, 32+S4+controlBandBytes] for
+// the given S4 — the invariant that prevents decoy/control-packet size aliasing
+//. The window is safe iff it lies entirely below the band (jmax <
+// 32+S4) or entirely above it (jmin > 32+S4+controlBandBytes). FALSE means small
+// real control packets (SYN/FIN/ACK ≈ 32+S4) can be dropped as decoys. The
+// generator always produces the above-band case (see DeriveAWGParamsForEnd).
+func junkWindowClearsControlBand(s4, jmin, jmax int) bool {
+	return jmax < 32+s4 || jmin > 32+s4+controlBandBytes
 }
 
 // deriveSignatures generates the I1-I5 CPS templates from seed. Each slot is keyed
@@ -251,15 +280,18 @@ func DeriveAWGShared(seed string) domain.AWGShared {
 func DeriveAWGParamsForEnd(tunnelSeed, endLabel string, kernel bool) domain.AWGParams {
 	shared := DeriveAWGShared(tunnelSeed)
 	local := DeriveAWGLocal(tunnelSeed+"|end|"+endLabel, kernel)
-	// Floor Jmin above S4 so no junk packet this end SENDS is short enough to
-	// underflow a peer that strips S4 from incoming junk before length-checking it
-	// (amneziawg-go ≤20251104 bug; see junkS4Margin). S4 is shared, so flooring on
-	// the sending end protects the receiving end. Shift Jmax by the same amount to
-	// keep the Jmin<Jmax gap; both stay well under the 1280 ceiling.
-	if floor := shared.S4 + junkS4Margin; local.Jmin < floor {
-		shift := floor - local.Jmin
-		local.Jmin += shift
-		local.Jmax += shift
+	// Place the junk-decoy window strictly ABOVE the small-control transport band so
+	// a decoy never shares a wire size with a real control packet (SYN/FIN/ACK /
+	// keepalive ≈ 32+S4) — amneziawg-go's size classifier would otherwise confuse and
+	// drop them. This SUPERSEDES the old S4+margin floor, which sat the
+	// window inside the band. S4 is shared, so both ends compute the same floor and
+	// stay mutually consistent; the per-end jitter/span keep each end distinct.
+	bandFloor := 32 + shared.S4 + controlBandBytes + junkBandGap
+	span := local.Jmax - local.Jmin
+	local.Jmin = bandFloor + local.Jmin // raw Jmin is the per-end jitter above the floor
+	local.Jmax = local.Jmin + span
+	if local.Jmax > awgJunkCeil {
+		local.Jmax = awgJunkCeil
 	}
 	return domain.AWGParams{Shared: shared, Local: local}
 }
