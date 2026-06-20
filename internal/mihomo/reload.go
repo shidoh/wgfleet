@@ -9,7 +9,40 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	yaml "go.yaml.in/yaml/v3"
 )
+
+// ProxiesChanged reports whether the `proxies:` section differs between two
+// rendered mihomo configs. A Clash API hot reload (PUT /configs) updates rules,
+// DNS, the sniffer and proxy-GROUP membership in place, but it does NOT
+// re-initialise an existing wireguard outbound's underlying device — so a change
+// to a proxy's AmneziaWG params (S1-S4 / H / keys / endpoint / MTU) silently does
+// NOT take effect until the container is fully restarted (verified live: a hot
+// reload left stale S4 on the proxies; only `docker compose restart mihomo`
+// applied them). The mihomo planner uses this to force a restart on a proxy
+// change while still hot-reloading routine changes (drain, rules) that keep every
+// client's connection alive. When either side is unparseable (e.g. first run, no
+// prior config) it returns true so the agent restarts to be safe.
+func ProxiesChanged(oldCfg, newCfg []byte) bool {
+	return proxiesYAML(oldCfg) != proxiesYAML(newCfg)
+}
+
+func proxiesYAML(cfg []byte) string {
+	var doc map[string]any
+	if err := yaml.Unmarshal(cfg, &doc); err != nil {
+		return "<unparseable>"
+	}
+	p, ok := doc["proxies"]
+	if !ok {
+		return "<no-proxies>"
+	}
+	b, err := yaml.Marshal(p)
+	if err != nil {
+		return "<unmarshalable>"
+	}
+	return string(b)
+}
 
 // reloadTimeout bounds the Clash API call so a wedged controller never blocks a
 // reconcile pass.

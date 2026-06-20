@@ -14,6 +14,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/mihomo"
 	"github.com/shidoh/wgfleet/internal/wg"
 	"github.com/shidoh/wgfleet/internal/wgeasy"
 )
@@ -167,12 +168,28 @@ func TestMasterApplyWritesMihomoConfig(t *testing.T) {
 	}
 }
 
-// TestMihomoReloadPreferredOverRestart proves a config change (e.g. draining an
-// exit) is hot-reloaded via the Clash API rather than restarting the container —
-// the whole point of the change, so other clients keep their connections.
+// seedMihomoConfig writes the current rendered config to disk so a subsequent
+// NON-proxy change exercises the hot-reload path (a proxy change forces a restart).
+func seedMihomoConfig(t *testing.T, paths Paths, spec domain.NodeSpec, priv string) {
+	t.Helper()
+	cfg, err := mihomo.RenderConfig(mihomo.RenderInput{Spec: *spec.Master, PrivateKey: priv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.MihomoConfig, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestMihomoReloadPreferredOverRestart proves a NON-proxy config change (e.g. a
+// sniffer/rule tweak or draining an exit) is hot-reloaded via the Clash API rather
+// than restarting the container — so other clients keep their connections.
 func TestMihomoReloadPreferredOverRestart(t *testing.T) {
 	paths := testPaths(t)
 	spec, priv := masterSpec(t)
+	// A Clash API secret set via overrides must reach the reload call.
+	spec.Master.Custom.Overrides = map[string]any{"secret": "topsecret"}
+	seedMihomoConfig(t, paths, spec, priv)
 
 	var reloadCalls int
 	var gotSecret string
@@ -184,10 +201,11 @@ func TestMihomoReloadPreferredOverRestart(t *testing.T) {
 		}
 		return nil
 	}
-	// A Clash API secret set via overrides must reach the reload call.
-	spec.Master.Custom.Overrides = map[string]any{"secret": "topsecret"}
+	// A NON-proxy change (sniffer skip-domain) triggers an apply via hot reload.
+	spec.Master.SnifferSkip = append(spec.Master.SnifferSkip, "+.example.com")
 
-	pl := mihomoPlanner{paths: paths, privateKey: priv, reload: reload}
+	pl := mihomoPlanner{paths: paths, privateKey: priv, reload: reload,
+		restart: func(context.Context) error { t.Error("non-proxy change must NOT restart"); return nil }}
 	if _, err := reconcile.NewEngine(nil, pl).Reconcile(context.Background(), spec, reconcile.ModeApply); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -198,11 +216,8 @@ func TestMihomoReloadPreferredOverRestart(t *testing.T) {
 		t.Errorf("clash secret not forwarded from overrides: %q", gotSecret)
 	}
 
-	// Second pass, config unchanged ⇒ no reload (and no restart).
+	// Config now matches disk ⇒ no further reload (and no restart).
 	reloadCalls = 0
-	if _, err := pl.Plan(context.Background(), spec); err != nil {
-		t.Fatal(err)
-	}
 	acts, _ := pl.Plan(context.Background(), spec)
 	for _, a := range acts {
 		if a.Changes() && strings.Contains(a.Summary, "reload") {
@@ -217,14 +232,43 @@ func TestMihomoReloadPreferredOverRestart(t *testing.T) {
 func TestMihomoRejectedConfigNotRestarted(t *testing.T) {
 	paths := testPaths(t)
 	spec, priv := masterSpec(t)
+	seedMihomoConfig(t, paths, spec, priv)
+	spec.Master.SnifferSkip = append(spec.Master.SnifferSkip, "+.example.com") // non-proxy change ⇒ hot-reload path
 
 	rejected := errors.New("controller rejected config (HTTP 400)")
 	reload := func(context.Context, string, string, []byte) error { return rejected }
 
-	pl := mihomoPlanner{paths: paths, privateKey: priv, reload: reload}
+	pl := mihomoPlanner{paths: paths, privateKey: priv, reload: reload,
+		restart: func(context.Context) error { t.Error("rejected config must NOT restart"); return nil }}
 	_, err := reconcile.NewEngine(nil, pl).Reconcile(context.Background(), spec, reconcile.ModeApply)
 	if err == nil || !strings.Contains(err.Error(), "rejected") {
 		t.Fatalf("expected the rejection to surface as a reconcile error, got %v", err)
+	}
+}
+
+// TestMihomoRestartsOnProxyChange proves a wireguard-proxy AmneziaWG-param change
+// forces a full container restart (a Clash API hot reload can't re-init the proxy
+// device, so new S/H params would silently never apply — the an earlier finding deploy gap).
+func TestMihomoRestartsOnProxyChange(t *testing.T) {
+	paths := testPaths(t)
+	spec, priv := masterSpec(t)
+	seedMihomoConfig(t, paths, spec, priv)
+
+	// Change a wireguard-proxy AmneziaWG param.
+	spec.Master.ExitTunnels[0].AWG.Shared.S4++
+
+	var restarts, reloads int
+	pl := mihomoPlanner{paths: paths, privateKey: priv,
+		reload:  func(context.Context, string, string, []byte) error { reloads++; return nil },
+		restart: func(context.Context) error { restarts++; return nil }}
+	if _, err := reconcile.NewEngine(nil, pl).Reconcile(context.Background(), spec, reconcile.ModeApply); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if restarts != 1 {
+		t.Errorf("proxy AWG change must restart mihomo once, got %d", restarts)
+	}
+	if reloads != 0 {
+		t.Errorf("proxy change must NOT hot-reload (silent no-op), got %d reloads", reloads)
 	}
 }
 

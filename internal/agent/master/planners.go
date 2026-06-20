@@ -318,6 +318,9 @@ type mihomoPlanner struct {
 	// injected in tests. Preferred over a container restart so a routine change like
 	// draining one exit does not drop every client's connection.
 	reload func(ctx context.Context, controllerAddr, secret string, cfgYAML []byte) error
+	// restart bounces the container (nil ⇒ real `docker compose restart mihomo`);
+	// injected in tests. Used when a wireguard-proxy change can't be hot-reloaded.
+	restart func(ctx context.Context) error
 }
 
 func (mihomoPlanner) Component() string { return "mihomo (data plane)" }
@@ -330,6 +333,10 @@ func (p mihomoPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcil
 	if err != nil {
 		return nil, err
 	}
+	// Snapshot the on-disk config BEFORE the FileAction overwrites it, so we can tell
+	// whether the wireguard proxies (AmneziaWG params) changed and a hot reload would
+	// silently no-op (see applyConfigAction / mihomo.ProxiesChanged).
+	oldCfg, _ := os.ReadFile(p.paths.MihomoConfig)
 	configAction, err := reconcile.FileAction(p.paths.MihomoConfig, []byte(cfg), 0o644, mihomo.RedactConfig)
 	if err != nil {
 		return nil, err
@@ -346,7 +353,12 @@ func (p mihomoPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcil
 
 	actions := []reconcile.Action{configAction, directAction}
 	if configAction.Changes() || directAction.Changes() {
-		actions = append(actions, p.applyConfigAction(spec, []byte(cfg)))
+		// A wireguard-proxy change (AmneziaWG params/keys/endpoint/MTU) needs a full
+		// container restart — a Clash API hot reload does not re-init the proxy's
+		// device. Routine changes (drain, rules, DNS, direct-networks) hot-reload so
+		// existing client connections survive.
+		forceRestart := mihomo.ProxiesChanged(oldCfg, []byte(cfg))
+		actions = append(actions, p.applyConfigAction(spec, []byte(cfg), forceRestart))
 	} else {
 		actions = append(actions, reconcile.NoChangeAction("mihomo", "config already current"))
 	}
@@ -359,7 +371,7 @@ func (p mihomoPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcil
 // everyone), and falls back to `docker compose restart mihomo` only when the API is
 // unreachable (mihomo down / mid-start). A config the controller actively REJECTS is
 // surfaced as an error WITHOUT a restart, so the previous good config keeps running.
-func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML []byte) reconcile.Action {
+func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML []byte, forceRestart bool) reconcile.Action {
 	reload := p.reload
 	if reload == nil {
 		reload = mihomo.Reload
@@ -367,6 +379,25 @@ func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML []byte) r
 	addr := spec.Master.ExternalController
 	secret := clashSecret(spec.Master)
 	compose := p.paths.Compose
+
+	restart := p.restart
+	if restart == nil {
+		restart = func(ctx context.Context) error {
+			c := exec.CommandContext(ctx, "docker", "compose", "-f", compose, "restart", "mihomo")
+			if out, rerr := c.CombinedOutput(); rerr != nil {
+				return fmt.Errorf("mihomo restart failed: %w: %s", rerr, strings.TrimSpace(string(out)))
+			}
+			return nil
+		}
+	}
+
+	// A wireguard-proxy change must restart the container: a hot reload cannot
+	// re-init an existing AmneziaWG device, so new S/H params silently never apply.
+	if forceRestart {
+		return reconcile.CustomAction(reconcile.ActionUpdate, "mihomo",
+			"restart mihomo (wireguard-proxy AmneziaWG params changed — hot reload can't re-init the device)",
+			"docker compose restart mihomo", restart)
+	}
 
 	display := fmt.Sprintf("PUT http://%s/configs (hot reload; fallback: docker compose restart mihomo)",
 		orPlaceholder(addr, "<external-controller>"))
@@ -379,10 +410,8 @@ func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML []byte) r
 			// Not reachable (down / mid-start): restart so it reads the fresh file.
 			// Heavier (drops connections) but rare — the compose planner already
 			// brought the stack up earlier in the same pass.
-			c := exec.CommandContext(ctx, "docker", "compose", "-f", compose, "restart", "mihomo")
-			if out, rerr := c.CombinedOutput(); rerr != nil {
-				return fmt.Errorf("mihomo reload unreachable (%v) and restart failed: %w: %s",
-					err, rerr, strings.TrimSpace(string(out)))
+			if rerr := restart(ctx); rerr != nil {
+				return fmt.Errorf("mihomo reload unreachable (%v) and %w", err, rerr)
 			}
 			return nil
 		default:
