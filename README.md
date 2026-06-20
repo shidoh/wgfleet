@@ -699,17 +699,26 @@ upstream kernel module + tools sources**. Getting them wrong silently breaks
 tunnels.
 
 - **Must be identical on both ends of a tunnel:** `S1–S4` (junk prefix sizes) and **`H1–H4`** (packet junk header ranges).
-- **May differ per end:** `Jc`, `Jmin`, `Jmax` (junk count, interval min/max) and **`I1–I5`** (CPS junk templates).
+- **May differ per end:** `Jc`, `Jmin`, `Jmax` (junk count, interval min/max) and **`I1–I5`** (per-end protocol-mimicry packets — see below).
 - **`H1–H4` are ranges** (`min-max`, e.g. `15384729-145384729`); the four ranges
   **must not overlap** (kernel-enforced). Modelled as `AWGHeader{Min,Max}`.
 - **All obfuscation parameters live in `[Interface]`, never `[Peer]`.**
-- Limits: `1 ≤ Jc ≤ 128`; `Jmin < Jmax ≤ 1280`; `S1 ≤ 1132`; `S2 ≤ 1188`;
-  `S3 ≤ 1216` (cookie-reply junk, AmneziaWG 1.5); `S4 ≤ 1248` (transport junk);
-  **`S1+56 ≠ S2`** (anti-detection; docs-only, we enforce it); `I` values are hex
-  blobs or CPS templates (`<b>`, `<r>`, `<rc>`, `<rd>` for userspace; kernel also allows `<c>`, `<t>`).
-- **`<c>` / `<t>` CPS tags work in the kernel but break userspace WireGuard-Go**
-  (mihomo proxies, Amnezia app clients) — so userspace configs use only
-  `<b>/<r>/<rc>/<rd>`. Enforced via `ValidateUserspace()`.
+- **`S1–S4` must be message-size collision-safe (ADR-0022).** The userspace
+  `amneziawg-go` classifier (mihomo proxies, app clients) keys on packet size, so a data
+  packet `32+S4+16k` must never equal a handshake size `{148+S1, 92+S2, 64+S3}` nor shadow
+  an adjacent pair — otherwise ~50% of new TLS connections silently stall. The generator
+  draws S1-S3 ∈ [15,64] and S4 ∈ [16,32] (Amnezia doc ranges, never `S4=0`) and **iterates
+  until `awgSizesSafe` holds** (`deriveSafeS`). Kernel hard limits are far higher
+  (`S ≤ 65535−base`) but are NOT sufficient — the kernel does not check this.
+- Other limits: `1 ≤ Jc ≤ 10`; `Jmin < Jmax ≤ 1280`; **`S1+56 ≠ S2`** (anti-detection).
+- **`I1–I5` mimic a real UDP protocol** (ADR-0022): each tunnel-end picks one cover
+  protocol from its seed — **QUIC v1 Initial / STUN binding / DTLS ClientHello** — and
+  fills all five slots with structurally-valid, per-slot-varied packets, so a DPI sees
+  QUIC/WebRTC, not a VPN handshake. I1-I5 differ, the two ends differ, and templates vary
+  fleet-wide. Built from the RFCs as `<b>/<r>/<rc>` literals; the `<c>/<t>` CPS tags are
+  **not used** (they break userspace WireGuard-Go and would corrupt a protocol's layout),
+  so kernel and userspace I-profiles are identical. `ValidateUserspace()` still gates
+  operator overrides.
 - Shared params are **derived deterministically** from a per-tunnel seed
   (`wg.DeriveAWGParams`), so both ends compute the identical set with no
   coordination. The reference example from the wg-easy docs is pinned as a golden
@@ -784,8 +793,9 @@ fork).
 (dry-run first-class throughout).
 
 **Phase 2 ✅ complete** — drift auto-reconcile, health-based LB in mihomo,
-AmneziaWG parameter generator (S1-S4, per-end decoy Jc/Jmin/Jmax + I1-I5 with CPS validation
-and per-end seeds), auto-MTU sequential model, SOPS/age secrets, live-kernel drift repair.
+AmneziaWG parameter generator (collision-safe S1-S4, per-end decoy Jc/Jmin/Jmax + I1-I5
+real-protocol mimicry QUIC/STUN/DTLS, per-end seeds — ADR-0022), auto-MTU sequential model,
+SOPS/age secrets, live-kernel drift repair.
 
 **Phase 3 (in progress)** — censorship-adaptive egress failover.
 - ✅ egress-block detection (ADR-0016) — non-destructive active confirmation signal.
