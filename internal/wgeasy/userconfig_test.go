@@ -96,15 +96,45 @@ func TestUserConfigRoundTrip(t *testing.T) {
 func TestDesiredUserConfigPreservesWhenNoIntent(t *testing.T) {
 	current := UserConfigColumns{
 		Host: "old", Port: 51820, MTU: 1420, Keepalive: ClientKeepaliveSeconds,
-		DNS: []string{"1.1.1.1"}, AllowedIPs: []string{"0.0.0.0/0", "::/0"},
+		DNS: []string{"1.1.1.1"}, AllowedIPs: []string{"0.0.0.0/0"},
 		Jc: 7, Jmin: 10, Jmax: 1000,
 	}
-	// No host, no dns, no allowed-ips, no AWG, zero port/mtu ⇒ host/dns/allowed-ips
-	// preserved. Keepalive is always enforced (behind-NAT requirement), so current
-	// already carries it here to isolate the preserve behaviour.
+	// No host, no dns, no allowed-ips, no AWG, zero port/mtu ⇒ host/dns preserved
+	// and the already-IPv4-only AllowedIPs is stable (no churn). Keepalive is always
+	// enforced (behind-NAT requirement), so current already carries it here to
+	// isolate the preserve behaviour.
 	desired := DesiredUserConfig(current, domain.WGServerSpec{}, "", nil, nil)
 	if !desired.Equal(current) {
 		t.Errorf("no-intent overlay must preserve current:\n got=%+v\nwant=%+v", desired, current)
+	}
+}
+
+// The wgfleet data plane is IPv4-only; with no operator override the client
+// AllowedIPs must be pinned IPv4-only, stripping wg-easy's ::/0 default that
+// black-holes IPv6 and stalls dual-stack traffic.
+func TestDesiredUserConfigPinsIPv4OnlyByDefault(t *testing.T) {
+	current := UserConfigColumns{
+		AllowedIPs: []string{"0.0.0.0/0", "::/0"}, // wg-easy schema default
+	}
+	desired := DesiredUserConfig(current, domain.WGServerSpec{}, "", nil, nil)
+	if !equalStrings(desired.AllowedIPs, DefaultClientAllowedIPs) {
+		t.Errorf("default AllowedIPs = %v, want IPv4-only %v", desired.AllowedIPs, DefaultClientAllowedIPs)
+	}
+	for _, ip := range desired.AllowedIPs {
+		if ip == "::/0" {
+			t.Error("client AllowedIPs must not carry an IPv6 default route")
+		}
+	}
+}
+
+// An operator that explicitly sets allowed-ips (e.g. once real IPv6 egress
+// exists) is respected verbatim, including a v6 default if they want one.
+func TestDesiredUserConfigRespectsOperatorAllowedIPs(t *testing.T) {
+	current := UserConfigColumns{AllowedIPs: []string{"0.0.0.0/0", "::/0"}}
+	want := []string{"0.0.0.0/0", "::/0", "10.0.0.0/8"}
+	desired := DesiredUserConfig(current, domain.WGServerSpec{}, "", nil, want)
+	if !equalStrings(desired.AllowedIPs, want) {
+		t.Errorf("operator AllowedIPs = %v, want %v (verbatim)", desired.AllowedIPs, want)
 	}
 }
 

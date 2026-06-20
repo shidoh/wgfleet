@@ -38,6 +38,18 @@ import (
 // we enforce 25s, the conventional WireGuard NAT-keepalive interval.
 const ClientKeepaliveSeconds = 25
 
+// DefaultClientAllowedIPs is the client-facing AllowedIPs the platform pins when
+// the operator has not set one explicitly. It is IPv4-only ON PURPOSE: the
+// wgfleet data plane carries no IPv6 (the master runs with net.ipv6 forwarding
+// off, mihomo with ipv6:false, and WARP egress has no working IPv6). wg-easy's
+// schema default is ["0.0.0.0/0","::/0"], i.e. it hands clients an IPv6 default
+// route into a tunnel that black-holes every v6 packet — happy-eyeballs then
+// prefers IPv6 to dual-stack hosts (Instagram, Google, most CDNs) and stalls
+// (pages start then stop loading, video freezes after a few seconds; an earlier finding).
+// Pinning IPv4-only keeps clients off the dead v6 path. An operator who later
+// adds real IPv6 egress can override via the manifest's client_allowed_ips.
+var DefaultClientAllowedIPs = []string{"0.0.0.0/0"}
+
 type UserConfigColumns struct {
 	Host               string
 	Port               int
@@ -72,9 +84,11 @@ func equalStrings(a, b []string) bool {
 
 // DesiredUserConfig overlays the desired client-facing values from the master's
 // spec onto the current columns, leaving a column untouched when there is no
-// intent for it (empty host/dns/allowed-ips, zero port/mtu, nil AWG). This avoids
-// clobbering wg-easy's sane migration defaults with empty values when the operator
-// has not specified DNS/allowed-IPs.
+// intent for it (empty host/dns, zero port/mtu, nil AWG). This avoids clobbering
+// wg-easy's sane migration defaults with empty values when the operator has not
+// specified DNS. AllowedIPs is the exception: when the operator sets none we pin
+// IPv4-only (DefaultClientAllowedIPs) instead of inheriting wg-easy's ::/0
+// default, which is wrong for this IPv4-only data plane.
 func DesiredUserConfig(current UserConfigColumns, w domain.WGServerSpec, host string, dns, allowedIPs []string) UserConfigColumns {
 	desired := current
 	if host != "" {
@@ -94,6 +108,13 @@ func DesiredUserConfig(current UserConfigColumns, w domain.WGServerSpec, host st
 	}
 	if len(allowedIPs) > 0 {
 		desired.AllowedIPs = allowedIPs
+	} else {
+		// No operator override: pin client AllowedIPs to IPv4-only rather than
+		// inherit wg-easy's ["0.0.0.0/0","::/0"] default, which routes IPv6 into a
+		// dead tunnel and stalls dual-stack traffic (see DefaultClientAllowedIPs,
+		// an earlier finding). This DOES overwrite the wg-easy default — that default is
+		// wrong for an IPv4-only data plane, so we assert intent here.
+		desired.AllowedIPs = append([]string(nil), DefaultClientAllowedIPs...)
 	}
 	// Obfuscation is MANDATORY in both directions — clients must emit the full AWG
 	// decoy, never a bare WireGuard handshake. wg-easy bakes these client defaults
