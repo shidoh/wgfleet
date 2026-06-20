@@ -66,6 +66,50 @@ func TestJminAboveS4(t *testing.T) {
 
 const awgJMaxLimitTest = 1280
 
+// TestAWGSizesSafeOracle pins awgSizesSafe against the 11-point LIVE oracle that
+// diagnosed an earlier finding: nine (S1,S2,S3,S4) sets that work on the fleet and two that
+// break it (~50% of new TLS connections dropped). The predicate must classify every
+// row correctly — a real data packet of wire size 32+S4+16k must never alias a
+// handshake size (clause A) nor shadow an adjacent handshake pair (clause B).
+func TestAWGSizesSafeOracle(t *testing.T) {
+	for _, c := range []struct {
+		s1, s2, s3, s4 int
+		safe           bool
+		note           string
+	}{
+		{19, 145, 76, 0, true, "exit-2 S4=0"},
+		{19, 145, 76, 100, true, "exit-2 S4=100"},
+		{71, 126, 68, 0, true, "exit-1 S4=0"},
+		{71, 126, 68, 23, true, "exit-1 S4=23 (only S4 changed from the fail row)"},
+		{15, 18, 20, 23, true, "Amnezia client defaults"},
+		{83, 29, 91, 112, true, "prod exit-a"},
+		{47, 50, 2, 9, true, "prod exit-2"},
+		{102, 67, 143, 38, true, "prod exit-b"},
+		{19, 94, 72, 126, true, "prod exit-c"},
+		{19, 145, 76, 39, false, "exit-2 S4=39 — data size 167 aliases init (clause A)"},
+		{71, 126, 68, 62, false, "exit-1 S4=62 — grid 222 shadows init=219 & resp=218 (clause B)"},
+	} {
+		if got := awgSizesSafe(c.s1, c.s2, c.s3, c.s4); got != c.safe {
+			t.Errorf("awgSizesSafe(%d,%d,%d,%d)=%v want %v — %s", c.s1, c.s2, c.s3, c.s4, got, c.safe, c.note)
+		}
+	}
+}
+
+// TestDeriveSharedAlwaysSizeSafe guards an earlier finding end to end: every derived tunnel
+// must carry a NON-ZERO S4 (AWG-2.0 transport masking is mandatory) AND a
+// collision-safe message-size set, across many seeds and both tunnel ends.
+func TestDeriveSharedAlwaysSizeSafe(t *testing.T) {
+	for i := 0; i < 3000; i++ {
+		s := DeriveAWGShared(string(rune(i)) + "|tunnel|salt")
+		if s.S4 == 0 {
+			t.Fatalf("seed %d: S4=0 — AWG-2.0 transport junk must be present", i)
+		}
+		if !awgSizesSafe(s.S1, s.S2, s.S3, s.S4) {
+			t.Fatalf("seed %d: derived size-UNSAFE S1=%d S2=%d S3=%d S4=%d", i, s.S1, s.S2, s.S3, s.S4)
+		}
+	}
+}
+
 func TestDeriveAWGDeterministic(t *testing.T) {
 	seed := "exit-de-1|master-xa-1|salt"
 	a := DeriveAWGShared(seed)

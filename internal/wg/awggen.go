@@ -23,16 +23,32 @@ const (
 	hTop        = 2_000_000_000 // < 2^31, leaves headroom
 	hRangeWidth = 130_000_000   // matches the wg-easy example's ~130M-wide ranges
 
-	sLow  = 15 // S1/S2/S3 recommended range (handshake/cookie junk, no data-MTU impact)
-	sHigh = 150
+	// S1/S2/S3 (init/response/cookie handshake junk). Range kept within the Amnezia
+	// docs' recommended 0-64 (docs.amnezia.org). They have no per-packet MTU cost.
+	sLow  = 15
+	sHigh = 64
 
 	// S4 (transport_packet_junk_size) is prepended to EVERY data packet, so unlike
-	// S1-S3 it consumes per-packet MTU. Keep the derived value strictly within the
-	// AmneziaWG MTU cushion (AWGExtraOverhead) with margin so a full-size data packet
-	// never fragments at the physical link. The TestS4FitsMTUCushion test
-	// guards s4High ≤ AWGExtraOverhead.
+	// S1-S3 it consumes per-packet MTU. Bounded to the Amnezia docs' 0-32 range
+	// (well within AWGExtraOverhead, so a full data packet never fragments — earlier findings
+	// ; TestS4FitsMTUCushion guards s4High ≤ AWGExtraOverhead). Never 0: AWG-2.0
+	// transport masking is mandatory.
 	s4Low  = 16
-	s4High = AWGExtraOverhead - 16 // = 64; must stay ≤ AWGExtraOverhead
+	s4High = 32
+
+	// AmneziaWG message-size collision avoidance. The userspace
+	// amneziawg-go receiver classifies a packet by its WIRE SIZE first. A genuine
+	// transport DATA packet has wire size 32+S4+16k (k≥0); the decorated handshake
+	// sizes are {148+S1, 92+S2, 64+S3}. Two ways a real data packet gets dropped:
+	//   A. it lands EXACTLY on a handshake size ((H-(32+S4)) a non-negative multiple
+	//      of 16) → the magic is read at the wrong junk offset and the packet is
+	//      discarded with no recovery (the dominant, code-traceable hazard);
+	//   B. one data grid point sits within awgShadowDelta of TWO handshake sizes at
+	//      once (the adjacent-pair shadow — needed for the S1/S2 ≈ adjacent case).
+	// awgSizesSafe rejects both; DeriveAWGShared iterates S1-S4 until it holds. See
+	// the live 11-point oracle in awggen_test.go.
+	awgShadowDelta = 4   // clause B: forbidden if a grid point is within +4 of two handshake sizes
+	maxSafeSIters  = 256 // S1-S4 re-derivation attempts before falling back to Amnezia defaults
 
 	// junkS4Margin keeps Jmin a safe distance above S4 (see deriveJunk / the Jmin
 	// floor in DeriveAWGParamsForEnd). A receiver strips S4 bytes from an incoming
@@ -50,7 +66,7 @@ const (
 	// profile instead of a fleet-wide constant signature. The bounds stay inside
 	// the AmneziaWG recommendations (Jc 4-12) and keep the per-handshake junk
 	// overhead modest (Jmax well under the 1280 ceiling).
-	jcLow, jcHigh     = 4, 12  // junk packet count
+	jcLow, jcHigh     = 4, 10  // junk packet count (Amnezia docs cap Jc at 10)
 	jminLow, jminHigh = 8, 40  // lower bound of the junk size window
 	jGapLow, jGapHigh = 24, 88 // Jmax = Jmin + gap, so Jmin < Jmax always holds
 
@@ -220,26 +236,96 @@ func DeriveAWGShared(seed string) domain.AWGShared {
 		headers[i] = domain.AWGHeader{Min: min, Max: min + hRangeWidth}
 	}
 
-	s1 := int(mapU32(uint32(sum[16])<<8|uint32(sum[17]), sLow, sHigh))
-	s2 := int(mapU32(uint32(sum[18])<<8|uint32(sum[19]), sLow, sHigh))
-	if s1+56 == s2 { // enforce S1+56 != S2 deterministically
-		if s2 < sHigh {
-			s2++
-		} else {
-			s2--
-		}
-	}
-	// S3 (cookie-reply junk) ranges like S1/S2. S4 (transport junk) rides every data
-	// packet, so it is bounded to the AWG MTU cushion (s4Low..s4High). Both are
-	// AmneziaWG 2.0 params, shared, derived from the same tunnel seed so both ends
-	// compute identical values (requires a 2.0-compatible AmneziaWG on both ends).
-	s3 := int(mapU32(uint32(sum[20])<<8|uint32(sum[21]), sLow, sHigh))
-	s4 := int(mapU32(uint32(sum[22])<<8|uint32(sum[23]), s4Low, s4High))
+	// S1-S4 (init/response/cookie/transport junk) are AmneziaWG 2.0 shared params,
+	// derived from the same tunnel seed so both ends compute identical values. They
+	// are iterated until the message-size set is collision-safe for the userspace
+	// amneziawg-go classifier — see deriveSafeS / awgSizesSafe.
+	s1, s2, s3, s4 := deriveSafeS(seed)
 
 	return domain.AWGShared{
 		H1: headers[0], H2: headers[1], H3: headers[2], H4: headers[3],
 		S1: s1, S2: s2, S3: s3, S4: s4,
 	}
+}
+
+// deriveSafeS deterministically derives (S1,S2,S3,S4) from seed, re-deriving from
+// an incremented sub-seed until the four decorated message sizes avoid the
+// amneziawg-go classifier collisions (awgSizesSafe; an earlier finding). Both tunnel ends
+// run the identical loop and converge on the same values. The safe set is large
+// (a handful of mod-16 residues are excluded), so it converges in the first few
+// iterations; the Amnezia-default fallback is a proven-safe last resort.
+func deriveSafeS(seed string) (s1, s2, s3, s4 int) {
+	for i := 0; i < maxSafeSIters; i++ {
+		h := sha256.Sum256([]byte(fmt.Sprintf("%s|S|%d", seed, i)))
+		s1 = int(mapU32(uint32(h[0])<<8|uint32(h[1]), sLow, sHigh))
+		s2 = int(mapU32(uint32(h[2])<<8|uint32(h[3]), sLow, sHigh))
+		if s1+56 == s2 { // S1+56 != S2 (anti-detection), enforced deterministically
+			if s2 < sHigh {
+				s2++
+			} else {
+				s2--
+			}
+		}
+		s3 = int(mapU32(uint32(h[4])<<8|uint32(h[5]), sLow, sHigh))
+		s4 = int(mapU32(uint32(h[6])<<8|uint32(h[7]), s4Low, s4High))
+		if awgSizesSafe(s1, s2, s3, s4) {
+			return s1, s2, s3, s4
+		}
+	}
+	// Fallback (effectively unreachable): Amnezia's commercial defaults, oracle-PASS.
+	return 15, 18, 20, 23
+}
+
+// awgSizesSafe reports whether the AmneziaWG message-size set avoids the two ways a
+// genuine transport DATA packet gets misclassified and dropped by the userspace
+// amneziawg-go size classifier. Decorated handshake sizes are
+// {148+S1, 92+S2, 64+S3}; a data packet has wire size 32+S4+16k (k≥0). It returns
+// false when (A) a data size lands exactly on a handshake size — (H-(32+S4)) a
+// non-negative multiple of 16 — or (B) one data grid point sits within
+// awgShadowDelta of two handshake sizes at once, or the four decorated sizes are
+// not all distinct (which amneziawg-go rejects outright).
+func awgSizesSafe(s1, s2, s3, s4 int) bool {
+	t0 := 32 + s4
+	hs := [3]int{148 + s1, 92 + s2, 64 + s3}
+
+	// All four decorated sizes must be distinct (init/resp/cookie/transport).
+	sizes := [4]int{hs[0], hs[1], hs[2], t0}
+	for i := 0; i < 4; i++ {
+		for j := i + 1; j < 4; j++ {
+			if sizes[i] == sizes[j] {
+				return false
+			}
+		}
+	}
+
+	// Clause A: no data grid point lands exactly on a handshake size.
+	for _, h := range hs {
+		if h >= t0 && (h-t0)%16 == 0 {
+			return false
+		}
+	}
+
+	// Clause B: no data grid point within awgShadowDelta of two handshake sizes.
+	maxH := hs[0]
+	for _, h := range hs[1:] {
+		if h > maxH {
+			maxH = h
+		}
+	}
+	// A shadowing grid point can sit up to awgShadowDelta ABOVE the largest handshake
+	// size (g-H ∈ [0,δ] ⇒ g ≤ maxH+δ), so scan a little past maxH.
+	for g := t0; g <= maxH+awgShadowDelta; g += 16 {
+		near := 0
+		for _, h := range hs {
+			if d := g - h; d >= 0 && d <= awgShadowDelta {
+				near++
+			}
+		}
+		if near >= 2 {
+			return false
+		}
+	}
+	return true
 }
 
 // DeriveAWGParamsForEnd returns one tunnel END's full AmneziaWG config: shared
