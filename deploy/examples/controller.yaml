@@ -67,6 +67,15 @@ fleet:
   # mihomo redirect self-heal) at the cost of more frequent docker/nft/listener probes.
   # Unset ⇒ 30s. Range 5s..1h. A per-node agent.yaml reconcile_interval still overrides.
   reconcile_interval: 30s
+  # Scanner-ASN blacklist feed (hides exit WG port/SSH from active VPN scanners).
+  # Baked fleet-wide into every agent.yaml; the per-exit ENABLE toggle is
+  # exits[].firewall.as_blacklist below. The exit agent refreshes the cache on this
+  # cadence and renders it into the nft as_blacklist sets atomically (a failed fetch
+  # keeps the last-good list). Unset URLs ⇒ the C24Be/AS_Network_List defaults;
+  # unset interval ⇒ 24h (range 1m..168h).
+  # as_blacklist_interval: 24h
+  # as_blacklist_v4_url: "https://raw.githubusercontent.com/C24Be/AS_Network_List/main/blacklists/blacklist-v4.txt"
+  # as_blacklist_v6_url: "https://raw.githubusercontent.com/C24Be/AS_Network_List/main/blacklists/blacklist-v6.txt"
   masters:
     - name: master-xa-1
       mgmt_addr: 10.20.25.254 # ZT overlay address
@@ -169,6 +178,10 @@ fleet:
             clientGroupsBlock:
               default: [ads]
       firewall:
+        # Drop scanning ASNs (the daily C24Be feed, v4+v6) before the WG/SSH accepts,
+        # so active VPN scanners never see the open ports. Source URLs + refresh
+        # cadence are fleet-wide (fleet.as_blacklist_* above); this is the per-exit
+        # on/off switch. Whitelist still wins over the blacklist.
         as_blacklist: true
         whitelist: [10.20.0.0/16] # mgmt overlay; real values from local config
       ssh:

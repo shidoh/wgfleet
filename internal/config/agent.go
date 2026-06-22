@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -49,6 +50,16 @@ type AgentSection struct {
 	// otherwise be black-holed). Agent-local on purpose — it must not depend on the
 	// channel it protects. Recommended 1240 (matches a 1280 overlay MTU); 0 disables.
 	MgmtOverlayMSS int `koanf:"mgmt_overlay_mss"`
+	// ASBlacklistV4URL / ASBlacklistV6URL override the scanner-ASN feed sources the
+	// exit firewall drops (to hide the WG port/SSH from active VPN scanners). Empty
+	// falls back to the asnfeed defaults (C24Be/AS_Network_List). The per-exit enable
+	// toggle is fleet.yaml exits[].firewall.as_blacklist (wire); these are agent-local
+	// operational knobs (like MgmtOverlayMSS), baked fleet-wide at provisioning.
+	ASBlacklistV4URL string `koanf:"as_blacklist_v4_url"`
+	ASBlacklistV6URL string `koanf:"as_blacklist_v6_url"`
+	// ASBlacklistInterval is how often a stale feed cache is refreshed. 0 falls back
+	// to the asnfeed default (24h). A failed refresh keeps the last-good list.
+	ASBlacklistInterval time.Duration `koanf:"as_blacklist_interval"`
 }
 
 // IdentitySection holds the node's mTLS client certificate material. The key is
@@ -90,6 +101,19 @@ func (a AgentConfig) Validate() error {
 	// fit the overlay path it is meant to protect).
 	if m := a.Agent.MgmtOverlayMSS; m != 0 && (m < 536 || m > 1460) {
 		errs = append(errs, fmt.Errorf("agent.mgmt_overlay_mss %d out of range (0 to disable, else 536..1460)", m))
+	}
+	// Scanner-ASN feed refresh cadence: 0 uses the default; otherwise keep it in a
+	// sane band so a typo can't pin it to seconds (hammering the source) or months.
+	if d := a.Agent.ASBlacklistInterval; d != 0 && (d < time.Minute || d > 7*24*time.Hour) {
+		errs = append(errs, fmt.Errorf("agent.as_blacklist_interval %s out of range (0 for default, else 1m..168h)", d))
+	}
+	for name, u := range map[string]string{
+		"agent.as_blacklist_v4_url": a.Agent.ASBlacklistV4URL,
+		"agent.as_blacklist_v6_url": a.Agent.ASBlacklistV6URL,
+	} {
+		if u != "" && !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
+			errs = append(errs, fmt.Errorf("%s must be an http(s) URL, got %q", name, u))
+		}
 	}
 	return errors.Join(errs...)
 }

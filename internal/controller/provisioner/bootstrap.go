@@ -37,6 +37,13 @@ type BootstrapInput struct {
 	// the key and let the agent use its built-in default. The controller resolves
 	// this from fleet.reconcile_interval (config.FleetSection.AgentReconcileInterval).
 	ReconcileInterval time.Duration
+	// ASBlacklistV4URL / ASBlacklistV6URL / ASBlacklistInterval are baked into
+	// agent.yaml when set, configuring the scanner-ASN blacklist feed the exit
+	// firewall drops (hides the WG port/SSH from VPN scanners). Empty/0 ⇒ omit the
+	// key so the agent uses the asnfeed defaults. From fleet.as_blacklist_*.
+	ASBlacklistV4URL    string
+	ASBlacklistV6URL    string
+	ASBlacklistInterval time.Duration
 }
 
 // Remote paths the bootstrap writes to. Kept here so plan and apply agree.
@@ -221,6 +228,17 @@ func renderAgentYAML(in BootstrapInput) string {
 		// Baked in from fleet config so the clamp is agent-local: it must not depend on
 		// the control channel it protects (see config.AgentSection.MgmtOverlayMSS).
 		extra += fmt.Sprintf("  mgmt_overlay_mss: %d\n", in.MgmtOverlayMSS)
+	}
+	// Scanner-ASN blacklist feed knobs (agent-local; the per-exit enable toggle rides
+	// the wire as firewall.as_blacklist). Omitted when empty/0 so the agent defaults.
+	if u := strings.TrimSpace(in.ASBlacklistV4URL); u != "" {
+		extra += fmt.Sprintf("  as_blacklist_v4_url: %q\n", u)
+	}
+	if u := strings.TrimSpace(in.ASBlacklistV6URL); u != "" {
+		extra += fmt.Sprintf("  as_blacklist_v6_url: %q\n", u)
+	}
+	if in.ASBlacklistInterval > 0 {
+		extra += fmt.Sprintf("  as_blacklist_interval: %s\n", in.ASBlacklistInterval)
 	}
 	return fmt.Sprintf(`agent:
   role: %s

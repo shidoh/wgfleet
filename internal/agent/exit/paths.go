@@ -22,6 +22,10 @@ type Paths struct {
 	// tmpfs (/run): a reboot clears the kernel rules and the state file together,
 	// forcing a clean re-apply on next reconcile.
 	RoutingState string
+	// ASBlacklist is the persisted scanner-ASN feed cache the firewall renders into
+	// the as_blacklist sets. It lives under /var/lib (persistent), so a reboot keeps
+	// the last-good list while the feed planner refreshes it on its own cadence.
+	ASBlacklist string
 }
 
 // DefaultPaths returns the production-default file locations.
@@ -35,6 +39,7 @@ func DefaultPaths() Paths {
 		DNS:          "/etc/wgfleet/blocky/config.yml",
 		DNSCompose:   "/etc/wgfleet/blocky/docker-compose.yml",
 		RoutingState: "/run/wgfleet/routing.applied",
+		ASBlacklist:  "/var/lib/wgfleet/as-blacklist.lst",
 	}
 }
 
@@ -50,5 +55,6 @@ func PathsUnder(dir string) Paths {
 		DNS:          filepath.Join(dir, "blocky", "config.yml"),
 		DNSCompose:   filepath.Join(dir, "blocky", "docker-compose.yml"),
 		RoutingState: filepath.Join(dir, "routing.applied"),
+		ASBlacklist:  filepath.Join(dir, "as-blacklist.lst"),
 	}
 }

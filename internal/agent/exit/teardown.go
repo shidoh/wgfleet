@@ -45,6 +45,8 @@ func (p exitTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]recon
 		{p.paths.DNS, "blocky config"},
 		{p.paths.DNSCompose, "blocky compose file"},
 		{p.paths.RoutingState, "policy-routing state"},
+		{p.paths.ASBlacklist, "AS-blacklist feed cache"},
+		{p.paths.ASBlacklist + ".attempt", "AS-blacklist refresh marker"},
 		{p.paths.WGKey, "WG private key"},
 	}
 	for _, w := range wipe {

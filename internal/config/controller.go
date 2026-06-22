@@ -142,6 +142,15 @@ type FleetSection struct {
 	// fast drift and self-heal land. 0/unset ⇒ DefaultReconcileInterval. A per-node
 	// agent.yaml value still overrides it. Resolve via AgentReconcileInterval.
 	ReconcileInterval time.Duration `koanf:"reconcile_interval"`
+	// ASBlacklistV4URL / ASBlacklistV6URL / ASBlacklistInterval configure the
+	// scanner-ASN blacklist feed every exit refreshes to hide its WG port/SSH from
+	// active VPN scanners (the per-exit enable toggle is exits[].firewall.as_blacklist).
+	// They are baked fleet-wide into each agent.yaml at provisioning (agent-local
+	// operational knobs, like MgmtOverlayMSS). Empty URLs / 0 interval ⇒ the asnfeed
+	// defaults (C24Be/AS_Network_List, 24h).
+	ASBlacklistV4URL    string        `koanf:"as_blacklist_v4_url"`
+	ASBlacklistV6URL    string        `koanf:"as_blacklist_v6_url"`
+	ASBlacklistInterval time.Duration `koanf:"as_blacklist_interval"`
 }
 
 // AgentReconcileInterval returns the fleet-wide agent reconcile interval, or the
@@ -470,6 +479,18 @@ func (c ControllerConfig) Validate() error {
 	// and drift repair lag. Keep it in a sane band; 0/unset uses the default.
 	if d := c.Fleet.ReconcileInterval; d != 0 && (d < 5*time.Second || d > time.Hour) {
 		errs = append(errs, fmt.Errorf("fleet.reconcile_interval %s out of range (0 for default, else 5s..1h)", d))
+	}
+	// Scanner-ASN feed refresh cadence baked into agent.yaml; same band as the agent.
+	if d := c.Fleet.ASBlacklistInterval; d != 0 && (d < time.Minute || d > 7*24*time.Hour) {
+		errs = append(errs, fmt.Errorf("fleet.as_blacklist_interval %s out of range (0 for default, else 1m..168h)", d))
+	}
+	for name, u := range map[string]string{
+		"fleet.as_blacklist_v4_url": c.Fleet.ASBlacklistV4URL,
+		"fleet.as_blacklist_v6_url": c.Fleet.ASBlacklistV6URL,
+	} {
+		if u != "" && !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
+			errs = append(errs, fmt.Errorf("%s must be an http(s) URL, got %q", name, u))
+		}
 	}
 	for _, m := range c.Fleet.Masters {
 		if d := m.Mihomo.HealthInterval; d != 0 && (d < 5*time.Second || d > time.Hour) {

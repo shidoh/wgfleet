@@ -124,14 +124,50 @@ type RenderInput struct {
 	// originated SYN/SYN-ACK toward the client; it only lowers an MSS, so it is a no-op
 	// when nothing exceeds it. Value = spec.WGServer.MTU − 40.
 	ClientMSS int
+	// ASBlacklistV4 / ASBlacklistV6 are scanner-ASN prefixes to drop, sourced from
+	// the daily-refreshed feed cache (internal/asnfeed). They populate the
+	// as_blacklist / as_blacklist_v6 sets only when Firewall.ASBlacklist is on.
+	// Every element is re-validated and re-emitted from its parsed form here (never
+	// trusted verbatim), so a corrupt/hostile cache cannot inject nft syntax into a
+	// ruleset applied as root. Empty leaves the set(s) empty — fail-open, so a
+	// not-yet-fetched feed never blocks the WG port.
+	ASBlacklistV4 []string
+	ASBlacklistV6 []string
+}
+
+// canonicalSetElems re-parses prefixes, keeps only the requested family, masks to
+// canonical form, de-duplicates and sorts. Invalid or wrong-family entries are
+// dropped silently (the feed parser already validated them; this is defense in
+// depth before `nft -f` runs as root). Mirrors canonicalPrefix's re-emit guard.
+func canonicalSetElems(prefixes []string, wantV4 bool) []string {
+	if len(prefixes) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(prefixes))
+	out := make([]string, 0, len(prefixes))
+	for _, p := range prefixes {
+		pre, err := netip.ParsePrefix(strings.TrimSpace(p))
+		if err != nil || pre.Addr().Is4() != wantV4 {
+			continue
+		}
+		c := pre.Masked().String()
+		if _, dup := seen[c]; dup {
+			continue
+		}
+		seen[c] = struct{}{}
+		out = append(out, c)
+	}
+	return out
 }
 
 // RenderRuleset renders an nftables script for in. The input chain defaults to
 // drop: only established/related, loopback, the management overlay (ZeroTier
 // interface, fail-safe), the whitelist, SSH, the ZeroTier transport port and the
-// WG port are accepted. An AS-blacklist set is declared (and dropped early) when
-// enabled; it is populated out-of-band from ASN feeds, so the rule references an
-// initially empty set rather than inlining thousands of prefixes.
+// WG port are accepted. AS-blacklist sets (v4 + v6) are declared and dropped early
+// (before the WG/SSH accepts, so scanners never see those ports) when enabled;
+// their elements come from the daily-refreshed scanner feed cache (ASBlacklistV4/
+// V6), re-validated here. Empty sets are fail-open, so a not-yet-fetched feed
+// never blocks legitimate traffic.
 // mssClampExpr renders the nft match+statement that clamps the TCP MSS of SYN /
 // SYN-ACK packets DOWN to mss. The `tcp option maxseg size > mss` guard is ESSENTIAL:
 // nft's `tcp option maxseg size set` is UNCONDITIONAL (unlike iptables
@@ -169,10 +205,26 @@ func RenderRuleset(in RenderInput) (string, error) {
 	fmt.Fprintf(&b, "table inet %s {\n", ExitTable)
 
 	if in.Firewall.ASBlacklist {
+		v4 := canonicalSetElems(in.ASBlacklistV4, true)
 		b.WriteString("\tset as_blacklist {\n")
 		b.WriteString("\t\ttype ipv4_addr\n")
 		b.WriteString("\t\tflags interval\n")
-		b.WriteString("\t\t# populated out-of-band from ASN scanner feeds\n")
+		if len(v4) > 0 {
+			fmt.Fprintf(&b, "\t\telements = { %s }\n", strings.Join(v4, ", "))
+		} else {
+			b.WriteString("\t\t# empty: scanner feed not yet fetched (fail-open)\n")
+		}
+		b.WriteString("\t}\n\n")
+
+		v6 := canonicalSetElems(in.ASBlacklistV6, false)
+		b.WriteString("\tset as_blacklist_v6 {\n")
+		b.WriteString("\t\ttype ipv6_addr\n")
+		b.WriteString("\t\tflags interval\n")
+		if len(v6) > 0 {
+			fmt.Fprintf(&b, "\t\telements = { %s }\n", strings.Join(v6, ", "))
+		} else {
+			b.WriteString("\t\t# empty: scanner feed not yet fetched (fail-open)\n")
+		}
 		b.WriteString("\t}\n\n")
 	}
 
@@ -192,8 +244,11 @@ func RenderRuleset(in RenderInput) (string, error) {
 	// Trust the management overlay wholesale (fail-safe; see mgmtOverlayIface).
 	fmt.Fprintf(&b, "\t\tiifname %q accept\n", mgmtOverlayIface)
 	b.WriteString("\t\tip saddr @whitelist accept\n")
+	// Whitelist accept precedes the blacklist drop, so an explicitly trusted source
+	// (mgmt overlay, master IP) is never caught by a scanner feed.
 	if in.Firewall.ASBlacklist {
 		b.WriteString("\t\tip saddr @as_blacklist drop\n")
+		b.WriteString("\t\tip6 saddr @as_blacklist_v6 drop\n")
 	}
 	fmt.Fprintf(&b, "\t\ttcp dport %d accept\n", sshPort)
 	fmt.Fprintf(&b, "\t\tudp dport %d accept\n", zeroTierPort)

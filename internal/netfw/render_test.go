@@ -39,6 +39,66 @@ func TestRenderExitRuleset(t *testing.T) {
 	}
 }
 
+func TestRenderASBlacklistElements(t *testing.T) {
+	out, err := RenderRuleset(RenderInput{
+		Role:     domain.RoleExit,
+		Firewall: domain.FirewallSpec{ASBlacklist: true, WGPort: 51820},
+		// Unmasked, duplicate, wrong-family and junk entries must be normalized/
+		// dropped — render never trusts the cache verbatim (it runs as root).
+		ASBlacklistV4: []string{"1.2.3.4/24", "1.2.3.0/24", "10.0.0.0/8", "bogus", "2001:db8::/32"},
+		ASBlacklistV6: []string{"2001:db8::/32", "192.0.2.0/24"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"set as_blacklist {",
+		"type ipv4_addr",
+		"elements = { 1.2.3.0/24, 10.0.0.0/8 }", // masked + deduped, v6/junk excluded
+		"set as_blacklist_v6 {",
+		"type ipv6_addr",
+		"elements = { 2001:db8::/32 }", // only the real v6 entry
+		"ip saddr @as_blacklist drop",
+		"ip6 saddr @as_blacklist_v6 drop",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("ruleset missing %q:\n%s", want, out)
+		}
+	}
+	// The v4 set must not leak the IPv6 prefix, and vice versa.
+	if i := strings.Index(out, "set as_blacklist {"); i >= 0 {
+		v4Block := out[i:strings.Index(out, "set as_blacklist_v6")]
+		if strings.Contains(v4Block, "2001:db8") {
+			t.Errorf("v6 prefix leaked into the v4 set:\n%s", v4Block)
+		}
+	}
+}
+
+func TestRenderASBlacklistEmptyFailOpen(t *testing.T) {
+	// Enabled but no cached elements yet: sets exist (so the drop rules resolve) but
+	// are empty — fail-open, the WG port is not blocked before the feed is fetched.
+	out, err := RenderRuleset(RenderInput{
+		Role:     domain.RoleExit,
+		Firewall: domain.FirewallSpec{ASBlacklist: true, WGPort: 51820},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"set as_blacklist {",
+		"set as_blacklist_v6 {",
+		"# empty: scanner feed not yet fetched (fail-open)",
+		"udp dport 51820 accept",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("ruleset missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "elements = {") {
+		t.Errorf("expected no elements when feed unfetched:\n%s", out)
+	}
+}
+
 func TestRenderTrustsMgmtOverlayWithoutWhitelist(t *testing.T) {
 	// Even with an empty whitelist, the overlay interface must be accepted — this is
 	// the robustness fix: a node stays reachable over ZeroTier regardless of config.

@@ -125,14 +125,17 @@ func (m *Manager) Provision(ctx context.Context, nodeID string, mode provisioner
 		return provisioner.Report{}, fmt.Errorf("issue node cert: %w", err)
 	}
 	in := provisioner.BootstrapInput{
-		Node:               node,
-		Bundle:             pki.KeyPair{CertPEM: bundle.CertPEM},
-		NodeKey:            bundle.KeyPEM,
-		CACert:             m.ca.CertPEM(),
-		ControllerEndpoint: m.opts.ControllerEndpoint,
-		ZeroTierNetwork:    m.fleet.ZeroTierNetwork,
-		MgmtOverlayMSS:     m.fleet.MgmtOverlayMSS,
-		ReconcileInterval:  m.fleet.AgentReconcileInterval(),
+		Node:                node,
+		Bundle:              pki.KeyPair{CertPEM: bundle.CertPEM},
+		NodeKey:             bundle.KeyPEM,
+		CACert:              m.ca.CertPEM(),
+		ControllerEndpoint:  m.opts.ControllerEndpoint,
+		ZeroTierNetwork:     m.fleet.ZeroTierNetwork,
+		MgmtOverlayMSS:      m.fleet.MgmtOverlayMSS,
+		ReconcileInterval:   m.fleet.AgentReconcileInterval(),
+		ASBlacklistV4URL:    m.fleet.ASBlacklistV4URL,
+		ASBlacklistV6URL:    m.fleet.ASBlacklistV6URL,
+		ASBlacklistInterval: m.fleet.ASBlacklistInterval,
 	}
 	if m.opts.AgentBinPath != "" {
 		bin, err := os.ReadFile(m.opts.AgentBinPath)
