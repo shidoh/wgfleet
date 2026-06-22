@@ -205,10 +205,16 @@ func RenderRuleset(in RenderInput) (string, error) {
 	fmt.Fprintf(&b, "table inet %s {\n", ExitTable)
 
 	if in.Firewall.ASBlacklist {
+		// auto-merge is ESSENTIAL: the scanner feeds contain overlapping prefixes
+		// (e.g. a /22 and a /23 inside it, or 2a00:1148::/29 and ::/32), and an
+		// `interval` set rejects overlaps with "conflicting intervals specified",
+		// failing the whole `nft -f`. auto-merge folds overlapping/adjacent ranges at
+		// load instead of erroring — exactly what an externally-sourced list needs.
 		v4 := canonicalSetElems(in.ASBlacklistV4, true)
 		b.WriteString("\tset as_blacklist {\n")
 		b.WriteString("\t\ttype ipv4_addr\n")
 		b.WriteString("\t\tflags interval\n")
+		b.WriteString("\t\tauto-merge\n")
 		if len(v4) > 0 {
 			fmt.Fprintf(&b, "\t\telements = { %s }\n", strings.Join(v4, ", "))
 		} else {
@@ -220,6 +226,7 @@ func RenderRuleset(in RenderInput) (string, error) {
 		b.WriteString("\tset as_blacklist_v6 {\n")
 		b.WriteString("\t\ttype ipv6_addr\n")
 		b.WriteString("\t\tflags interval\n")
+		b.WriteString("\t\tauto-merge\n")
 		if len(v6) > 0 {
 			fmt.Fprintf(&b, "\t\telements = { %s }\n", strings.Join(v6, ", "))
 		} else {

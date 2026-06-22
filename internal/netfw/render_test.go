@@ -54,6 +54,9 @@ func TestRenderASBlacklistElements(t *testing.T) {
 	for _, want := range []string{
 		"set as_blacklist {",
 		"type ipv4_addr",
+		// auto-merge lets the kernel fold the feeds' overlapping prefixes instead of
+		// failing the whole nft load with "conflicting intervals".
+		"auto-merge",
 		"elements = { 1.2.3.0/24, 10.0.0.0/8 }", // masked + deduped, v6/junk excluded
 		"set as_blacklist_v6 {",
 		"type ipv6_addr",
