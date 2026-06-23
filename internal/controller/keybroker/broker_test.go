@@ -648,3 +648,73 @@ func TestRenderExitSpecEgressChain(t *testing.T) {
 		t.Errorf("preferred egress = %q, want warp", spec.Egress)
 	}
 }
+
+func TestRenderMasterDNS(t *testing.T) {
+	// Master-tier blocky (ADR-0024): the master resolver forwards public queries to
+	// the active exit blockys, layers operator blocking/conditional via overrides, and
+	// clients are handed the master gateway as their single DNS.
+	ctx := context.Background()
+	fleet := testFleet()
+	fleet.Masters[0].DNSFilter = true
+	fleet.Masters[0].DNS = config.DNSConfig{
+		Allowlist: []string{"*.example.com"},
+		Overrides: map[string]any{
+			"conditional": map[string]any{
+				"mapping": map[string]any{"lab.lan": "10.200.99.1"},
+			},
+		},
+	}
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	b := New(st, fleet, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !spec.DNS.Enabled {
+		t.Fatal("master DNS should be enabled")
+	}
+	if spec.DNS.MgmtAddr != "10.20.25.254" {
+		t.Errorf("master DNS mgmt bind = %q, want the master mgmt addr", spec.DNS.MgmtAddr)
+	}
+	// The default upstream group is the active exit blocky (its mgmt address).
+	if !contains(spec.DNS.Upstreams, "10.20.0.5") {
+		t.Errorf("master DNS upstreams should be the exit blockys, got %v", spec.DNS.Upstreams)
+	}
+	if !contains(spec.DNS.Allowlist, "*.example.com") {
+		t.Errorf("operator allowlist not carried: %v", spec.DNS.Allowlist)
+	}
+	if spec.DNS.Custom.Overrides["conditional"] == nil {
+		t.Errorf("operator conditional override not carried: %v", spec.DNS.Custom.Overrides)
+	}
+	// Clients are handed the master gateway (.1 in the client pool) as their DNS.
+	if cd := spec.Master.Compose.ClientDNS; len(cd) != 1 || cd[0] != "10.80.0.1" {
+		t.Errorf("client DNS should be the master gateway 10.80.0.1, got %v", cd)
+	}
+}
+
+func TestRenderMasterDNSDisabledByDefault(t *testing.T) {
+	// Without dns_filter the master runs no resolver and clients still point at the
+	// exit blockys (pre-ADR-0024 behavior).
+	ctx := context.Background()
+	b, st := newBroker(t)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if spec.DNS.Enabled {
+		t.Error("master DNS should be disabled without dns_filter")
+	}
+	if !contains(spec.Master.Compose.ClientDNS, "10.20.0.5") {
+		t.Errorf("clients should fall back to the exit blocky mgmt addr, got %v", spec.Master.Compose.ClientDNS)
+	}
+}

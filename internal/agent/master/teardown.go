@@ -29,6 +29,11 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 		reconcile.BestEffortExecAction("remove master input-firewall table",
 			"nft", "delete", "table", "inet", "wgfleet"),
 	}
+	// Master-tier blocky runs as its own compose project (ADR-0024); bring it down too.
+	if p.paths.DNSCompose != "" {
+		actions = append(actions, reconcile.BestEffortExecAction("bring the blocky resolver down",
+			"docker", "compose", "-f", p.paths.DNSCompose, "down"))
+	}
 
 	// Wipe the rendered config and the wg-easy DB once the stack is down: on
 	// decommission the master is gone, so its client-AWG database (keys included)
@@ -40,6 +45,8 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 		{p.paths.FirewallNFT, "master input-firewall ruleset"},
 		{p.paths.Compose, "container compose file"},
 		{p.paths.WGEasyDB, "wg-easy client database"},
+		{p.paths.DNS, "blocky resolver config"},
+		{p.paths.DNSCompose, "blocky compose file"},
 	}
 	for _, w := range wipe {
 		if w.path == "" {

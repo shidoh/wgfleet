@@ -310,6 +310,39 @@ func TestRenderMasterAcceptsRedirPort(t *testing.T) {
 	}
 }
 
+func TestRenderMasterAcceptsClientDNSPort(t *testing.T) {
+	// Master-tier blocky (ADR-0024): clients query the master gateway for DNS, which
+	// lands on INPUT. Open it UDP+TCP, scoped to the client interface, when set.
+	out, err := RenderRuleset(RenderInput{
+		Role:           domain.RoleMaster,
+		Firewall:       domain.FirewallSpec{WGPort: 443},
+		RedirInterface: "wg0",
+		ClientDNSPort:  53,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`iifname "wg0" udp dport 53 accept`,
+		`iifname "wg0" tcp dport 53 accept`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("master input firewall missing client DNS accept %q:\n%s", want, out)
+		}
+	}
+
+	// Zero port never opens DNS (clients use another resolver).
+	out2, _ := RenderRuleset(RenderInput{Role: domain.RoleMaster, Firewall: domain.FirewallSpec{WGPort: 443}})
+	if strings.Contains(out2, "dport 53 accept") {
+		t.Errorf("no client DNS accept expected when ClientDNSPort is zero:\n%s", out2)
+	}
+	// Exit role never emits the client DNS accept (master-only).
+	out3, _ := RenderRuleset(RenderInput{Role: domain.RoleExit, Firewall: domain.FirewallSpec{WGPort: 51820}, ClientDNSPort: 53})
+	if strings.Contains(out3, "dport 53 accept") {
+		t.Errorf("client DNS accept is master-only, must not appear on exit:\n%s", out3)
+	}
+}
+
 func TestRenderMasterClientMSSClamp(t *testing.T) {
 	// The master clamps client-facing TCP MSS to the true client-path MTU so large
 	// server→client segments (SSH KEX, dashboard HTML, sustained downloads) do not

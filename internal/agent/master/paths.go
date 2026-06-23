@@ -23,6 +23,8 @@ type Paths struct {
 	WGEasyDB       string // wg-easy SQLite db (client-facing AWG server)
 	Compose        string // docker-compose.yml for the container stack
 	WGEasyAdmin    string // wg-easy admin password file (agent-local, 0600; never crosses the wire)
+	DNS            string // master-tier blocky resolver config (config.yml, ADR-0024)
+	DNSCompose     string // docker-compose.yml for the master blocky container
 }
 
 // DefaultPaths returns the production-default file locations.
@@ -37,6 +39,8 @@ func DefaultPaths() Paths {
 		WGEasyDB:       wgeasy.DefaultDBPath,
 		Compose:        "/etc/wgfleet/docker-compose.yml",
 		WGEasyAdmin:    "/etc/wgfleet/wg-easy-admin-password",
+		DNS:            "/etc/wgfleet/blocky/config.yml",
+		DNSCompose:     "/etc/wgfleet/blocky/docker-compose.yml",
 	}
 }
 
@@ -52,5 +56,7 @@ func PathsUnder(dir string) Paths {
 		WGEasyDB:       filepath.Join(dir, "wg-easy.db"),
 		Compose:        filepath.Join(dir, "docker-compose.yml"),
 		WGEasyAdmin:    filepath.Join(dir, "wg-easy-admin-password"),
+		DNS:            filepath.Join(dir, "blocky", "config.yml"),
+		DNSCompose:     filepath.Join(dir, "blocky", "docker-compose.yml"),
 	}
 }

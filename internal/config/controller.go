@@ -257,6 +257,15 @@ type MasterConfig struct {
 	// strict default (admin reachable only over the mgmt overlay). See
 	// domain.MasterSpec.ClientAdminPorts for the security trade-off.
 	ClientAdminPorts []int `koanf:"client_admin_ports"`
+	// DNSFilter enables the master-tier blocky resolver (ADR-0024): a client-facing
+	// filtering resolver clients use as their DNS. It blocks + forwards local zones to
+	// internal DNS (DNS.overrides conditional mappings) + forwards everything else to
+	// the active exit blockys. Off ⇒ clients fall back to the exit blockys directly.
+	DNSFilter bool `koanf:"dns_filter"`
+	// DNS is the master resolver's config (same shape as exits[].dns). Its upstreams
+	// default to the active exit blockys; the rich surface (denylists, conditional
+	// local-zone mappings, caching) rides in DNS.overrides.
+	DNS DNSConfig `koanf:"dns"`
 }
 
 // MihomoConfig is the operator-facing mihomo tuning for a master, including the

@@ -239,6 +239,13 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 
 	autoSuspend := b.throughputAutoSuspend(ctx)
 
+	// dnsUpstreams collects the active exit blockys (mgmt addrs) the master-tier
+	// resolver forwards public queries to (ADR-0024). Built from the same membership
+	// as the LB group — registered, non-decommissioned exits — so a new exit auto-joins
+	// the resolver set as soon as it registers (drain doesn't remove it: a drained
+	// exit's blocky still resolves, and keeping it avoids an empty upstream group).
+	var dnsUpstreams []string
+
 	for _, exit := range b.fleet.Exits {
 		exitNode, exitPub := b.lookupPubKey(ctx, exit.Name)
 		if exitPub == "" {
@@ -291,9 +298,13 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			// throughput watchdog auto-suspended it (ADR-0021).
 			Drained: exitNode.Drain || autoSuspend[exit.Name],
 		})
+		if exitNode.MgmtAddr != "" {
+			dnsUpstreams = append(dnsUpstreams, exitNode.MgmtAddr)
+		}
 	}
 
 	spec.Master = ms
+	spec.DNS = b.renderMasterDNS(master, dnsUpstreams)
 	return spec, nil
 }
 
@@ -429,9 +440,18 @@ func (b *Broker) composeSpec(ctx context.Context, master config.MasterConfig) do
 	cc := master.Compose
 	dns := append([]string(nil), cc.ClientDNS...)
 	if len(dns) == 0 {
-		for _, exit := range b.fleet.Exits {
-			if node, _ := b.lookupPubKey(ctx, exit.Name); node.MgmtAddr != "" {
-				dns = append(dns, node.MgmtAddr)
+		if master.DNSFilter {
+			// Master-tier blocky (ADR-0024): clients use the master gateway (its own
+			// address in the client pool) as their single DNS, through the tunnel.
+			if addr, err := nthHost(master.ClientAWG.AddressPool, exitHostIndex); err == nil {
+				dns = []string{addr.String()}
+			}
+		} else {
+			// Pre-ADR-0024 default: clients resolve directly against the exit blockys.
+			for _, exit := range b.fleet.Exits {
+				if node, _ := b.lookupPubKey(ctx, exit.Name); node.MgmtAddr != "" {
+					dns = append(dns, node.MgmtAddr)
+				}
 			}
 		}
 	}
@@ -483,6 +503,43 @@ func (b *Broker) renderDNS(ctx context.Context, exit config.ExitConfig) domain.D
 			HTTP:  d.Ports.HTTP,
 		},
 		Upstreams:  append([]string(nil), d.Upstreams...),
+		Allowlist:  append([]string(nil), d.Allowlist...),
+		Prometheus: prometheus,
+		Image:      config.ResolveImage(d.Image, d.Tag, compose.DefaultBlockyImage),
+		Custom:     dnsCustomConfig(d),
+	}
+}
+
+// renderMasterDNS builds the master-tier blocky resolver spec (ADR-0024). Its
+// default upstream group is the active exit blockys (their mgmt addrs) — clients'
+// public queries are forwarded there and resolved at the exit's egress; the
+// operator's overrides layer on blocking + conditional local-zone mappings. The
+// client-facing gateway bind is added agent-side (from MasterSpec.BindAddress, no
+// wire field). Off ⇒ an empty (disabled) spec.
+func (b *Broker) renderMasterDNS(master config.MasterConfig, exitUpstreams []string) domain.DNSFilterSpec {
+	if !master.DNSFilter {
+		return domain.DNSFilterSpec{}
+	}
+	d := master.DNS
+	prometheus := true // default on (docs/DESIGN.md §9: no blind components)
+	if d.Prometheus != nil {
+		prometheus = *d.Prometheus
+	}
+	// Upstreams default to the active exit blockys unless the operator pins them.
+	upstreams := append([]string(nil), d.Upstreams...)
+	if len(upstreams) == 0 {
+		upstreams = exitUpstreams
+	}
+	return domain.DNSFilterSpec{
+		Enabled:  true,
+		MgmtAddr: master.MgmtAddr, // mgmt bind; the client-gateway bind is added agent-side
+		Ports: domain.DNSPorts{
+			DNS:   d.Ports.DNS,
+			TLS:   d.Ports.TLS,
+			HTTPS: d.Ports.HTTPS,
+			HTTP:  d.Ports.HTTP,
+		},
+		Upstreams:  upstreams,
 		Allowlist:  append([]string(nil), d.Allowlist...),
 		Prometheus: prometheus,
 		Image:      config.ResolveImage(d.Image, d.Tag, compose.DefaultBlockyImage),

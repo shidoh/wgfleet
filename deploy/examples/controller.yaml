@@ -94,6 +94,28 @@ fleet:
       # The mgmt address must sit under direct_cidrs above (172.16.0.0/12 covers it) so
       # the traffic bypasses the client→mihomo DNAT and reaches the local port.
       # client_admin_ports: [9000, 9090]
+      # Master-tier blocky resolver (ADR-0024): when dns_filter is on, the master runs
+      # a client-facing blocky that becomes the clients' single DNS. It BLOCKS (denylists
+      # below), forwards LOCAL zones to internal DNS (conditional mappings), and forwards
+      # everything else to the ACTIVE exit blockys (auto-discovered — a new exit joins the
+      # upstream set as soon as it registers). The client-pool gateway bind is added
+      # automatically. Off ⇒ clients point at the exit blockys directly (pre-ADR-0024).
+      # dns_filter: true
+      # dns:
+      #   prometheus: true
+      #   allowlist: ["*.example.com", payment.mts.ru]      # never blocked (platform infra auto-added)
+      #   # upstreams: [...]   # pin DNS upstreams; default = the active exit blockys
+      #   overrides:           # the rich surface (deep-merged into config.yml)
+      #     conditional:
+      #       fallbackUpstream: true
+      #       mapping:
+      #         sln.internal: 10.20.2.1,10.20.2.2          # local zones → internal DNS (over ZT)
+      #         bootsman.lan: 10.200.99.1
+      #     blocking:
+      #       denylists:
+      #         ads: ["https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.txt"]
+      #       clientGroupsBlock: { default: [ads] }
+      #     caching: { minTime: 5m, prefetching: true, prefetchThreshold: 15 }
       mihomo: # master data-plane tuning + custom-config hooks
         sniffer_skip: ["+.themoviedb.org", "+.cloudfront.net"] # CDNs that break under sniffing
         # health_interval: how often mihomo health-checks the exits in wg-best to detect

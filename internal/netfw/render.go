@@ -98,6 +98,14 @@ type RenderInput struct {
 	// the client interface (RedirInterface, default "wg0"), opt-in per master. Empty
 	// ⇒ the strict default where only the mgmt overlay reaches admin services.
 	ClientAdminPorts []int
+	// ClientDNSPort, when > 0 (master role), opens the client-facing resolver port
+	// (blocky on the master, ADR-0024) to the client pool — UDP and TCP — scoped to
+	// the client interface (RedirInterface, default "wg0"). The master-tier blocky
+	// binds the client-pool gateway, so a client's DNS query lands on the master's
+	// INPUT hook; without this accept the drop policy swallows it (clients get web
+	// but no DNS). 0 ⇒ clients use some other resolver (the pre-ADR-0024 default
+	// where clients pointed at the exit blockys directly).
+	ClientDNSPort int
 	// ClampMSS, when > 0 (exit role), clamps forwarded TCP SYN/SYN-ACK MSS in BOTH
 	// directions to this value. Client traffic crosses the master↔exit tunnel
 	// (WGServer.MTU, e.g. 1360) AND the egress (WARP). The egress leg alone is NOT
@@ -271,6 +279,13 @@ func RenderRuleset(in RenderInput) (string, error) {
 		}
 		if in.RedirPort > 0 {
 			fmt.Fprintf(&b, "\t\tiifname %q tcp dport %d accept\n", redirIface, in.RedirPort)
+		}
+		// Client-facing resolver (master-tier blocky, ADR-0024): clients query the
+		// master gateway for DNS, which lands on INPUT. Open it UDP+TCP, scoped to the
+		// client interface only.
+		if in.ClientDNSPort > 0 {
+			fmt.Fprintf(&b, "\t\tiifname %q udp dport %d accept\n", redirIface, in.ClientDNSPort)
+			fmt.Fprintf(&b, "\t\tiifname %q tcp dport %d accept\n", redirIface, in.ClientDNSPort)
 		}
 		// Opt-in: expose admin UIs (controller Web UI, mihomo dashboard) bound to the
 		// mgmt overlay to the client pool. Without these the drop policy swallows

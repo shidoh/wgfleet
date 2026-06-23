@@ -15,6 +15,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/agent/tuning"
 	"github.com/shidoh/wgfleet/internal/compose"
+	"github.com/shidoh/wgfleet/internal/dnsfilter"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/mihomo"
 	"github.com/shidoh/wgfleet/internal/netfw"
@@ -75,6 +76,10 @@ func Planners(in Input) []reconcile.Planner {
 		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey},
 		masterNATPlanner{path: in.Paths.NFT, clientIface: in.ClientInterface},
 		masterForwardPlanner{clientIface: in.ClientInterface},
+		// Client-facing blocky resolver (ADR-0024): runs after the stack is up so wg0
+		// (the client gateway it binds) exists. Renders config + its own compose,
+		// restarts blocky on change (no hot-reload for upstreams), self-heals when down.
+		dnsPlanner{configPath: in.Paths.DNS, composePath: in.Paths.DNSCompose},
 		// Last: ensure mihomo's redirect listener is actually bound. It runs after the
 		// stack is up and wg0 exists, and self-heals the case where mihomo silently
 		// lost its redir bind (the client iface was recreated under it, e.g. a wg-easy
@@ -644,6 +649,16 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	if spec.WGServer.MTU > 0 {
 		clientMSS = spec.WGServer.MTU - mssTCPIPOverhead
 	}
+	// Open the client-facing resolver port when the master runs blocky (ADR-0024):
+	// clients query the master gateway for DNS, which lands on INPUT and the drop
+	// policy would otherwise swallow it. 0 keeps it closed (clients use another DNS).
+	clientDNSPort := 0
+	if spec.DNS.Enabled {
+		clientDNSPort = dnsfilter.DefaultDNSPort
+		if spec.DNS.Ports.DNS > 0 {
+			clientDNSPort = spec.DNS.Ports.DNS
+		}
+	}
 	ruleset, err := netfw.RenderRuleset(netfw.RenderInput{
 		Firewall:         spec.Firewall,
 		Role:             domain.RoleMaster,
@@ -652,6 +667,7 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 		RedirInterface:   p.clientIface,
 		ClientAdminPorts: adminPorts,
 		ClientMSS:        clientMSS,
+		ClientDNSPort:    clientDNSPort,
 	})
 	if err != nil {
 		return nil, err
