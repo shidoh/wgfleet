@@ -53,6 +53,10 @@ func DefaultMasterProbes(spec domain.NodeSpec) MasterProbes {
 		// though vanilla `wg show` would not.
 		WGServerUp: ifaceUpProbe(wgeasy.DefaultInterface),
 		MihomoAPI:  mihomoAPIProbe(controller, secret),
+		// Master-tier blocky binds the mgmt address too, so the on-host probe queries
+		// it the same way the exit does (ADR-0024). MasterChecks omits the check unless
+		// spec.DNS is enabled, so this is nil-safe for a master without a resolver.
+		DNSResolves: dnsResolvesProbe(dnsListenAddr(spec.DNS)),
 	}
 }
 

@@ -113,6 +113,29 @@ func TestMasterChecks(t *testing.T) {
 	if names := checkNames(MasterChecks(specNoAPI, probes)); len(names) != 1 || names[0] != "client-wg" {
 		t.Errorf("no-api master: want [client-wg], got %v", names)
 	}
+
+	// Master-tier blocky (ADR-0024): when DNS is enabled with a bind, a dns-filter
+	// check is added so a down/non-resolving resolver shows Degraded.
+	dnsProbes := MasterProbes{MihomoAPI: passing("api"), WGServerUp: passing("wg"), DNSResolves: passing("resolves")}
+	specDNS := domain.NodeSpec{
+		Role:   domain.RoleMaster,
+		Master: &domain.MasterSpec{ExternalController: "10.20.25.254:9090"},
+		DNS:    domain.DNSFilterSpec{Enabled: true, MgmtAddr: "10.20.3.10"},
+	}
+	if names := checkNames(MasterChecks(specDNS, dnsProbes)); len(names) != 3 || names[2] != "dns-filter" {
+		t.Errorf("dns-enabled master: want [client-wg mihomo-api dns-filter], got %v", names)
+	}
+
+	// DNS enabled but mgmt addr not yet known ⇒ the dns-filter check is deferred
+	// (no false Degraded in the startup window).
+	specDNSPending := domain.NodeSpec{
+		Role:   domain.RoleMaster,
+		Master: &domain.MasterSpec{ExternalController: "10.20.25.254:9090"},
+		DNS:    domain.DNSFilterSpec{Enabled: true},
+	}
+	if names := checkNames(MasterChecks(specDNSPending, dnsProbes)); len(names) != 2 {
+		t.Errorf("dns pending (no mgmt addr): want 2 checks (no dns-filter), got %v", names)
+	}
 }
 
 func TestEndToEndExitReady(t *testing.T) {
