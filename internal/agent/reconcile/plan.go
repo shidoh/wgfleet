@@ -68,6 +68,11 @@ func (a Action) run(ctx context.Context) error {
 // Plan is the set of actions one planner would take.
 type Plan struct {
 	Component string
+	// Scheduled marks a plan whose changes are driven by an out-of-band schedule
+	// (e.g. a timer-based feed refresh) rather than by divergence from the desired
+	// spec. Such expected changes are excluded from drift accounting. The engine
+	// sets it from a planner that implements ScheduledPlanner.
+	Scheduled bool
 	Actions   []Action
 }
 
@@ -96,6 +101,23 @@ func (r Report) ChangedComponents() []string {
 		if p.HasChanges() {
 			names = append(names, p.Component)
 		}
+	}
+	return names
+}
+
+// DriftComponents is ChangedComponents minus any plan flagged Scheduled. A
+// scheduled planner (e.g. the AS-blacklist feed refresh) mutates the node on its
+// own timer, independently of the desired spec, so its expected change is NOT
+// configuration drift and must not be reported as such — otherwise the daily
+// refresh would WARN and bump agent_drift_total every cycle. Use this, not
+// ChangedComponents, for drift detection.
+func (r Report) DriftComponents() []string {
+	var names []string
+	for _, p := range r.Plans {
+		if p.Scheduled || !p.HasChanges() {
+			continue
+		}
+		names = append(names, p.Component)
 	}
 	return names
 }

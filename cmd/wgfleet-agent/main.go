@@ -471,10 +471,13 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	// the last applied pass mean the node diverged and we repaired it (config
 	// drift). The first pass (no prior spec) and any spec change are normal
 	// reconcile, not drift; a failed pass is a retry, so only count clean passes.
+	// DriftComponents (not ChangedComponents) excludes scheduled/out-of-band
+	// planners like the AS-blacklist feed, whose timer-driven refresh is expected
+	// work — not divergence — so it does not spuriously WARN/bump drift every cycle.
 	print := specFingerprint(spec)
 	var drifted []string
 	if reconcileErr == nil && a.lastSpecPrint != "" && print == a.lastSpecPrint {
-		drifted = report.ChangedComponents()
+		drifted = report.DriftComponents()
 	}
 	a.lastSpecPrint = print
 	if len(drifted) > 0 {

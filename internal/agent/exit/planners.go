@@ -335,6 +335,12 @@ func newASNFeedPlanner(in Input) asnFeedPlanner {
 
 func (asnFeedPlanner) Component() string { return "AS-blacklist feed" }
 
+// Scheduled marks the feed refresh as out-of-band (timer-driven): its daily cache
+// update is expected work, not divergence from the spec, so the drift detector
+// must not count it — otherwise every refresh would WARN and bump
+// agent_drift_total. See reconcile.ScheduledPlanner / Report.DriftComponents.
+func (asnFeedPlanner) Scheduled() bool { return true }
+
 // attemptPath is the marker touched on every refresh ATTEMPT (success or failure)
 // so a failing source backs off to the retry window instead of refetching every
 // pass. It sits next to the cache.

@@ -192,6 +192,53 @@ func TestReportChangedComponents(t *testing.T) {
 	}
 }
 
+// scheduledStubPlanner is a stubPlanner that declares its changes out-of-band.
+type scheduledStubPlanner struct{ stubPlanner }
+
+func (scheduledStubPlanner) Scheduled() bool { return true }
+
+func TestReportDriftComponentsExcludesScheduled(t *testing.T) {
+	changed, _ := FileAction(filepath.Join(t.TempDir(), "a.conf"), []byte("new\n"), 0o600, nil)
+	feed, _ := FileAction(filepath.Join(t.TempDir(), "feed.lst"), []byte("feed\n"), 0o600, nil)
+	r := Report{Mode: ModeApply, Plans: []Plan{
+		{Component: "firewall", Actions: []Action{changed}},
+		{Component: "AS-blacklist feed", Scheduled: true, Actions: []Action{feed}},
+	}}
+
+	// ChangedComponents still lists every mutating plan...
+	if got := r.ChangedComponents(); len(got) != 2 {
+		t.Fatalf("ChangedComponents = %v, want both", got)
+	}
+	// ...but DriftComponents drops the scheduled one, so a daily feed refresh is
+	// not misreported as config drift.
+	got := r.DriftComponents()
+	want := []string{"firewall"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("DriftComponents = %v, want %v", got, want)
+	}
+}
+
+func TestEngineFlagsScheduledPlanner(t *testing.T) {
+	changed, _ := FileAction(filepath.Join(t.TempDir(), "feed.lst"), []byte("feed\n"), 0o600, nil)
+	eng := NewEngine(nil,
+		scheduledStubPlanner{stubPlanner{name: "AS-blacklist feed", actions: []Action{changed}}},
+		stubPlanner{name: "firewall", actions: []Action{NoChangeAction("fw", "current")}},
+	)
+	report, err := eng.Reconcile(context.Background(), domain.NodeSpec{}, ModePlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Plans[0].Scheduled {
+		t.Error("engine did not flag the ScheduledPlanner's plan as scheduled")
+	}
+	if report.Plans[1].Scheduled {
+		t.Error("non-scheduled planner's plan was flagged scheduled")
+	}
+	if got := report.DriftComponents(); len(got) != 0 {
+		t.Errorf("DriftComponents = %v, want empty (only a scheduled change occurred)", got)
+	}
+}
+
 func TestBestEffortExecSwallowsError(t *testing.T) {
 	// A best-effort exec of a non-existent command must NOT return an error from
 	// the engine apply (teardown tolerates already-down steps).

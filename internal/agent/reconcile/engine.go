@@ -19,6 +19,14 @@ type Planner interface {
 	Plan(ctx context.Context, spec domain.NodeSpec) ([]Action, error)
 }
 
+// ScheduledPlanner is an optional interface a Planner may implement to declare
+// that its changes are driven by an out-of-band schedule (e.g. a timer-based
+// feed refresh), not by divergence from the desired spec. The engine flags such
+// plans (Plan.Scheduled) so drift detection excludes their expected changes.
+type ScheduledPlanner interface {
+	Scheduled() bool
+}
+
 // Engine runs an ordered set of planners. Order matters: e.g. firewall before
 // the interface comes up, routing after the egress interface exists.
 type Engine struct {
@@ -46,7 +54,11 @@ func (e *Engine) Reconcile(ctx context.Context, spec domain.NodeSpec, mode Mode)
 		if err != nil {
 			return report, fmt.Errorf("plan %s: %w", p.Component(), err)
 		}
-		report.Plans = append(report.Plans, Plan{Component: p.Component(), Actions: actions})
+		plan := Plan{Component: p.Component(), Actions: actions}
+		if sp, ok := p.(ScheduledPlanner); ok && sp.Scheduled() {
+			plan.Scheduled = true
+		}
+		report.Plans = append(report.Plans, plan)
 
 		if mode != ModeApply {
 			continue
