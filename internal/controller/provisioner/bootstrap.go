@@ -44,6 +44,10 @@ type BootstrapInput struct {
 	ASBlacklistV4URL    string
 	ASBlacklistV6URL    string
 	ASBlacklistInterval time.Duration
+	// MgmtIgnoreCIDRs are management-overlay scopes fail2ban must never ban (added
+	// to the sshd jail's ignoreip alongside loopback). From fleet.MgmtCIDRs() so the
+	// operator/control plane reaching nodes over the overlay is never locked out.
+	MgmtIgnoreCIDRs []string
 }
 
 // Remote paths the bootstrap writes to. Kept here so plan and apply agree.
@@ -55,6 +59,7 @@ const (
 	remoteNodeKey    = "/etc/wgfleet/node.key"
 	remoteCACert     = "/etc/wgfleet/ca.crt"
 	remoteHardenConf = "/etc/ssh/sshd_config.d/10-wgfleet-hardening.conf"
+	remoteFail2ban   = "/etc/fail2ban/jail.d/wgfleet.conf"
 )
 
 // BuildPlan renders the ordered bootstrap steps for a node. The order is
@@ -115,6 +120,18 @@ func BuildPlan(in BootstrapInput) Plan {
 			"install wgcf "+wgcfVersion+" for WARP egress (GitHub release)",
 			wgcfInstallCmd(in.Facts.Arch)))
 	}
+
+	// Phase 1c-4: fail2ban SSH brute-force protection. The package is installed by
+	// the dependency phase above (MissingPackages adds it when absent); here we drop
+	// our jail and (re)start the service. Idempotent — safe to re-run on an already
+	// protected node.
+	fail2banConf := renderFail2banJail(in)
+	steps = append(steps,
+		uploadStep("install fail2ban sshd jail", remoteFail2ban,
+			[]byte(fail2banConf), 0o644, fail2banConf),
+		runStep("enable + (re)start fail2ban",
+			"systemctl enable fail2ban && systemctl restart fail2ban"),
+	)
 
 	// Phase 1d: join the mgmt overlay (ZeroTier) if configured.
 	if in.ZeroTierNetwork != "" {
@@ -250,6 +267,19 @@ func renderAgentYAML(in BootstrapInput) string {
     ca: %q
 `, in.Node.Role, in.ControllerEndpoint, in.Node.ID, extra,
 		remoteNodeCert, remoteNodeKey, remoteCACert)
+}
+
+// renderFail2banJail fills the sshd jail with the ignoreip scope: always loopback,
+// plus every management-overlay CIDR so the operator/control plane reaching nodes
+// over the overlay is never banned.
+func renderFail2banJail(in BootstrapInput) string {
+	ignore := "127.0.0.1/8 ::1"
+	for _, c := range in.MgmtIgnoreCIDRs {
+		if c = strings.TrimSpace(c); c != "" {
+			ignore += " " + c
+		}
+	}
+	return fmt.Sprintf(fail2banJail, ignore)
 }
 
 func join(s []string) string {

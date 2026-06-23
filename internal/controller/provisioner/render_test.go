@@ -23,6 +23,28 @@ func TestRenderAgentYAMLIncludesMgmtAddr(t *testing.T) {
 	}
 }
 
+func TestRenderFail2banJail(t *testing.T) {
+	in := BootstrapInput{MgmtIgnoreCIDRs: []string{"10.20.3.10/32", "10.20.3.20/32"}}
+	got := renderFail2banJail(in)
+	for _, want := range []string{
+		"backend = systemd",
+		"banaction = nftables[type=multiport]",
+		"[sshd]",
+		"enabled = true",
+		"ignoreip = 127.0.0.1/8 ::1 10.20.3.10/32 10.20.3.20/32",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("fail2ban jail missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderFail2banJailLoopbackOnlyWithoutMgmtCIDRs(t *testing.T) {
+	if got := renderFail2banJail(BootstrapInput{}); !strings.Contains(got, "ignoreip = 127.0.0.1/8 ::1\n") {
+		t.Fatalf("ignoreip should be loopback-only when no mgmt CIDRs:\n%s", got)
+	}
+}
+
 func TestRenderAgentYAMLOmitsMgmtAddrWhenEmpty(t *testing.T) {
 	in := BootstrapInput{
 		Node:               domain.Node{ID: "exit-de-1", Role: domain.RoleExit},

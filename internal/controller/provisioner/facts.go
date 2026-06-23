@@ -22,6 +22,7 @@ type Facts struct {
 	HasConntrack bool   // conntrack present
 	HasZeroTier  bool   // zerotier-cli present
 	HasDocker    bool   // docker engine present (needed for blocky/mihomo/wg-easy)
+	HasFail2ban  bool   // fail2ban present (SSH brute-force protection)
 }
 
 // CollectFacts gathers Facts from the target via the Runner. It never mutates
@@ -53,6 +54,7 @@ func CollectFacts(ctx context.Context, r Runner) (Facts, error) {
 	f.HasConntrack = commandExists(ctx, r, "conntrack")
 	f.HasZeroTier = commandExists(ctx, r, "zerotier-cli")
 	f.HasDocker = commandExists(ctx, r, "docker")
+	f.HasFail2ban = commandExists(ctx, r, "fail2ban-client")
 	f.HasAWGKmod = awgKmodPresent(ctx, r)
 
 	return f, nil
@@ -125,6 +127,11 @@ func (f Facts) MissingPackages() []string {
 	}
 	if !f.HasConntrack {
 		pkgs = append(pkgs, "conntrack")
+	}
+	if !f.HasFail2ban {
+		// SSH brute-force protection. Its jail is dropped + (re)started in a dedicated
+		// bootstrap step; here we just ensure the package (and its update) is installed.
+		pkgs = append(pkgs, "fail2ban")
 	}
 	return pkgs
 }

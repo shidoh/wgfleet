@@ -136,6 +136,7 @@ func (m *Manager) Provision(ctx context.Context, nodeID string, mode provisioner
 		ASBlacklistV4URL:    m.fleet.ASBlacklistV4URL,
 		ASBlacklistV6URL:    m.fleet.ASBlacklistV6URL,
 		ASBlacklistInterval: m.fleet.ASBlacklistInterval,
+		MgmtIgnoreCIDRs:     m.fleet.MgmtCIDRs(),
 	}
 	if m.opts.AgentBinPath != "" {
 		bin, err := os.ReadFile(m.opts.AgentBinPath)

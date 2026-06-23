@@ -41,6 +41,29 @@ table inet wgfleet_baseline {
 }
 `
 
+// fail2banJail is the drop-in jail config installed in Phase 1c-4 (placed in
+// jail.d so it overrides distro defaults without rewriting jail.local). It bans
+// SSH brute-force sources seen in the systemd journal. It coexists with the
+// wgfleet nft ruleset: fail2ban's nftables action manages its OWN table, and a
+// ban DROP there is terminal regardless of the wgfleet accept at the same hook,
+// so banned scanners are dropped while legitimate (key-auth) logins are never
+// touched. %s is the ignoreip list (loopback + the mgmt overlay).
+const fail2banJail = `# Managed by wgfleet — SSH brute-force protection.
+[DEFAULT]
+backend = systemd
+banaction = nftables[type=multiport]
+bantime = 1h
+findtime = 10m
+maxretry = 5
+# Never ban loopback or the management overlay: the operator and control plane
+# reach nodes over it. Key auth never fails so a ban is unlikely anyway — this is
+# belt-and-suspenders against self-lockout.
+ignoreip = %s
+
+[sshd]
+enabled = true
+`
+
 // The agent's Prometheus /metrics endpoint binds on the node's mgmt/overlay address
 // at config.DefaultAgentMetricsPort by default (kept off the controller's 9300 so a
 // co-located controller+agent does not collide). The agent derives that bind from
