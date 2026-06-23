@@ -88,7 +88,7 @@ func RenderBlocky(spec domain.DNSFilterSpec) (string, error) {
 			"prefetching":       true,
 			"prefetchThreshold": 15,
 		},
-		"ports": portsMap(spec.MgmtAddr, spec.Ports),
+		"ports": portsMap(bindAddrs(spec), spec.Ports),
 		// allowlists protect the control plane and operator domains even when no
 		// denylists are configured; clientGroupsBlock starts empty (no filtering
 		// by default — the operator adds denylists + groups via overrides).
@@ -112,40 +112,55 @@ func RenderBlocky(spec domain.DNSFilterSpec) (string, error) {
 	return "# Rendered by wgfleet — do not edit by hand.\n" + out, nil
 }
 
-// portsMap binds each enabled protocol on loopback + the mgmt address only. This
-// is what keeps :53 (and the rest) off the public interface.
-func portsMap(mgmt string, p domain.DNSPorts) map[string]any {
+// bindAddrs is the ordered list of non-loopback addresses blocky binds: the
+// mgmt/ZT address, plus the client-pool gateway on a master-tier resolver
+// (ADR-0024). Both are internal (overlay / tunnel-internal); the public interface
+// is never in this list — that is the enforcement of "port 53 stays off the
+// public IP".
+func bindAddrs(spec domain.DNSFilterSpec) []string {
+	addrs := []string{spec.MgmtAddr}
+	if a := strings.TrimSpace(spec.ClientBindAddr); a != "" && a != spec.MgmtAddr {
+		addrs = append(addrs, a)
+	}
+	return addrs
+}
+
+// portsMap binds each enabled protocol on loopback + the given internal addresses
+// only. This is what keeps :53 (and the rest) off the public interface.
+func portsMap(addrs []string, p domain.DNSPorts) map[string]any {
 	dns := p.DNS
 	if dns == 0 {
 		dns = DefaultDNSPort
 	}
-	out := map[string]any{"dns": binds(mgmt, dns)}
+	out := map[string]any{"dns": binds(addrs, dns)}
 	tls := p.TLS
 	if tls == 0 {
 		tls = DefaultTLSPort
 	}
 	if tls > 0 {
-		out["tls"] = binds(mgmt, tls)
+		out["tls"] = binds(addrs, tls)
 	}
 	if p.HTTPS > 0 {
-		out["https"] = binds(mgmt, p.HTTPS)
+		out["https"] = binds(addrs, p.HTTPS)
 	}
 	httpPort := p.HTTP
 	if httpPort == 0 {
 		httpPort = DefaultHTTPPort
 	}
 	if httpPort > 0 {
-		out["http"] = binds(mgmt, httpPort)
+		out["http"] = binds(addrs, httpPort)
 	}
 	return out
 }
 
-// binds returns the loopback + mgmt-address listen list for a port.
-func binds(mgmt string, port int) []any {
-	return []any{
-		fmt.Sprintf("%s:%d", loopbackAddr, port),
-		fmt.Sprintf("%s:%d", mgmt, port),
+// binds returns the loopback + internal-address listen list for a port.
+func binds(addrs []string, port int) []any {
+	out := make([]any, 0, len(addrs)+1)
+	out = append(out, fmt.Sprintf("%s:%d", loopbackAddr, port))
+	for _, a := range addrs {
+		out = append(out, fmt.Sprintf("%s:%d", a, port))
 	}
+	return out
 }
 
 func bootstrapList(in []domain.BootstrapUpstream) []any {

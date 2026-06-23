@@ -130,8 +130,15 @@ type PeerSpec struct {
 // base from desired state, not a fork per option (docs/DESIGN.md principle 7).
 type DNSFilterSpec struct {
 	Enabled  bool
-	MgmtAddr string // ZT/mgmt address — the ONLY non-loopback address blocky binds
-	Ports    DNSPorts
+	MgmtAddr string // ZT/mgmt address — a non-loopback address blocky binds
+	// ClientBindAddr is an ADDITIONAL non-loopback bind for the master-tier resolver
+	// (ADR-0024): the client-pool gateway (e.g. "10.73.0.1"), so VPN clients can use
+	// the master as their DNS through the tunnel. It is tunnel-internal, reachable
+	// only from inside the authenticated AWG tunnel — never the public interface.
+	// Agent-populated on the master from MasterSpec.BindAddress (like
+	// RoutingSpec.ClientCIDR, it needs no wire field); empty on exits.
+	ClientBindAddr string
+	Ports          DNSPorts
 	// Upstreams is the default upstream group (DoT/DoH/plain). Safe defaults are
 	// used when empty.
 	Upstreams []string

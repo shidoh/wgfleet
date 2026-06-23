@@ -66,6 +66,58 @@ func TestRenderBlockyBindsLoopbackAndMgmtOnly(t *testing.T) {
 	}
 }
 
+func TestRenderBlockyMasterClientBind(t *testing.T) {
+	// Master-tier resolver (ADR-0024): binds loopback + mgmt + the client-pool
+	// gateway, so VPN clients can use the master as their DNS through the tunnel.
+	out, err := RenderBlocky(domain.DNSFilterSpec{
+		Enabled:        true,
+		MgmtAddr:       "10.20.3.10",
+		ClientBindAddr: "10.73.0.1",
+		Upstreams:      []string{"10.20.3.20", "10.20.3.21"}, // exit-blockys
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatalf("invalid YAML: %v\n%s", err, out)
+	}
+	ports, _ := cfg["ports"].(map[string]any)
+	dns, _ := ports["dns"].([]any)
+	want := []any{"127.0.0.1:53", "10.20.3.10:53", "10.73.0.1:53"}
+	if len(dns) != len(want) {
+		t.Fatalf("expected loopback+mgmt+gateway binds, got %v", dns)
+	}
+	for i := range want {
+		if dns[i] != want[i] {
+			t.Errorf("dns bind[%d] = %v, want %v (full: %v)", i, dns[i], want[i], dns)
+		}
+	}
+	// Still never the public interface.
+	if strings.Contains(out, "0.0.0.0") {
+		t.Errorf("master resolver must not bind 0.0.0.0:\n%s", out)
+	}
+	// Upstreams = the exit-blockys (master forwards public queries to exits).
+	if !strings.Contains(out, "10.20.3.20") || !strings.Contains(out, "10.20.3.21") {
+		t.Errorf("master upstreams should be the exit-blockys:\n%s", out)
+	}
+}
+
+func TestRenderBlockyClientBindOmittedOnExit(t *testing.T) {
+	// Exit-tier (no ClientBindAddr): binds loopback + mgmt only, unchanged.
+	out, err := RenderBlocky(domain.DNSFilterSpec{Enabled: true, MgmtAddr: "10.20.3.20"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	_ = yaml.Unmarshal([]byte(out), &cfg)
+	ports, _ := cfg["ports"].(map[string]any)
+	dns, _ := ports["dns"].([]any)
+	if len(dns) != 2 {
+		t.Fatalf("exit resolver should bind exactly loopback + mgmt, got %v", dns)
+	}
+}
+
 func TestRenderBlockyDefaultsUpstreamsAndBootstrap(t *testing.T) {
 	out, err := RenderBlocky(domain.DNSFilterSpec{Enabled: true, MgmtAddr: "10.20.4.10"})
 	if err != nil {
