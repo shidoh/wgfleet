@@ -27,6 +27,15 @@ func GenerateKeypair() (privateKey, publicKey string, err error) {
 		realityKeyEncoding.EncodeToString(priv.PublicKey().Bytes()), nil
 }
 
+// ValidPublicKey reports whether s is a well-formed REALITY x25519 public key: a
+// base64.RawURLEncoding string decoding to exactly 32 bytes. The controller
+// validates it before storing because it is rendered verbatim into config
+// (reality-opts.public-key), so a malformed/multi-line value must be rejected.
+func ValidPublicKey(s string) bool {
+	raw, err := realityKeyEncoding.DecodeString(s)
+	return err == nil && len(raw) == 32
+}
+
 // PublicKeyFor derives the REALITY public key from a base64 private key, so the
 // agent can re-publish the pubkey from a persisted private key without storing the
 // pubkey separately.

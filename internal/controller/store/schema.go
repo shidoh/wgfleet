@@ -37,4 +37,7 @@ var migrations = []string{
 	// v3: record the agent's reported build + wire version for skew visibility.
 	`ALTER TABLE nodes ADD COLUMN agent_version TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE nodes ADD COLUMN wire_version INTEGER NOT NULL DEFAULT 0`,
+	// v4: the exit's REALITY x25519 public key (ADR-0025), published separately
+	// from the WireGuard public_key; the master's vless proxy peers it.
+	`ALTER TABLE nodes ADD COLUMN reality_public_key TEXT NOT NULL DEFAULT ''`,
 }

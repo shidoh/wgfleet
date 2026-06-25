@@ -86,15 +86,16 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 	// existing row; new rows fall back to now.
 	const q = `
 		INSERT INTO nodes (
-			id, name, role, region, mgmt_addr, public_ip, public_key, state,
+			id, name, role, region, mgmt_addr, public_ip, public_key, reality_public_key, state,
 			drain, decommission, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
 			agent_version, wire_version,
 			created_at, updated_at, last_seen
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			name=excluded.name, role=excluded.role, region=excluded.region,
 			mgmt_addr=excluded.mgmt_addr, public_ip=excluded.public_ip,
-			public_key=excluded.public_key, state=excluded.state,
+			public_key=excluded.public_key, reality_public_key=excluded.reality_public_key,
+			state=excluded.state,
 			drain=excluded.drain, decommission=excluded.decommission,
 			last_error=excluded.last_error,
 			ssh_host=excluded.ssh_host, ssh_port=excluded.ssh_port,
@@ -103,7 +104,7 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 			updated_at=excluded.updated_at, last_seen=excluded.last_seen`
 	_, err := s.db.ExecContext(ctx, q,
 		n.ID, n.Name, string(n.Role), n.Region, n.MgmtAddr, n.PublicIP,
-		n.PublicKey, string(n.State), boolToInt(n.Drain), boolToInt(n.Decommission), n.LastError,
+		n.PublicKey, n.RealityPublicKey, string(n.State), boolToInt(n.Drain), boolToInt(n.Decommission), n.LastError,
 		n.SSH.Host, n.SSH.Port, n.SSH.User, n.SSH.KeyPath,
 		n.AgentVersion, n.WireVersion,
 		fmtTime(orDefault(n.CreatedAt, now)), fmtTime(now), fmtTime(n.LastSeen),
@@ -116,7 +117,7 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 
 // GetNode implements Store.
 func (s *SQLiteStore) GetNode(ctx context.Context, id string) (domain.Node, error) {
-	const q = `SELECT id, name, role, region, mgmt_addr, public_ip, public_key,
+	const q = `SELECT id, name, role, region, mgmt_addr, public_ip, public_key, reality_public_key,
 		state, drain, decommission, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
 		agent_version, wire_version, created_at, updated_at, last_seen FROM nodes WHERE id = ?`
 	return scanNode(s.db.QueryRowContext(ctx, q, id))
@@ -124,7 +125,7 @@ func (s *SQLiteStore) GetNode(ctx context.Context, id string) (domain.Node, erro
 
 // ListNodes implements Store.
 func (s *SQLiteStore) ListNodes(ctx context.Context) ([]domain.Node, error) {
-	const q = `SELECT id, name, role, region, mgmt_addr, public_ip, public_key,
+	const q = `SELECT id, name, role, region, mgmt_addr, public_ip, public_key, reality_public_key,
 		state, drain, decommission, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
 		agent_version, wire_version, created_at, updated_at, last_seen FROM nodes ORDER BY name`
 	rows, err := s.db.QueryContext(ctx, q)
@@ -193,6 +194,18 @@ func (s *SQLiteStore) SetNodePublicKey(ctx context.Context, id, publicKey string
 		publicKey, fmtTime(s.now().UTC()), id)
 	if err != nil {
 		return fmt.Errorf("set public key for %q: %w", id, err)
+	}
+	return requireAffected(res)
+}
+
+// SetNodeRealityKey implements Store: records the exit's REALITY x25519 public
+// key (ADR-0025), separate from the WireGuard public_key.
+func (s *SQLiteStore) SetNodeRealityKey(ctx context.Context, id, publicKey string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE nodes SET reality_public_key=?, updated_at=? WHERE id=?`,
+		publicKey, fmtTime(s.now().UTC()), id)
+	if err != nil {
+		return fmt.Errorf("set reality key for %q: %w", id, err)
 	}
 	return requireAffected(res)
 }
@@ -274,7 +287,7 @@ func scanNode(row rowScanner) (domain.Node, error) {
 		createdAt, updatedAt, seen string
 	)
 	err := row.Scan(
-		&n.ID, &n.Name, &roleS, &n.Region, &n.MgmtAddr, &n.PublicIP, &n.PublicKey,
+		&n.ID, &n.Name, &roleS, &n.Region, &n.MgmtAddr, &n.PublicIP, &n.PublicKey, &n.RealityPublicKey,
 		&stateS, &drain, &decommission, &n.LastError, &n.SSH.Host, &n.SSH.Port, &n.SSH.User, &n.SSH.KeyPath,
 		&n.AgentVersion, &n.WireVersion,
 		&createdAt, &updatedAt, &seen,

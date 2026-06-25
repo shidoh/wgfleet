@@ -25,6 +25,7 @@ import (
 type SpecRenderer interface {
 	RenderNodeSpec(ctx context.Context, nodeID string) (domain.NodeSpec, error)
 	RegisterPublicKey(ctx context.Context, nodeID, publicKey string) error
+	RegisterRealityKey(ctx context.Context, nodeID, publicKey string) error
 }
 
 // Service implements pb.NodeServiceServer, backed by the store and key broker.
@@ -130,14 +131,31 @@ func (s *Service) PublishPublicKey(ctx context.Context, req *pb.PublishPublicKey
 	if req.GetPublicKey() == "" {
 		return nil, status.Error(codes.InvalidArgument, "public key is empty")
 	}
-	if err := s.renderer.RegisterPublicKey(ctx, nodeID, req.GetPublicKey()); err != nil {
+	// Route by key type (ADR-0025): empty == WireGuard (back-compat); "reality" is
+	// the exit's REALITY x25519 key for the master's vless proxy.
+	register := s.renderer.RegisterPublicKey
+	keyType := req.GetKeyType()
+	if keyType == api.KeyTypeReality {
+		register = s.renderer.RegisterRealityKey
+	} else if keyType != api.KeyTypeWireGuard {
+		return nil, status.Errorf(codes.InvalidArgument, "unknown key type %q", keyType)
+	}
+	if err := register(ctx, nodeID, req.GetPublicKey()); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Errorf(codes.FailedPrecondition, "node %q not registered", nodeID)
 		}
-		return nil, status.Errorf(codes.Internal, "register pubkey for %q: %v", nodeID, err)
+		return nil, status.Errorf(codes.Internal, "register %s key for %q: %v", keyTypeLabel(keyType), nodeID, err)
 	}
-	s.log.Info("public key registered", "node", nodeID)
+	s.log.Info("public key registered", "node", nodeID, "type", keyTypeLabel(keyType))
 	return &pb.PublishPublicKeyResponse{Accepted: true}, nil
+}
+
+// keyTypeLabel gives the empty (WireGuard) key type a readable name for logs.
+func keyTypeLabel(t string) string {
+	if t == api.KeyTypeWireGuard {
+		return "wireguard"
+	}
+	return t
 }
 
 // PullSpec returns the node's desired NodeSpec, rendered from fleet config and

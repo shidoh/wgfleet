@@ -48,6 +48,11 @@ type Store interface {
 	// the node is absent.
 	SetNodePublicKey(ctx context.Context, id, publicKey string) error
 
+	// SetNodeRealityKey registers an exit's REALITY x25519 public key (ADR-0025),
+	// stored separately from the WireGuard key. Returns ErrNotFound if the node
+	// is absent.
+	SetNodeRealityKey(ctx context.Context, id, publicKey string) error
+
 	// RecordStatus stores the latest status report for a node, overwriting any
 	// previous report, and stamps the node's LastSeen.
 	RecordStatus(ctx context.Context, s domain.NodeStatus) error

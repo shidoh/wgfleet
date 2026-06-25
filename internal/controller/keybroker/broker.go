@@ -20,6 +20,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/wg"
+	"github.com/shidoh/wgfleet/internal/xray"
 )
 
 // awgSalt seeds the deterministic AmneziaWG parameter derivation. It need not be
@@ -58,6 +59,21 @@ func (b *Broker) RegisterPublicKey(ctx context.Context, nodeID, publicKey string
 		return fmt.Errorf("keybroker: malformed WireGuard public key for %q", nodeID)
 	}
 	return b.store.SetNodePublicKey(ctx, nodeID, publicKey)
+}
+
+// RegisterRealityKey records an exit's REALITY x25519 public key (ADR-0025),
+// stored separately from the WireGuard key and rendered into the master's vless
+// proxy. Validated as a 32-byte Curve25519 key before storing — it is rendered
+// verbatim into config (reality-opts.public-key), so a malformed/multi-line value
+// from a CA-authenticated-but-rogue node must be rejected here.
+func (b *Broker) RegisterRealityKey(ctx context.Context, nodeID, publicKey string) error {
+	if publicKey == "" {
+		return fmt.Errorf("keybroker: empty reality public key for %q", nodeID)
+	}
+	if !xray.ValidPublicKey(publicKey) {
+		return fmt.Errorf("keybroker: malformed REALITY public key for %q", nodeID)
+	}
+	return b.store.SetNodeRealityKey(ctx, nodeID, publicKey)
 }
 
 // RenderNodeSpec builds the desired NodeSpec for nodeID from its fleet-config

@@ -51,6 +51,11 @@ type Node struct {
 	// only ever sees this pubkey (key-broker model).
 	PublicKey string
 
+	// RealityPublicKey is the exit's REALITY x25519 public key (ADR-0025),
+	// published separately from PublicKey and only set on exits that run the
+	// reality transport. Like PublicKey, the private key never leaves the node.
+	RealityPublicKey string
+
 	// Drain, when set, takes the node out of the load balancer: it stays a
 	// configured peer/proxy (existing connections survive) but receives no new
 	// traffic. The operator drains, then deletes. Independent of State (health).

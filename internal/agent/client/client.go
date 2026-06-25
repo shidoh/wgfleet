@@ -103,12 +103,25 @@ func (c *Client) Register(ctx context.Context, role domain.Role, publicIP, regio
 
 // PublishPublicKey registers this node's WireGuard public key.
 func (c *Client) PublishPublicKey(ctx context.Context, publicKey string) error {
-	resp, err := c.rpc.PublishPublicKey(ctx, &pb.PublishPublicKeyRequest{PublicKey: publicKey})
+	return c.publishKey(ctx, publicKey, api.KeyTypeWireGuard)
+}
+
+// PublishRealityKey registers this exit's REALITY x25519 public key (ADR-0025),
+// stored separately from the WireGuard key.
+func (c *Client) PublishRealityKey(ctx context.Context, publicKey string) error {
+	return c.publishKey(ctx, publicKey, api.KeyTypeReality)
+}
+
+func (c *Client) publishKey(ctx context.Context, publicKey, keyType string) error {
+	resp, err := c.rpc.PublishPublicKey(ctx, &pb.PublishPublicKeyRequest{
+		PublicKey: publicKey,
+		KeyType:   keyType,
+	})
 	if err != nil {
-		return fmt.Errorf("publish public key: %w", err)
+		return fmt.Errorf("publish %q key: %w", keyType, err)
 	}
 	if !resp.GetAccepted() {
-		return fmt.Errorf("controller rejected public key")
+		return fmt.Errorf("controller rejected %q key", keyType)
 	}
 	return nil
 }

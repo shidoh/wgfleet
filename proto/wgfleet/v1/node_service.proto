@@ -39,7 +39,12 @@ message RegisterResponse {
 }
 
 message PublishPublicKeyRequest {
-  string public_key = 1; // base64 WireGuard public key
+  string public_key = 1; // base64 public key
+  // key_type selects which key registry the value lands in (ADR-0025). Empty ⇒
+  // "wireguard" (back-compat: an older agent omits it and publishes its WG key).
+  // "reality" publishes the exit's REALITY x25519 public key for the master's
+  // vless proxy. Additive — no wire-version bump.
+  string key_type = 2;
 }
 
 message PublishPublicKeyResponse {

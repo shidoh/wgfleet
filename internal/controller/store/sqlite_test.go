@@ -320,3 +320,38 @@ func TestSetNodeDecommission(t *testing.T) {
 		t.Error("decommission must not set drain")
 	}
 }
+
+func TestSetNodeRealityKey(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	n := sampleNode()
+	if err := s.UpsertNode(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetNodePublicKey(ctx, n.ID, "WGKEY=="); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetNodeRealityKey(ctx, n.ID, "REALITYKEY"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetNode(ctx, n.ID)
+	// The two key registries are independent.
+	if got.PublicKey != "WGKEY==" {
+		t.Errorf("wg key clobbered: %q", got.PublicKey)
+	}
+	if got.RealityPublicKey != "REALITYKEY" {
+		t.Errorf("reality key = %q, want REALITYKEY", got.RealityPublicKey)
+	}
+	// A re-register (GetNode→UpsertNode) preserves both keys.
+	got.PublicIP = "203.0.113.99"
+	if err := s.UpsertNode(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := s.GetNode(ctx, n.ID)
+	if again.RealityPublicKey != "REALITYKEY" || again.PublicKey != "WGKEY==" {
+		t.Errorf("keys lost across upsert: wg=%q reality=%q", again.PublicKey, again.RealityPublicKey)
+	}
+	if err := s.SetNodeRealityKey(ctx, "ghost", "x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetNodeRealityKey ghost: want ErrNotFound, got %v", err)
+	}
+}

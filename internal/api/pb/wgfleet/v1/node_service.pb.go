@@ -142,8 +142,13 @@ func (x *RegisterResponse) GetState() string {
 }
 
 type PublishPublicKeyRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	PublicKey     string                 `protobuf:"bytes,1,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"` // base64 WireGuard public key
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	PublicKey string                 `protobuf:"bytes,1,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"` // base64 public key
+	// key_type selects which key registry the value lands in (ADR-0025). Empty ⇒
+	// "wireguard" (back-compat: an older agent omits it and publishes its WG key).
+	// "reality" publishes the exit's REALITY x25519 public key for the master's
+	// vless proxy. Additive — no wire-version bump.
+	KeyType       string `protobuf:"bytes,2,opt,name=key_type,json=keyType,proto3" json:"key_type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -181,6 +186,13 @@ func (*PublishPublicKeyRequest) Descriptor() ([]byte, []int) {
 func (x *PublishPublicKeyRequest) GetPublicKey() string {
 	if x != nil {
 		return x.PublicKey
+	}
+	return ""
+}
+
+func (x *PublishPublicKeyRequest) GetKeyType() string {
+	if x != nil {
+		return x.KeyType
 	}
 	return ""
 }
@@ -2213,10 +2225,11 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\tmgmt_addr\x18\x04 \x01(\tR\bmgmtAddr\"A\n" +
 	"\x10RegisterResponse\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x14\n" +
-	"\x05state\x18\x02 \x01(\tR\x05state\"8\n" +
+	"\x05state\x18\x02 \x01(\tR\x05state\"S\n" +
 	"\x17PublishPublicKeyRequest\x12\x1d\n" +
 	"\n" +
-	"public_key\x18\x01 \x01(\tR\tpublicKey\"6\n" +
+	"public_key\x18\x01 \x01(\tR\tpublicKey\x12\x19\n" +
+	"\bkey_type\x18\x02 \x01(\tR\akeyType\"6\n" +
 	"\x18PublishPublicKeyResponse\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\"\x11\n" +
 	"\x0fPullSpecRequest\"\xcb\x01\n" +

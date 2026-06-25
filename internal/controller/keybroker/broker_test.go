@@ -10,6 +10,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/xray"
 )
 
 func testFleet() config.FleetSection {
@@ -754,5 +755,30 @@ func TestRenderMasterDNSDisabledByDefault(t *testing.T) {
 	}
 	if !contains(spec.Master.Compose.ClientDNS, "10.20.0.5") {
 		t.Errorf("clients should fall back to the exit blocky mgmt addr, got %v", spec.Master.Compose.ClientDNS)
+	}
+}
+
+func TestRegisterRealityKey(t *testing.T) {
+	ctx := context.Background()
+	b, st := newBroker(t)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "", domain.RoleExit)
+
+	// A valid REALITY x25519 public key (base64.RawURLEncoding, 32 bytes).
+	_, pub, err := xray.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RegisterRealityKey(ctx, "exit-de-1", pub); err != nil {
+		t.Fatalf("register valid reality key: %v", err)
+	}
+	n, _ := st.GetNode(ctx, "exit-de-1")
+	if n.RealityPublicKey != pub {
+		t.Errorf("stored reality key = %q, want %q", n.RealityPublicKey, pub)
+	}
+	// Malformed keys are rejected (rendered verbatim into config).
+	for _, bad := range []string{"", "not-base64-!!", "c2hvcnQ"} { // last decodes to <32 bytes
+		if err := b.RegisterRealityKey(ctx, "exit-de-1", bad); err == nil {
+			t.Errorf("expected rejection of malformed reality key %q", bad)
+		}
 	}
 }
