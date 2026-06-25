@@ -510,6 +510,9 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	if a.metrics != nil {
 		a.metrics.ObserveReconcile(elapsed, report.ChangeCount(), state, results, reconcileErr)
 		a.metrics.ObserveDrift(drifted)
+		if a.role == domain.RoleExit {
+			a.metrics.ObserveTransport(spec.ActiveTransport.OrDefault())
+		}
 	}
 	a.log.Info("reconcile applied",
 		"changes", report.ChangeCount(), "drift", len(drifted),

@@ -20,6 +20,7 @@ type AgentMetrics struct {
 	driftResources    prometheus.Gauge       // components repaired in the last pass
 	egressReach       *prometheus.GaugeVec   // info: current egress reachability as a label
 	egressActive      *prometheus.GaugeVec   // info: currently active egress method as a label
+	transportActive   *prometheus.GaugeVec   // info: active master↔exit transport as a label (ADR-0025)
 	egressThroughput  prometheus.Gauge       // last measured egress throughput, bytes/sec
 	reconcileChanges  prometheus.Gauge       // resources changed in the last pass
 	checkLatency      *prometheus.GaugeVec   // per self-check: probe latency, seconds
@@ -78,6 +79,10 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Namespace: namespace, Subsystem: "agent", Name: "egress_active",
 			Help: "Currently active egress method as a label (warp|direct|...); value is always 1. Differs from the preferred egress while failed over (ADR-0017).", ConstLabels: cl,
 		}, []string{"method"}),
+		transportActive: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "transport_active",
+			Help: "Active master↔exit transport as a label (awg|reality-xhttp); value is always 1 (ADR-0025). Exit nodes only.", ConstLabels: cl,
+		}, []string{"transport"}),
 		egressThroughput: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "egress_throughput_bytes",
 			Help: "Last measured egress throughput in bytes/sec (ADR-0021). A sustained collapse below the configured floor auto-suspends the exit from the LB.", ConstLabels: cl,
@@ -89,7 +94,8 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 	}
 	m.startTime.Set(float64(now.Unix()))
 	reg.MustRegister(m.reconcileTotal, m.reconcileDuration, m.stateInfo, m.checkUp, m.checkLatency,
-		m.driftTotal, m.driftResources, m.reconcileChanges, m.egressReach, m.egressActive, m.egressThroughput, m.startTime)
+		m.driftTotal, m.driftResources, m.reconcileChanges, m.egressReach, m.egressActive,
+		m.transportActive, m.egressThroughput, m.startTime)
 	return m
 }
 
@@ -135,6 +141,16 @@ func (m *AgentMetrics) ObserveEgressActive(method domain.EgressMethod) {
 	}
 	m.egressActive.Reset()
 	m.egressActive.WithLabelValues(string(method)).Set(1)
+}
+
+// ObserveTransport records the exit's active master↔exit transport as a
+// single-valued info gauge (ADR-0025). A no-op for the empty transport.
+func (m *AgentMetrics) ObserveTransport(t domain.MasterTransport) {
+	if t == "" {
+		return
+	}
+	m.transportActive.Reset()
+	m.transportActive.WithLabelValues(string(t)).Set(1)
 }
 
 // ObserveEgressThroughput records the last measured egress throughput (bytes/sec).

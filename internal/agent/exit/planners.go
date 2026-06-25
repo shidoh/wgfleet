@@ -821,9 +821,14 @@ func (p xrayPlanner) isUp() bool {
 
 func (p xrayPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
 	if !spec.HasTransport(domain.TransportRealityXHTTP) || spec.Reality == nil {
-		// Exit does not run the reality transport: nothing to converge. Full removal of
-		// a previously-running xray happens via teardown/decommission (mirrors the dns
-		// filter's disabled path).
+		// Exit no longer runs the reality transport. If xray is still up (the operator
+		// removed reality-xhttp from the transport set, or switched the node AWG-only),
+		// stop the now-unused container so it does not linger listening; idempotent —
+		// a no-op once it is down. Full file wipe happens on decommission (teardown.go).
+		if p.isUp() {
+			return []reconcile.Action{reconcile.ExecAction("stop reality inbound (transport disabled)",
+				"docker", "compose", "-f", p.composePath, "down")}, nil
+		}
 		return []reconcile.Action{reconcile.NoChangeAction("reality inbound", "disabled")}, nil
 	}
 	if p.privateKey == "" {

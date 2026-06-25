@@ -761,3 +761,33 @@ func TestXrayPlannerRendersAndEnsuresUp(t *testing.T) {
 		t.Error("unchanged config + stack up: must not re-issue up -d")
 	}
 }
+
+func TestXrayPlannerStopsWhenTransportRemoved(t *testing.T) {
+	dir := t.TempDir()
+	awgOnly := domain.NodeSpec{} // no reality transport (default AWG-only)
+	hasDown := func(acts []reconcile.Action) bool {
+		for _, a := range acts {
+			if a.Kind == reconcile.ActionExec && strings.Contains(a.Display, "down") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// xray still up but reality no longer enabled ⇒ stop it (compose down).
+	up := xrayPlanner{configPath: filepath.Join(dir, "c.json"), composePath: filepath.Join(dir, "dc.yml"), up: func(string) bool { return true }}
+	acts, err := up.Plan(context.Background(), awgOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDown(acts) {
+		t.Error("reality removed while xray up: expected a compose down")
+	}
+
+	// Already down ⇒ no-op (no perpetual down every pass).
+	down := xrayPlanner{configPath: filepath.Join(dir, "c.json"), composePath: filepath.Join(dir, "dc.yml"), up: func(string) bool { return false }}
+	acts2, _ := down.Plan(context.Background(), awgOnly)
+	if hasDown(acts2) {
+		t.Error("reality removed + xray already down: must not re-issue down")
+	}
+}
