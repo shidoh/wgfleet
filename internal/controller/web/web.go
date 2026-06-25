@@ -40,6 +40,9 @@ var staticFS embed.FS
 // SpecRenderer previews a node's desired NodeSpec. *keybroker.Broker satisfies it.
 type SpecRenderer interface {
 	RenderNodeSpec(ctx context.Context, nodeID string) (domain.NodeSpec, error)
+	// ExitTransportInfo returns an exit's resolved active transport + enabled set
+	// for the fleet list (cheap — no spec render). ok=false for non-exits.
+	ExitTransportInfo(node domain.Node) (active domain.MasterTransport, enabled []domain.MasterTransport, ok bool)
 }
 
 // Provisioner triggers asynchronous node provisioning. *provmgr.Manager satisfies
@@ -298,6 +301,10 @@ type nodeRow struct {
 	ActiveEgress  string // set only when failed over to a non-preferred egress
 	EgressBlocked bool
 	LowThroughput bool
+	// Transport (exits, ADR-0025): the resolved active master↔exit transport, and
+	// whether the exit runs more than one (so the list can flag the switchable ones).
+	Transport     domain.MasterTransport
+	DualTransport bool
 }
 
 // nodeRows joins the inventory with each node's latest status for the fleet list.
@@ -319,13 +326,23 @@ func (h *Handler) nodeRows(ctx context.Context) ([]nodeRow, error) {
 			row.EgressBlocked = st.EgressBlocked()
 			row.LowThroughput = st.EgressThroughputDegraded()
 		}
+		if h.renderer != nil && n.Role == domain.RoleExit {
+			if active, enabled, ok := h.renderer.ExitTransportInfo(n); ok {
+				row.Transport = active
+				row.DualTransport = len(enabled) > 1
+			}
+		}
 		rows = append(rows, row)
 	}
 	return rows, nil
 }
 
 // nodes returns the live store inventory merged with declared-but-unprovisioned
-// manifest nodes (shown as Pending). Store rows win on conflict.
+// manifest nodes (shown as Pending). Store rows win on conflict, except for
+// inventory the agent may not report (mgmt addr, region, public IP): the manifest
+// is authoritative there, so a blank store value is backfilled from it — otherwise
+// a node that registered without a seeded inventory (auto-created, or its agent.yaml
+// lacks mgmt_addr) shows "—" for fields the operator did configure.
 func (h *Handler) nodes(ctx context.Context) ([]domain.Node, error) {
 	stored, err := h.store.ListNodes(ctx)
 	if err != nil {
@@ -334,11 +351,19 @@ func (h *Handler) nodes(ctx context.Context) ([]domain.Node, error) {
 	if h.prov == nil {
 		return stored, nil
 	}
-	seen := make(map[string]struct{}, len(stored))
-	for _, n := range stored {
-		seen[n.ID] = struct{}{}
+	manifest := make(map[string]domain.Node)
+	for _, mn := range h.prov.ManifestNodes() {
+		manifest[mn.ID] = mn
 	}
-	merged := stored
+	seen := make(map[string]struct{}, len(stored))
+	merged := make([]domain.Node, 0, len(stored))
+	for _, n := range stored {
+		if mn, ok := manifest[n.ID]; ok {
+			n = backfillFromManifest(n, mn)
+		}
+		seen[n.ID] = struct{}{}
+		merged = append(merged, n)
+	}
 	for _, mn := range h.prov.ManifestNodes() {
 		if _, ok := seen[mn.ID]; !ok {
 			merged = append(merged, mn)
@@ -346,6 +371,22 @@ func (h *Handler) nodes(ctx context.Context) ([]domain.Node, error) {
 	}
 	sortByName(merged)
 	return merged, nil
+}
+
+// backfillFromManifest fills inventory fields the agent does not report (and that
+// the manifest owns) when the store row left them blank. Display-only — it never
+// changes the persisted node.
+func backfillFromManifest(n, mn domain.Node) domain.Node {
+	if n.MgmtAddr == "" {
+		n.MgmtAddr = mn.MgmtAddr
+	}
+	if n.Region == "" {
+		n.Region = mn.Region
+	}
+	if n.PublicIP == "" {
+		n.PublicIP = mn.PublicIP
+	}
+	return n
 }
 
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -405,6 +446,10 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
+	} else if mn, ok := h.manifestNode(id); ok {
+		// Backfill manifest-owned inventory (mgmt/region/public IP) the agent may not
+		// report, so the detail page matches the list (see nodes()).
+		node = backfillFromManifest(node, mn)
 	}
 	data := nodeData{Title: node.Name, NodeCount: 1, Node: node, CSRF: h.csrf}
 	if node.WireVersion != 0 {

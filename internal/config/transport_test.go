@@ -67,3 +67,35 @@ func TestValidateAcceptsDualTransport(t *testing.T) {
 		t.Fatalf("valid dual-transport exit rejected: %v", err)
 	}
 }
+
+func TestValidateRealityCamouflage(t *testing.T) {
+	// Per-exit bad SNI (has a port) → rejected.
+	e := validExit()
+	e.Transports = []string{"awg", "reality-xhttp"}
+	e.Reality.ServerName = "www.microsoft.com:443"
+	if err := controllerWithExit(e).Validate(); err == nil || !strings.Contains(err.Error(), "bare hostname") {
+		t.Fatalf("expected bare-hostname error, got %v", err)
+	}
+
+	// Bad dest (no port) → rejected.
+	e2 := validExit()
+	e2.Reality.Dest = "www.microsoft.com"
+	if err := controllerWithExit(e2).Validate(); err == nil || !strings.Contains(err.Error(), "host:port") {
+		t.Fatalf("expected host:port error, got %v", err)
+	}
+
+	// Valid camouflage → accepted.
+	e3 := validExit()
+	e3.Reality.ServerName = "www.microsoft.com"
+	e3.Reality.Dest = "www.microsoft.com:443"
+	if err := controllerWithExit(e3).Validate(); err != nil {
+		t.Fatalf("valid camouflage rejected: %v", err)
+	}
+
+	// Fleet-wide default validated too.
+	c := controllerWithExit(validExit())
+	c.Fleet.RealityDefaultSNI = "bad sni/with space"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "bare hostname") {
+		t.Fatalf("expected fleet default SNI rejected, got %v", err)
+	}
+}

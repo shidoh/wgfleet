@@ -22,6 +22,13 @@ func (s stubRenderer) RenderNodeSpec(context.Context, string) (domain.NodeSpec, 
 	return s.spec, s.err
 }
 
+func (s stubRenderer) ExitTransportInfo(node domain.Node) (domain.MasterTransport, []domain.MasterTransport, bool) {
+	if node.Role != domain.RoleExit {
+		return "", nil, false
+	}
+	return s.spec.ActiveTransport.OrDefault(), s.spec.Transports(), true
+}
+
 func newTestHandler(t *testing.T, renderer SpecRenderer) (*Handler, store.Store) {
 	t.Helper()
 	st, err := store.Open(":memory:")
@@ -514,5 +521,21 @@ func TestListShowsEgressIP(t *testing.T) {
 	_, body := get(t, h, "/")
 	if !strings.Contains(body, "104.16.0.9") {
 		t.Errorf("fleet list should show the exit's egress IP:\n%s", body)
+	}
+}
+
+func TestListShowsTransportAndMgmt(t *testing.T) {
+	spec := domain.NodeSpec{
+		Role:              domain.RoleExit,
+		EnabledTransports: []domain.MasterTransport{domain.TransportAWG, domain.TransportRealityXHTTP},
+		ActiveTransport:   domain.TransportRealityXHTTP,
+	}
+	h, st := newTestHandler(t, stubRenderer{spec: spec})
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady, MgmtAddr: "10.20.3.22"})
+	_, body := get(t, h, "/")
+	for _, want := range []string{"10.20.3.22" /* mgmt col back */, "REALITY" /* active transport */, "Mgmt (ZT)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("fleet list missing %q:\n%s", want, body)
+		}
 	}
 }

@@ -929,3 +929,30 @@ func TestActiveTransportOverride(t *testing.T) {
 		t.Errorf("invalid override should fall back to manifest awg, got %q", exitSpec.ActiveTransport)
 	}
 }
+
+func TestRealityCamouflageFleetDefaultAndOverride(t *testing.T) {
+	ctx := context.Background()
+	fleet := testFleet()
+	fleet.RealityDefaultSNI = "www.cloudflare.com"
+	fleet.Exits[0].Transports = []string{"awg", "reality-xhttp"}
+	fleet.Exits[0].ActiveTransport = "awg"
+	fleet.Exits[0].SSH = config.SSHConfig{Host: "198.51.100.7"}
+	st, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = st.Close() })
+	b := New(st, fleet, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+	// Fleet default used when the exit sets none.
+	s, _ := b.RenderNodeSpec(ctx, "exit-de-1")
+	if s.Reality == nil || s.Reality.ServerName != "www.cloudflare.com" {
+		t.Fatalf("fleet default SNI not applied: %+v", s.Reality)
+	}
+
+	// Per-exit override wins over the fleet default.
+	b.fleet.Exits[0].Reality.ServerName = "github.com"
+	s2, _ := b.RenderNodeSpec(ctx, "exit-de-1")
+	if s2.Reality.ServerName != "github.com" {
+		t.Errorf("per-exit SNI override = %q, want github.com", s2.Reality.ServerName)
+	}
+}

@@ -151,6 +151,15 @@ type FleetSection struct {
 	ASBlacklistV4URL    string        `koanf:"as_blacklist_v4_url"`
 	ASBlacklistV6URL    string        `koanf:"as_blacklist_v6_url"`
 	ASBlacklistInterval time.Duration `koanf:"as_blacklist_interval"`
+	// RealityDefaultSNI / RealityDefaultDest are the fleet-wide camouflage target for
+	// the VLESS+REALITY+XHTTP transport (ADR-0025): the SNI the link impersonates and
+	// the real TLS-1.3 site the inbound borrows a cert from / falls back to for probes.
+	// A per-exit exits[].reality.{server_name,dest} overrides it; empty here ⇒ a safe
+	// built-in (keybroker.DefaultRealitySNI). Pick a target whose hosting ASN is
+	// plausible for the exit's provider (recon 2026-06-25) — a single fleet default is
+	// a starting point, but ASN-diverse exits SHOULD set it per-exit.
+	RealityDefaultSNI  string `koanf:"reality_default_sni"`
+	RealityDefaultDest string `koanf:"reality_default_dest"`
 }
 
 // AgentReconcileInterval returns the fleet-wide agent reconcile interval, or the
@@ -665,11 +674,36 @@ func (c ControllerConfig) Validate() error {
 		if p := e.Reality.ListenPort; p != 0 && (p < 1 || p > 65535) {
 			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): reality.listen_port %d out of range", i, e.Name, p))
 		}
+		if err := validateRealityCamouflage(e.Reality.ServerName, e.Reality.Dest); err != nil {
+			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): %w", i, e.Name, err))
+		}
 	}
 	if err := validateProbeURL(c.Fleet.EgressThroughputProbeURL); err != nil {
 		errs = append(errs, err)
 	}
+	if err := validateRealityCamouflage(c.Fleet.RealityDefaultSNI, c.Fleet.RealityDefaultDest); err != nil {
+		errs = append(errs, fmt.Errorf("fleet: %w", err))
+	}
 	return errors.Join(errs...)
+}
+
+// validateRealityCamouflage sanity-checks a REALITY camouflage SNI and dest
+// (ADR-0025). The SNI must be a bare hostname (no scheme/port/path); the dest, when
+// set, must be host:port. Both are rendered into the xray/mihomo config, so a typo
+// here would silently break the REALITY handshake — catch it at load.
+func validateRealityCamouflage(sni, dest string) error {
+	if sni != "" {
+		if strings.ContainsAny(sni, "/: ") {
+			return fmt.Errorf("reality server_name %q must be a bare hostname (no scheme, port, or path)", sni)
+		}
+	}
+	if dest != "" {
+		host, port, err := net.SplitHostPort(dest)
+		if err != nil || host == "" || port == "" {
+			return fmt.Errorf("reality dest %q must be host:port", dest)
+		}
+	}
+	return nil
 }
 
 // validateMgmtAddr rejects a non-empty mgmt_addr that is not a bare IP. The value

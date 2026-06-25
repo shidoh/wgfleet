@@ -3,88 +3,76 @@
   <a class="back" href="/">← fleet</a>
   <h1>{{.Node.Name}}</h1>
   <span class="role {{.Node.Role}}">{{.Node.Role}}</span>
-  <span class="badge {{lower .Node.State}}"><span class="led"></span>{{.Node.State}}</span>
-  {{if .Node.Drain}}<span class="badge draining" title="Temporarily out of routing (no new traffic). Node untouched; reversible with one click (Undrain)."><span class="led"></span>out of routing</span>{{end}}
-  {{if .Node.Decommission}}<span class="badge decommissioning"><span class="led"></span>decommissioning</span>{{end}}
-  {{if and .HasStatus .Status.EgressBlocked}}<span class="badge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
-  {{if and .HasStatus .Status.EgressThroughputDegraded}}<span class="badge draining" title="Egress throughput below the floor — auto-suspended from the load balancer (ADR-0021)"><span class="led"></span>low egress throughput</span>{{end}}
-  {{if .HasStatus}}{{$e := .Status.ActiveEgress}}{{if and $e (ne $e "warp")}}<span class="badge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{$e}}</span>{{end}}{{end}}
-  {{if .WireSkew}}<span class="badge blocked" title="{{.WireSkew}}"><span class="led"></span>version skew</span>{{end}}
-  <span class="actions">
-    {{if .CanProvision}}
-    <form method="post" action="/nodes/{{.Node.ID}}/provision"
-          onsubmit="return confirm('Provision {{.Node.Name}}? SSH-bootstrap the node and install the agent.')">
-      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <button class="btn go">Provision</button>
-    </form>
-    {{end}}
-    {{if .CanUpgrade}}
-    <form method="post" action="/nodes/{{.Node.ID}}/upgrade"
-          onsubmit="return confirm('Upgrade the agent on {{.Node.Name}}? Upload the new binary and restart the agent (data plane survives the restart).')">
-      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <button class="btn">Upgrade agent</button>
-    </form>
-    {{end}}
-    {{if .Node.Drain}}
-    {{/* Fast, one-click reverse: no confirm. Prominent so a suspended node is
-         obviously easy to bring back. Hot-reloads mihomo — other clients undisturbed. */}}
-    <form method="post" action="/nodes/{{.Node.ID}}/undrain">
-      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <button class="btn go" title="Bring this node back into routing. Instant (mihomo hot reload); no node change.">↩ Resume routing</button>
-    </form>
-    {{else}}
-    <form method="post" action="/nodes/{{.Node.ID}}/drain"
-          onsubmit="return confirm('Suspend {{.Node.Name}} from routing? New traffic stops going to it (for a flaky node). The node is NOT changed or wiped, and it is applied by hot-reloading mihomo so other clients keep their connections. Reverse instantly with “Resume routing”.')">
-      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <button class="btn warn" title="Temporarily pull this node out of routing (reversible; no node change).">Suspend from routing</button>
-    </form>
-    {{end}}
-    {{if not .Node.Decommission}}
-    <form method="post" action="/nodes/{{.Node.ID}}/decommission"
-          onsubmit="return confirm('Decommission {{.Node.Name}}? The agent will tear down its data plane (stop services, bring tunnels down). Drain it first.')">
-      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <button class="btn warn">Decommission</button>
-    </form>
-    {{end}}
-    <form method="post" action="/nodes/{{.Node.ID}}/delete"
-          onsubmit="return confirm('Delete {{.Node.Name}} from inventory? Decommission and tear it down first.')">
-      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <button class="btn danger">Delete</button>
-    </form>
+  <span class="badges">
+    <span class="badge {{lower .Node.State}}"><span class="led"></span>{{.Node.State}}</span>
+    {{if .Node.Drain}}<span class="badge draining" title="Manually taken out of the load balancer — no new traffic. The node is untouched; reverse instantly with “Resume routing”."><span class="led"></span>out of routing</span>{{end}}
+    {{if .Node.Decommission}}<span class="badge decommissioning"><span class="led"></span>decommissioning</span>{{end}}
+    {{if and .HasStatus .Status.EgressBlocked}}<span class="badge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
+    {{if and .HasStatus .Status.EgressThroughputDegraded}}<span class="badge draining" title="Egress throughput below the floor — auto-suspended from the load balancer (ADR-0021)"><span class="led"></span>low egress throughput</span>{{end}}
+    {{if .HasStatus}}{{$e := .Status.ActiveEgress}}{{if and $e (ne $e "warp")}}<span class="badge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{$e}}</span>{{end}}{{end}}
+    {{if .WireSkew}}<span class="badge blocked" title="{{.WireSkew}}"><span class="led"></span>version skew</span>{{end}}
   </span>
+</div>
+
+<div class="toolbar">
+  {{if .CanProvision}}
+  <form method="post" action="/nodes/{{.Node.ID}}/provision"
+        onsubmit="return confirm('Provision {{.Node.Name}}? SSH-bootstrap the node and install the agent.')">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <button class="btn go">Provision</button>
+  </form>
+  {{end}}
+  {{if .CanUpgrade}}
+  <form method="post" action="/nodes/{{.Node.ID}}/upgrade"
+        onsubmit="return confirm('Upgrade the agent on {{.Node.Name}}? Upload the new binary and restart the agent (data plane survives the restart).')">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <button class="btn">Upgrade agent</button>
+  </form>
+  {{end}}
+  {{if .Node.Drain}}
+  {{/* Fast, one-click reverse: no confirm. Prominent so a suspended node is
+       obviously easy to bring back. Hot-reloads mihomo — other clients undisturbed. */}}
+  <form method="post" action="/nodes/{{.Node.ID}}/undrain">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <button class="btn go" title="Bring this node back into routing. Instant (mihomo hot reload); no node change.">↩ Resume routing</button>
+  </form>
+  {{else}}
+  <form method="post" action="/nodes/{{.Node.ID}}/drain"
+        onsubmit="return confirm('Take {{.Node.Name}} out of routing? New traffic stops going to it (for a flaky node). The node is NOT changed or wiped, and it is applied by hot-reloading mihomo so other clients keep their connections. Reverse instantly with “Resume routing”.')">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <button class="btn warn" title="Temporarily pull this node out of routing (reversible; no node change).">Take out of routing</button>
+  </form>
+  {{end}}
+  <span class="toolbar-spacer"></span>
+  {{if not .Node.Decommission}}
+  <form method="post" action="/nodes/{{.Node.ID}}/decommission"
+        onsubmit="return confirm('Decommission {{.Node.Name}}? The agent will tear down its data plane (stop services, bring tunnels down). Take it out of routing first.')">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <button class="btn warn">Decommission</button>
+  </form>
+  {{end}}
+  <form method="post" action="/nodes/{{.Node.ID}}/delete"
+        onsubmit="return confirm('Delete {{.Node.Name}} from inventory? Decommission and tear it down first.')">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <button class="btn danger">Delete</button>
+  </form>
 </div>
 
 {{if .Node.LastError}}<p class="error-note">⚠ {{.Node.LastError}}</p>{{end}}
 
 <div class="grid">
   <div class="card">
-    <h2>Inventory</h2>
-    <dl class="kv">
-      <dt>ID</dt><dd>{{.Node.ID}}</dd>
-      <dt>Region</dt><dd class="dim">{{or .Node.Region "—"}}</dd>
-      <dt>Mgmt addr</dt><dd>{{or .Node.MgmtAddr "—"}}</dd>
-      <dt>Public IP</dt><dd>{{or .Node.PublicIP "—"}}</dd>
-      <dt>Public key</dt><dd class="dim">{{or .Node.PublicKey "— (not registered)"}}</dd>
-      <dt>Agent</dt><dd class="dim">{{if .Node.AgentVersion}}{{.Node.AgentVersion}} (wire v{{.Node.WireVersion}}){{else}}— (not reported){{end}}</dd>
-      <dt>Created</dt><dd class="dim">{{absTime .Node.CreatedAt}}</dd>
-      <dt>Last seen</dt><dd class="dim">{{relTime .Node.LastSeen}}</dd>
-      {{if .WGEasyURL}}<dt>wg-easy</dt><dd><a class="extlink" href="{{.WGEasyURL}}" target="_blank" rel="noopener noreferrer">client admin UI ↗</a></dd>{{end}}
-      {{if .MihomoURL}}<dt>mihomo</dt><dd><a class="extlink" href="{{.MihomoURL}}" target="_blank" rel="noopener noreferrer">router dashboard ↗</a></dd>{{end}}
-    </dl>
-  </div>
-
-  <div class="card">
     <h2>Status</h2>
     {{if .HasStatus}}
     <dl class="kv">
       <dt>State</dt><dd>{{.Status.State}}</dd>
-      <dt>Egress IP</dt><dd>{{or .Status.EgressIP "—"}}</dd>
+      {{if eq (lower .Node.Role) "exit"}}<dt>Egress IP</dt><dd>{{or .Status.EgressIP "—"}}</dd>{{end}}
       <dt>Last handshake</dt><dd class="dim">{{relTime .Status.LastHandshake}}</dd>
       <dt>Reported</dt><dd class="dim">{{relTime .Status.ReportedAt}}</dd>
     </dl>
     {{if .Status.ReconcileError}}<p class="error-note">{{.Status.ReconcileError}}</p>{{end}}
     {{if .Status.Checks}}
-    <h2 style="margin-top:1rem">Health checks</h2>
+    <div class="subhead">Health checks</div>
     <ul class="checks">
       {{range .Status.Checks}}
       <li>
@@ -100,9 +88,10 @@
     {{end}}
   </div>
 
-  {{if gt (len .Transports) 1}}
+  {{if .Transports}}
   <div class="card">
     <h2>Transport</h2>
+    {{if gt (len .Transports) 1}}
     <p class="hint">Active master↔exit link. Switching moves the proxy in/out of the
       load balancer via mihomo hot-reload — existing client connections are not dropped.</p>
     <div class="switch">
@@ -117,6 +106,9 @@
       </form>
       {{end}}
     </div>
+    {{else}}
+    <dl class="kv"><dt>Active</dt><dd>{{transportLabel .ActiveTransport}}</dd></dl>
+    {{end}}
     {{if .RealityInfo}}
     <dl class="kv" style="margin-top:1rem">
       <dt>REALITY SNI</dt><dd>{{.RealityInfo.ServerName}}</dd>
@@ -126,6 +118,22 @@
     {{end}}
   </div>
   {{end}}
+
+  <div class="card">
+    <h2>Inventory</h2>
+    <dl class="kv">
+      <dt>ID</dt><dd>{{.Node.ID}}</dd>
+      <dt>Region</dt><dd class="dim">{{or .Node.Region "—"}}</dd>
+      <dt>Mgmt (ZT)</dt><dd>{{or .Node.MgmtAddr "—"}}</dd>
+      <dt>Public IP</dt><dd>{{or .Node.PublicIP "—"}}</dd>
+      <dt>Public key</dt><dd class="dim">{{or .Node.PublicKey "— (not registered)"}}</dd>
+      <dt>Agent</dt><dd class="dim">{{if .Node.AgentVersion}}{{.Node.AgentVersion}} (wire v{{.Node.WireVersion}}){{else}}— (not reported){{end}}</dd>
+      <dt>Created</dt><dd class="dim">{{absTime .Node.CreatedAt}}</dd>
+      <dt>Last seen</dt><dd class="dim">{{relTime .Node.LastSeen}}</dd>
+      {{if .WGEasyURL}}<dt>wg-easy</dt><dd><a class="extlink" href="{{.WGEasyURL}}" target="_blank" rel="noopener noreferrer">client admin UI ↗</a></dd>{{end}}
+      {{if .MihomoURL}}<dt>mihomo</dt><dd><a class="extlink" href="{{.MihomoURL}}" target="_blank" rel="noopener noreferrer">router dashboard ↗</a></dd>{{end}}
+    </dl>
+  </div>
 
   <details class="card full spec-card">
     <summary><h2>Rendered NodeSpec (desired state)</h2></summary>

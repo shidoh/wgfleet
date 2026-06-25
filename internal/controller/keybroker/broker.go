@@ -207,7 +207,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	// the master's vless proxy because both call realityFor with the same inputs; the
 	// exit generates its own x25519 keypair locally and publishes only the pubkey.
 	if spec.HasTransport(domain.TransportRealityXHTTP) {
-		rp := realityFor(exit, master.Name)
+		rp := b.realityFor(exit, master.Name)
 		spec.Reality = &domain.RealityServerSpec{
 			ListenPort: rp.Port, UUID: rp.UUID, ShortID: rp.ShortID,
 			ServerName: rp.ServerName, Dest: rp.Dest,
@@ -380,7 +380,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			})
 		}
 		if realityRenderable {
-			rp := realityFor(exit, master.Name)
+			rp := b.realityFor(exit, master.Name)
 			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
 				Name:      exit.Name + "-reality",
 				Endpoint:  netip.AddrPortFrom(exitIP, uint16(rp.Port)).String(),
@@ -436,16 +436,11 @@ type realityParams struct {
 // realityFor resolves the REALITY parameters for an exit's master↔exit tunnel,
 // identical on both ends (the controller owns them). Camouflage fields come from
 // the manifest with safe fallbacks; UUID/short-id/path derive from the tunnel seed.
-func realityFor(exit config.ExitConfig, masterName string) realityParams {
+func (b *Broker) realityFor(exit config.ExitConfig, masterName string) realityParams {
 	uuid, shortID := deriveRealityIDs(realitySeed(exit.Name, masterName))
-	sni := exit.Reality.ServerName
-	if sni == "" {
-		sni = DefaultRealitySNI
-	}
-	dest := exit.Reality.Dest
-	if dest == "" {
-		dest = sni + ":443"
-	}
+	// Camouflage SNI/dest: per-exit override → fleet-wide default → safe built-in.
+	sni := firstNonEmpty(exit.Reality.ServerName, b.fleet.RealityDefaultSNI, DefaultRealitySNI)
+	dest := firstNonEmpty(exit.Reality.Dest, b.fleet.RealityDefaultDest, sni+":443")
 	path := exit.Reality.XHTTPPath
 	if path == "" {
 		path = "/" + shortID
@@ -477,6 +472,18 @@ func resolveActiveTransport(exit config.ExitConfig, node domain.Node) domain.Mas
 		}
 	}
 	return exit.ResolvedActiveTransport()
+}
+
+// ExitTransportInfo reports an exit's resolved active master↔exit transport and
+// its enabled set, for the dashboard fleet list (ADR-0025). It is a cheap pure
+// lookup (manifest + the node's override) — no spec render. ok=false for a
+// non-exit or a node absent from the manifest.
+func (b *Broker) ExitTransportInfo(node domain.Node) (active domain.MasterTransport, enabled []domain.MasterTransport, ok bool) {
+	exit, found := b.findExit(node.ID)
+	if !found {
+		return "", nil, false
+	}
+	return resolveActiveTransport(exit, node).OrDefault(), exit.EnabledTransports(), true
 }
 
 func realitySeed(exitName, masterName string) string {
@@ -812,4 +819,14 @@ func (b *Broker) primaryMaster() (config.MasterConfig, bool) {
 		return config.MasterConfig{}, false
 	}
 	return b.fleet.Masters[0], true
+}
+
+// firstNonEmpty returns the first non-empty string, or "" if all are empty.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

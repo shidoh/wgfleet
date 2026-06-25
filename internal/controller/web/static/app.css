@@ -208,5 +208,15 @@ pre.spec {
   font-family: var(--mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em;
   padding: 0.1rem 0.4rem; border-radius: 4px; border: 1px solid var(--border); color: var(--text-dim);
 }
-.chip.reality { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.chip.reality-xhttp { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
 .subbadges { display: inline-flex; gap: 0.3rem; flex-wrap: wrap; }
+
+/* Node detail: header badges + a separated action toolbar (was a crammed row) */
+.detail-head .badges { display: inline-flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
+.toolbar {
+  display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;
+  margin: 0 0 1.5rem; padding-bottom: 1.1rem; border-bottom: 1px solid var(--border);
+}
+.toolbar form { margin: 0; }
+.toolbar-spacer { flex: 1 1 auto; }
+.subhead { margin: 1.1rem 0 0.5rem; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
