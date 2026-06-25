@@ -220,3 +220,8 @@ pre.spec {
 .toolbar form { margin: 0; }
 .toolbar-spacer { flex: 1 1 auto; }
 .subhead { margin: 1.1rem 0 0.5rem; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
+
+/* Address cell: node public IP (primary) + actual WARP egress IP (smaller, dim) */
+.ipcell .ip-main { font-family: var(--mono); display: block; }
+.ipcell .ip-sub { font-family: var(--mono); font-size: 0.68rem; color: var(--text-faint); display: block; margin-top: 0.1rem; }
+.ipcell .ip-sub::before { content: "↳ "; }

@@ -24,7 +24,7 @@
   <thead>
     <tr>
       <th>Node</th><th>Role</th><th>Region</th><th>State</th>
-      <th>Transport</th><th>Mgmt (ZT)</th><th>Egress IP</th><th>Seen</th>
+      <th>Transport</th><th>Mgmt (ZT)</th><th>Address</th><th>Seen</th>
     </tr>
   </thead>
   <tbody>
@@ -49,7 +49,10 @@
         {{else}}<span class="mono">—</span>{{end}}
       </td>
       <td class="mono">{{or .MgmtAddr "—"}}</td>
-      <td class="mono">{{if eq (lower .Role) "exit"}}{{or .EgressIP "—"}}{{else}}—{{end}}</td>
+      <td class="ipcell">
+        <span class="ip-main">{{or .PublicIP "—"}}</span>
+        {{if and (eq (lower .Role) "exit") .EgressIP (ne .EgressIP .PublicIP)}}<span class="ip-sub" title="Actual egress IP (Cloudflare WARP)">WARP {{.EgressIP}}</span>{{end}}
+      </td>
       <td class="mono">{{relTime .LastSeen}}</td>
     </tr>
     {{end}}
