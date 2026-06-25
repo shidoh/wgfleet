@@ -40,7 +40,7 @@ func newTestHandler(t *testing.T, renderer SpecRenderer) (*Handler, store.Store)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	h, err := New(st, renderer, nil)
+	h, err := New(st, renderer, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -465,7 +465,7 @@ func newProvHandler(t *testing.T, prov Provisioner) (*Handler, store.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	h, err := New(st, nil, prov)
+	h, err := New(st, nil, prov, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -601,6 +601,15 @@ func TestTransportSwitchAction(t *testing.T) {
 		},
 	}
 	h, st := newTestHandler(t, stubRenderer{spec: spec})
+	// The handler must durably persist the switch to the manifest before the store.
+	var persisted []domain.MasterTransport
+	h.persistTransport = func(exitName string, tr domain.MasterTransport) error {
+		if exitName != "exit-de-1" {
+			t.Errorf("persistTransport exit = %q, want exit-de-1", exitName)
+		}
+		persisted = append(persisted, tr)
+		return nil
+	}
 	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
 
 	_, body := get(t, h, "/nodes/exit-de-1")
@@ -620,9 +629,16 @@ func TestTransportSwitchAction(t *testing.T) {
 	if n, _ := st.GetNode(context.Background(), "exit-de-1"); n.ActiveTransport != domain.TransportRealityXHTTP {
 		t.Errorf("override = %q, want reality-xhttp", n.ActiveTransport)
 	}
+	if len(persisted) != 1 || persisted[0] != domain.TransportRealityXHTTP {
+		t.Errorf("manifest persist = %v, want [reality-xhttp]", persisted)
+	}
 
 	if res := post(t, h, "/nodes/exit-de-1/transport/carrier-pigeon"); res.StatusCode != http.StatusBadRequest {
 		t.Errorf("unknown transport status = %d, want 400", res.StatusCode)
+	}
+	// An invalid transport must never reach the manifest writer.
+	if len(persisted) != 1 {
+		t.Errorf("persist called for invalid transport: %v", persisted)
 	}
 }
 

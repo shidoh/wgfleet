@@ -74,12 +74,16 @@ type Handler struct {
 	mux      *http.ServeMux
 	csrf     string       // per-process CSRF token, embedded in forms and double-submit cookie
 	log      *slog.Logger // structured logger; surfaces render failures the page swallows
+	// persistTransport durably records an active-transport switch in the manifest
+	// (the platform's source of truth) so the change survives restart / re-provision.
+	// nil ⇒ store-only (the live override still applies, but is not made durable).
+	persistTransport func(exitName string, t domain.MasterTransport) error
 }
 
 // New builds the dashboard handler. renderer and prov may be nil (the spec
 // preview / provision action are then omitted). Each page is parsed as its own
 // template set so the per-page "content" definitions do not collide.
-func New(st store.Store, renderer SpecRenderer, prov Provisioner) (*Handler, error) {
+func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTransport func(exitName string, t domain.MasterTransport) error) (*Handler, error) {
 	listTmpl, err := parsePage("templates/layout.html", "templates/nodes.html")
 	if err != nil {
 		return nil, fmt.Errorf("web: parse list templates: %w", err)
@@ -92,7 +96,7 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner) (*Handler, err
 	if err != nil {
 		return nil, fmt.Errorf("web: generate csrf token: %w", err)
 	}
-	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default()}
+	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport}
 
 	staticHandler := http.FileServer(http.FS(staticFS))
 	h.mux.Handle("GET /static/", staticHandler)
@@ -111,10 +115,14 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner) (*Handler, err
 	return h, nil
 }
 
-// handleTransport switches an exit's active master↔exit transport (ADR-0025). It
-// records the operator's override in the store; the keybroker re-renders with the
-// new active transport and the master hot-reloads mihomo (the standby proxy moves
-// in/out of the wg-best group) — existing connections are undisturbed.
+// handleTransport switches an exit's active master↔exit transport (ADR-0025).
+// It writes the change to the manifest first (the platform's source of truth, so
+// the switch survives a controller restart and a node delete/re-provision), then
+// records the live store override; the keybroker re-renders with the new active
+// transport and the master hot-reloads mihomo (the standby proxy moves in/out of
+// the wg-best group) — existing connections are undisturbed. Writing the manifest
+// before the store means a manifest-write failure aborts cleanly with nothing
+// changed, instead of leaving a live override the config does not reflect.
 func (h *Handler) handleTransport(w http.ResponseWriter, r *http.Request) {
 	if !h.guard(w, r) {
 		return
@@ -124,6 +132,12 @@ func (h *Handler) handleTransport(w http.ResponseWriter, r *http.Request) {
 	if !t.Valid() {
 		http.Error(w, "unknown transport "+string(t), http.StatusBadRequest)
 		return
+	}
+	if h.persistTransport != nil {
+		if err := h.persistTransport(id, t); err != nil {
+			h.redirectErr(w, r, "/nodes/"+id, "persist transport to manifest", err)
+			return
+		}
 	}
 	if err := h.store.SetNodeActiveTransport(r.Context(), id, t); err != nil {
 		h.redirectErr(w, r, "/nodes/"+id, "set transport", err)

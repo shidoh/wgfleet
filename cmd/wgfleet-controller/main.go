@@ -39,6 +39,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/controller/sweeper"
 	"github.com/shidoh/wgfleet/internal/controller/web"
+	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/metrics"
 	"github.com/shidoh/wgfleet/internal/version"
 )
@@ -119,7 +120,7 @@ func run() error {
 		return upgradeAgentNode(cfg, ca, *upgradeAgent, *agentBin, *plan)
 	}
 
-	return serve(cfg, ca)
+	return serve(cfg, ca, *configPath)
 }
 
 // loadCA builds the fleet CA, resolving the private key through the secret
@@ -150,7 +151,7 @@ func loadCA(cfg *config.ControllerConfig, provider config.SecretProvider) (*pki.
 	return ca, nil
 }
 
-func serve(cfg *config.ControllerConfig, ca *pki.CA) error {
+func serve(cfg *config.ControllerConfig, ca *pki.CA, configPath string) error {
 	host := hostOf(cfg.Controller.Listen)
 	advertiseHost := hostOf(cfg.Controller.Advertise) // "" when advertise unset
 	serverKP, err := ca.IssueServerCert("wgfleet-controller", serverSANs(host, advertiseHost))
@@ -218,7 +219,10 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA) error {
 
 	var webSrv *http.Server
 	if cfg.Controller.WebUI != "" {
-		webHandler, err := web.New(st, broker, provMgr)
+		persistTransport := func(exitName string, t domain.MasterTransport) error {
+			return config.SetExitActiveTransport(configPath, exitName, t)
+		}
+		webHandler, err := web.New(st, broker, provMgr, persistTransport)
 		if err != nil {
 			return fmt.Errorf("build web ui: %w", err)
 		}
