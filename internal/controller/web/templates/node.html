@@ -16,48 +16,55 @@
 
 <div class="toolbar">
   {{if .CanProvision}}
-  <form method="post" action="/nodes/{{.Node.ID}}/provision"
-        onsubmit="return confirm('Provision {{.Node.Name}}? SSH-bootstrap the node and install the agent.')">
+  <form method="post" action="/nodes/{{.Node.ID}}/provision" onsubmit="return lockAction(this)"
+        data-confirm="Provision {{.Node.Name}}? SSH-bootstrap the node and install the agent.">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-    <button class="btn go">Provision</button>
+    <button type="submit" class="btn go" data-pending="Provisioning…">Provision</button>
   </form>
   {{end}}
   {{if .CanUpgrade}}
-  <form method="post" action="/nodes/{{.Node.ID}}/upgrade"
-        onsubmit="return confirm('Upgrade the agent on {{.Node.Name}}? Upload the new binary and restart the agent (data plane survives the restart).')">
+  <form method="post" action="/nodes/{{.Node.ID}}/upgrade" onsubmit="return lockAction(this)"
+        data-confirm="Upgrade the agent on {{.Node.Name}}? Upload the new binary and restart the agent (data plane survives the restart).">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-    <button class="btn">Upgrade agent</button>
+    <button type="submit" class="btn" data-pending="Upgrading…">Upgrade agent</button>
   </form>
   {{end}}
   {{if .Node.Drain}}
   {{/* Fast, one-click reverse: no confirm. Prominent so a suspended node is
        obviously easy to bring back. Hot-reloads mihomo — other clients undisturbed. */}}
-  <form method="post" action="/nodes/{{.Node.ID}}/undrain">
+  <form method="post" action="/nodes/{{.Node.ID}}/undrain" onsubmit="return lockAction(this)">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-    <button class="btn go" title="Bring this node back into routing. Instant (mihomo hot reload); no node change.">↩ Resume routing</button>
+    <button type="submit" class="btn go" data-pending="Resuming…" title="Bring this node back into routing. Instant (mihomo hot reload); no node change.">↩ Resume routing</button>
   </form>
   {{else}}
-  <form method="post" action="/nodes/{{.Node.ID}}/drain"
-        onsubmit="return confirm('Take {{.Node.Name}} out of routing? New traffic stops going to it (for a flaky node). The node is NOT changed or wiped, and it is applied by hot-reloading mihomo so other clients keep their connections. Reverse instantly with “Resume routing”.')">
+  <form method="post" action="/nodes/{{.Node.ID}}/drain" onsubmit="return lockAction(this)"
+        data-confirm="Take {{.Node.Name}} out of routing? New traffic stops going to it (for a flaky node). The node is NOT changed or wiped, and it is applied by hot-reloading mihomo so other clients keep their connections. Reverse instantly with “Resume routing”.">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-    <button class="btn warn" title="Temporarily pull this node out of routing (reversible; no node change).">Take out of routing</button>
+    <button type="submit" class="btn warn" data-pending="Taking out…" title="Temporarily pull this node out of routing (reversible; no node change).">Take out of routing</button>
   </form>
   {{end}}
   <span class="toolbar-spacer"></span>
   {{if not .Node.Decommission}}
-  <form method="post" action="/nodes/{{.Node.ID}}/decommission"
-        onsubmit="return confirm('Decommission {{.Node.Name}}? The agent will tear down its data plane (stop services, bring tunnels down). Take it out of routing first.')">
+  <form method="post" action="/nodes/{{.Node.ID}}/decommission" onsubmit="return lockAction(this)"
+        data-confirm="Decommission {{.Node.Name}}? The agent will tear down its data plane (stop services, bring tunnels down). Take it out of routing first.">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-    <button class="btn warn">Decommission</button>
+    <button type="submit" class="btn warn" data-pending="Decommissioning…">Decommission</button>
   </form>
   {{end}}
-  <form method="post" action="/nodes/{{.Node.ID}}/delete"
-        onsubmit="return confirm('Delete {{.Node.Name}} from inventory? Decommission and tear it down first.')">
+  {{if .CanDelete}}
+  <form method="post" action="/nodes/{{.Node.ID}}/delete" onsubmit="return lockAction(this)"
+        data-confirm="Delete {{.Node.Name}} from inventory? It has been decommissioned; this removes it permanently.">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-    <button class="btn danger">Delete</button>
+    <button type="submit" class="btn danger" data-pending="Deleting…">Delete</button>
   </form>
+  {{else}}
+  {{/* Delete is gated on Decommission: enforce the drain→decommission→delete order
+       the copy implies, not just a confirm() the operator can blow past. */}}
+  <button type="button" class="btn danger" disabled title="Decommission and tear down first">Delete</button>
+  {{end}}
 </div>
 
+{{if .Flash}}<p class="error-note" role="alert">⚠ {{.Flash}}</p>{{end}}
 {{if .Node.LastError}}<p class="error-note">⚠ {{.Node.LastError}}</p>{{end}}
 
 <div class="grid">
@@ -94,12 +101,15 @@
     {{if gt (len .Transports) 1}}
     <p class="hint">Active master↔exit link. Switching moves the proxy in/out of the
       load balancer via mihomo hot-reload — existing client connections are not dropped.</p>
-    <div class="switch">
+    <div class="switch" role="group" aria-label="Active master↔exit transport">
       {{range .Transports}}
       {{$on := eq .OrDefault $.ActiveTransport}}
-      <form method="post" action="/nodes/{{$.Node.ID}}/transport/{{.}}">
+      <form method="post" action="/nodes/{{$.Node.ID}}/transport/{{.}}" onsubmit="return lockAction(this)"
+            data-confirm="Switch {{$.Node.Name}} to {{transportLabel .}}? This re-renders the master and hot-reloads mihomo — active connections survive, new traffic moves to the new transport.">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-        <button class="seg {{if $on}}on{{end}}" {{if $on}}disabled aria-current="true"{{end}}
+        <button type="submit" class="seg {{if $on}}on{{end}}" {{if $on}}disabled{{end}}
+                aria-pressed="{{if $on}}true{{else}}false{{end}}"{{if $on}} aria-current="true"{{end}}
+                data-pending="Switching…"
                 title="Route master↔exit traffic over {{transportLabel .}}">
           {{transportLabel .}}{{if $on}} <span class="dotmark">●</span>{{end}}
         </button>

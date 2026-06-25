@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,9 @@ import (
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
 )
+
+// errInjected is a sentinel returned by stubs to exercise action error paths.
+var errInjected = errors.New("injected failure")
 
 type stubRenderer struct {
 	spec domain.NodeSpec
@@ -234,6 +238,56 @@ func TestDeleteAction(t *testing.T) {
 	}
 }
 
+func TestDeleteGatedOnDecommission(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+
+	// Not decommissioned ⇒ disabled Delete (no form).
+	if _, body := get(t, h, "/nodes/exit-de-1"); strings.Contains(body, `action="/nodes/exit-de-1/delete"`) {
+		t.Error("delete form should be hidden until the node is decommissioned")
+	}
+
+	// Once decommissioned ⇒ the delete form appears.
+	_ = st.SetNodeDecommission(context.Background(), "exit-de-1", true)
+	if _, body := get(t, h, "/nodes/exit-de-1"); !strings.Contains(body, `action="/nodes/exit-de-1/delete"`) {
+		t.Error("decommissioned node should show the delete form")
+	}
+}
+
+// TestActionErrorRedirectsWithFlash covers the error path: a store mutation that
+// fails (here, a drain on a node that does not exist) must redirect back to the
+// originating page with a one-shot flash cookie — NOT dump a bare http.Error text
+// page. The CSRF guard still gates the request.
+func TestActionErrorRedirectsWithFlash(t *testing.T) {
+	h, _ := newTestHandler(t, nil) // no node seeded ⇒ the mutation fails
+
+	res := post(t, h, "/nodes/ghost/drain")
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("failed action status = %d, want 303 (redirect, not a bare error page)", res.StatusCode)
+	}
+	if loc := res.Header.Get("Location"); loc != "/nodes/ghost" {
+		t.Errorf("redirect Location = %q, want /nodes/ghost", loc)
+	}
+	var flashed bool
+	for _, c := range res.Cookies() {
+		if c.Name == flashCookie && c.Value != "" {
+			flashed = true
+		}
+	}
+	if !flashed {
+		t.Error("failed action should set a flash cookie carrying the error")
+	}
+
+	// The error path is still CSRF-gated: same-origin but no token ⇒ 403, no flash.
+	req := httptest.NewRequest(http.MethodPost, "/nodes/ghost/drain", nil)
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Result().StatusCode != http.StatusForbidden {
+		t.Errorf("missing-CSRF failed action = %d, want 403", rec.Result().StatusCode)
+	}
+}
+
 func TestActionsRejectCrossSite(t *testing.T) {
 	h, st := newTestHandler(t, nil)
 	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
@@ -304,8 +358,13 @@ func TestDetailShowsDrainButton(t *testing.T) {
 	if !strings.Contains(body, `action="/nodes/exit-de-1/drain"`) {
 		t.Error("detail page missing drain action")
 	}
-	if !strings.Contains(body, `action="/nodes/exit-de-1/delete"`) {
-		t.Error("detail page missing delete action")
+	// Delete is gated on Decommission: a non-decommissioned node shows a disabled
+	// Delete button, not the delete form.
+	if strings.Contains(body, `action="/nodes/exit-de-1/delete"`) {
+		t.Error("non-decommissioned node should not show an active delete form")
+	}
+	if !strings.Contains(body, "Decommission and tear down first") {
+		t.Error("non-decommissioned node should show the disabled-delete tooltip")
 	}
 	// Once drained, show undrain + draining badge.
 	_ = st.SetNodeDrain(context.Background(), "exit-de-1", true)
@@ -424,6 +483,59 @@ func TestProvisionAction(t *testing.T) {
 	}
 	if prov.triggered != "exit-de-1" {
 		t.Errorf("TriggerAsync not called with the node id, got %q", prov.triggered)
+	}
+}
+
+func TestUpgradeAction(t *testing.T) {
+	// A provisioned (Ready) node can have its agent rolled forward. The success
+	// path 303-redirects; the failure path flashes-and-redirects (not a bare error).
+	prov := &stubProv{provisionable: true}
+	h, st := newProvHandler(t, prov)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+
+	res := post(t, h, "/nodes/exit-de-1/upgrade")
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("upgrade status = %d, want 303", res.StatusCode)
+	}
+	if prov.upgraded != "exit-de-1" {
+		t.Errorf("TriggerUpgrade not called with the node id, got %q", prov.upgraded)
+	}
+
+	// TriggerUpgrade error ⇒ redirect back to the node page with a flash, not 4xx text.
+	prov.err = errInjected
+	res = post(t, h, "/nodes/exit-de-1/upgrade")
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("failed upgrade status = %d, want 303", res.StatusCode)
+	}
+	if loc := res.Header.Get("Location"); loc != "/nodes/exit-de-1" {
+		t.Errorf("failed upgrade Location = %q, want /nodes/exit-de-1", loc)
+	}
+	var flashed bool
+	for _, c := range res.Cookies() {
+		if c.Name == flashCookie && c.Value != "" {
+			flashed = true
+		}
+	}
+	if !flashed {
+		t.Error("failed upgrade should set a flash cookie")
+	}
+
+	// Still CSRF-gated.
+	req := httptest.NewRequest(http.MethodPost, "/nodes/exit-de-1/upgrade", nil)
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Result().StatusCode != http.StatusForbidden {
+		t.Errorf("missing-CSRF upgrade = %d, want 403", rec.Result().StatusCode)
+	}
+}
+
+func TestUpgradeUnavailableWhenNoManager(t *testing.T) {
+	h, st := newTestHandler(t, nil) // prov is nil
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+	res := post(t, h, "/nodes/exit-de-1/upgrade")
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("upgrade without manager = %d, want 503", res.StatusCode)
 	}
 }
 

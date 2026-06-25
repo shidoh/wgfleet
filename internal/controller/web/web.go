@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"net"
 	"net/http"
 	"sort"
@@ -30,6 +31,11 @@ import (
 
 // csrfCookie is the name of the double-submit cookie carrying the CSRF token.
 const csrfCookie = "wgfleet_csrf"
+
+// flashCookie carries a one-shot error message across an action's redirect, so a
+// failed mutation lands back on its originating page (styled) instead of dumping a
+// bare http.Error text page. It is read-and-cleared on the next render.
+const flashCookie = "wgfleet_flash"
 
 //go:embed templates/*.html
 var templatesFS embed.FS
@@ -66,7 +72,8 @@ type Handler struct {
 	listTmpl *template.Template // layout + nodes list (also holds "nodes-table")
 	nodeTmpl *template.Template // layout + node detail
 	mux      *http.ServeMux
-	csrf     string // per-process CSRF token, embedded in forms and double-submit cookie
+	csrf     string       // per-process CSRF token, embedded in forms and double-submit cookie
+	log      *slog.Logger // structured logger; surfaces render failures the page swallows
 }
 
 // New builds the dashboard handler. renderer and prov may be nil (the spec
@@ -85,7 +92,7 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner) (*Handler, err
 	if err != nil {
 		return nil, fmt.Errorf("web: generate csrf token: %w", err)
 	}
-	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, mux: http.NewServeMux(), csrf: token}
+	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default()}
 
 	staticHandler := http.FileServer(http.FS(staticFS))
 	h.mux.Handle("GET /static/", staticHandler)
@@ -119,7 +126,7 @@ func (h *Handler) handleTransport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.store.SetNodeActiveTransport(r.Context(), id, t); err != nil {
-		http.Error(w, "set transport: "+err.Error(), http.StatusNotFound)
+		h.redirectErr(w, r, "/nodes/"+id, "set transport", err)
 		return
 	}
 	http.Redirect(w, r, "/nodes/"+id, http.StatusSeeOther)
@@ -137,7 +144,7 @@ func (h *Handler) handleProvision(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if err := h.prov.TriggerAsync(id); err != nil {
-		http.Error(w, "provision: "+err.Error(), http.StatusConflict)
+		h.redirectErr(w, r, "/nodes/"+id, "provision", err)
 		return
 	}
 	http.Redirect(w, r, "/nodes/"+id, http.StatusSeeOther)
@@ -156,7 +163,7 @@ func (h *Handler) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if err := h.prov.TriggerUpgrade(id); err != nil {
-		http.Error(w, "upgrade: "+err.Error(), http.StatusConflict)
+		h.redirectErr(w, r, "/nodes/"+id, "upgrade", err)
 		return
 	}
 	http.Redirect(w, r, "/nodes/"+id, http.StatusSeeOther)
@@ -170,7 +177,7 @@ func (h *Handler) handleDecommission(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if err := h.store.SetNodeDecommission(r.Context(), id, true); err != nil {
-		http.Error(w, "set decommission: "+err.Error(), http.StatusNotFound)
+		h.redirectErr(w, r, "/nodes/"+id, "set decommission", err)
 		return
 	}
 	http.Redirect(w, r, "/nodes/"+id, http.StatusSeeOther)
@@ -185,7 +192,7 @@ func (h *Handler) handleDrain(drain bool) http.HandlerFunc {
 		}
 		id := r.PathValue("id")
 		if err := h.store.SetNodeDrain(r.Context(), id, drain); err != nil {
-			http.Error(w, "set drain: "+err.Error(), http.StatusNotFound)
+			h.redirectErr(w, r, "/nodes/"+id, "set drain", err)
 			return
 		}
 		http.Redirect(w, r, "/nodes/"+id, http.StatusSeeOther)
@@ -200,7 +207,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if err := h.store.DeleteNode(r.Context(), id); err != nil {
-		http.Error(w, "delete node: "+err.Error(), http.StatusNotFound)
+		h.redirectErr(w, r, "/nodes/"+id, "delete node", err)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -261,6 +268,41 @@ func (h *Handler) setCSRFCookie(w http.ResponseWriter) {
 	})
 }
 
+// redirectErr surfaces a failed action back on its originating page: it stashes a
+// short-lived flash cookie with the message and 303-redirects there. The next
+// render reads-and-clears the flash into the page's styled .error-note, so a
+// failure no longer replaces the whole console with a bare http.Error text page.
+func (h *Handler) redirectErr(w http.ResponseWriter, r *http.Request, dest, what string, err error) {
+	msg := what
+	if err != nil {
+		msg = what + ": " + err.Error()
+	}
+	h.log.Warn("web action failed", "action", what, "path", r.URL.Path, "error", err)
+	http.SetCookie(w, &http.Cookie{
+		Name:     flashCookie,
+		Value:    base64.RawURLEncoding.EncodeToString([]byte(msg)),
+		Path:     "/",
+		MaxAge:   30,
+		SameSite: http.SameSiteStrictMode,
+	})
+	http.Redirect(w, r, dest, http.StatusSeeOther)
+}
+
+// takeFlash reads-and-clears the one-shot flash error cookie. It returns "" when
+// no flash is set. Clearing is best-effort (a Set-Cookie with MaxAge<0).
+func (h *Handler) takeFlash(w http.ResponseWriter, r *http.Request) string {
+	c, err := r.Cookie(flashCookie)
+	if err != nil || c.Value == "" {
+		return ""
+	}
+	http.SetCookie(w, &http.Cookie{Name: flashCookie, Value: "", Path: "/", MaxAge: -1})
+	raw, err := base64.RawURLEncoding.DecodeString(c.Value)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
 // newCSRFToken returns a 32-byte random token, base64url-encoded.
 func newCSRFToken() (string, error) {
 	buf := make([]byte, 32)
@@ -288,6 +330,7 @@ type listData struct {
 	NodeCount int
 	Nodes     []nodeRow
 	Summary   []stateStat
+	Flash     string // one-shot error surfaced from a failed action redirect
 }
 
 // nodeRow is a fleet-list row: the inventory node plus a few derived operational
@@ -400,6 +443,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		NodeCount: len(rows),
 		Nodes:     rows,
 		Summary:   summarize(rows),
+		Flash:     h.takeFlash(w, r),
 	}
 	h.render(w, h.listTmpl, "layout", data)
 }
@@ -423,6 +467,8 @@ type nodeData struct {
 	SpecErr      string
 	CanProvision bool
 	CanUpgrade   bool   // node is provisioned + upgradable over SSH
+	CanDelete    bool   // node has been decommissioned — safe to remove from inventory
+	Flash        string // one-shot error surfaced from a failed action redirect
 	WGEasyURL    string // master only: link to its wg-easy admin UI (mgmt overlay)
 	MihomoURL    string // master only: link to its mihomo (Clash) web dashboard (mgmt overlay)
 	WireSkew     string // non-empty (reason) when the agent's wire version is incompatible
@@ -451,7 +497,7 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 		// report, so the detail page matches the list (see nodes()).
 		node = backfillFromManifest(node, mn)
 	}
-	data := nodeData{Title: node.Name, NodeCount: 1, Node: node, CSRF: h.csrf}
+	data := nodeData{Title: node.Name, NodeCount: 1, Node: node, CSRF: h.csrf, CanDelete: node.Decommission, Flash: h.takeFlash(w, r)}
 	if node.WireVersion != 0 {
 		if compat := api.CheckWire(node.WireVersion); compat != api.WireCompatible {
 			data.WireSkew = api.IncompatibilityDetail(compat, node.WireVersion)
@@ -539,7 +585,9 @@ func (h *Handler) render(w http.ResponseWriter, tmpl *template.Template, name st
 	h.setCSRFCookie(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
-		// Headers may already be sent; surface best-effort.
+		// Headers may already be sent; surface best-effort in-page AND log it, so a
+		// render failure is not silently swallowed into an HTML comment nobody sees.
+		h.log.Error("web: template render failed", "template", name, "error", err)
 		_, _ = fmt.Fprintf(w, "\n<!-- template error: %v -->", err)
 	}
 }
