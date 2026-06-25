@@ -414,8 +414,10 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 // is published and read back from the store.
 const (
 	// DefaultRealityListenPort is the exit's VLESS port when the manifest leaves it
-	// unset. It must differ from the AWG awg0 port so both transports run warm.
-	DefaultRealityListenPort = 8443
+	// unset — 443, the standard HTTPS port (least conspicuous; an earlier finding). It must
+	// differ from the AWG awg0 port so both transports run warm; the AWG port is a
+	// high stable-random one, so 443 does not collide.
+	DefaultRealityListenPort = 443
 	// DefaultRealitySNI is the camouflage SNI fallback. Operators SHOULD override
 	// per exit with an ASN-plausible target (recon 2026-06-25); this is only a safe
 	// default so a minimally-configured exit still renders.
@@ -438,18 +440,21 @@ type realityParams struct {
 // the manifest with safe fallbacks; UUID/short-id/path derive from the tunnel seed.
 func (b *Broker) realityFor(exit config.ExitConfig, masterName string) realityParams {
 	uuid, shortID := deriveRealityIDs(realitySeed(exit.Name, masterName))
+	r := exit.Transports.Reality
 	// Camouflage SNI/dest: per-exit override → fleet-wide default → safe built-in.
-	sni := firstNonEmpty(exit.Reality.ServerName, b.fleet.RealityDefaultSNI, DefaultRealitySNI)
-	dest := firstNonEmpty(exit.Reality.Dest, b.fleet.RealityDefaultDest, sni+":443")
-	path := exit.Reality.XHTTPPath
+	// dest_domain+dest_port compose to "host:port" (config.DestHostPort); when unset
+	// fall back to the fleet default, then to the SNI on the default HTTPS port.
+	sni := firstNonEmpty(r.SNI, r.DestDomain, b.fleet.RealityDefaultSNI, DefaultRealitySNI)
+	dest := firstNonEmpty(r.DestHostPort(), b.fleet.RealityDefaultDest, sni+":443")
+	path := r.XHTTPPath
 	if path == "" {
 		path = "/" + shortID
 	}
-	port := exit.Reality.ListenPort
+	port := r.ListenPort
 	if port == 0 {
 		port = DefaultRealityListenPort
 	}
-	image := exit.Reality.Image
+	image := r.Image
 	if image == "" {
 		image = compose.DefaultXrayImage
 	}

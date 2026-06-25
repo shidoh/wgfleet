@@ -91,6 +91,64 @@ func TestLoadControllerConfig(t *testing.T) {
 	}
 }
 
+const dualTransportYAML = `
+controller:
+  listen: "0.0.0.0:8443"
+  store: "/var/lib/wgfleet/state.db"
+  metrics: "127.0.0.1:9300"
+  pki:
+    ca_cert: "/etc/wgfleet/ca.crt"
+    ca_key: "secret://ca-key"
+fleet:
+  masters:
+    - name: master-xa-1
+      mgmt_addr: 10.20.25.254
+      client_awg:
+        listen_port: 443
+        address_pool: 10.80.0.0/24
+  exits:
+    - name: exit-de-1
+      region: de
+      egress: warp
+      address_pool: 10.81.0.0/24
+      mgmt_addr: 10.20.3.20
+      transports:
+        awg:
+          enabled: true
+          listen_port: 0
+        reality:
+          enabled: true
+          listen_port: 443
+          dest_domain: www.microsoft.com
+          dest_port: 443
+          sni: www.microsoft.com
+      active_transport: reality-xhttp
+`
+
+func TestLoadDualTransportSections(t *testing.T) {
+	path := writeTemp(t, "controller.yaml", dualTransportYAML)
+	cfg, err := Load(path, &ControllerConfig{})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	e := cfg.Fleet.Exits[0]
+	if !e.Transports.AWG.Enabled || !e.Transports.Reality.Enabled {
+		t.Fatalf("both sections should be enabled: %+v", e.Transports)
+	}
+	if got := len(e.EnabledTransports()); got != 2 {
+		t.Errorf("EnabledTransports = %v, want 2", e.EnabledTransports())
+	}
+	if got := e.ResolvedActiveTransport().String(); got != "reality-xhttp" {
+		t.Errorf("active = %q, want reality-xhttp", got)
+	}
+	if got := e.Transports.Reality.ListenPort; got != 443 {
+		t.Errorf("reality listen_port = %d, want 443", got)
+	}
+	if got := e.Transports.Reality.DestHostPort(); got != "www.microsoft.com:443" {
+		t.Errorf("dest = %q, want www.microsoft.com:443", got)
+	}
+}
+
 func TestEnvOverride(t *testing.T) {
 	path := writeTemp(t, "controller.yaml", controllerYAML)
 	t.Setenv("WGFLEET_CONTROLLER_LISTEN", "127.0.0.1:9443")

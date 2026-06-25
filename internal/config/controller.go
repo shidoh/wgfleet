@@ -401,38 +401,76 @@ type ExitConfig struct {
 	DNS                       DNSConfig      `koanf:"dns"` // optional rich blocky tuning + custom config
 	Firewall                  FirewallConfig `koanf:"firewall"`
 	SSH                       SSHConfig      `koanf:"ssh"` // bootstrap target
-	// Transports lists the master↔exit transports this exit runs (ADR-0025):
-	// "awg" and/or "reality-xhttp". Empty ⇒ ["awg"] (AWG-only, back-compat).
-	Transports []string `koanf:"transports"`
-	// ActiveTransport is the transport the master routes to (must be in Transports).
+	// Transports declares which master↔exit transports this exit runs and tunes each
+	// (ADR-0025): two sections — awg and reality — each gated by its `enabled` flag.
+	// Both disabled ⇒ AWG-only (back-compat). Both enabled ⇒ dual-transport (warm).
+	Transports TransportsConfig `koanf:"transports"`
+	// ActiveTransport is the transport the master routes to (must be enabled).
 	// Empty ⇒ the first enabled transport. The operator flips this (or via the UI)
 	// to switch the live path between AWG and REALITY.
 	ActiveTransport string `koanf:"active_transport"`
-	// Reality tunes the VLESS+REALITY+XHTTP transport (camouflage dest/SNI, port).
-	Reality RealityConfig `koanf:"reality"`
 }
 
-// RealityConfig is the operator's per-exit tuning for the VLESS+REALITY+XHTTP
-// transport (ADR-0025). The REALITY x25519 keypair, UUID and short-id are NOT here
-// — the exit generates its keypair locally and the controller derives the shared
-// identifiers; this only carries operator-facing camouflage choices.
-type RealityConfig struct {
-	ListenPort int    `koanf:"listen_port"` // VLESS port; 0 ⇒ default (must differ from the AWG port)
-	Dest       string `koanf:"dest"`        // camouflage target host:port; empty ⇒ fleet default
-	ServerName string `koanf:"server_name"` // camouflage SNI; empty ⇒ derived from dest's host
-	XHTTPPath  string `koanf:"xhttp_path"`  // XHTTP path; empty ⇒ default
+// TransportsConfig holds the two master↔exit transport sections (ADR-0025). Each
+// section is gated by its own `enabled` flag, so the operator turns a transport on
+// (and tunes it) in one place; the active transport is selected by the enclosing
+// ExitConfig.ActiveTransport.
+type TransportsConfig struct {
+	AWG     AWGTransportConfig     `koanf:"awg"`
+	Reality RealityTransportConfig `koanf:"reality"`
+}
+
+// AWGTransportConfig tunes the kernel AmneziaWG transport (awg-quick awg0 on the
+// exit, a mihomo wireguard proxy on the master).
+type AWGTransportConfig struct {
+	Enabled    bool `koanf:"enabled"`
+	ListenPort int  `koanf:"listen_port"` // WG server UDP port; 0 ⇒ stable-random derived from the exit name (as on other exits)
+}
+
+// RealityTransportConfig is the operator's per-exit tuning for the VLESS+REALITY+
+// XHTTP transport (ADR-0025). The REALITY x25519 keypair, UUID and short-id are NOT
+// here — the exit generates its keypair locally and the controller derives the
+// shared identifiers; this carries only operator-facing camouflage choices.
+type RealityTransportConfig struct {
+	Enabled    bool   `koanf:"enabled"`
+	ListenPort int    `koanf:"listen_port"` // VLESS port; 0 ⇒ DefaultRealityListenPort (443). Must differ from the AWG port so both run warm.
+	DestDomain string `koanf:"dest_domain"` // camouflage target host; empty ⇒ fleet default / SNI
+	DestPort   int    `koanf:"dest_port"`   // camouflage target port; 0 ⇒ 443
+	SNI        string `koanf:"sni"`         // camouflage SNI (ClientHello); empty ⇒ dest_domain / fleet default
+	XHTTPPath  string `koanf:"xhttp_path"`  // XHTTP path; empty ⇒ /<short-id>
 	Image      string `koanf:"image"`       // xray image; empty ⇒ default pinned
 }
 
-// EnabledTransports resolves the exit's transport set into domain values, defaulting
-// to AWG-only when the manifest leaves it empty (back-compat).
-func (e ExitConfig) EnabledTransports() []domain.MasterTransport {
-	if len(e.Transports) == 0 {
-		return []domain.MasterTransport{domain.TransportAWG}
+// DestHostPort returns the REALITY camouflage target as "host:port" from the split
+// dest_domain/dest_port fields (dest_port 0 ⇒ 443), or "" when no domain is set —
+// the keybroker then falls back to the fleet default or the SNI.
+func (r RealityTransportConfig) DestHostPort() string {
+	if r.DestDomain == "" {
+		return ""
 	}
-	out := make([]domain.MasterTransport, 0, len(e.Transports))
-	for _, t := range e.Transports {
-		out = append(out, domain.MasterTransport(t))
+	port := r.DestPort
+	if port == 0 {
+		port = DefaultRealityDestPort
+	}
+	return fmt.Sprintf("%s:%d", r.DestDomain, port)
+}
+
+// DefaultRealityDestPort is the camouflage target port assumed when dest_port is
+// unset — 443, the real TLS site the REALITY inbound borrows a handshake from.
+const DefaultRealityDestPort = 443
+
+// EnabledTransports resolves the exit's enabled transport set into domain values,
+// defaulting to AWG-only when the manifest enables neither section (back-compat).
+func (e ExitConfig) EnabledTransports() []domain.MasterTransport {
+	var out []domain.MasterTransport
+	if e.Transports.AWG.Enabled {
+		out = append(out, domain.TransportAWG)
+	}
+	if e.Transports.Reality.Enabled {
+		out = append(out, domain.TransportRealityXHTTP)
+	}
+	if len(out) == 0 {
+		return []domain.MasterTransport{domain.TransportAWG}
 	}
 	return out
 }
@@ -474,7 +512,10 @@ type DNSPortsConfig struct {
 // per-node port derived from the exit name when unset (randomized within a
 // reasonable range so exits don't all share one fixed port).
 func (e ExitConfig) WGListenPort() int {
-	if e.ListenPort > 0 {
+	if p := e.Transports.AWG.ListenPort; p > 0 {
+		return p
+	}
+	if e.ListenPort > 0 { // legacy top-level listen_port (pre-two-section schema)
 		return e.ListenPort
 	}
 	return derivedExitPort(e.Name)
@@ -654,27 +695,31 @@ func (c ControllerConfig) Validate() error {
 		if err := validateMgmtAddr(e.MgmtAddr); err != nil {
 			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): %w", i, e.Name, err))
 		}
-		// Transport set (ADR-0025): each declared transport must be known, and the
-		// active transport must be one of them. An empty set defaults to AWG-only.
+		// Transport set (ADR-0025): the active transport must be one of the enabled
+		// sections. Neither section enabled defaults to AWG-only.
 		activeFound := false
 		active := e.ResolvedActiveTransport()
 		for _, t := range e.EnabledTransports() {
-			if !t.Valid() {
-				errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): unknown transport %q (want %q or %q)",
-					i, e.Name, t, domain.TransportAWG, domain.TransportRealityXHTTP))
-			}
 			if t == active {
 				activeFound = true
 			}
 		}
 		if !activeFound {
-			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): active_transport %q is not in transports %v",
-				i, e.Name, active, e.Transports))
+			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): active_transport %q is not an enabled transport %v",
+				i, e.Name, active, e.EnabledTransports()))
 		}
-		if p := e.Reality.ListenPort; p != 0 && (p < 1 || p > 65535) {
-			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): reality.listen_port %d out of range", i, e.Name, p))
+		r := e.Transports.Reality
+		if p := r.ListenPort; p != 0 && (p < 1 || p > 65535) {
+			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): transports.reality.listen_port %d out of range", i, e.Name, p))
 		}
-		if err := validateRealityCamouflage(e.Reality.ServerName, e.Reality.Dest); err != nil {
+		if p := r.DestPort; p != 0 && (p < 1 || p > 65535) {
+			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): transports.reality.dest_port %d out of range", i, e.Name, p))
+		}
+		// Both transports run warm side by side; their listen ports must differ.
+		if e.Transports.AWG.Enabled && r.Enabled && r.ListenPort != 0 && r.ListenPort == e.WGListenPort() {
+			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): transports.reality.listen_port %d collides with the AWG port", i, e.Name, r.ListenPort))
+		}
+		if err := validateRealityCamouflage(r.SNI, r.DestHostPort()); err != nil {
 			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): %w", i, e.Name, err))
 		}
 	}

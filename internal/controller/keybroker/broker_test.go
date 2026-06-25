@@ -786,7 +786,7 @@ func TestRegisterRealityKey(t *testing.T) {
 func TestRenderDualTransport(t *testing.T) {
 	ctx := context.Background()
 	fleet := testFleet()
-	fleet.Exits[0].Transports = []string{"awg", "reality-xhttp"}
+	fleet.Exits[0].Transports = config.TransportsConfig{AWG: config.AWGTransportConfig{Enabled: true}, Reality: config.RealityTransportConfig{Enabled: true}}
 	fleet.Exits[0].ActiveTransport = "awg"
 	fleet.Exits[0].SSH = config.SSHConfig{Host: "198.51.100.7"} // dialable endpoint
 	st, err := store.Open(":memory:")
@@ -858,7 +858,7 @@ func TestRenderDualTransport(t *testing.T) {
 func TestRenderDualTransportRealityActiveFlipsDrain(t *testing.T) {
 	ctx := context.Background()
 	fleet := testFleet()
-	fleet.Exits[0].Transports = []string{"awg", "reality-xhttp"}
+	fleet.Exits[0].Transports = config.TransportsConfig{AWG: config.AWGTransportConfig{Enabled: true}, Reality: config.RealityTransportConfig{Enabled: true}}
 	fleet.Exits[0].ActiveTransport = "reality-xhttp"
 	fleet.Exits[0].SSH = config.SSHConfig{Host: "198.51.100.7"}
 	st, _ := store.Open(":memory:")
@@ -890,7 +890,7 @@ func TestRenderDualTransportRealityActiveFlipsDrain(t *testing.T) {
 func TestActiveTransportOverride(t *testing.T) {
 	ctx := context.Background()
 	fleet := testFleet()
-	fleet.Exits[0].Transports = []string{"awg", "reality-xhttp"}
+	fleet.Exits[0].Transports = config.TransportsConfig{AWG: config.AWGTransportConfig{Enabled: true}, Reality: config.RealityTransportConfig{Enabled: true}}
 	fleet.Exits[0].ActiveTransport = "awg" // manifest default
 	fleet.Exits[0].SSH = config.SSHConfig{Host: "198.51.100.7"}
 	st, _ := store.Open(":memory:")
@@ -934,7 +934,7 @@ func TestRealityCamouflageFleetDefaultAndOverride(t *testing.T) {
 	ctx := context.Background()
 	fleet := testFleet()
 	fleet.RealityDefaultSNI = "www.cloudflare.com"
-	fleet.Exits[0].Transports = []string{"awg", "reality-xhttp"}
+	fleet.Exits[0].Transports = config.TransportsConfig{AWG: config.AWGTransportConfig{Enabled: true}, Reality: config.RealityTransportConfig{Enabled: true}}
 	fleet.Exits[0].ActiveTransport = "awg"
 	fleet.Exits[0].SSH = config.SSHConfig{Host: "198.51.100.7"}
 	st, _ := store.Open(":memory:")
@@ -950,7 +950,7 @@ func TestRealityCamouflageFleetDefaultAndOverride(t *testing.T) {
 	}
 
 	// Per-exit override wins over the fleet default.
-	b.fleet.Exits[0].Reality.ServerName = "github.com"
+	b.fleet.Exits[0].Transports.Reality.SNI = "github.com"
 	s2, _ := b.RenderNodeSpec(ctx, "exit-de-1")
 	if s2.Reality.ServerName != "github.com" {
 		t.Errorf("per-exit SNI override = %q, want github.com", s2.Reality.ServerName)
