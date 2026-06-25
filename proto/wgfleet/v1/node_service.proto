@@ -86,6 +86,25 @@ message NodeSpec {
   repeated string egress_chain = 12; // egress priority chain for censorship-adaptive failover (ADR-0017); [0] = preferred (== egress), later = fallbacks; empty ⇒ no failover
   int32 egress_throughput_min_bps = 13; // exit egress throughput floor in bytes/sec; 0 = watchdog disabled (ADR-0021)
   string egress_throughput_probe_url = 14; // URL the throughput watchdog downloads through the active egress; empty = agent default
+  // Dual-transport exit (ADR-0025; additive — an older agent ignores these and
+  // stays AWG-only, backward-compatible, no wire-version bump).
+  repeated string enabled_transports = 15; // master↔exit transports the exit runs; empty ⇒ ["awg"]
+  string active_transport = 16; // the transport placed in the master LB; empty ⇒ "awg"
+  RealitySrvSpec reality = 17; // VLESS+REALITY+XHTTP inbound spec (exit only; set when reality-xhttp enabled)
+}
+
+// RealitySrvSpec is the exit-side VLESS+REALITY+XHTTP inbound desired state
+// (xray-core). Carries no private key — the exit generates its REALITY x25519
+// keypair locally and publishes only the public key (key-broker model).
+message RealitySrvSpec {
+  int32 listen_port = 1;  // VLESS port (differs from the AWG port)
+  string uuid = 2;        // VLESS user id (matches the master's RealityTunnel)
+  string short_id = 3;    // REALITY short-id (hex)
+  string server_name = 4; // camouflage SNI (serverNames[0])
+  string dest = 5;        // camouflage target host:port (steal/fallback)
+  string xhttp_path = 6;  // XHTTP path
+  string xhttp_mode = 7;  // XHTTP mode ("packet-up")
+  string image = 8;       // xray container image (pinned repo:tag)
 }
 
 // MasterSpec is the master node's mihomo data plane.
@@ -134,6 +153,23 @@ message ExitTunnel {
   int32 mtu = 6;
   AWGParams awg = 7;
   bool drained = 8; // kept as a proxy but excluded from the load-balance group
+  // Dual-transport (ADR-0025; additive). transport "" == "awg" (back-compat): the
+  // AWG/server_public_key/tunnel_ip fields apply. For "reality-xhttp" the reality
+  // field carries the mihomo vless proxy params instead.
+  string transport = 9;
+  RealityTunnel reality = 10;
+}
+
+// RealityTunnel is the master-side mihomo vless+reality proxy descriptor for a
+// REALITY/XHTTP exit. Endpoint host:port comes from the enclosing ExitTunnel.
+message RealityTunnel {
+  string uuid = 1;        // VLESS user id (shared with the exit)
+  string public_key = 2;  // exit's REALITY x25519 PUBLIC key (reality-opts.public-key)
+  string short_id = 3;    // REALITY short-id (hex)
+  string server_name = 4; // camouflage SNI (mihomo servername)
+  string fingerprint = 5; // client uTLS fingerprint (mihomo client-fingerprint)
+  string xhttp_path = 6;  // XHTTP path
+  string xhttp_mode = 7;  // XHTTP mode ("packet-up")
 }
 
 // CustomConfig carries operator overrides (JSON-encoded for arbitrary nesting)

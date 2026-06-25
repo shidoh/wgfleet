@@ -45,9 +45,41 @@ type NodeSpec struct {
 	// EgressThroughputProbeURL is the URL the throughput watchdog downloads through
 	// the active egress interface to measure bytes/sec. Empty ⇒ the agent default.
 	EgressThroughputProbeURL string
+	// EnabledTransports lists the master↔exit transports this exit runs (exit only,
+	// ADR-0025). Empty ⇒ [TransportAWG] (back-compat: AWG-only). The exit keeps every
+	// enabled transport's server warm; the master places only the active one in its
+	// load-balance group.
+	EnabledTransports []MasterTransport
+	// ActiveTransport is the transport currently routed to (placed in the master LB
+	// group). Informational on the exit side — the master enforces it via LB
+	// membership — but carried here so the exit can report/observe it. Empty ⇒
+	// TransportAWG.
+	ActiveTransport MasterTransport
+	// Reality is the VLESS+REALITY+XHTTP inbound server spec (exit only), set when
+	// TransportRealityXHTTP is enabled. nil otherwise.
+	Reality *RealityServerSpec
 	// Decommission tells the agent to tear the node down (reverse reconcile)
 	// instead of converging it. Rendered when the node is flagged for removal.
 	Decommission bool
+}
+
+// Transports returns the exit's enabled master↔exit transports, falling back to a
+// single-entry [TransportAWG] when none is set (an AWG-only exit, pre-ADR-0025).
+func (s NodeSpec) Transports() []MasterTransport {
+	if len(s.EnabledTransports) > 0 {
+		return s.EnabledTransports
+	}
+	return []MasterTransport{TransportAWG}
+}
+
+// HasTransport reports whether the exit runs transport t.
+func (s NodeSpec) HasTransport(t MasterTransport) bool {
+	for _, e := range s.Transports() {
+		if e.OrDefault() == t.OrDefault() {
+			return true
+		}
+	}
+	return false
 }
 
 // EgressMethods returns the egress priority chain, falling back to a single-entry
@@ -236,6 +268,23 @@ func (s NodeSpec) Validate() error {
 	}
 	if len(s.EgressChain) > 0 && s.EgressChain[0] != s.Egress {
 		errs = append(errs, fmt.Errorf("egress chain[0] %q must equal the preferred egress %q", s.EgressChain[0], s.Egress))
+	}
+	// Transport set (ADR-0025): every enabled transport must be known, the active
+	// one must be enabled, and TransportRealityXHTTP requires a Reality server spec.
+	for i, t := range s.EnabledTransports {
+		if !t.Valid() {
+			errs = append(errs, fmt.Errorf("enabled transport[%d] %q is unknown", i, t))
+		}
+	}
+	if s.ActiveTransport != "" {
+		if !s.ActiveTransport.Valid() {
+			errs = append(errs, fmt.Errorf("active transport %q is unknown", s.ActiveTransport))
+		} else if !s.HasTransport(s.ActiveTransport) {
+			errs = append(errs, fmt.Errorf("active transport %q is not in the enabled set", s.ActiveTransport))
+		}
+	}
+	if s.HasTransport(TransportRealityXHTTP) && s.Reality == nil {
+		errs = append(errs, errors.New("reality-xhttp transport enabled but Reality server spec is missing"))
 	}
 	if s.WGServer.ListenPort <= 0 || s.WGServer.ListenPort > 65535 {
 		errs = append(errs, fmt.Errorf("WG listen port %d out of range", s.WGServer.ListenPort))

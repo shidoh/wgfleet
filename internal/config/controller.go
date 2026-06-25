@@ -392,6 +392,49 @@ type ExitConfig struct {
 	DNS                       DNSConfig      `koanf:"dns"` // optional rich blocky tuning + custom config
 	Firewall                  FirewallConfig `koanf:"firewall"`
 	SSH                       SSHConfig      `koanf:"ssh"` // bootstrap target
+	// Transports lists the master↔exit transports this exit runs (ADR-0025):
+	// "awg" and/or "reality-xhttp". Empty ⇒ ["awg"] (AWG-only, back-compat).
+	Transports []string `koanf:"transports"`
+	// ActiveTransport is the transport the master routes to (must be in Transports).
+	// Empty ⇒ the first enabled transport. The operator flips this (or via the UI)
+	// to switch the live path between AWG and REALITY.
+	ActiveTransport string `koanf:"active_transport"`
+	// Reality tunes the VLESS+REALITY+XHTTP transport (camouflage dest/SNI, port).
+	Reality RealityConfig `koanf:"reality"`
+}
+
+// RealityConfig is the operator's per-exit tuning for the VLESS+REALITY+XHTTP
+// transport (ADR-0025). The REALITY x25519 keypair, UUID and short-id are NOT here
+// — the exit generates its keypair locally and the controller derives the shared
+// identifiers; this only carries operator-facing camouflage choices.
+type RealityConfig struct {
+	ListenPort int    `koanf:"listen_port"` // VLESS port; 0 ⇒ default (must differ from the AWG port)
+	Dest       string `koanf:"dest"`        // camouflage target host:port; empty ⇒ fleet default
+	ServerName string `koanf:"server_name"` // camouflage SNI; empty ⇒ derived from dest's host
+	XHTTPPath  string `koanf:"xhttp_path"`  // XHTTP path; empty ⇒ default
+	Image      string `koanf:"image"`       // xray image; empty ⇒ default pinned
+}
+
+// EnabledTransports resolves the exit's transport set into domain values, defaulting
+// to AWG-only when the manifest leaves it empty (back-compat).
+func (e ExitConfig) EnabledTransports() []domain.MasterTransport {
+	if len(e.Transports) == 0 {
+		return []domain.MasterTransport{domain.TransportAWG}
+	}
+	out := make([]domain.MasterTransport, 0, len(e.Transports))
+	for _, t := range e.Transports {
+		out = append(out, domain.MasterTransport(t))
+	}
+	return out
+}
+
+// ResolvedActiveTransport returns the active transport, defaulting to the first
+// enabled one when the manifest leaves it empty.
+func (e ExitConfig) ResolvedActiveTransport() domain.MasterTransport {
+	if e.ActiveTransport != "" {
+		return domain.MasterTransport(e.ActiveTransport)
+	}
+	return e.EnabledTransports()[0]
 }
 
 // DNSConfig is the operator's optional tuning for the exit's blocky resolver.
@@ -601,6 +644,26 @@ func (c ControllerConfig) Validate() error {
 		}
 		if err := validateMgmtAddr(e.MgmtAddr); err != nil {
 			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): %w", i, e.Name, err))
+		}
+		// Transport set (ADR-0025): each declared transport must be known, and the
+		// active transport must be one of them. An empty set defaults to AWG-only.
+		activeFound := false
+		active := e.ResolvedActiveTransport()
+		for _, t := range e.EnabledTransports() {
+			if !t.Valid() {
+				errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): unknown transport %q (want %q or %q)",
+					i, e.Name, t, domain.TransportAWG, domain.TransportRealityXHTTP))
+			}
+			if t == active {
+				activeFound = true
+			}
+		}
+		if !activeFound {
+			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): active_transport %q is not in transports %v",
+				i, e.Name, active, e.Transports))
+		}
+		if p := e.Reality.ListenPort; p != 0 && (p < 1 || p > 65535) {
+			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): reality.listen_port %d out of range", i, e.Name, p))
 		}
 	}
 	if err := validateProbeURL(c.Fleet.EgressThroughputProbeURL); err != nil {

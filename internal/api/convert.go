@@ -35,6 +35,11 @@ func SpecToProto(s domain.NodeSpec) *pb.NodeSpec {
 	for _, m := range s.EgressChain {
 		out.EgressChain = append(out.EgressChain, string(m))
 	}
+	for _, t := range s.EnabledTransports {
+		out.EnabledTransports = append(out.EnabledTransports, string(t))
+	}
+	out.ActiveTransport = string(s.ActiveTransport)
+	out.Reality = realityServerToProto(s.Reality)
 	return out
 }
 
@@ -65,7 +70,74 @@ func SpecFromProto(p *pb.NodeSpec) domain.NodeSpec {
 	for _, m := range p.GetEgressChain() {
 		s.EgressChain = append(s.EgressChain, domain.EgressMethod(m))
 	}
+	for _, t := range p.GetEnabledTransports() {
+		s.EnabledTransports = append(s.EnabledTransports, domain.MasterTransport(t))
+	}
+	s.ActiveTransport = domain.MasterTransport(p.GetActiveTransport())
+	s.Reality = realityServerFromProto(p.GetReality())
 	return s
+}
+
+func realityServerToProto(r *domain.RealityServerSpec) *pb.RealitySrvSpec {
+	if r == nil {
+		return nil
+	}
+	return &pb.RealitySrvSpec{
+		ListenPort: int32(r.ListenPort),
+		Uuid:       r.UUID,
+		ShortId:    r.ShortID,
+		ServerName: r.ServerName,
+		Dest:       r.Dest,
+		XhttpPath:  r.XHTTPPath,
+		XhttpMode:  r.XHTTPMode,
+		Image:      r.Image,
+	}
+}
+
+func realityServerFromProto(r *pb.RealitySrvSpec) *domain.RealityServerSpec {
+	if r == nil {
+		return nil
+	}
+	return &domain.RealityServerSpec{
+		ListenPort: int(r.GetListenPort()),
+		UUID:       r.GetUuid(),
+		ShortID:    r.GetShortId(),
+		ServerName: r.GetServerName(),
+		Dest:       r.GetDest(),
+		XHTTPPath:  r.GetXhttpPath(),
+		XHTTPMode:  r.GetXhttpMode(),
+		Image:      r.GetImage(),
+	}
+}
+
+func realityTunnelToProto(r *domain.RealityTunnel) *pb.RealityTunnel {
+	if r == nil {
+		return nil
+	}
+	return &pb.RealityTunnel{
+		Uuid:        r.UUID,
+		PublicKey:   r.PublicKey,
+		ShortId:     r.ShortID,
+		ServerName:  r.ServerName,
+		Fingerprint: r.Fingerprint,
+		XhttpPath:   r.XHTTPPath,
+		XhttpMode:   r.XHTTPMode,
+	}
+}
+
+func realityTunnelFromProto(r *pb.RealityTunnel) *domain.RealityTunnel {
+	if r == nil {
+		return nil
+	}
+	return &domain.RealityTunnel{
+		UUID:        r.GetUuid(),
+		PublicKey:   r.GetPublicKey(),
+		ShortID:     r.GetShortId(),
+		ServerName:  r.GetServerName(),
+		Fingerprint: r.GetFingerprint(),
+		XHTTPPath:   r.GetXhttpPath(),
+		XHTTPMode:   r.GetXhttpMode(),
+	}
 }
 
 func masterToProto(m *domain.MasterSpec) *pb.MasterSpec {
@@ -97,6 +169,8 @@ func masterToProto(m *domain.MasterSpec) *pb.MasterSpec {
 			Mtu:             int32(t.MTU),
 			Awg:             awgToProto(t.AWG),
 			Drained:         t.Drained,
+			Transport:       string(t.Transport),
+			Reality:         realityTunnelToProto(t.Reality),
 		})
 	}
 	return out
@@ -131,6 +205,8 @@ func masterFromProto(m *pb.MasterSpec) *domain.MasterSpec {
 			MTU:             int(t.GetMtu()),
 			AWG:             awgFromProto(t.GetAwg()),
 			Drained:         t.GetDrained(),
+			Transport:       domain.MasterTransport(t.GetTransport()),
+			Reality:         realityTunnelFromProto(t.GetReality()),
 		})
 	}
 	return out

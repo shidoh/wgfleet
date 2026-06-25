@@ -65,6 +65,13 @@ func TestNodeSpecRoundTrip(t *testing.T) {
 		EgressChain:              []domain.EgressMethod{domain.EgressWARP, domain.EgressDirect},
 		EgressThroughputMinBps:   256000,
 		EgressThroughputProbeURL: "https://speed.cloudflare.com/__down?bytes=262144",
+		EnabledTransports:        []domain.MasterTransport{domain.TransportAWG, domain.TransportRealityXHTTP},
+		ActiveTransport:          domain.TransportAWG,
+		Reality: &domain.RealityServerSpec{
+			ListenPort: 8443, UUID: "uuid-1", ShortID: "0badc0de", ServerName: "www.microsoft.com",
+			Dest: "www.microsoft.com:443", XHTTPPath: "/down", XHTTPMode: "packet-up",
+			Image: "ghcr.io/xtls/xray-core:25.6.22",
+		},
 	}
 
 	got := SpecFromProto(SpecToProto(spec))
@@ -150,6 +157,15 @@ func TestMasterSpecRoundTrip(t *testing.T) {
 					ServerPublicKey: "EXITPUB==", PresharedKey: "PSK==",
 					TunnelIP: "10.81.0.2", MTU: 1360, AWG: awg,
 				},
+				{
+					Name: "exit-de-1-reality", Endpoint: "198.51.100.7:443",
+					Transport: domain.TransportRealityXHTTP, Drained: true,
+					Reality: &domain.RealityTunnel{
+						UUID: "uuid-1", PublicKey: "RPUB==", ShortID: "0badc0de",
+						ServerName: "www.microsoft.com", Fingerprint: "chrome",
+						XHTTPPath: "/down", XHTTPMode: "packet-up",
+					},
+				},
 			},
 			Custom: domain.CustomConfig{
 				Overrides: map[string]any{"log-level": "debug", "dns": map[string]any{"listen": "0.0.0.0:53"}},
@@ -178,7 +194,7 @@ func TestMasterSpecRoundTrip(t *testing.T) {
 	if len(m.ClientAdminPorts) != 3 || m.ClientAdminPorts[0] != 9000 || m.ClientAdminPorts[2] != 51821 {
 		t.Errorf("client admin ports lost in round-trip: %v", m.ClientAdminPorts)
 	}
-	if len(m.ExitTunnels) != 1 {
+	if len(m.ExitTunnels) != 2 {
 		t.Fatalf("exit tunnels = %d", len(m.ExitTunnels))
 	}
 	tn := m.ExitTunnels[0]
@@ -187,6 +203,16 @@ func TestMasterSpecRoundTrip(t *testing.T) {
 	}
 	if tn.AWG == nil || tn.AWG.Shared.H1.Min != 15384729 || tn.AWG.Local.Jc != 5 {
 		t.Errorf("exit tunnel AWG mismatch: %+v", tn.AWG)
+	}
+	// The REALITY/XHTTP tunnel must survive the round-trip with its transport
+	// discriminator and reality params intact (ADR-0025).
+	rt := m.ExitTunnels[1]
+	if rt.Transport != domain.TransportRealityXHTTP || !rt.Drained || rt.Reality == nil {
+		t.Fatalf("reality tunnel mismatch: %+v", rt)
+	}
+	if rt.Reality.PublicKey != "RPUB==" || rt.Reality.ShortID != "0badc0de" ||
+		rt.Reality.XHTTPMode != "packet-up" || rt.Reality.Fingerprint != "chrome" {
+		t.Errorf("reality tunnel params lost in round-trip: %+v", rt.Reality)
 	}
 	// Custom overrides survive as JSON round-trip.
 	if m.Custom.Overrides["log-level"] != "debug" {

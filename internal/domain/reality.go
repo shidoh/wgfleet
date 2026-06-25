@@ -1,0 +1,57 @@
+package domain
+
+// RealityServerSpec is the exit-side desired state for a VLESS+REALITY+XHTTP
+// inbound (xray-core), rendered when TransportRealityXHTTP is enabled (ADR-0025).
+//
+// The exit generates its own REALITY x25519 keypair LOCALLY and publishes only
+// the public key (keybroker principle #2 — the controller sees public keys only,
+// never private). This spec therefore carries no private key; it holds the shared
+// identifiers (controller-derived, IDENTICAL on both ends of the tunnel) and the
+// camouflage parameters the inbound needs.
+type RealityServerSpec struct {
+	// ListenPort is the VLESS listen port (e.g. 443). It must differ from the
+	// AWG awg0 port so both transports can run warm side by side.
+	ListenPort int
+	// UUID is the VLESS user id — MUST match the master's RealityTunnel.UUID.
+	UUID string
+	// ShortID is the REALITY short-id (hex) — MUST match the master.
+	ShortID string
+	// ServerName is the camouflage SNI (REALITY serverNames[0]).
+	ServerName string
+	// Dest is the camouflage target "host:port" the inbound borrows the
+	// certificate of and falls back to for unauthenticated probes (REALITY
+	// fallback-to-real-site — the documented anti-active-probing defense).
+	Dest string
+	// XHTTPPath is the XHTTP request path.
+	XHTTPPath string
+	// XHTTPMode is the XHTTP mode; "packet-up" splits the upstream into many
+	// short POSTs and dodges the foreign-DC single-connection volume-freeze.
+	XHTTPMode string
+	// Image is the xray container image (pinned repo:tag).
+	Image string
+}
+
+// RealityTunnel is the master-side proxy descriptor for a REALITY/XHTTP exit
+// (the mihomo `type: vless` proxy with reality-opts). The exit's REALITY public
+// key is published by the exit; the shared identifiers are controller-derived and
+// match the exit's RealityServerSpec. The endpoint host:port comes from the
+// enclosing ExitTunnel.
+type RealityTunnel struct {
+	// UUID is the VLESS user id (shared with the exit's RealityServerSpec).
+	UUID string
+	// PublicKey is the exit's REALITY x25519 PUBLIC key (exit-generated), the
+	// mihomo reality-opts.public-key.
+	PublicKey string
+	// ShortID is the REALITY short-id (hex), one of the server's shortIds.
+	ShortID string
+	// ServerName is the camouflage SNI the client sends (mihomo servername).
+	ServerName string
+	// Fingerprint is the client uTLS fingerprint (mihomo client-fingerprint,
+	// e.g. "chrome").
+	Fingerprint string
+	// XHTTPPath is the XHTTP request path (must match the inbound).
+	XHTTPPath string
+	// XHTTPMode is the XHTTP mode (e.g. "packet-up"); set explicitly on both ends
+	// because the auto+REALITY path has an xray bug (#5635).
+	XHTTPMode string
+}

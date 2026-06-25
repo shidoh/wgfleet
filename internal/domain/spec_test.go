@@ -81,6 +81,34 @@ func TestNodeSpecValidate(t *testing.T) {
 			name:   "valid egress chain",
 			mutate: func(s *NodeSpec) { s.EgressChain = []EgressMethod{EgressWARP, EgressDirect} },
 		},
+		{
+			name:    "unknown enabled transport",
+			mutate:  func(s *NodeSpec) { s.EnabledTransports = []MasterTransport{"carrier-pigeon"} },
+			wantErr: "is unknown",
+		},
+		{
+			name: "active transport not in enabled set",
+			mutate: func(s *NodeSpec) {
+				s.EnabledTransports = []MasterTransport{TransportAWG}
+				s.ActiveTransport = TransportRealityXHTTP
+			},
+			wantErr: "not in the enabled set",
+		},
+		{
+			name: "reality transport without reality spec",
+			mutate: func(s *NodeSpec) {
+				s.EnabledTransports = []MasterTransport{TransportAWG, TransportRealityXHTTP}
+			},
+			wantErr: "Reality server spec is missing",
+		},
+		{
+			name: "valid dual transport",
+			mutate: func(s *NodeSpec) {
+				s.EnabledTransports = []MasterTransport{TransportAWG, TransportRealityXHTTP}
+				s.ActiveTransport = TransportAWG
+				s.Reality = &RealityServerSpec{ListenPort: 443, UUID: "u", ShortID: "ab", ServerName: "x.example"}
+			},
+		},
 	}
 
 	for _, tt := range tests {

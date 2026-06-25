@@ -121,6 +121,11 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		Role:        domain.RoleExit,
 		Egress:      egress,
 		EgressChain: egressChain(exit),
+		// Master↔exit transport set (ADR-0025). Defaults to AWG-only. The REALITY
+		// server spec (spec.Reality) and the master-side proxies are populated in
+		// later phases; until then an exit may only enable TransportAWG.
+		EnabledTransports: exit.EnabledTransports(),
+		ActiveTransport:   exit.ResolvedActiveTransport(),
 		WGServer: domain.WGServerSpec{
 			ListenPort:  port,
 			AddressPool: exit.AddressPool,

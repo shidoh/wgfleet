@@ -80,15 +80,23 @@ func (c ComposeSpec) Enabled() bool { return c.WGEasyImage != "" || c.MihomoImag
 // (the master has a single WG identity that each exit peers); it is not stored
 // here. The AmneziaWG params for this tunnel MUST match the exit's interface.
 type ExitTunnel struct {
-	Name            string // proxy name == exit node name
+	Name            string // proxy name == exit node name (+ transport suffix when multi)
 	Endpoint        string // exit public endpoint "host:port"
-	ServerPublicKey string // exit's WG server public key
+	ServerPublicKey string // exit's WG server public key (TransportAWG)
 	PresharedKey    string // optional WG preshared key (secret; redacted in plans)
 	TunnelIP        string // master's address inside the exit's pool (e.g. "10.81.0.2")
 	MTU             int    // computed along the tunnel chain
 	AWG             *AWGParams
+	// Transport is the master↔exit transport this proxy carries (ADR-0025). Empty
+	// == TransportAWG (back-compat). For TransportAWG the ServerPublicKey/TunnelIP/
+	// AWG/MTU fields apply (a mihomo wireguard proxy); for TransportRealityXHTTP the
+	// Reality field carries the proxy params instead (a mihomo vless proxy).
+	Transport MasterTransport
+	// Reality is set when Transport == TransportRealityXHTTP, nil otherwise.
+	Reality *RealityTunnel
 	// Drained keeps the proxy configured (existing connections survive) but
 	// excludes it from the load-balance group, so no new traffic routes to it.
+	// A standby transport on a dual-transport exit is rendered Drained (ADR-0025).
 	Drained bool
 }
 
