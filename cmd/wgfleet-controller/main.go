@@ -28,6 +28,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/grpcapi"
@@ -185,12 +187,28 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA) error {
 		go sw.Run(ctx, sweepInterval(threshold))
 	}
 
+	// Prometheus registry + collectors. Built before the provision manager so the
+	// provisioning-duration histogram can be wired into it (the manager records
+	// every apply-mode Provision through Options.OnProvision). The /metrics server
+	// itself is started further down. nil when metrics are disabled.
+	var (
+		reg      *prometheus.Registry
+		provMetr *metrics.ProvisionMetrics
+	)
+	if cfg.Controller.Metrics != "" {
+		reg = metrics.NewRegistry()
+		metrics.NewStoreCollector(reg, st)
+		metrics.RegisterBuildInfo(reg, "controller", version.Version, version.Commit)
+		provMetr = metrics.NewProvisionMetrics(reg)
+	}
+
 	// Web UI (read-only dashboard). Binds the mgmt/ZT address only — never expose
 	// it on the public interface.
 	// Provision manager: lets the Web UI SSH-bootstrap fleet nodes asynchronously.
 	provMgr := provmgr.New(st, ca, cfg.Fleet, provmgr.Options{
 		AgentBinPath:       cfg.Controller.AgentBin,
 		ControllerEndpoint: controllerEndpoint(cfg.Controller),
+		OnProvision:        provMetr.ObserveProvision, // method value on a nil *ProvisionMetrics is a safe no-op
 	}, slog.Default())
 	// Tie async provisioning jobs to the signal context so they abort on shutdown;
 	// Wait() (below) drains them before the store is closed.
@@ -212,13 +230,11 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA) error {
 		}()
 	}
 
-	// Prometheus /metrics — a scrape-time projection of the state store. Binds the
-	// mgmt/ZT address only.
+	// Prometheus /metrics — a scrape-time projection of the state store plus the
+	// provisioning-duration histogram (registered above on reg). Binds the mgmt/ZT
+	// address only.
 	var metricsSrv *http.Server
 	if cfg.Controller.Metrics != "" {
-		reg := metrics.NewRegistry()
-		metrics.NewStoreCollector(reg, st)
-		metrics.RegisterBuildInfo(reg, "controller", version.Version, version.Commit)
 		mux := http.NewServeMux()
 		mux.Handle("GET /metrics", metrics.Handler(reg))
 		metricsSrv = &http.Server{Addr: cfg.Controller.Metrics, Handler: mux}

@@ -79,10 +79,6 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Namespace: namespace, Subsystem: "agent", Name: "egress_active",
 			Help: "Currently active egress method as a label (warp|direct|...); value is always 1. Differs from the preferred egress while failed over (ADR-0017).", ConstLabels: cl,
 		}, []string{"method"}),
-		transportActive: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Namespace: namespace, Subsystem: "agent", Name: "transport_active",
-			Help: "Active master↔exit transport as a label (awg|reality-xhttp); value is always 1 (ADR-0025). Exit nodes only.", ConstLabels: cl,
-		}, []string{"transport"}),
 		egressThroughput: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "egress_throughput_bytes",
 			Help: "Last measured egress throughput in bytes/sec (ADR-0021). A sustained collapse below the configured floor auto-suspends the exit from the LB.", ConstLabels: cl,
@@ -92,10 +88,23 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Help: "Unix time the agent process started.", ConstLabels: cl,
 		}),
 	}
+	// transport_active is exit-only (the active master↔exit transport, ADR-0025).
+	// Registering it on a master would expose an empty series, so absent()-based
+	// alerts fire on masters that have no transport at all; gate it on the role.
+	if role == domain.RoleExit {
+		m.transportActive = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "transport_active",
+			Help: "Active master↔exit transport as a label (awg|reality-xhttp); value is always 1 (ADR-0025). Exit nodes only.", ConstLabels: cl,
+		}, []string{"transport"})
+	}
+
 	m.startTime.Set(float64(now.Unix()))
 	reg.MustRegister(m.reconcileTotal, m.reconcileDuration, m.stateInfo, m.checkUp, m.checkLatency,
 		m.driftTotal, m.driftResources, m.reconcileChanges, m.egressReach, m.egressActive,
-		m.transportActive, m.egressThroughput, m.startTime)
+		m.egressThroughput, m.startTime)
+	if m.transportActive != nil {
+		reg.MustRegister(m.transportActive)
+	}
 	return m
 }
 
@@ -146,7 +155,9 @@ func (m *AgentMetrics) ObserveEgressActive(method domain.EgressMethod) {
 // ObserveTransport records the exit's active master↔exit transport as a
 // single-valued info gauge (ADR-0025). A no-op for the empty transport.
 func (m *AgentMetrics) ObserveTransport(t domain.MasterTransport) {
-	if t == "" {
+	// transportActive is nil on non-exit roles (never registered), so guard it —
+	// a master must never touch this exit-only series.
+	if t == "" || m.transportActive == nil {
 		return
 	}
 	m.transportActive.Reset()

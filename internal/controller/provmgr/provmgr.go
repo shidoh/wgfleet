@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/pki"
@@ -22,11 +23,21 @@ import (
 // DialFunc opens a Runner to an SSH target. Injectable so tests use a mock.
 type DialFunc func(target domain.SSHTarget) (provisioner.Runner, error)
 
+// ProvisionObserver records the wall-clock duration of one apply-mode provisioning
+// run, labelled by node role and outcome (err nil ⇒ success). It is injected so
+// provmgr stays decoupled from the metrics package (which depends on the store);
+// the controller passes metrics.ProvisionMetrics.ObserveProvision, while the CLI
+// and tests leave it nil. now defaults to time.Now.
+type ProvisionObserver func(role string, seconds float64, err error)
+
 // Options configures the manager.
 type Options struct {
 	AgentBinPath       string // wgfleet-agent binary to install (optional)
 	ControllerEndpoint string // mTLS endpoint the agent will dial
 	Dial               DialFunc
+	// OnProvision, when set, is called after every apply-mode Provision with its
+	// duration and result. Plan (dry-run) runs are not timed (they execute nothing).
+	OnProvision ProvisionObserver
 }
 
 // Manager runs provisioning jobs.
@@ -36,7 +47,8 @@ type Manager struct {
 	fleet   config.FleetSection
 	opts    Options
 	log     *slog.Logger
-	baseCtx context.Context // parent for async jobs; cancelled on controller shutdown
+	now     func() time.Time // injectable clock for provisioning-duration timing
+	baseCtx context.Context  // parent for async jobs; cancelled on controller shutdown
 
 	mu       sync.Mutex
 	inflight map[string]bool
@@ -56,7 +68,7 @@ func New(st store.Store, ca *pki.CA, fleet config.FleetSection, opts Options, lo
 		}
 	}
 	return &Manager{
-		store: st, ca: ca, fleet: fleet, opts: opts, log: log,
+		store: st, ca: ca, fleet: fleet, opts: opts, log: log, now: time.Now,
 		baseCtx: context.Background(), inflight: map[string]bool{},
 	}
 }
@@ -101,13 +113,25 @@ func (m *Manager) ManifestNodes() []domain.Node {
 }
 
 // Provision runs the bootstrap pipeline synchronously and returns the report.
-func (m *Manager) Provision(ctx context.Context, nodeID string, mode provisioner.Mode) (provisioner.Report, error) {
+// In apply mode it times the whole run (including the async path, which calls
+// here) and reports the duration + outcome via Options.OnProvision when set.
+func (m *Manager) Provision(ctx context.Context, nodeID string, mode provisioner.Mode) (rep provisioner.Report, err error) {
 	node, _, ok := m.findNode(nodeID)
 	if !ok {
 		return provisioner.Report{}, fmt.Errorf("node %q not found in fleet manifest", nodeID)
 	}
 	if node.SSH.Host == "" || node.SSH.KeyPath == "" {
 		return provisioner.Report{}, fmt.Errorf("node %q has no ssh target", nodeID)
+	}
+
+	// Time the apply only — a plan executes nothing, so its duration is noise. The
+	// deferred record fires on every return below (cert error, dial error, success),
+	// so the histogram counts both successful and failed bootstraps.
+	if mode == provisioner.ModeApply && m.opts.OnProvision != nil {
+		start := m.now()
+		defer func() {
+			m.opts.OnProvision(string(node.Role), m.now().Sub(start).Seconds(), err)
+		}()
 	}
 
 	// Persist the manifest's inventory (mgmt_addr, public_ip, role) into the store

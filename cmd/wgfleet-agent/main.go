@@ -100,6 +100,18 @@ func resolveMetricsBind(flagVal, mgmtAddr string) string {
 	}
 }
 
+// wgIfacesForRole returns the WireGuard/AmneziaWG interfaces the WG metrics
+// collector probes for a node's role. An exit terminates the master tunnel on
+// awg0 and egresses via the wgcf WARP interface; a master's client WG runs inside
+// the wg-easy container (wg0 there, not on the host), so wg0 is listed but only
+// reported if it happens to be host-visible — the collector fails soft otherwise.
+func wgIfacesForRole(role domain.Role) []string {
+	if role == domain.RoleExit {
+		return []string{"awg0", "wgcf"}
+	}
+	return []string{"wg0"}
+}
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("agent exited with error", "err", err)
@@ -181,6 +193,15 @@ func run() error {
 		reg := metrics.NewRegistry()
 		a.metrics = metrics.NewAgentMetrics(reg, cfg.Agent.NodeID, role, time.Now())
 		metrics.RegisterBuildInfo(reg, "agent", version.Version, version.Commit)
+		// Scrape-time collectors (no extra goroutine): per-peer WG/AWG telemetry and
+		// firewall stats. Both fail soft — a missing wg/nft, a down interface, or a
+		// non-Linux dev box simply yields no series. The WG interface set is
+		// role-dependent (exits run the awg0 client tunnel + the wgcf WARP leg; a
+		// master's client wg lives inside the wg-easy container, so wg0 is probed
+		// best-effort). Firewall metrics are only populated on exits (table inet
+		// wgfleet), but the collector is safe to register everywhere.
+		metrics.NewWGCollector(reg, cfg.Agent.NodeID, string(role), wgIfacesForRole(role), nil)
+		metrics.NewFWCollector(reg, cfg.Agent.NodeID, string(role), nil)
 		metricsSrv := &http.Server{Addr: bind, Handler: metricsMux(reg)}
 		go func() {
 			// The mgmt/overlay (ZeroTier) address may not be on an interface yet at agent
