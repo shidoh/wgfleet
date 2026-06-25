@@ -221,3 +221,42 @@ func TestKernelReflects(t *testing.T) {
 		t.Error("direct egress spec should always be reflected")
 	}
 }
+
+func TestRenderRealityEgressMark(t *testing.T) {
+	steps, err := Render(domain.RoutingSpec{
+		EgressInterface:   "wgcf",
+		ClientCIDR:        "10.81.0.0/24",
+		RealityEgressMark: 0x33,
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	script := Script(steps)
+	if !strings.Contains(script, "ip rule add fwmark 0x33 lookup 51820") {
+		t.Errorf("missing reality egress fwmark rule:\n%s", script)
+	}
+	if !strings.Contains(script, "ip route replace default dev wgcf table 51820") {
+		t.Errorf("missing egress default route:\n%s", script)
+	}
+	prefs := ManagedPrefs(domain.RoutingSpec{EgressInterface: "wgcf", ClientCIDR: "10.81.0.0/24", RealityEgressMark: 0x33})
+	found := false
+	for _, p := range prefs {
+		if p == prefRealityEgress {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("ManagedPrefs missing reality egress pref %d: %v", prefRealityEgress, prefs)
+	}
+}
+
+func TestRenderRealityEgressMarkDirectEgressNoop(t *testing.T) {
+	// Direct egress (no interface) renders nothing even with a reality mark set.
+	steps, err := Render(domain.RoutingSpec{RealityEgressMark: 0x33})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if len(steps) != 0 {
+		t.Errorf("direct egress should render no steps, got %d", len(steps))
+	}
+}

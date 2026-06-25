@@ -45,10 +45,11 @@ func EffectiveFwMark(r domain.RoutingSpec) int {
 // selector currently sits there (e.g. a stale master IP after the spec changed),
 // so re-applying never leaves a duplicate or an orphan.
 const (
-	prefMaster  = 100 // keep master-bound traffic on the main table
-	prefDirect0 = 110 // first direct-CIDR rule; CIDR i uses prefDirect0+i
-	prefFwmark  = 200 // keep WG replies/handshake (fwmark) on the main table
-	prefEgress  = 300 // send remaining traffic to the egress table
+	prefMaster        = 100 // keep master-bound traffic on the main table
+	prefDirect0       = 110 // first direct-CIDR rule; CIDR i uses prefDirect0+i
+	prefFwmark        = 200 // keep WG replies/handshake (fwmark) on the main table
+	prefEgress        = 300 // send client traffic (from ClientCIDR) to the egress table
+	prefRealityEgress = 310 // send reality-marked host traffic to the egress table (ADR-0025)
 )
 
 // MaxDirectCIDRs caps the number of direct-CIDR rules. Each consumes priority
@@ -141,6 +142,23 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 			fmt.Sprintf("send client traffic (from %s) to the egress table", spec.ClientCIDR),
 			"from", spec.ClientCIDR, "lookup", fmt.Sprintf("%d", EgressTable),
 		)...)
+	}
+
+	// The xray REALITY inbound dials FROM THE HOST, so the `from <ClientCIDR>` rule
+	// above does not catch it. Mark-route its outbound (SO_MARK'd by
+	// xray) to the egress table so it leaves through WARP like client traffic
+	// (ADR-0025). A separate fwmark from the WG-reply mark (prefFwmark, kept on
+	// main) — different mark, different table.
+	if spec.RealityEgressMark > 0 {
+		steps = append(steps, ipRuleReplace(prefRealityEgress,
+			fmt.Sprintf("send reality egress (fwmark 0x%x) to the egress table", spec.RealityEgressMark),
+			"fwmark", fmt.Sprintf("0x%x", spec.RealityEgressMark), "lookup", fmt.Sprintf("%d", EgressTable),
+		)...)
+	}
+
+	// The egress table needs its default route whenever anything is routed into it:
+	// client traffic (ClientCIDR) and/or the reality-marked host traffic.
+	if spec.ClientCIDR != "" || spec.RealityEgressMark > 0 {
 		steps = append(steps, Step{
 			Summary: fmt.Sprintf("default route via %s in table %d", spec.EgressInterface, EgressTable),
 			Argv:    []string{"ip", "route", "replace", "default", "dev", spec.EgressInterface, "table", fmt.Sprintf("%d", EgressTable)},
@@ -198,6 +216,9 @@ func ManagedPrefs(spec domain.RoutingSpec) []int {
 	// to (Render skips it otherwise), so only expect it then.
 	if spec.ClientCIDR != "" {
 		prefs = append(prefs, prefEgress)
+	}
+	if spec.RealityEgressMark > 0 {
+		prefs = append(prefs, prefRealityEgress)
 	}
 	return prefs
 }

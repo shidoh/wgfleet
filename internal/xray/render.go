@@ -14,10 +14,6 @@ import (
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
-// DefaultImage is the pinned xray-core container image (no implicit :latest —
-// every container the platform runs pins image AND tag).
-const DefaultImage = "ghcr.io/xtls/xray-core:25.6.22"
-
 // DefaultXHTTPMode mirrors mihomo.DefaultXHTTPMode: packet-up splits the upstream
 // into many short POSTs (dodges the foreign-DC volume-freeze) and works without a
 // CDN. It MUST match the client; set explicitly on both ends (auto+REALITY has an

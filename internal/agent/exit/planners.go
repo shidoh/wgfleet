@@ -21,6 +21,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/netfw"
 	"github.com/shidoh/wgfleet/internal/routing"
 	"github.com/shidoh/wgfleet/internal/wg"
+	"github.com/shidoh/wgfleet/internal/xray"
 )
 
 // Input is everything the exit planners need beyond the NodeSpec. PrivateKey is
@@ -593,6 +594,14 @@ func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 	// derive it agent-side from the WG server spec the agent already holds.
 	rspec := spec.Routing
 	rspec.ClientCIDR = spec.WGServer.AddressPool
+	// When this exit runs the REALITY transport, its xray inbound dials from the
+	// host and marks its sockets so policy routing sends them through WARP, not the
+	// host default route. Mirror that mark into the routing intent so
+	// the matching `fwmark <mark> lookup <egress-table>` rule is rendered (ADR-0025).
+	// Only meaningful with a WARP egress; routing.Render no-ops for direct egress.
+	if spec.HasTransport(domain.TransportRealityXHTTP) {
+		rspec.RealityEgressMark = xray.EgressMark
+	}
 	steps, err := routing.Render(rspec)
 	if err != nil {
 		return nil, err

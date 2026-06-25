@@ -232,6 +232,13 @@ type RoutingSpec struct {
 	// ). It is the exit's WG pool, populated agent-side from WGServer.AddressPool
 	// (so it needs no wire field); empty ⇒ no egress rule is rendered (fail-safe).
 	ClientCIDR string
+	// RealityEgressMark is the SO_MARK the xray REALITY inbound stamps on its
+	// outbound sockets (ADR-0025). xray dials FROM THE HOST, so the `from
+	// <ClientCIDR>` egress rule does not catch its connections; a dedicated `fwmark
+	// <mark> lookup <egress-table>` rule sends them through WARP instead. Populated
+	// agent-side (a fixed constant) when the exit runs the reality transport with a
+	// WARP egress; 0 ⇒ no such rule (direct egress, or no reality transport).
+	RealityEgressMark int
 }
 
 // ExportersSpec selects which Prometheus endpoints the agent runs. Host metrics
