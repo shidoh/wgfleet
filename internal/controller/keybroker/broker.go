@@ -110,6 +110,8 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	}
 	port := exit.WGListenPort()
 	egress := domain.EgressMethod(exit.Egress)
+	// The exit's own store node carries the operator's live active-transport override.
+	exitNode, _ := b.lookupPubKey(ctx, exit.Name)
 
 	// The management overlay (ZeroTier) must be trusted on every exit without the
 	// operator hand-listing it: route it DIRECT so client→mgmt traffic (e.g. DNS to
@@ -143,7 +145,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		// server spec (spec.Reality) and the master-side proxies are populated in
 		// later phases; until then an exit may only enable TransportAWG.
 		EnabledTransports: exit.EnabledTransports(),
-		ActiveTransport:   exit.ResolvedActiveTransport(),
+		ActiveTransport:   resolveActiveTransport(exit, exitNode),
 		WGServer: domain.WGServerSpec{
 			ListenPort:  port,
 			AddressPool: exit.AddressPool,
@@ -345,7 +347,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		// published its reality pubkey AND its endpoint is dialable — until then the
 		// AWG tunnel keeps carrying traffic (no flip to a not-yet-ready transport).
 		baseDrained := exitNode.Drain || autoSuspend[exit.Name]
-		active := exit.ResolvedActiveTransport()
+		active := resolveActiveTransport(exit, exitNode)
 		hasAWG, hasReality := false, false
 		for _, t := range exit.EnabledTransports() {
 			switch t.OrDefault() {
@@ -460,6 +462,21 @@ func realityFor(exit config.ExitConfig, masterName string) realityParams {
 		Port: port, UUID: uuid, ShortID: shortID, ServerName: sni,
 		Dest: dest, Path: path, Mode: xray.DefaultXHTTPMode, Image: image,
 	}
+}
+
+// resolveActiveTransport returns the exit's active master↔exit transport: the
+// operator's live per-node override (Node.ActiveTransport, set from the Web UI)
+// when it names one of the exit's enabled transports, else the manifest's
+// active_transport (ADR-0025).
+func resolveActiveTransport(exit config.ExitConfig, node domain.Node) domain.MasterTransport {
+	if ov := node.ActiveTransport; ov != "" {
+		for _, t := range exit.EnabledTransports() {
+			if t.OrDefault() == ov.OrDefault() {
+				return ov
+			}
+		}
+	}
+	return exit.ResolvedActiveTransport()
 }
 
 func realitySeed(exitName, masterName string) string {

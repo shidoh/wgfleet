@@ -180,3 +180,33 @@ pre.spec {
 }
 .full { grid-column: 1 / -1; }
 .error-note { color: var(--err); font-family: var(--mono); font-size: 0.82rem; }
+
+/* Transport switch (ADR-0025) */
+.hint { color: var(--text-faint); font-size: 0.8rem; margin: 0 0 0.9rem; line-height: 1.45; }
+.switch { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.switch form { margin: 0; }
+.seg {
+  font-family: var(--mono); font-size: 0.82rem; cursor: pointer;
+  padding: 0.45rem 1.05rem; border: none; border-right: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text-dim); transition: background 150ms, color 150ms;
+}
+.switch form:last-child .seg { border-right: none; }
+.seg:hover:not(:disabled) { background: var(--surface); color: var(--text); }
+.seg.on { background: color-mix(in srgb, var(--accent) 18%, var(--surface)); color: var(--text); cursor: default; }
+.seg .dotmark { color: var(--accent); font-size: 0.7em; vertical-align: middle; }
+
+/* Collapsible rendered-spec card */
+.spec-card summary { cursor: pointer; list-style: none; }
+.spec-card summary h2 { display: inline; margin: 0; }
+.spec-card summary::-webkit-details-marker { display: none; }
+.spec-card summary::before { content: "▸"; color: var(--text-faint); margin-right: 0.5rem; }
+.spec-card[open] summary::before { content: "▾"; }
+.spec-card pre.spec { margin-top: 0.9rem; }
+
+/* Transport chip + egress cell in the fleet list */
+.chip {
+  font-family: var(--mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 0.1rem 0.4rem; border-radius: 4px; border: 1px solid var(--border); color: var(--text-dim);
+}
+.chip.reality { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.subbadges { display: inline-flex; gap: 0.3rem; flex-wrap: wrap; }

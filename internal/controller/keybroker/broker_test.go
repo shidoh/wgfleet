@@ -886,3 +886,46 @@ func TestRenderDualTransportRealityActiveFlipsDrain(t *testing.T) {
 		}
 	}
 }
+
+func TestActiveTransportOverride(t *testing.T) {
+	ctx := context.Background()
+	fleet := testFleet()
+	fleet.Exits[0].Transports = []string{"awg", "reality-xhttp"}
+	fleet.Exits[0].ActiveTransport = "awg" // manifest default
+	fleet.Exits[0].SSH = config.SSHConfig{Host: "198.51.100.7"}
+	st, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = st.Close() })
+	b := New(st, fleet, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+	_, realityPub, _ := xray.GenerateKeypair()
+	_ = st.SetNodeRealityKey(ctx, "exit-de-1", realityPub)
+
+	// Operator override (store) flips active to reality despite the manifest default.
+	if err := st.SetNodeActiveTransport(ctx, "exit-de-1", domain.TransportRealityXHTTP); err != nil {
+		t.Fatal(err)
+	}
+	mSpec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, tn := range mSpec.Master.ExitTunnels {
+		switch tn.Transport.OrDefault() {
+		case domain.TransportRealityXHTTP:
+			if tn.Drained {
+				t.Error("override→reality: reality tunnel must be active (in LB)")
+			}
+		case domain.TransportAWG:
+			if !tn.Drained {
+				t.Error("override→reality: AWG tunnel must be standby (drained)")
+			}
+		}
+	}
+
+	// An override naming a NON-enabled transport is ignored (falls back to manifest).
+	_ = st.SetNodeActiveTransport(ctx, "exit-de-1", domain.MasterTransport("vless-nope"))
+	exitSpec, _ := b.RenderNodeSpec(ctx, "exit-de-1")
+	if exitSpec.ActiveTransport.OrDefault() != domain.TransportAWG {
+		t.Errorf("invalid override should fall back to manifest awg, got %q", exitSpec.ActiveTransport)
+	}
+}

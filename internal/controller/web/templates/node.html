@@ -100,13 +100,40 @@
     {{end}}
   </div>
 
-  <div class="card full">
-    <h2>Rendered NodeSpec (desired state)</h2>
+  {{if gt (len .Transports) 1}}
+  <div class="card">
+    <h2>Transport</h2>
+    <p class="hint">Active master↔exit link. Switching moves the proxy in/out of the
+      load balancer via mihomo hot-reload — existing client connections are not dropped.</p>
+    <div class="switch">
+      {{range .Transports}}
+      {{$on := eq .OrDefault $.ActiveTransport}}
+      <form method="post" action="/nodes/{{$.Node.ID}}/transport/{{.}}">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        <button class="seg {{if $on}}on{{end}}" {{if $on}}disabled aria-current="true"{{end}}
+                title="Route master↔exit traffic over {{transportLabel .}}">
+          {{transportLabel .}}{{if $on}} <span class="dotmark">●</span>{{end}}
+        </button>
+      </form>
+      {{end}}
+    </div>
+    {{if .RealityInfo}}
+    <dl class="kv" style="margin-top:1rem">
+      <dt>REALITY SNI</dt><dd>{{.RealityInfo.ServerName}}</dd>
+      <dt>Listen port</dt><dd>{{.RealityInfo.ListenPort}} / tcp</dd>
+      <dt>Camouflage</dt><dd class="dim">{{.RealityInfo.Dest}}</dd>
+    </dl>
+    {{end}}
+  </div>
+  {{end}}
+
+  <details class="card full spec-card">
+    <summary><h2>Rendered NodeSpec (desired state)</h2></summary>
     {{if .SpecErr}}
     <p class="error-note">{{.SpecErr}}</p>
     {{else}}
     <pre class="spec">{{.SpecText}}</pre>
     {{end}}
-  </div>
+  </details>
 </div>
 {{end}}

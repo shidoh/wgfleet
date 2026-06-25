@@ -66,6 +66,13 @@ type Node struct {
 	// reverse of reconcile. The operator drains, decommissions, then deletes.
 	Decommission bool
 
+	// ActiveTransport, when set, overrides the manifest's active master↔exit
+	// transport for this exit (ADR-0025): it is the operator's live UI choice of
+	// which transport (awg | reality-xhttp) the master routes to. Empty ⇒ use the
+	// manifest's active_transport. The keybroker honors it only if it is one of the
+	// exit's enabled transports.
+	ActiveTransport MasterTransport
+
 	// AgentVersion is the build identity (version.Short()) the agent last reported
 	// over gRPC metadata; WireVersion is its protocol version. Both are observed,
 	// not desired — the controller records them to surface version skew in the UI

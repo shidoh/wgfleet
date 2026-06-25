@@ -468,3 +468,51 @@ func TestManifestNodeShownAsPending(t *testing.T) {
 		t.Error("manifest-only node detail should offer provisioning")
 	}
 }
+
+func TestTransportSwitchAction(t *testing.T) {
+	// A dual-transport exit renders the switch; the POST records the override.
+	spec := domain.NodeSpec{
+		Role:              domain.RoleExit,
+		WGServer:          domain.WGServerSpec{ListenPort: 443, AddressPool: "10.81.0.0/24"},
+		EnabledTransports: []domain.MasterTransport{domain.TransportAWG, domain.TransportRealityXHTTP},
+		ActiveTransport:   domain.TransportAWG,
+		Reality: &domain.RealityServerSpec{
+			ListenPort: 8443, ServerName: "www.microsoft.com", Dest: "www.microsoft.com:443",
+			UUID: "u", ShortID: "ab",
+		},
+	}
+	h, st := newTestHandler(t, stubRenderer{spec: spec})
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+
+	_, body := get(t, h, "/nodes/exit-de-1")
+	for _, want := range []string{
+		"Transport", "AmneziaWG", "REALITY", "www.microsoft.com",
+		"/nodes/exit-de-1/transport/reality-xhttp",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("detail page missing transport switch element %q", want)
+		}
+	}
+
+	res := post(t, h, "/nodes/exit-de-1/transport/reality-xhttp")
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("transport switch status = %d, want 303", res.StatusCode)
+	}
+	if n, _ := st.GetNode(context.Background(), "exit-de-1"); n.ActiveTransport != domain.TransportRealityXHTTP {
+		t.Errorf("override = %q, want reality-xhttp", n.ActiveTransport)
+	}
+
+	if res := post(t, h, "/nodes/exit-de-1/transport/carrier-pigeon"); res.StatusCode != http.StatusBadRequest {
+		t.Errorf("unknown transport status = %d, want 400", res.StatusCode)
+	}
+}
+
+func TestListShowsEgressIP(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady, PublicIP: "198.51.100.7"})
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{NodeID: "exit-de-1", State: domain.StateReady, EgressIP: "104.16.0.9"})
+	_, body := get(t, h, "/")
+	if !strings.Contains(body, "104.16.0.9") {
+		t.Errorf("fleet list should show the exit's egress IP:\n%s", body)
+	}
+}

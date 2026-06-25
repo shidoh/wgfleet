@@ -96,8 +96,30 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner) (*Handler, err
 	h.mux.HandleFunc("POST /nodes/{id}/drain", h.handleDrain(true))
 	h.mux.HandleFunc("POST /nodes/{id}/undrain", h.handleDrain(false))
 	h.mux.HandleFunc("POST /nodes/{id}/decommission", h.handleDecommission)
+	h.mux.HandleFunc("POST /nodes/{id}/transport/{transport}", h.handleTransport)
 	h.mux.HandleFunc("POST /nodes/{id}/delete", h.handleDelete)
 	return h, nil
+}
+
+// handleTransport switches an exit's active master↔exit transport (ADR-0025). It
+// records the operator's override in the store; the keybroker re-renders with the
+// new active transport and the master hot-reloads mihomo (the standby proxy moves
+// in/out of the wg-best group) — existing connections are undisturbed.
+func (h *Handler) handleTransport(w http.ResponseWriter, r *http.Request) {
+	if !h.guard(w, r) {
+		return
+	}
+	id := r.PathValue("id")
+	t := domain.MasterTransport(r.PathValue("transport"))
+	if !t.Valid() {
+		http.Error(w, "unknown transport "+string(t), http.StatusBadRequest)
+		return
+	}
+	if err := h.store.SetNodeActiveTransport(r.Context(), id, t); err != nil {
+		http.Error(w, "set transport: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	http.Redirect(w, r, "/nodes/"+id, http.StatusSeeOther)
 }
 
 // handleProvision kicks off asynchronous SSH bootstrap of a fleet node. The node
@@ -261,8 +283,45 @@ type stateStat struct {
 type listData struct {
 	Title     string
 	NodeCount int
-	Nodes     []domain.Node
+	Nodes     []nodeRow
 	Summary   []stateStat
+}
+
+// nodeRow is a fleet-list row: the inventory node plus a few derived operational
+// signals from its latest status report, so the list shows where each node is at
+// a glance (egress, freshness, censorship signals) without opening the detail page.
+type nodeRow struct {
+	domain.Node
+	HasStatus     bool
+	EgressIP      string
+	LastHandshake time.Time
+	ActiveEgress  string // set only when failed over to a non-preferred egress
+	EgressBlocked bool
+	LowThroughput bool
+}
+
+// nodeRows joins the inventory with each node's latest status for the fleet list.
+func (h *Handler) nodeRows(ctx context.Context) ([]nodeRow, error) {
+	ns, err := h.nodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]nodeRow, 0, len(ns))
+	for _, n := range ns {
+		row := nodeRow{Node: n}
+		if st, err := h.store.GetStatus(ctx, n.ID); err == nil {
+			row.HasStatus = true
+			row.EgressIP = st.EgressIP
+			row.LastHandshake = st.LastHandshake
+			if e := st.ActiveEgress(); e != "" && e != "warp" {
+				row.ActiveEgress = e
+			}
+			row.EgressBlocked = st.EgressBlocked()
+			row.LowThroughput = st.EgressThroughputDegraded()
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
 }
 
 // nodes returns the live store inventory merged with declared-but-unprovisioned
@@ -290,27 +349,27 @@ func (h *Handler) nodes(ctx context.Context) ([]domain.Node, error) {
 }
 
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
-	nodes, err := h.nodes(r.Context())
+	rows, err := h.nodeRows(r.Context())
 	if err != nil {
 		httpError(w, "list nodes", err)
 		return
 	}
 	data := listData{
 		Title:     "Fleet",
-		NodeCount: len(nodes),
-		Nodes:     nodes,
-		Summary:   summarize(nodes),
+		NodeCount: len(rows),
+		Nodes:     rows,
+		Summary:   summarize(rows),
 	}
 	h.render(w, h.listTmpl, "layout", data)
 }
 
 func (h *Handler) handleNodesPartial(w http.ResponseWriter, r *http.Request) {
-	nodes, err := h.nodes(r.Context())
+	rows, err := h.nodeRows(r.Context())
 	if err != nil {
 		httpError(w, "list nodes", err)
 		return
 	}
-	h.render(w, h.listTmpl, "nodes-table", listData{Nodes: nodes})
+	h.render(w, h.listTmpl, "nodes-table", listData{Nodes: rows})
 }
 
 type nodeData struct {
@@ -327,6 +386,11 @@ type nodeData struct {
 	MihomoURL    string // master only: link to its mihomo (Clash) web dashboard (mgmt overlay)
 	WireSkew     string // non-empty (reason) when the agent's wire version is incompatible
 	CSRF         string // CSRF token embedded in the action forms
+	// Transport switch (ADR-0025): populated from the rendered spec. A dual-transport
+	// exit (len(Transports) > 1) renders a switch; ActiveTransport is highlighted.
+	Transports      []domain.MasterTransport
+	ActiveTransport domain.MasterTransport
+	RealityInfo     *domain.RealityServerSpec
 }
 
 func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
@@ -363,6 +427,11 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 		data.SpecText = formatSpec(spec)
 		data.WGEasyURL = wgEasyURL(node, spec)
 		data.MihomoURL = mihomoURL(node, spec)
+		if spec.Role == domain.RoleExit {
+			data.Transports = spec.Transports()
+			data.ActiveTransport = spec.ActiveTransport.OrDefault()
+			data.RealityInfo = spec.Reality
+		}
 	}
 	// Offer provisioning when the node can be bootstrapped and is not already
 	// active (Provisioning/Reconciling/Ready) — i.e. Pending or Error.
@@ -448,7 +517,7 @@ func sortByName(nodes []domain.Node) {
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
 }
 
-func summarize(nodes []domain.Node) []stateStat {
+func summarize(nodes []nodeRow) []stateStat {
 	counts := map[domain.NodeState]int{}
 	for _, n := range nodes {
 		counts[n.State]++
@@ -477,6 +546,17 @@ func funcMap() template.FuncMap {
 		// lower accepts any stringish value (string, domain.Role, domain.NodeState).
 		"lower":   func(v any) string { return strings.ToLower(fmt.Sprint(v)) },
 		"relTime": relTime,
+		// transportLabel renders a human label for a master↔exit transport.
+		"transportLabel": func(t domain.MasterTransport) string {
+			switch t.OrDefault() {
+			case domain.TransportRealityXHTTP:
+				return "REALITY"
+			case domain.TransportAWG:
+				return "AmneziaWG"
+			default:
+				return string(t)
+			}
+		},
 		"absTime": func(t time.Time) string {
 			if t.IsZero() {
 				return "—"

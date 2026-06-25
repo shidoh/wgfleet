@@ -24,21 +24,30 @@
   <thead>
     <tr>
       <th>Node</th><th>Role</th><th>Region</th><th>State</th>
-      <th>Mgmt addr</th><th>Public IP</th><th>Last seen</th>
+      <th>Public IP</th><th>Egress</th><th>Seen</th>
     </tr>
   </thead>
   <tbody>
     {{range .Nodes}}
     <tr>
-      <td class="name"><a href="/nodes/{{.ID}}">{{.Name}}</a></td>
+      <td class="name">
+        <a href="/nodes/{{.ID}}">{{.Name}}</a>
+        {{if .ActiveTransport}}<span class="chip {{lower .ActiveTransport}}" title="Operator-selected active transport">via {{transportLabel .ActiveTransport}}</span>{{end}}
+      </td>
       <td><span class="role {{.Role}}">{{.Role}}</span></td>
       <td class="mono">{{or .Region "—"}}</td>
       <td>
-        <span class="badge {{lower .State}}"><span class="led"></span>{{.State}}</span>
-        {{if .Drain}}<span class="badge draining" title="Temporarily out of routing (reversible; node untouched)"><span class="led"></span>out of routing</span>{{end}}
+        <span class="subbadges">
+          <span class="badge {{lower .State}}"><span class="led"></span>{{.State}}</span>
+          {{if .Drain}}<span class="badge draining" title="Parked: out of routing (reversible; node untouched)"><span class="led"></span>parked</span>{{end}}
+          {{if .EgressBlocked}}<span class="badge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
+          {{if .ActiveEgress}}<span class="badge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>{{.ActiveEgress}}</span>{{end}}
+          {{if .LowThroughput}}<span class="badge draining" title="Egress throughput below floor — auto-suspended (ADR-0021)"><span class="led"></span>low tput</span>{{end}}
+          {{if .Decommission}}<span class="badge decommissioning"><span class="led"></span>decommissioning</span>{{end}}
+        </span>
       </td>
-      <td class="mono">{{or .MgmtAddr "—"}}</td>
       <td class="mono">{{or .PublicIP "—"}}</td>
+      <td class="mono">{{if eq (lower .Role) "exit"}}{{or .EgressIP "—"}}{{else}}—{{end}}</td>
       <td class="mono">{{relTime .LastSeen}}</td>
     </tr>
     {{end}}

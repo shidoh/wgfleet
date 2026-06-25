@@ -53,6 +53,11 @@ type Store interface {
 	// is absent.
 	SetNodeRealityKey(ctx context.Context, id, publicKey string) error
 
+	// SetNodeActiveTransport overrides the active master↔exit transport for an exit
+	// (ADR-0025); empty clears it back to the manifest default. Returns ErrNotFound
+	// if the node is absent.
+	SetNodeActiveTransport(ctx context.Context, id string, transport domain.MasterTransport) error
+
 	// RecordStatus stores the latest status report for a node, overwriting any
 	// previous report, and stamps the node's LastSeen.
 	RecordStatus(ctx context.Context, s domain.NodeStatus) error

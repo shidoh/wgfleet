@@ -87,16 +87,17 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 	const q = `
 		INSERT INTO nodes (
 			id, name, role, region, mgmt_addr, public_ip, public_key, reality_public_key, state,
-			drain, decommission, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
+			drain, decommission, active_transport, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
 			agent_version, wire_version,
 			created_at, updated_at, last_seen
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			name=excluded.name, role=excluded.role, region=excluded.region,
 			mgmt_addr=excluded.mgmt_addr, public_ip=excluded.public_ip,
 			public_key=excluded.public_key, reality_public_key=excluded.reality_public_key,
 			state=excluded.state,
 			drain=excluded.drain, decommission=excluded.decommission,
+			active_transport=excluded.active_transport,
 			last_error=excluded.last_error,
 			ssh_host=excluded.ssh_host, ssh_port=excluded.ssh_port,
 			ssh_user=excluded.ssh_user, ssh_key_path=excluded.ssh_key_path,
@@ -104,7 +105,8 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 			updated_at=excluded.updated_at, last_seen=excluded.last_seen`
 	_, err := s.db.ExecContext(ctx, q,
 		n.ID, n.Name, string(n.Role), n.Region, n.MgmtAddr, n.PublicIP,
-		n.PublicKey, n.RealityPublicKey, string(n.State), boolToInt(n.Drain), boolToInt(n.Decommission), n.LastError,
+		n.PublicKey, n.RealityPublicKey, string(n.State), boolToInt(n.Drain), boolToInt(n.Decommission),
+		string(n.ActiveTransport), n.LastError,
 		n.SSH.Host, n.SSH.Port, n.SSH.User, n.SSH.KeyPath,
 		n.AgentVersion, n.WireVersion,
 		fmtTime(orDefault(n.CreatedAt, now)), fmtTime(now), fmtTime(n.LastSeen),
@@ -118,7 +120,7 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 // GetNode implements Store.
 func (s *SQLiteStore) GetNode(ctx context.Context, id string) (domain.Node, error) {
 	const q = `SELECT id, name, role, region, mgmt_addr, public_ip, public_key, reality_public_key,
-		state, drain, decommission, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
+		state, drain, decommission, active_transport, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
 		agent_version, wire_version, created_at, updated_at, last_seen FROM nodes WHERE id = ?`
 	return scanNode(s.db.QueryRowContext(ctx, q, id))
 }
@@ -126,7 +128,7 @@ func (s *SQLiteStore) GetNode(ctx context.Context, id string) (domain.Node, erro
 // ListNodes implements Store.
 func (s *SQLiteStore) ListNodes(ctx context.Context) ([]domain.Node, error) {
 	const q = `SELECT id, name, role, region, mgmt_addr, public_ip, public_key, reality_public_key,
-		state, drain, decommission, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
+		state, drain, decommission, active_transport, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
 		agent_version, wire_version, created_at, updated_at, last_seen FROM nodes ORDER BY name`
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
@@ -194,6 +196,18 @@ func (s *SQLiteStore) SetNodePublicKey(ctx context.Context, id, publicKey string
 		publicKey, fmtTime(s.now().UTC()), id)
 	if err != nil {
 		return fmt.Errorf("set public key for %q: %w", id, err)
+	}
+	return requireAffected(res)
+}
+
+// SetNodeActiveTransport implements Store: records the operator's active
+// master↔exit transport override (ADR-0025). Empty clears it (back to manifest).
+func (s *SQLiteStore) SetNodeActiveTransport(ctx context.Context, id string, transport domain.MasterTransport) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE nodes SET active_transport=?, updated_at=? WHERE id=?`,
+		string(transport), fmtTime(s.now().UTC()), id)
+	if err != nil {
+		return fmt.Errorf("set active transport for %q: %w", id, err)
 	}
 	return requireAffected(res)
 }
@@ -282,13 +296,13 @@ type rowScanner interface {
 func scanNode(row rowScanner) (domain.Node, error) {
 	var (
 		n                          domain.Node
-		roleS, stateS              string
+		roleS, stateS, activeXport string
 		drain, decommission        int
 		createdAt, updatedAt, seen string
 	)
 	err := row.Scan(
 		&n.ID, &n.Name, &roleS, &n.Region, &n.MgmtAddr, &n.PublicIP, &n.PublicKey, &n.RealityPublicKey,
-		&stateS, &drain, &decommission, &n.LastError, &n.SSH.Host, &n.SSH.Port, &n.SSH.User, &n.SSH.KeyPath,
+		&stateS, &drain, &decommission, &activeXport, &n.LastError, &n.SSH.Host, &n.SSH.Port, &n.SSH.User, &n.SSH.KeyPath,
 		&n.AgentVersion, &n.WireVersion,
 		&createdAt, &updatedAt, &seen,
 	)
@@ -300,6 +314,7 @@ func scanNode(row rowScanner) (domain.Node, error) {
 	}
 	n.Role = domain.Role(roleS)
 	n.State = domain.NodeState(stateS)
+	n.ActiveTransport = domain.MasterTransport(activeXport)
 	n.Drain = drain != 0
 	n.Decommission = decommission != 0
 	n.CreatedAt = parseTime(createdAt)

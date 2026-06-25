@@ -40,4 +40,7 @@ var migrations = []string{
 	// v4: the exit's REALITY x25519 public key (ADR-0025), published separately
 	// from the WireGuard public_key; the master's vless proxy peers it.
 	`ALTER TABLE nodes ADD COLUMN reality_public_key TEXT NOT NULL DEFAULT ''`,
+	// v5: the operator's live UI override of the active master↔exit transport
+	// (ADR-0025); empty ⇒ use the manifest's active_transport.
+	`ALTER TABLE nodes ADD COLUMN active_transport TEXT NOT NULL DEFAULT ''`,
 }
