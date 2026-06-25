@@ -2029,6 +2029,7 @@ type FirewallSpec struct {
 	AsBlacklist   bool                   `protobuf:"varint,1,opt,name=as_blacklist,json=asBlacklist,proto3" json:"as_blacklist,omitempty"`
 	Whitelist     []string               `protobuf:"bytes,2,rep,name=whitelist,proto3" json:"whitelist,omitempty"`
 	WgPort        int32                  `protobuf:"varint,3,opt,name=wg_port,json=wgPort,proto3" json:"wg_port,omitempty"`
+	RealityPort   int32                  `protobuf:"varint,4,opt,name=reality_port,json=realityPort,proto3" json:"reality_port,omitempty"` // TCP port for the REALITY/XHTTP inbound (ADR-0025); 0 = not opened
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2080,6 +2081,13 @@ func (x *FirewallSpec) GetWhitelist() []string {
 func (x *FirewallSpec) GetWgPort() int32 {
 	if x != nil {
 		return x.WgPort
+	}
+	return 0
+}
+
+func (x *FirewallSpec) GetRealityPort() int32 {
+	if x != nil {
+		return x.RealityPort
 	}
 	return 0
 }
@@ -2398,11 +2406,12 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x04http\x18\x04 \x01(\x05R\x04http\"A\n" +
 	"\x11BootstrapUpstream\x12\x1a\n" +
 	"\bupstream\x18\x01 \x01(\tR\bupstream\x12\x10\n" +
-	"\x03ips\x18\x02 \x03(\tR\x03ips\"h\n" +
+	"\x03ips\x18\x02 \x03(\tR\x03ips\"\x8b\x01\n" +
 	"\fFirewallSpec\x12!\n" +
 	"\fas_blacklist\x18\x01 \x01(\bR\vasBlacklist\x12\x1c\n" +
 	"\twhitelist\x18\x02 \x03(\tR\twhitelist\x12\x17\n" +
-	"\awg_port\x18\x03 \x01(\x05R\x06wgPort\"\x90\x01\n" +
+	"\awg_port\x18\x03 \x01(\x05R\x06wgPort\x12!\n" +
+	"\freality_port\x18\x04 \x01(\x05R\vrealityPort\"\x90\x01\n" +
 	"\vRoutingSpec\x12)\n" +
 	"\x10egress_interface\x18\x01 \x01(\tR\x0fegressInterface\x12!\n" +
 	"\fdirect_cidrs\x18\x02 \x03(\tR\vdirectCidrs\x12\x1b\n" +

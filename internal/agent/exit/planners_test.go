@@ -16,6 +16,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/egress"
 	"github.com/shidoh/wgfleet/internal/wg"
+	"github.com/shidoh/wgfleet/internal/xray"
 )
 
 func testPaths(t *testing.T) Paths {
@@ -676,5 +677,87 @@ func TestASNFeedFailureNonFatalAndBacksOff(t *testing.T) {
 		if a.Changes() {
 			t.Errorf("expected backoff (no refresh) within the retry window, got %+v", acts)
 		}
+	}
+}
+
+func TestXrayPlannerDisabledNoop(t *testing.T) {
+	dir := t.TempDir()
+	p := xrayPlanner{
+		configPath:  filepath.Join(dir, "config.json"),
+		composePath: filepath.Join(dir, "docker-compose.yml"),
+		privateKey:  "PRIV",
+	}
+	// AWG-only exit (no reality transport): the planner must be a no-op and write
+	// nothing.
+	acts, err := p.Plan(context.Background(), domain.NodeSpec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range acts {
+		if a.Kind == reconcile.ActionExec {
+			t.Errorf("disabled xray planner emitted an exec: %q", a.Display)
+		}
+	}
+	if _, err := os.Stat(p.configPath); err == nil {
+		t.Error("disabled xray planner wrote a config file")
+	}
+}
+
+func TestXrayPlannerRendersAndEnsuresUp(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	composePath := filepath.Join(dir, "docker-compose.yml")
+	spec := domain.NodeSpec{
+		EnabledTransports: []domain.MasterTransport{domain.TransportRealityXHTTP},
+		Reality: &domain.RealityServerSpec{
+			ListenPort: 8443, UUID: "11111111-2222-3333-4444-555555555555",
+			ShortID: "0badc0de", ServerName: "www.microsoft.com", Dest: "www.microsoft.com:443",
+			XHTTPPath: "/down",
+		},
+	}
+	hasUp := func(actions []reconcile.Action) bool {
+		for _, a := range actions {
+			if a.Kind == reconcile.ActionExec && strings.Contains(a.Display, "up -d") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// First pass: config absent → renders config + compose and brings the stack up.
+	p := xrayPlanner{configPath: cfgPath, composePath: composePath, privateKey: "PRIV", up: func(string) bool { return false }}
+	acts, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasUp(acts) {
+		t.Error("first render should bring the xray stack up")
+	}
+
+	// Pre-write the exact rendered artifacts so a second pass sees unchanged files,
+	// isolating the ensure-up branch (mirrors TestDNSPlannerEnsureUpWhenDown).
+	cfg, err := xray.RenderConfig(xray.RenderInput{Spec: *spec.Reality, PrivateKey: "PRIV", EgressMark: xray.EgressMark})
+	if err != nil {
+		t.Fatal(err)
+	}
+	composeYAML, err := compose.RenderXrayCompose(compose.XrayInput{Image: spec.Reality.Image, ConfigPath: cfgPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(composePath, []byte(composeYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Stack up + unchanged config ⇒ no re-up.
+	up := xrayPlanner{configPath: cfgPath, composePath: composePath, privateKey: "PRIV", up: func(string) bool { return true }}
+	acts2, err := up.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasUp(acts2) {
+		t.Error("unchanged config + stack up: must not re-issue up -d")
 	}
 }

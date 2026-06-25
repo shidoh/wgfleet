@@ -281,6 +281,7 @@ message FirewallSpec {
   bool as_blacklist = 1;
   repeated string whitelist = 2;
   int32 wg_port = 3;
+  int32 reality_port = 4; // TCP port for the REALITY/XHTTP inbound (ADR-0025); 0 = not opened
 }
 
 message RoutingSpec {

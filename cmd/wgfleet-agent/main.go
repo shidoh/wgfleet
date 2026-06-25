@@ -45,6 +45,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/version"
 	"github.com/shidoh/wgfleet/internal/wg"
 	"github.com/shidoh/wgfleet/internal/wgeasy"
+	"github.com/shidoh/wgfleet/internal/xray"
 )
 
 // metricsMux builds the agent's /metrics HTTP handler.
@@ -327,6 +328,28 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		}
 	}
 
+	// Exits also carry a REALITY x25519 key for the optional reality transport
+	// (ADR-0025). Generate+publish it unconditionally so the controller can render
+	// the reality proxy the moment the operator flips the active transport — no
+	// chicken-and-egg. The key is exit-local (persisted in apply, ephemeral in plan);
+	// only the pubkey crosses the wire. Unused on AWG-only exits.
+	var realityPriv string
+	if a.role == domain.RoleExit {
+		rPriv, rPub, rEph, rerr := a.ensureRealityKey(!plan)
+		if rerr != nil {
+			return fmt.Errorf("ensure reality key: %w", rerr)
+		}
+		if rEph && plan {
+			a.log.Info("REALITY key absent; using an ephemeral key for the plan (apply would generate one)")
+		}
+		realityPriv = rPriv
+		if !plan {
+			if err := a.client.PublishRealityKey(ctx, rPub); err != nil {
+				return fmt.Errorf("publish reality key: %w", err)
+			}
+		}
+	}
+
 	spec, err := a.client.PullSpec(ctx)
 	if err != nil {
 		return fmt.Errorf("pull spec: %w", err)
@@ -368,7 +391,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		"peers", len(spec.Peers), "egress", spec.Egress,
 		"wg_port", spec.WGServer.ListenPort, "mtu", spec.WGServer.MTU)
 
-	engine := reconcile.NewEngine(a.log, a.planners(kp.PrivateKey, adminUser, adminPass)...)
+	engine := reconcile.NewEngine(a.log, a.planners(kp.PrivateKey, realityPriv, adminUser, adminPass)...)
 	start := time.Now()
 	report, reconcileErr := engine.Reconcile(ctx, spec, mode)
 	elapsed := time.Since(start)
@@ -626,7 +649,7 @@ func (a *agent) masterPaths() master.Paths {
 // planners returns the role-appropriate reconcile planners. The master's data
 // plane is mihomo + NAT; the exit's is the WG/AWG interface + wgcf + routing +
 // nftables + DNS.
-func (a *agent) planners(privateKey, adminUser, adminPass string) []reconcile.Planner {
+func (a *agent) planners(privateKey, realityPrivateKey, adminUser, adminPass string) []reconcile.Planner {
 	if a.role == domain.RoleMaster {
 		return master.Planners(master.Input{
 			Paths:         a.masterPaths(),
@@ -639,6 +662,7 @@ func (a *agent) planners(privateKey, adminUser, adminPass string) []reconcile.Pl
 	in := exit.Input{
 		Paths:               a.paths,
 		PrivateKey:          privateKey,
+		RealityPrivateKey:   realityPrivateKey,
 		OverlayMSS:          a.cfg.Agent.MgmtOverlayMSS,
 		ASBlacklistV4URL:    a.cfg.Agent.ASBlacklistV4URL,
 		ASBlacklistV6URL:    a.cfg.Agent.ASBlacklistV6URL,
@@ -646,6 +670,27 @@ func (a *agent) planners(privateKey, adminUser, adminPass string) []reconcile.Pl
 	}
 	in.WARP = a.readWARPProfile()
 	return exit.Planners(in)
+}
+
+// ensureRealityKey returns the exit's REALITY x25519 keypair (ADR-0025). With
+// persist=true (apply) it loads or creates+persists the private key (0600); with
+// persist=false (plan) it loads an existing key or generates an ephemeral one just
+// for rendering, reporting ephemeral=true so dry-run never writes anything.
+func (a *agent) ensureRealityKey(persist bool) (priv, pub string, ephemeral bool, err error) {
+	if persist {
+		priv, pub, _, err = xray.LoadOrCreateKey(a.paths.XrayKey)
+		return priv, pub, false, err
+	}
+	if data, rerr := os.ReadFile(a.paths.XrayKey); rerr == nil {
+		p := strings.TrimSpace(string(data))
+		pk, perr := xray.PublicKeyFor(p)
+		if perr != nil {
+			return "", "", false, fmt.Errorf("stored reality key invalid: %w", perr)
+		}
+		return p, pk, false, nil
+	}
+	priv, pub, err = xray.GenerateKeypair()
+	return priv, pub, true, err
 }
 
 // readWARPProfile reads and parses the wgcf-profile.conf produced on-node by

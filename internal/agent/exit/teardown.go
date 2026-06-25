@@ -33,6 +33,7 @@ func (p exitTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]recon
 	actions = append(actions,
 		reconcile.BestEffortExecAction("remove nftables table", "nft", "delete", "table", "inet", "wgfleet"),
 		reconcile.BestEffortExecAction("stop DNS filter", "docker", "compose", "-f", p.paths.DNSCompose, "down"),
+		reconcile.BestEffortExecAction("stop reality inbound", "docker", "compose", "-f", p.paths.XrayCompose, "down"),
 	)
 
 	// Wipe the rendered config and key material once the services are down. On
@@ -44,6 +45,9 @@ func (p exitTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]recon
 		{p.paths.NFT, "nftables ruleset"},
 		{p.paths.DNS, "blocky config"},
 		{p.paths.DNSCompose, "blocky compose file"},
+		{p.paths.XrayConfig, "xray (reality) config"},
+		{p.paths.XrayCompose, "xray compose file"},
+		{p.paths.XrayKey, "REALITY private key"},
 		{p.paths.RoutingState, "policy-routing state"},
 		{p.paths.ASBlacklist, "AS-blacklist feed cache"},
 		{p.paths.ASBlacklist + ".attempt", "AS-blacklist refresh marker"},

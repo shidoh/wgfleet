@@ -208,6 +208,10 @@ type FirewallSpec struct {
 	ASBlacklist bool     // drop scanning ASNs via an nftables set
 	Whitelist   []string // always-allow sources (mgmt overlay, master IP, ...)
 	WGPort      int      // UDP port to open for the WG listener
+	// RealityPort is the TCP port the REALITY/XHTTP inbound (xray) listens on
+	// (ADR-0025). Unlike the AWG WGPort (UDP), this is TCP. 0 ⇒ not opened (the exit
+	// does not run the reality transport).
+	RealityPort int
 }
 
 // RoutingSpec captures policy-routing intent, translated to ip rule/route by

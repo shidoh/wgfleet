@@ -454,6 +454,7 @@ func firewallToProto(f domain.FirewallSpec) *pb.FirewallSpec {
 		AsBlacklist: f.ASBlacklist,
 		Whitelist:   append([]string(nil), f.Whitelist...),
 		WgPort:      int32(f.WGPort),
+		RealityPort: int32(f.RealityPort),
 	}
 }
 
@@ -465,6 +466,7 @@ func firewallFromProto(f *pb.FirewallSpec) domain.FirewallSpec {
 		ASBlacklist: f.GetAsBlacklist(),
 		Whitelist:   append([]string(nil), f.GetWhitelist()...),
 		WGPort:      int(f.GetWgPort()),
+		RealityPort: int(f.GetRealityPort()),
 	}
 }
 

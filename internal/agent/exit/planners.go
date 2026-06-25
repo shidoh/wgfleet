@@ -31,7 +31,11 @@ import (
 type Input struct {
 	Paths      Paths
 	PrivateKey string
-	WARP       *egress.WARPConfig
+	// RealityPrivateKey is the exit's locally-generated REALITY x25519 private key
+	// (ADR-0025), persisted in apply mode / ephemeral in plan mode. Empty on exits
+	// that do not run the reality transport (the xray planner then no-ops).
+	RealityPrivateKey string
+	WARP              *egress.WARPConfig
 	// IfaceUp reports whether a network interface currently exists/is up. It lets
 	// the WG/WARP planners bring an interface up when it is down even though its
 	// config file is unchanged (after a reboot, or a previously failed `up`).
@@ -66,6 +70,10 @@ func Planners(in Input) []reconcile.Planner {
 		warpPlanner{path: in.Paths.WGCF, dir: in.Paths.WARPDir, warp: in.WARP, up: up},
 		routingPlanner{statePath: in.Paths.RoutingState},
 		dnsPlanner{configPath: in.Paths.DNS, composePath: in.Paths.DNSCompose},
+		// REALITY/XHTTP inbound (ADR-0025): renders + runs the xray container when the
+		// exit's active transport set includes reality; a no-op otherwise. Its
+		// host-originated outbound is mark-routed to WARP by the routing planner.
+		xrayPlanner{configPath: in.Paths.XrayConfig, composePath: in.Paths.XrayCompose, privateKey: in.RealityPrivateKey},
 		// blocky runs in Docker, which sets the nft FORWARD policy to DROP and would
 		// silently black-hole client traffic forwarded awg0→wgcf (an earlier finding, same as
 		// the master). Runs after dnsPlanner so the DOCKER-USER chain exists.
@@ -789,6 +797,78 @@ func (p dnsPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.A
 		// Steady state: everything in place and running. Record a no-change so the
 		// engine doesn't see a perpetual exec "change" every pass.
 		actions = append(actions, reconcile.NoChangeAction("dns filter", "resolver already up"))
+	}
+	return actions, nil
+}
+
+// --- REALITY/XHTTP inbound (xray, ADR-0025) ---
+
+type xrayPlanner struct {
+	configPath  string
+	composePath string
+	privateKey  string                 // REALITY x25519 private key (exit-local)
+	up          func(file string) bool // nil ⇒ real `docker compose ps` probe
+}
+
+func (xrayPlanner) Component() string { return "reality inbound (xray)" }
+
+func (p xrayPlanner) isUp() bool {
+	if p.up == nil {
+		return compose.StackUp(p.composePath)
+	}
+	return p.up(p.composePath)
+}
+
+func (p xrayPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
+	if !spec.HasTransport(domain.TransportRealityXHTTP) || spec.Reality == nil {
+		// Exit does not run the reality transport: nothing to converge. Full removal of
+		// a previously-running xray happens via teardown/decommission (mirrors the dns
+		// filter's disabled path).
+		return []reconcile.Action{reconcile.NoChangeAction("reality inbound", "disabled")}, nil
+	}
+	if p.privateKey == "" {
+		return []reconcile.Action{reconcile.NoChangeAction("reality inbound",
+			"pending: REALITY private key not yet available")}, nil
+	}
+	cfg, err := xray.RenderConfig(xray.RenderInput{
+		Spec:       *spec.Reality,
+		PrivateKey: p.privateKey,
+		EgressMark: xray.EgressMark,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("render reality inbound: %w", err)
+	}
+	composeYAML, err := compose.RenderXrayCompose(compose.XrayInput{
+		Image:      spec.Reality.Image,
+		ConfigPath: p.configPath,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("render reality compose: %w", err)
+	}
+
+	// config.json carries the REALITY private key; redact it in plan/dry-run output.
+	cfgFile, err := reconcile.FileAction(p.configPath, []byte(cfg), 0o600, xray.RedactConfig)
+	if err != nil {
+		return nil, err
+	}
+	composeFile, err := reconcile.FileAction(p.composePath, []byte(composeYAML), 0o644, nil)
+	if err != nil {
+		return nil, err
+	}
+	actions := []reconcile.Action{composeFile, cfgFile}
+
+	switch {
+	case composeFile.Changes():
+		actions = append(actions, reconcile.ExecAction("bring xray stack up",
+			"docker", "compose", "-f", p.composePath, "up", "-d"))
+	case cfgFile.Changes():
+		actions = append(actions, reconcile.ExecAction("restart reality inbound",
+			"docker", "compose", "-f", p.composePath, "restart", "xray"))
+	case !p.isUp():
+		actions = append(actions, reconcile.ExecAction("bring xray stack up (was down)",
+			"docker", "compose", "-f", p.composePath, "up", "-d"))
+	default:
+		actions = append(actions, reconcile.NoChangeAction("reality inbound", "xray already up"))
 	}
 	return actions, nil
 }

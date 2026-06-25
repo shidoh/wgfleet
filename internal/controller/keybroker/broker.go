@@ -211,6 +211,9 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 			ServerName: rp.ServerName, Dest: rp.Dest,
 			XHTTPPath: rp.Path, XHTTPMode: rp.Mode, Image: rp.Image,
 		}
+		// Open the reality inbound's TCP port so the master can dial it (the AWG
+		// WGPort above is UDP; reality is TCP).
+		spec.Firewall.RealityPort = rp.Port
 	}
 	return spec, nil
 }

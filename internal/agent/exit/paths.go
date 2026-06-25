@@ -17,6 +17,12 @@ type Paths struct {
 	WARPDir    string // dir where `wgcf register`/`generate` keep account + profile
 	DNS        string // blocky resolver config (config.yml)
 	DNSCompose string // docker-compose.yml for the blocky container stack
+	// REALITY transport (ADR-0025): the locally-generated x25519 key, the rendered
+	// xray inbound config, and its compose file. Only used on exits that run the
+	// reality transport; otherwise the xray planner is a no-op.
+	XrayKey     string // REALITY x25519 private key (0600, generated on-node)
+	XrayConfig  string // rendered xray config.json
+	XrayCompose string // docker-compose.yml for the xray container
 	// RoutingState records the last-applied policy-routing intent so the routing
 	// steps (ip rule/sysctl/conntrack -D) run only when it changes. It lives on
 	// tmpfs (/run): a reboot clears the kernel rules and the state file together,
@@ -38,6 +44,9 @@ func DefaultPaths() Paths {
 		WARPDir:      "/etc/wgfleet/warp",
 		DNS:          "/etc/wgfleet/blocky/config.yml",
 		DNSCompose:   "/etc/wgfleet/blocky/docker-compose.yml",
+		XrayKey:      "/etc/wgfleet/reality.key",
+		XrayConfig:   "/etc/wgfleet/xray/config.json",
+		XrayCompose:  "/etc/wgfleet/xray/docker-compose.yml",
 		RoutingState: "/run/wgfleet/routing.applied",
 		ASBlacklist:  "/var/lib/wgfleet/as-blacklist.lst",
 	}
@@ -54,6 +63,9 @@ func PathsUnder(dir string) Paths {
 		WARPDir:      filepath.Join(dir, "warp"),
 		DNS:          filepath.Join(dir, "blocky", "config.yml"),
 		DNSCompose:   filepath.Join(dir, "blocky", "docker-compose.yml"),
+		XrayKey:      filepath.Join(dir, "reality.key"),
+		XrayConfig:   filepath.Join(dir, "xray", "config.json"),
+		XrayCompose:  filepath.Join(dir, "xray", "docker-compose.yml"),
 		RoutingState: filepath.Join(dir, "routing.applied"),
 		ASBlacklist:  filepath.Join(dir, "as-blacklist.lst"),
 	}

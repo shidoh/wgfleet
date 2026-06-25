@@ -268,6 +268,11 @@ func RenderRuleset(in RenderInput) (string, error) {
 	fmt.Fprintf(&b, "\t\ttcp dport %d accept\n", sshPort)
 	fmt.Fprintf(&b, "\t\tudp dport %d accept\n", zeroTierPort)
 	fmt.Fprintf(&b, "\t\tudp dport %d accept\n", in.Firewall.WGPort)
+	// REALITY/XHTTP inbound (xray) listens on TCP, not UDP (ADR-0025). Open it so the
+	// master can dial the reality transport; 0 ⇒ the exit does not run reality.
+	if in.Firewall.RealityPort > 0 {
+		fmt.Fprintf(&b, "\t\ttcp dport %d accept\n", in.Firewall.RealityPort)
+	}
 	// Master only: let client TCP that prerouting DNAT'd to the local mihomo redir
 	// port reach mihomo. After DNAT the destination is the master's own address, so
 	// the packet hits this INPUT chain; without this accept the drop policy swallows
