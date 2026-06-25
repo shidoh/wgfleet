@@ -271,6 +271,44 @@ func TestRenderMasterSpec(t *testing.T) {
 	}
 }
 
+// A node re-added after its store record was deleted (the drain→decommission→
+// delete→re-add lifecycle) re-registers without a PublicIP — the agent's Register
+// sends none and provisioning didn't re-seed inventory. The master endpoint must
+// fall back to the manifest's ssh.host (or public_ip) instead of rendering an empty
+// endpoint that fails the whole master mihomo plan.
+func TestRenderMasterSpecFallsBackToManifestPublicIP(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	fleet := testFleet()
+	fleet.Exits[0].SSH = config.SSHConfig{Host: "203.0.113.50"}
+	b := New(st, fleet, log)
+
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	// Exit registered (pubkey present) but PublicIP empty in the store.
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if spec.Master == nil || len(spec.Master.ExitTunnels) != 1 {
+		t.Fatalf("expected 1 exit tunnel, got %+v", spec.Master)
+	}
+	et := spec.Master.ExitTunnels[0]
+	wantEndpoint := fmt.Sprintf("203.0.113.50:%d", config.ExitConfig{Name: "exit-de-1"}.WGListenPort())
+	if et.Endpoint != wantEndpoint {
+		t.Errorf("exit endpoint = %q, want %q (manifest ssh.host fallback)", et.Endpoint, wantEndpoint)
+	}
+	if !contains(spec.Master.DirectCIDRs, "203.0.113.50/32") {
+		t.Errorf("fallback public IP missing from DIRECT cidrs: %v", spec.Master.DirectCIDRs)
+	}
+}
+
 func TestRenderSkipsUnregisteredPeer(t *testing.T) {
 	ctx := context.Background()
 	b, st := newBroker(t)

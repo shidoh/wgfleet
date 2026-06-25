@@ -262,8 +262,23 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		if err != nil {
 			return domain.NodeSpec{}, err
 		}
+		// Resolve the exit's public IP (the WG endpoint the master dials). Prefer the
+		// store value (set by provisioning, preserved across agent Register), but fall
+		// back to the manifest's public_ip / ssh.host. Without this fallback, an exit
+		// that registers without a prior provisioned inventory entry — e.g. re-added
+		// after a store-record delete (the drain→decommission→delete→re-add lifecycle)
+		// — has an empty PublicIP, yielding an empty endpoint that fails the WHOLE
+		// master mihomo render (one bad exit Errors the entire master). Mirrors the
+		// master's manifest fallback below.
+		exitPublicIP := exitNode.PublicIP
+		if exitPublicIP == "" {
+			exitPublicIP = exit.PublicIP
+			if exitPublicIP == "" {
+				exitPublicIP = exit.SSH.Host
+			}
+		}
 		endpoint := ""
-		if addr, err := netip.ParseAddr(exitNode.PublicIP); err == nil {
+		if addr, err := netip.ParseAddr(exitPublicIP); err == nil {
 			endpoint = netip.AddrPortFrom(addr, uint16(exit.WGListenPort())).String()
 			// Route client traffic to this exit's OWN public IP DIRECT (master uplink),
 			// never through mihomo→wg-best→WARP. Without this, SSH/management to an
@@ -275,9 +290,9 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 				bits = 128
 			}
 			ms.DirectCIDRs = append(ms.DirectCIDRs, netip.PrefixFrom(addr, bits).String())
-		} else if exitNode.PublicIP != "" {
+		} else if exitPublicIP != "" {
 			b.log.Warn("exit has unparseable public IP; omitting from master proxies",
-				"exit", exit.Name, "public_ip", exitNode.PublicIP)
+				"exit", exit.Name, "public_ip", exitPublicIP)
 			continue
 		}
 		// Same tunnel seed as the exit's interface ⇒ identical shared AWG params on
