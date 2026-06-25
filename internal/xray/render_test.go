@@ -65,6 +65,22 @@ func TestRenderConfigStructure(t *testing.T) {
 	}
 }
 
+func TestRenderConfigEmptySNI(t *testing.T) {
+	s := sampleSpec()
+	s.AllowEmptySNI = true
+	out, err := RenderConfig(RenderInput{Spec: s, PrivateKey: "K"})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	var c map[string]any
+	_ = json.Unmarshal([]byte(out), &c)
+	rs := c["inbounds"].([]any)[0].(map[string]any)["streamSettings"].(map[string]any)["realitySettings"].(map[string]any)
+	names := rs["serverNames"].([]any)
+	if len(names) != 2 || names[0] != "" || names[1] != "www.microsoft.com" {
+		t.Errorf("AllowEmptySNI serverNames = %v, want [\"\", www.microsoft.com]", names)
+	}
+}
+
 func TestRenderConfigDeterministic(t *testing.T) {
 	a, _ := RenderConfig(RenderInput{Spec: sampleSpec(), PrivateKey: "K", EgressMark: 0})
 	b, _ := RenderConfig(RenderInput{Spec: sampleSpec(), PrivateKey: "K", EgressMark: 0})

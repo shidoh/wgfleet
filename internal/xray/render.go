@@ -127,6 +127,13 @@ func RenderConfig(in RenderInput) (string, error) {
 	if s.ShortID != "" {
 		shortIDs = []string{"", s.ShortID}
 	}
+	// serverNames lists the SNIs the inbound accepts. AllowEmptySNI prepends ""
+	// so a ClientHello carrying no SNI extension is accepted (the master then
+	// sends the exit IP as a placeholder so uTLS omits SNI) — the RU TSPU bypass.
+	serverNames := []string{s.ServerName}
+	if s.AllowEmptySNI {
+		serverNames = []string{"", s.ServerName}
+	}
 
 	out := outbound{Protocol: "freedom", Tag: "direct"}
 	if in.EgressMark > 0 {
@@ -149,7 +156,7 @@ func RenderConfig(in RenderInput) (string, error) {
 				RealitySettings: realitySettings{
 					Show:        false,
 					Target:      s.Dest,
-					ServerNames: []string{s.ServerName},
+					ServerNames: serverNames,
 					PrivateKey:  in.PrivateKey,
 					ShortIDs:    shortIDs,
 				},

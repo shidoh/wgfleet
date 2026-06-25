@@ -303,10 +303,6 @@ func realityProxy(t domain.ExitTunnel, host string, port int) (map[string]any, e
 	case r.ServerName == "":
 		return nil, fmt.Errorf("exit %q: reality tunnel missing server name (SNI)", t.Name)
 	}
-	fingerprint := r.Fingerprint
-	if fingerprint == "" {
-		fingerprint = DefaultRealityFingerprint
-	}
 	mode := r.XHTTPMode
 	if mode == "" {
 		mode = DefaultXHTTPMode
@@ -315,23 +311,39 @@ func realityProxy(t domain.ExitTunnel, host string, port int) (map[string]any, e
 	if r.XHTTPPath != "" {
 		xhttp["path"] = r.XHTTPPath
 	}
-	return map[string]any{
-		"name":               t.Name,
-		"type":               "vless",
-		"server":             host,
-		"port":               port,
-		"uuid":               r.UUID,
-		"network":            "xhttp",
-		"tls":                true,
-		"udp":                true,
-		"servername":         r.ServerName,
-		"client-fingerprint": fingerprint,
+	// EmptySNI: send the ClientHello with no SNI by setting servername to the exit
+	// IP placeholder (uTLS omits the SNI extension for a literal IP). The inbound
+	// must accept "" in serverNames (RealityServerSpec.AllowEmptySNI).
+	servername := r.ServerName
+	if r.EmptySNI {
+		servername = host
+	}
+	proxy := map[string]any{
+		"name":       t.Name,
+		"type":       "vless",
+		"server":     host,
+		"port":       port,
+		"uuid":       r.UUID,
+		"network":    "xhttp",
+		"tls":        true,
+		"udp":        true,
+		"servername": servername,
 		"reality-opts": map[string]any{
 			"public-key": r.PublicKey,
 			"short-id":   r.ShortID,
 		},
 		"xhttp-opts": xhttp,
-	}, nil
+	}
+	// client-fingerprint is the uTLS ClientHello fingerprint. "none" omits it (the
+	// Go-default fingerprint, reported to survive RU TSPU where chrome is flagged);
+	// empty ⇒ the chrome default for back-compat.
+	if fp := r.Fingerprint; fp != "none" {
+		if fp == "" {
+			fp = DefaultRealityFingerprint
+		}
+		proxy["client-fingerprint"] = fp
+	}
+	return proxy, nil
 }
 
 // awgOption renders the mihomo amnezia-wg-option block. H ranges render as

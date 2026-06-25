@@ -540,3 +540,40 @@ func TestRenderRealityProxy(t *testing.T) {
 		t.Errorf("wg-best members = %d, want 2 (the AWG exits)", len(members))
 	}
 }
+
+func TestRenderRealityFingerprintAndEmptySNI(t *testing.T) {
+	mk := func(tune func(*domain.RealityTunnel)) map[string]any {
+		in := sampleInput()
+		rt := &domain.RealityTunnel{
+			UUID: "u", PublicKey: "PK", ShortID: "0badc0de",
+			ServerName: "www.microsoft.com", XHTTPPath: "/down",
+		}
+		tune(rt)
+		in.Spec.ExitTunnels = append(in.Spec.ExitTunnels, domain.ExitTunnel{
+			Name: "exit-a-reality", Endpoint: "203.0.113.7:443",
+			Transport: domain.TransportRealityXHTTP, Drained: true, Reality: rt,
+		})
+		out, err := RenderConfig(in)
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		return proxyByName(t, out, "exit-a-reality")
+	}
+
+	// firefox fingerprint passes through.
+	if p := mk(func(rt *domain.RealityTunnel) { rt.Fingerprint = "firefox" }); p["client-fingerprint"] != "firefox" {
+		t.Errorf("fingerprint = %v, want firefox", p["client-fingerprint"])
+	}
+	// "none" omits client-fingerprint entirely (Go-default uTLS).
+	if p := mk(func(rt *domain.RealityTunnel) { rt.Fingerprint = "none" }); func() bool { _, ok := p["client-fingerprint"]; return ok }() {
+		t.Errorf("fingerprint=none must omit client-fingerprint, got %v", p["client-fingerprint"])
+	}
+	// empty ⇒ chrome default (back-compat).
+	if p := mk(func(rt *domain.RealityTunnel) {}); p["client-fingerprint"] != "chrome" {
+		t.Errorf("default fingerprint = %v, want chrome", p["client-fingerprint"])
+	}
+	// EmptySNI ⇒ servername set to the exit IP placeholder (so uTLS omits SNI).
+	if p := mk(func(rt *domain.RealityTunnel) { rt.EmptySNI = true }); p["servername"] != "203.0.113.7" {
+		t.Errorf("EmptySNI servername = %v, want 203.0.113.7 (IP placeholder)", p["servername"])
+	}
+}

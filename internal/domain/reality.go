@@ -27,6 +27,10 @@ type RealityServerSpec struct {
 	// XHTTPMode is the XHTTP mode; "packet-up" splits the upstream into many
 	// short POSTs and dodges the foreign-DC single-connection volume-freeze.
 	XHTTPMode string
+	// AllowEmptySNI adds "" to the inbound serverNames so a ClientHello without an
+	// SNI extension is accepted (the master then sends no SNI). Reported to bypass
+	// the RU TSPU heuristic block (ADR-0025 / 2026 recon).
+	AllowEmptySNI bool
 	// Image is the xray container image (pinned repo:tag).
 	Image string
 }
@@ -47,11 +51,14 @@ type RealityTunnel struct {
 	// ServerName is the camouflage SNI the client sends (mihomo servername).
 	ServerName string
 	// Fingerprint is the client uTLS fingerprint (mihomo client-fingerprint,
-	// e.g. "chrome").
+	// e.g. "chrome", "firefox"). "none" ⇒ omit it (Go-default fingerprint).
 	Fingerprint string
 	// XHTTPPath is the XHTTP request path (must match the inbound).
 	XHTTPPath string
 	// XHTTPMode is the XHTTP mode (e.g. "packet-up"); set explicitly on both ends
 	// because the auto+REALITY path has an xray bug (#5635).
 	XHTTPMode string
+	// EmptySNI sends the ClientHello with no SNI (mihomo servername set to the exit
+	// IP placeholder); the inbound must allow it (RealityServerSpec.AllowEmptySNI).
+	EmptySNI bool
 }

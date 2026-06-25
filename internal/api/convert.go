@@ -83,14 +83,15 @@ func realityServerToProto(r *domain.RealityServerSpec) *pb.RealitySrvSpec {
 		return nil
 	}
 	return &pb.RealitySrvSpec{
-		ListenPort: int32(r.ListenPort),
-		Uuid:       r.UUID,
-		ShortId:    r.ShortID,
-		ServerName: r.ServerName,
-		Dest:       r.Dest,
-		XhttpPath:  r.XHTTPPath,
-		XhttpMode:  r.XHTTPMode,
-		Image:      r.Image,
+		ListenPort:    int32(r.ListenPort),
+		Uuid:          r.UUID,
+		ShortId:       r.ShortID,
+		ServerName:    r.ServerName,
+		Dest:          r.Dest,
+		XhttpPath:     r.XHTTPPath,
+		XhttpMode:     r.XHTTPMode,
+		AllowEmptySni: r.AllowEmptySNI,
+		Image:         r.Image,
 	}
 }
 
@@ -99,14 +100,15 @@ func realityServerFromProto(r *pb.RealitySrvSpec) *domain.RealityServerSpec {
 		return nil
 	}
 	return &domain.RealityServerSpec{
-		ListenPort: int(r.GetListenPort()),
-		UUID:       r.GetUuid(),
-		ShortID:    r.GetShortId(),
-		ServerName: r.GetServerName(),
-		Dest:       r.GetDest(),
-		XHTTPPath:  r.GetXhttpPath(),
-		XHTTPMode:  r.GetXhttpMode(),
-		Image:      r.GetImage(),
+		ListenPort:    int(r.GetListenPort()),
+		UUID:          r.GetUuid(),
+		ShortID:       r.GetShortId(),
+		ServerName:    r.GetServerName(),
+		Dest:          r.GetDest(),
+		XHTTPPath:     r.GetXhttpPath(),
+		XHTTPMode:     r.GetXhttpMode(),
+		AllowEmptySNI: r.GetAllowEmptySni(),
+		Image:         r.GetImage(),
 	}
 }
 
@@ -122,6 +124,7 @@ func realityTunnelToProto(r *domain.RealityTunnel) *pb.RealityTunnel {
 		Fingerprint: r.Fingerprint,
 		XhttpPath:   r.XHTTPPath,
 		XhttpMode:   r.XHTTPMode,
+		EmptySni:    r.EmptySNI,
 	}
 }
 
@@ -137,6 +140,7 @@ func realityTunnelFromProto(r *pb.RealityTunnel) *domain.RealityTunnel {
 		Fingerprint: r.GetFingerprint(),
 		XHTTPPath:   r.GetXhttpPath(),
 		XHTTPMode:   r.GetXhttpMode(),
+		EmptySNI:    r.GetEmptySni(),
 	}
 }
 

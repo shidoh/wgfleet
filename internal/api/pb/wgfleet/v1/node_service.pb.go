@@ -643,15 +643,18 @@ func (x *NodeSpec) GetReality() *RealitySrvSpec {
 // (xray-core). Carries no private key — the exit generates its REALITY x25519
 // keypair locally and publishes only the public key (key-broker model).
 type RealitySrvSpec struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ListenPort    int32                  `protobuf:"varint,1,opt,name=listen_port,json=listenPort,proto3" json:"listen_port,omitempty"` // VLESS port (differs from the AWG port)
-	Uuid          string                 `protobuf:"bytes,2,opt,name=uuid,proto3" json:"uuid,omitempty"`                                // VLESS user id (matches the master's RealityTunnel)
-	ShortId       string                 `protobuf:"bytes,3,opt,name=short_id,json=shortId,proto3" json:"short_id,omitempty"`           // REALITY short-id (hex)
-	ServerName    string                 `protobuf:"bytes,4,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"`  // camouflage SNI (serverNames[0])
-	Dest          string                 `protobuf:"bytes,5,opt,name=dest,proto3" json:"dest,omitempty"`                                // camouflage target host:port (steal/fallback)
-	XhttpPath     string                 `protobuf:"bytes,6,opt,name=xhttp_path,json=xhttpPath,proto3" json:"xhttp_path,omitempty"`     // XHTTP path
-	XhttpMode     string                 `protobuf:"bytes,7,opt,name=xhttp_mode,json=xhttpMode,proto3" json:"xhttp_mode,omitempty"`     // XHTTP mode ("packet-up")
-	Image         string                 `protobuf:"bytes,8,opt,name=image,proto3" json:"image,omitempty"`                              // xray container image (pinned repo:tag)
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	ListenPort int32                  `protobuf:"varint,1,opt,name=listen_port,json=listenPort,proto3" json:"listen_port,omitempty"` // VLESS port (differs from the AWG port)
+	Uuid       string                 `protobuf:"bytes,2,opt,name=uuid,proto3" json:"uuid,omitempty"`                                // VLESS user id (matches the master's RealityTunnel)
+	ShortId    string                 `protobuf:"bytes,3,opt,name=short_id,json=shortId,proto3" json:"short_id,omitempty"`           // REALITY short-id (hex)
+	ServerName string                 `protobuf:"bytes,4,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"`  // camouflage SNI (serverNames[0])
+	Dest       string                 `protobuf:"bytes,5,opt,name=dest,proto3" json:"dest,omitempty"`                                // camouflage target host:port (steal/fallback)
+	XhttpPath  string                 `protobuf:"bytes,6,opt,name=xhttp_path,json=xhttpPath,proto3" json:"xhttp_path,omitempty"`     // XHTTP path
+	XhttpMode  string                 `protobuf:"bytes,7,opt,name=xhttp_mode,json=xhttpMode,proto3" json:"xhttp_mode,omitempty"`     // XHTTP mode ("packet-up")
+	Image      string                 `protobuf:"bytes,8,opt,name=image,proto3" json:"image,omitempty"`                              // xray container image (pinned repo:tag)
+	// Accept a ClientHello with no SNI (serverNames gains ""). Additive; an older
+	// agent ignores it — backward-compatible, no wire-version bump (ADR-0019).
+	AllowEmptySni bool `protobuf:"varint,9,opt,name=allow_empty_sni,json=allowEmptySni,proto3" json:"allow_empty_sni,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -740,6 +743,13 @@ func (x *RealitySrvSpec) GetImage() string {
 		return x.Image
 	}
 	return ""
+}
+
+func (x *RealitySrvSpec) GetAllowEmptySni() bool {
+	if x != nil {
+		return x.AllowEmptySni
+	}
+	return false
 }
 
 // MasterSpec is the master node's mihomo data plane.
@@ -1107,14 +1117,17 @@ func (x *ExitTunnel) GetReality() *RealityTunnel {
 // RealityTunnel is the master-side mihomo vless+reality proxy descriptor for a
 // REALITY/XHTTP exit. Endpoint host:port comes from the enclosing ExitTunnel.
 type RealityTunnel struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Uuid          string                 `protobuf:"bytes,1,opt,name=uuid,proto3" json:"uuid,omitempty"`                               // VLESS user id (shared with the exit)
-	PublicKey     string                 `protobuf:"bytes,2,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`    // exit's REALITY x25519 PUBLIC key (reality-opts.public-key)
-	ShortId       string                 `protobuf:"bytes,3,opt,name=short_id,json=shortId,proto3" json:"short_id,omitempty"`          // REALITY short-id (hex)
-	ServerName    string                 `protobuf:"bytes,4,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"` // camouflage SNI (mihomo servername)
-	Fingerprint   string                 `protobuf:"bytes,5,opt,name=fingerprint,proto3" json:"fingerprint,omitempty"`                 // client uTLS fingerprint (mihomo client-fingerprint)
-	XhttpPath     string                 `protobuf:"bytes,6,opt,name=xhttp_path,json=xhttpPath,proto3" json:"xhttp_path,omitempty"`    // XHTTP path
-	XhttpMode     string                 `protobuf:"bytes,7,opt,name=xhttp_mode,json=xhttpMode,proto3" json:"xhttp_mode,omitempty"`    // XHTTP mode ("packet-up")
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Uuid        string                 `protobuf:"bytes,1,opt,name=uuid,proto3" json:"uuid,omitempty"`                               // VLESS user id (shared with the exit)
+	PublicKey   string                 `protobuf:"bytes,2,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`    // exit's REALITY x25519 PUBLIC key (reality-opts.public-key)
+	ShortId     string                 `protobuf:"bytes,3,opt,name=short_id,json=shortId,proto3" json:"short_id,omitempty"`          // REALITY short-id (hex)
+	ServerName  string                 `protobuf:"bytes,4,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"` // camouflage SNI (mihomo servername)
+	Fingerprint string                 `protobuf:"bytes,5,opt,name=fingerprint,proto3" json:"fingerprint,omitempty"`                 // client uTLS fingerprint (mihomo client-fingerprint); "none" ⇒ omit
+	XhttpPath   string                 `protobuf:"bytes,6,opt,name=xhttp_path,json=xhttpPath,proto3" json:"xhttp_path,omitempty"`    // XHTTP path
+	XhttpMode   string                 `protobuf:"bytes,7,opt,name=xhttp_mode,json=xhttpMode,proto3" json:"xhttp_mode,omitempty"`    // XHTTP mode ("packet-up")
+	// Send the ClientHello with no SNI (mihomo servername = exit IP placeholder).
+	// Additive; an older agent ignores it — backward-compatible (ADR-0019).
+	EmptySni      bool `protobuf:"varint,8,opt,name=empty_sni,json=emptySni,proto3" json:"empty_sni,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1196,6 +1209,13 @@ func (x *RealityTunnel) GetXhttpMode() string {
 		return x.XhttpMode
 	}
 	return ""
+}
+
+func (x *RealityTunnel) GetEmptySni() bool {
+	if x != nil {
+		return x.EmptySni
+	}
+	return false
 }
 
 // CustomConfig carries operator overrides (JSON-encoded for arbitrary nesting)
@@ -2273,7 +2293,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x1begress_throughput_probe_url\x18\x0e \x01(\tR\x18egressThroughputProbeUrl\x12-\n" +
 	"\x12enabled_transports\x18\x0f \x03(\tR\x11enabledTransports\x12)\n" +
 	"\x10active_transport\x18\x10 \x01(\tR\x0factiveTransport\x124\n" +
-	"\areality\x18\x11 \x01(\v2\x1a.wgfleet.v1.RealitySrvSpecR\areality\"\xe9\x01\n" +
+	"\areality\x18\x11 \x01(\v2\x1a.wgfleet.v1.RealitySrvSpecR\areality\"\x91\x02\n" +
 	"\x0eRealitySrvSpec\x12\x1f\n" +
 	"\vlisten_port\x18\x01 \x01(\x05R\n" +
 	"listenPort\x12\x12\n" +
@@ -2286,7 +2306,8 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"xhttp_path\x18\x06 \x01(\tR\txhttpPath\x12\x1d\n" +
 	"\n" +
 	"xhttp_mode\x18\a \x01(\tR\txhttpMode\x12\x14\n" +
-	"\x05image\x18\b \x01(\tR\x05image\"\xd4\x04\n" +
+	"\x05image\x18\b \x01(\tR\x05image\x12&\n" +
+	"\x0fallow_empty_sni\x18\t \x01(\bR\rallowEmptySni\"\xd4\x04\n" +
 	"\n" +
 	"MasterSpec\x12!\n" +
 	"\fbind_address\x18\x01 \x01(\tR\vbindAddress\x12\x1d\n" +
@@ -2326,7 +2347,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\adrained\x18\b \x01(\bR\adrained\x12\x1c\n" +
 	"\ttransport\x18\t \x01(\tR\ttransport\x123\n" +
 	"\areality\x18\n" +
-	" \x01(\v2\x19.wgfleet.v1.RealityTunnelR\areality\"\xde\x01\n" +
+	" \x01(\v2\x19.wgfleet.v1.RealityTunnelR\areality\"\xfb\x01\n" +
 	"\rRealityTunnel\x12\x12\n" +
 	"\x04uuid\x18\x01 \x01(\tR\x04uuid\x12\x1d\n" +
 	"\n" +
@@ -2338,7 +2359,8 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\n" +
 	"xhttp_path\x18\x06 \x01(\tR\txhttpPath\x12\x1d\n" +
 	"\n" +
-	"xhttp_mode\x18\a \x01(\tR\txhttpMode\"d\n" +
+	"xhttp_mode\x18\a \x01(\tR\txhttpMode\x12\x1b\n" +
+	"\tempty_sni\x18\b \x01(\bR\bemptySni\"d\n" +
 	"\fCustomConfig\x12%\n" +
 	"\x0eoverrides_json\x18\x01 \x01(\tR\roverridesJson\x12-\n" +
 	"\x05files\x18\x02 \x03(\v2\x17.wgfleet.v1.ManagedFileR\x05files\"S\n" +

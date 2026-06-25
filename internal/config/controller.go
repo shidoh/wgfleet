@@ -437,8 +437,17 @@ type RealityTransportConfig struct {
 	DestDomain string `koanf:"dest_domain"` // camouflage target host; empty ⇒ fleet default / SNI
 	DestPort   int    `koanf:"dest_port"`   // camouflage target port; 0 ⇒ 443
 	SNI        string `koanf:"sni"`         // camouflage SNI (ClientHello); empty ⇒ dest_domain / fleet default
-	XHTTPPath  string `koanf:"xhttp_path"`  // XHTTP path; empty ⇒ /<short-id>
-	Image      string `koanf:"image"`       // xray image; empty ⇒ default pinned
+	// Fingerprint is the master-side uTLS ClientHello fingerprint (mihomo
+	// client-fingerprint): "chrome" (default), "firefox", "safari", … or "none" to
+	// omit it and fall back to the Go-default fingerprint. Against heuristic DPI
+	// (RU TSPU 2026) operators report firefox/none surviving where chrome is flagged.
+	Fingerprint string `koanf:"fingerprint"`
+	// EmptySNI accepts/sends a ClientHello with NO SNI extension (server serverNames
+	// gains "", the master sends the exit IP as a placeholder so uTLS omits SNI).
+	// Reported to bypass the RU TSPU heuristic block where changing the SNI does not.
+	EmptySNI  bool   `koanf:"empty_sni"`
+	XHTTPPath string `koanf:"xhttp_path"` // XHTTP path; empty ⇒ /<short-id>
+	Image     string `koanf:"image"`      // xray image; empty ⇒ default pinned
 }
 
 // DestHostPort returns the REALITY camouflage target as "host:port" from the split

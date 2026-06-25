@@ -110,6 +110,9 @@ message RealitySrvSpec {
   string xhttp_path = 6;  // XHTTP path
   string xhttp_mode = 7;  // XHTTP mode ("packet-up")
   string image = 8;       // xray container image (pinned repo:tag)
+  // Accept a ClientHello with no SNI (serverNames gains ""). Additive; an older
+  // agent ignores it — backward-compatible, no wire-version bump (ADR-0019).
+  bool allow_empty_sni = 9;
 }
 
 // MasterSpec is the master node's mihomo data plane.
@@ -172,9 +175,12 @@ message RealityTunnel {
   string public_key = 2;  // exit's REALITY x25519 PUBLIC key (reality-opts.public-key)
   string short_id = 3;    // REALITY short-id (hex)
   string server_name = 4; // camouflage SNI (mihomo servername)
-  string fingerprint = 5; // client uTLS fingerprint (mihomo client-fingerprint)
+  string fingerprint = 5; // client uTLS fingerprint (mihomo client-fingerprint); "none" ⇒ omit
   string xhttp_path = 6;  // XHTTP path
   string xhttp_mode = 7;  // XHTTP mode ("packet-up")
+  // Send the ClientHello with no SNI (mihomo servername = exit IP placeholder).
+  // Additive; an older agent ignores it — backward-compatible (ADR-0019).
+  bool empty_sni = 8;
 }
 
 // CustomConfig carries operator overrides (JSON-encoded for arbitrary nesting)

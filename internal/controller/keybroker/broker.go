@@ -211,7 +211,8 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		spec.Reality = &domain.RealityServerSpec{
 			ListenPort: rp.Port, UUID: rp.UUID, ShortID: rp.ShortID,
 			ServerName: rp.ServerName, Dest: rp.Dest,
-			XHTTPPath: rp.Path, XHTTPMode: rp.Mode, Image: rp.Image,
+			XHTTPPath: rp.Path, XHTTPMode: rp.Mode,
+			AllowEmptySNI: rp.EmptySNI, Image: rp.Image,
 		}
 		// Open the reality inbound's TCP port so the master can dial it (the AWG
 		// WGPort above is UDP; reality is TCP).
@@ -386,12 +387,14 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 				Endpoint:  netip.AddrPortFrom(exitIP, uint16(rp.Port)).String(),
 				Transport: domain.TransportRealityXHTTP,
 				Reality: &domain.RealityTunnel{
-					UUID:       rp.UUID,
-					PublicKey:  exitNode.RealityPublicKey,
-					ShortID:    rp.ShortID,
-					ServerName: rp.ServerName,
-					XHTTPPath:  rp.Path,
-					XHTTPMode:  rp.Mode,
+					UUID:        rp.UUID,
+					PublicKey:   exitNode.RealityPublicKey,
+					ShortID:     rp.ShortID,
+					ServerName:  rp.ServerName,
+					Fingerprint: rp.Fingerprint,
+					XHTTPPath:   rp.Path,
+					XHTTPMode:   rp.Mode,
+					EmptySNI:    rp.EmptySNI,
 				},
 				Drained: baseDrained || !realityActive,
 			})
@@ -425,14 +428,16 @@ const (
 )
 
 type realityParams struct {
-	Port       int
-	UUID       string
-	ShortID    string
-	ServerName string
-	Dest       string
-	Path       string
-	Mode       string
-	Image      string
+	Port        int
+	UUID        string
+	ShortID     string
+	ServerName  string
+	Dest        string
+	Path        string
+	Mode        string
+	Fingerprint string
+	EmptySNI    bool
+	Image       string
 }
 
 // realityFor resolves the REALITY parameters for an exit's master↔exit tunnel,
@@ -460,7 +465,8 @@ func (b *Broker) realityFor(exit config.ExitConfig, masterName string) realityPa
 	}
 	return realityParams{
 		Port: port, UUID: uuid, ShortID: shortID, ServerName: sni,
-		Dest: dest, Path: path, Mode: xray.DefaultXHTTPMode, Image: image,
+		Dest: dest, Path: path, Mode: xray.DefaultXHTTPMode,
+		Fingerprint: r.Fingerprint, EmptySNI: r.EmptySNI, Image: image,
 	}
 }
 
