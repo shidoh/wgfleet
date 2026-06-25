@@ -5,6 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 // realityKeyEncoding is the base64 alphabet REALITY/xray use for x25519 keys.
@@ -25,6 +28,33 @@ func GenerateKeypair() (privateKey, publicKey string, err error) {
 	}
 	return realityKeyEncoding.EncodeToString(priv.Bytes()),
 		realityKeyEncoding.EncodeToString(priv.PublicKey().Bytes()), nil
+}
+
+// LoadOrCreateKey returns the exit's REALITY keypair, persisting a freshly
+// generated private key (0600) on first use. Mirrors wg.LoadOrCreateKey: in apply
+// mode the agent calls it to get a stable on-node identity; the private key never
+// leaves the node, only the returned public key is published. created reports
+// whether a new key was generated this call.
+func LoadOrCreateKey(path string) (privateKey, publicKey string, created bool, err error) {
+	if data, rerr := os.ReadFile(path); rerr == nil {
+		priv := strings.TrimSpace(string(data))
+		pub, perr := PublicKeyFor(priv)
+		if perr != nil {
+			return "", "", false, fmt.Errorf("stored reality key invalid: %w", perr)
+		}
+		return priv, pub, false, nil
+	}
+	priv, pub, err := GenerateKeypair()
+	if err != nil {
+		return "", "", false, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", "", false, fmt.Errorf("create reality key dir: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(priv+"\n"), 0o600); err != nil {
+		return "", "", false, fmt.Errorf("persist reality key: %w", err)
+	}
+	return priv, pub, true, nil
 }
 
 // ValidPublicKey reports whether s is a well-formed REALITY x25519 public key: a

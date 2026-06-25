@@ -29,3 +29,24 @@ func TestPublicKeyForRejectsGarbage(t *testing.T) {
 		t.Error("expected error for invalid base64 private key")
 	}
 }
+
+func TestLoadOrCreateKey(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/reality.key"
+	priv, pub, created, err := LoadOrCreateKey(path)
+	if err != nil || !created {
+		t.Fatalf("first LoadOrCreateKey: created=%v err=%v", created, err)
+	}
+	// Second call loads the SAME persisted key (created=false, stable identity).
+	priv2, pub2, created2, err := LoadOrCreateKey(path)
+	if err != nil || created2 {
+		t.Fatalf("second LoadOrCreateKey: created=%v err=%v", created2, err)
+	}
+	if priv2 != priv || pub2 != pub {
+		t.Errorf("key not stable across loads: priv %q→%q pub %q→%q", priv, priv2, pub, pub2)
+	}
+	// Derived pubkey matches.
+	if got, _ := PublicKeyFor(priv); got != pub {
+		t.Errorf("persisted priv derives %q, want %q", got, pub)
+	}
+}
