@@ -782,3 +782,107 @@ func TestRegisterRealityKey(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderDualTransport(t *testing.T) {
+	ctx := context.Background()
+	fleet := testFleet()
+	fleet.Exits[0].Transports = []string{"awg", "reality-xhttp"}
+	fleet.Exits[0].ActiveTransport = "awg"
+	fleet.Exits[0].SSH = config.SSHConfig{Host: "198.51.100.7"} // dialable endpoint
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	b := New(st, fleet, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+	_, realityPub, _ := xray.GenerateKeypair()
+	if err := st.SetNodeRealityKey(ctx, "exit-de-1", realityPub); err != nil {
+		t.Fatal(err)
+	}
+
+	// Exit spec carries the REALITY server params.
+	exitSpec, err := b.RenderNodeSpec(ctx, "exit-de-1")
+	if err != nil {
+		t.Fatalf("render exit: %v", err)
+	}
+	if exitSpec.Reality == nil {
+		t.Fatal("exit spec missing Reality server spec")
+	}
+	if exitSpec.Reality.ListenPort != DefaultRealityListenPort || exitSpec.Reality.UUID == "" {
+		t.Errorf("reality server spec wrong: %+v", exitSpec.Reality)
+	}
+	if err := exitSpec.Validate(); err != nil {
+		t.Errorf("dual-transport exit spec invalid: %v", err)
+	}
+
+	// Master renders two proxies; AWG active (in LB), reality standby (drained). The
+	// shared identifiers must match the exit's (both ends derive them identically).
+	mSpec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render master: %v", err)
+	}
+	tunnels := mSpec.Master.ExitTunnels
+	if len(tunnels) != 2 {
+		t.Fatalf("exit tunnels = %d, want 2 (awg + reality)", len(tunnels))
+	}
+	var awgT, realT *domain.ExitTunnel
+	for i := range tunnels {
+		switch tunnels[i].Transport.OrDefault() {
+		case domain.TransportAWG:
+			awgT = &tunnels[i]
+		case domain.TransportRealityXHTTP:
+			realT = &tunnels[i]
+		}
+	}
+	if awgT == nil || realT == nil {
+		t.Fatalf("missing a transport: %+v", tunnels)
+	}
+	if awgT.Drained {
+		t.Error("active AWG tunnel must be in the LB (not drained)")
+	}
+	if !realT.Drained {
+		t.Error("standby reality tunnel must be drained (out of LB)")
+	}
+	if realT.Reality == nil || realT.Reality.PublicKey != realityPub {
+		t.Errorf("reality tunnel pubkey not wired: %+v", realT.Reality)
+	}
+	if realT.Reality.UUID != exitSpec.Reality.UUID || realT.Reality.ShortID != exitSpec.Reality.ShortID {
+		t.Errorf("reality IDs differ across ends: master=%s/%s exit=%s/%s",
+			realT.Reality.UUID, realT.Reality.ShortID, exitSpec.Reality.UUID, exitSpec.Reality.ShortID)
+	}
+}
+
+func TestRenderDualTransportRealityActiveFlipsDrain(t *testing.T) {
+	ctx := context.Background()
+	fleet := testFleet()
+	fleet.Exits[0].Transports = []string{"awg", "reality-xhttp"}
+	fleet.Exits[0].ActiveTransport = "reality-xhttp"
+	fleet.Exits[0].SSH = config.SSHConfig{Host: "198.51.100.7"}
+	st, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = st.Close() })
+	b := New(st, fleet, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+	_, realityPub, _ := xray.GenerateKeypair()
+	_ = st.SetNodeRealityKey(ctx, "exit-de-1", realityPub)
+
+	mSpec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render master: %v", err)
+	}
+	for _, tn := range mSpec.Master.ExitTunnels {
+		switch tn.Transport.OrDefault() {
+		case domain.TransportRealityXHTTP:
+			if tn.Drained {
+				t.Error("active reality tunnel must be in the LB")
+			}
+		case domain.TransportAWG:
+			if !tn.Drained {
+				t.Error("standby AWG tunnel must be drained when reality is active")
+			}
+		}
+	}
+}

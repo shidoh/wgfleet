@@ -10,6 +10,8 @@ package keybroker
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -197,6 +199,19 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	if egress == domain.EgressWARP {
 		spec.Routing.EgressInterface = "wgcf"
 	}
+
+	// REALITY/XHTTP inbound desired state (ADR-0025), set when the exit runs the
+	// reality transport. The shared identifiers (UUID/short-id) and camouflage match
+	// the master's vless proxy because both call realityFor with the same inputs; the
+	// exit generates its own x25519 keypair locally and publishes only the pubkey.
+	if spec.HasTransport(domain.TransportRealityXHTTP) {
+		rp := realityFor(exit, master.Name)
+		spec.Reality = &domain.RealityServerSpec{
+			ListenPort: rp.Port, UUID: rp.UUID, ShortID: rp.ShortID,
+			ServerName: rp.ServerName, Dest: rp.Dest,
+			XHTTPPath: rp.Path, XHTTPMode: rp.Mode, Image: rp.Image,
+		}
+	}
 	return spec, nil
 }
 
@@ -299,7 +314,10 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			}
 		}
 		endpoint := ""
+		var exitIP netip.Addr
+		var haveIP bool
 		if addr, err := netip.ParseAddr(exitPublicIP); err == nil {
+			exitIP, haveIP = addr, true
 			endpoint = netip.AddrPortFrom(addr, uint16(exit.WGListenPort())).String()
 			// Route client traffic to this exit's OWN public IP DIRECT (master uplink),
 			// never through mihomo→wg-best→WARP. Without this, SSH/management to an
@@ -316,24 +334,63 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 				"exit", exit.Name, "public_ip", exitPublicIP)
 			continue
 		}
-		// Same tunnel seed as the exit's interface ⇒ identical shared AWG params on
-		// both ends (ADR-0005); the "master" end label gives this end its own local
-		// I1-I5. mihomo is userspace WireGuard-Go, so kernel=false keeps the
-		// signatures free of the <c>/<t> tags it cannot parse.
-		awg := wg.DeriveAWGParamsForEnd(wg.TunnelSeed(exit.Name, master.Name, awgSalt), "master", false)
-		ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
-			Name:            exit.Name,
-			Endpoint:        endpoint,
-			ServerPublicKey: exitPub,
-			TunnelIP:        masterAddr.String(),
-			// Must match the exit's awg0 server MTU (serverMTU in renderExitSpec); both
-			// derive from this exit's link_mtu so a narrow path lowers both ends.
-			MTU: exitTunnelMTU(exit, masterAddr.Is6()),
-			AWG: &awg,
-			// Out of the LB group (kept as a proxy) when the operator drained it OR the
-			// throughput watchdog auto-suspended it (ADR-0021).
-			Drained: exitNode.Drain || autoSuspend[exit.Name],
-		})
+
+		// Dual-transport (ADR-0025): an exit may carry both AWG and REALITY. The
+		// active transport goes into the wg-best LB group; the other is rendered as a
+		// warm standby proxy (Drained). Admin drain / throughput auto-suspend (ADR-0021)
+		// drains whichever is active. REALITY only becomes active once the exit has
+		// published its reality pubkey AND its endpoint is dialable — until then the
+		// AWG tunnel keeps carrying traffic (no flip to a not-yet-ready transport).
+		baseDrained := exitNode.Drain || autoSuspend[exit.Name]
+		active := exit.ResolvedActiveTransport()
+		hasAWG, hasReality := false, false
+		for _, t := range exit.EnabledTransports() {
+			switch t.OrDefault() {
+			case domain.TransportAWG:
+				hasAWG = true
+			case domain.TransportRealityXHTTP:
+				hasReality = true
+			}
+		}
+		realityRenderable := hasReality && haveIP && exitNode.RealityPublicKey != ""
+		realityActive := active == domain.TransportRealityXHTTP && realityRenderable
+
+		if hasAWG {
+			// Same tunnel seed as the exit's interface ⇒ identical shared AWG params on
+			// both ends (ADR-0005); the "master" end label gives this end its own local
+			// I1-I5. mihomo is userspace WireGuard-Go, so kernel=false keeps the
+			// signatures free of the <c>/<t> tags it cannot parse.
+			awg := wg.DeriveAWGParamsForEnd(wg.TunnelSeed(exit.Name, master.Name, awgSalt), "master", false)
+			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
+				Name:            exit.Name,
+				Endpoint:        endpoint,
+				ServerPublicKey: exitPub,
+				TunnelIP:        masterAddr.String(),
+				// Must match the exit's awg0 server MTU (serverMTU in renderExitSpec); both
+				// derive from this exit's link_mtu so a narrow path lowers both ends.
+				MTU:       exitTunnelMTU(exit, masterAddr.Is6()),
+				AWG:       &awg,
+				Transport: domain.TransportAWG,
+				Drained:   baseDrained || realityActive,
+			})
+		}
+		if realityRenderable {
+			rp := realityFor(exit, master.Name)
+			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
+				Name:      exit.Name + "-reality",
+				Endpoint:  netip.AddrPortFrom(exitIP, uint16(rp.Port)).String(),
+				Transport: domain.TransportRealityXHTTP,
+				Reality: &domain.RealityTunnel{
+					UUID:       rp.UUID,
+					PublicKey:  exitNode.RealityPublicKey,
+					ShortID:    rp.ShortID,
+					ServerName: rp.ServerName,
+					XHTTPPath:  rp.Path,
+					XHTTPMode:  rp.Mode,
+				},
+				Drained: baseDrained || !realityActive,
+			})
+		}
 		if exitNode.MgmtAddr != "" {
 			dnsUpstreams = append(dnsUpstreams, exitNode.MgmtAddr)
 		}
@@ -342,6 +399,81 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	spec.Master = ms
 	spec.DNS = b.renderMasterDNS(master, dnsUpstreams)
 	return spec, nil
+}
+
+// REALITY transport derivation (ADR-0025). The UUID and short-id are derived
+// deterministically from the tunnel identity so both ends — the master's vless
+// proxy and the exit's xray inbound — compute identical values without
+// coordination (the same model as the AWG params). The REALITY x25519 keypair is
+// NOT derived here: it is generated locally on the exit, and only its public key
+// is published and read back from the store.
+const (
+	// DefaultRealityListenPort is the exit's VLESS port when the manifest leaves it
+	// unset. It must differ from the AWG awg0 port so both transports run warm.
+	DefaultRealityListenPort = 8443
+	// DefaultRealitySNI is the camouflage SNI fallback. Operators SHOULD override
+	// per exit with an ASN-plausible target (recon 2026-06-25); this is only a safe
+	// default so a minimally-configured exit still renders.
+	DefaultRealitySNI = "www.microsoft.com"
+)
+
+type realityParams struct {
+	Port       int
+	UUID       string
+	ShortID    string
+	ServerName string
+	Dest       string
+	Path       string
+	Mode       string
+	Image      string
+}
+
+// realityFor resolves the REALITY parameters for an exit's master↔exit tunnel,
+// identical on both ends (the controller owns them). Camouflage fields come from
+// the manifest with safe fallbacks; UUID/short-id/path derive from the tunnel seed.
+func realityFor(exit config.ExitConfig, masterName string) realityParams {
+	uuid, shortID := deriveRealityIDs(realitySeed(exit.Name, masterName))
+	sni := exit.Reality.ServerName
+	if sni == "" {
+		sni = DefaultRealitySNI
+	}
+	dest := exit.Reality.Dest
+	if dest == "" {
+		dest = sni + ":443"
+	}
+	path := exit.Reality.XHTTPPath
+	if path == "" {
+		path = "/" + shortID
+	}
+	port := exit.Reality.ListenPort
+	if port == 0 {
+		port = DefaultRealityListenPort
+	}
+	image := exit.Reality.Image
+	if image == "" {
+		image = compose.DefaultXrayImage
+	}
+	return realityParams{
+		Port: port, UUID: uuid, ShortID: shortID, ServerName: sni,
+		Dest: dest, Path: path, Mode: xray.DefaultXHTTPMode, Image: image,
+	}
+}
+
+func realitySeed(exitName, masterName string) string {
+	return fmt.Sprintf("%s|%s|%s|reality", awgSalt, masterName, exitName)
+}
+
+// deriveRealityIDs derives a stable VLESS UUID and REALITY short-id from a seed,
+// so both tunnel ends agree without the controller storing them.
+func deriveRealityIDs(seed string) (uuid, shortID string) {
+	sum := sha256.Sum256([]byte(seed))
+	var u [16]byte
+	copy(u[:], sum[:16])
+	u[6] = (u[6] & 0x0f) | 0x40 // version 4
+	u[8] = (u[8] & 0x3f) | 0x80 // variant 10
+	uuid = fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
+	shortID = hex.EncodeToString(sum[28:32]) // 8 hex chars
+	return uuid, shortID
 }
 
 // throughputAutoSuspend returns the set of exit names to auto-suspend from the LB
