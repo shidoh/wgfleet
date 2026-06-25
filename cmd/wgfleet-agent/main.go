@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -367,7 +368,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			repCtx, repCancel := context.WithTimeout(base, statusReportTimeout)
 			defer repCancel()
 			check := domain.HealthCheck{Name: domain.CheckSpecValid, OK: false, Detail: err.Error()}
-			if rerr := a.reportStatus(repCtx, domain.StateError, []domain.HealthCheck{check}, err); rerr != nil {
+			if rerr := a.reportStatus(repCtx, domain.StateError, []domain.HealthCheck{check}, err, ""); rerr != nil {
 				a.log.Error("failed to report invalid-spec state", "err", rerr)
 			}
 			return fmt.Errorf("invalid spec, not applied: %w", err)
@@ -517,7 +518,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	// timed-out apply must still report the node's state, or it sticks in Provisioning.
 	repCtx, repCancel := context.WithTimeout(base, statusReportTimeout)
 	defer repCancel()
-	if err := a.reportStatus(repCtx, state, results, reconcileErr); err != nil {
+	if err := a.reportStatus(repCtx, state, results, reconcileErr, a.egressIP(repCtx, spec, activeEgress)); err != nil {
 		return err
 	}
 	if reconcileErr != nil {
@@ -627,7 +628,7 @@ func (a *agent) teardown(ctx context.Context, plan bool) error {
 	}
 	a.log.Info("decommission complete", "actions", report.ChangeCount())
 	// Report a terminal status so the controller/UI sees the node is torn down.
-	return a.reportStatus(ctx, domain.StatePending, []domain.HealthCheck{{Name: "decommissioned", OK: true}}, nil)
+	return a.reportStatus(ctx, domain.StatePending, []domain.HealthCheck{{Name: "decommissioned", OK: true}}, nil, "")
 }
 
 func (a *agent) teardownPlanners() []reconcile.Planner {
@@ -712,8 +713,10 @@ func (a *agent) readWARPProfile() *egress.WARPConfig {
 
 // reportStatus pushes the computed lifecycle state, self-check results, and any
 // reconcile error to the controller (the error becomes the node's LastError).
-func (a *agent) reportStatus(ctx context.Context, state domain.NodeState, checks []domain.HealthCheck, reconcileErr error) error {
-	st := domain.NodeStatus{State: state, Checks: checks}
+// egressIP, when known, is the address the node's traffic appears to leave under
+// (the WARP IP for warp egress, the node's own IP for direct) — surfaced in the UI.
+func (a *agent) reportStatus(ctx context.Context, state domain.NodeState, checks []domain.HealthCheck, reconcileErr error, egressIP string) error {
+	st := domain.NodeStatus{State: state, Checks: checks, EgressIP: egressIP}
 	if reconcileErr != nil {
 		st.ReconcileError = reconcileErr.Error()
 	}
@@ -721,6 +724,34 @@ func (a *agent) reportStatus(ctx context.Context, state domain.NodeState, checks
 		return fmt.Errorf("report status: %w", err)
 	}
 	return nil
+}
+
+// egressIP reports the address the exit's client traffic leaves under: the
+// Cloudflare WARP IP for warp egress (read from the cloudflare trace via the
+// egress interface), or the node's own public IP for direct egress. Best-effort —
+// "" when it cannot be determined. Masters have no egress and return "".
+func (a *agent) egressIP(ctx context.Context, spec domain.NodeSpec, active domain.EgressMethod) string {
+	if a.role == domain.RoleMaster {
+		return ""
+	}
+	if active != domain.EgressWARP {
+		return a.publicIP // direct egress leaves under the node's own IP
+	}
+	iface := spec.Routing.EgressInterface
+	if iface == "" {
+		iface = "wgcf"
+	}
+	out, err := exec.CommandContext(ctx, "curl", "-s", "--max-time", "5",
+		"--interface", iface, "https://www.cloudflare.com/cdn-cgi/trace").Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if v, ok := strings.CutPrefix(line, "ip="); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // ensureWGKey returns the node's WG key pair. With persist=true it loads or
