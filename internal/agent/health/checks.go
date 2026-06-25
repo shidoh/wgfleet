@@ -14,6 +14,9 @@ type ExitProbes struct {
 	// blip — see EgressClassifier. Non-destructive (read-only; never re-registers
 	// wgcf, which would churn the node's WARP account — an earlier finding).
 	EgressConfirm Probe
+	// RealityInbound checks the xray REALITY inbound is listening (ADR-0025). Run
+	// in place of the WG-handshake check when REALITY is the active transport.
+	RealityInbound Probe
 }
 
 // MasterProbes are the injectable probes for a master node's self-checks.
@@ -27,7 +30,16 @@ type MasterProbes struct {
 // not relevant to the spec (e.g. WARP egress when egress is direct) are omitted.
 func ExitChecks(spec domain.NodeSpec, p ExitProbes) []Check {
 	var checks []Check
-	if p.HandshakeFresh != nil {
+	// The active master↔exit transport determines which link must be healthy. When
+	// REALITY is active the AWG server is a warm standby with no handshake, so the
+	// wg-handshake check would always fail and falsely mark the node Degraded — check
+	// the reality inbound instead (ADR-0025). AWG-active exits keep the WG check.
+	if spec.HasTransport(domain.TransportRealityXHTTP) &&
+		spec.ActiveTransport.OrDefault() == domain.TransportRealityXHTTP {
+		if p.RealityInbound != nil {
+			checks = append(checks, Check{Name: "reality-inbound", Probe: p.RealityInbound})
+		}
+	} else if p.HandshakeFresh != nil {
 		checks = append(checks, Check{Name: "wg-handshake", Probe: p.HandshakeFresh})
 	}
 	if spec.Egress == domain.EgressWARP && p.WARPEgress != nil {

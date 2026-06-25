@@ -31,11 +31,16 @@ func DefaultExitProbes(spec domain.NodeSpec) ExitProbes {
 	if egressIface == "" {
 		egressIface = "wgcf"
 	}
+	var realityPort int
+	if spec.Reality != nil {
+		realityPort = spec.Reality.ListenPort
+	}
 	return ExitProbes{
 		HandshakeFresh: handshakeFreshProbe(wgIface),
 		WARPEgress:     warpEgressProbe(egressIface),
 		DNSResolves:    dnsResolvesProbe(dnsListenAddr(spec.DNS)),
 		EgressConfirm:  warpHandshakeProbe(egressIface),
+		RealityInbound: realityInboundProbe(realityPort),
 	}
 }
 
@@ -131,6 +136,27 @@ func warpHandshakeProbe(iface string) Probe {
 			return fail(fmt.Sprintf("WARP handshake stale (%s old)", age.Round(time.Second)))
 		}
 		return ok(fmt.Sprintf("WARP handshake %s ago", age.Round(time.Second)), since(start))
+	}
+}
+
+// realityInboundProbe checks the xray REALITY inbound is listening on its TCP
+// port (ADR-0025). Like the master redir probe it reads the socket
+// table rather than dialing — connecting would just exercise REALITY's
+// fallback-to-the-camouflage-site, not prove the proxy itself is ready.
+func realityInboundProbe(port int) Probe {
+	return func(ctx context.Context) Result {
+		start := now()
+		if port <= 0 {
+			return fail("no reality port")
+		}
+		out, err := runCmd(ctx, "ss", "-ltnH")
+		if err != nil {
+			return fail(fmt.Sprintf("ss failed: %v", err))
+		}
+		if strings.Contains(out, fmt.Sprintf(":%d ", port)) {
+			return ok(fmt.Sprintf("listening on :%d", port), since(start))
+		}
+		return fail(fmt.Sprintf("no listener on :%d", port))
 	}
 }
 

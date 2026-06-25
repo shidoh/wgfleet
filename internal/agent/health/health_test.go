@@ -180,3 +180,39 @@ func TestHostOf(t *testing.T) {
 		t.Errorf("hostOf empty = %q", got)
 	}
 }
+
+func TestExitChecksTransportSelectsLink(t *testing.T) {
+	probes := ExitProbes{
+		HandshakeFresh: passing("hs"),
+		RealityInbound: passing("reality"),
+		WARPEgress:     passing("warp"),
+	}
+	base := domain.NodeSpec{
+		Role: domain.RoleExit, Egress: domain.EgressWARP,
+		EnabledTransports: []domain.MasterTransport{domain.TransportAWG, domain.TransportRealityXHTTP},
+	}
+
+	// AWG active ⇒ wg-handshake gates (no reality-inbound).
+	awg := base
+	awg.ActiveTransport = domain.TransportAWG
+	if names := checkNames(ExitChecks(awg, probes)); !contains(names, "wg-handshake") || contains(names, "reality-inbound") {
+		t.Errorf("awg-active: want wg-handshake (not reality-inbound), got %v", names)
+	}
+
+	// REALITY active ⇒ reality-inbound gates, wg-handshake is omitted (the AWG
+	// standby has no handshake and would always fail).
+	rxt := base
+	rxt.ActiveTransport = domain.TransportRealityXHTTP
+	if names := checkNames(ExitChecks(rxt, probes)); !contains(names, "reality-inbound") || contains(names, "wg-handshake") {
+		t.Errorf("reality-active: want reality-inbound (not wg-handshake), got %v", names)
+	}
+}
+
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
