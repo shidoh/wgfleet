@@ -11,6 +11,7 @@
   --text-dim: #8b95a7;
   --text-faint: #5b6577;
   --accent: #4c8dff;
+  --accent-2: #a78bfa; /* soft violet — a second categorical hue (not a status colour) */
 
   --ok: #34d399;
   --warn: #fbbf24;
@@ -111,9 +112,11 @@ main { padding: 1.75rem 0 4rem; }
 .role {
   font-family: var(--mono); font-size: 0.7rem; text-transform: uppercase;
   letter-spacing: 0.05em; padding: 0.12rem 0.45rem; border-radius: 4px;
-  border: 1px solid var(--border); color: var(--text-dim);
+  border: 1px solid transparent;
+  /* bright text on a faint fill — present, not the grey-bordered "inactive" look */
+  background: var(--surface-2); color: var(--text);
 }
-.role.master { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.role.master { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 
 .badge {
   display: inline-flex; align-items: center; gap: 0.4rem;
@@ -206,9 +209,12 @@ pre.spec {
 /* Transport chip + egress cell in the fleet list */
 .chip {
   font-family: var(--mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em;
-  padding: 0.1rem 0.4rem; border-radius: 4px; border: 1px solid var(--border); color: var(--text-dim);
+  padding: 0.1rem 0.4rem; border-radius: 4px; border: 1px solid transparent;
+  /* AWG (the baseline transport): soft violet fill — a calm colour, not grey */
+  background: color-mix(in srgb, var(--accent-2) 14%, transparent); color: var(--accent-2);
 }
-.chip.reality-xhttp { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+/* REALITY (the obfuscated transport): the blue accent, so the eye catches it */
+.chip.reality-xhttp { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .subbadges { display: inline-flex; gap: 0.3rem; flex-wrap: wrap; }
 
 /* Node detail: header badges + a separated action toolbar (was a crammed row) */
@@ -222,16 +228,10 @@ pre.spec {
 .subhead { margin: 1.1rem 0 0.5rem; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
 
 
-/* Address cell: node public IP (grey pill) over the actual WARP egress IP (blue
-   pill) — chip styling borrowed from role/transport so the two don't blur together */
-.ipcell { display: flex; flex-direction: column; align-items: flex-start; gap: 0.25rem; }
-.ipchip {
-  font-family: var(--mono); font-size: 0.74rem; line-height: 1;
-  padding: 0.16rem 0.5rem; border-radius: 4px;
-  border: 1px solid var(--border); color: var(--text-dim);
-}
-.ipchip.warp {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
+/* Address cell: aligned label + value, no pills (pills read as "inactive").
+   Public IP in primary text, the actual WARP egress IP in accent — distinguished
+   by colour + a tiny dim tag, quiet but readable as data. */
+.ipcell { display: inline-grid; grid-template-columns: auto auto; gap: 0.12rem 0.5rem; align-items: baseline; }
+.ip-tag { font-size: 0.6rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); text-align: right; }
+.ip-val { font-family: var(--mono); font-size: 0.82rem; color: var(--text); }
+.ip-val.warp { color: var(--accent); }

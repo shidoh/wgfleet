@@ -51,8 +51,8 @@
       <td class="mono">{{or .MgmtAddr "—"}}</td>
       <td>
         <div class="ipcell">
-          <span class="ipchip" title="Node public IP">{{or .PublicIP "—"}}</span>
-          {{if and (eq (lower .Role) "exit") .EgressIP (ne .EgressIP .PublicIP)}}<span class="ipchip warp" title="Actual egress IP (Cloudflare WARP)">WARP {{.EgressIP}}</span>{{end}}
+          <span class="ip-tag">public</span><span class="ip-val" title="Node public IP">{{or .PublicIP "—"}}</span>
+          {{if and (eq (lower .Role) "exit") .EgressIP (ne .EgressIP .PublicIP)}}<span class="ip-tag">warp</span><span class="ip-val warp" title="Actual egress IP (Cloudflare WARP)">{{.EgressIP}}</span>{{end}}
         </div>
       </td>
       <td class="mono">{{relTime .LastSeen}}</td>
