@@ -15,6 +15,8 @@ func TestRenderXrayCompose(t *testing.T) {
 		"network_mode: host",
 		"/etc/wgfleet/xray/config.json:/etc/xray/config.json:ro",
 		"container_name: xray",
+		"0:0",       // run as root: read the 0600 config (holds the REALITY private key)
+		"NET_ADMIN", // SO_MARK for the WARP egress path
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("compose missing %q:\n%s", want, out)

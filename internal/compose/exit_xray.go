@@ -9,7 +9,7 @@ import (
 // spec leaves the image unset (no implicit :latest — every container the platform
 // runs pins image AND tag). Exported so the controller resolves image/tag
 // overrides against the same canonical default the renderer falls back to.
-const DefaultXrayImage = "ghcr.io/xtls/xray-core:25.6.22"
+const DefaultXrayImage = "ghcr.io/xtls/xray-core:26.3.27"
 
 // XrayInput is everything needed to render the exit node's REALITY inbound stack.
 type XrayInput struct {
@@ -46,6 +46,14 @@ func RenderXrayCompose(in XrayInput) (string, error) {
 		"network_mode":   "host",
 		"command":        []any{"run", "-c", "/etc/xray/config.json"},
 		"volumes":        volumes,
+		// Run as root so xray can read the 0600 config (it holds the REALITY private
+		// key, kept root-only on the host) — the xray-core image otherwise runs as a
+		// non-root user and gets "permission denied".
+		"user": "0:0",
+		// NET_ADMIN lets the freedom outbound set SO_MARK (sockopt.mark), which the
+		// host policy routing matches to send xray's egress through WARP (ADR-0025,
+		// an earlier finding). Without it the mark is silently dropped and egress misroutes.
+		"cap_add": []any{"NET_ADMIN"},
 	}
 	if len(env) > 0 {
 		svc["environment"] = env
