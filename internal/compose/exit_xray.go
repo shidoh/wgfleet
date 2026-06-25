@@ -9,7 +9,7 @@ import (
 // spec leaves the image unset (no implicit :latest — every container the platform
 // runs pins image AND tag). Exported so the controller resolves image/tag
 // overrides against the same canonical default the renderer falls back to.
-const DefaultXrayImage = "ghcr.io/xtls/xray-core:26.3.27"
+const DefaultXrayImage = "ghcr.io/xtls/xray-core:26.6.22"
 
 // XrayInput is everything needed to render the exit node's REALITY inbound stack.
 type XrayInput struct {

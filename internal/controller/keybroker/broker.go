@@ -422,10 +422,15 @@ const (
 	// differ from the AWG awg0 port so both transports run warm; the AWG port is a
 	// high stable-random one, so 443 does not collide.
 	DefaultRealityListenPort = 443
-	// DefaultRealitySNI is the camouflage SNI fallback. Operators SHOULD override
-	// per exit with an ASN-plausible target (recon 2026-06-25); this is only a safe
-	// default so a minimally-configured exit still renders.
-	DefaultRealitySNI = "www.microsoft.com"
+	// DefaultRealitySNI is the camouflage SNI/dest fallback. It MUST support TLS 1.3
+	// AND the X25519MLKEM768 post-quantum key exchange — modern xray/mihomo uTLS
+	// clients offer mlkem768, and a dest that can't echo it fails the authorized
+	// REALITY handshake ("handshake did not complete successfully"), even though the
+	// plain decoy still works (proven live 2026-06-25; XTLS PR #4779). www.microsoft.com
+	// does NOT support mlkem768 and must not be used. Verify any target with
+	// `xray tls ping <host>`. Operators SHOULD still override per exit with an
+	// ASN-plausible, inconspicuous, mlkem768-capable target.
+	DefaultRealitySNI = "www.python.org"
 )
 
 type realityParams struct {
