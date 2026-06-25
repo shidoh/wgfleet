@@ -221,7 +221,17 @@ pre.spec {
 .toolbar-spacer { flex: 1 1 auto; }
 .subhead { margin: 1.1rem 0 0.5rem; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
 
-/* Address cell: node public IP (primary) + actual WARP egress IP (smaller, dim) */
-.ipcell .ip-main { font-family: var(--mono); display: block; }
-.ipcell .ip-sub { font-family: var(--mono); font-size: 0.68rem; color: var(--text-faint); display: block; margin-top: 0.1rem; }
-.ipcell .ip-sub::before { content: "↳ "; }
+
+/* Address cell: node public IP (grey pill) over the actual WARP egress IP (blue
+   pill) — chip styling borrowed from role/transport so the two don't blur together */
+.ipcell { display: flex; flex-direction: column; align-items: flex-start; gap: 0.25rem; }
+.ipchip {
+  font-family: var(--mono); font-size: 0.74rem; line-height: 1;
+  padding: 0.16rem 0.5rem; border-radius: 4px;
+  border: 1px solid var(--border); color: var(--text-dim);
+}
+.ipchip.warp {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
