@@ -24,6 +24,18 @@ import (
 // DefaultRedirPort is mihomo's redirect port when the spec leaves it unset.
 const DefaultRedirPort = 7895
 
+// REALITY/XHTTP client defaults (ADR-0025) for a vless proxy when the tunnel
+// leaves them unset.
+const (
+	// DefaultRealityFingerprint is the uTLS ClientHello fingerprint mihomo mimics.
+	DefaultRealityFingerprint = "chrome"
+	// DefaultXHTTPMode splits the upload into many short POSTs ("packet-up"),
+	// which dodges the foreign-DC single-connection volume-freeze and works
+	// without a CDN (direct to the exit IP). Set explicitly on both ends because
+	// auto+REALITY has an xray bug (#5635).
+	DefaultXHTTPMode = "packet-up"
+)
+
 // DefaultHealthInterval is the wg-best health-check cadence (seconds) when the spec
 // leaves HealthCheckInterval unset.
 const DefaultHealthInterval = 60
@@ -216,38 +228,15 @@ func renderProxies(in RenderInput) (proxies []any, lbMembers []string, err error
 		if perr != nil {
 			return nil, nil, fmt.Errorf("exit %q: %w", t.Name, perr)
 		}
-		if t.ServerPublicKey == "" {
-			return nil, nil, fmt.Errorf("exit %q: missing server public key", t.Name)
+		var proxy map[string]any
+		switch t.Transport.OrDefault() {
+		case domain.TransportRealityXHTTP:
+			proxy, perr = realityProxy(t, host, port)
+		default: // TransportAWG (empty == awg, back-compat)
+			proxy, perr = wireguardProxy(t, host, port, in.PrivateKey)
 		}
-		peer := map[string]any{
-			"server":      host,
-			"port":        port,
-			"public-key":  t.ServerPublicKey,
-			"allowed-ips": []any{"0.0.0.0/0"},
-		}
-		if t.PresharedKey != "" {
-			peer["pre-shared-key"] = t.PresharedKey
-		}
-		proxy := map[string]any{
-			"name":        t.Name,
-			"type":        "wireguard",
-			"ip":          t.TunnelIP,
-			"private-key": in.PrivateKey,
-			"udp":         true,
-			// Keepalive is a PROXY-level field in mihomo (WireGuardOption); the peer
-			// struct has no such field, so a peer-level value is silently dropped and
-			// the master↔exit tunnel would idle out behind NAT.
-			"persistent-keepalive": 25,
-			"peers":                []any{peer},
-		}
-		if t.MTU > 0 {
-			proxy["mtu"] = t.MTU
-		}
-		if t.AWG != nil {
-			if verr := t.AWG.ValidateUserspace(); verr != nil {
-				return nil, nil, fmt.Errorf("exit %q AWG: %w", t.Name, verr)
-			}
-			proxy["amnezia-wg-option"] = awgOption(*t.AWG)
+		if perr != nil {
+			return nil, nil, perr
 		}
 		proxies = append(proxies, proxy)
 		if !t.Drained {
@@ -255,6 +244,94 @@ func renderProxies(in RenderInput) (proxies []any, lbMembers []string, err error
 		}
 	}
 	return proxies, lbMembers, nil
+}
+
+// wireguardProxy renders a mihomo WireGuard proxy carrying the AmneziaWG-obfuscated
+// master↔exit tunnel (TransportAWG).
+func wireguardProxy(t domain.ExitTunnel, host string, port int, privateKey string) (map[string]any, error) {
+	if t.ServerPublicKey == "" {
+		return nil, fmt.Errorf("exit %q: missing server public key", t.Name)
+	}
+	peer := map[string]any{
+		"server":      host,
+		"port":        port,
+		"public-key":  t.ServerPublicKey,
+		"allowed-ips": []any{"0.0.0.0/0"},
+	}
+	if t.PresharedKey != "" {
+		peer["pre-shared-key"] = t.PresharedKey
+	}
+	proxy := map[string]any{
+		"name":        t.Name,
+		"type":        "wireguard",
+		"ip":          t.TunnelIP,
+		"private-key": privateKey,
+		"udp":         true,
+		// Keepalive is a PROXY-level field in mihomo (WireGuardOption); the peer
+		// struct has no such field, so a peer-level value is silently dropped and
+		// the master↔exit tunnel would idle out behind NAT.
+		"persistent-keepalive": 25,
+		"peers":                []any{peer},
+	}
+	if t.MTU > 0 {
+		proxy["mtu"] = t.MTU
+	}
+	if t.AWG != nil {
+		if verr := t.AWG.ValidateUserspace(); verr != nil {
+			return nil, fmt.Errorf("exit %q AWG: %w", t.Name, verr)
+		}
+		proxy["amnezia-wg-option"] = awgOption(*t.AWG)
+	}
+	return proxy, nil
+}
+
+// realityProxy renders a mihomo VLESS proxy carrying REALITY over XHTTP
+// (TransportRealityXHTTP, ADR-0025). No `flow` is set: xtls-rprx-vision is
+// incompatible with XHTTP. `client-fingerprint` is a top-level key (uTLS
+// ClientHello), NOT under reality-opts. The XHTTP mode is set explicitly
+// (packet-up) because auto+REALITY has an xray bug (#5635).
+func realityProxy(t domain.ExitTunnel, host string, port int) (map[string]any, error) {
+	r := t.Reality
+	if r == nil {
+		return nil, fmt.Errorf("exit %q: reality transport but no reality params", t.Name)
+	}
+	switch {
+	case r.UUID == "":
+		return nil, fmt.Errorf("exit %q: reality tunnel missing uuid", t.Name)
+	case r.PublicKey == "":
+		return nil, fmt.Errorf("exit %q: reality tunnel missing public key", t.Name)
+	case r.ServerName == "":
+		return nil, fmt.Errorf("exit %q: reality tunnel missing server name (SNI)", t.Name)
+	}
+	fingerprint := r.Fingerprint
+	if fingerprint == "" {
+		fingerprint = DefaultRealityFingerprint
+	}
+	mode := r.XHTTPMode
+	if mode == "" {
+		mode = DefaultXHTTPMode
+	}
+	xhttp := map[string]any{"mode": mode}
+	if r.XHTTPPath != "" {
+		xhttp["path"] = r.XHTTPPath
+	}
+	return map[string]any{
+		"name":               t.Name,
+		"type":               "vless",
+		"server":             host,
+		"port":               port,
+		"uuid":               r.UUID,
+		"network":            "xhttp",
+		"tls":                true,
+		"udp":                true,
+		"servername":         r.ServerName,
+		"client-fingerprint": fingerprint,
+		"reality-opts": map[string]any{
+			"public-key": r.PublicKey,
+			"short-id":   r.ShortID,
+		},
+		"xhttp-opts": xhttp,
+	}, nil
 }
 
 // awgOption renders the mihomo amnezia-wg-option block. H ranges render as

@@ -466,3 +466,77 @@ func TestRenderRejectsAllDrained(t *testing.T) {
 		t.Fatal("expected error when all exits are drained (empty LB group)")
 	}
 }
+
+func proxyByName(t *testing.T, cfg string, name string) map[string]any {
+	t.Helper()
+	var c map[string]any
+	if err := yaml.Unmarshal([]byte(cfg), &c); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range c["proxies"].([]any) {
+		m := p.(map[string]any)
+		if m["name"] == name {
+			return m
+		}
+	}
+	return nil
+}
+
+func TestRenderRealityProxy(t *testing.T) {
+	in := sampleInput()
+	// A REALITY/XHTTP standby beside the two AWG exits: rendered as a proxy but
+	// drained ⇒ kept out of the wg-best group (ADR-0025 warm standby).
+	in.Spec.ExitTunnels = append(in.Spec.ExitTunnels, domain.ExitTunnel{
+		Name: "exit-a-reality", Endpoint: "exit-a.example.net:443",
+		Transport: domain.TransportRealityXHTTP, Drained: true,
+		Reality: &domain.RealityTunnel{
+			UUID: "11111111-2222-3333-4444-555555555555", PublicKey: "RPUBKEYbase64==",
+			ShortID: "0badc0de", ServerName: "www.microsoft.com", XHTTPPath: "/down",
+		},
+	})
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	p := proxyByName(t, out, "exit-a-reality")
+	if p == nil {
+		t.Fatal("reality proxy not rendered")
+	}
+	if p["type"] != "vless" || p["network"] != "xhttp" || p["tls"] != true {
+		t.Errorf("reality proxy core fields wrong: %+v", p)
+	}
+	if p["servername"] != "www.microsoft.com" {
+		t.Errorf("servername wrong: %v", p["servername"])
+	}
+	// client-fingerprint is a TOP-LEVEL key (defaults to chrome), not under reality-opts.
+	if p["client-fingerprint"] != "chrome" {
+		t.Errorf("client-fingerprint = %v, want chrome (top-level)", p["client-fingerprint"])
+	}
+	// Vision must NOT be set — incompatible with XHTTP.
+	if _, hasFlow := p["flow"]; hasFlow {
+		t.Error("reality+xhttp proxy must not set flow (Vision is incompatible with XHTTP)")
+	}
+	ro, _ := p["reality-opts"].(map[string]any)
+	if ro == nil || ro["public-key"] != "RPUBKEYbase64==" || ro["short-id"] != "0badc0de" {
+		t.Errorf("reality-opts wrong: %+v", ro)
+	}
+	xo, _ := p["xhttp-opts"].(map[string]any)
+	if xo == nil || xo["mode"] != "packet-up" || xo["path"] != "/down" {
+		t.Errorf("xhttp-opts wrong: %+v", xo)
+	}
+
+	// Drained ⇒ excluded from wg-best; the two AWG exits remain.
+	var c map[string]any
+	_ = yaml.Unmarshal([]byte(out), &c)
+	g := c["proxy-groups"].([]any)[0].(map[string]any)
+	members := g["proxies"].([]any)
+	for _, m := range members {
+		if m == "exit-a-reality" {
+			t.Error("drained reality proxy must not be in wg-best")
+		}
+	}
+	if len(members) != 2 {
+		t.Errorf("wg-best members = %d, want 2 (the AWG exits)", len(members))
+	}
+}
