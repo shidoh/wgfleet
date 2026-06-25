@@ -1,5 +1,13 @@
 package domain
 
+// REALITY transport modes (ADR-0025). XHTTP wraps the tunnel in HTTP packet-up to
+// dodge the foreign-DC volume-freeze; Vision is classic TCP + xtls-rprx-vision (the
+// most battle-tested REALITY combo, no XHTTP layer). Empty ⇒ XHTTP (back-compat).
+const (
+	RealityModeXHTTP  = "xhttp"
+	RealityModeVision = "vision"
+)
+
 // RealityServerSpec is the exit-side desired state for a VLESS+REALITY+XHTTP
 // inbound (xray-core), rendered when TransportRealityXHTTP is enabled (ADR-0025).
 //
@@ -27,6 +35,9 @@ type RealityServerSpec struct {
 	// XHTTPMode is the XHTTP mode; "packet-up" splits the upstream into many
 	// short POSTs and dodges the foreign-DC single-connection volume-freeze.
 	XHTTPMode string
+	// Mode is the REALITY transport mode (RealityModeXHTTP | RealityModeVision);
+	// empty ⇒ XHTTP. Vision renders TCP + xtls-rprx-vision (no XHTTP layer).
+	Mode string
 	// AllowEmptySNI adds "" to the inbound serverNames so a ClientHello without an
 	// SNI extension is accepted (the master then sends no SNI). Reported to bypass
 	// the RU TSPU heuristic block (ADR-0025 / 2026 recon).
@@ -58,6 +69,9 @@ type RealityTunnel struct {
 	// XHTTPMode is the XHTTP mode (e.g. "packet-up"); set explicitly on both ends
 	// because the auto+REALITY path has an xray bug (#5635).
 	XHTTPMode string
+	// Mode is the REALITY transport mode (RealityModeXHTTP | RealityModeVision),
+	// matching the inbound; empty ⇒ XHTTP. Vision ⇒ network tcp + flow vision.
+	Mode string
 	// EmptySNI sends the ClientHello with no SNI (mihomo servername set to the exit
 	// IP placeholder); the inbound must allow it (RealityServerSpec.AllowEmptySNI).
 	EmptySNI bool

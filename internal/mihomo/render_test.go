@@ -576,4 +576,21 @@ func TestRenderRealityFingerprintAndEmptySNI(t *testing.T) {
 	if p := mk(func(rt *domain.RealityTunnel) { rt.EmptySNI = true }); p["servername"] != "203.0.113.7" {
 		t.Errorf("EmptySNI servername = %v, want 203.0.113.7 (IP placeholder)", p["servername"])
 	}
+
+	// Vision mode ⇒ network tcp + flow vision, no xhttp-opts.
+	pv := mk(func(rt *domain.RealityTunnel) { rt.Mode = domain.RealityModeVision })
+	if pv["network"] != "tcp" || pv["flow"] != "xtls-rprx-vision" {
+		t.Errorf("vision proxy network/flow wrong: %+v", pv)
+	}
+	if _, has := pv["xhttp-opts"]; has {
+		t.Error("vision proxy must omit xhttp-opts")
+	}
+	// xhttp (default) ⇒ has xhttp-opts, no flow.
+	px := mk(func(rt *domain.RealityTunnel) {})
+	if px["network"] != "xhttp" {
+		t.Errorf("default network = %v, want xhttp", px["network"])
+	}
+	if _, has := px["flow"]; has {
+		t.Error("xhttp proxy must not set flow")
+	}
 }

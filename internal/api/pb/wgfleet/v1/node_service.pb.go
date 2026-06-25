@@ -655,6 +655,8 @@ type RealitySrvSpec struct {
 	// Accept a ClientHello with no SNI (serverNames gains ""). Additive; an older
 	// agent ignores it — backward-compatible, no wire-version bump (ADR-0019).
 	AllowEmptySni bool `protobuf:"varint,9,opt,name=allow_empty_sni,json=allowEmptySni,proto3" json:"allow_empty_sni,omitempty"`
+	// REALITY transport mode: "" / "xhttp" (default) / "vision" (TCP + vision flow).
+	Mode          string `protobuf:"bytes,10,opt,name=mode,proto3" json:"mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -750,6 +752,13 @@ func (x *RealitySrvSpec) GetAllowEmptySni() bool {
 		return x.AllowEmptySni
 	}
 	return false
+}
+
+func (x *RealitySrvSpec) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
 }
 
 // MasterSpec is the master node's mihomo data plane.
@@ -1127,7 +1136,9 @@ type RealityTunnel struct {
 	XhttpMode   string                 `protobuf:"bytes,7,opt,name=xhttp_mode,json=xhttpMode,proto3" json:"xhttp_mode,omitempty"`    // XHTTP mode ("packet-up")
 	// Send the ClientHello with no SNI (mihomo servername = exit IP placeholder).
 	// Additive; an older agent ignores it — backward-compatible (ADR-0019).
-	EmptySni      bool `protobuf:"varint,8,opt,name=empty_sni,json=emptySni,proto3" json:"empty_sni,omitempty"`
+	EmptySni bool `protobuf:"varint,8,opt,name=empty_sni,json=emptySni,proto3" json:"empty_sni,omitempty"`
+	// REALITY transport mode: "" / "xhttp" (default) / "vision" (TCP + vision flow).
+	Mode          string `protobuf:"bytes,9,opt,name=mode,proto3" json:"mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1216,6 +1227,13 @@ func (x *RealityTunnel) GetEmptySni() bool {
 		return x.EmptySni
 	}
 	return false
+}
+
+func (x *RealityTunnel) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
 }
 
 // CustomConfig carries operator overrides (JSON-encoded for arbitrary nesting)
@@ -2293,7 +2311,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x1begress_throughput_probe_url\x18\x0e \x01(\tR\x18egressThroughputProbeUrl\x12-\n" +
 	"\x12enabled_transports\x18\x0f \x03(\tR\x11enabledTransports\x12)\n" +
 	"\x10active_transport\x18\x10 \x01(\tR\x0factiveTransport\x124\n" +
-	"\areality\x18\x11 \x01(\v2\x1a.wgfleet.v1.RealitySrvSpecR\areality\"\x91\x02\n" +
+	"\areality\x18\x11 \x01(\v2\x1a.wgfleet.v1.RealitySrvSpecR\areality\"\xa5\x02\n" +
 	"\x0eRealitySrvSpec\x12\x1f\n" +
 	"\vlisten_port\x18\x01 \x01(\x05R\n" +
 	"listenPort\x12\x12\n" +
@@ -2307,7 +2325,9 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\n" +
 	"xhttp_mode\x18\a \x01(\tR\txhttpMode\x12\x14\n" +
 	"\x05image\x18\b \x01(\tR\x05image\x12&\n" +
-	"\x0fallow_empty_sni\x18\t \x01(\bR\rallowEmptySni\"\xd4\x04\n" +
+	"\x0fallow_empty_sni\x18\t \x01(\bR\rallowEmptySni\x12\x12\n" +
+	"\x04mode\x18\n" +
+	" \x01(\tR\x04mode\"\xd4\x04\n" +
 	"\n" +
 	"MasterSpec\x12!\n" +
 	"\fbind_address\x18\x01 \x01(\tR\vbindAddress\x12\x1d\n" +
@@ -2347,7 +2367,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\adrained\x18\b \x01(\bR\adrained\x12\x1c\n" +
 	"\ttransport\x18\t \x01(\tR\ttransport\x123\n" +
 	"\areality\x18\n" +
-	" \x01(\v2\x19.wgfleet.v1.RealityTunnelR\areality\"\xfb\x01\n" +
+	" \x01(\v2\x19.wgfleet.v1.RealityTunnelR\areality\"\x8f\x02\n" +
 	"\rRealityTunnel\x12\x12\n" +
 	"\x04uuid\x18\x01 \x01(\tR\x04uuid\x12\x1d\n" +
 	"\n" +
@@ -2360,7 +2380,8 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"xhttp_path\x18\x06 \x01(\tR\txhttpPath\x12\x1d\n" +
 	"\n" +
 	"xhttp_mode\x18\a \x01(\tR\txhttpMode\x12\x1b\n" +
-	"\tempty_sni\x18\b \x01(\bR\bemptySni\"d\n" +
+	"\tempty_sni\x18\b \x01(\bR\bemptySni\x12\x12\n" +
+	"\x04mode\x18\t \x01(\tR\x04mode\"d\n" +
 	"\fCustomConfig\x12%\n" +
 	"\x0eoverrides_json\x18\x01 \x01(\tR\roverridesJson\x12-\n" +
 	"\x05files\x18\x02 \x03(\v2\x17.wgfleet.v1.ManagedFileR\x05files\"S\n" +

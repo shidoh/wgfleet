@@ -113,6 +113,8 @@ message RealitySrvSpec {
   // Accept a ClientHello with no SNI (serverNames gains ""). Additive; an older
   // agent ignores it — backward-compatible, no wire-version bump (ADR-0019).
   bool allow_empty_sni = 9;
+  // REALITY transport mode: "" / "xhttp" (default) / "vision" (TCP + vision flow).
+  string mode = 10;
 }
 
 // MasterSpec is the master node's mihomo data plane.
@@ -181,6 +183,8 @@ message RealityTunnel {
   // Send the ClientHello with no SNI (mihomo servername = exit IP placeholder).
   // Additive; an older agent ignores it — backward-compatible (ADR-0019).
   bool empty_sni = 8;
+  // REALITY transport mode: "" / "xhttp" (default) / "vision" (TCP + vision flow).
+  string mode = 9;
 }
 
 // CustomConfig carries operator overrides (JSON-encoded for arbitrary nesting)

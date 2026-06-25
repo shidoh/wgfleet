@@ -91,6 +91,7 @@ func realityServerToProto(r *domain.RealityServerSpec) *pb.RealitySrvSpec {
 		XhttpPath:     r.XHTTPPath,
 		XhttpMode:     r.XHTTPMode,
 		AllowEmptySni: r.AllowEmptySNI,
+		Mode:          r.Mode,
 		Image:         r.Image,
 	}
 }
@@ -108,6 +109,7 @@ func realityServerFromProto(r *pb.RealitySrvSpec) *domain.RealityServerSpec {
 		XHTTPPath:     r.GetXhttpPath(),
 		XHTTPMode:     r.GetXhttpMode(),
 		AllowEmptySNI: r.GetAllowEmptySni(),
+		Mode:          r.GetMode(),
 		Image:         r.GetImage(),
 	}
 }
@@ -125,6 +127,7 @@ func realityTunnelToProto(r *domain.RealityTunnel) *pb.RealityTunnel {
 		XhttpPath:   r.XHTTPPath,
 		XhttpMode:   r.XHTTPMode,
 		EmptySni:    r.EmptySNI,
+		Mode:        r.Mode,
 	}
 }
 
@@ -141,6 +144,7 @@ func realityTunnelFromProto(r *pb.RealityTunnel) *domain.RealityTunnel {
 		XHTTPPath:   r.GetXhttpPath(),
 		XHTTPMode:   r.GetXhttpMode(),
 		EmptySNI:    r.GetEmptySni(),
+		Mode:        r.GetMode(),
 	}
 }
 

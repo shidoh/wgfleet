@@ -211,7 +211,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		spec.Reality = &domain.RealityServerSpec{
 			ListenPort: rp.Port, UUID: rp.UUID, ShortID: rp.ShortID,
 			ServerName: rp.ServerName, Dest: rp.Dest,
-			XHTTPPath: rp.Path, XHTTPMode: rp.Mode,
+			XHTTPPath: rp.Path, XHTTPMode: rp.Mode, Mode: rp.RealityMode,
 			AllowEmptySNI: rp.EmptySNI, Image: rp.Image,
 		}
 		// Open the reality inbound's TCP port so the master can dial it (the AWG
@@ -394,6 +394,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 					Fingerprint: rp.Fingerprint,
 					XHTTPPath:   rp.Path,
 					XHTTPMode:   rp.Mode,
+					Mode:        rp.RealityMode,
 					EmptySNI:    rp.EmptySNI,
 				},
 				Drained: baseDrained || !realityActive,
@@ -434,7 +435,8 @@ type realityParams struct {
 	ServerName  string
 	Dest        string
 	Path        string
-	Mode        string
+	Mode        string // XHTTP mode ("packet-up")
+	RealityMode string // transport mode: "" / "xhttp" / "vision"
 	Fingerprint string
 	EmptySNI    bool
 	Image       string
@@ -465,7 +467,7 @@ func (b *Broker) realityFor(exit config.ExitConfig, masterName string) realityPa
 	}
 	return realityParams{
 		Port: port, UUID: uuid, ShortID: shortID, ServerName: sni,
-		Dest: dest, Path: path, Mode: xray.DefaultXHTTPMode,
+		Dest: dest, Path: path, Mode: xray.DefaultXHTTPMode, RealityMode: r.Mode,
 		Fingerprint: r.Fingerprint, EmptySNI: r.EmptySNI, Image: image,
 	}
 }

@@ -81,6 +81,28 @@ func TestRenderConfigEmptySNI(t *testing.T) {
 	}
 }
 
+func TestRenderConfigVisionMode(t *testing.T) {
+	s := sampleSpec()
+	s.Mode = domain.RealityModeVision
+	out, err := RenderConfig(RenderInput{Spec: s, PrivateKey: "K"})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	var c map[string]any
+	_ = json.Unmarshal([]byte(out), &c)
+	ss := c["inbounds"].([]any)[0].(map[string]any)["streamSettings"].(map[string]any)
+	if ss["network"] != "tcp" {
+		t.Errorf("vision network = %v, want tcp", ss["network"])
+	}
+	if _, has := ss["xhttpSettings"]; has {
+		t.Error("vision mode must omit xhttpSettings")
+	}
+	cl := c["inbounds"].([]any)[0].(map[string]any)["settings"].(map[string]any)["clients"].([]any)[0].(map[string]any)
+	if cl["flow"] != "xtls-rprx-vision" {
+		t.Errorf("vision client flow = %v, want xtls-rprx-vision", cl["flow"])
+	}
+}
+
 func TestRenderConfigDeterministic(t *testing.T) {
 	a, _ := RenderConfig(RenderInput{Spec: sampleSpec(), PrivateKey: "K", EgressMark: 0})
 	b, _ := RenderConfig(RenderInput{Spec: sampleSpec(), PrivateKey: "K", EgressMark: 0})

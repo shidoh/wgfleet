@@ -61,14 +61,15 @@ type inboundSetting struct {
 }
 
 type client struct {
-	ID string `json:"id"`
+	ID   string `json:"id"`
+	Flow string `json:"flow,omitempty"` // "xtls-rprx-vision" in vision mode; empty for xhttp
 }
 
 type streamSettings struct {
 	Network         string          `json:"network"`
 	Security        string          `json:"security"`
 	RealitySettings realitySettings `json:"realitySettings"`
-	XHTTPSettings   xhttpSettings   `json:"xhttpSettings"`
+	XHTTPSettings   *xhttpSettings  `json:"xhttpSettings,omitempty"` // omitted in vision (TCP) mode
 }
 
 type realitySettings struct {
@@ -140,6 +141,28 @@ func RenderConfig(in RenderInput) (string, error) {
 		out.StreamSettings = &outStreamSettings{Sockopt: sockopt{Mark: in.EgressMark}}
 	}
 
+	cl := client{ID: s.UUID}
+	ss := streamSettings{
+		Network:  "tcp",
+		Security: "reality",
+		RealitySettings: realitySettings{
+			Show:        false,
+			Target:      s.Dest,
+			ServerNames: serverNames,
+			PrivateKey:  in.PrivateKey,
+			ShortIDs:    shortIDs,
+		},
+	}
+	// Transport mode (ADR-0025): xhttp (default; packet-up dodges the volume-freeze)
+	// or vision (classic TCP + xtls-rprx-vision — the most battle-tested REALITY combo,
+	// no XHTTP layer). A quick switch to isolate XHTTP interop / fall back to a known-good path.
+	if s.Mode == domain.RealityModeVision {
+		cl.Flow = "xtls-rprx-vision"
+	} else {
+		ss.Network = "xhttp"
+		ss.XHTTPSettings = &xhttpSettings{Path: path, Mode: mode}
+	}
+
 	cfg := config{
 		Log: logCfg{Loglevel: "warning"},
 		Inbounds: []inbound{{
@@ -147,21 +170,10 @@ func RenderConfig(in RenderInput) (string, error) {
 			Port:     s.ListenPort,
 			Protocol: "vless",
 			Settings: inboundSetting{
-				Clients:    []client{{ID: s.UUID}},
+				Clients:    []client{cl},
 				Decryption: "none",
 			},
-			StreamSettings: streamSettings{
-				Network:  "xhttp",
-				Security: "reality",
-				RealitySettings: realitySettings{
-					Show:        false,
-					Target:      s.Dest,
-					ServerNames: serverNames,
-					PrivateKey:  in.PrivateKey,
-					ShortIDs:    shortIDs,
-				},
-				XHTTPSettings: xhttpSettings{Path: path, Mode: mode},
-			},
+			StreamSettings: ss,
 		}},
 		Outbounds: []outbound{out},
 	}

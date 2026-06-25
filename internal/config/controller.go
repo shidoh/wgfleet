@@ -437,6 +437,10 @@ type RealityTransportConfig struct {
 	DestDomain string `koanf:"dest_domain"` // camouflage target host; empty ⇒ fleet default / SNI
 	DestPort   int    `koanf:"dest_port"`   // camouflage target port; 0 ⇒ 443
 	SNI        string `koanf:"sni"`         // camouflage SNI (ClientHello); empty ⇒ dest_domain / fleet default
+	// Mode is the REALITY transport: "xhttp" (default; packet-up dodges the volume
+	// freeze) or "vision" (classic TCP + xtls-rprx-vision, no XHTTP). Flip to roll
+	// back/forward quickly when isolating XHTTP interop.
+	Mode string `koanf:"mode"`
 	// Fingerprint is the master-side uTLS ClientHello fingerprint (mihomo
 	// client-fingerprint): "chrome" (default), "firefox", "safari", … or "none" to
 	// omit it and fall back to the Go-default fingerprint. Against heuristic DPI
@@ -727,6 +731,12 @@ func (c ControllerConfig) Validate() error {
 		// Both transports run warm side by side; their listen ports must differ.
 		if e.Transports.AWG.Enabled && r.Enabled && r.ListenPort != 0 && r.ListenPort == e.WGListenPort() {
 			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): transports.reality.listen_port %d collides with the AWG port", i, e.Name, r.ListenPort))
+		}
+		switch r.Mode {
+		case "", domain.RealityModeXHTTP, domain.RealityModeVision:
+		default:
+			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): transports.reality.mode %q invalid (want %q or %q)",
+				i, e.Name, r.Mode, domain.RealityModeXHTTP, domain.RealityModeVision))
 		}
 		if err := validateRealityCamouflage(r.SNI, r.DestHostPort()); err != nil {
 			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): %w", i, e.Name, err))

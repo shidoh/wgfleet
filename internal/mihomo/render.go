@@ -303,14 +303,6 @@ func realityProxy(t domain.ExitTunnel, host string, port int) (map[string]any, e
 	case r.ServerName == "":
 		return nil, fmt.Errorf("exit %q: reality tunnel missing server name (SNI)", t.Name)
 	}
-	mode := r.XHTTPMode
-	if mode == "" {
-		mode = DefaultXHTTPMode
-	}
-	xhttp := map[string]any{"mode": mode}
-	if r.XHTTPPath != "" {
-		xhttp["path"] = r.XHTTPPath
-	}
 	// EmptySNI: send the ClientHello with no SNI by setting servername to the exit
 	// IP placeholder (uTLS omits the SNI extension for a literal IP). The inbound
 	// must accept "" in serverNames (RealityServerSpec.AllowEmptySNI).
@@ -324,7 +316,6 @@ func realityProxy(t domain.ExitTunnel, host string, port int) (map[string]any, e
 		"server":     host,
 		"port":       port,
 		"uuid":       r.UUID,
-		"network":    "xhttp",
 		"tls":        true,
 		"udp":        true,
 		"servername": servername,
@@ -332,7 +323,24 @@ func realityProxy(t domain.ExitTunnel, host string, port int) (map[string]any, e
 			"public-key": r.PublicKey,
 			"short-id":   r.ShortID,
 		},
-		"xhttp-opts": xhttp,
+	}
+	// Transport mode (ADR-0025): vision = classic TCP + xtls-rprx-vision (no XHTTP);
+	// xhttp (default) = network xhttp + xhttp-opts, no flow (Vision is incompatible
+	// with XHTTP). The switch isolates XHTTP interop / falls back to a known-good path.
+	if r.Mode == domain.RealityModeVision {
+		proxy["network"] = "tcp"
+		proxy["flow"] = "xtls-rprx-vision"
+	} else {
+		mode := r.XHTTPMode
+		if mode == "" {
+			mode = DefaultXHTTPMode
+		}
+		xhttp := map[string]any{"mode": mode}
+		if r.XHTTPPath != "" {
+			xhttp["path"] = r.XHTTPPath
+		}
+		proxy["network"] = "xhttp"
+		proxy["xhttp-opts"] = xhttp
 	}
 	// client-fingerprint is the uTLS ClientHello fingerprint. "none" omits it (the
 	// Go-default fingerprint, reported to survive RU TSPU where chrome is flagged);
