@@ -543,67 +543,8 @@ func TestMasterFirewallReloadGate(t *testing.T) {
 	}
 }
 
-func TestMasterForwardPlanner(t *testing.T) {
-	spec := domain.NodeSpec{Master: &domain.MasterSpec{}}
-
-	// Forwarding off, DOCKER-USER present, rules absent ⇒ enable + insert both.
-	t.Run("applies when missing", func(t *testing.T) {
-		pl := masterForwardPlanner{
-			clientIface: "wg0",
-			forwardOn:   func() bool { return false },
-			chainExists: func() bool { return true },
-			rulePresent: func([]string) bool { return false },
-		}
-		acts, err := pl.Plan(context.Background(), spec)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !hasChangingSummary(acts, "enable IPv4 forwarding") {
-			t.Errorf("expected ip_forward enable, got %+v", acts)
-		}
-		if !hasChangingSummary(acts, "client→uplink") || !hasChangingSummary(acts, "return traffic") {
-			t.Errorf("expected both DOCKER-USER inserts, got %+v", acts)
-		}
-	})
-
-	// Everything already in place ⇒ no change (idempotent, no perpetual drift).
-	t.Run("no change when present", func(t *testing.T) {
-		pl := masterForwardPlanner{
-			clientIface: "wg0",
-			forwardOn:   func() bool { return true },
-			chainExists: func() bool { return true },
-			rulePresent: func([]string) bool { return true },
-		}
-		acts, err := pl.Plan(context.Background(), spec)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, a := range acts {
-			if a.Changes() {
-				t.Errorf("expected no-change when forwarding already set, got %+v", acts)
-			}
-		}
-	})
-
-	// DOCKER-USER absent (docker not up yet) ⇒ defer the inserts, never fail.
-	t.Run("defers when docker not up", func(t *testing.T) {
-		pl := masterForwardPlanner{
-			clientIface: "wg0",
-			forwardOn:   func() bool { return true },
-			chainExists: func() bool { return false },
-			rulePresent: func([]string) bool { return false },
-		}
-		acts, err := pl.Plan(context.Background(), spec)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, a := range acts {
-			if a.Changes() {
-				t.Errorf("expected no insert while DOCKER-USER is absent, got %+v", acts)
-			}
-		}
-	})
-}
+// (TestMasterForwardPlanner moved to internal/agent/dockerfw, where the shared
+// ForwardPlanner now lives.)
 
 func hasChangingSummary(acts []reconcile.Action, substr string) bool {
 	for _, a := range acts {

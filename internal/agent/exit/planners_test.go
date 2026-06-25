@@ -515,45 +515,8 @@ func TestExitSecondPlanIsNoChange(t *testing.T) {
 	}
 }
 
-func TestExitForwardPlanner(t *testing.T) {
-	spec := domain.NodeSpec{Role: domain.RoleExit}
-	changing := func(acts []reconcile.Action, sub string) bool {
-		for _, a := range acts {
-			if a.Changes() && strings.Contains(a.Summary, sub) {
-				return true
-			}
-		}
-		return false
-	}
-
-	// ip_forward off + DOCKER-USER present + rules absent ⇒ enable + insert both.
-	pl := forwardPlanner{
-		wgIface:     "awg0",
-		forwardOn:   func() bool { return false },
-		chainExists: func() bool { return true },
-		rulePresent: func([]string) bool { return false },
-	}
-	acts, err := pl.Plan(context.Background(), spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !changing(acts, "enable IPv4 forwarding") ||
-		!changing(acts, "client→egress") || !changing(acts, "return traffic") {
-		t.Errorf("expected ip_forward + both DOCKER-USER inserts, got %+v", acts)
-	}
-
-	// DOCKER-USER absent (docker not up) ⇒ defer, never insert.
-	deferred := forwardPlanner{
-		wgIface: "awg0", forwardOn: func() bool { return true },
-		chainExists: func() bool { return false }, rulePresent: func([]string) bool { return false },
-	}
-	acts2, _ := deferred.Plan(context.Background(), spec)
-	for _, a := range acts2 {
-		if a.Changes() {
-			t.Errorf("expected no insert while DOCKER-USER absent, got %+v", acts2)
-		}
-	}
-}
+// (TestExitForwardPlanner moved to internal/agent/dockerfw, where the shared
+// ForwardPlanner now lives.)
 
 // --- scanner-ASN blacklist feed ---
 

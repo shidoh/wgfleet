@@ -31,9 +31,9 @@ type dnsPlanner struct {
 
 func (dnsPlanner) Component() string { return "master dns filter (blocky)" }
 
-func (p dnsPlanner) isUp() bool {
+func (p dnsPlanner) isUp(ctx context.Context) bool {
 	if p.up == nil {
-		return compose.StackUp(p.composePath)
+		return compose.StackUp(ctx, p.composePath)
 	}
 	return p.up(p.composePath)
 }
@@ -46,7 +46,7 @@ func (p dnsPlanner) nonlocalBindOn() bool {
 	return err == nil && strings.TrimSpace(string(b)) == "1"
 }
 
-func (p dnsPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
+func (p dnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
 	if !spec.DNS.Enabled {
 		return []reconcile.Action{reconcile.NoChangeAction("master dns filter", "disabled")}, nil
 	}
@@ -98,21 +98,12 @@ func (p dnsPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.A
 	actions = append(actions, composeFile, cfgFile)
 
 	// Operator extra files (Custom.Files): include lists referenced from overrides.
-	dir := filepath.Dir(p.configPath)
+	extra, err := reconcile.ManagedFileActions(dns.Custom.Files, filepath.Dir(p.configPath))
+	if err != nil {
+		return nil, err
+	}
 	configChanged := cfgFile.Changes()
-	for _, f := range dns.Custom.Files {
-		target := f.Path
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(dir, target)
-		}
-		var redact reconcile.Redactor
-		if f.Secret {
-			redact = func(string) string { return "<redacted: operator secret file>" }
-		}
-		fa, err := reconcile.FileAction(target, []byte(f.Content), 0o644, redact)
-		if err != nil {
-			return nil, err
-		}
+	for _, fa := range extra {
 		actions = append(actions, fa)
 		configChanged = configChanged || fa.Changes()
 	}
@@ -126,7 +117,7 @@ func (p dnsPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.A
 		// it has no hot-reload for the resolver config (only `/lists/refresh` for lists).
 		actions = append(actions, reconcile.ExecAction("restart master resolver",
 			"docker", "compose", "-f", p.composePath, "restart", "blocky"))
-	case !p.isUp():
+	case !p.isUp(ctx):
 		actions = append(actions, reconcile.ExecAction("bring master blocky stack up (was down)",
 			"docker", "compose", "-f", p.composePath, "up", "-d"))
 	default:

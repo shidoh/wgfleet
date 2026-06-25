@@ -2,16 +2,11 @@ package master
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net"
-	"net/netip"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"strconv"
 	"strings"
 
+	"github.com/shidoh/wgfleet/internal/agent/dockerfw"
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/agent/tuning"
 	"github.com/shidoh/wgfleet/internal/compose"
@@ -75,7 +70,10 @@ func Planners(in Input) []reconcile.Planner {
 		dashboardPlanner{uiDir: in.Paths.UIDir},
 		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey},
 		masterNATPlanner{path: in.Paths.NFT, clientIface: in.ClientInterface},
-		masterForwardPlanner{clientIface: in.ClientInterface},
+		dockerfw.NewForwardPlanner(
+			"master forwarding (ip_forward + DOCKER-USER)",
+			in.ClientInterface, defaultClientInterface,
+			"accept client→uplink forwarding (DOCKER-USER)"),
 		// Client-facing blocky resolver (ADR-0024): runs after the stack is up so wg0
 		// (the client gateway it binds) exists. Renders config + its own compose,
 		// restarts blocky on change (no hot-reload for upstreams), self-heals when down.
@@ -111,7 +109,7 @@ type composePlanner struct {
 
 func (composePlanner) Component() string { return "container stack (docker compose)" }
 
-func (p composePlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
+func (p composePlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
 	if spec.Master == nil {
 		return nil, fmt.Errorf("compose: node has no master spec")
 	}
@@ -138,7 +136,7 @@ func (p composePlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 	case file.Changes():
 		// Definition changed: `up -d` recreates only the services whose config moved.
 		actions = append(actions, composeStart(p.path))
-	case !p.isUp():
+	case !p.isUp(ctx):
 		// Definition unchanged but the stack is (partly) down — reboot, crash, or a
 		// prior up that failed: bring it up so reconcile converges to the running
 		// state, not just the on-disk config.
@@ -152,9 +150,9 @@ func (p composePlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 	return actions, nil
 }
 
-func (p composePlanner) isUp() bool {
+func (p composePlanner) isUp(ctx context.Context) bool {
 	if p.up == nil {
-		return compose.StackUp(p.path)
+		return compose.StackUp(ctx, p.path)
 	}
 	return p.up(p.path)
 }
@@ -314,268 +312,8 @@ func (p wgEasyMetricsPlanner) Plan(ctx context.Context, _ domain.NodeSpec) ([]re
 	return []reconcile.Action{enable}, nil
 }
 
-// --- mihomo config + included direct-networks ---
-
-type mihomoPlanner struct {
-	paths      Paths
-	privateKey string
-	// reload hot-applies the config via the Clash API (nil ⇒ the real mihomo.Reload);
-	// injected in tests. Preferred over a container restart so a routine change like
-	// draining one exit does not drop every client's connection.
-	reload func(ctx context.Context, controllerAddr, secret string, cfgYAML []byte) error
-	// restart bounces the container (nil ⇒ real `docker compose restart mihomo`);
-	// injected in tests. Used when a wireguard-proxy change can't be hot-reloaded.
-	restart func(ctx context.Context) error
-}
-
-func (mihomoPlanner) Component() string { return "mihomo (data plane)" }
-
-func (p mihomoPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
-	if spec.Master == nil {
-		return nil, fmt.Errorf("mihomo: node has no master spec")
-	}
-	cfg, err := mihomo.RenderConfig(mihomo.RenderInput{Spec: *spec.Master, PrivateKey: p.privateKey})
-	if err != nil {
-		return nil, err
-	}
-	// Snapshot the on-disk config BEFORE the FileAction overwrites it, so we can tell
-	// whether the wireguard proxies (AmneziaWG params) changed and a hot reload would
-	// silently no-op (see applyConfigAction / mihomo.ProxiesChanged).
-	oldCfg, _ := os.ReadFile(p.paths.MihomoConfig)
-	configAction, err := reconcile.FileAction(p.paths.MihomoConfig, []byte(cfg), 0o644, mihomo.RedactConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	direct, err := mihomo.RenderDirectNetworks(*spec.Master)
-	if err != nil {
-		return nil, err
-	}
-	directAction, err := reconcile.FileAction(p.paths.DirectNetworks, []byte(direct), 0o644, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	actions := []reconcile.Action{configAction, directAction}
-	if configAction.Changes() || directAction.Changes() {
-		// A wireguard-proxy change (AmneziaWG params/keys/endpoint/MTU) needs a full
-		// container restart — a Clash API hot reload does not re-init the proxy's
-		// device. Routine changes (drain, rules, DNS, direct-networks) hot-reload so
-		// existing client connections survive.
-		forceRestart := mihomo.ProxiesChanged(oldCfg, []byte(cfg))
-		actions = append(actions, p.applyConfigAction(spec, []byte(cfg), forceRestart))
-	} else {
-		actions = append(actions, reconcile.NoChangeAction("mihomo", "config already current"))
-	}
-	return actions, nil
-}
-
-// applyConfigAction makes a running mihomo pick up the freshly written config. It
-// prefers an in-process hot reload via the Clash API (no container restart, so
-// existing client connections survive — draining one exit must not disconnect
-// everyone), and falls back to `docker compose restart mihomo` only when the API is
-// unreachable (mihomo down / mid-start). A config the controller actively REJECTS is
-// surfaced as an error WITHOUT a restart, so the previous good config keeps running.
-func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML []byte, forceRestart bool) reconcile.Action {
-	reload := p.reload
-	if reload == nil {
-		reload = mihomo.Reload
-	}
-	addr := spec.Master.ExternalController
-	secret := clashSecret(spec.Master)
-	compose := p.paths.Compose
-
-	restart := p.restart
-	if restart == nil {
-		restart = func(ctx context.Context) error {
-			c := exec.CommandContext(ctx, "docker", "compose", "-f", compose, "restart", "mihomo")
-			if out, rerr := c.CombinedOutput(); rerr != nil {
-				return fmt.Errorf("mihomo restart failed: %w: %s", rerr, strings.TrimSpace(string(out)))
-			}
-			return nil
-		}
-	}
-
-	// A wireguard-proxy change must restart the container: a hot reload cannot
-	// re-init an existing AmneziaWG device, so new S/H params silently never apply.
-	if forceRestart {
-		return reconcile.CustomAction(reconcile.ActionUpdate, "mihomo",
-			"restart mihomo (wireguard-proxy AmneziaWG params changed — hot reload can't re-init the device)",
-			"docker compose restart mihomo", restart)
-	}
-
-	display := fmt.Sprintf("PUT http://%s/configs (hot reload; fallback: docker compose restart mihomo)",
-		orPlaceholder(addr, "<external-controller>"))
-	apply := func(ctx context.Context) error {
-		err := reload(ctx, addr, secret, cfgYAML)
-		switch {
-		case err == nil:
-			return nil
-		case errors.Is(err, mihomo.ErrUnreachable):
-			// Not reachable (down / mid-start): restart so it reads the fresh file.
-			// Heavier (drops connections) but rare — the compose planner already
-			// brought the stack up earlier in the same pass.
-			if rerr := restart(ctx); rerr != nil {
-				return fmt.Errorf("mihomo reload unreachable (%v) and %w", err, rerr)
-			}
-			return nil
-		default:
-			// Reachable but rejected the config: leave the old config running.
-			return err
-		}
-	}
-	return reconcile.CustomAction(reconcile.ActionUpdate, "mihomo",
-		"reload mihomo config in place (Clash API; existing connections preserved)", display, apply)
-}
-
-// clashSecret extracts the Clash API secret from the operator's mihomo overrides
-// (where it is configured), so the agent can authenticate its reload call. Empty
-// when no secret is set (the API is then bound to mgmt only and unauthenticated).
-func clashSecret(ms *domain.MasterSpec) string {
-	if ms == nil || ms.Custom.Overrides == nil {
-		return ""
-	}
-	if s, ok := ms.Custom.Overrides["secret"].(string); ok {
-		return s
-	}
-	return ""
-}
-
-func orPlaceholder(s, placeholder string) string {
-	if s == "" {
-		return placeholder
-	}
-	return s
-}
-
-// --- mihomo redirect-listener self-heal ---
-
-// mihomoRedirPlanner verifies that mihomo is actually listening on its transparent
-// redirect port (<BindAddress>:<RedirPort>) — the target masterNATPlanner DNATs all
-// client TCP to. mihomo binds that listener to the client gateway IP (e.g.
-// 10.73.0.1, the wg0 address); if the client interface is recreated under a running
-// mihomo (a wg-easy restart flaps the address), mihomo silently loses the bind and
-// does NOT re-bind on its own. The container still reports "up" and its config is
-// unchanged, so neither composePlanner nor mihomoPlanner notices — but every DNAT'd
-// client TCP connection now black-holes (pings and the WG handshake keep working,
-// which makes it look healthy). When the listener is down we restart mihomo to
-// rebind. Guarded by a local-address check so we never thrash while wg0 itself is
-// still down (the wg-easy/compose planners bring it back first).
-type mihomoRedirPlanner struct {
-	compose string
-	// listening reports whether a TCP socket is LISTENing on addr; nil ⇒ a passive
-	// socket-table read (socketListening). It must never open a connection to addr.
-	listening func(addr string) bool
-	// localUp reports whether host is assigned to a local interface; nil ⇒ real check.
-	localUp func(host string) bool
-}
-
-func (mihomoRedirPlanner) Component() string { return "mihomo redirect listener" }
-
-func (p mihomoRedirPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
-	if spec.Master == nil {
-		return nil, fmt.Errorf("mihomo redir: node has no master spec")
-	}
-	bindHost := strings.TrimSpace(spec.Master.BindAddress)
-	if bindHost == "" {
-		return []reconcile.Action{reconcile.NoChangeAction("mihomo redirect listener",
-			"no bind address in spec")}, nil
-	}
-	redir := mihomo.DefaultRedirPort
-	if spec.Master.RedirPort != 0 {
-		redir = spec.Master.RedirPort
-	}
-	addr := net.JoinHostPort(bindHost, strconv.Itoa(redir))
-
-	localUp := p.localUp
-	if localUp == nil {
-		localUp = localAddrPresent
-	}
-	// If the bind address isn't up on a local interface yet (wg0/wg-easy down or
-	// mid-recreate), restarting mihomo can't bind it and would loop — defer to the
-	// wg-easy/compose planners and re-check next pass.
-	if !localUp(bindHost) {
-		return []reconcile.Action{reconcile.NoChangeAction("mihomo redirect listener",
-			"deferred: bind address "+bindHost+" not up locally yet")}, nil
-	}
-
-	listening := p.listening
-	if listening == nil {
-		listening = socketListening
-	}
-	if listening(addr) {
-		return []reconcile.Action{reconcile.NoChangeAction("mihomo redirect listener",
-			"listening on "+addr)}, nil
-	}
-
-	compose := p.compose
-	restart := reconcile.CustomAction(reconcile.ActionUpdate, "mihomo redirect listener",
-		"redir listener down on "+addr+" — restart mihomo to rebind",
-		"docker compose -f "+compose+" restart mihomo",
-		func(ctx context.Context) error {
-			c := exec.CommandContext(ctx, "docker", "compose", "-f", compose, "restart", "mihomo")
-			if out, err := c.CombinedOutput(); err != nil {
-				return fmt.Errorf("restart mihomo: %w: %s", err, strings.TrimSpace(string(out)))
-			}
-			return nil
-		})
-	return []reconcile.Action{restart}, nil
-}
-
-// socketListening reports whether a TCP socket is LISTENing on addr (host:port),
-// read passively from the kernel socket table.
-//
-// It MUST NOT open a connection to addr. The redir port is a transparent proxy: a
-// probe connection to it gets proxied by mihomo, and because the probe is not DNAT'd
-// its original destination is the redir address itself, which the direct-networks
-// rule matches — so mihomo dials DIRECT back into its own redir port, igniting a
-// self-amplifying connection storm that pins the master's CPU. A passive socket-table
-// read avoids that entirely. Fails safe to true (an unreadable probe must never
-// trigger a needless mihomo restart).
-func socketListening(addr string) bool {
-	out, err := exec.Command("ss", "-ltnH").CombinedOutput()
-	if err != nil {
-		return true // can't tell → assume up; never falsely restart mihomo
-	}
-	_, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return true
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		f := strings.Fields(line)
-		if len(f) < 4 {
-			continue
-		}
-		switch f[3] { // ss "Local Address:Port" column
-		case addr, "0.0.0.0:" + port, "*:" + port, "[::]:" + port:
-			return true
-		}
-	}
-	return false
-}
-
-// localAddrPresent reports whether host is currently assigned to a local interface.
-func localAddrPresent(host string) bool {
-	target, err := netip.ParseAddr(host)
-	if err != nil {
-		return false
-	}
-	target = target.Unmap()
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return false
-	}
-	for _, a := range addrs {
-		ipnet, ok := a.(*net.IPNet)
-		if !ok {
-			continue
-		}
-		if got, ok := netip.AddrFromSlice(ipnet.IP); ok && got.Unmap() == target {
-			return true
-		}
-	}
-	return false
-}
+// mihomo planners (mihomoPlanner config/reload + mihomoRedirPlanner self-heal)
+// live in mihomo.go.
 
 // --- operator extra files (CustomConfig.Files) ---
 
@@ -587,23 +325,7 @@ func (p extraFilesPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reco
 	if spec.Master == nil || len(spec.Master.Custom.Files) == 0 {
 		return []reconcile.Action{reconcile.NoChangeAction("extra files", "none")}, nil
 	}
-	var actions []reconcile.Action
-	for _, f := range spec.Master.Custom.Files {
-		target := f.Path
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(p.dir, target)
-		}
-		var redact reconcile.Redactor
-		if f.Secret {
-			redact = func(string) string { return "<redacted: operator secret file>" }
-		}
-		a, err := reconcile.FileAction(target, []byte(f.Content), 0o644, redact)
-		if err != nil {
-			return nil, err
-		}
-		actions = append(actions, a)
-	}
-	return actions, nil
+	return reconcile.ManagedFileActions(spec.Master.Custom.Files, p.dir)
 }
 
 // --- master input firewall (nftables filter, mirrors the exit) ---
@@ -694,18 +416,10 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 
 func (p firewallPlanner) isLoaded() bool {
 	if p.loaded == nil {
-		return firewallLoaded()
+		// The master input firewall shares the exit's `inet wgfleet` table name.
+		return netfw.TableLoaded("inet", netfw.ExitTable)
 	}
 	return p.loaded()
-}
-
-// firewallLoaded is the real kernel probe behind firewallPlanner.isLoaded:
-// `nft list table inet wgfleet` succeeds only when the input-firewall table is
-// present. Any exec error (table absent, non-Linux dev box, missing nft) reports
-// "not loaded", so the planner re-applies — harmless in plan mode, self-healing on
-// a real node.
-func firewallLoaded() bool {
-	return exec.Command("nft", "list", "table", "inet", netfw.ExitTable).Run() == nil
 }
 
 // --- master NAT (DNAT clients → mihomo, MASQUERADE, drop QUIC) ---
@@ -760,117 +474,10 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 
 func (p masterNATPlanner) isLoaded() bool {
 	if p.loaded == nil {
-		return masterNATLoaded()
+		return netfw.TableLoaded("ip", netfw.MasterNATTable)
 	}
 	return p.loaded()
 }
 
-// masterNATLoaded is the real kernel probe behind masterNATPlanner.isLoaded:
-// `nft list table ip wgfleet_master` succeeds only when the table is present.
-// Any exec error (table absent, non-Linux dev box, missing nft) reports "not
-// loaded", so the planner re-applies — harmless in plan mode, self-healing on a
-// real node.
-func masterNATLoaded() bool {
-	return exec.Command("nft", "list", "table", "ip", netfw.MasterNATTable).Run() == nil
-}
-
-// --- master forwarding (ip_forward + docker FORWARD accept) ---
-
-// masterForwardPlanner makes the master actually forward client traffic. Two
-// kernel facts conspire against it:
-//
-//  1. Docker sets the filter FORWARD policy to DROP and only accepts its own
-//     bridge traffic, so client packets routed wg0→uplink are dropped. wg-easy's
-//     own `FORWARD -i wg0 -j ACCEPT` is emitted via the container's iptables,
-//     which on a modern host is iptables-LEGACY — invisible to Docker's nft
-//     FORWARD chain, so it does not help. The sanctioned override is the
-//     DOCKER-USER chain (Docker never flushes it); an ACCEPT there makes the
-//     FORWARD base chain return accept instead of hitting the drop policy. A
-//     separate nft base chain cannot help: a drop in Docker's chain is final
-//     regardless of an accept in another base chain at the same hook.
-//  2. IPv4 forwarding must be on. Docker enables it, but the master data plane
-//     should not depend on that side effect, so we assert it too.
-//
-// Only TCP is DNAT'd to mihomo (a local address ⇒ INPUT, not FORWARD); ICMP, DNS
-// and other UDP are plain-forwarded, so without this they silently black-hole
-// while the AmneziaWG handshake looks healthy.
-type masterForwardPlanner struct {
-	clientIface string
-	// Probes (nil ⇒ real). Injected in tests.
-	forwardOn   func() bool           // ip_forward == 1
-	chainExists func() bool           // DOCKER-USER chain present (Docker up)
-	rulePresent func(m []string) bool // iptables -C DOCKER-USER <m>
-}
-
-func (masterForwardPlanner) Component() string { return "master forwarding (ip_forward + DOCKER-USER)" }
-
-// dockerUserRule is one DOCKER-USER accept we maintain, with its match args (the
-// part after `-I DOCKER-USER`) and a human summary.
-type dockerUserRule struct {
-	summary string
-	match   []string
-}
-
-func masterForwardRules(iface string) []dockerUserRule {
-	return []dockerUserRule{
-		{"accept client→uplink forwarding (DOCKER-USER)", []string{"-i", iface, "-j", "ACCEPT"}},
-		{"accept return traffic to clients (DOCKER-USER)", []string{"-o", iface, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"}},
-	}
-}
-
-func (p masterForwardPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]reconcile.Action, error) {
-	iface := p.clientIface
-	if iface == "" {
-		iface = defaultClientInterface
-	}
-	var actions []reconcile.Action
-
-	// 1. IPv4 forwarding.
-	if p.isForwardOn() {
-		actions = append(actions, reconcile.NoChangeAction("ip_forward", "already enabled"))
-	} else {
-		actions = append(actions, reconcile.ExecAction("enable IPv4 forwarding",
-			"sysctl", "-w", "net.ipv4.ip_forward=1"))
-	}
-
-	// 2. DOCKER-USER accept rules. The chain only exists once Docker is up; until
-	// then defer rather than fail the pass (the compose planner brings Docker up
-	// earlier in the same reconcile, so it converges next pass at the latest).
-	if !p.dockerUserExists() {
-		actions = append(actions, reconcile.NoChangeAction("DOCKER-USER",
-			"pending: DOCKER-USER chain not present yet (docker not up)"))
-		return actions, nil
-	}
-	for _, r := range masterForwardRules(iface) {
-		if p.isRulePresent(r.match) {
-			actions = append(actions, reconcile.NoChangeAction("DOCKER-USER", r.summary+" already present"))
-			continue
-		}
-		argv := append([]string{"iptables", "-I", "DOCKER-USER"}, r.match...)
-		actions = append(actions, reconcile.ExecAction(r.summary, argv...))
-	}
-	return actions, nil
-}
-
-func (p masterForwardPlanner) isForwardOn() bool {
-	if p.forwardOn != nil {
-		return p.forwardOn()
-	}
-	b, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward")
-	return err == nil && strings.TrimSpace(string(b)) == "1"
-}
-
-func (p masterForwardPlanner) dockerUserExists() bool {
-	if p.chainExists != nil {
-		return p.chainExists()
-	}
-	return exec.Command("iptables", "-S", "DOCKER-USER").Run() == nil
-}
-
-func (p masterForwardPlanner) isRulePresent(match []string) bool {
-	if p.rulePresent != nil {
-		return p.rulePresent(match)
-	}
-	argv := append([]string{"-C", "DOCKER-USER"}, match...)
-	return exec.Command("iptables", argv...).Run() == nil
-}
+// Master forwarding (ip_forward + DOCKER-USER accept, an earlier finding) is handled by
+// the shared dockerfw.ForwardPlanner, constructed in Planners() with iface wg0.
