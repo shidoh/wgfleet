@@ -9,7 +9,7 @@
   --border: #262d3a;
   --text: #e6e9ef;
   --text-dim: #8b95a7;
-  --text-faint: #76819a; /* nudged up from #5b6577 toward AA for small data text */
+  --text-faint: #8a93a8; /* clears ~5:1 on both surfaces; was #76819a (borderline AA at <0.7rem) */
   --accent: #4c8dff;
   --accent-2: #a78bfa; /* soft violet — a second categorical hue (not a status colour) */
 
@@ -24,9 +24,17 @@
 
   --space: 1rem;
   --radius: 8px;
+  --radius-md: 6px;
+  --radius-sm: 4px;
+  --radius-pill: 100px;
+  --duration-fast: 150ms;
 }
 
 * { box-sizing: border-box; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+}
 
 body {
   margin: 0;
@@ -316,3 +324,31 @@ pre.spec {
 }
 .backup-warn strong { color: var(--warn); font-weight: 600; }
 .warn-ico { width: 15px; height: 15px; flex: none; color: var(--warn); margin-top: 0.1rem; }
+.backup-restore { margin: 0; color: var(--text-faint); font-size: 0.78rem; line-height: 1.5; }
+
+/* ── Review fixes (2026-06-26) ───────────────────────────────────────────── */
+
+/* Fleet table: scroll the table inside its own container on narrow viewports
+   instead of blowing out the page grid. */
+.table-wrap { overflow-x: auto; }
+.nodes { min-width: 44rem; }
+
+/* Summary strip: empty buckets recede so "all clear" reads instantly, and every
+   state carries the colour its badge uses (not just ok/warn/err). */
+.stat.zero .n, .stat.zero .l { color: var(--text-faint); }
+.stat.reconciling .n, .stat.provisioning .n { color: var(--provisioning); }
+.stat.pending .n { color: var(--pending); }
+
+/* Health-check verdict: a glyph (shape, not colour alone) + semantic colour, so
+   a red/green-blind operator can still read pass/fail. */
+.checks .cmark {
+  flex: none; width: 1.1em; text-align: center;
+  font-family: var(--mono); font-weight: 700; font-size: 0.9rem; line-height: 1;
+}
+.checks .cmark.ok { color: var(--ok); }
+.checks .cmark.bad { color: var(--err); }
+
+/* Links that leave the console (metrics, wg-easy, mihomo) read dimmer than
+   in-app links until hovered. */
+.extlink { color: var(--text-dim); }
+.extlink:hover { color: var(--accent); }

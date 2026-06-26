@@ -133,7 +133,8 @@ func TestNodeDetailWithStatusAndSpec(t *testing.T) {
 	for _, want := range []string{
 		"exit-de-1", "198.51.100.7", // inventory
 		"104.16.0.1", "warp-egress", "cloudflare", // status + checks
-		"led ok", "led bad", // check leds
+		"cmark ok", "cmark bad", // check verdict glyphs (shape, not colour-only)
+		`aria-label="warp-egress: pass"`, `aria-label="dns: fail"`, // accessible verdict
 		"role:    exit", "egress:  warp", "[wg server]", "address pool: 10.81.0.0/24", // rendered spec preview
 	} {
 		if !strings.Contains(body, want) {

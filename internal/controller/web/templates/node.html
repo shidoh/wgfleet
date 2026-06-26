@@ -82,10 +82,10 @@
     <div class="subhead">Health checks</div>
     <ul class="checks">
       {{range .Status.Checks}}
-      <li>
-        <span class="led {{if .OK}}ok{{else}}bad{{end}}"></span>
+      <li aria-label="{{.Name}}: {{if .OK}}pass{{else}}fail{{end}}">
+        <span class="cmark {{if .OK}}ok{{else}}bad{{end}}" aria-hidden="true">{{if .OK}}✓{{else}}✗{{end}}</span>
         <span class="cname">{{.Name}}</span>
-        {{if .Detail}}<span class="cdetail">{{.Detail}}</span>{{end}}
+        {{if or .Detail .Latency}}<span class="cdetail">{{.Detail}}{{if and .Detail .Latency}} · {{end}}{{if .Latency}}{{.Latency}}{{end}}</span>{{end}}
       </li>
       {{end}}
     </ul>
@@ -137,9 +137,11 @@
       <dt>Mgmt (ZT)</dt><dd>{{or .Node.MgmtAddr "—"}}</dd>
       <dt>Public IP</dt><dd>{{or .Node.PublicIP "—"}}</dd>
       <dt>Public key</dt><dd class="dim">{{or .Node.PublicKey "— (not registered)"}}</dd>
+      {{if .Node.RealityPublicKey}}<dt>REALITY key</dt><dd class="dim">{{.Node.RealityPublicKey}}</dd>{{end}}
       <dt>Agent</dt><dd class="dim">{{if .Node.AgentVersion}}{{.Node.AgentVersion}} (wire v{{.Node.WireVersion}}){{else}}— (not reported){{end}}</dd>
       <dt>Created</dt><dd class="dim">{{absTime .Node.CreatedAt}}</dd>
       <dt>Last seen</dt><dd class="dim">{{relTime .Node.LastSeen}}</dd>
+      {{if .MetricsURL}}<dt>Metrics</dt><dd><a class="extlink" href="{{.MetricsURL}}" target="_blank" rel="noopener noreferrer">Prometheus /metrics ↗</a></dd>{{end}}
       {{if .WGEasyURL}}<dt>wg-easy</dt><dd><a class="extlink" href="{{.WGEasyURL}}" target="_blank" rel="noopener noreferrer">client admin UI ↗</a></dd>{{end}}
       {{if .MihomoURL}}<dt>mihomo</dt><dd><a class="extlink" href="{{.MihomoURL}}" target="_blank" rel="noopener noreferrer">router dashboard ↗</a></dd>{{end}}
     </dl>

@@ -2,7 +2,7 @@
 {{if .Flash}}<p class="error-note" role="alert">⚠ {{.Flash}}</p>{{end}}
 <section class="summary">
   {{range .Summary}}
-  <div class="stat {{.Class}}">
+  <div class="stat {{.Class}}{{if eq .Count 0}} zero{{end}}">
     <div class="n">{{.Count}}</div>
     <div class="l">{{.Label}}</div>
   </div>
@@ -37,17 +37,21 @@
       <svg class="warn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>
       <span>The archive holds the <strong>CA key</strong> and <strong>every client key</strong>. It is sealed to your recipient — store it like a secret. No recipient on the CLI? <code>--backup</code> falls back to a passphrase.</span>
     </p>
+    <p class="backup-restore">Restoring is CLI-only (it must run with the controller stopped): <code>wgfleet-controller --restore &lt;archive&gt; --plan</code>, then without <code>--plan</code>.</p>
   </div>
 </details>
 {{end}}
 
 {{define "nodes-table"}}
 {{if .Nodes}}
+<div class="table-wrap">
 <table class="nodes">
   <thead>
     <tr>
       <th>Node</th><th>Role</th><th>Region</th><th>State</th>
-      <th class="col-transport">Transport</th><th>Mgmt (ZT)</th><th>Address</th><th class="col-seen">Seen</th>
+      <th class="col-transport">Transport</th><th>Mgmt (ZT)</th><th>Address</th>
+      <th class="col-seen" title="Age of the latest WireGuard handshake — data-plane liveness">Handshake</th>
+      <th class="col-seen" title="Age of the latest agent status report">Seen</th>
     </tr>
   </thead>
   <tbody>
@@ -78,11 +82,13 @@
           {{if and (eq (lower .Role) "exit") .EgressIP (ne .EgressIP .PublicIP)}}<span class="ip-tag">warp</span><span class="ip-val warp" title="Actual egress IP (Cloudflare WARP)">{{.EgressIP}}</span>{{end}}
         </div>
       </td>
+      <td class="mono col-seen">{{if and .HasStatus (not .LastHandshake.IsZero)}}{{relTime .LastHandshake}}{{else}}—{{end}}</td>
       <td class="mono col-seen">{{relTime .LastSeen}}</td>
     </tr>
     {{end}}
   </tbody>
 </table>
+</div>
 {{else}}
 <div class="empty">No nodes registered yet. Provision one with <code>wgfleet-controller --provision &lt;node&gt;</code>.</div>
 {{end}}

@@ -25,6 +25,7 @@ import (
 
 	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/compose"
+	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
 )
@@ -491,6 +492,7 @@ type nodeData struct {
 	Flash        string // one-shot error surfaced from a failed action redirect
 	WGEasyURL    string // master only: link to its wg-easy admin UI (mgmt overlay)
 	MihomoURL    string // master only: link to its mihomo (Clash) web dashboard (mgmt overlay)
+	MetricsURL   string // link to the node's agent Prometheus /metrics on the mgmt overlay
 	WireSkew     string // non-empty (reason) when the agent's wire version is incompatible
 	CSRF         string // CSRF token embedded in the action forms
 	// Transport switch (ADR-0025): populated from the rendered spec. A dual-transport
@@ -517,7 +519,7 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 		// report, so the detail page matches the list (see nodes()).
 		node = backfillFromManifest(node, mn)
 	}
-	data := nodeData{Title: node.Name, NodeCount: 1, Node: node, CSRF: h.csrf, CanDelete: node.Decommission, Flash: h.takeFlash(w, r)}
+	data := nodeData{Title: node.Name, NodeCount: 1, Node: node, CSRF: h.csrf, CanDelete: node.Decommission, Flash: h.takeFlash(w, r), MetricsURL: metricsURL(node)}
 	if node.WireVersion != 0 {
 		if compat := api.CheckWire(node.WireVersion); compat != api.WireCompatible {
 			data.WireSkew = api.IncompatibilityDetail(compat, node.WireVersion)
@@ -576,6 +578,20 @@ func wgEasyURL(node domain.Node, spec domain.NodeSpec) string {
 		port = spec.Master.Compose.WGEasyWebPort
 	}
 	return fmt.Sprintf("http://%s:%d", host, port)
+}
+
+// metricsURL builds the node's agent Prometheus /metrics URL on the mgmt/ZT
+// overlay, or "" when the mgmt address is unknown. Every node (master and exit)
+// runs the agent, which binds /metrics on <mgmt_addr>:9301 by default.
+func metricsURL(node domain.Node) string {
+	if node.MgmtAddr == "" {
+		return ""
+	}
+	host := node.MgmtAddr
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return fmt.Sprintf("http://%s:%d/metrics", host, config.DefaultAgentMetricsPort)
 }
 
 // mihomoURL builds the master's mihomo (Clash) web dashboard URL on the mgmt/ZT
