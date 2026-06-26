@@ -43,4 +43,6 @@ var migrations = []string{
 	// v5: the operator's live UI override of the active master↔exit transport
 	// (ADR-0025); empty ⇒ use the manifest's active_transport.
 	`ALTER TABLE nodes ADD COLUMN active_transport TEXT NOT NULL DEFAULT ''`,
+	// v6: master's per-exit tunnel health (mihomo proxy liveness), JSON like checks.
+	`ALTER TABLE node_status ADD COLUMN exit_health_json TEXT NOT NULL DEFAULT '[]'`,
 }

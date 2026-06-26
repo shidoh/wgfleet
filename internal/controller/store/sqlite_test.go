@@ -355,3 +355,32 @@ func TestSetNodeRealityKey(t *testing.T) {
 		t.Errorf("SetNodeRealityKey ghost: want ErrNotFound, got %v", err)
 	}
 }
+
+func TestStatusExitHealthPersists(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if err := st.UpsertNode(ctx, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady}); err != nil {
+		t.Fatal(err)
+	}
+	want := domain.NodeStatus{
+		NodeID: "master-xa-1", State: domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{
+			{Name: "exit-de-1", Alive: true, Delay: 42 * time.Millisecond, LastTest: time.Unix(1000, 0).UTC(), Selected: true},
+		},
+	}
+	if err := st.RecordStatus(ctx, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetStatus(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.ExitHealth) != 1 || got.ExitHealth[0].Name != "exit-de-1" || !got.ExitHealth[0].Alive ||
+		got.ExitHealth[0].Delay != 42*time.Millisecond || !got.ExitHealth[0].Selected {
+		t.Fatalf("exit health not persisted: %+v", got.ExitHealth)
+	}
+}

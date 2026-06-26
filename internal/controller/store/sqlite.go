@@ -233,6 +233,10 @@ func (s *SQLiteStore) RecordStatus(ctx context.Context, st domain.NodeStatus) er
 	if err != nil {
 		return fmt.Errorf("marshal checks: %w", err)
 	}
+	exitHealth, err := json.Marshal(st.ExitHealth)
+	if err != nil {
+		return fmt.Errorf("marshal exit health: %w", err)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin status tx: %w", err)
@@ -241,14 +245,15 @@ func (s *SQLiteStore) RecordStatus(ctx context.Context, st domain.NodeStatus) er
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO node_status (node_id, state, reported_at, last_handshake,
-			egress_ip, reconcile_error, checks_json)
-		VALUES (?,?,?,?,?,?,?)
+			egress_ip, reconcile_error, checks_json, exit_health_json)
+		VALUES (?,?,?,?,?,?,?,?)
 		ON CONFLICT(node_id) DO UPDATE SET
 			state=excluded.state, reported_at=excluded.reported_at,
 			last_handshake=excluded.last_handshake, egress_ip=excluded.egress_ip,
-			reconcile_error=excluded.reconcile_error, checks_json=excluded.checks_json`,
+			reconcile_error=excluded.reconcile_error, checks_json=excluded.checks_json,
+			exit_health_json=excluded.exit_health_json`,
 		st.NodeID, string(st.State), fmtTime(orDefault(st.ReportedAt, s.now().UTC())),
-		fmtTime(st.LastHandshake), st.EgressIP, st.ReconcileError, string(checks),
+		fmtTime(st.LastHandshake), st.EgressIP, st.ReconcileError, string(checks), string(exitHealth),
 	); err != nil {
 		return fmt.Errorf("record status for %q: %w", st.NodeID, err)
 	}
@@ -264,15 +269,16 @@ func (s *SQLiteStore) RecordStatus(ctx context.Context, st domain.NodeStatus) er
 // GetStatus implements Store.
 func (s *SQLiteStore) GetStatus(ctx context.Context, id string) (domain.NodeStatus, error) {
 	const q = `SELECT node_id, state, reported_at, last_handshake, egress_ip,
-		reconcile_error, checks_json FROM node_status WHERE node_id = ?`
+		reconcile_error, checks_json, exit_health_json FROM node_status WHERE node_id = ?`
 	var (
 		st                                domain.NodeStatus
 		stateS, reportedAt, lastHandshake string
 		checksJSON                        string
+		exitHealthJSON                    string
 	)
 	err := s.db.QueryRowContext(ctx, q, id).Scan(
 		&st.NodeID, &stateS, &reportedAt, &lastHandshake,
-		&st.EgressIP, &st.ReconcileError, &checksJSON)
+		&st.EgressIP, &st.ReconcileError, &checksJSON, &exitHealthJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.NodeStatus{}, ErrNotFound
 	}
@@ -284,6 +290,9 @@ func (s *SQLiteStore) GetStatus(ctx context.Context, id string) (domain.NodeStat
 	st.LastHandshake = parseTime(lastHandshake)
 	if err := json.Unmarshal([]byte(checksJSON), &st.Checks); err != nil {
 		return domain.NodeStatus{}, fmt.Errorf("unmarshal checks for %q: %w", id, err)
+	}
+	if err := json.Unmarshal([]byte(exitHealthJSON), &st.ExitHealth); err != nil {
+		return domain.NodeStatus{}, fmt.Errorf("unmarshal exit health for %q: %w", id, err)
 	}
 	return st, nil
 }
