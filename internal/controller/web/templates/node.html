@@ -169,6 +169,18 @@
   {{end}}
 </ul>
 {{end}}
+{{if .Status.ExitHealth}}
+<div class="subhead">Exit tunnels</div>
+<ul class="checks">
+  {{range .Status.ExitHealth}}
+  <li aria-label="{{.Name}}: {{if .Alive}}up{{else}}down{{end}}">
+    <span class="cmark {{if .Alive}}ok{{else}}bad{{end}}" aria-hidden="true">{{if .Alive}}✓{{else}}✗{{end}}</span>
+    <span class="cname">{{.Name}}</span>
+    <span class="cdetail">{{if .Selected}}● carrying{{end}}{{if .Delay}}{{if .Selected}} · {{end}}{{.Delay}}{{end}}{{if not .LastTest.IsZero}} · tested {{relTime .LastTest}}{{end}}</span>
+  </li>
+  {{end}}
+</ul>
+{{end}}
 {{else}}
 <p class="kv dim">No status reported yet.</p>
 {{end}}

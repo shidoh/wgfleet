@@ -728,3 +728,31 @@ func TestListShowsTransportAndMgmt(t *testing.T) {
 		}
 	}
 }
+
+func TestMasterDetailShowsExitTunnelHealth(t *testing.T) {
+	h, st := newTestHandler(t, stubRenderer{spec: domain.NodeSpec{Role: domain.RoleMaster}})
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "master-xa-1", State: domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{
+			{Name: "exit-de-1", Alive: true, Delay: 42 * time.Millisecond, LastTest: time.Now().Add(-5 * time.Second), Selected: true},
+			{Name: "exit-nl-1", Alive: false},
+		},
+	})
+
+	_, body := get(t, h, "/nodes/master-xa-1")
+	for _, want := range []string{"Exit tunnels", "exit-de-1", "exit-nl-1", "carrying", "cmark ok", "cmark bad"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("master detail missing %q", want)
+		}
+	}
+}
+
+func TestExitNodeHasNoExitTunnelCard(t *testing.T) {
+	h, st := newTestHandler(t, stubRenderer{spec: domain.NodeSpec{Role: domain.RoleExit}})
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{NodeID: "exit-de-1", State: domain.StateReady})
+	if _, body := get(t, h, "/nodes/exit-de-1"); strings.Contains(body, "Exit tunnels") {
+		t.Error("an exit node must not show the Exit tunnels section")
+	}
+}
