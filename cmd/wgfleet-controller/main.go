@@ -64,6 +64,9 @@ func run() error {
 		plan         = flag.Bool("plan", false, "with --provision/--upgrade-agent: dry-run, show the plan and change nothing")
 		agentBin     = flag.String("agent-bin", "", "with --provision/--upgrade-agent: path to the wgfleet-agent binary to install (default controller.agent_bin)")
 		ctlEndpoint  = flag.String("controller-endpoint", "", "with --provision: controller mTLS endpoint the agent dials (default controller.listen)")
+		backupOut    = flag.String("backup", "", "snapshot controller (+co-located master) state to an age-encrypted archive at this path, then exit")
+		restoreIn    = flag.String("restore", "", "restore controller state from an age-encrypted archive at this path, then exit")
+		ageRecipient = flag.String("age-recipient", "", "with --backup: encrypt to this age recipient instead of prompting for a passphrase")
 		showVersion  = flag.Bool("version", false, "print build version and exit")
 	)
 	flag.Parse()
@@ -83,6 +86,24 @@ func run() error {
 	}
 	if *storePath != "" { // flag overrides file, per config-driven principle
 		cfg.Controller.Store = *storePath
+	}
+
+	// Backup/restore operate on files (store db, CA, manifest, master state) and
+	// do not need a loaded CA — handle them before the secret-provider/CA load.
+	if *backupOut != "" {
+		if err := runBackup(cfg, *configPath, *backupOut, *ageRecipient, nil); err != nil {
+			return err
+		}
+		fmt.Printf("backup written to %s\n", *backupOut)
+		return nil
+	}
+	if *restoreIn != "" {
+		p, err := runRestore(context.Background(), *restoreIn, *plan, nil, int(api.WireContractVersion), controllerEndpoint(cfg.Controller))
+		if err != nil {
+			return err
+		}
+		printRestorePlan(p, *plan)
+		return nil
 	}
 
 	if *initPKI {
