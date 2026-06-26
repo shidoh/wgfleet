@@ -500,10 +500,24 @@ fleet:
       region: de
       egress: warp                          # preferred egress method: warp | direct
       egress_fallback: [direct]             # ordered fallbacks for censorship-adaptive failover (ADR-0017)
-      listen_port: 51820                    # WG server port; 0 ⇒ 51820
-      warp_mtu: 0                           # WARP interface MTU; 0 ⇒ computed 1440. Set if real path < 1500
+      warp_mtu: 0                           # WARP interface MTU; 0 ⇒ default 1380 + auto-probe (tracepath, capped, only lowers). Set if the real path is < that.
       address_pool: 10.81.0.0/24
       mgmt_addr: 10.20.0.5                 # ZeroTier address (admin/metrics/DNS bind)
+      transports:                           # master↔exit transport(s), ADR-0025; omit ⇒ AWG-only
+        awg: { enabled: true, listen_port: 0 }       # WG UDP port; 0 ⇒ stable-random derived
+        reality:                            # VLESS+REALITY+XHTTP (xray) — censorship-resistant
+          enabled: true
+          listen_port: 443                  # default 443; must differ from the AWG port
+          dest_domain: www.python.org       # camouflage dest — MUST support X25519MLKEM768 (verify `xray tls ping`); not Cloudflare-fronted
+          dest_port: 443
+          sni: www.python.org               # empty ⇒ = dest_domain
+          mode: xhttp                       # xhttp (default; packet-up dodges volume-freeze) | vision (TCP + xtls-rprx-vision)
+          mux: true                         # XMUX connection reuse — amortizes the per-connection handshake (xhttp only)
+          fingerprint: chrome               # uTLS fingerprint: chrome | firefox | none
+          empty_sni: false                  # true ⇒ no-SNI ClientHello (RU-TSPU heuristic bypass)
+          allow_ipv6: false                 # false ⇒ pin xray resolution to IPv4 (IPv4-only data plane)
+          # image: ghcr.io/xtls/xray-core:26.6.22   # unset ⇒ pinned default
+      active_transport: awg                 # awg | reality-xhttp (flip live in the Web UI)
       dns_filter: true                      # blocky (Docker); binds loopback + mgmt_addr ONLY
       dns:                                  # optional blocky tuning (ZT-only binds enforced regardless)
         image: spx01/blocky                 # repository …
@@ -812,5 +826,8 @@ native Go (kernel WG via netlink, native nftables).
 **Phase 5 (optional) — HA control plane:** multi-master with leader election,
 raft/rqlite store, CA-key distribution model.
 
-**Wishlist:** Reality/VLESS as an **additional** master↔exit transport
-(not a WG replacement; when needed for DPI-resistant second transport).
+**Done (ADR-0025):** Reality/VLESS+XHTTP as an **additional** master↔exit transport
+(not a WG replacement) — dual-transport per exit, switchable live from the Web UI.
+Shipped and the fleet runs on it; the camouflage `dest` must support X25519MLKEM768
+. Per-exit knobs: `transports.reality.{dest_domain,dest_port,sni,
+listen_port,mode,mux,fingerprint,empty_sni,allow_ipv6,image}`.
