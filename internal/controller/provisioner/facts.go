@@ -24,6 +24,7 @@ type Facts struct {
 	HasZeroTier  bool   // zerotier-cli present
 	HasDocker    bool   // docker engine present (needed for blocky/mihomo/wg-easy)
 	HasFail2ban  bool   // fail2ban present (SSH brute-force protection)
+	HasAge       bool   // age present (controller backup/restore archive encryption)
 }
 
 // CollectFacts gathers Facts from the target via the Runner. It never mutates
@@ -57,6 +58,7 @@ func CollectFacts(ctx context.Context, r Runner) (Facts, error) {
 	f.HasZeroTier = commandExists(ctx, r, "zerotier-cli")
 	f.HasDocker = commandExists(ctx, r, "docker")
 	f.HasFail2ban = commandExists(ctx, r, "fail2ban-client")
+	f.HasAge = commandExists(ctx, r, "age")
 	f.HasAWGKmod = awgKmodPresent(ctx, r)
 
 	return f, nil
@@ -139,6 +141,12 @@ func (f Facts) MissingPackages() []string {
 		// SSH brute-force protection. Its jail is dropped + (re)started in a dedicated
 		// bootstrap step; here we just ensure the package (and its update) is installed.
 		pkgs = append(pkgs, "fail2ban")
+	}
+	if !f.HasAge {
+		// age encrypts the controller backup archive (wgfleet-controller --backup,
+		// internal/controller/backup). Needed on any node that may host the controller
+		// so disaster-recovery restore works on a freshly provisioned box.
+		pkgs = append(pkgs, "age")
 	}
 	return pkgs
 }
