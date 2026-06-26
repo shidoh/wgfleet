@@ -92,10 +92,11 @@ type NodeStatus struct {
 	NodeID         string
 	State          NodeState
 	ReportedAt     time.Time
-	LastHandshake  time.Time     // freshest WG handshake across peers
-	EgressIP       string        // observed egress IP (should be Cloudflare for warp)
-	ReconcileError string        // non-empty if the last reconcile failed
-	Checks         []HealthCheck // individual self-check results
+	LastHandshake  time.Time          // freshest WG handshake across peers
+	EgressIP       string             // observed egress IP (should be Cloudflare for warp)
+	ReconcileError string             // non-empty if the last reconcile failed
+	Checks         []HealthCheck      // individual self-check results
+	ExitHealth     []ExitTunnelHealth // master only: per-exit tunnel health from mihomo
 }
 
 // HealthCheck is a single named self-check result from an agent.
@@ -104,6 +105,17 @@ type HealthCheck struct {
 	OK      bool
 	Detail  string
 	Latency time.Duration
+}
+
+// ExitTunnelHealth is the master's view of one master↔exit tunnel, derived from
+// mihomo's Clash API (the tunnels are userspace mihomo proxies, not kernel WG, so
+// this — not a wg handshake — is their liveness). One per exit on a master node.
+type ExitTunnelHealth struct {
+	Name     string        // exit node name (== mihomo proxy name)
+	Alive    bool          // mihomo reports the proxy up
+	Delay    time.Duration // last url-test delay (0 = no/failed measurement)
+	LastTest time.Time     // time of the last delay test (zero = none)
+	Selected bool          // currently chosen by the wg-best group (carrying traffic)
 }
 
 // EgressReachability classifies WHY an exit's egress is or is not working, so an
