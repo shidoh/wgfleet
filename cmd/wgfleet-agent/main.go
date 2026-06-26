@@ -43,6 +43,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/egress"
 	"github.com/shidoh/wgfleet/internal/metrics"
+	"github.com/shidoh/wgfleet/internal/mihomo"
 	"github.com/shidoh/wgfleet/internal/version"
 	"github.com/shidoh/wgfleet/internal/wg"
 	"github.com/shidoh/wgfleet/internal/wgeasy"
@@ -389,7 +390,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			repCtx, repCancel := context.WithTimeout(base, statusReportTimeout)
 			defer repCancel()
 			check := domain.HealthCheck{Name: domain.CheckSpecValid, OK: false, Detail: err.Error()}
-			if rerr := a.reportStatus(repCtx, domain.StateError, []domain.HealthCheck{check}, err, ""); rerr != nil {
+			if rerr := a.reportStatus(repCtx, domain.StateError, []domain.HealthCheck{check}, err, "", nil); rerr != nil {
 				a.log.Error("failed to report invalid-spec state", "err", rerr)
 			}
 			return fmt.Errorf("invalid spec, not applied: %w", err)
@@ -542,7 +543,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	// timed-out apply must still report the node's state, or it sticks in Provisioning.
 	repCtx, repCancel := context.WithTimeout(base, statusReportTimeout)
 	defer repCancel()
-	if err := a.reportStatus(repCtx, state, results, reconcileErr, a.egressIP(repCtx, spec, activeEgress)); err != nil {
+	if err := a.reportStatus(repCtx, state, results, reconcileErr, a.egressIP(repCtx, spec, activeEgress), a.collectExitHealth(repCtx, spec)); err != nil {
 		return err
 	}
 	if reconcileErr != nil {
@@ -652,7 +653,7 @@ func (a *agent) teardown(ctx context.Context, plan bool) error {
 	}
 	a.log.Info("decommission complete", "actions", report.ChangeCount())
 	// Report a terminal status so the controller/UI sees the node is torn down.
-	return a.reportStatus(ctx, domain.StatePending, []domain.HealthCheck{{Name: "decommissioned", OK: true}}, nil, "")
+	return a.reportStatus(ctx, domain.StatePending, []domain.HealthCheck{{Name: "decommissioned", OK: true}}, nil, "", nil)
 }
 
 func (a *agent) teardownPlanners() []reconcile.Planner {
@@ -739,8 +740,8 @@ func (a *agent) readWARPProfile() *egress.WARPConfig {
 // reconcile error to the controller (the error becomes the node's LastError).
 // egressIP, when known, is the address the node's traffic appears to leave under
 // (the WARP IP for warp egress, the node's own IP for direct) — surfaced in the UI.
-func (a *agent) reportStatus(ctx context.Context, state domain.NodeState, checks []domain.HealthCheck, reconcileErr error, egressIP string) error {
-	st := domain.NodeStatus{State: state, Checks: checks, EgressIP: egressIP}
+func (a *agent) reportStatus(ctx context.Context, state domain.NodeState, checks []domain.HealthCheck, reconcileErr error, egressIP string, exitHealth []domain.ExitTunnelHealth) error {
+	st := domain.NodeStatus{State: state, Checks: checks, EgressIP: egressIP, ExitHealth: exitHealth}
 	if reconcileErr != nil {
 		st.ReconcileError = reconcileErr.Error()
 	}
@@ -748,6 +749,59 @@ func (a *agent) reportStatus(ctx context.Context, state domain.NodeState, checks
 		return fmt.Errorf("report status: %w", err)
 	}
 	return nil
+}
+
+// wgBestGroupName is the mihomo load-balance group the master routes through; its
+// current selection marks the exit carrying traffic.
+const wgBestGroupName = "wg-best"
+
+// exitHealthForMaster parses per-exit tunnel health from a Clash /proxies payload
+// using the master spec's exit names. It returns nil for a non-master or when the
+// payload cannot be parsed — collection is best-effort and never fails the report.
+func exitHealthForMaster(proxiesJSON []byte, spec domain.NodeSpec) []domain.ExitTunnelHealth {
+	if spec.Role != domain.RoleMaster || spec.Master == nil {
+		return nil
+	}
+	names := make([]string, 0, len(spec.Master.ExitTunnels))
+	for _, t := range spec.Master.ExitTunnels {
+		names = append(names, t.Name)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	h, err := mihomo.ParseProxyHealth(proxiesJSON, wgBestGroupName, names)
+	if err != nil {
+		return nil
+	}
+	return h
+}
+
+// collectExitHealth fetches the master's mihomo /proxies snapshot and parses it.
+// On any error it logs and returns nil so the status report still sends.
+func (a *agent) collectExitHealth(ctx context.Context, spec domain.NodeSpec) []domain.ExitTunnelHealth {
+	if spec.Role != domain.RoleMaster || spec.Master == nil || spec.Master.ExternalController == "" {
+		return nil
+	}
+	// domain.MasterSpec.Custom is a VALUE (domain.CustomConfig), not a pointer — a
+	// nil Overrides map is fine, the lookup just yields "".
+	js, err := mihomo.FetchProxies(ctx, spec.Master.ExternalController, clashAPISecret(spec.Master.Custom.Overrides))
+	if err != nil {
+		a.log.Warn("could not fetch mihomo proxy health", "err", err)
+		return nil
+	}
+	return exitHealthForMaster(js, spec)
+}
+
+// clashAPISecret reads the mihomo Clash API secret from the operator's mihomo
+// overrides — the same key the running mihomo enforces, so the fetch authenticates
+// exactly like the master health probe (mirrors internal/agent/health/probes.go
+// clashSecret, which reads overrides["secret"]). Missing/non-string ⇒ "" (no auth
+// header). Defined locally because that helper is package-private to `health`.
+func clashAPISecret(overrides map[string]any) string {
+	if s, ok := overrides["secret"].(string); ok {
+		return s
+	}
+	return ""
 }
 
 // egressIP reports the address the exit's client traffic leaves under: the
