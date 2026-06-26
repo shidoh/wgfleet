@@ -18,8 +18,8 @@
   {{template "nodes-table" .}}
 </div>
 
-<section class="backup-section">
-  <div class="section-title">Backup &amp; migrate</div>
+<details class="backup-section">
+  <summary class="backup-summary">Backup &amp; migrate</summary>
   <div class="backup-card">
     <p class="backup-lead">One <code>age</code>-encrypted archive of everything irreplaceable — node inventory, CA, manifest, and this master's wg-easy clients. Restore it after a loss, or migrate the controller to a fresh node.</p>
     <form class="backup-form" method="post" action="/backup">
@@ -38,7 +38,7 @@
       <span>The archive holds the <strong>CA key</strong> and <strong>every client key</strong>. It is sealed to your recipient — store it like a secret. No recipient on the CLI? <code>--backup</code> falls back to a passphrase.</span>
     </p>
   </div>
-</section>
+</details>
 {{end}}
 
 {{define "nodes-table"}}

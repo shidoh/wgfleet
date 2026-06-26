@@ -265,6 +265,20 @@ pre.spec {
    client key), flagged with a violet keyline — accent-2 reads as the categorical
    "secret/security" hue here, not a status colour. */
 .backup-section { margin-top: 2.25rem; }
+/* Collapsed by default — a quiet disclosure line so the form does not crowd the
+   main page. Mirrors the .spec-card ▸/▾ idiom for consistency. */
+.backup-summary {
+  cursor: pointer; list-style: none; width: max-content;
+  display: inline-flex; align-items: center;
+  font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-dim);
+  transition: color 150ms;
+}
+.backup-summary::-webkit-details-marker { display: none; }
+.backup-summary::before { content: "▸"; color: var(--text-faint); margin-right: 0.5rem; }
+.backup-section[open] .backup-summary::before { content: "▾"; }
+.backup-summary:hover { color: var(--text); }
+.backup-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.backup-section[open] .backup-card { margin-top: 0.9rem; }
 .backup-card {
   background: var(--surface);
   border: 1px solid var(--border);
