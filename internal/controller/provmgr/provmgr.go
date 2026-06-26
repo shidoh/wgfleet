@@ -236,13 +236,40 @@ func (m *Manager) TriggerUpgrade(nodeID string) error {
 	go func() {
 		defer m.wg.Done()
 		defer m.clearInflight(nodeID)
-		if _, err := m.UpgradeAgent(bg, nodeID, provisioner.ModeApply); err != nil {
+		_, err := m.UpgradeAgent(bg, nodeID, provisioner.ModeApply)
+		// Record the outcome on the node so a background upgrade failure is visible
+		// in the UI (the detail page surfaces Node.LastError) instead of being
+		// swallowed into a log line the operator never sees. Success clears it.
+		m.recordUpgradeOutcome(bg, nodeID, err)
+		if err != nil {
 			m.log.Error("agent upgrade failed", "node", nodeID, "err", err)
 			return
 		}
 		m.log.Info("agent upgrade applied; restarted agent will re-register", "node", nodeID)
 	}()
 	return nil
+}
+
+// recordUpgradeOutcome stamps a background agent-upgrade result onto the node's
+// LastError (preserving its operational state): the error message on failure, or
+// an empty string clearing a prior failure on success. Best-effort — a store
+// error here is logged, never fatal to the upgrade path.
+func (m *Manager) recordUpgradeOutcome(ctx context.Context, nodeID string, upErr error) {
+	if m.store == nil {
+		return
+	}
+	n, err := m.store.GetNode(ctx, nodeID)
+	if err != nil {
+		m.log.Warn("could not load node to record upgrade outcome", "node", nodeID, "err", err)
+		return
+	}
+	msg := ""
+	if upErr != nil {
+		msg = "agent upgrade failed: " + upErr.Error()
+	}
+	if err := m.store.SetNodeState(ctx, nodeID, n.State, msg); err != nil {
+		m.log.Warn("could not record upgrade outcome", "node", nodeID, "err", err)
+	}
 }
 
 // TriggerAsync starts an apply-mode provisioning job in the background. It

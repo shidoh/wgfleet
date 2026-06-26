@@ -233,6 +233,31 @@ func TestUpgradeAgentUploadsBinaryAndRestarts(t *testing.T) {
 	}
 }
 
+func TestRecordUpgradeOutcome(t *testing.T) {
+	m, st := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) { return provisioner.NewMockRunner(), nil })
+	ctx := context.Background()
+	if err := st.UpsertNode(ctx, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A failed background upgrade is recorded on LastError, state preserved.
+	m.recordUpgradeOutcome(ctx, "exit-de-1", io.ErrUnexpectedEOF)
+	n, _ := st.GetNode(ctx, "exit-de-1")
+	if n.LastError != "agent upgrade failed: unexpected EOF" {
+		t.Fatalf("expected upgrade failure recorded, got %q", n.LastError)
+	}
+	if n.State != domain.StateReady {
+		t.Fatalf("state must be preserved, got %q", n.State)
+	}
+
+	// A subsequent success clears the recorded error.
+	m.recordUpgradeOutcome(ctx, "exit-de-1", nil)
+	n, _ = st.GetNode(ctx, "exit-de-1")
+	if n.LastError != "" {
+		t.Fatalf("success should clear LastError, got %q", n.LastError)
+	}
+}
+
 func TestUpgradeAgentRequiresBinary(t *testing.T) {
 	mock := provisioner.NewMockRunner()
 	m, _ := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) { return mock, nil })
