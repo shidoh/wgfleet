@@ -17,10 +17,16 @@ var pmtuRe = regexp.MustCompile(`pmtu\s+(\d+)`)
 
 // ProbeWARPMTU measures the path MTU to the WARP endpoint host and returns the
 // wgcf interface MTU that fits it (path MTU minus the plain-WG IPv4 overhead),
-// clamped to [MinTunnelMTU, FleetTunnelMTU]. It shells out to `tracepath` (Apply-
-// side only — it sends probe packets, so it must never run in Plan/dry-run). The
-// caller treats any error as "keep the default": an unprobeable path falls back to
-// wg.DefaultWARPMTU rather than guessing.
+// clamped to [MinTunnelMTU, DefaultWARPMTU]. It shells out to `tracepath` (Apply-
+// side only — it sends probe packets, so it must never run in Plan/dry-run).
+//
+// Safety by construction: the result is capped at wg.DefaultWARPMTU, so the probe
+// can only LOWER the MTU for a genuinely constrained path, never RAISE it above the
+// conservative default. tracepath sees the OUTER path to the endpoint IP (often a
+// full 1500); Cloudflare's inner WARP MTU is smaller and not directly measurable
+// here, so raising toward the outer path would re-introduce the egress black-hole
+// this whole mechanism exists to avoid. An operator who needs a higher value sets
+// warp_mtu explicitly (which bypasses the probe). Any error ⇒ caller keeps the default.
 func ProbeWARPMTU(ctx context.Context, endpoint string) (int, error) {
 	host := endpoint
 	if h, _, err := net.SplitHostPort(endpoint); err == nil {
@@ -39,8 +45,8 @@ func ProbeWARPMTU(ctx context.Context, endpoint string) (int, error) {
 	if mtu < wg.MinTunnelMTU {
 		mtu = wg.MinTunnelMTU
 	}
-	if max := wg.FleetTunnelMTU(false, false); mtu > max {
-		mtu = max
+	if mtu > wg.DefaultWARPMTU {
+		mtu = wg.DefaultWARPMTU
 	}
 	return mtu, nil
 }
