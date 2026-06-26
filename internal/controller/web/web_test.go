@@ -255,6 +255,42 @@ func TestDeleteGatedOnDecommission(t *testing.T) {
 	}
 }
 
+func TestDecommissionGatedOnDrain(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+
+	// Not drained ⇒ decommission is refused (would tear down a live LB target).
+	post(t, h, "/nodes/exit-de-1/decommission")
+	if n, _ := st.GetNode(context.Background(), "exit-de-1"); n.Decommission {
+		t.Fatal("decommission must be refused while the node is still in routing")
+	}
+	// The disabled button is shown, not the active form.
+	if _, body := get(t, h, "/nodes/exit-de-1"); strings.Contains(body, `action="/nodes/exit-de-1/decommission"`) {
+		t.Error("decommission form should be hidden (disabled button) until drained")
+	}
+
+	// Drain first ⇒ decommission now succeeds.
+	_ = st.SetNodeDrain(context.Background(), "exit-de-1", true)
+	post(t, h, "/nodes/exit-de-1/decommission")
+	if n, _ := st.GetNode(context.Background(), "exit-de-1"); !n.Decommission {
+		t.Fatal("decommission should succeed once the node is drained")
+	}
+}
+
+func TestRecommissionClearsDecommission(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady, Drain: true, Decommission: true})
+
+	// The cancel-decommission form is offered for a decommissioned node.
+	if _, body := get(t, h, "/nodes/exit-de-1"); !strings.Contains(body, `action="/nodes/exit-de-1/recommission"`) {
+		t.Error("decommissioned node should offer Cancel decommission")
+	}
+	post(t, h, "/nodes/exit-de-1/recommission")
+	if n, _ := st.GetNode(context.Background(), "exit-de-1"); n.Decommission {
+		t.Fatal("recommission must clear the decommission flag")
+	}
+}
+
 // TestActionErrorRedirectsWithFlash covers the error path: a store mutation that
 // fails (here, a drain on a node that does not exist) must redirect back to the
 // originating page with a one-shot flash cookie — NOT dump a bare http.Error text
@@ -425,7 +461,8 @@ func TestDetailShowsEgressFailoverBadge(t *testing.T) {
 
 func TestDecommissionAction(t *testing.T) {
 	h, st := newTestHandler(t, nil)
-	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+	// Drained first — decommission is gated on Drain (see TestDecommissionGatedOnDrain).
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady, Drain: true})
 
 	res := post(t, h, "/nodes/exit-de-1/decommission")
 	if res.StatusCode != http.StatusSeeOther {

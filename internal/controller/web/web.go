@@ -114,6 +114,7 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	h.mux.HandleFunc("POST /nodes/{id}/drain", h.handleDrain(true))
 	h.mux.HandleFunc("POST /nodes/{id}/undrain", h.handleDrain(false))
 	h.mux.HandleFunc("POST /nodes/{id}/decommission", h.handleDecommission)
+	h.mux.HandleFunc("POST /nodes/{id}/recommission", h.handleRecommission)
 	h.mux.HandleFunc("POST /nodes/{id}/transport/{transport}", h.handleTransport)
 	h.mux.HandleFunc("POST /nodes/{id}/delete", h.handleDelete)
 	h.mux.HandleFunc("POST /backup", h.handleBackupExport)
@@ -189,14 +190,36 @@ func (h *Handler) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDecommission flags a node for teardown. The agent reverses its data
-// plane on its next reconcile; the operator then deletes it.
+// plane on its next reconcile; the operator then deletes it. It is gated on the
+// node being drained first — decommissioning a node still in the load balancer
+// would tear down its data plane under live client traffic (a one-click outage).
 func (h *Handler) handleDecommission(w http.ResponseWriter, r *http.Request) {
 	if !h.guard(w, r) {
 		return
 	}
 	id := r.PathValue("id")
+	// Enforce drain→decommission order (not just advise it in the confirm copy).
+	if n, err := h.store.GetNode(r.Context(), id); err == nil && !n.Drain {
+		h.redirectErr(w, r, "/nodes/"+id, "decommission refused", fmt.Errorf("take the node out of routing first (Drain), then decommission"))
+		return
+	}
 	if err := h.store.SetNodeDecommission(r.Context(), id, true); err != nil {
 		h.redirectErr(w, r, "/nodes/"+id, "set decommission", err)
+		return
+	}
+	http.Redirect(w, r, "/nodes/"+id, http.StatusSeeOther)
+}
+
+// handleRecommission clears a node's decommission flag — the in-UI reverse of an
+// accidental Decommission. The agent stops tearing the node down and reconciles
+// it back to its desired state on the next pass.
+func (h *Handler) handleRecommission(w http.ResponseWriter, r *http.Request) {
+	if !h.guard(w, r) {
+		return
+	}
+	id := r.PathValue("id")
+	if err := h.store.SetNodeDecommission(r.Context(), id, false); err != nil {
+		h.redirectErr(w, r, "/nodes/"+id, "cancel decommission", err)
 		return
 	}
 	http.Redirect(w, r, "/nodes/"+id, http.StatusSeeOther)
@@ -479,22 +502,23 @@ func (h *Handler) handleNodesPartial(w http.ResponseWriter, r *http.Request) {
 }
 
 type nodeData struct {
-	Title        string
-	NodeCount    int
-	Node         domain.Node
-	HasStatus    bool
-	Status       domain.NodeStatus
-	SpecText     string
-	SpecErr      string
-	CanProvision bool
-	CanUpgrade   bool   // node is provisioned + upgradable over SSH
-	CanDelete    bool   // node has been decommissioned — safe to remove from inventory
-	Flash        string // one-shot error surfaced from a failed action redirect
-	WGEasyURL    string // master only: link to its wg-easy admin UI (mgmt overlay)
-	MihomoURL    string // master only: link to its mihomo (Clash) web dashboard (mgmt overlay)
-	MetricsURL   string // link to the node's agent Prometheus /metrics on the mgmt overlay
-	WireSkew     string // non-empty (reason) when the agent's wire version is incompatible
-	CSRF         string // CSRF token embedded in the action forms
+	Title           string
+	NodeCount       int
+	Node            domain.Node
+	HasStatus       bool
+	Status          domain.NodeStatus
+	SpecText        string
+	SpecErr         string
+	CanProvision    bool
+	CanUpgrade      bool   // node is provisioned + upgradable over SSH
+	CanDecommission bool   // node is drained — safe to tear its data plane down
+	CanDelete       bool   // node has been decommissioned — safe to remove from inventory
+	Flash           string // one-shot error surfaced from a failed action redirect
+	WGEasyURL       string // master only: link to its wg-easy admin UI (mgmt overlay)
+	MihomoURL       string // master only: link to its mihomo (Clash) web dashboard (mgmt overlay)
+	MetricsURL      string // link to the node's agent Prometheus /metrics on the mgmt overlay
+	WireSkew        string // non-empty (reason) when the agent's wire version is incompatible
+	CSRF            string // CSRF token embedded in the action forms
 	// Transport switch (ADR-0025): populated from the rendered spec. A dual-transport
 	// exit (len(Transports) > 1) renders a switch; ActiveTransport is highlighted.
 	Transports      []domain.MasterTransport
@@ -519,7 +543,7 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 		// report, so the detail page matches the list (see nodes()).
 		node = backfillFromManifest(node, mn)
 	}
-	data := nodeData{Title: node.Name, NodeCount: 1, Node: node, CSRF: h.csrf, CanDelete: node.Decommission, Flash: h.takeFlash(w, r), MetricsURL: metricsURL(node)}
+	data := nodeData{Title: node.Name, NodeCount: 1, Node: node, CSRF: h.csrf, CanDelete: node.Decommission, CanDecommission: node.Drain && !node.Decommission, Flash: h.takeFlash(w, r), MetricsURL: metricsURL(node)}
 	if node.WireVersion != 0 {
 		if compat := api.CheckWire(node.WireVersion); compat != api.WireCompatible {
 			data.WireSkew = api.IncompatibilityDetail(compat, node.WireVersion)

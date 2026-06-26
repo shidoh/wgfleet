@@ -44,12 +44,22 @@
   </form>
   {{end}}
   <span class="toolbar-spacer"></span>
-  {{if not .Node.Decommission}}
+  {{if .Node.Decommission}}
+  {{/* In-UI reverse of an accidental decommission: clear the flag, agent reconciles back. */}}
+  <form method="post" action="/nodes/{{.Node.ID}}/recommission" onsubmit="return lockAction(this)">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <button type="submit" class="btn" data-pending="Cancelling…" title="Clear the decommission flag — the agent stops tearing the node down and reconciles it back to desired state.">↩ Cancel decommission</button>
+  </form>
+  {{else if .CanDecommission}}
   <form method="post" action="/nodes/{{.Node.ID}}/decommission" onsubmit="return lockAction(this)"
-        data-confirm="Decommission {{.Node.Name}}? The agent will tear down its data plane (stop services, bring tunnels down). Take it out of routing first.">
+        data-confirm="Decommission {{.Node.Name}}? The agent will tear down its data plane (stop services, bring tunnels down).">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     <button type="submit" class="btn warn" data-pending="Decommissioning…">Decommission</button>
   </form>
+  {{else}}
+  {{/* Gated on Drain: tearing down a node still in the load balancer drops live
+       client traffic. Drain first (the button above), then this enables. */}}
+  <button type="button" class="btn warn" disabled title="Take the node out of routing first (Drain), then decommission">Decommission</button>
   {{end}}
   {{if .CanDelete}}
   <form method="post" action="/nodes/{{.Node.ID}}/delete" onsubmit="return lockAction(this)"
