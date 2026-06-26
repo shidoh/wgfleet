@@ -260,3 +260,45 @@ pre.spec {
 .ip-tag { font-size: 0.6rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); text-align: right; }
 .ip-val { font-family: var(--mono); font-size: 0.82rem; color: var(--text); }
 .ip-val.warp { color: var(--accent); }
+
+/* Backup & migrate. A sensitive action (the archive carries the CA key + every
+   client key), flagged with a violet keyline — accent-2 reads as the categorical
+   "secret/security" hue here, not a status colour. */
+.backup-section { margin-top: 2.25rem; }
+.backup-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent-2);
+  border-radius: var(--radius);
+  padding: 1.15rem 1.25rem;
+  display: flex; flex-direction: column; gap: 0.95rem;
+}
+.backup-lead { margin: 0; color: var(--text-dim); font-size: 0.86rem; line-height: 1.55; max-width: 64ch; }
+.backup-lead code, .backup-warn code {
+  font-family: var(--mono); font-size: 0.85em;
+  color: var(--text); background: var(--surface-2);
+  padding: 0.05em 0.35em; border-radius: 4px;
+}
+.backup-form { display: flex; align-items: flex-end; gap: 0.7rem; flex-wrap: wrap; margin: 0; }
+.field { display: flex; flex-direction: column; gap: 0.32rem; flex: 1 1 20rem; }
+.field-label { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-faint); }
+.input {
+  width: 100%;
+  font-family: var(--mono); font-size: 0.82rem; color: var(--text);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.45rem 0.65rem; transition: border-color 150ms;
+}
+.input::placeholder { color: var(--text-faint); }
+.input:focus { outline: none; border-color: var(--accent); }
+.input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.btn.go { display: inline-flex; align-items: center; gap: 0.4rem; }
+.btn-ico { width: 14px; height: 14px; flex: none; }
+.backup-warn {
+  display: flex; gap: 0.6rem; align-items: flex-start; margin: 0;
+  padding: 0.62rem 0.8rem; border-radius: 6px;
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 22%, transparent);
+  color: var(--text-dim); font-size: 0.8rem; line-height: 1.5; max-width: 70ch;
+}
+.backup-warn strong { color: var(--warn); font-weight: 600; }
+.warn-ico { width: 15px; height: 15px; flex: none; color: var(--warn); margin-top: 0.1rem; }
