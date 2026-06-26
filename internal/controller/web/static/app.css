@@ -235,6 +235,9 @@ pre.spec {
 /* Reserve enough width for the widest pill ("AMNEZIAWG ⇄") so the column never
    squeezes the chip onto a second line. */
 .nodes .col-transport { min-width: 9.5rem; white-space: nowrap; }
+/* Reserve enough width for the widest relative time ("XXm ago") so the value
+   never wraps to a second line as the elapsed time grows. */
+.nodes .col-seen { min-width: 5.5rem; white-space: nowrap; }
 /* REALITY (the obfuscated transport): the blue accent, so the eye catches it */
 .chip.reality-xhttp { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .subbadges { display: inline-flex; gap: 0.3rem; flex-wrap: wrap; }
