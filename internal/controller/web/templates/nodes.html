@@ -25,7 +25,7 @@
   <thead>
     <tr>
       <th>Node</th><th>Role</th><th>Region</th><th>State</th>
-      <th>Transport</th><th>Mgmt (ZT)</th><th>Address</th><th>Seen</th>
+      <th class="col-transport">Transport</th><th>Mgmt (ZT)</th><th>Address</th><th>Seen</th>
     </tr>
   </thead>
   <tbody>
@@ -44,7 +44,7 @@
           {{if .Decommission}}<span class="badge decommissioning"><span class="led"></span>decommissioning</span>{{end}}
         </span>
       </td>
-      <td>
+      <td class="col-transport">
         {{if eq (lower .Role) "exit"}}
           <span class="chip {{lower .Transport}}" title="Active master↔exit transport{{if .DualTransport}} (switchable on the node page){{end}}">{{transportLabel .Transport}}{{if .DualTransport}} ⇄{{end}}</span>
         {{else}}<span class="mono">—</span>{{end}}

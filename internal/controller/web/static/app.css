@@ -227,9 +227,14 @@ pre.spec {
 .chip {
   font-family: var(--mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em;
   padding: 0.1rem 0.4rem; border-radius: 4px; border: 1px solid transparent;
+  /* Keep the label and the ⇄ dual-transport arrow on one line — never wrap the pill. */
+  white-space: nowrap; display: inline-block;
   /* AWG (the baseline transport): soft violet fill — a calm colour, not grey */
   background: color-mix(in srgb, var(--accent-2) 14%, transparent); color: var(--accent-2);
 }
+/* Reserve enough width for the widest pill ("AMNEZIAWG ⇄") so the column never
+   squeezes the chip onto a second line. */
+.nodes .col-transport { min-width: 9.5rem; white-space: nowrap; }
 /* REALITY (the obfuscated transport): the blue accent, so the eye catches it */
 .chip.reality-xhttp { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .subbadges { display: inline-flex; gap: 0.3rem; flex-wrap: wrap; }
