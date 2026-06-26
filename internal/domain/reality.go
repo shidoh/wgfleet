@@ -42,6 +42,10 @@ type RealityServerSpec struct {
 	// SNI extension is accepted (the master then sends no SNI). Reported to bypass
 	// the RU TSPU heuristic block (ADR-0025 / 2026 recon).
 	AllowEmptySNI bool
+	// AllowIPv6 false ⇒ the rendered config pins xray to IPv4 resolution
+	// (dns.queryStrategy UseIPv4 + freedom domainStrategy UseIPv4), so an AAAA-only
+	// dest does not black-hole the steal/egress on the IPv4-only data plane (#20).
+	AllowIPv6 bool
 	// Image is the xray container image (pinned repo:tag).
 	Image string
 }

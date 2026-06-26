@@ -81,6 +81,31 @@ func TestRenderConfigEmptySNI(t *testing.T) {
 	}
 }
 
+func TestRenderConfigIPv4Pin(t *testing.T) {
+	// Default (AllowIPv6 false) ⇒ dns.queryStrategy UseIPv4 + freedom domainStrategy UseIPv4.
+	out, _ := RenderConfig(RenderInput{Spec: sampleSpec(), PrivateKey: "K", EgressMark: EgressMark})
+	var c map[string]any
+	_ = json.Unmarshal([]byte(out), &c)
+	dns, _ := c["dns"].(map[string]any)
+	if dns == nil || dns["queryStrategy"] != "UseIPv4" {
+		t.Errorf("expected dns.queryStrategy UseIPv4, got %v", c["dns"])
+	}
+	fs, _ := c["outbounds"].([]any)[0].(map[string]any)["settings"].(map[string]any)
+	if fs == nil || fs["domainStrategy"] != "UseIPv4" {
+		t.Errorf("expected freedom domainStrategy UseIPv4, got %v", fs)
+	}
+
+	// AllowIPv6 true ⇒ no dns block, no freedom domainStrategy (AsIs).
+	s := sampleSpec()
+	s.AllowIPv6 = true
+	out2, _ := RenderConfig(RenderInput{Spec: s, PrivateKey: "K"})
+	var c2 map[string]any
+	_ = json.Unmarshal([]byte(out2), &c2)
+	if _, has := c2["dns"]; has {
+		t.Error("AllowIPv6 must omit the dns block")
+	}
+}
+
 func TestRenderConfigVisionMode(t *testing.T) {
 	s := sampleSpec()
 	s.Mode = domain.RealityModeVision

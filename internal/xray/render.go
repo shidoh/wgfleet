@@ -39,8 +39,16 @@ type RenderInput struct {
 // JSON field order deterministic (so the reconcile diff is stable).
 type config struct {
 	Log       logCfg     `json:"log"`
+	DNS       *dnsConfig `json:"dns,omitempty"` // set to pin resolution to IPv4 (AAAA-only dest black-hole, #20)
 	Inbounds  []inbound  `json:"inbounds"`
 	Outbounds []outbound `json:"outbounds"`
+}
+
+// dnsConfig pins xray's resolver IP-version. queryStrategy "UseIPv4" makes xray
+// request/use A records only (no servers ⇒ system resolver), so the REALITY steal
+// to an AAAA-only dest can't black-hole on the IPv4-only exit data plane.
+type dnsConfig struct {
+	QueryStrategy string `json:"queryStrategy"`
 }
 
 type logCfg struct {
@@ -88,7 +96,14 @@ type xhttpSettings struct {
 type outbound struct {
 	Protocol       string             `json:"protocol"`
 	Tag            string             `json:"tag"`
+	Settings       *freedomSettings   `json:"settings,omitempty"`
 	StreamSettings *outStreamSettings `json:"streamSettings,omitempty"`
+}
+
+// freedomSettings carries the freedom outbound's domainStrategy — "UseIPv4" pins
+// the proxied-traffic egress to IPv4 (pairs with dns.queryStrategy for the steal).
+type freedomSettings struct {
+	DomainStrategy string `json:"domainStrategy"`
 }
 
 type outStreamSettings struct {
@@ -140,6 +155,15 @@ func RenderConfig(in RenderInput) (string, error) {
 	if in.EgressMark > 0 {
 		out.StreamSettings = &outStreamSettings{Sockopt: sockopt{Mark: in.EgressMark}}
 	}
+	// Pin xray to IPv4 unless the exit advertises real IPv6 egress: the data plane is
+	// IPv4-only, so an AAAA-only dest (e.g. some Fastly anycast) would
+	// black-hole the REALITY steal and the proxied egress. dns.queryStrategy covers
+	// resolution (incl. the steal); freedom domainStrategy covers the proxied egress.
+	var dnsCfg *dnsConfig
+	if !s.AllowIPv6 {
+		dnsCfg = &dnsConfig{QueryStrategy: "UseIPv4"}
+		out.Settings = &freedomSettings{DomainStrategy: "UseIPv4"}
+	}
 
 	cl := client{ID: s.UUID}
 	ss := streamSettings{
@@ -165,6 +189,7 @@ func RenderConfig(in RenderInput) (string, error) {
 
 	cfg := config{
 		Log: logCfg{Loglevel: "warning"},
+		DNS: dnsCfg,
 		Inbounds: []inbound{{
 			Listen:   "0.0.0.0",
 			Port:     s.ListenPort,

@@ -656,7 +656,10 @@ type RealitySrvSpec struct {
 	// agent ignores it — backward-compatible, no wire-version bump (ADR-0019).
 	AllowEmptySni bool `protobuf:"varint,9,opt,name=allow_empty_sni,json=allowEmptySni,proto3" json:"allow_empty_sni,omitempty"`
 	// REALITY transport mode: "" / "xhttp" (default) / "vision" (TCP + vision flow).
-	Mode          string `protobuf:"bytes,10,opt,name=mode,proto3" json:"mode,omitempty"`
+	Mode string `protobuf:"bytes,10,opt,name=mode,proto3" json:"mode,omitempty"`
+	// Allow xray to resolve dest/egress over IPv6. false ⇒ pin to IPv4 (data plane is
+	// IPv4-only, #20). Additive; older agent ignores it — no wire bump (ADR-0019).
+	AllowIpv6     bool `protobuf:"varint,11,opt,name=allow_ipv6,json=allowIpv6,proto3" json:"allow_ipv6,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -759,6 +762,13 @@ func (x *RealitySrvSpec) GetMode() string {
 		return x.Mode
 	}
 	return ""
+}
+
+func (x *RealitySrvSpec) GetAllowIpv6() bool {
+	if x != nil {
+		return x.AllowIpv6
+	}
+	return false
 }
 
 // MasterSpec is the master node's mihomo data plane.
@@ -2311,7 +2321,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x1begress_throughput_probe_url\x18\x0e \x01(\tR\x18egressThroughputProbeUrl\x12-\n" +
 	"\x12enabled_transports\x18\x0f \x03(\tR\x11enabledTransports\x12)\n" +
 	"\x10active_transport\x18\x10 \x01(\tR\x0factiveTransport\x124\n" +
-	"\areality\x18\x11 \x01(\v2\x1a.wgfleet.v1.RealitySrvSpecR\areality\"\xa5\x02\n" +
+	"\areality\x18\x11 \x01(\v2\x1a.wgfleet.v1.RealitySrvSpecR\areality\"\xc4\x02\n" +
 	"\x0eRealitySrvSpec\x12\x1f\n" +
 	"\vlisten_port\x18\x01 \x01(\x05R\n" +
 	"listenPort\x12\x12\n" +
@@ -2327,7 +2337,9 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x05image\x18\b \x01(\tR\x05image\x12&\n" +
 	"\x0fallow_empty_sni\x18\t \x01(\bR\rallowEmptySni\x12\x12\n" +
 	"\x04mode\x18\n" +
-	" \x01(\tR\x04mode\"\xd4\x04\n" +
+	" \x01(\tR\x04mode\x12\x1d\n" +
+	"\n" +
+	"allow_ipv6\x18\v \x01(\bR\tallowIpv6\"\xd4\x04\n" +
 	"\n" +
 	"MasterSpec\x12!\n" +
 	"\fbind_address\x18\x01 \x01(\tR\vbindAddress\x12\x1d\n" +

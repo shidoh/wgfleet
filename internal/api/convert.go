@@ -92,6 +92,7 @@ func realityServerToProto(r *domain.RealityServerSpec) *pb.RealitySrvSpec {
 		XhttpMode:     r.XHTTPMode,
 		AllowEmptySni: r.AllowEmptySNI,
 		Mode:          r.Mode,
+		AllowIpv6:     r.AllowIPv6,
 		Image:         r.Image,
 	}
 }
@@ -110,6 +111,7 @@ func realityServerFromProto(r *pb.RealitySrvSpec) *domain.RealityServerSpec {
 		XHTTPMode:     r.GetXhttpMode(),
 		AllowEmptySNI: r.GetAllowEmptySni(),
 		Mode:          r.GetMode(),
+		AllowIPv6:     r.GetAllowIpv6(),
 		Image:         r.GetImage(),
 	}
 }

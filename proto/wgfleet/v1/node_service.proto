@@ -115,6 +115,9 @@ message RealitySrvSpec {
   bool allow_empty_sni = 9;
   // REALITY transport mode: "" / "xhttp" (default) / "vision" (TCP + vision flow).
   string mode = 10;
+  // Allow xray to resolve dest/egress over IPv6. false ⇒ pin to IPv4 (data plane is
+  // IPv4-only, #20). Additive; older agent ignores it — no wire bump (ADR-0019).
+  bool allow_ipv6 = 11;
 }
 
 // MasterSpec is the master node's mihomo data plane.

@@ -449,7 +449,13 @@ type RealityTransportConfig struct {
 	// EmptySNI accepts/sends a ClientHello with NO SNI extension (server serverNames
 	// gains "", the master sends the exit IP as a placeholder so uTLS omits SNI).
 	// Reported to bypass the RU TSPU heuristic block where changing the SNI does not.
-	EmptySNI  bool   `koanf:"empty_sni"`
+	EmptySNI bool `koanf:"empty_sni"`
+	// AllowIPv6 lets xray resolve the camouflage dest (and egress) over IPv6. Default
+	// false ⇒ xray is pinned to IPv4 (queryStrategy UseIPv4): the exit data plane is
+	// IPv4-only (no IPv6 egress, an earlier finding), so a dest that resolves AAAA-only (e.g.
+	// some Fastly anycast) would otherwise black-hole the REALITY steal/egress. Set
+	// true only on an exit that genuinely has working IPv6 egress.
+	AllowIPv6 bool   `koanf:"allow_ipv6"`
 	XHTTPPath string `koanf:"xhttp_path"` // XHTTP path; empty ⇒ /<short-id>
 	Image     string `koanf:"image"`      // xray image; empty ⇒ default pinned
 }
