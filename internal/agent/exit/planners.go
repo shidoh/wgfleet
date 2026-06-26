@@ -62,9 +62,9 @@ func Planners(in Input) []reconcile.Planner {
 	return []reconcile.Planner{
 		// Node tuning first (BBR congestion control); cheap, independent of the rest.
 		tuning.BBRPlanner(),
-		firewallPlanner{path: in.Paths.NFT, wgConf: in.Paths.WGConf, overlayMSS: in.OverlayMSS, asBlacklistCache: in.Paths.ASBlacklist},
+		firewallPlanner{path: in.Paths.NFT, wgConf: in.Paths.WGConf, overlayMSS: in.OverlayMSS, asBlacklistCache: in.Paths.ASBlacklist, warpMTUCache: in.Paths.WARPMTUCache},
 		wgPlanner{path: in.Paths.WGConf, privateKey: in.PrivateKey, up: up},
-		warpPlanner{path: in.Paths.WGCF, dir: in.Paths.WARPDir, warp: in.WARP, up: up},
+		warpPlanner{path: in.Paths.WGCF, dir: in.Paths.WARPDir, warp: in.WARP, up: up, warpMTUCache: in.Paths.WARPMTUCache},
 		routingPlanner{statePath: in.Paths.RoutingState},
 		dnsPlanner{configPath: in.Paths.DNS, composePath: in.Paths.DNSCompose},
 		// REALITY/XHTTP inbound (ADR-0025): renders + runs the xray container when the
@@ -81,6 +81,9 @@ func Planners(in Input) []reconcile.Planner {
 		// Last: refresh the scanner-ASN feed cache (network, Apply-side only). It only
 		// writes a file; the firewall (first) renders it into the nft sets next pass.
 		newASNFeedPlanner(in),
+		// Auto-probe the WARP path MTU (network, Apply-side only): writes the wgcf MTU
+		// to a cache file; the WARP + firewall planners read it via effectiveWARPMTU.
+		newWARPMTUPlanner(in),
 	}
 }
 
@@ -122,6 +125,9 @@ type firewallPlanner struct {
 	// asBlacklistCache is the scanner-ASN feed cache path; read (best-effort) and
 	// rendered into the as_blacklist sets when spec.Firewall.ASBlacklist is on.
 	asBlacklistCache string
+	// warpMTUCache is the auto-probed WARP MTU cache path (effectiveWARPMTU), used to
+	// size the forwarded-TCP MSS clamp to the real WARP path.
+	warpMTUCache string
 	// loaded reports whether the live kernel has the exit firewall table.
 	// nil ⇒ a real `nft list table inet wgfleet` probe; tests inject a stub.
 	loaded func() bool
@@ -153,8 +159,8 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	// egress — black-hole on the return through the master↔exit tunnel.
 	if spec.Role == domain.RoleExit && spec.WGServer.MTU > 0 {
 		clampMTU := spec.WGServer.MTU
-		if spec.WARPMTU > 0 && spec.WARPMTU < clampMTU {
-			clampMTU = spec.WARPMTU
+		if warpMTU := effectiveWARPMTU(spec, p.warpMTUCache); warpMTU > 0 && warpMTU < clampMTU {
+			clampMTU = warpMTU
 		}
 		in.ClampMSS = clampMTU - tcpIPHeaderBytes
 	}
@@ -251,10 +257,11 @@ func shArg(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + 
 // --- WARP egress (wgcf) ---
 
 type warpPlanner struct {
-	path string
-	dir  string // WARPDir: where wgcf keeps the account + generated profile
-	warp *egress.WARPConfig
-	up   func(name string) bool
+	path         string
+	dir          string // WARPDir: where wgcf keeps the account + generated profile
+	warp         *egress.WARPConfig
+	up           func(name string) bool
+	warpMTUCache string // auto-probed WARP MTU cache (effectiveWARPMTU)
 }
 
 func (warpPlanner) Component() string { return "warp egress (wgcf)" }
@@ -288,14 +295,10 @@ func (p warpPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.
 		// re-encapsulated afresh, so WARP's carrier is the physical MTU, never the
 		// inner master↔exit MTU (that would set WARP below the client MTU and
 		// fragment every egress packet, an earlier finding). The controller pins the value in
-		// spec.WARPMTU (operator override for a constrained WARP path, an earlier finding's
-		// 1320-1420 band); fall back to the computed 1440 when unset. WARP is vanilla
-		// WG — Cloudflare can't do AmneziaWG.
-		if spec.WARPMTU > 0 {
-			cfg.MTU = spec.WARPMTU
-		} else {
-			cfg.MTU = wg.FleetTunnelMTU(false, false)
-		}
+		// the operator override (spec.WARPMTU, an earlier finding's 1320-1420 band), else the
+		// auto-probed path MTU from the cache, else wg.DefaultWARPMTU (effectiveWARPMTU).
+		// WARP is vanilla WG — Cloudflare can't do AmneziaWG.
+		cfg.MTU = effectiveWARPMTU(spec, p.warpMTUCache)
 	}
 	content, err := egress.RenderWGCF(cfg)
 	if err != nil {

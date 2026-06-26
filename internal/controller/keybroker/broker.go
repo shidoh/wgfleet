@@ -154,9 +154,11 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 			AWG:         awg,
 		},
 		// WARP egress rides the exit's own physical link to Cloudflare, whose path
-		// MTU can be below 1500; the operator pins it per exit via
-		// warp_mtu, else it is the computed 1440. The exit's WARP planner uses this.
-		WARPMTU: exitWARPMTU(exit),
+		// MTU can be below 1500. Send the RAW per-exit warp_mtu: >0 pins
+		// it, 0 ⇒ the agent auto-probes the path MTU (tracepath) and falls back to
+		// wg.DefaultWARPMTU. The controller's own MTU math below uses exitWARPMTU
+		// (operator value or the conservative default) since it can't see the probe.
+		WARPMTU: exit.WARPMTU,
 		// Egress throughput watchdog (ADR-0021): the agent measures real throughput on
 		// the active egress and reports it; a sustained collapse fails over to a
 		// fallback (if any) and/or the controller auto-suspends the exit from the LB.
@@ -580,14 +582,16 @@ func egressChain(exit config.ExitConfig) []domain.EgressMethod {
 	return chain
 }
 
-// exitWARPMTU returns the MTU for an exit's WARP egress interface: the operator's
-// per-exit warp_mtu when set, else the computed sequential value (1440). Only
-// meaningful for warp egress; direct egress carries no WARP layer.
+// exitWARPMTU returns the MTU the controller assumes for an exit's WARP egress in
+// its own cross-node MTU math (master↔exit MSS/sequential model): the operator's
+// per-exit warp_mtu when set, else the conservative wg.DefaultWARPMTU. The agent
+// may auto-probe a different value for the wgcf interface itself (the controller
+// can't see that), so this stays conservative. Only meaningful for warp egress.
 func exitWARPMTU(exit config.ExitConfig) int {
 	if exit.WARPMTU > 0 {
 		return exit.WARPMTU
 	}
-	return wg.FleetTunnelMTU(false, false)
+	return wg.DefaultWARPMTU
 }
 
 // exitLinkMTU returns the physical/path MTU of the master↔exit link: the

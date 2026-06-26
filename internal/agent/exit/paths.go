@@ -32,6 +32,11 @@ type Paths struct {
 	// the as_blacklist sets. It lives under /var/lib (persistent), so a reboot keeps
 	// the last-good list while the feed planner refreshes it on its own cadence.
 	ASBlacklist string
+	// WARPMTUCache holds the auto-probed WARP path MTU (one integer). Like the AS
+	// feed it is written Apply-side by a Scheduled planner and read in Plan, so the
+	// network probe never runs in dry-run. Empty ⇒ the wgcf MTU falls back to the
+	// operator override or wg.DefaultWARPMTU.
+	WARPMTUCache string
 }
 
 // DefaultPaths returns the production-default file locations.
@@ -49,6 +54,7 @@ func DefaultPaths() Paths {
 		XrayCompose:  "/etc/wgfleet/xray/docker-compose.yml",
 		RoutingState: "/run/wgfleet/routing.applied",
 		ASBlacklist:  "/var/lib/wgfleet/as-blacklist.lst",
+		WARPMTUCache: "/var/lib/wgfleet/warp-mtu",
 	}
 }
 
@@ -68,5 +74,6 @@ func PathsUnder(dir string) Paths {
 		XrayCompose:  filepath.Join(dir, "xray", "docker-compose.yml"),
 		RoutingState: filepath.Join(dir, "routing.applied"),
 		ASBlacklist:  filepath.Join(dir, "as-blacklist.lst"),
+		WARPMTUCache: filepath.Join(dir, "warp-mtu"),
 	}
 }

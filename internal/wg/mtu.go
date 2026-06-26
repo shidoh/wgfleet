@@ -23,6 +23,15 @@ const (
 
 	// MinTunnelMTU is the IPv6 minimum; below this, tunnels are unreliable.
 	MinTunnelMTU = 1280
+
+	// DefaultWARPMTU is the assumed wgcf (WARP egress) interface MTU when neither an
+	// operator override nor an auto-probe is available. Lowered from the naive
+	// physical-1500 computation (1440): the real path to Cloudflare's anycast WARP
+	// endpoint from a datacenter is usually below 1500 (intermediate encap/peering),
+	// so 1440 black-holes the larger egress segments on many nodes (observed live on
+	// exit-2). 1380 = a conservative ~1440-byte path minus the WG IPv4 overhead. The
+	// per-exit auto-probe (warpMTUPlanner) refines this; warp_mtu pins it explicitly.
+	DefaultWARPMTU = 1380
 )
 
 // TunnelMTU returns the MTU available *inside* one tunnel layer carried over an

@@ -20,6 +20,7 @@ type Facts struct {
 	HasWgcf      bool   // wgcf present (installed from a GitHub release, not apt)
 	HasNft       bool   // nftables present
 	HasConntrack bool   // conntrack present
+	HasTracepath bool   // tracepath present (WARP path-MTU auto-probe)
 	HasZeroTier  bool   // zerotier-cli present
 	HasDocker    bool   // docker engine present (needed for blocky/mihomo/wg-easy)
 	HasFail2ban  bool   // fail2ban present (SSH brute-force protection)
@@ -52,6 +53,7 @@ func CollectFacts(ctx context.Context, r Runner) (Facts, error) {
 	f.HasWgcf = commandExists(ctx, r, "wgcf")
 	f.HasNft = commandExists(ctx, r, "nft")
 	f.HasConntrack = commandExists(ctx, r, "conntrack")
+	f.HasTracepath = commandExists(ctx, r, "tracepath")
 	f.HasZeroTier = commandExists(ctx, r, "zerotier-cli")
 	f.HasDocker = commandExists(ctx, r, "docker")
 	f.HasFail2ban = commandExists(ctx, r, "fail2ban-client")
@@ -127,6 +129,11 @@ func (f Facts) MissingPackages() []string {
 	}
 	if !f.HasConntrack {
 		pkgs = append(pkgs, "conntrack")
+	}
+	if !f.HasTracepath {
+		// tracepath drives the WARP path-MTU auto-probe (warpMTUPlanner); without it
+		// the probe is a non-fatal no-op and the exit keeps wg.DefaultWARPMTU.
+		pkgs = append(pkgs, "iputils-tracepath")
 	}
 	if !f.HasFail2ban {
 		// SSH brute-force protection. Its jail is dropped + (re)started in a dedicated

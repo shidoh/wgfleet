@@ -453,14 +453,18 @@ func TestWARPMTUDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if exitSpec.WARPMTU != 1440 {
-		t.Errorf("default exit WARPMTU = %d, want 1440 (1500-60)", exitSpec.WARPMTU)
+	// No operator warp_mtu ⇒ the spec carries the raw 0 (auto): the agent probes the
+	// path MTU and falls back to wg.DefaultWARPMTU. The controller no longer pins a
+	// value into the spec here.
+	if exitSpec.WARPMTU != 0 {
+		t.Errorf("default exit WARPMTU = %d, want 0 (auto-probe sentinel)", exitSpec.WARPMTU)
 	}
 	masterSpec, err := b.RenderNodeSpec(ctx, "master-xa-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Default WARP (1440) is above the 1360 AWG hop, so the client binds at 1360.
+	// The controller's own math assumes DefaultWARPMTU (1380), still above the 1360
+	// AWG hop, so the client binds at 1360.
 	if masterSpec.WGServer.MTU != 1360 {
 		t.Errorf("default client MTU = %d, want 1360", masterSpec.WGServer.MTU)
 	}

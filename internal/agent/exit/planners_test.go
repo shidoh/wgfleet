@@ -92,9 +92,10 @@ func TestExitFirewallClampsMSSBothWays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Tunnel MTU 1440 binds (WARP unset) ⇒ clamp 1400, bidirectional (no oifname).
-	// Guarded (`> N`) so it only lowers, never raises a smaller client MSS.
-	if want := "tcp flags syn / syn,rst tcp option maxseg size > 1400 tcp option maxseg size set 1400"; !strings.Contains(acts[0].Display, want) {
+	// WARP unset ⇒ the conservative default WARP MTU (wg.DefaultWARPMTU 1380) binds
+	// over the 1440 tunnel MTU ⇒ clamp 1340, bidirectional (no oifname). Guarded
+	// (`> N`) so it only lowers, never raises a smaller client MSS.
+	if want := "tcp flags syn / syn,rst tcp option maxseg size > 1340 tcp option maxseg size set 1340"; !strings.Contains(acts[0].Display, want) {
 		t.Errorf("exit firewall must clamp MSS both ways to %q:\n%s", want, acts[0].Display)
 	}
 
@@ -259,9 +260,9 @@ func TestExitApplyModeWritesConfigs(t *testing.T) {
 
 func TestWARPMTUIsPhysicalNotNested(t *testing.T) {
 	// Regression for the sequential MTU model (ADR-0014): WARP rides the exit's
-	// own physical link, so its MTU is 1500-60 = 1440 (vanilla WG). It must NOT be
-	// derived from the 1360 master↔exit tunnel — that nested computation gives 1300,
-	// below the 1360 client MTU, and fragments every egress packet.
+	// own physical link, so with no override/probe its MTU is wg.DefaultWARPMTU
+	// (1380). It must NOT be derived from the 1360 master↔exit tunnel — that nested
+	// computation gives 1300, below the client MTU, and fragments egress.
 	paths := testPaths(t)
 	spec, priv := exitSpec(t)
 	warp := &egress.WARPConfig{
@@ -282,8 +283,8 @@ func TestWARPMTUIsPhysicalNotNested(t *testing.T) {
 		t.Fatalf("wgcf config not written: %v", err)
 	}
 	got := string(data)
-	if !strings.Contains(got, "MTU = 1440") {
-		t.Errorf("WARP MTU not 1440 (sequential model); wgcf.conf:\n%s", got)
+	if !strings.Contains(got, "MTU = 1380") {
+		t.Errorf("WARP MTU not 1380 (DefaultWARPMTU, sequential model); wgcf.conf:\n%s", got)
 	}
 	if strings.Contains(got, "MTU = 1300") {
 		t.Errorf("WARP MTU regressed to nested 1300 (would fragment egress); wgcf.conf:\n%s", got)
