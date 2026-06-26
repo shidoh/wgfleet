@@ -40,7 +40,7 @@ func newTestHandler(t *testing.T, renderer SpecRenderer) (*Handler, store.Store)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	h, err := New(st, renderer, nil, nil)
+	h, err := New(st, renderer, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -465,7 +465,7 @@ func newProvHandler(t *testing.T, prov Provisioner) (*Handler, store.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	h, err := New(st, nil, prov, nil)
+	h, err := New(st, nil, prov, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

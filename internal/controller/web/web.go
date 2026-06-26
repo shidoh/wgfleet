@@ -78,12 +78,15 @@ type Handler struct {
 	// (the platform's source of truth) so the change survives restart / re-provision.
 	// nil ⇒ store-only (the live override still applies, but is not made durable).
 	persistTransport func(exitName string, t domain.MasterTransport) error
+	// exportBackup streams an age-encrypted controller backup for the given age
+	// recipient. nil ⇒ the export endpoint reports 501 Not Implemented.
+	exportBackup func(ctx context.Context, recipient string) ([]byte, error)
 }
 
 // New builds the dashboard handler. renderer and prov may be nil (the spec
 // preview / provision action are then omitted). Each page is parsed as its own
 // template set so the per-page "content" definitions do not collide.
-func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTransport func(exitName string, t domain.MasterTransport) error) (*Handler, error) {
+func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTransport func(exitName string, t domain.MasterTransport) error, exportBackup func(ctx context.Context, recipient string) ([]byte, error)) (*Handler, error) {
 	listTmpl, err := parsePage("templates/layout.html", "templates/nodes.html")
 	if err != nil {
 		return nil, fmt.Errorf("web: parse list templates: %w", err)
@@ -96,7 +99,7 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	if err != nil {
 		return nil, fmt.Errorf("web: generate csrf token: %w", err)
 	}
-	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport}
+	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup}
 
 	staticHandler := http.FileServer(http.FS(staticFS))
 	h.mux.Handle("GET /static/", staticHandler)
@@ -112,6 +115,7 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	h.mux.HandleFunc("POST /nodes/{id}/decommission", h.handleDecommission)
 	h.mux.HandleFunc("POST /nodes/{id}/transport/{transport}", h.handleTransport)
 	h.mux.HandleFunc("POST /nodes/{id}/delete", h.handleDelete)
+	h.mux.HandleFunc("POST /backup", h.handleBackupExport)
 	return h, nil
 }
 
@@ -345,6 +349,7 @@ type listData struct {
 	Nodes     []nodeRow
 	Summary   []stateStat
 	Flash     string // one-shot error surfaced from a failed action redirect
+	CSRF      string // CSRF token for the backup-export form
 }
 
 // nodeRow is a fleet-list row: the inventory node plus a few derived operational
@@ -458,6 +463,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Nodes:     rows,
 		Summary:   summarize(rows),
 		Flash:     h.takeFlash(w, r),
+		CSRF:      h.csrf,
 	}
 	h.render(w, h.listTmpl, "layout", data)
 }

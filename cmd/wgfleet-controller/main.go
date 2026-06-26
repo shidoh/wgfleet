@@ -32,6 +32,7 @@ import (
 
 	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/config"
+	"github.com/shidoh/wgfleet/internal/controller/backup"
 	"github.com/shidoh/wgfleet/internal/controller/grpcapi"
 	"github.com/shidoh/wgfleet/internal/controller/keybroker"
 	"github.com/shidoh/wgfleet/internal/controller/pki"
@@ -243,7 +244,14 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, configPath string) error {
 		persistTransport := func(exitName string, t domain.MasterTransport) error {
 			return config.SetExitActiveTransport(configPath, exitName, t)
 		}
-		webHandler, err := web.New(st, broker, provMgr, persistTransport)
+		exportBackup := func(ctx context.Context, recipient string) ([]byte, error) {
+			return backup.Export(ctx, backup.ExportOptions{
+				Sources:     backup.DefaultSources(cfg, configPath),
+				WireVersion: int(api.WireContractVersion),
+				Encrypt:     backup.AgeEncryptor(recipient),
+			})
+		}
+		webHandler, err := web.New(st, broker, provMgr, persistTransport, exportBackup)
 		if err != nil {
 			return fmt.Errorf("build web ui: %w", err)
 		}

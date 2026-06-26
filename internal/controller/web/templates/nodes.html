@@ -17,6 +17,14 @@
 <div hx-get="/partials/nodes" hx-trigger="every 5s [document.visibilityState=='visible']" hx-swap="innerHTML">
   {{template "nodes-table" .}}
 </div>
+
+<div class="section-title">Backup</div>
+<form class="backup-form" method="post" action="/backup">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <input type="text" name="recipient" placeholder="age recipient (age1…)" required>
+  <button type="submit">Download backup</button>
+  <p class="hint">Encrypts the controller state (and co-located master clients) to your age recipient. Keep the archive safe — it carries the CA key and every client key.</p>
+</form>
 {{end}}
 
 {{define "nodes-table"}}
