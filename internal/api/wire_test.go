@@ -65,3 +65,9 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+func TestWireContractVersionIs2(t *testing.T) {
+	if WireContractVersion != 2 {
+		t.Fatalf("WireContractVersion = %d, want 2 (bumped for additive exit_health)", WireContractVersion)
+	}
+}

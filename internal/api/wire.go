@@ -17,7 +17,9 @@ import "fmt"
 //     their last-good spec until they are re-rolled).
 const (
 	// WireContractVersion is the protocol version this build speaks.
-	WireContractVersion uint32 = 1
+	// v2: additive StatusReport.exit_health (master per-exit tunnel health). An
+	// older agent simply omits it; an older controller ignores it.
+	WireContractVersion uint32 = 2
 
 	// MinSupportedWire is the oldest agent wire version the controller will serve
 	// a spec to. Agents below it are refused (fail-safe) and, where possible,

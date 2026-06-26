@@ -523,6 +523,18 @@ func StatusFromProto(nodeID string, r *pb.StatusReport) domain.NodeStatus {
 			Latency: time.Duration(c.GetLatencyMs()) * time.Millisecond,
 		})
 	}
+	for _, e := range r.GetExitHealth() {
+		h := domain.ExitTunnelHealth{
+			Name:     e.GetName(),
+			Alive:    e.GetAlive(),
+			Delay:    time.Duration(e.GetDelayMs()) * time.Millisecond,
+			Selected: e.GetSelected(),
+		}
+		if t := e.GetLastTestUnix(); t > 0 {
+			h.LastTest = time.Unix(t, 0).UTC()
+		}
+		st.ExitHealth = append(st.ExitHealth, h)
+	}
 	return st
 }
 
@@ -543,6 +555,18 @@ func StatusToProto(s domain.NodeStatus) *pb.StatusReport {
 			Detail:    c.Detail,
 			LatencyMs: c.Latency.Milliseconds(),
 		})
+	}
+	for _, h := range s.ExitHealth {
+		e := &pb.ExitTunnelHealth{
+			Name:     h.Name,
+			Alive:    h.Alive,
+			DelayMs:  h.Delay.Milliseconds(),
+			Selected: h.Selected,
+		}
+		if !h.LastTest.IsZero() {
+			e.LastTestUnix = h.LastTest.Unix()
+		}
+		r.ExitHealth = append(r.ExitHealth, e)
 	}
 	return r
 }

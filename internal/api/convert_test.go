@@ -226,3 +226,25 @@ func TestMasterSpecRoundTrip(t *testing.T) {
 		t.Errorf("custom files lost: %+v", m.Custom.Files)
 	}
 }
+
+func TestStatusExitHealthRoundTrip(t *testing.T) {
+	in := domain.NodeStatus{
+		NodeID: "master-xa-1",
+		State:  domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{
+			{Name: "exit-de-1", Alive: true, Delay: 42 * time.Millisecond, LastTest: time.Unix(1000, 0).UTC(), Selected: true},
+			{Name: "exit-nl-1", Alive: false},
+		},
+	}
+	out := StatusFromProto("master-xa-1", StatusToProto(in))
+	if len(out.ExitHealth) != 2 {
+		t.Fatalf("want 2 exit-health entries, got %d", len(out.ExitHealth))
+	}
+	de := out.ExitHealth[0]
+	if de.Name != "exit-de-1" || !de.Alive || de.Delay != 42*time.Millisecond || !de.Selected || !de.LastTest.Equal(time.Unix(1000, 0).UTC()) {
+		t.Fatalf("exit-de-1 round-trip mismatch: %+v", de)
+	}
+	if out.ExitHealth[1].Alive {
+		t.Fatalf("exit-nl-1 should be down")
+	}
+}

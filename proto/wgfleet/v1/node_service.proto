@@ -61,6 +61,7 @@ message StatusReport {
   string reconcile_error = 3;
   int64 last_handshake_unix = 4; // freshest WG handshake (unix seconds, 0 = none)
   repeated HealthCheck checks = 5;
+  repeated ExitTunnelHealth exit_health = 6; // master only: per-exit tunnel health from mihomo
 }
 
 message HealthCheck {
@@ -68,6 +69,14 @@ message HealthCheck {
   bool ok = 2;
   string detail = 3;
   int64 latency_ms = 4;
+}
+
+message ExitTunnelHealth {
+  string name = 1; // exit node name (== mihomo proxy name)
+  bool alive = 2; // mihomo proxy alive
+  int64 delay_ms = 3; // last url-test delay (0 = none/failed)
+  int64 last_test_unix = 4; // unix seconds of the last delay test (0 = none)
+  bool selected = 5; // currently chosen by the wg-best group
 }
 
 message ReportStatusAck {
