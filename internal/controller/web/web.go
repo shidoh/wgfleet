@@ -107,6 +107,7 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	h.mux.HandleFunc("GET /{$}", h.handleIndex)
 	h.mux.HandleFunc("GET /partials/nodes", h.handleNodesPartial)
 	h.mux.HandleFunc("GET /nodes/{id}", h.handleNode)
+	h.mux.HandleFunc("GET /nodes/{id}/status", h.handleNodeStatus)
 	// Mutating actions. POST-only; guarded by the mgmt/ZT bind, a Sec-Fetch-Site
 	// check, and a CSRF token (form field or X-CSRF-Token header) — see guard().
 	h.mux.HandleFunc("POST /nodes/{id}/provision", h.handleProvision)
@@ -490,6 +491,28 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		CSRF:      h.csrf,
 	}
 	h.render(w, h.listTmpl, "layout", data)
+}
+
+// handleNodeStatus renders just the Status card body for the per-node detail
+// page's htmx poll, so an operator triaging a node sees health checks and
+// handshake age update live without reloading the page.
+func (h *Handler) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	node, err := h.store.GetNode(r.Context(), id)
+	if err != nil {
+		if mn, ok := h.manifestNode(id); ok {
+			node = mn
+		} else {
+			http.Error(w, "node not found", http.StatusNotFound)
+			return
+		}
+	}
+	data := nodeData{Node: node}
+	if st, err := h.store.GetStatus(r.Context(), id); err == nil {
+		data.HasStatus = true
+		data.Status = st
+	}
+	h.render(w, h.nodeTmpl, "node-status", data)
 }
 
 func (h *Handler) handleNodesPartial(w http.ResponseWriter, r *http.Request) {

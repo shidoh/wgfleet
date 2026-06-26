@@ -78,31 +78,8 @@
 {{if .Node.LastError}}<p class="error-note">⚠ {{.Node.LastError}}</p>{{end}}
 
 <div class="grid">
-  <div class="card">
-    <h2>Status</h2>
-    {{if .HasStatus}}
-    <dl class="kv">
-      <dt>State</dt><dd>{{.Status.State}}</dd>
-      {{if eq (lower .Node.Role) "exit"}}<dt>Egress IP</dt><dd>{{or .Status.EgressIP "—"}}</dd>{{end}}
-      <dt>Last handshake</dt><dd class="dim">{{relTime .Status.LastHandshake}}</dd>
-      <dt>Reported</dt><dd class="dim">{{relTime .Status.ReportedAt}}</dd>
-    </dl>
-    {{if .Status.ReconcileError}}<p class="error-note">{{.Status.ReconcileError}}</p>{{end}}
-    {{if .Status.Checks}}
-    <div class="subhead">Health checks</div>
-    <ul class="checks">
-      {{range .Status.Checks}}
-      <li aria-label="{{.Name}}: {{if .OK}}pass{{else}}fail{{end}}">
-        <span class="cmark {{if .OK}}ok{{else}}bad{{end}}" aria-hidden="true">{{if .OK}}✓{{else}}✗{{end}}</span>
-        <span class="cname">{{.Name}}</span>
-        {{if or .Detail .Latency}}<span class="cdetail">{{.Detail}}{{if and .Detail .Latency}} · {{end}}{{if .Latency}}{{.Latency}}{{end}}</span>{{end}}
-      </li>
-      {{end}}
-    </ul>
-    {{end}}
-    {{else}}
-    <p class="kv dim">No status reported yet.</p>
-    {{end}}
+  <div class="card" hx-get="/nodes/{{.Node.ID}}/status" hx-trigger="every 5s [document.visibilityState=='visible']" hx-swap="innerHTML">
+    {{template "node-status" .}}
   </div>
 
   {{if .Transports}}
@@ -166,4 +143,33 @@
     {{end}}
   </details>
 </div>
+{{end}}
+
+{{/* Status card body — re-fetched on its own by htmx so the triage page stays
+     live without reloading the whole detail page. */}}
+{{define "node-status"}}
+<h2>Status <span class="live" title="Auto-refreshing every 5s"><span class="pulse"></span>live</span></h2>
+{{if .HasStatus}}
+<dl class="kv">
+  <dt>State</dt><dd>{{.Status.State}}</dd>
+  {{if eq (lower .Node.Role) "exit"}}<dt>Egress IP</dt><dd>{{or .Status.EgressIP "—"}}</dd>{{end}}
+  <dt>Last handshake</dt><dd class="dim">{{relTime .Status.LastHandshake}}</dd>
+  <dt>Reported</dt><dd class="dim">{{relTime .Status.ReportedAt}}</dd>
+</dl>
+{{if .Status.ReconcileError}}<p class="error-note">{{.Status.ReconcileError}}</p>{{end}}
+{{if .Status.Checks}}
+<div class="subhead">Health checks</div>
+<ul class="checks">
+  {{range .Status.Checks}}
+  <li aria-label="{{.Name}}: {{if .OK}}pass{{else}}fail{{end}}">
+    <span class="cmark {{if .OK}}ok{{else}}bad{{end}}" aria-hidden="true">{{if .OK}}✓{{else}}✗{{end}}</span>
+    <span class="cname">{{.Name}}</span>
+    {{if or .Detail .Latency}}<span class="cdetail">{{.Detail}}{{if and .Detail .Latency}} · {{end}}{{if .Latency}}{{.Latency}}{{end}}</span>{{end}}
+  </li>
+  {{end}}
+</ul>
+{{end}}
+{{else}}
+<p class="kv dim">No status reported yet.</p>
+{{end}}
 {{end}}

@@ -255,6 +255,29 @@ func TestDeleteGatedOnDecommission(t *testing.T) {
 	}
 }
 
+func TestNodeStatusPartial(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "exit-de-1", State: domain.StateReady,
+		Checks: []domain.HealthCheck{{Name: "warp-egress", OK: true, Detail: "cloudflare"}},
+	})
+
+	res, body := get(t, h, "/nodes/exit-de-1/status")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status partial = %d", res.StatusCode)
+	}
+	// The fragment is just the status body — no full-page chrome (no topbar).
+	if strings.Contains(body, "<header") || strings.Contains(body, "<!doctype") {
+		t.Error("status partial must be a fragment, not the full page")
+	}
+	for _, want := range []string{"warp-egress", "cloudflare", "Health checks", "live"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("status partial missing %q", want)
+		}
+	}
+}
+
 func TestDecommissionGatedOnDrain(t *testing.T) {
 	h, st := newTestHandler(t, nil)
 	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
