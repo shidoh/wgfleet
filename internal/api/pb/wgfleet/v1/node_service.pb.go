@@ -1148,7 +1148,10 @@ type RealityTunnel struct {
 	// Additive; an older agent ignores it — backward-compatible (ADR-0019).
 	EmptySni bool `protobuf:"varint,8,opt,name=empty_sni,json=emptySni,proto3" json:"empty_sni,omitempty"`
 	// REALITY transport mode: "" / "xhttp" (default) / "vision" (TCP + vision flow).
-	Mode          string `protobuf:"bytes,9,opt,name=mode,proto3" json:"mode,omitempty"`
+	Mode string `protobuf:"bytes,9,opt,name=mode,proto3" json:"mode,omitempty"`
+	// Enable XHTTP connection reuse (XMUX) so the handshake/steal is amortized.
+	// Additive; older agent ignores it — backward-compatible (ADR-0019).
+	Mux           bool `protobuf:"varint,10,opt,name=mux,proto3" json:"mux,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1244,6 +1247,13 @@ func (x *RealityTunnel) GetMode() string {
 		return x.Mode
 	}
 	return ""
+}
+
+func (x *RealityTunnel) GetMux() bool {
+	if x != nil {
+		return x.Mux
+	}
+	return false
 }
 
 // CustomConfig carries operator overrides (JSON-encoded for arbitrary nesting)
@@ -2379,7 +2389,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\adrained\x18\b \x01(\bR\adrained\x12\x1c\n" +
 	"\ttransport\x18\t \x01(\tR\ttransport\x123\n" +
 	"\areality\x18\n" +
-	" \x01(\v2\x19.wgfleet.v1.RealityTunnelR\areality\"\x8f\x02\n" +
+	" \x01(\v2\x19.wgfleet.v1.RealityTunnelR\areality\"\xa1\x02\n" +
 	"\rRealityTunnel\x12\x12\n" +
 	"\x04uuid\x18\x01 \x01(\tR\x04uuid\x12\x1d\n" +
 	"\n" +
@@ -2393,7 +2403,9 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\n" +
 	"xhttp_mode\x18\a \x01(\tR\txhttpMode\x12\x1b\n" +
 	"\tempty_sni\x18\b \x01(\bR\bemptySni\x12\x12\n" +
-	"\x04mode\x18\t \x01(\tR\x04mode\"d\n" +
+	"\x04mode\x18\t \x01(\tR\x04mode\x12\x10\n" +
+	"\x03mux\x18\n" +
+	" \x01(\bR\x03mux\"d\n" +
 	"\fCustomConfig\x12%\n" +
 	"\x0eoverrides_json\x18\x01 \x01(\tR\roverridesJson\x12-\n" +
 	"\x05files\x18\x02 \x03(\v2\x17.wgfleet.v1.ManagedFileR\x05files\"S\n" +

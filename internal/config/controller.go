@@ -450,6 +450,14 @@ type RealityTransportConfig struct {
 	// gains "", the master sends the exit IP as a placeholder so uTLS omits SNI).
 	// Reported to bypass the RU TSPU heuristic block where changing the SNI does not.
 	EmptySNI bool `koanf:"empty_sni"`
+	// Mux enables XHTTP connection reuse (XMUX, mihomo xhttp-opts.reuse-settings) on
+	// the master's reality proxy: many client streams ride one underlying XHTTP
+	// connection, so the per-connection REALITY handshake + dest-steal is paid once
+	// and amortized instead of on every request (mihomo's default opens a fresh
+	// connection per request). Client-side only — xray needs no change. NB: this is
+	// XMUX (HTTP framing), NOT sing-mux/smux (which is incompatible with xray). Only
+	// effective in xhttp mode; ignored for vision (TCP). Default false.
+	Mux bool `koanf:"mux"`
 	// AllowIPv6 lets xray resolve the camouflage dest (and egress) over IPv6. Default
 	// false ⇒ xray is pinned to IPv4 (queryStrategy UseIPv4): the exit data plane is
 	// IPv4-only (no IPv6 egress, an earlier finding), so a dest that resolves AAAA-only (e.g.

@@ -339,6 +339,17 @@ func realityProxy(t domain.ExitTunnel, host string, port int) (map[string]any, e
 		if r.XHTTPPath != "" {
 			xhttp["path"] = r.XHTTPPath
 		}
+		// XMUX: reuse the underlying XHTTP connection across requests so the REALITY
+		// handshake + dest-steal is amortized (without it mihomo opens a fresh
+		// connection — and a fresh handshake — per request). Server-compatible: xray
+		// needs no change. Defaults mirror the documented XMUX template.
+		if r.Mux {
+			xhttp["reuse-settings"] = map[string]any{
+				"max-concurrency":     "16-32",
+				"h-max-request-times": "600-900",
+				"h-max-reusable-secs": "1800-3000",
+			}
+		}
 		proxy["network"] = "xhttp"
 		proxy["xhttp-opts"] = xhttp
 	}

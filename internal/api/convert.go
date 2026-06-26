@@ -130,6 +130,7 @@ func realityTunnelToProto(r *domain.RealityTunnel) *pb.RealityTunnel {
 		XhttpMode:   r.XHTTPMode,
 		EmptySni:    r.EmptySNI,
 		Mode:        r.Mode,
+		Mux:         r.Mux,
 	}
 }
 
@@ -147,6 +148,7 @@ func realityTunnelFromProto(r *pb.RealityTunnel) *domain.RealityTunnel {
 		XHTTPMode:   r.GetXhttpMode(),
 		EmptySNI:    r.GetEmptySni(),
 		Mode:        r.GetMode(),
+		Mux:         r.GetMux(),
 	}
 }
 

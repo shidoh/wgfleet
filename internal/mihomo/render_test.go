@@ -593,4 +593,18 @@ func TestRenderRealityFingerprintAndEmptySNI(t *testing.T) {
 	if _, has := px["flow"]; has {
 		t.Error("xhttp proxy must not set flow")
 	}
+	// Mux off (default) ⇒ no reuse-settings; Mux on ⇒ XMUX reuse-settings present.
+	if xo := px["xhttp-opts"].(map[string]any); xo["reuse-settings"] != nil {
+		t.Error("xhttp without Mux must not set reuse-settings")
+	}
+	pm := mk(func(rt *domain.RealityTunnel) { rt.Mux = true })
+	rs, _ := pm["xhttp-opts"].(map[string]any)["reuse-settings"].(map[string]any)
+	if rs == nil || rs["max-concurrency"] != "16-32" {
+		t.Errorf("Mux must add XMUX reuse-settings: %+v", pm["xhttp-opts"])
+	}
+	// Vision mode ignores Mux (no xhttp-opts at all).
+	pmv := mk(func(rt *domain.RealityTunnel) { rt.Mode = domain.RealityModeVision; rt.Mux = true })
+	if _, has := pmv["xhttp-opts"]; has {
+		t.Error("vision proxy must not carry xhttp-opts even with Mux")
+	}
 }

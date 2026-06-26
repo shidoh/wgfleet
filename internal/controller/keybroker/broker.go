@@ -394,6 +394,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 					ShortID:     rp.ShortID,
 					ServerName:  rp.ServerName,
 					Fingerprint: rp.Fingerprint,
+					Mux:         rp.Mux,
 					XHTTPPath:   rp.Path,
 					XHTTPMode:   rp.Mode,
 					Mode:        rp.RealityMode,
@@ -447,6 +448,7 @@ type realityParams struct {
 	Fingerprint string
 	EmptySNI    bool
 	AllowIPv6   bool
+	Mux         bool
 	Image       string
 }
 
@@ -476,7 +478,7 @@ func (b *Broker) realityFor(exit config.ExitConfig, masterName string) realityPa
 	return realityParams{
 		Port: port, UUID: uuid, ShortID: shortID, ServerName: sni,
 		Dest: dest, Path: path, Mode: xray.DefaultXHTTPMode, RealityMode: r.Mode,
-		Fingerprint: r.Fingerprint, EmptySNI: r.EmptySNI, AllowIPv6: r.AllowIPv6, Image: image,
+		Fingerprint: r.Fingerprint, EmptySNI: r.EmptySNI, AllowIPv6: r.AllowIPv6, Mux: r.Mux, Image: image,
 	}
 }
 

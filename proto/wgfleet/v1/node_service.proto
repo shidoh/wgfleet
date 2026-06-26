@@ -188,6 +188,9 @@ message RealityTunnel {
   bool empty_sni = 8;
   // REALITY transport mode: "" / "xhttp" (default) / "vision" (TCP + vision flow).
   string mode = 9;
+  // Enable XHTTP connection reuse (XMUX) so the handshake/steal is amortized.
+  // Additive; older agent ignores it — backward-compatible (ADR-0019).
+  bool mux = 10;
 }
 
 // CustomConfig carries operator overrides (JSON-encoded for arbitrary nesting)

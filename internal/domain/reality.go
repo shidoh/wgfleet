@@ -79,4 +79,9 @@ type RealityTunnel struct {
 	// EmptySNI sends the ClientHello with no SNI (mihomo servername set to the exit
 	// IP placeholder); the inbound must allow it (RealityServerSpec.AllowEmptySNI).
 	EmptySNI bool
+	// Mux enables XHTTP connection reuse (XMUX, xhttp-opts.reuse-settings) so the
+	// REALITY handshake + dest-steal is amortized across requests instead of paid
+	// per request. Client-side (mihomo) only; xray unchanged. Only the xhttp path
+	// honours it (vision/TCP ignores it). See RealityTransportConfig.Mux.
+	Mux bool
 }
