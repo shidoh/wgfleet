@@ -804,9 +804,28 @@ func clashAPISecret(overrides map[string]any) string {
 	return ""
 }
 
+// egressEchoURLs are the off-Cloudflare IP-echo endpoints the warp-egress probe
+// hits, in order, to learn the address client traffic leaves under. They MUST NOT be
+// fronted by Cloudflare: WARP routes Cloudflare-bound traffic out a different
+// "on-net" egress IP than general-internet traffic, so a Cloudflare endpoint reports
+// an address that never matches what clients actually appear under. checkip.amazonaws.com
+// (AWS) and ifconfig.me are off-Cloudflare and return the bare egress IP; the second
+// covers a transient rate-limit/outage of the first.
+var egressEchoURLs = []string{
+	"https://checkip.amazonaws.com",
+	"https://ifconfig.me",
+}
+
+// egressTraceURL is the last-resort fallback: Cloudflare's own trace endpoint is the
+// authoritative WARP source (it can't return a captive page or stale CDN body), but
+// it reports the on-net egress IP — only correct for Cloudflare-bound traffic, so it
+// is used ONLY when every off-Cloudflare echo above is unreachable. Its body is
+// key=value lines (the IP is on the `ip=` line), not a bare address.
+const egressTraceURL = "https://www.cloudflare.com/cdn-cgi/trace"
+
 // egressIP reports the address the exit's client traffic leaves under: the
-// Cloudflare WARP IP for warp egress (read from the cloudflare trace via the
-// egress interface), or the node's own public IP for direct egress. Best-effort —
+// Cloudflare WARP IP for warp egress (observed via an off-Cloudflare IP echo through
+// the egress interface), or the node's own public IP for direct egress. Best-effort —
 // "" when it cannot be determined. Masters have no egress and return "".
 func (a *agent) egressIP(ctx context.Context, spec domain.NodeSpec, active domain.EgressMethod) string {
 	if a.role == domain.RoleMaster {
@@ -819,14 +838,38 @@ func (a *agent) egressIP(ctx context.Context, spec domain.NodeSpec, active domai
 	if iface == "" {
 		iface = "wgcf"
 	}
+	for _, url := range egressEchoURLs {
+		// The echoes return the bare IP (plus a trailing newline); validate it so a
+		// captive page or error body never lands in the store as an "egress IP".
+		if ip := curlEgressIP(ctx, iface, url, ""); ip != "" {
+			return ip
+		}
+	}
+	// All off-Cloudflare echoes failed: fall back to Cloudflare's trace (on-net IP).
+	return curlEgressIP(ctx, iface, egressTraceURL, "ip=")
+}
+
+// curlEgressIP curls url through iface and extracts a valid IP from the response. With
+// an empty linePrefix the whole (trimmed) body must be the IP; otherwise the IP is
+// read from the line carrying that prefix (e.g. "ip=" in Cloudflare's trace output).
+// Returns "" on any curl error or when no valid IP is found.
+func curlEgressIP(ctx context.Context, iface, url, linePrefix string) string {
 	out, err := exec.CommandContext(ctx, "curl", "-s", "--max-time", "5",
-		"--interface", iface, "https://www.cloudflare.com/cdn-cgi/trace").Output()
+		"--interface", iface, url).Output()
 	if err != nil {
 		return ""
 	}
+	if linePrefix == "" {
+		if ip := net.ParseIP(strings.TrimSpace(string(out))); ip != nil {
+			return ip.String()
+		}
+		return ""
+	}
 	for _, line := range strings.Split(string(out), "\n") {
-		if v, ok := strings.CutPrefix(line, "ip="); ok {
-			return strings.TrimSpace(v)
+		if v, ok := strings.CutPrefix(line, linePrefix); ok {
+			if ip := net.ParseIP(strings.TrimSpace(v)); ip != nil {
+				return ip.String()
+			}
 		}
 	}
 	return ""
