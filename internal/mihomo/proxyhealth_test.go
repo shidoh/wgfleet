@@ -1,6 +1,10 @@
 package mihomo
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,5 +41,41 @@ func TestParseProxyHealth(t *testing.T) {
 func TestParseProxyHealthGarbage(t *testing.T) {
 	if _, err := ParseProxyHealth([]byte("not json"), "wg-best", []string{"x"}); err == nil {
 		t.Fatal("expected error on unparseable JSON")
+	}
+}
+
+func TestFetchProxies(t *testing.T) {
+	const body = `{"proxies":{"wg-best":{"now":"exit-de-1"}}}`
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		if r.URL.Path != "/proxies" {
+			http.Error(w, "wrong path", http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	got, err := FetchProxies(context.Background(), addr, "s3cret")
+	if err != nil {
+		t.Fatalf("FetchProxies: %v", err)
+	}
+	if string(got) != body {
+		t.Fatalf("body mismatch: %s", got)
+	}
+	if gotAuth != "Bearer s3cret" {
+		t.Fatalf("auth header = %q", gotAuth)
+	}
+}
+
+func TestFetchProxiesNon200(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "nope", http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	if _, err := FetchProxies(context.Background(), strings.TrimPrefix(srv.URL, "http://"), ""); err == nil {
+		t.Fatal("expected error on non-2xx")
 	}
 }
