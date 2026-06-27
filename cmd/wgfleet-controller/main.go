@@ -251,7 +251,7 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, configPath string) error {
 				Encrypt:     backup.AgeEncryptor(recipient),
 			})
 		}
-		webHandler, err := web.New(st, broker, provMgr, persistTransport, exportBackup, 7*24*time.Hour)
+		webHandler, err := web.New(st, broker, provMgr, persistTransport, exportBackup, cfg.WebUISessionTTL())
 		if err != nil {
 			return fmt.Errorf("build web ui: %w", err)
 		}

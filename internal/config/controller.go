@@ -75,6 +75,8 @@ type ControllerSection struct {
 	// StalenessAfter marks a Ready/Reconciling node Degraded when it has not
 	// reported status for this long (a silent/dead agent). 0 disables the sweep.
 	StalenessAfter time.Duration `koanf:"staleness_after"`
+	// SessionTTL is the web panel's sliding session lifetime. 0 ⇒ default (7d).
+	SessionTTL time.Duration `koanf:"session_ttl"`
 }
 
 // SecretsSection configures the provider backing secret:// references. When
@@ -100,6 +102,17 @@ func (c ControllerConfig) Staleness() time.Duration {
 	default:
 		return c.Controller.StalenessAfter
 	}
+}
+
+// DefaultSessionTTL is the web panel session lifetime when unset.
+const DefaultSessionTTL = 7 * 24 * time.Hour
+
+// WebUISessionTTL returns the configured session lifetime, or the default.
+func (c ControllerConfig) WebUISessionTTL() time.Duration {
+	if c.Controller.SessionTTL <= 0 {
+		return DefaultSessionTTL
+	}
+	return c.Controller.SessionTTL
 }
 
 // PKISection configures the mTLS certificate authority used to issue node certs.

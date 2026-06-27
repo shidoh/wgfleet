@@ -91,6 +91,17 @@ func TestLoadControllerConfig(t *testing.T) {
 	}
 }
 
+func TestWebUISessionTTLDefault(t *testing.T) {
+	var c ControllerConfig
+	if got := c.WebUISessionTTL(); got != 7*24*time.Hour {
+		t.Errorf("default session TTL = %v; want 168h", got)
+	}
+	c.Controller.SessionTTL = 2 * time.Hour
+	if got := c.WebUISessionTTL(); got != 2*time.Hour {
+		t.Errorf("configured session TTL = %v; want 2h", got)
+	}
+}
+
 const dualTransportYAML = `
 controller:
   listen: "0.0.0.0:8443"
