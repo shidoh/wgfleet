@@ -6,6 +6,29 @@
    blue = links/master/REALITY, amber = caution, red = destructive.
    ============================================================ */
 
+/* ---- Self-hosted JetBrains Mono (latin) ---------------------------- *
+   Embedded + served from /static/fonts so the panel has NO external font
+   dependency (the operator's egress may block/throttle fonts.googleapis.com).
+   Latin subset only; the few symbol glyphs (arrows/checks/carets) fall back to
+   the system mono in the stack — visually indistinguishable. font-display:swap
+   keeps text visible while the woff2 loads. */
+@font-face {
+  font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap;
+  src: url('/static/fonts/jetbrains-mono-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono'; font-style: normal; font-weight: 500; font-display: swap;
+  src: url('/static/fonts/jetbrains-mono-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono'; font-style: normal; font-weight: 600; font-display: swap;
+  src: url('/static/fonts/jetbrains-mono-600.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono'; font-style: normal; font-weight: 700; font-display: swap;
+  src: url('/static/fonts/jetbrains-mono-700.woff2') format('woff2');
+}
+
 /* ---- Design tokens (verbatim from tokens.css) ---------------------- */
 :root {
   /* ---- Surfaces ---------------------------------------------------- */

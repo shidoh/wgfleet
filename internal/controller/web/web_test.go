@@ -923,6 +923,28 @@ func TestExitNodeHasNoExitTunnelCard(t *testing.T) {
 	}
 }
 
+// TestMasterRoutingButtonsExitOnly: the take-out-of-routing / decommission /
+// delete lifecycle is exit-only — the master is the client gateway/balancer, so
+// those actions must not appear on its detail page. Exits still show them.
+func TestMasterRoutingButtonsExitOnly(t *testing.T) {
+	h, st := newTestHandler(t, stubRenderer{spec: domain.NodeSpec{Role: domain.RoleMaster}})
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+
+	_, master := get(t, h, "/nodes/master-xa-1")
+	for _, s := range []string{"Take out of routing", "/drain", "Decommission", "/delete"} {
+		if strings.Contains(master, s) {
+			t.Errorf("master detail must not contain routing-lifecycle element %q", s)
+		}
+	}
+	_, exit := get(t, h, "/nodes/exit-de-1")
+	for _, s := range []string{"Take out of routing", "Decommission", "Delete"} {
+		if !strings.Contains(exit, s) {
+			t.Errorf("exit detail must contain routing-lifecycle element %q", s)
+		}
+	}
+}
+
 func TestChangePassword(t *testing.T) {
 	h, st := newTestHandler(t, nil) // admin "admin"/"test-password-123"
 

@@ -4,9 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}} — wgfleet</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/app.js" defer></script>
@@ -18,7 +15,7 @@
     <span class="spacer"></span>
     <span class="nodecount"><span class="statusdot pulse"></span>{{.NodeCount}} node{{if ne .NodeCount 1}}s{{end}}</span>
     <span class="topbar-account">
-      <a class="account-link" href="/profile" title="Admin profile">admin</a>
+      <a class="account-link" href="/profile" title="Admin profile">{{.User}}</a>
       <form method="post" action="/logout" class="logout-form"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button class="account-link" type="submit">logout</button></form>
     </span>
   </header>

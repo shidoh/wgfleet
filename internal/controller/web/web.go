@@ -45,7 +45,7 @@ const flashCookie = "wgfleet_flash"
 //go:embed templates/*.html
 var templatesFS embed.FS
 
-//go:embed static/*
+//go:embed static
 var staticFS embed.FS
 
 // SpecRenderer previews a node's desired NodeSpec. *keybroker.Broker satisfies it.
@@ -269,6 +269,7 @@ func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
 type profileData struct {
 	Title           string
 	NodeCount       int
+	User            string // logged-in admin (topbar)
 	Username        string
 	PasswordChanged time.Time
 	Flash           string
@@ -281,10 +282,21 @@ func (h *Handler) handleProfile(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "load profile", err)
 		return
 	}
+	user, _ := h.currentUser(r)
 	h.render(w, h.profileTmpl, "layout", profileData{
-		Title: "Profile", NodeCount: 1, Username: rec.Username,
+		Title: "Profile", NodeCount: h.fleetCount(r.Context()), User: user, Username: rec.Username,
 		PasswordChanged: rec.UpdatedAt, Flash: h.takeFlash(w, r), CSRF: h.csrf,
 	})
+}
+
+// fleetCount is the number of nodes in the fleet (for the global topbar). It is
+// best-effort — 0 on a store error.
+func (h *Handler) fleetCount(ctx context.Context) int {
+	ns, err := h.nodes(ctx)
+	if err != nil {
+		return 0
+	}
+	return len(ns)
 }
 
 func (h *Handler) handleChangePassword(w http.ResponseWriter, r *http.Request) {
@@ -644,6 +656,7 @@ type stateStat struct {
 type listData struct {
 	Title     string
 	NodeCount int
+	User      string // logged-in admin (topbar)
 	Nodes     []nodeRow
 	Summary   []stateStat
 	Topology  *topology // master↔exit routing picture; nil when there is no master
@@ -786,9 +799,11 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "list nodes", err)
 		return
 	}
+	user, _ := h.currentUser(r)
 	data := listData{
 		Title:     "Fleet",
 		NodeCount: len(rows),
+		User:      user,
 		Nodes:     rows,
 		Summary:   summarize(rows),
 		Topology:  h.buildTopology(r.Context(), rows),
@@ -837,6 +852,7 @@ func (h *Handler) handleNodesPartial(w http.ResponseWriter, r *http.Request) {
 type nodeData struct {
 	Title           string
 	NodeCount       int
+	User            string // logged-in admin (topbar)
 	Node            domain.Node
 	HasStatus       bool
 	Status          domain.NodeStatus
@@ -876,7 +892,8 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 		// report, so the detail page matches the list (see nodes()).
 		node = backfillFromManifest(node, mn)
 	}
-	data := nodeData{Title: node.Name, NodeCount: 1, Node: node, CSRF: h.csrf, CanDelete: node.Decommission, CanDecommission: node.Drain && !node.Decommission, Flash: h.takeFlash(w, r), MetricsURL: metricsURL(node)}
+	user, _ := h.currentUser(r)
+	data := nodeData{Title: node.Name, NodeCount: h.fleetCount(r.Context()), User: user, Node: node, CSRF: h.csrf, CanDelete: node.Decommission, CanDecommission: node.Drain && !node.Decommission, Flash: h.takeFlash(w, r), MetricsURL: metricsURL(node)}
 	if node.WireVersion != 0 {
 		if compat := api.CheckWire(node.WireVersion); compat != api.WireCompatible {
 			data.WireSkew = api.IncompatibilityDetail(compat, node.WireVersion)

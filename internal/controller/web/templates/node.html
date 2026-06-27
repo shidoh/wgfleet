@@ -31,6 +31,11 @@
     <button type="submit" class="btn" data-pending="Upgrading…">Upgrade agent</button>
   </form>
   {{end}}
+  {{if eq (lower .Node.Role) "exit"}}
+  {{/* Routing lifecycle (take-out-of-routing → decommission → delete) is exit-only:
+       the master IS the client gateway / load balancer, so draining, decommissioning,
+       or deleting it from its own panel does not apply (and would be self-destructive
+       for the co-located control plane). */}}
   {{if .Node.Drain}}
   {{/* Fast, one-click reverse: no confirm. Prominent so a suspended node is
        obviously easy to bring back. Hot-reloads mihomo — other clients undisturbed. */}}
@@ -73,6 +78,7 @@
   {{/* Delete is gated on Decommission: enforce the drain→decommission→delete order
        the copy implies, not just a confirm() the operator can blow past. */}}
   <button type="button" class="btn ghost-red" disabled title="Decommission and tear down first">Delete</button>
+  {{end}}
   {{end}}
 </div>
 
