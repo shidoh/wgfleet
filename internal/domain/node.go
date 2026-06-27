@@ -186,3 +186,13 @@ func (s NodeStatus) ActiveEgress() string {
 	}
 	return ""
 }
+
+// AuthRecord is the single web-panel admin credential (one row). PasswordHash is
+// a bcrypt hash; SessionSecret is the HMAC key used to sign session cookies —
+// rotating it invalidates every issued session. It never leaves the controller.
+type AuthRecord struct {
+	Username      string
+	PasswordHash  string
+	SessionSecret []byte
+	UpdatedAt     time.Time
+}

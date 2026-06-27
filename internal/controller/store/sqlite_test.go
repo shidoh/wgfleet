@@ -56,6 +56,60 @@ func TestUpsertAndGetNode(t *testing.T) {
 	}
 }
 
+func TestAuthCredentialLifecycle(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+
+	// Unset initially.
+	if ok, err := st.AuthConfigured(ctx); err != nil || ok {
+		t.Fatalf("AuthConfigured on empty store = %v, %v; want false, nil", ok, err)
+	}
+	if _, err := st.GetAuth(ctx); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetAuth on empty store: want ErrNotFound, got %v", err)
+	}
+
+	// Set the credential.
+	secret := []byte("0123456789abcdef0123456789abcdef")
+	if err := st.SetAuthCredential(ctx, "admin", "hash-v1", secret); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := st.AuthConfigured(ctx); !ok {
+		t.Fatal("AuthConfigured after set = false")
+	}
+	rec, err := st.GetAuth(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Username != "admin" || rec.PasswordHash != "hash-v1" || string(rec.SessionSecret) != string(secret) {
+		t.Fatalf("GetAuth = %+v", rec)
+	}
+	if rec.UpdatedAt.IsZero() {
+		t.Error("UpdatedAt not set")
+	}
+
+	// Change password rotates hash + secret, keeps username.
+	newSecret := []byte("ffffffffffffffffffffffffffffffff")
+	if err := st.SetAuthPassword(ctx, "hash-v2", newSecret); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ = st.GetAuth(ctx)
+	if rec.Username != "admin" || rec.PasswordHash != "hash-v2" || string(rec.SessionSecret) != string(newSecret) {
+		t.Fatalf("after SetAuthPassword: %+v", rec)
+	}
+}
+
+func TestSetAuthPasswordMissingRow(t *testing.T) {
+	st, _ := Open(":memory:")
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.SetAuthPassword(context.Background(), "h", []byte("x")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("SetAuthPassword with no row: want ErrNotFound, got %v", err)
+	}
+}
+
 func TestUpsertRoundTripsAgentVersion(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

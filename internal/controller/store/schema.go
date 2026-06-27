@@ -45,4 +45,13 @@ var migrations = []string{
 	`ALTER TABLE nodes ADD COLUMN active_transport TEXT NOT NULL DEFAULT ''`,
 	// v6: master's per-exit tunnel health (mihomo proxy liveness), JSON like checks.
 	`ALTER TABLE node_status ADD COLUMN exit_health_json TEXT NOT NULL DEFAULT '[]'`,
+	// v7: single-row web-panel admin credential. id is pinned to 1 so the table
+	// holds exactly one account (single-user panel); SetAuthCredential upserts it.
+	`CREATE TABLE IF NOT EXISTS auth (
+		id             INTEGER PRIMARY KEY CHECK (id = 1),
+		username       TEXT NOT NULL,
+		password_hash  TEXT NOT NULL,
+		session_secret BLOB NOT NULL,
+		updated_at     TEXT NOT NULL
+	)`,
 }

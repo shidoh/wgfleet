@@ -374,3 +374,60 @@ func orDefault(t, fallback time.Time) time.Time {
 	}
 	return t
 }
+
+// AuthConfigured implements Store.
+func (s *SQLiteStore) AuthConfigured(ctx context.Context) (bool, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM auth WHERE id = 1`).Scan(&n); err != nil {
+		return false, fmt.Errorf("store: count auth: %w", err)
+	}
+	return n > 0, nil
+}
+
+// GetAuth implements Store.
+func (s *SQLiteStore) GetAuth(ctx context.Context) (domain.AuthRecord, error) {
+	var (
+		rec       domain.AuthRecord
+		updatedAt string
+	)
+	err := s.db.QueryRowContext(ctx,
+		`SELECT username, password_hash, session_secret, updated_at FROM auth WHERE id = 1`,
+	).Scan(&rec.Username, &rec.PasswordHash, &rec.SessionSecret, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.AuthRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.AuthRecord{}, fmt.Errorf("store: get auth: %w", err)
+	}
+	rec.UpdatedAt = parseTime(updatedAt)
+	return rec, nil
+}
+
+// SetAuthCredential implements Store.
+func (s *SQLiteStore) SetAuthCredential(ctx context.Context, username, passwordHash string, sessionSecret []byte) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO auth (id, username, password_hash, session_secret, updated_at)
+		 VALUES (1, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET
+		   username=excluded.username, password_hash=excluded.password_hash,
+		   session_secret=excluded.session_secret, updated_at=excluded.updated_at`,
+		username, passwordHash, sessionSecret, fmtTime(s.now().UTC()))
+	if err != nil {
+		return fmt.Errorf("store: set auth credential: %w", err)
+	}
+	return nil
+}
+
+// SetAuthPassword implements Store.
+func (s *SQLiteStore) SetAuthPassword(ctx context.Context, passwordHash string, sessionSecret []byte) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE auth SET password_hash = ?, session_secret = ?, updated_at = ? WHERE id = 1`,
+		passwordHash, sessionSecret, fmtTime(s.now().UTC()))
+	if err != nil {
+		return fmt.Errorf("store: set auth password: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

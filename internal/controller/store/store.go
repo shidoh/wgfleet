@@ -65,6 +65,17 @@ type Store interface {
 	// GetStatus returns the latest status for a node, or ErrNotFound.
 	GetStatus(ctx context.Context, id string) (domain.NodeStatus, error)
 
+	// AuthConfigured reports whether the single web-panel admin credential exists.
+	AuthConfigured(ctx context.Context) (bool, error)
+	// GetAuth returns the admin credential, or ErrNotFound when unset.
+	GetAuth(ctx context.Context) (domain.AuthRecord, error)
+	// SetAuthCredential upserts the admin account (first-run setup / CLI reset),
+	// setting username, password hash, and session signing secret.
+	SetAuthCredential(ctx context.Context, username, passwordHash string, sessionSecret []byte) error
+	// SetAuthPassword changes the password and rotates the session secret in one
+	// write (invalidating other sessions). Returns ErrNotFound if no row exists.
+	SetAuthPassword(ctx context.Context, passwordHash string, sessionSecret []byte) error
+
 	// Close releases the underlying database handle.
 	Close() error
 }
