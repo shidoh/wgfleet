@@ -10,6 +10,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -49,7 +50,10 @@ type payload struct {
 
 // Sign returns "b64(payload).b64(HMAC-SHA256(payload))" for user/exp.
 func Sign(secret []byte, user string, exp time.Time) string {
-	p, _ := json.Marshal(payload{U: user, E: exp.Unix()})
+	p, err := json.Marshal(payload{U: user, E: exp.Unix()})
+	if err != nil {
+		panic(fmt.Sprintf("auth.Sign: marshal payload: %v", err))
+	}
 	body := base64.RawURLEncoding.EncodeToString(p)
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(body))
