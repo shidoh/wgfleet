@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/term"
 
 	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/config"
@@ -40,6 +41,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/controller/sweeper"
 	"github.com/shidoh/wgfleet/internal/controller/web"
+	"github.com/shidoh/wgfleet/internal/controller/web/auth"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/metrics"
 	"github.com/shidoh/wgfleet/internal/version"
@@ -69,6 +71,9 @@ func run() error {
 		restoreIn    = flag.String("restore", "", "restore controller state from an age-encrypted archive at this path, then exit")
 		ageRecipient = flag.String("age-recipient", "", "with --backup: encrypt to this age recipient instead of prompting for a passphrase")
 		showVersion  = flag.Bool("version", false, "print build version and exit")
+		setAdminPw   = flag.Bool("set-admin-password", false, "set/reset the web panel admin password (run with the controller stopped) and exit")
+		adminUser    = flag.String("admin-user", "admin", "username for --set-admin-password")
+		passwordFile = flag.String("password-file", "", "with --set-admin-password: read the password from this file instead of prompting")
 	)
 	flag.Parse()
 
@@ -104,6 +109,23 @@ func run() error {
 			return err
 		}
 		printRestorePlan(p, *plan)
+		return nil
+	}
+
+	if *setAdminPw {
+		st, err := store.Open(cfg.Controller.Store)
+		if err != nil {
+			return fmt.Errorf("open store: %w", err)
+		}
+		defer st.Close()
+		pw, err := readAdminPassword(*passwordFile)
+		if err != nil {
+			return err
+		}
+		if err := setAdminPassword(st, *adminUser, pw); err != nil {
+			return err
+		}
+		fmt.Printf("admin password set for %q\n", *adminUser)
 		return nil
 	}
 
@@ -408,6 +430,50 @@ func hostOf(listen string) string {
 		return listen
 	}
 	return host
+}
+
+// setAdminPassword sets (or resets) the single web-panel admin credential
+// directly in the store. It always rotates the session secret (logging out any
+// active session). Intended for the --set-admin-password CLI path, which opens
+// the store exclusively — run it with the controller STOPPED.
+func setAdminPassword(st store.Store, username, password string) error {
+	if len(password) < auth.MinPasswordLen {
+		return fmt.Errorf("password must be at least %d characters", auth.MinPasswordLen)
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	secret, err := auth.NewSecret()
+	if err != nil {
+		return fmt.Errorf("generate session secret: %w", err)
+	}
+	if err := st.SetAuthCredential(context.Background(), username, hash, secret); err != nil {
+		return fmt.Errorf("store credential: %w", err)
+	}
+	return nil
+}
+
+// readAdminPassword sources the password: --password-file, then
+// WGFLEET_ADMIN_PASSWORD, then an interactive no-echo prompt.
+func readAdminPassword(passwordFile string) (string, error) {
+	if passwordFile != "" {
+		b, err := os.ReadFile(passwordFile)
+		if err != nil {
+			return "", fmt.Errorf("read password file: %w", err)
+		}
+		return strings.TrimRight(string(b), "\r\n"), nil
+	}
+	if env := os.Getenv("WGFLEET_ADMIN_PASSWORD"); env != "" {
+		return env, nil
+	}
+	fmt.Fprint(os.Stderr, "New admin password: ")
+	b, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", fmt.Errorf("read password: %w", err)
+	}
+	return string(b), nil
 }
 
 func setupLogging(format string) {
