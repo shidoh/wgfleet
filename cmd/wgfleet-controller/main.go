@@ -465,7 +465,7 @@ func readAdminPassword(passwordFile string) (string, error) {
 		return strings.TrimRight(string(b), "\r\n"), nil
 	}
 	if env := os.Getenv("WGFLEET_ADMIN_PASSWORD"); env != "" {
-		return env, nil
+		return strings.TrimRight(env, "\r\n"), nil
 	}
 	fmt.Fprint(os.Stderr, "New admin password: ")
 	b, err := term.ReadPassword(int(os.Stdin.Fd()))
