@@ -27,11 +27,15 @@ import (
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/store"
+	"github.com/shidoh/wgfleet/internal/controller/web/auth"
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
 // csrfCookie is the name of the double-submit cookie carrying the CSRF token.
 const csrfCookie = "wgfleet_csrf"
+
+// sessionCookie carries the HMAC-signed login session (see internal/.../auth).
+const sessionCookie = "wgfleet_session"
 
 // flashCookie carries a one-shot error message across an action's redirect, so a
 // failed mutation lands back on its originating page (styled) instead of dumping a
@@ -82,12 +86,14 @@ type Handler struct {
 	// exportBackup streams an age-encrypted controller backup for the given age
 	// recipient. nil ⇒ the export endpoint reports 501 Not Implemented.
 	exportBackup func(ctx context.Context, recipient string) ([]byte, error)
+	sessionTTL   time.Duration
+	loginLimit   *auth.Limiter
 }
 
 // New builds the dashboard handler. renderer and prov may be nil (the spec
 // preview / provision action are then omitted). Each page is parsed as its own
 // template set so the per-page "content" definitions do not collide.
-func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTransport func(exitName string, t domain.MasterTransport) error, exportBackup func(ctx context.Context, recipient string) ([]byte, error)) (*Handler, error) {
+func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTransport func(exitName string, t domain.MasterTransport) error, exportBackup func(ctx context.Context, recipient string) ([]byte, error), sessionTTL time.Duration) (*Handler, error) {
 	listTmpl, err := parsePage("templates/layout.html", "templates/nodes.html")
 	if err != nil {
 		return nil, fmt.Errorf("web: parse list templates: %w", err)
@@ -100,7 +106,7 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	if err != nil {
 		return nil, fmt.Errorf("web: generate csrf token: %w", err)
 	}
-	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup}
+	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute)}
 
 	staticHandler := http.FileServer(http.FS(staticFS))
 	h.mux.Handle("GET /static/", staticHandler)
@@ -359,8 +365,72 @@ func parsePage(files ...string) (*template.Template, error) {
 	return template.New("layout").Funcs(funcMap()).ParseFS(templatesFS, files...)
 }
 
-// ServeHTTP implements http.Handler.
-func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.ServeHTTP(w, r) }
+// issueSession sets (or refreshes) the signed session cookie for user.
+func (h *Handler) issueSession(w http.ResponseWriter, user string, secret []byte) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    auth.Sign(secret, user, time.Now().Add(h.sessionTTL)),
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+// clearSession expires the session cookie (logout).
+func (h *Handler) clearSession(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+}
+
+// currentUser returns the authenticated user from a valid session cookie.
+func (h *Handler) currentUser(r *http.Request) (string, bool) {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil || c.Value == "" {
+		return "", false
+	}
+	rec, err := h.store.GetAuth(r.Context())
+	if err != nil {
+		return "", false
+	}
+	return auth.Verify(rec.SessionSecret, c.Value)
+}
+
+// authExempt reports paths reachable without a session.
+func authExempt(p string) bool {
+	switch {
+	case p == "/login", p == "/logout", p == "/setup":
+		return true
+	case strings.HasPrefix(p, "/static/"):
+		return true
+	default:
+		return false
+	}
+}
+
+// ServeHTTP gates every non-exempt route behind a valid session. With no admin
+// configured yet it sends everything to first-run /setup; an unauthenticated
+// request is redirected to /login (or, for an htmx request, answered 401 with
+// HX-Redirect so the live polls navigate cleanly instead of swapping login into
+// a card).
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if authExempt(r.URL.Path) {
+		h.mux.ServeHTTP(w, r)
+		return
+	}
+	if ok, _ := h.store.AuthConfigured(r.Context()); !ok {
+		http.Redirect(w, r, "/setup", http.StatusSeeOther)
+		return
+	}
+	if _, ok := h.currentUser(r); !ok {
+		if r.Header.Get("HX-Request") == "true" {
+			w.Header().Set("HX-Redirect", "/login")
+			http.Error(w, "unauthenticated", http.StatusUnauthorized)
+			return
+		}
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	h.mux.ServeHTTP(w, r)
+}
 
 type stateStat struct {
 	Label string

@@ -11,8 +11,12 @@ import (
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/controller/store"
+	"github.com/shidoh/wgfleet/internal/controller/web/auth"
 	"github.com/shidoh/wgfleet/internal/domain"
 )
+
+// testSessionTTL is used by the test harness when constructing handlers.
+const testSessionTTL = time.Hour
 
 // errInjected is a sentinel returned by stubs to exercise action error paths.
 var errInjected = errors.New("injected failure")
@@ -40,11 +44,28 @@ func newTestHandler(t *testing.T, renderer SpecRenderer) (*Handler, store.Store)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	h, err := New(st, renderer, nil, nil, nil)
+	// Seed an admin so the handler is past first-run setup; tests authenticate
+	// via the session cookie minted by sessionCookieFor.
+	hash, _ := auth.HashPassword("test-password-123")
+	secret := []byte("test-secret-test-secret-test-sec")
+	if err := st.SetAuthCredential(context.Background(), "admin", hash, secret); err != nil {
+		t.Fatal(err)
+	}
+	h, err := New(st, renderer, nil, nil, nil, testSessionTTL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return h, st
+}
+
+// sessionCookieFor mints a valid session cookie for the seeded admin.
+func sessionCookieFor(t *testing.T, h *Handler) *http.Cookie {
+	t.Helper()
+	rec, err := h.store.GetAuth(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Cookie{Name: sessionCookie, Value: auth.Sign(rec.SessionSecret, rec.Username, time.Now().Add(testSessionTTL))}
 }
 
 func seed(t *testing.T, st store.Store, n domain.Node) {
@@ -57,6 +78,9 @@ func seed(t *testing.T, st store.Store, n domain.Node) {
 func get(t *testing.T, h http.Handler, path string) (*http.Response, string) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if hh, ok := h.(*Handler); ok {
+		req.AddCookie(sessionCookieFor(t, hh))
+	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	res := rec.Result()
@@ -199,6 +223,7 @@ func post(t *testing.T, h http.Handler, path string) *http.Response {
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	if hh, ok := h.(*Handler); ok {
 		req.Header.Set("X-CSRF-Token", hh.csrf)
+		req.AddCookie(sessionCookieFor(t, hh))
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -338,9 +363,10 @@ func TestActionErrorRedirectsWithFlash(t *testing.T) {
 		t.Error("failed action should set a flash cookie carrying the error")
 	}
 
-	// The error path is still CSRF-gated: same-origin but no token ⇒ 403, no flash.
+	// The error path is still CSRF-gated: authenticated but no token ⇒ 403, no flash.
 	req := httptest.NewRequest(http.MethodPost, "/nodes/ghost/drain", nil)
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.AddCookie(sessionCookieFor(t, h))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Result().StatusCode != http.StatusForbidden {
@@ -354,6 +380,7 @@ func TestActionsRejectCrossSite(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/nodes/exit-de-1/drain", nil)
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	req.AddCookie(sessionCookieFor(t, h))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Result().StatusCode != http.StatusForbidden {
@@ -368,9 +395,10 @@ func TestActionsRejectMissingCSRF(t *testing.T) {
 	h, st := newTestHandler(t, nil)
 	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
 
-	// Same-origin (passes the Sec-Fetch check) but no CSRF token must still 403.
+	// Authenticated but no CSRF token must still 403.
 	req := httptest.NewRequest(http.MethodPost, "/nodes/exit-de-1/drain", nil)
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.AddCookie(sessionCookieFor(t, h))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Result().StatusCode != http.StatusForbidden {
@@ -384,6 +412,7 @@ func TestActionsRejectMissingCSRF(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, "/nodes/exit-de-1/drain", nil)
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.Header.Set("X-CSRF-Token", "not-the-real-token")
+	req.AddCookie(sessionCookieFor(t, h))
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Result().StatusCode != http.StatusForbidden {
@@ -526,7 +555,13 @@ func newProvHandler(t *testing.T, prov Provisioner) (*Handler, store.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	h, err := New(st, nil, prov, nil, nil)
+	// Seed admin so session cookies work for prov-handler tests too.
+	hash, _ := auth.HashPassword("test-password-123")
+	secret := []byte("test-secret-test-secret-test-sec")
+	if err := st.SetAuthCredential(context.Background(), "admin", hash, secret); err != nil {
+		t.Fatal(err)
+	}
+	h, err := New(st, nil, prov, nil, nil, testSessionTTL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -581,9 +616,10 @@ func TestUpgradeAction(t *testing.T) {
 		t.Error("failed upgrade should set a flash cookie")
 	}
 
-	// Still CSRF-gated.
+	// Still CSRF-gated: authenticated but no token ⇒ 403.
 	req := httptest.NewRequest(http.MethodPost, "/nodes/exit-de-1/upgrade", nil)
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.AddCookie(sessionCookieFor(t, h))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Result().StatusCode != http.StatusForbidden {
@@ -792,5 +828,31 @@ func TestExitNodeHasNoExitTunnelCard(t *testing.T) {
 	_ = st.RecordStatus(context.Background(), domain.NodeStatus{NodeID: "exit-de-1", State: domain.StateReady})
 	if _, body := get(t, h, "/nodes/exit-de-1"); strings.Contains(body, "EXIT TUNNELS") {
 		t.Error("an exit node must not show the Exit tunnels section")
+	}
+}
+
+func TestUnauthenticatedRedirectsToLogin(t *testing.T) {
+	h, _ := newTestHandler(t, nil)
+	// No cookie ⇒ browser GET redirected to /login.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("unauth GET / = %d loc %q; want 303 /login", rec.Code, rec.Header().Get("Location"))
+	}
+	// htmx poll ⇒ 401 + HX-Redirect (so it doesn't swap login into a card).
+	req = httptest.NewRequest(http.MethodGet, "/partials/nodes", nil)
+	req.Header.Set("HX-Request", "true")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || rec.Header().Get("HX-Redirect") != "/login" {
+		t.Fatalf("unauth htmx = %d hx %q; want 401 /login", rec.Code, rec.Header().Get("HX-Redirect"))
+	}
+	// Static assets are exempt.
+	req = httptest.NewRequest(http.MethodGet, "/static/app.css", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unauth static = %d; want 200", rec.Code)
 	}
 }
