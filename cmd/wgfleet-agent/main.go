@@ -741,7 +741,7 @@ func (a *agent) readWARPProfile() *egress.WARPConfig {
 // egressIP, when known, is the address the node's traffic appears to leave under
 // (the WARP IP for warp egress, the node's own IP for direct) — surfaced in the UI.
 func (a *agent) reportStatus(ctx context.Context, state domain.NodeState, checks []domain.HealthCheck, reconcileErr error, egressIP string, exitHealth []domain.ExitTunnelHealth) error {
-	st := domain.NodeStatus{State: state, Checks: checks, EgressIP: egressIP, ExitHealth: exitHealth}
+	st := domain.NodeStatus{State: state, Checks: checks, EgressIP: egressIP, ExitHealth: exitHealth, LastHandshake: a.latestHandshake(ctx)}
 	if reconcileErr != nil {
 		st.ReconcileError = reconcileErr.Error()
 	}
@@ -749,6 +749,19 @@ func (a *agent) reportStatus(ctx context.Context, state domain.NodeState, checks
 		return fmt.Errorf("report status: %w", err)
 	}
 	return nil
+}
+
+// latestHandshake reads the node's freshest WireGuard handshake for the status
+// report's HANDSHAKE column (data-plane liveness): an exit's master↔exit kernel
+// AWG tunnel (awg0), or a master's wg-easy client interface (wg0). It is
+// best-effort — zero (shown as "—") when the interface is absent or carries no WG
+// handshake (e.g. an exit whose active transport is REALITY, not kernel AWG).
+func (a *agent) latestHandshake(ctx context.Context) time.Time {
+	iface := "awg0" // exit: master↔exit kernel AWG tunnel (matches DefaultExitProbes)
+	if a.role == domain.RoleMaster {
+		iface = wgeasy.DefaultInterface
+	}
+	return health.LatestHandshake(ctx, iface)
 }
 
 // wgBestGroupName is the mihomo load-balance group the master routes through; its

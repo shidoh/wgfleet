@@ -97,6 +97,23 @@ func handshakeFreshProbe(iface string) Probe {
 	}
 }
 
+// LatestHandshake returns the freshest WireGuard handshake across the peers of
+// iface, read via `awg show <iface> latest-handshakes`. It returns the zero time
+// when there is no handshake yet or the command fails (interface absent, not a WG
+// device) — so the caller treats zero as "none" and the dashboard shows "—". This
+// is the timestamp behind the fleet list's HANDSHAKE column (data-plane liveness),
+// distinct from handshakeFreshProbe which only emits a pass/fail self-check.
+func LatestHandshake(ctx context.Context, iface string) time.Time {
+	out, err := runCmd(ctx, "awg", "show", iface, "latest-handshakes")
+	if err != nil {
+		return time.Time{}
+	}
+	if newest := newestHandshake(out); newest > 0 {
+		return time.Unix(newest, 0).UTC()
+	}
+	return time.Time{}
+}
+
 // warpEgressProbe confirms egress leaves via the WARP interface and that
 // Cloudflare reports warp=on.
 func warpEgressProbe(iface string) Probe {
