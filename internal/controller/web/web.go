@@ -76,6 +76,7 @@ type Handler struct {
 	prov     Provisioner
 	listTmpl *template.Template // layout + nodes list (also holds "nodes-table")
 	nodeTmpl *template.Template // layout + node detail
+	authTmpl *template.Template // auth-layout (login / setup screens)
 	mux      *http.ServeMux
 	csrf     string       // per-process CSRF token, embedded in forms and double-submit cookie
 	log      *slog.Logger // structured logger; surfaces render failures the page swallows
@@ -102,14 +103,23 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	if err != nil {
 		return nil, fmt.Errorf("web: parse node templates: %w", err)
 	}
+	authTmpl, err := parsePage("templates/auth.html")
+	if err != nil {
+		return nil, fmt.Errorf("web: parse auth templates: %w", err)
+	}
 	token, err := newCSRFToken()
 	if err != nil {
 		return nil, fmt.Errorf("web: generate csrf token: %w", err)
 	}
-	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute)}
+	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute)}
 
 	staticHandler := http.FileServer(http.FS(staticFS))
 	h.mux.Handle("GET /static/", staticHandler)
+	h.mux.HandleFunc("GET /login", h.handleLoginForm)
+	h.mux.HandleFunc("POST /login", h.handleLogin)
+	h.mux.HandleFunc("POST /logout", h.handleLogout)
+	h.mux.HandleFunc("GET /setup", h.handleSetupForm)
+	h.mux.HandleFunc("POST /setup", h.handleSetup)
 	h.mux.HandleFunc("GET /{$}", h.handleIndex)
 	h.mux.HandleFunc("GET /partials/nodes", h.handleNodesPartial)
 	h.mux.HandleFunc("GET /nodes/{id}", h.handleNode)
@@ -126,6 +136,115 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	h.mux.HandleFunc("POST /nodes/{id}/delete", h.handleDelete)
 	h.mux.HandleFunc("POST /backup", h.handleBackupExport)
 	return h, nil
+}
+
+type authPage struct {
+	Title  string
+	Screen string // "login" | "setup"
+	CSRF   string
+	Error  string
+}
+
+func (h *Handler) renderAuth(w http.ResponseWriter, screen, errMsg string) {
+	h.setCSRFCookie(w)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	title := "Sign in"
+	if screen == "setup" {
+		title = "Create admin"
+	}
+	if err := h.authTmpl.ExecuteTemplate(w, "auth-layout", authPage{Title: title, Screen: screen, CSRF: h.csrf, Error: errMsg}); err != nil {
+		h.log.Error("web: auth template render failed", "screen", screen, "error", err)
+	}
+}
+
+func (h *Handler) handleLoginForm(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.currentUser(r); ok {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	h.renderAuth(w, "login", "")
+}
+
+func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if !h.guard(w, r) {
+		return
+	}
+	if !h.loginLimit.Allowed() {
+		h.renderAuth(w, "login", "too many attempts — try again in a minute")
+		return
+	}
+	rec, err := h.store.GetAuth(r.Context())
+	user := r.FormValue("username")
+	pass := r.FormValue("password")
+	// Run the bcrypt compare even on a bad/missing record to avoid a timing oracle.
+	hash := "$2a$12$0000000000000000000000000000000000000000000000000000z"
+	if err == nil {
+		hash = rec.PasswordHash
+	}
+	if err != nil || user != rec.Username || !auth.CheckPassword(hash, pass) {
+		h.loginLimit.Fail()
+		h.renderAuth(w, "login", "invalid username or password")
+		return
+	}
+	h.loginLimit.Reset()
+	h.issueSession(w, rec.Username, rec.SessionSecret)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if !h.guard(w, r) {
+		return
+	}
+	h.clearSession(w)
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+func (h *Handler) handleSetupForm(w http.ResponseWriter, r *http.Request) {
+	if ok, _ := h.store.AuthConfigured(r.Context()); ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	h.renderAuth(w, "setup", "")
+}
+
+func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
+	if !h.guard(w, r) {
+		return
+	}
+	if ok, _ := h.store.AuthConfigured(r.Context()); ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	user := strings.TrimSpace(r.FormValue("username"))
+	pass := r.FormValue("password")
+	if user == "" {
+		h.renderAuth(w, "setup", "username is required")
+		return
+	}
+	if len(pass) < auth.MinPasswordLen {
+		h.renderAuth(w, "setup", fmt.Sprintf("password must be at least %d characters", auth.MinPasswordLen))
+		return
+	}
+	if pass != r.FormValue("confirm") {
+		h.renderAuth(w, "setup", "passwords do not match")
+		return
+	}
+	hash, err := auth.HashPassword(pass)
+	if err != nil {
+		h.renderAuth(w, "setup", "could not hash password")
+		return
+	}
+	secret, err := auth.NewSecret()
+	if err != nil {
+		h.renderAuth(w, "setup", "could not initialize session secret")
+		return
+	}
+	if err := h.store.SetAuthCredential(r.Context(), user, hash, secret); err != nil {
+		h.renderAuth(w, "setup", "could not save admin: "+err.Error())
+		return
+	}
+	h.issueSession(w, user, secret)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 // handleTransport switches an exit's active master↔exit transport (ADR-0025).

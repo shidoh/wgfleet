@@ -1038,3 +1038,16 @@ a:focus-visible,
   .topo-master { flex: 1 1 auto; }
   .topo-connector { display: none; }
 }
+
+/* ── Auth screens (login / setup) ─────────────────────────────────────── */
+.auth-screen { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.auth-card {
+  width: 100%; max-width: 380px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--r-card); padding: 30px 30px 34px; box-shadow: var(--card-shadow);
+}
+.auth-brand { font-size: var(--fs-logo); font-weight: 700; letter-spacing: -.5px; color: var(--text-strong); margin-bottom: 18px; }
+.auth-brand .dot { color: var(--green); }
+.auth-title { font-size: 18px; font-weight: 600; color: var(--text-strong); margin: 0 0 6px; }
+.auth-lead { font-size: var(--fs-body); color: var(--text-muted); margin: 0 0 18px; line-height: 1.5; }
+.auth-form { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
+.auth-form .btn { margin-top: 6px; justify-content: center; }

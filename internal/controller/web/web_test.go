@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -819,6 +820,87 @@ func TestFleetTopologyOmittedWithoutMaster(t *testing.T) {
 	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
 	if _, body := get(t, h, "/"); strings.Contains(body, "topo-panel") {
 		t.Error("topology panel should be omitted when there is no master")
+	}
+}
+
+func TestSetupCreatesAdminAndLogsIn(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	h, _ := New(st, nil, nil, nil, nil, testSessionTTL) // no admin seeded
+
+	// With no admin, "/" redirects to /setup.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Header().Get("Location") != "/setup" {
+		t.Fatalf("no-admin / -> %q; want /setup", rec.Header().Get("Location"))
+	}
+
+	// POST /setup creates the admin and sets a session cookie.
+	form := url.Values{"csrf_token": {h.csrf}, "username": {"admin"}, "password": {"hunter2hunter2"}, "confirm": {"hunter2hunter2"}}
+	req = httptest.NewRequest(http.MethodPost, "/setup", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /setup = %d; want 303", rec.Code)
+	}
+	var hasSession bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookie && c.Value != "" {
+			hasSession = true
+		}
+	}
+	if !hasSession {
+		t.Error("setup did not set a session cookie")
+	}
+	if ok, _ := st.AuthConfigured(context.Background()); !ok {
+		t.Error("setup did not persist the admin")
+	}
+}
+
+func TestLoginAndLogout(t *testing.T) {
+	h, st := newTestHandler(t, nil) // seeds admin "admin"/"test-password-123"
+	_ = st
+
+	bad := url.Values{"csrf_token": {h.csrf}, "username": {"admin"}, "password": {"wrong"}}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(bad.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code == http.StatusSeeOther {
+		t.Error("wrong password should not redirect to /")
+	}
+
+	good := url.Values{"csrf_token": {h.csrf}, "username": {"admin"}, "password": {"test-password-123"}}
+	req = httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(good.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("login = %d loc %q; want 303 /", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// Logout clears the cookie.
+	req = httptest.NewRequest(http.MethodPost, "/logout", nil)
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.Header.Set("X-CSRF-Token", h.csrf)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var cleared bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookie && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Error("logout did not clear the session cookie")
 	}
 }
 

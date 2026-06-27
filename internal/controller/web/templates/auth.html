@@ -1,0 +1,49 @@
+{{define "auth-layout"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — wgfleet</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-brand">wg<span class="dot">·</span>fleet</div>
+      {{if eq .Screen "login"}}{{template "login-body" .}}{{else}}{{template "setup-body" .}}{{end}}
+    </div>
+  </main>
+</body>
+</html>{{end}}
+
+{{define "login-body"}}
+  <h1 class="auth-title">Sign in</h1>
+  {{if .Error}}<p class="error-note" role="alert">⚠ {{.Error}}</p>{{end}}
+  <form class="auth-form" method="post" action="/login">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <label class="field"><span class="field-label">Username</span>
+      <input class="input" type="text" name="username" autocomplete="username" autofocus required></label>
+    <label class="field"><span class="field-label">Password</span>
+      <input class="input" type="password" name="password" autocomplete="current-password" required></label>
+    <button class="btn go" type="submit">Sign in</button>
+  </form>
+{{end}}
+
+{{define "setup-body"}}
+  <h1 class="auth-title">Create admin</h1>
+  <p class="auth-lead">First run — set the single admin account for this panel.</p>
+  {{if .Error}}<p class="error-note" role="alert">⚠ {{.Error}}</p>{{end}}
+  <form class="auth-form" method="post" action="/setup">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <label class="field"><span class="field-label">Username</span>
+      <input class="input" type="text" name="username" value="admin" autocomplete="username" autofocus required></label>
+    <label class="field"><span class="field-label">Password (min 12)</span>
+      <input class="input" type="password" name="password" autocomplete="new-password" required minlength="12"></label>
+    <label class="field"><span class="field-label">Confirm password</span>
+      <input class="input" type="password" name="confirm" autocomplete="new-password" required minlength="12"></label>
+    <button class="btn go" type="submit">Create admin</button>
+  </form>
+{{end}}
