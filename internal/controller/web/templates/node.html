@@ -1,20 +1,22 @@
 {{define "content"}}
 <div class="detail-head">
   <a class="back" href="/">← fleet</a>
-  <h1>{{.Node.Name}}</h1>
+  <h1 class="detail-title">{{.Node.Name}}</h1>
   <span class="role {{.Node.Role}}">{{.Node.Role}}</span>
-  <span class="badges">
-    <span class="badge {{lower .Node.State}}"><span class="led"></span>{{.Node.State}}</span>
-    {{if .Node.Drain}}<span class="badge draining" title="Manually taken out of the load balancer — no new traffic. The node is untouched; reverse instantly with “Resume routing”."><span class="led"></span>out of routing</span>{{end}}
-    {{if .Node.Decommission}}<span class="badge decommissioning"><span class="led"></span>decommissioning</span>{{end}}
-    {{if and .HasStatus .Status.EgressBlocked}}<span class="badge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
-    {{if and .HasStatus .Status.EgressThroughputDegraded}}<span class="badge draining" title="Egress throughput below the floor — auto-suspended from the load balancer (ADR-0021)"><span class="led"></span>low egress throughput</span>{{end}}
-    {{if .HasStatus}}{{$e := .Status.ActiveEgress}}{{if and $e (ne $e "warp")}}<span class="badge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{$e}}</span>{{end}}{{end}}
-    {{if .WireSkew}}<span class="badge blocked" title="{{.WireSkew}}"><span class="led"></span>version skew</span>{{end}}
+  <span class="state-pill {{lower .Node.State}}"><span class="led"></span>{{.Node.State}}</span>
+  {{if or .Node.Drain .Node.Decommission .WireSkew (and .HasStatus .Status.EgressBlocked) (and .HasStatus .Status.EgressThroughputDegraded) (and .HasStatus (ne .Status.ActiveEgress "") (ne .Status.ActiveEgress "warp"))}}
+  <span class="subbadges">
+    {{if .Node.Drain}}<span class="subbadge drain" title="Manually taken out of the load balancer — no new traffic. The node is untouched; reverse instantly with “Resume routing”."><span class="led"></span>out of routing</span>{{end}}
+    {{if .Node.Decommission}}<span class="subbadge decommission"><span class="led"></span>decommissioning</span>{{end}}
+    {{if and .HasStatus .Status.EgressBlocked}}<span class="subbadge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
+    {{if and .HasStatus .Status.EgressThroughputDegraded}}<span class="subbadge slow" title="Egress throughput below the floor — auto-suspended from the load balancer (ADR-0021)"><span class="led"></span>low egress throughput</span>{{end}}
+    {{if .HasStatus}}{{$e := .Status.ActiveEgress}}{{if and $e (ne $e "warp")}}<span class="subbadge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{$e}}</span>{{end}}{{end}}
+    {{if .WireSkew}}<span class="subbadge blocked" title="{{.WireSkew}}"><span class="led"></span>version skew</span>{{end}}
   </span>
+  {{end}}
 </div>
 
-<div class="toolbar">
+<div class="action-bar">
   {{if .CanProvision}}
   <form method="post" action="/nodes/{{.Node.ID}}/provision" onsubmit="return lockAction(this)"
         data-confirm="Provision {{.Node.Name}}? SSH-bootstrap the node and install the agent.">
@@ -40,10 +42,10 @@
   <form method="post" action="/nodes/{{.Node.ID}}/drain" onsubmit="return lockAction(this)"
         data-confirm="Take {{.Node.Name}} out of routing? New traffic stops going to it (for a flaky node). The node is NOT changed or wiped, and it is applied by hot-reloading mihomo so other clients keep their connections. Reverse instantly with “Resume routing”.">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-    <button type="submit" class="btn warn" data-pending="Taking out…" title="Temporarily pull this node out of routing (reversible; no node change).">Take out of routing</button>
+    <button type="submit" class="btn caution" data-pending="Taking out…" title="Temporarily pull this node out of routing (reversible; no node change).">Take out of routing</button>
   </form>
   {{end}}
-  <span class="toolbar-spacer"></span>
+  <span class="action-spacer"></span>
   {{if .Node.Decommission}}
   {{/* In-UI reverse of an accidental decommission: clear the flag, agent reconciles back. */}}
   <form method="post" action="/nodes/{{.Node.ID}}/recommission" onsubmit="return lockAction(this)">
@@ -54,129 +56,160 @@
   <form method="post" action="/nodes/{{.Node.ID}}/decommission" onsubmit="return lockAction(this)"
         data-confirm="Decommission {{.Node.Name}}? The agent will tear down its data plane (stop services, bring tunnels down).">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-    <button type="submit" class="btn warn" data-pending="Decommissioning…">Decommission</button>
+    <button type="submit" class="btn ghost-amber" data-pending="Decommissioning…">Decommission</button>
   </form>
   {{else}}
   {{/* Gated on Drain: tearing down a node still in the load balancer drops live
        client traffic. Drain first (the button above), then this enables. */}}
-  <button type="button" class="btn warn" disabled title="Take the node out of routing first (Drain), then decommission">Decommission</button>
+  <button type="button" class="btn ghost-amber" disabled title="Take the node out of routing first (Drain), then decommission">Decommission</button>
   {{end}}
   {{if .CanDelete}}
   <form method="post" action="/nodes/{{.Node.ID}}/delete" onsubmit="return lockAction(this)"
         data-confirm="Delete {{.Node.Name}} from inventory? It has been decommissioned; this removes it permanently.">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-    <button type="submit" class="btn danger" data-pending="Deleting…">Delete</button>
+    <button type="submit" class="btn ghost-red" data-pending="Deleting…">Delete</button>
   </form>
   {{else}}
   {{/* Delete is gated on Decommission: enforce the drain→decommission→delete order
        the copy implies, not just a confirm() the operator can blow past. */}}
-  <button type="button" class="btn danger" disabled title="Decommission and tear down first">Delete</button>
+  <button type="button" class="btn ghost-red" disabled title="Decommission and tear down first">Delete</button>
   {{end}}
 </div>
 
 {{if .Flash}}<p class="error-note" role="alert">⚠ {{.Flash}}</p>{{end}}
 {{if .Node.LastError}}<p class="error-note">⚠ {{.Node.LastError}}</p>{{end}}
 
-<div class="grid">
-  <div class="card" hx-get="/nodes/{{.Node.ID}}/status" hx-trigger="every 5s [document.visibilityState=='visible']" hx-swap="innerHTML">
+{{if eq (lower .Node.Role) "master"}}
+<div class="panels cols-2">
+  <div class="panel" hx-get="/nodes/{{.Node.ID}}/status" hx-trigger="every 5s [document.visibilityState=='visible']" hx-swap="innerHTML">
     {{template "node-status" .}}
   </div>
-
-  {{if .Transports}}
-  <div class="card">
-    <h2>Transport</h2>
-    {{if gt (len .Transports) 1}}
-    <p class="hint">Active master↔exit link. Switching moves the proxy in/out of the
-      load balancer via mihomo hot-reload — existing client connections are not dropped.</p>
-    <div class="switch" role="group" aria-label="Active master↔exit transport">
-      {{range .Transports}}
-      {{$on := eq .OrDefault $.ActiveTransport}}
-      <form method="post" action="/nodes/{{$.Node.ID}}/transport/{{.}}" onsubmit="return lockAction(this)"
-            data-confirm="Switch {{$.Node.Name}} to {{transportLabel .}}? This re-renders the master and hot-reloads mihomo — active connections survive, new traffic moves to the new transport.">
-        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-        <button type="submit" class="seg {{if $on}}on{{end}}" {{if $on}}disabled{{end}}
-                aria-pressed="{{if $on}}true{{else}}false{{end}}"{{if $on}} aria-current="true"{{end}}
-                data-pending="Switching…"
-                title="Route master↔exit traffic over {{transportLabel .}}">
-          {{transportLabel .}}{{if $on}} <span class="dotmark">●</span>{{end}}
-        </button>
-      </form>
-      {{end}}
-    </div>
-    {{else}}
-    <dl class="kv"><dt>Active</dt><dd>{{transportLabel .ActiveTransport}}</dd></dl>
-    {{end}}
-    {{if .RealityInfo}}
-    <dl class="kv" style="margin-top:1rem">
-      <dt>REALITY SNI</dt><dd>{{.RealityInfo.ServerName}}</dd>
-      <dt>Listen port</dt><dd>{{.RealityInfo.ListenPort}} / tcp</dd>
-      <dt>Camouflage</dt><dd class="dim">{{.RealityInfo.Dest}}</dd>
-    </dl>
-    {{end}}
+  {{template "inventory-panel" .}}
+</div>
+{{else if .Transports}}
+<div class="panels cols-3">
+  <div class="panel" hx-get="/nodes/{{.Node.ID}}/status" hx-trigger="every 5s [document.visibilityState=='visible']" hx-swap="innerHTML">
+    {{template "node-status" .}}
   </div>
+  {{template "transport-panel" .}}
+  {{template "inventory-panel" .}}
+</div>
+{{else}}
+<div class="panels cols-2">
+  <div class="panel" hx-get="/nodes/{{.Node.ID}}/status" hx-trigger="every 5s [document.visibilityState=='visible']" hx-swap="innerHTML">
+    {{template "node-status" .}}
+  </div>
+  {{template "inventory-panel" .}}
+</div>
+{{end}}
+
+<details class="spec">
+  <summary class="spec-toggle">RENDERED NODESPEC (DESIRED STATE)</summary>
+  {{if .SpecErr}}
+  <p class="error-note">{{.SpecErr}}</p>
+  {{else}}
+  <pre class="spec-pre">{{.SpecText}}</pre>
   {{end}}
+</details>
+{{end}}
 
-  <div class="card">
-    <h2>Inventory</h2>
-    <dl class="kv">
-      <dt>ID</dt><dd>{{.Node.ID}}</dd>
-      <dt>Region</dt><dd class="dim">{{or .Node.Region "—"}}</dd>
-      <dt>Mgmt (ZT)</dt><dd>{{or .Node.MgmtAddr "—"}}</dd>
-      <dt>Public IP</dt><dd>{{or .Node.PublicIP "—"}}</dd>
-      <dt>Public key</dt><dd class="dim">{{or .Node.PublicKey "— (not registered)"}}</dd>
-      {{if .Node.RealityPublicKey}}<dt>REALITY key</dt><dd class="dim">{{.Node.RealityPublicKey}}</dd>{{end}}
-      <dt>Agent</dt><dd class="dim">{{if .Node.AgentVersion}}{{.Node.AgentVersion}} (wire v{{.Node.WireVersion}}){{else}}— (not reported){{end}}</dd>
-      <dt>Created</dt><dd class="dim">{{absTime .Node.CreatedAt}}</dd>
-      <dt>Last seen</dt><dd class="dim">{{relTime .Node.LastSeen}}</dd>
-      {{if .MetricsURL}}<dt>Metrics</dt><dd><a class="extlink" href="{{.MetricsURL}}" target="_blank" rel="noopener noreferrer">Prometheus /metrics ↗</a></dd>{{end}}
-      {{if .WGEasyURL}}<dt>wg-easy</dt><dd><a class="extlink" href="{{.WGEasyURL}}" target="_blank" rel="noopener noreferrer">client admin UI ↗</a></dd>{{end}}
-      {{if .MihomoURL}}<dt>mihomo</dt><dd><a class="extlink" href="{{.MihomoURL}}" target="_blank" rel="noopener noreferrer">router dashboard ↗</a></dd>{{end}}
-    </dl>
-  </div>
-
-  <details class="card full spec-card">
-    <summary><h2>Rendered NodeSpec (desired state)</h2></summary>
-    {{if .SpecErr}}
-    <p class="error-note">{{.SpecErr}}</p>
-    {{else}}
-    <pre class="spec">{{.SpecText}}</pre>
+{{/* Transport panel — exit only, and only when the exit runs at least one
+     transport. The segmented control is rendered from the same per-transport
+     action forms as before (CSRF + lockAction + confirm preserved). */}}
+{{define "transport-panel"}}
+<div class="panel">
+  <div class="panel-head"><span class="panel-label">TRANSPORT</span></div>
+  {{if gt (len .Transports) 1}}
+  <p class="panel-note">Active master↔exit link. Switching moves the proxy in/out of the
+    load balancer via mihomo hot-reload — existing client connections are not dropped.</p>
+  <div class="seg-toggle" role="group" aria-label="Active master↔exit transport">
+    {{range .Transports}}
+    {{$on := eq .OrDefault $.ActiveTransport}}
+    <form method="post" action="/nodes/{{$.Node.ID}}/transport/{{.}}" onsubmit="return lockAction(this)"
+          data-confirm="Switch {{$.Node.Name}} to {{transportLabel .}}? This re-renders the master and hot-reloads mihomo — active connections survive, new traffic moves to the new transport.">
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+      <button type="submit" class="seg {{if $on}}on{{end}}" {{if $on}}disabled{{end}}
+              aria-pressed="{{if $on}}true{{else}}false{{end}}"{{if $on}} aria-current="true"{{end}}
+              data-pending="Switching…"
+              title="Route master↔exit traffic over {{transportLabel .}}">
+        {{transportLabel .}}{{if and $on (eq (transportSlug .) "reality")}}<span class="seg-dot" aria-hidden="true"></span>{{end}}
+      </button>
+    </form>
     {{end}}
-  </details>
+  </div>
+  {{else}}
+  <dl class="kv"><dt>Active</dt><dd class="strong">{{transportLabel .ActiveTransport}}</dd></dl>
+  {{end}}
+  {{if .RealityInfo}}
+  <dl class="kv">
+    <dt>REALITY SNI</dt><dd>{{.RealityInfo.ServerName}}</dd>
+    <dt>Listen port</dt><dd>{{.RealityInfo.ListenPort}} / tcp</dd>
+    <dt>Camouflage</dt><dd class="dim">{{.RealityInfo.Dest}}</dd>
+  </dl>
+  {{end}}
+</div>
+{{end}}
+
+{{define "inventory-panel"}}
+<div class="panel">
+  <div class="panel-head"><span class="panel-label">INVENTORY</span></div>
+  <dl class="kv">
+    <dt>ID</dt><dd class="strong">{{.Node.ID}}</dd>
+    <dt>Region</dt><dd class="dim">{{or .Node.Region "—"}}</dd>
+    <dt>Mgmt (ZT)</dt><dd>{{or .Node.MgmtAddr "—"}}</dd>
+    <dt>Public IP</dt><dd>{{or .Node.PublicIP "—"}}</dd>
+    <dt>Public key</dt><dd class="dim">{{or .Node.PublicKey "— (not registered)"}}</dd>
+    {{if .Node.RealityPublicKey}}<dt>REALITY key</dt><dd class="dim">{{.Node.RealityPublicKey}}</dd>{{end}}
+    <dt>Agent</dt><dd class="dim">{{if .Node.AgentVersion}}{{.Node.AgentVersion}} (wire v{{.Node.WireVersion}}){{else}}— (not reported){{end}}</dd>
+    <dt>Created</dt><dd class="dim">{{absTime .Node.CreatedAt}}</dd>
+    <dt>Last seen</dt><dd class="dim">{{relTime .Node.LastSeen}}</dd>
+  </dl>
+  {{if or .MetricsURL .WGEasyURL .MihomoURL}}
+  <div class="rule"></div>
+  <dl class="kv">
+    {{if .MetricsURL}}<dt>Metrics</dt><dd><a class="extlink" href="{{.MetricsURL}}" target="_blank" rel="noopener noreferrer">Prometheus /metrics ↗</a></dd>{{end}}
+    {{if .WGEasyURL}}<dt>wg-easy</dt><dd><a class="extlink" href="{{.WGEasyURL}}" target="_blank" rel="noopener noreferrer">client admin UI ↗</a></dd>{{end}}
+    {{if .MihomoURL}}<dt>mihomo</dt><dd><a class="extlink" href="{{.MihomoURL}}" target="_blank" rel="noopener noreferrer">router dashboard ↗</a></dd>{{end}}
+  </dl>
+  {{end}}
 </div>
 {{end}}
 
 {{/* Status card body — re-fetched on its own by htmx so the triage page stays
      live without reloading the whole detail page. */}}
 {{define "node-status"}}
-<h2>Status <span class="live" title="Auto-refreshing every 5s"><span class="pulse"></span>live</span></h2>
+<div class="panel-head">
+  <span class="panel-label">STATUS</span>
+  <span class="live" title="Auto-refreshing every 5s"><span class="statusdot pulse"></span>LIVE</span>
+</div>
 {{if .HasStatus}}
 <dl class="kv">
-  <dt>State</dt><dd>{{.Status.State}}</dd>
+  <dt>State</dt><dd class="strong">{{.Status.State}}</dd>
   {{if eq (lower .Node.Role) "exit"}}<dt>Egress IP</dt><dd>{{or .Status.EgressIP "—"}}</dd>{{end}}
   <dt>Last handshake</dt><dd class="dim">{{relTime .Status.LastHandshake}}</dd>
   <dt>Reported</dt><dd class="dim">{{relTime .Status.ReportedAt}}</dd>
 </dl>
 {{if .Status.ReconcileError}}<p class="error-note">{{.Status.ReconcileError}}</p>{{end}}
 {{if .Status.Checks}}
-<div class="subhead">Health checks</div>
+<div class="panel-sublabel">HEALTH CHECKS</div>
 <ul class="checks">
   {{range .Status.Checks}}
   <li aria-label="{{.Name}}: {{if .OK}}pass{{else}}fail{{end}}">
-    <span class="cmark {{if .OK}}ok{{else}}bad{{end}}" aria-hidden="true">{{if .OK}}✓{{else}}✗{{end}}</span>
-    <span class="cname">{{.Name}}</span>
-    {{if or .Detail .Latency}}<span class="cdetail">{{.Detail}}{{if and .Detail .Latency}} · {{end}}{{if .Latency}}{{.Latency}}{{end}}</span>{{end}}
+    <span class="check-mark {{if .OK}}ok{{else}}bad{{end}}" aria-hidden="true">{{if .OK}}✓{{else}}✗{{end}}</span>
+    <span class="check-name">{{.Name}}</span>
+    {{if or .Detail .Latency}}<span class="check-meta">{{.Detail}}{{if and .Detail .Latency}} · {{end}}{{if .Latency}}{{.Latency}}{{end}}</span>{{end}}
   </li>
   {{end}}
 </ul>
 {{end}}
 {{if .Status.ExitHealth}}
-<div class="subhead">Exit tunnels</div>
+<div class="panel-sublabel">EXIT TUNNELS</div>
 <ul class="checks">
   {{range .Status.ExitHealth}}
   <li aria-label="{{.Name}}: {{if .Alive}}up{{else}}down{{end}}">
-    <span class="cmark {{if .Alive}}ok{{else}}bad{{end}}" aria-hidden="true">{{if .Alive}}✓{{else}}✗{{end}}</span>
-    <span class="cname">{{.Name}}</span>
-    <span class="cdetail">{{if .Selected}}● carrying{{end}}{{if .Delay}}{{if .Selected}} · {{end}}{{.Delay}}{{end}}{{if not .LastTest.IsZero}} · tested {{relTime .LastTest}}{{end}}</span>
+    <span class="check-mark {{if .Alive}}ok{{else}}bad{{end}}" aria-hidden="true">{{if .Alive}}✓{{else}}✗{{end}}</span>
+    <span class="check-name">{{.Name}}</span>
+    <span class="check-meta">{{if .Selected}}<span class="check-carry" aria-hidden="true">●</span> carrying{{end}}{{if .Delay}}{{if .Selected}} · {{end}}{{.Delay}}{{end}}{{if not .LastTest.IsZero}} · tested {{relTime .LastTest}}{{end}}</span>
   </li>
   {{end}}
 </ul>

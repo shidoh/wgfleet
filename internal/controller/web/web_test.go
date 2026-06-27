@@ -73,7 +73,7 @@ func TestIndexListsNodesWithStates(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", res.StatusCode)
 	}
-	for _, want := range []string{"exit-de-1", "master-xa-1", "wg", "fleet", `badge ready`, `badge reconciling`, "Ready", "Reconciling"} {
+	for _, want := range []string{"exit-de-1", "master-xa-1", "wg", "fleet", `state-pill ready`, `state-pill reconciling`, "Ready", "Reconciling"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("index body missing %q", want)
 		}
@@ -133,7 +133,7 @@ func TestNodeDetailWithStatusAndSpec(t *testing.T) {
 	for _, want := range []string{
 		"exit-de-1", "198.51.100.7", // inventory
 		"104.16.0.1", "warp-egress", "cloudflare", // status + checks
-		"cmark ok", "cmark bad", // check verdict glyphs (shape, not colour-only)
+		"check-mark ok", "check-mark bad", // check verdict glyphs (shape, not colour-only)
 		`aria-label="warp-egress: pass"`, `aria-label="dns: fail"`, // accessible verdict
 		"role:    exit", "egress:  warp", "[wg server]", "address pool: 10.81.0.0/24", // rendered spec preview
 	} {
@@ -271,7 +271,7 @@ func TestNodeStatusPartial(t *testing.T) {
 	if strings.Contains(body, "<header") || strings.Contains(body, "<!doctype") {
 		t.Error("status partial must be a fragment, not the full page")
 	}
-	for _, want := range []string{"warp-egress", "cloudflare", "Health checks", "live"} {
+	for _, want := range []string{"warp-egress", "cloudflare", "HEALTH CHECKS", "LIVE"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("status partial missing %q", want)
 		}
@@ -432,7 +432,7 @@ func TestDetailShowsDrainButton(t *testing.T) {
 	if !strings.Contains(body, `action="/nodes/exit-de-1/undrain"`) {
 		t.Error("drained node should show undrain action")
 	}
-	if !strings.Contains(body, "badge draining") {
+	if !strings.Contains(body, "subbadge drain") {
 		t.Error("drained node should show draining badge")
 	}
 }
@@ -495,7 +495,7 @@ func TestDecommissionAction(t *testing.T) {
 		t.Error("decommission action did not set the flag")
 	}
 	_, body := get(t, h, "/nodes/exit-de-1")
-	if !strings.Contains(body, "badge decommissioning") {
+	if !strings.Contains(body, "subbadge decommission") {
 		t.Error("decommissioning node should show the badge")
 	}
 }
@@ -675,7 +675,7 @@ func TestTransportSwitchAction(t *testing.T) {
 
 	_, body := get(t, h, "/nodes/exit-de-1")
 	for _, want := range []string{
-		"Transport", "AmneziaWG", "REALITY", "www.microsoft.com",
+		"TRANSPORT", "AmneziaWG", "REALITY", "www.microsoft.com",
 		"/nodes/exit-de-1/transport/reality-xhttp",
 	} {
 		if !strings.Contains(body, want) {
@@ -722,7 +722,7 @@ func TestListShowsTransportAndMgmt(t *testing.T) {
 	h, st := newTestHandler(t, stubRenderer{spec: spec})
 	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady, MgmtAddr: "10.20.3.22"})
 	_, body := get(t, h, "/")
-	for _, want := range []string{"10.20.3.22" /* mgmt col back */, "REALITY" /* active transport */, "Mgmt (ZT)"} {
+	for _, want := range []string{"10.20.3.22" /* mgmt col back */, "REALITY" /* active transport */, "MGMT (ZT)"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("fleet list missing %q:\n%s", want, body)
 		}
@@ -741,10 +741,48 @@ func TestMasterDetailShowsExitTunnelHealth(t *testing.T) {
 	})
 
 	_, body := get(t, h, "/nodes/master-xa-1")
-	for _, want := range []string{"Exit tunnels", "exit-de-1", "exit-nl-1", "carrying", "cmark ok", "cmark bad"} {
+	for _, want := range []string{"EXIT TUNNELS", "exit-de-1", "exit-nl-1", "carrying", "check-mark ok", "check-mark bad"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("master detail missing %q", want)
 		}
+	}
+}
+
+// TestFleetTopology covers the fleet-list topology panel: it derives the carrying
+// exit and per-exit latency from the master's ExitHealth report, formats latency
+// the way the design shows it, and flags a slow path amber.
+func TestFleetTopology(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, MgmtAddr: "10.20.3.10", State: domain.StateReady})
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, Region: "de", State: domain.StateReady})
+	seed(t, st, domain.Node{ID: "exit-nl-1", Name: "exit-nl-1", Role: domain.RoleExit, Region: "nl", State: domain.StateReady})
+	// The master's view of the two tunnels: de carries traffic at 107ms; nl is slow.
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "master-xa-1", State: domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{
+			{Name: "exit-de-1-reality", Alive: true, Delay: 107 * time.Millisecond, Selected: true},
+			{Name: "exit-nl-1-reality", Alive: true, Delay: 1088 * time.Millisecond},
+		},
+	})
+
+	_, body := get(t, h, "/")
+	for _, want := range []string{
+		"topo-panel", "master-xa-1", "balancing 2 exits", // master card
+		"pill-carrying", "CARRYING", "107ms", // carrying exit (de)
+		`topo-exit-lat slow`, "1.088s", // slow exit (nl), formatted as seconds
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("fleet topology missing %q", want)
+		}
+	}
+}
+
+// TestFleetTopologyOmittedWithoutMaster: no master ⇒ no topology panel.
+func TestFleetTopologyOmittedWithoutMaster(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+	if _, body := get(t, h, "/"); strings.Contains(body, "topo-panel") {
+		t.Error("topology panel should be omitted when there is no master")
 	}
 }
 
@@ -752,7 +790,7 @@ func TestExitNodeHasNoExitTunnelCard(t *testing.T) {
 	h, st := newTestHandler(t, stubRenderer{spec: domain.NodeSpec{Role: domain.RoleExit}})
 	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
 	_ = st.RecordStatus(context.Background(), domain.NodeStatus{NodeID: "exit-de-1", State: domain.StateReady})
-	if _, body := get(t, h, "/nodes/exit-de-1"); strings.Contains(body, "Exit tunnels") {
+	if _, body := get(t, h, "/nodes/exit-de-1"); strings.Contains(body, "EXIT TUNNELS") {
 		t.Error("an exit node must not show the Exit tunnels section")
 	}
 }

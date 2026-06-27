@@ -4,39 +4,22 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}} — wgfleet</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
-  <script>
-    // lockAction gates an action form, then locks its submit button so a slow ZT
-    // link can't be double-submitted. confirm() (from the form's data-confirm) runs
-    // FIRST and short-circuits on cancel; only once it passes do we let the native
-    // submit proceed and disable the button on the next tick (a disabled button
-    // won't submit, so we must disable AFTER submission has started).
-    function lockAction(form) {
-      var msg = form.getAttribute('data-confirm');
-      if (msg && !window.confirm(msg)) return false;
-      var btn = form.querySelector('button[type="submit"], button:not([type])');
-      if (btn) {
-        var pending = btn.getAttribute('data-pending') || 'Working…';
-        setTimeout(function () { btn.disabled = true; btn.textContent = pending; }, 0);
-      }
-      return true; // allow native submit
-    }
-  </script>
+  <script src="/static/app.js" defer></script>
 </head>
 <body>
   <header class="topbar">
-    <div class="shell">
-      <span class="brand">wg<span class="dot">·</span>fleet</span>
-      <span class="meta">control plane</span>
-      <span class="spacer"></span>
-      <span class="meta">{{.NodeCount}} node{{if ne .NodeCount 1}}s{{end}}</span>
-    </div>
+    <span class="wordmark">wg<span class="dot">·</span>fleet</span>
+    <span class="tagline">control plane</span>
+    <span class="spacer"></span>
+    <span class="nodecount"><span class="statusdot pulse"></span>{{.NodeCount}} node{{if ne .NodeCount 1}}s{{end}}</span>
   </header>
-  <main>
-    <div class="shell">
-      {{template "content" .}}
-    </div>
+  <main class="shell">
+    {{template "content" .}}
   </main>
 </body>
 </html>{{end}}

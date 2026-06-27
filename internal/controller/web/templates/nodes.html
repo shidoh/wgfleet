@@ -1,40 +1,24 @@
 {{define "content"}}
 {{if .Flash}}<p class="error-note" role="alert">⚠ {{.Flash}}</p>{{end}}
-<section class="summary">
-  {{range .Summary}}
-  <div class="stat {{.Class}}{{if eq .Count 0}} zero{{end}}">
-    <div class="n">{{.Count}}</div>
-    <div class="l">{{.Label}}</div>
-  </div>
-  {{end}}
-</section>
-
-<div class="section-title">
-  Fleet <span class="count">{{.NodeCount}}</span>
-  <span class="live"><span class="pulse"></span>live</span>
-</div>
 
 <div hx-get="/partials/nodes" hx-trigger="every 5s [document.visibilityState=='visible']" hx-swap="innerHTML">
   {{template "nodes-table" .}}
 </div>
 
 <details class="backup-section">
-  <summary class="backup-summary">Backup &amp; migrate</summary>
+  <summary class="backup-summary">BACKUP &amp; MIGRATE</summary>
   <div class="backup-card">
     <p class="backup-lead">One <code>age</code>-encrypted archive of everything irreplaceable — node inventory, CA, manifest, and this master's wg-easy clients. Restore it after a loss, or migrate the controller to a fresh node.</p>
     <form class="backup-form" method="post" action="/backup">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <label class="field">
-        <span class="field-label">age recipient</span>
+      <div class="field-label">AGE RECIPIENT</div>
+      <div class="field">
         <input class="input" type="text" name="recipient" placeholder="age1q…" spellcheck="false" autocapitalize="off" autocomplete="off" required>
-      </label>
-      <button class="btn go" type="submit">
-        <svg class="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-        Download backup
-      </button>
+        <button class="btn go" type="submit">↓ Download backup</button>
+      </div>
     </form>
     <p class="backup-warn">
-      <svg class="warn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>
+      <span class="warn-ico" aria-hidden="true">⚷</span>
       <span>The archive holds the <strong>CA key</strong> and <strong>every client key</strong>. It is sealed to your recipient — store it like a secret. No recipient on the CLI? <code>--backup</code> falls back to a passphrase.</span>
     </p>
     <p class="backup-restore">Restoring is CLI-only (it must run with the controller stopped): <code>wgfleet-controller --restore &lt;archive&gt; --plan</code>, then without <code>--plan</code>.</p>
@@ -43,51 +27,106 @@
 {{end}}
 
 {{define "nodes-table"}}
-{{if .Nodes}}
-<div class="table-wrap">
-<table class="nodes">
-  <thead>
-    <tr>
-      <th>Node</th><th>Role</th><th>Region</th><th>State</th>
-      <th class="col-transport">Transport</th><th>Mgmt (ZT)</th><th>Address</th>
-      <th class="col-seen" title="Age of the latest WireGuard handshake — data-plane liveness">Handshake</th>
-      <th class="col-seen" title="Age of the latest agent status report">Seen</th>
-    </tr>
-  </thead>
-  <tbody>
-    {{range .Nodes}}
-    <tr class="row-{{lower .State}}">
-      <td class="name"><a href="/nodes/{{.ID}}">{{.Name}}</a></td>
-      <td><span class="role {{.Role}}">{{.Role}}</span></td>
-      <td class="mono">{{or .Region "—"}}</td>
-      <td>
-        <span class="subbadges">
-          <span class="badge {{lower .State}}"><span class="led"></span>{{.State}}</span>
-          {{if .Drain}}<span class="badge draining" title="Manually taken out of the load balancer — no new traffic. The node is untouched; reverse instantly with “Resume routing”."><span class="led"></span>out of routing</span>{{end}}
-          {{if .EgressBlocked}}<span class="badge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
-          {{if .ActiveEgress}}<span class="badge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{.ActiveEgress}}</span>{{end}}
-          {{if .LowThroughput}}<span class="badge draining" title="Egress throughput below floor — auto-suspended (ADR-0021)"><span class="led"></span>low throughput</span>{{end}}
-          {{if .Decommission}}<span class="badge decommissioning"><span class="led"></span>decommissioning</span>{{end}}
-        </span>
-      </td>
-      <td class="col-transport">
-        {{if eq (lower .Role) "exit"}}
-          <span class="chip {{lower .Transport}}" title="Active master↔exit transport{{if .DualTransport}} (switchable on the node page){{end}}">{{transportLabel .Transport}}{{if .DualTransport}} ⇄{{end}}</span>
-        {{else}}<span class="mono">—</span>{{end}}
-      </td>
-      <td class="mono">{{or .MgmtAddr "—"}}</td>
-      <td>
-        <div class="ipcell">
-          <span class="ip-tag">public</span><span class="ip-val" title="Node public IP">{{or .PublicIP "—"}}</span>
-          {{if and (eq (lower .Role) "exit") .EgressIP (ne .EgressIP .PublicIP)}}<span class="ip-tag">warp</span><span class="ip-val warp" title="Actual egress IP (Cloudflare WARP)">{{.EgressIP}}</span>{{end}}
+<section class="summary">
+  {{range .Summary}}
+  <div class="chip-stat {{.Class}}{{if eq .Count 0}} is-zero{{end}}{{if and (eq .Class "ready") (gt .Count 0)}} is-active{{end}}">
+    <div class="num">{{.Count}}</div>
+    <div class="lbl">{{.Label}}</div>
+  </div>
+  {{end}}
+</section>
+
+{{with .Topology}}
+<div class="section-head">
+  <span class="section-label">TOPOLOGY</span>
+  <span class="section-sub">master ↔ exit routing · mihomo load balancer</span>
+</div>
+<div class="topo-panel">
+  <div class="topo-stage">
+    <div class="topo-master">
+      <span class="badge-master">MASTER</span>
+      <div class="topo-master-name">{{.MasterName}}</div>
+      <div class="topo-master-meta">{{.MasterMgmt}}{{if .MasterRegion}} · {{.MasterRegion}}{{end}}</div>
+      <div class="topo-master-bal"><span class="statusdot"></span>balancing {{.Balancing}} exit{{if ne .Balancing 1}}s{{end}}</div>
+    </div>
+    {{/* Connector column: fan-out lines from the master (left) to each exit card
+         (right). Coords overshoot the 56px channel so they touch the blocks; the
+         carrying line is green + animated. Hidden on mobile (the lines are
+         meaningless once the layout stacks). */}}
+    <div class="topo-connector">
+      <svg class="topo-svg" aria-hidden="true">
+        {{range .Exits}}
+        <line x1="-32%" y1="50%" x2="132%" y2="{{.LineY}}" class="{{if .Carrying}}flow{{else}}static-line{{end}}"></line>
+        {{end}}
+        <circle class="master-node" cx="-32%" cy="50%" r="4"></circle>
+      </svg>
+    </div>
+    <div class="topo-exits">
+      {{range .Exits}}
+      <div class="topo-exit{{if .Carrying}} carrying{{end}}" data-carrying="{{if .Carrying}}true{{else}}false{{end}}">
+        <div>
+          <div class="topo-exit-name">{{.Name}}{{if .Carrying}}<span class="pill-carrying">CARRYING</span>{{end}}</div>
+          <div class="topo-exit-meta">{{.Region}}{{if and .Region .EgressIP}} · {{end}}{{.EgressIP}}</div>
         </div>
-      </td>
-      <td class="mono col-seen">{{if and .HasStatus (not .LastHandshake.IsZero)}}{{relTime .LastHandshake}}{{else}}—{{end}}</td>
-      <td class="mono col-seen">{{relTime .LastSeen}}</td>
-    </tr>
-    {{end}}
-  </tbody>
-</table>
+        <div class="topo-exit-right">
+          {{if .Latency}}<div class="topo-exit-lat{{if .Slow}} slow{{end}}">{{.Latency}}</div>{{end}}
+          <div class="topo-exit-xport">{{transportLabel .Transport}}</div>
+        </div>
+      </div>
+      {{end}}
+    </div>
+  </div>
+</div>
+{{end}}
+
+<div class="section-head">
+  <span class="section-label">FLEET</span>
+  <span class="section-sub">{{len .Nodes}}</span>
+  <span class="spacer"></span>
+  <span class="live"><span class="statusdot pulse"></span>LIVE</span>
+</div>
+
+{{if .Nodes}}
+<div class="fleet-table">
+  <div class="fleet-scroll">
+  <div class="fleet-track">
+  <div class="fleet-thead fleet-grid">
+    <div>NODE</div><div>ROLE</div><div>REGION</div><div>STATE</div>
+    <div>TRANSPORT</div><div>MGMT (ZT)</div><div>ADDRESS</div><div>HANDSHAKE</div><div>SEEN</div>
+  </div>
+  {{range .Nodes}}
+  <a class="fleet-row fleet-grid" href="/nodes/{{.ID}}">
+    <div class="cell-node">{{.Name}}</div>
+    <div><span class="role {{.Role}}">{{.Role}}</span></div>
+    <div class="cell-region">{{or .Region "—"}}</div>
+    <div>
+      <span class="state-pill {{lower .State}}"><span class="led"></span>{{.State}}</span>
+      {{if or .Drain .EgressBlocked .ActiveEgress .LowThroughput .Decommission}}
+      <span class="subbadges">
+        {{if .Drain}}<span class="subbadge drain" title="Manually taken out of the load balancer — no new traffic. The node is untouched; reverse instantly with “Resume routing”."><span class="led"></span>out of routing</span>{{end}}
+        {{if .EgressBlocked}}<span class="subbadge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
+        {{if .ActiveEgress}}<span class="subbadge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{.ActiveEgress}}</span>{{end}}
+        {{if .LowThroughput}}<span class="subbadge slow" title="Egress throughput below floor — auto-suspended (ADR-0021)"><span class="led"></span>low throughput</span>{{end}}
+        {{if .Decommission}}<span class="subbadge decommission"><span class="led"></span>decommissioning</span>{{end}}
+      </span>
+      {{end}}
+    </div>
+    <div>
+      {{if eq (lower .Role) "exit"}}
+        <span class="xport {{transportSlug .Transport}}" title="Active master↔exit transport{{if .DualTransport}} (switchable on the node page){{end}}">{{transportLabel .Transport}}{{if .DualTransport}} ⇄{{end}}</span>
+      {{else}}<span class="cell-dash">—</span>{{end}}
+    </div>
+    <div class="cell-mgmt">{{or .MgmtAddr "—"}}</div>
+    <div class="addr">
+      <span class="addr-tag">PUBLIC</span><span class="addr-val" title="Node public IP">{{or .PublicIP "—"}}</span>
+      {{if and (eq (lower .Role) "exit") .EgressIP (ne .EgressIP .PublicIP)}}<span class="addr-tag">WARP</span><span class="addr-val warp" title="Actual egress IP (Cloudflare WARP)">{{.EgressIP}}</span>{{end}}
+    </div>
+    <div class="cell-dash">{{if and .HasStatus (not .LastHandshake.IsZero)}}{{relTime .LastHandshake}}{{else}}—{{end}}</div>
+    <div class="cell-seen">{{relTime .LastSeen}}</div>
+  </a>
+  {{end}}
+  </div>
+  </div>
 </div>
 {{else}}
 <div class="empty">No nodes registered yet. Provision one with <code>wgfleet-controller --provision &lt;node&gt;</code>.</div>

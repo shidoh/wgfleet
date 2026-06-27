@@ -373,9 +373,40 @@ type listData struct {
 	NodeCount int
 	Nodes     []nodeRow
 	Summary   []stateStat
-	Flash     string // one-shot error surfaced from a failed action redirect
-	CSRF      string // CSRF token for the backup-export form
+	Topology  *topology // master↔exit routing picture; nil when there is no master
+	Flash     string    // one-shot error surfaced from a failed action redirect
+	CSRF      string    // CSRF token for the backup-export form
 }
+
+// topology is the master↔exit routing picture shown on the fleet list: the master
+// load balancer and the exits it balances, with each exit's live url-test latency
+// and which one currently carries traffic. It is derived from the master's latest
+// status report (ExitHealth, mihomo's view of the tunnels). nil when there is no
+// master node, so the template omits the panel.
+type topology struct {
+	MasterName   string
+	MasterMgmt   string
+	MasterRegion string
+	Balancing    int        // number of exits the master is balancing
+	Exits        []topoExit // in fleet-list order
+}
+
+// topoExit is one exit card in the topology diagram.
+type topoExit struct {
+	Name      string
+	Region    string
+	EgressIP  string
+	Transport domain.MasterTransport
+	Carrying  bool   // currently selected by the master's wg-best load balancer
+	Latency   string // preformatted url-test delay ("107ms" / "1.088s"); "" if unknown
+	Slow      bool   // latency above the slow threshold → render amber
+	LineY     string // topology connector endpoint Y ("16%"), evenly spaced by index
+}
+
+// slowExitLatency is the master↔exit url-test delay at or above which an exit's
+// latency reads as "slow" (amber) in the topology. Chosen well above a healthy
+// cross-continent tunnel (~100–250ms) so only genuinely degraded paths flag.
+const slowExitLatency = 600 * time.Millisecond
 
 // nodeRow is a fleet-list row: the inventory node plus a few derived operational
 // signals from its latest status report, so the list shows where each node is at
@@ -487,6 +518,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		NodeCount: len(rows),
 		Nodes:     rows,
 		Summary:   summarize(rows),
+		Topology:  h.buildTopology(r.Context(), rows),
 		Flash:     h.takeFlash(w, r),
 		CSRF:      h.csrf,
 	}
@@ -521,7 +553,12 @@ func (h *Handler) handleNodesPartial(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "list nodes", err)
 		return
 	}
-	h.render(w, h.listTmpl, "nodes-table", listData{Nodes: rows})
+	h.render(w, h.listTmpl, "nodes-table", listData{
+		NodeCount: len(rows),
+		Nodes:     rows,
+		Summary:   summarize(rows),
+		Topology:  h.buildTopology(r.Context(), rows),
+	})
 }
 
 type nodeData struct {
@@ -689,6 +726,101 @@ func (h *Handler) manifestNode(id string) (domain.Node, bool) {
 	return domain.Node{}, false
 }
 
+// buildTopology assembles the fleet-list routing diagram from the joined rows: the
+// (first) master, the exits it balances, and each exit's live latency/carrying flag
+// taken from the master's latest ExitHealth report. Returns nil when there is no
+// master or no exit, so the caller omits the panel. Read-only.
+func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
+	var master *nodeRow
+	var exits []nodeRow
+	for i := range rows {
+		switch rows[i].Role {
+		case domain.RoleMaster:
+			if master == nil {
+				master = &rows[i]
+			}
+		case domain.RoleExit:
+			exits = append(exits, rows[i])
+		}
+	}
+	if master == nil || len(exits) == 0 {
+		return nil
+	}
+	// The master's view of each tunnel (latency + which one carries traffic).
+	var health []domain.ExitTunnelHealth
+	if st, err := h.store.GetStatus(ctx, master.ID); err == nil {
+		health = st.ExitHealth
+	}
+	topo := &topology{
+		MasterName:   master.Name,
+		MasterMgmt:   hostOnly(master.MgmtAddr),
+		MasterRegion: master.Region,
+		Balancing:    len(exits),
+		Exits:        make([]topoExit, 0, len(exits)),
+	}
+	n := len(exits)
+	for i, ex := range exits {
+		te := topoExit{Name: ex.Name, Region: ex.Region, EgressIP: ex.EgressIP, Transport: ex.Transport}
+		if d, carrying, ok := exitDelay(health, ex.Name); ok {
+			te.Carrying = carrying
+			te.Latency = formatDelay(d)
+			te.Slow = d >= slowExitLatency
+		}
+		// Evenly space the connector endpoints down the column: the i-th of n exits
+		// lands at the centre of its 1/n band (e.g. 3 exits → 16%/50%/83%).
+		te.LineY = fmt.Sprintf("%d%%", (i*100+50)/n)
+		topo.Exits = append(topo.Exits, te)
+	}
+	return topo
+}
+
+// exitDelay picks the most representative ExitHealth entry for an exit node from
+// the master's report. Tunnel names are the exit name, optionally suffixed by the
+// active transport (e.g. "exit-de-1" and "exit-de-1-reality"). It prefers the
+// load-balancer-selected (carrying) entry, otherwise the matching entry with the
+// largest measured delay (the active-transport proxy). ok=false when none match or
+// no delay was measured.
+func exitDelay(health []domain.ExitTunnelHealth, exitName string) (d time.Duration, carrying bool, ok bool) {
+	for _, e := range health {
+		if e.Name != exitName && !strings.HasPrefix(e.Name, exitName+"-") {
+			continue
+		}
+		if e.Selected {
+			carrying = true
+		}
+		if e.Delay > 0 && (!ok || e.Selected || e.Delay > d) {
+			d = e.Delay
+			ok = true
+		}
+	}
+	return d, carrying, ok
+}
+
+// formatDelay renders a url-test delay the way the design shows it: "107ms" below
+// a second, "1.088s" at or above. Empty for a non-positive delay.
+func formatDelay(d time.Duration) string {
+	switch {
+	case d <= 0:
+		return ""
+	case d < time.Second:
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	default:
+		return fmt.Sprintf("%.3fs", d.Seconds())
+	}
+}
+
+// hostOnly strips a :port from a mgmt address for display ("10.20.3.10:8443" →
+// "10.20.3.10"), leaving a bare host untouched.
+func hostOnly(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
+}
+
 func sortByName(nodes []domain.Node) {
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
 }
@@ -731,6 +863,18 @@ func funcMap() template.FuncMap {
 				return "AmneziaWG"
 			default:
 				return string(t)
+			}
+		},
+		// transportSlug renders a short CSS-class token for a master↔exit transport
+		// ("reality" / "amnezia"), so templates can style the badge by variant.
+		"transportSlug": func(t domain.MasterTransport) string {
+			switch t.OrDefault() {
+			case domain.TransportRealityXHTTP:
+				return "reality"
+			case domain.TransportAWG:
+				return "amnezia"
+			default:
+				return strings.ToLower(string(t))
 			}
 		},
 		"absTime": func(t time.Time) string {
