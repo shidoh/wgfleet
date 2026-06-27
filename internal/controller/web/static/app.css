@@ -1051,3 +1051,9 @@ a:focus-visible,
 .auth-lead { font-size: var(--fs-body); color: var(--text-muted); margin: 0 0 18px; line-height: 1.5; }
 .auth-form { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
 .auth-form .btn { margin-top: 6px; justify-content: center; }
+
+/* ── Topbar account cluster (profile link + logout) ───────────────────── */
+.topbar-account { display: inline-flex; align-items: center; gap: 12px; }
+.account-link { font-size: var(--fs-table); color: var(--text-muted); background: none; border: none; cursor: pointer; font-family: var(--font-mono); padding: 0; }
+.account-link:hover { color: var(--blue); }
+.logout-form { margin: 0; display: inline; }

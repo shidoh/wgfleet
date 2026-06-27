@@ -923,6 +923,57 @@ func TestExitNodeHasNoExitTunnelCard(t *testing.T) {
 	}
 }
 
+func TestChangePassword(t *testing.T) {
+	h, st := newTestHandler(t, nil) // admin "admin"/"test-password-123"
+
+	// Profile page renders for an authenticated user.
+	if _, body := get(t, h, "/profile"); !strings.Contains(body, "admin") || !strings.Contains(body, "Change password") {
+		t.Error("profile page missing username or change-password form")
+	}
+
+	// Wrong current password is rejected and does not change the hash.
+	before, _ := st.GetAuth(context.Background())
+	form := url.Values{"csrf_token": {h.csrf}, "current": {"nope"}, "password": {"new-password-12345"}, "confirm": {"new-password-12345"}}
+	req := httptest.NewRequest(http.MethodPost, "/profile/password", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.AddCookie(sessionCookieFor(t, h))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	after, _ := st.GetAuth(context.Background())
+	if before.PasswordHash != after.PasswordHash {
+		t.Error("wrong current password must not change the hash")
+	}
+
+	// Correct change rotates hash + secret and re-issues a session cookie.
+	form = url.Values{"csrf_token": {h.csrf}, "current": {"test-password-123"}, "password": {"new-password-12345"}, "confirm": {"new-password-12345"}}
+	req = httptest.NewRequest(http.MethodPost, "/profile/password", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.AddCookie(sessionCookieFor(t, h))
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("change password = %d; want 303", rec.Code)
+	}
+	final, _ := st.GetAuth(context.Background())
+	if !auth.CheckPassword(final.PasswordHash, "new-password-12345") {
+		t.Error("new password not in effect")
+	}
+	if string(final.SessionSecret) == string(before.SessionSecret) {
+		t.Error("session secret must rotate on password change")
+	}
+	var reissued bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookie && c.Value != "" {
+			reissued = true
+		}
+	}
+	if !reissued {
+		t.Error("password change must re-issue the current session cookie")
+	}
+}
+
 func TestUnauthenticatedRedirectsToLogin(t *testing.T) {
 	h, _ := newTestHandler(t, nil)
 	// No cookie ⇒ browser GET redirected to /login.

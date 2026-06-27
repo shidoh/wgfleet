@@ -71,15 +71,16 @@ type Provisioner interface {
 
 // Handler is the dashboard HTTP handler.
 type Handler struct {
-	store    store.Store
-	renderer SpecRenderer
-	prov     Provisioner
-	listTmpl *template.Template // layout + nodes list (also holds "nodes-table")
-	nodeTmpl *template.Template // layout + node detail
-	authTmpl *template.Template // auth-layout (login / setup screens)
-	mux      *http.ServeMux
-	csrf     string       // per-process CSRF token, embedded in forms and double-submit cookie
-	log      *slog.Logger // structured logger; surfaces render failures the page swallows
+	store       store.Store
+	renderer    SpecRenderer
+	prov        Provisioner
+	listTmpl    *template.Template // layout + nodes list (also holds "nodes-table")
+	nodeTmpl    *template.Template // layout + node detail
+	authTmpl    *template.Template // auth-layout (login / setup screens)
+	profileTmpl *template.Template // layout + admin profile / change-password
+	mux         *http.ServeMux
+	csrf        string       // per-process CSRF token, embedded in forms and double-submit cookie
+	log         *slog.Logger // structured logger; surfaces render failures the page swallows
 	// persistTransport durably records an active-transport switch in the manifest
 	// (the platform's source of truth) so the change survives restart / re-provision.
 	// nil ⇒ store-only (the live override still applies, but is not made durable).
@@ -107,11 +108,15 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	if err != nil {
 		return nil, fmt.Errorf("web: parse auth templates: %w", err)
 	}
+	profileTmpl, err := parsePage("templates/layout.html", "templates/profile.html")
+	if err != nil {
+		return nil, fmt.Errorf("web: parse profile templates: %w", err)
+	}
 	token, err := newCSRFToken()
 	if err != nil {
 		return nil, fmt.Errorf("web: generate csrf token: %w", err)
 	}
-	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute)}
+	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute)}
 
 	staticHandler := http.FileServer(http.FS(staticFS))
 	h.mux.Handle("GET /static/", staticHandler)
@@ -135,6 +140,8 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	h.mux.HandleFunc("POST /nodes/{id}/transport/{transport}", h.handleTransport)
 	h.mux.HandleFunc("POST /nodes/{id}/delete", h.handleDelete)
 	h.mux.HandleFunc("POST /backup", h.handleBackupExport)
+	h.mux.HandleFunc("GET /profile", h.handleProfile)
+	h.mux.HandleFunc("POST /profile/password", h.handleChangePassword)
 	return h, nil
 }
 
@@ -246,6 +253,68 @@ func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	h.issueSession(w, user, secret)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+type profileData struct {
+	Title           string
+	NodeCount       int
+	Username        string
+	PasswordChanged time.Time
+	Flash           string
+	CSRF            string
+}
+
+func (h *Handler) handleProfile(w http.ResponseWriter, r *http.Request) {
+	rec, err := h.store.GetAuth(r.Context())
+	if err != nil {
+		httpError(w, "load profile", err)
+		return
+	}
+	h.render(w, h.profileTmpl, "layout", profileData{
+		Title: "Profile", NodeCount: 1, Username: rec.Username,
+		PasswordChanged: rec.UpdatedAt, Flash: h.takeFlash(w, r), CSRF: h.csrf,
+	})
+}
+
+func (h *Handler) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	if !h.guard(w, r) {
+		return
+	}
+	rec, err := h.store.GetAuth(r.Context())
+	if err != nil {
+		h.redirectErr(w, r, "/profile", "load credential", err)
+		return
+	}
+	if !auth.CheckPassword(rec.PasswordHash, r.FormValue("current")) {
+		h.redirectErr(w, r, "/profile", "change password refused", fmt.Errorf("current password is incorrect"))
+		return
+	}
+	pass := r.FormValue("password")
+	if len(pass) < auth.MinPasswordLen {
+		h.redirectErr(w, r, "/profile", "change password refused", fmt.Errorf("new password must be at least %d characters", auth.MinPasswordLen))
+		return
+	}
+	if pass != r.FormValue("confirm") {
+		h.redirectErr(w, r, "/profile", "change password refused", fmt.Errorf("passwords do not match"))
+		return
+	}
+	hash, err := auth.HashPassword(pass)
+	if err != nil {
+		h.redirectErr(w, r, "/profile", "hash password", err)
+		return
+	}
+	secret, err := auth.NewSecret()
+	if err != nil {
+		h.redirectErr(w, r, "/profile", "rotate secret", err)
+		return
+	}
+	if err := h.store.SetAuthPassword(r.Context(), hash, secret); err != nil {
+		h.redirectErr(w, r, "/profile", "save password", err)
+		return
+	}
+	// Re-issue THIS session under the new secret so the operator stays logged in.
+	h.issueSession(w, rec.Username, secret)
+	http.Redirect(w, r, "/profile", http.StatusSeeOther)
 }
 
 // handleTransport switches an exit's active master↔exit transport (ADR-0025).

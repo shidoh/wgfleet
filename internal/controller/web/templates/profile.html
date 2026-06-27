@@ -1,0 +1,30 @@
+{{define "content"}}
+<div class="detail-head">
+  <a class="back" href="/">← fleet</a>
+  <h1 class="detail-title">Profile</h1>
+</div>
+{{if .Flash}}<p class="error-note" role="alert">⚠ {{.Flash}}</p>{{end}}
+<div class="panels cols-2">
+  <div class="panel">
+    <div class="panel-label">ACCOUNT</div>
+    <dl class="kv">
+      <dt>Username</dt><dd class="strong">{{.Username}}</dd>
+      <dt>Password changed</dt><dd class="dim">{{absTime .PasswordChanged}}</dd>
+    </dl>
+  </div>
+  <div class="panel">
+    <div class="panel-label">CHANGE PASSWORD</div>
+    <form class="auth-form" method="post" action="/profile/password" onsubmit="return lockAction(this)"
+          data-confirm="Change the admin password? Other active sessions will be logged out.">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <label class="field"><span class="field-label">Current password</span>
+        <input class="input" type="password" name="current" autocomplete="current-password" required></label>
+      <label class="field"><span class="field-label">New password (min 12)</span>
+        <input class="input" type="password" name="password" autocomplete="new-password" required minlength="12"></label>
+      <label class="field"><span class="field-label">Confirm new password</span>
+        <input class="input" type="password" name="confirm" autocomplete="new-password" required minlength="12"></label>
+      <button class="btn go" type="submit" data-pending="Changing…">Change password</button>
+    </form>
+  </div>
+</div>
+{{end}}
