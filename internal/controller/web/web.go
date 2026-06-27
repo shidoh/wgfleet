@@ -188,7 +188,12 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		hash = rec.PasswordHash
 	}
-	if err != nil || user != rec.Username || !auth.CheckPassword(hash, pass) {
+	// Run the bcrypt compare and a constant-time username check unconditionally so
+	// a wrong username and a wrong password are indistinguishable by timing (no
+	// user enumeration). hash is the stored hash, or the dummy above when no row.
+	userOK := err == nil && subtle.ConstantTimeCompare([]byte(user), []byte(rec.Username)) == 1
+	passOK := auth.CheckPassword(hash, pass)
+	if err != nil || !userOK || !passOK {
 		h.loginLimit.Fail()
 		h.renderAuth(w, "login", "invalid username or password")
 		return
@@ -207,7 +212,10 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleSetupForm(w http.ResponseWriter, r *http.Request) {
-	if ok, _ := h.store.AuthConfigured(r.Context()); ok {
+	if ok, err := h.store.AuthConfigured(r.Context()); ok || err != nil {
+		if err != nil {
+			h.log.Error("web: setup: auth check", "error", err)
+		}
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
@@ -218,7 +226,10 @@ func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
 	if !h.guard(w, r) {
 		return
 	}
-	if ok, _ := h.store.AuthConfigured(r.Context()); ok {
+	if ok, err := h.store.AuthConfigured(r.Context()); ok || err != nil {
+		if err != nil {
+			h.log.Error("web: setup: auth check", "error", err)
+		}
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
@@ -605,7 +616,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.mux.ServeHTTP(w, r)
 		return
 	}
-	if ok, _ := h.store.AuthConfigured(r.Context()); !ok {
+	if ok, err := h.store.AuthConfigured(r.Context()); !ok {
+		if err != nil {
+			h.log.Error("web: auth check failed", "error", err)
+		}
 		http.Redirect(w, r, "/setup", http.StatusSeeOther)
 		return
 	}
