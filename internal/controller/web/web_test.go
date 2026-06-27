@@ -887,6 +887,16 @@ func TestLoginAndLogout(t *testing.T) {
 		t.Fatalf("login = %d loc %q; want 303 /", rec.Code, rec.Header().Get("Location"))
 	}
 
+	var loggedIn bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookie && c.Value != "" {
+			loggedIn = true
+		}
+	}
+	if !loggedIn {
+		t.Error("login did not set a session cookie")
+	}
+
 	// Logout clears the cookie.
 	req = httptest.NewRequest(http.MethodPost, "/logout", nil)
 	req.Header.Set("Sec-Fetch-Site", "same-origin")

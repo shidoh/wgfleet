@@ -240,7 +240,8 @@ func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.store.SetAuthCredential(r.Context(), user, hash, secret); err != nil {
-		h.renderAuth(w, "setup", "could not save admin: "+err.Error())
+		h.log.Error("web: setup: save admin", "error", err)
+		h.renderAuth(w, "setup", "could not save admin — check server logs")
 		return
 	}
 	h.issueSession(w, user, secret)
