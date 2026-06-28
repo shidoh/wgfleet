@@ -159,7 +159,8 @@ body {
 .btn:focus-visible,
 .seg:focus-visible,
 .back:focus-visible,
-.fleet-row:focus-visible,
+.topo-master:focus-visible,
+.topo-exit:focus-visible,
 .backup-summary:focus-visible,
 .spec-toggle:focus-visible,
 .extlink:focus-visible,
@@ -430,16 +431,34 @@ a:focus-visible,
   filter: drop-shadow(var(--dot-glow-blue));
 }
 
-/* master card */
+/* master card — now a clickable link to the master detail page */
 .topo-master {
   flex: 0 0 250px;
   align-self: center;
   width: 100%;
+  display: flex;
+  flex-direction: column;
   background: linear-gradient(180deg, rgba(91,141,239,.07), var(--panel-2));
   border: 1px solid var(--blue-35);
   border-radius: var(--r-chip);
   padding: 16px;
   box-shadow: 0 10px 30px rgba(0,0,0,.35);
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color .12s, transform .12s, box-shadow .12s;
+}
+.topo-master:hover {
+  border-color: var(--blue);
+  transform: translateY(-1px);
+  box-shadow: 0 14px 34px rgba(0,0,0,.5);
+}
+/* header row: MASTER badge + live state pill */
+.topo-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 .badge-master {
   display: inline-block;
@@ -472,42 +491,63 @@ a:focus-visible,
 }
 .topo-master-bal .statusdot { width: 5px; height: 5px; box-shadow: 0 0 6px var(--green); }
 
-/* exit cards */
+/* exit cards — vertical, info-rich, clickable link cards */
 .topo-exits {
   flex: 1.4;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  justify-content: space-between;
 }
 .topo-exit {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 10px;
+  flex-direction: column;
+  gap: 11px;
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: var(--r-mini);
-  padding: 11px 14px;
+  padding: 14px 16px;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color .12s, transform .12s, box-shadow .12s, background .12s;
 }
-/* let the left block shrink (long egress IPs) and keep the latency/transport
-   block right-aligned, wrapping under on a very narrow card. */
-.topo-exit > div { min-width: 0; }
-.topo-exit-right { margin-left: auto; }
+.topo-exit:hover {
+  border-color: var(--blue);
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(0,0,0,.45);
+}
 .topo-exit.carrying {
   background: linear-gradient(180deg, var(--green-06), var(--panel-2));
   border-color: var(--green-30);
+}
+.topo-exit.carrying:hover { border-color: var(--green); }
+
+/* header: name (+ carrying) on the left, state pill + sub-badges on the right */
+.topo-exit-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 12px;
+  flex-wrap: wrap;
 }
 .topo-exit-name {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   font-size: var(--fs-table);
   font-weight: 500;
   color: var(--text-bright);
 }
 .topo-exit.carrying .topo-exit-name { color: var(--text); }
+.topo-exit-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
 .pill-carrying {
   font-size: 8.5px;
   letter-spacing: 1px;
@@ -516,82 +556,52 @@ a:focus-visible,
   border-radius: 4px;
   padding: 2px 6px;
 }
-.topo-exit-meta {
-  margin-top: 5px;
-  font-size: var(--fs-label);
-  color: var(--text-dim);
+
+/* tags row: region · transport · latency (latency pushed to the right edge) */
+.topo-exit-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
-.topo-exit-right { text-align: right; }
+.topo-tag {
+  font-size: var(--fs-label);
+  letter-spacing: .5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border: 1px solid var(--border-badge);
+  border-radius: var(--r-badge);
+  padding: 2px 7px;
+}
 .topo-exit-lat {
+  margin-left: auto;
   font-size: var(--fs-meta);
   color: var(--text-muted);
 }
 .topo-exit.carrying .topo-exit-lat { color: var(--green); }
 .topo-exit-lat.slow { color: var(--amber); }
-.topo-exit-xport {
-  margin-top: 4px;
-  font-size: 9px;
-  letter-spacing: .5px;
-  color: var(--blue);
+
+/* shared address grid + footer on every topology card */
+.topo-card-addr { margin-top: 2px; }
+.topo-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 11px;
+  border-top: 1px solid var(--border-row);
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
 }
+.topo-card-foot .foot-sep { color: var(--text-zero); }
+/* the master card spaces its stacked rows like the old layout did */
+.topo-master .topo-card-addr,
+.topo-master .topo-card-foot,
+.topo-master .topo-master-bal { margin-top: 13px; }
 
 /* ============================================================
-   FLEET TABLE (CSS grid, not <table>)
+   ADDRESS GRID (shared by every topology card)
    ============================================================ */
-.fleet-table {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--r-card);
-  overflow: hidden;
-}
-/* On narrow screens the table scrolls horizontally inside its card instead of
-   crushing the 9 columns. */
-.fleet-scroll { overflow-x: auto; }
-.fleet-track { min-width: 940px; }
-.fleet-grid {
-  display: grid;
-  grid-template-columns: 1.55fr 74px 66px 100px 132px 116px 1.5fr 88px 80px;
-  align-items: center;
-}
-.fleet-thead {
-  padding: 13px 22px;
-  font-size: var(--fs-tablehead);
-  letter-spacing: 1.3px;
-  color: var(--text-dim);
-  background: var(--panel-inset);
-  border-bottom: 1px solid var(--border);
-}
-.fleet-row {
-  padding: 16px 22px;
-  border-bottom: 1px solid var(--border-row);
-  text-decoration: none;
-  color: inherit;
-  cursor: pointer;
-  transition: background .12s;
-}
-.fleet-row:last-child { border-bottom: none; }
-.fleet-row:hover { background: var(--row-hover); }
-
-.cell-node {
-  font-size: var(--fs-body);
-  font-weight: 500;
-  color: var(--blue);
-}
-.cell-region {
-  font-size: var(--fs-table);
-  color: var(--text-muted);
-}
-.cell-mgmt {
-  font-size: var(--fs-table);
-  color: var(--text-bright);
-}
-.cell-dash { color: var(--text-dim); }
-.cell-seen {
-  font-size: var(--fs-meta);
-  color: var(--text-muted);
-}
-
-/* ADDRESS cell — 2-col inner grid, labels + IPs never wrap */
+/* 2-col inner grid, labels + IPs never wrap */
 .addr {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -1052,8 +1062,8 @@ a:focus-visible,
 
 /* ============================================================
    RESPONSIVE — one breakpoint at <820px (the rest reflow on their own:
-   summary chips via flex-wrap, detail panels via auto-fit, the fleet table via
-   its own horizontal-scroll wrapper).
+   summary chips via flex-wrap, detail panels via auto-fit, the topology cards
+   stack into a single column).
    ============================================================ */
 @media (max-width: 819px) {
   .topbar { padding: 15px 16px; }

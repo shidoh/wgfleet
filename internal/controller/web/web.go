@@ -664,29 +664,78 @@ type listData struct {
 	CSRF      string    // CSRF token for the backup-export form
 }
 
-// topology is the master↔exit routing picture shown on the fleet list: the master
-// load balancer and the exits it balances, with each exit's live url-test latency
-// and which one currently carries traffic. It is derived from the master's latest
-// status report (ExitHealth, mihomo's view of the tunnels). nil when there is no
-// master node, so the template omits the panel.
+// topology is the master↔exit routing picture shown on the fleet list — now the
+// ONLY fleet view (the flat node table was folded into these cards): the master
+// load balancer and the exits it balances, with each card carrying the full
+// per-node inventory + live operational signals the table used to show and linking
+// to its detail page. Latency and the carrying flag come from the master's latest
+// status report (ExitHealth, mihomo's view of the tunnels). nil only when the fleet
+// is empty (the template then shows the empty state). Master is nil for a
+// degenerate no-master fleet — the exits still render so no node is hidden.
 type topology struct {
-	MasterName   string
-	MasterMgmt   string
-	MasterRegion string
-	Balancing    int        // number of exits the master is balancing
-	Exits        []topoExit // in fleet-list order
+	Master *topoMaster // the load-balancer hub; nil when there is no master node
+	Exits  []topoExit  // balanced exits, in fleet-list order
+}
+
+// topoCard holds the inventory + status fields every node card shares (master and
+// exit alike), carrying everything the old fleet-table row did so removing the
+// table loses no information.
+type topoCard struct {
+	ID       string
+	Name     string
+	Region   string
+	State    domain.NodeState
+	MgmtAddr string
+	PublicIP string
+	// Live status signals (zero/false when no status has been reported yet).
+	HasStatus     bool
+	LastHandshake time.Time
+	LastSeen      time.Time
+	// Censorship / lifecycle sub-badges — same set + copy as the table's STATE cell.
+	Drain         bool
+	EgressBlocked bool
+	LowThroughput bool
+	Decommission  bool
+	ActiveEgress  string // non-empty only when failed over to a non-preferred egress
+}
+
+// topoMaster is the master hub card.
+type topoMaster struct {
+	topoCard
+	Balancing int // number of exits the master is balancing
 }
 
 // topoExit is one exit card in the topology diagram.
 type topoExit struct {
-	Name      string
-	Region    string
-	EgressIP  string
-	Transport domain.MasterTransport
-	Carrying  bool   // currently selected by the master's wg-best load balancer
-	Latency   string // preformatted url-test delay ("107ms" / "1.088s"); "" if unknown
-	Slow      bool   // latency above the slow threshold → render amber
-	LineY     string // topology connector endpoint Y ("16%"), evenly spaced by index
+	topoCard
+	EgressIP      string
+	Transport     domain.MasterTransport
+	DualTransport bool   // exit runs more than one transport (switchable on the node page)
+	Carrying      bool   // currently selected by the master's wg-best load balancer
+	Latency       string // preformatted url-test delay ("107ms" / "1.088s"); "" if unknown
+	Slow          bool   // latency above the slow threshold → render amber
+	LineY         string // topology connector endpoint Y ("16%"), evenly spaced by index
+}
+
+// cardOf projects a fleet-list row into the inventory + status fields every
+// topology card shares.
+func cardOf(r nodeRow) topoCard {
+	return topoCard{
+		ID:            r.ID,
+		Name:          r.Name,
+		Region:        r.Region,
+		State:         r.State,
+		MgmtAddr:      hostOnly(r.MgmtAddr),
+		PublicIP:      r.PublicIP,
+		HasStatus:     r.HasStatus,
+		LastHandshake: r.LastHandshake,
+		LastSeen:      r.LastSeen,
+		Drain:         r.Drain,
+		EgressBlocked: r.EgressBlocked,
+		LowThroughput: r.LowThroughput,
+		Decommission:  r.Decommission,
+		ActiveEgress:  r.ActiveEgress,
+	}
 }
 
 // slowExitLatency is the master↔exit url-test delay at or above which an exit's
@@ -1018,39 +1067,44 @@ func (h *Handler) manifestNode(id string) (domain.Node, bool) {
 
 // buildTopology assembles the fleet-list routing diagram from the joined rows: the
 // (first) master, the exits it balances, and each exit's live latency/carrying flag
-// taken from the master's latest ExitHealth report. Returns nil when there is no
-// master or no exit, so the caller omits the panel. Read-only.
+// taken from the master's latest ExitHealth report. It returns nil only for an
+// empty fleet (the template then shows the empty state). With no master it still
+// returns the exits (Master nil) so removing the flat table hides no node; with a
+// master but no exits it returns just the master. Read-only.
 func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
-	var master *nodeRow
+	if len(rows) == 0 {
+		return nil
+	}
+	var masterRow *nodeRow
 	var exits []nodeRow
 	for i := range rows {
 		switch rows[i].Role {
 		case domain.RoleMaster:
-			if master == nil {
-				master = &rows[i]
+			if masterRow == nil {
+				masterRow = &rows[i]
 			}
 		case domain.RoleExit:
 			exits = append(exits, rows[i])
 		}
 	}
-	if master == nil || len(exits) == 0 {
-		return nil
-	}
-	// The master's view of each tunnel (latency + which one carries traffic).
+	topo := &topology{Exits: make([]topoExit, 0, len(exits))}
+	// The master's view of each tunnel (latency + which one carries traffic) is only
+	// available from a master's status report.
 	var health []domain.ExitTunnelHealth
-	if st, err := h.store.GetStatus(ctx, master.ID); err == nil {
-		health = st.ExitHealth
-	}
-	topo := &topology{
-		MasterName:   master.Name,
-		MasterMgmt:   hostOnly(master.MgmtAddr),
-		MasterRegion: master.Region,
-		Balancing:    len(exits),
-		Exits:        make([]topoExit, 0, len(exits)),
+	if masterRow != nil {
+		if st, err := h.store.GetStatus(ctx, masterRow.ID); err == nil {
+			health = st.ExitHealth
+		}
+		topo.Master = &topoMaster{topoCard: cardOf(*masterRow), Balancing: len(exits)}
 	}
 	n := len(exits)
 	for i, ex := range exits {
-		te := topoExit{Name: ex.Name, Region: ex.Region, EgressIP: ex.EgressIP, Transport: ex.Transport}
+		te := topoExit{
+			topoCard:      cardOf(ex),
+			EgressIP:      ex.EgressIP,
+			Transport:     ex.Transport,
+			DualTransport: ex.DualTransport,
+		}
 		if d, carrying, ok := exitDelay(health, ex.Name); ok {
 			te.Carrying = carrying
 			te.Latency = formatDelay(d)

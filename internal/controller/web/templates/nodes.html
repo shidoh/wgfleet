@@ -36,19 +36,41 @@
   {{end}}
 </section>
 
-{{with .Topology}}
 <div class="section-head">
-  <span class="section-label">TOPOLOGY</span>
-  <span class="section-sub">master ↔ exit routing · mihomo load balancer</span>
+  <span class="section-label">FLEET</span>
+  <span class="section-sub">{{len .Nodes}} node{{if ne (len .Nodes) 1}}s{{end}} · master ↔ exit routing · mihomo load balancer</span>
+  <span class="spacer"></span>
+  <span class="live"><span class="statusdot pulse"></span>LIVE</span>
 </div>
+
+{{with .Topology}}
+{{/* The fleet topology is the single fleet view: the master load-balancer hub, the
+     exits it balances, and (folded in from the old flat table) every per-node field
+     on each card. Cards are links to the node detail page. */}}
 <div class="topo-panel">
   <div class="topo-stage">
-    <div class="topo-master">
-      <span class="badge-master">MASTER</span>
-      <div class="topo-master-name">{{.MasterName}}</div>
-      <div class="topo-master-meta">{{.MasterMgmt}}{{if .MasterRegion}} · {{.MasterRegion}}{{end}}</div>
+    {{with .Master}}
+    <a class="topo-master" href="/nodes/{{.ID}}">
+      <div class="topo-card-top">
+        <span class="badge-master">MASTER</span>
+        <span class="state-pill {{lower .State}}"><span class="led"></span>{{.State}}</span>
+      </div>
+      <div class="topo-master-name">{{.Name}}</div>
+      <div class="topo-master-meta">{{or .MgmtAddr "—"}}{{if .Region}} · {{.Region}}{{end}}</div>
+      {{template "node-subbadges" .}}
       <div class="topo-master-bal"><span class="statusdot"></span>balancing {{.Balancing}} exit{{if ne .Balancing 1}}s{{end}}</div>
-    </div>
+      <div class="addr topo-card-addr">
+        <span class="addr-tag">PUBLIC</span><span class="addr-val" title="Node public IP">{{or .PublicIP "—"}}</span>
+      </div>
+      <div class="topo-card-foot">
+        <span>handshake {{if and .HasStatus (not .LastHandshake.IsZero)}}{{relTime .LastHandshake}}{{else}}—{{end}}</span>
+        <span class="foot-sep">·</span>
+        <span>seen {{relTime .LastSeen}}</span>
+      </div>
+    </a>
+    {{end}}
+
+    {{if and .Master .Exits}}
     {{/* Connector column: fan-out lines from the master (left) to each exit card
          (right). Coords overshoot the 56px channel so they touch the blocks; the
          carrying line is green + animated. Hidden on mobile (the lines are
@@ -61,74 +83,55 @@
         <circle class="master-node" cx="-32%" cy="50%" r="4"></circle>
       </svg>
     </div>
+    {{end}}
+
+    {{if .Exits}}
     <div class="topo-exits">
       {{range .Exits}}
-      <div class="topo-exit{{if .Carrying}} carrying{{end}}" data-carrying="{{if .Carrying}}true{{else}}false{{end}}">
-        <div>
-          <div class="topo-exit-name">{{.Name}}{{if .Carrying}}<span class="pill-carrying">CARRYING</span>{{end}}</div>
-          <div class="topo-exit-meta">{{.Region}}{{if and .Region .EgressIP}} · {{end}}{{.EgressIP}}</div>
+      <a class="topo-exit{{if .Carrying}} carrying{{end}}" href="/nodes/{{.ID}}">
+        <div class="topo-exit-head">
+          <span class="topo-exit-name">{{.Name}}{{if .Carrying}}<span class="pill-carrying">CARRYING</span>{{end}}</span>
+          <span class="topo-exit-status">
+            <span class="state-pill {{lower .State}}"><span class="led"></span>{{.State}}</span>
+            {{template "node-subbadges" .}}
+          </span>
         </div>
-        <div class="topo-exit-right">
-          {{if .Latency}}<div class="topo-exit-lat{{if .Slow}} slow{{end}}">{{.Latency}}</div>{{end}}
-          <div class="topo-exit-xport">{{transportLabel .Transport}}</div>
+        <div class="topo-exit-tags">
+          {{if .Region}}<span class="topo-tag">{{.Region}}</span>{{end}}
+          <span class="xport {{transportSlug .Transport}}" title="Active master↔exit transport{{if .DualTransport}} (switchable on the node page){{end}}">{{transportLabel .Transport}}{{if .DualTransport}} ⇄{{end}}</span>
+          {{if .Latency}}<span class="topo-exit-lat{{if .Slow}} slow{{end}}" title="master↔exit url-test latency">{{.Latency}}</span>{{end}}
         </div>
-      </div>
+        <div class="addr topo-card-addr">
+          {{if .MgmtAddr}}<span class="addr-tag">MGMT</span><span class="addr-val" title="Mgmt (ZeroTier) address">{{.MgmtAddr}}</span>{{end}}
+          <span class="addr-tag">PUBLIC</span><span class="addr-val" title="Node public IP">{{or .PublicIP "—"}}</span>
+          {{if and .EgressIP (ne .EgressIP .PublicIP)}}<span class="addr-tag">WARP</span><span class="addr-val warp" title="Actual egress IP (Cloudflare WARP)">{{.EgressIP}}</span>{{end}}
+        </div>
+        <div class="topo-card-foot">
+          <span>handshake {{if and .HasStatus (not .LastHandshake.IsZero)}}{{relTime .LastHandshake}}{{else}}—{{end}}</span>
+          <span class="foot-sep">·</span>
+          <span>seen {{relTime .LastSeen}}</span>
+        </div>
+      </a>
       {{end}}
     </div>
-  </div>
-</div>
-{{end}}
-
-<div class="section-head">
-  <span class="section-label">FLEET</span>
-  <span class="section-sub">{{len .Nodes}}</span>
-  <span class="spacer"></span>
-  <span class="live"><span class="statusdot pulse"></span>LIVE</span>
-</div>
-
-{{if .Nodes}}
-<div class="fleet-table">
-  <div class="fleet-scroll">
-  <div class="fleet-track">
-  <div class="fleet-thead fleet-grid">
-    <div>NODE</div><div>ROLE</div><div>REGION</div><div>STATE</div>
-    <div>TRANSPORT</div><div>MGMT (ZT)</div><div>ADDRESS</div><div>HANDSHAKE</div><div>SEEN</div>
-  </div>
-  {{range .Nodes}}
-  <a class="fleet-row fleet-grid" href="/nodes/{{.ID}}">
-    <div class="cell-node">{{.Name}}</div>
-    <div><span class="role {{.Role}}">{{.Role}}</span></div>
-    <div class="cell-region">{{or .Region "—"}}</div>
-    <div>
-      <span class="state-pill {{lower .State}}"><span class="led"></span>{{.State}}</span>
-      {{if or .Drain .EgressBlocked .ActiveEgress .LowThroughput .Decommission}}
-      <span class="subbadges">
-        {{if .Drain}}<span class="subbadge drain" title="Manually taken out of the load balancer — no new traffic. The node is untouched; reverse instantly with “Resume routing”."><span class="led"></span>out of routing</span>{{end}}
-        {{if .EgressBlocked}}<span class="subbadge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
-        {{if .ActiveEgress}}<span class="subbadge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{.ActiveEgress}}</span>{{end}}
-        {{if .LowThroughput}}<span class="subbadge slow" title="Egress throughput below floor — auto-suspended (ADR-0021)"><span class="led"></span>low throughput</span>{{end}}
-        {{if .Decommission}}<span class="subbadge decommission"><span class="led"></span>decommissioning</span>{{end}}
-      </span>
-      {{end}}
-    </div>
-    <div>
-      {{if eq (lower .Role) "exit"}}
-        <span class="xport {{transportSlug .Transport}}" title="Active master↔exit transport{{if .DualTransport}} (switchable on the node page){{end}}">{{transportLabel .Transport}}{{if .DualTransport}} ⇄{{end}}</span>
-      {{else}}<span class="cell-dash">—</span>{{end}}
-    </div>
-    <div class="cell-mgmt">{{or .MgmtAddr "—"}}</div>
-    <div class="addr">
-      <span class="addr-tag">PUBLIC</span><span class="addr-val" title="Node public IP">{{or .PublicIP "—"}}</span>
-      {{if and (eq (lower .Role) "exit") .EgressIP (ne .EgressIP .PublicIP)}}<span class="addr-tag">WARP</span><span class="addr-val warp" title="Actual egress IP (Cloudflare WARP)">{{.EgressIP}}</span>{{end}}
-    </div>
-    <div class="cell-dash">{{if and .HasStatus (not .LastHandshake.IsZero)}}{{relTime .LastHandshake}}{{else}}—{{end}}</div>
-    <div class="cell-seen">{{relTime .LastSeen}}</div>
-  </a>
-  {{end}}
-  </div>
+    {{end}}
   </div>
 </div>
 {{else}}
 <div class="empty">No nodes registered yet. Provision one with <code>wgfleet-controller --provision &lt;node&gt;</code>.</div>
+{{end}}
+{{end}}
+
+{{/* node-subbadges — censorship / lifecycle flags shown under a node's state pill.
+     Identical set + copy the fleet table used; shared by the master and exit cards. */}}
+{{define "node-subbadges"}}
+{{if or .Drain .EgressBlocked .ActiveEgress .LowThroughput .Decommission}}
+<span class="subbadges">
+  {{if .Drain}}<span class="subbadge drain" title="Manually taken out of the load balancer — no new traffic. The node is untouched; reverse instantly with “Resume routing”."><span class="led"></span>out of routing</span>{{end}}
+  {{if .EgressBlocked}}<span class="subbadge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
+  {{if .ActiveEgress}}<span class="subbadge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{.ActiveEgress}}</span>{{end}}
+  {{if .LowThroughput}}<span class="subbadge slow" title="Egress throughput below floor — auto-suspended (ADR-0021)"><span class="led"></span>low throughput</span>{{end}}
+  {{if .Decommission}}<span class="subbadge decommission"><span class="led"></span>decommissioning</span>{{end}}
+</span>
 {{end}}
 {{end}}

@@ -759,7 +759,7 @@ func TestListShowsTransportAndMgmt(t *testing.T) {
 	h, st := newTestHandler(t, stubRenderer{spec: spec})
 	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady, MgmtAddr: "10.20.3.22"})
 	_, body := get(t, h, "/")
-	for _, want := range []string{"10.20.3.22" /* mgmt col back */, "REALITY" /* active transport */, "MGMT (ZT)"} {
+	for _, want := range []string{"10.20.3.22" /* mgmt addr on the card */, "REALITY" /* active transport */, "MGMT" /* address-grid label */} {
 		if !strings.Contains(body, want) {
 			t.Errorf("fleet list missing %q:\n%s", want, body)
 		}
@@ -814,12 +814,18 @@ func TestFleetTopology(t *testing.T) {
 	}
 }
 
-// TestFleetTopologyOmittedWithoutMaster: no master ⇒ no topology panel.
-func TestFleetTopologyOmittedWithoutMaster(t *testing.T) {
+// TestFleetWithoutMasterStillRendersExits: with no master there is no hub card, but
+// the exits must still render (the flat table is gone, so hiding them would lose a
+// node).
+func TestFleetWithoutMasterStillRendersExits(t *testing.T) {
 	h, st := newTestHandler(t, nil)
 	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
-	if _, body := get(t, h, "/"); strings.Contains(body, "topo-panel") {
-		t.Error("topology panel should be omitted when there is no master")
+	_, body := get(t, h, "/")
+	if !strings.Contains(body, "exit-de-1") {
+		t.Error("exit must still render in the topology when there is no master")
+	}
+	if strings.Contains(body, "badge-master") {
+		t.Error("master hub card should be absent when there is no master node")
 	}
 }
 
