@@ -26,7 +26,7 @@ else
 fi
 
 # sha <TAB> subject, one per line, oldest→newest reversed to newest→oldest default.
-git log --no-merges --reverse --pretty=format:'%h%x09%s' "$RANGE" | awk -v repo="$REPO_URL" '
+BODY="$(git log --no-merges --reverse --pretty=format:'%h%x09%s' "$RANGE" | awk -v repo="$REPO_URL" '
 function flush(key, title,   n, i) {
   n = idx[key]
   if (n == 0) return
@@ -73,11 +73,20 @@ END {
   # test, ci, and chore commits are intentionally excluded from the changelog
   # (still recognized as their type above, so they do not leak into "Other").
 }
-'
+')"
+
+# Fallback: if every commit in the range was filtered out (e.g. a release with
+# only chore/ci/test commits) or there were no commits at all, emit a placeholder
+# line instead of an empty body.
+if printf '%s' "$BODY" | grep -q '[^[:space:]]'; then
+  printf '%s\n' "$BODY"
+else
+  printf '_Maintenance release — no user-facing changes._\n'
+fi
 
 # Footer: a compare link when there is a previous tag to compare against.
 # RELEASE_TAG overrides the link target name (useful when CUR is HEAD on a manual
 # run before the tag ref exists).
 if [ -n "$PREV" ]; then
-  printf '**Full Changelog**: %s/compare/%s...%s\n' "$REPO_URL" "$PREV" "${RELEASE_TAG:-$CUR}"
+  printf '\n**Full Changelog**: %s/compare/%s...%s\n' "$REPO_URL" "$PREV" "${RELEASE_TAG:-$CUR}"
 fi
