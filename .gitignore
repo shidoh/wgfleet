@@ -29,8 +29,12 @@ fleet.local.yaml
 *.lima.yaml
 /etc-local/
 
-# Codegraph index (machine-local tool data)
+# Local agent / tooling artifacts (machine-local, never published)
 /.codegraph/
+/.claude/
+/.superpowers/
+# Local maintainer context file (public design notes live in docs/DESIGN.md)
+/CLAUDE.md
 
 # Go
 /vendor/

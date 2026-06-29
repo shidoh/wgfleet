@@ -2584,7 +2584,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\bRegister\x12\x1b.wgfleet.v1.RegisterRequest\x1a\x1c.wgfleet.v1.RegisterResponse\x12]\n" +
 	"\x10PublishPublicKey\x12#.wgfleet.v1.PublishPublicKeyRequest\x1a$.wgfleet.v1.PublishPublicKeyResponse\x12=\n" +
 	"\bPullSpec\x12\x1b.wgfleet.v1.PullSpecRequest\x1a\x14.wgfleet.v1.NodeSpec\x12G\n" +
-	"\fReportStatus\x12\x18.wgfleet.v1.StatusReport\x1a\x1b.wgfleet.v1.ReportStatusAck(\x01B/Z-github.com/shidoh/wgfleet/internal/api/pb;pbb\x06proto3"
+	"\fReportStatus\x12\x18.wgfleet.v1.StatusReport\x1a\x1b.wgfleet.v1.ReportStatusAck(\x01B.Z,github.com/shidoh/wgfleet/internal/api/pb;pbb\x06proto3"
 
 var (
 	file_wgfleet_v1_node_service_proto_rawDescOnce sync.Once
