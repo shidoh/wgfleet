@@ -62,22 +62,16 @@ function flush(key, title,   n, i) {
   bucket[key, idx[key]] = line
 }
 END {
-  flush("breaking", "⚠️ Breaking Changes")
-  flush("feat",     "🚀 Features")
-  flush("fix",      "🐛 Bug Fixes")
-  flush("perf",     "⚡ Performance")
-  flush("refactor", "♻️ Refactoring")
-  flush("docs",     "📝 Documentation")
-  flush("test",     "✅ Tests")
-  # build + ci + chore share a Maintenance section
-  if (idx["build"] || idx["ci"] || idx["chore"]) {
-    printf "### 🔧 Maintenance\n\n"
-    for (i = 1; i <= idx["build"]; i++) printf "%s\n", bucket["build", i]
-    for (i = 1; i <= idx["ci"];    i++) printf "%s\n", bucket["ci", i]
-    for (i = 1; i <= idx["chore"]; i++) printf "%s\n", bucket["chore", i]
-    printf "\n"
-  }
-  flush("other", "📦 Other Changes")
+  flush("breaking", "Breaking Changes")
+  flush("feat",     "Features")
+  flush("fix",      "Bug Fixes")
+  flush("perf",     "Performance")
+  flush("refactor", "Refactoring")
+  flush("docs",     "Documentation")
+  flush("build",    "Build System")
+  flush("other",    "Other Changes")
+  # test, ci, and chore commits are intentionally excluded from the changelog
+  # (still recognized as their type above, so they do not leak into "Other").
 }
 '
 
