@@ -1,0 +1,78 @@
+name: release
+
+# Build and publish release binaries when a version tag is pushed.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# Produces statically-linked Linux binaries for both controller and agent on
+# linux/amd64 and linux/arm64, a SHA256SUMS file, and a GitHub Release with the
+# assets attached. Can also be run manually (workflow_dispatch) against a tag.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and release (e.g. v0.1.0). Created at HEAD if it does not exist.'
+        required: true
+
+permissions:
+  contents: write          # needed to create the release and upload assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history + tags so the build can stamp identity
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Resolve build identity
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "COMMIT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          echo "Building $TAG @ $(git rev-parse --short HEAD)"
+
+      - name: Build binaries (linux amd64 + arm64)
+        run: |
+          for arch in amd64 arm64; do
+            make agent-linux controller-linux \
+              ARCH="$arch" \
+              VERSION="$TAG" \
+              COMMIT="$COMMIT" \
+              EXTRA_LDFLAGS="-s -w"
+          done
+          ls -lh dist/
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Prereleases are tags with a pre-release suffix (e.g. v0.1.0-rc1).
+          PRERELEASE=""
+          case "$TAG" in *-*) PRERELEASE="--prerelease" ;; esac
+
+          # Create the release with all assets, or upload to an existing one.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --generate-notes \
+              $PRERELEASE \
+              dist/*
+          fi

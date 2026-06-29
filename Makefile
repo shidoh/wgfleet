@@ -21,7 +21,10 @@ VERSION   ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
 COMMIT    ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)$(shell git diff --quiet 2>/dev/null || echo -dirty)
 DATE      ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 VPKG      := github.com/shidoh/wgfleet/internal/version
-LDFLAGS   := -X $(VPKG).Version=$(VERSION) -X $(VPKG).Commit=$(COMMIT) -X $(VPKG).BuildDate=$(DATE)
+# EXTRA_LDFLAGS is appended to the link flags; release builds set it to "-s -w"
+# to strip the symbol table and DWARF (smaller binaries). Empty for dev builds.
+EXTRA_LDFLAGS ?=
+LDFLAGS   := -X $(VPKG).Version=$(VERSION) -X $(VPKG).Commit=$(COMMIT) -X $(VPKG).BuildDate=$(DATE) $(EXTRA_LDFLAGS)
 
 .PHONY: all build test race vet fmt lint proto tidy clean agent-linux controller-linux
 

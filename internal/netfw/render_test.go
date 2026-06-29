@@ -459,9 +459,9 @@ func TestRenderRejectsBadPort(t *testing.T) {
 func TestRenderRejectsBadWhitelistEntry(t *testing.T) {
 	for _, bad := range []string{
 		"not-an-ip",
-		"10.0.0.0/33",           // bad prefix length
+		"10.0.0.0/33",            // bad prefix length
 		"203.0.113.20; rm -rf /", // injection attempt
-		"1.2.3.4 }",             // would close the nft set early
+		"1.2.3.4 }",              // would close the nft set early
 	} {
 		_, err := RenderRuleset(RenderInput{
 			Role:     domain.RoleExit,

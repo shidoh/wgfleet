@@ -49,7 +49,7 @@ func TestValidateRejectsPublicMetricsBind(t *testing.T) {
 func TestValidateAcceptsMgmtAndLoopbackBinds(t *testing.T) {
 	for _, bind := range []string{
 		"127.0.0.1:9000",       // loopback
-		"10.20.25.254:9000",   // RFC1918 (ZT overlay)
+		"10.20.25.254:9000",    // RFC1918 (ZT overlay)
 		"10.80.0.1:9000",       // RFC1918
 		"192.168.1.10:9000",    // RFC1918
 		"[::1]:9000",           // IPv6 loopback

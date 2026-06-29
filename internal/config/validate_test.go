@@ -140,9 +140,9 @@ func TestMgmtCIDRs(t *testing.T) {
 		Masters: []MasterConfig{{Name: "m", MgmtAddr: "10.20.25.254"}},
 		Exits: []ExitConfig{
 			{Name: "e1", MgmtAddr: "10.20.25.1"},
-			{Name: "e2", MgmtAddr: ""},              // skipped
+			{Name: "e2", MgmtAddr: ""},             // skipped
 			{Name: "e3", MgmtAddr: "10.20.25.254"}, // dup of master, skipped
-			{Name: "e4", MgmtAddr: "not-an-ip"},     // skipped
+			{Name: "e4", MgmtAddr: "not-an-ip"},    // skipped
 		},
 	}
 	got := f.MgmtCIDRs()
