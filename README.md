@@ -11,6 +11,12 @@ WARP, with AmneziaWG obfuscation, mihomo load-balancing, blocky DNS filtering an
 ZeroTier management overlay). The hard-won operational lessons from running that
 by hand are baked into the reconcile logic, not left as comments.
 
+**AmneziaWG is the primary transport** between the master and the exits. Each
+exit can additionally run a VLESS + REALITY + XHTTP transport as a **fallback for
+when AmneziaWG is blocked** by DPI (e.g. an exit on a censored network path) — the
+operator switches that exit to the fallback from the Web UI; AWG stays the default
+everywhere else.
+
 > Working language: **all code, comments, identifiers, logs and commits are in
 > English.** Project design notes (`docs/DESIGN.md`) and discussion are in Russian.
 
@@ -76,8 +82,9 @@ the load balancer on the master.
   renderer, not left to guesswork.
 - **Censorship-adaptive egress** — block detection and automatic egress failover
   (WARP ↔ direct), with a throughput watchdog so a throttled path is demoted.
-- **Dual transport per exit** — AmneziaWG and VLESS + REALITY + XHTTP, switchable
-  live from the Web UI for censorship resistance.
+- **AmneziaWG-first, REALITY fallback** — AmneziaWG is the primary master↔exit
+  transport; each exit can also run a VLESS + REALITY + XHTTP transport as a
+  fallback for when AWG is blocked by DPI, switchable live from the Web UI.
 - **Two-tier DNS filtering** — blocky on the master and exits, with conditional
   forwarding for local zones.
 - **Scanner-resistant firewall** — rendered nftables with an auto-refreshed
@@ -541,8 +548,8 @@ fleet:
       address_pool: 10.81.0.0/24
       mgmt_addr: 10.20.0.5                 # ZeroTier address (admin/metrics/DNS bind)
       transports:                           # master↔exit transport(s), ADR-0025; omit ⇒ AWG-only
-        awg: { enabled: true, listen_port: 0 }       # WG UDP port; 0 ⇒ stable-random derived
-        reality:                            # VLESS+REALITY+XHTTP (xray) — censorship-resistant
+        awg: { enabled: true, listen_port: 0 }       # primary transport. WG UDP port; 0 ⇒ stable-random derived
+        reality:                            # fallback transport (VLESS+REALITY+XHTTP, xray) for when AWG is DPI-blocked
           enabled: true
           listen_port: 443                  # default 443; must differ from the AWG port
           dest_domain: www.python.org       # camouflage dest — MUST support X25519MLKEM768 (verify `xray tls ping`); not Cloudflare-fronted
@@ -554,7 +561,7 @@ fleet:
           empty_sni: false                  # true ⇒ no-SNI ClientHello (RU-TSPU heuristic bypass)
           allow_ipv6: false                 # false ⇒ pin xray resolution to IPv4 (IPv4-only data plane)
           # image: ghcr.io/xtls/xray-core:26.6.22   # unset ⇒ pinned default
-      active_transport: awg                 # awg | reality-xhttp (flip live in the Web UI)
+      active_transport: awg                 # awg (default/primary) | reality-xhttp (fallback); flip live in the Web UI
       dns_filter: true                      # blocky (Docker); binds loopback + mgmt_addr ONLY
       dns:                                  # optional blocky tuning (ZT-only binds enforced regardless)
         image: spx01/blocky                 # repository …
@@ -898,8 +905,11 @@ native Go (kernel WG via netlink, native nftables).
 **Phase 5 (optional) — HA control plane:** multi-master with leader election,
 raft/rqlite store, CA-key distribution model.
 
-**Done (ADR-0025):** Reality/VLESS+XHTTP as an **additional** master↔exit transport
-(not a WG replacement) — dual-transport per exit, switchable live from the Web UI.
-Shipped and the fleet runs on it; the camouflage `dest` must support X25519MLKEM768
-. Per-exit knobs: `transports.reality.{dest_domain,dest_port,sni,
-listen_port,mode,mux,fingerprint,empty_sni,allow_ipv6,image}`.
+**Done (ADR-0025):** Reality/VLESS+XHTTP as a **fallback** master↔exit transport
+for when AmneziaWG is blocked (not a WG replacement) — per-exit, switchable live
+from the Web UI; AWG stays the default/primary. Shipped and validated on a censored
+path where AWG was blocked but REALITY carried traffic; the camouflage `dest` must
+support X25519MLKEM768. Per-exit knobs: `transports.reality.{dest_domain,
+dest_port,sni,listen_port,mode,mux,fingerprint,empty_sni,allow_ipv6,image}`.
+Switching is manual today; automatic AWG→REALITY failover (analogous to the
+WARP→direct egress failover) is on the roadmap.
