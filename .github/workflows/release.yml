@@ -56,7 +56,7 @@ jobs:
 
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum * > SHA256SUMS
+        run: sha256sum wgfleet-* > SHA256SUMS   # binaries only, not the sums file itself
 
       - name: Publish release
         env:

@@ -1,0 +1,16 @@
+# Reference systemd unit for the wgfleet controller (co-located control plane).
+# The one-line installer (install.sh) drops an equivalent unit during bootstrap.
+[Unit]
+Description=wgfleet controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/wgfleet-controller --config /etc/wgfleet/controller.yaml --log-format json
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
