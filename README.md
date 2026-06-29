@@ -14,6 +14,14 @@ by hand are baked into the reconcile logic, not left as comments.
 > Working language: **all code, comments, identifiers, logs and commits are in
 > English.** Project design notes (`docs/DESIGN.md`) and discussion are in Russian.
 
+> ⚠️ **Disclaimer.** wgfleet is research / infrastructure-automation software for
+> **lawful** use only, provided **without warranty**. It operates VPN and
+> traffic-obfuscation infrastructure; the legality of deploying, operating, or
+> using such tools varies by jurisdiction and is **your responsibility**. Read
+> [DISCLAIMER.md](DISCLAIMER.md) before using it.
+
+📄 [Disclaimer](DISCLAIMER.md) · [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+
 ---
 
 ## Table of contents
@@ -52,6 +60,32 @@ The headline feature is **autoprovisioning**: point the controller at a blank
 Ubuntu VM (SSH only) and it turns it into a `Ready` exit node — AmneziaWG server,
 WARP egress, DNS filtering, policy routing, firewall, metrics — and joins it to
 the load balancer on the master.
+
+### Features
+
+- **Declarative fleet** — describe masters and exits in `fleet.yaml`; the
+  reconcile loop converges every node to that state and keeps it there.
+- **Autoprovisioning** — bootstrap a blank Ubuntu VM (SSH only) into a `Ready`
+  exit node, then join it to the load balancer automatically.
+- **Key broker, not key store** — WireGuard/AmneziaWG keys are generated on-node;
+  the controller renders peer topology from public keys only.
+- **Dry-run / plan everywhere** — a first-class, side-effect-free plan mode shows
+  the rendered configs and diffs (secrets redacted) before anything is applied.
+- **AmneziaWG obfuscation, done right** — collision-safe S1-S4, per-end decoy
+  (Jc/Jmin/Jmax + I1-I5 real-protocol mimicry), computed MTU — encoded in the
+  renderer, not left to guesswork.
+- **Censorship-adaptive egress** — block detection and automatic egress failover
+  (WARP ↔ direct), with a throughput watchdog so a throttled path is demoted.
+- **Dual transport per exit** — AmneziaWG and VLESS + REALITY + XHTTP, switchable
+  live from the Web UI for censorship resistance.
+- **Two-tier DNS filtering** — blocky on the master and exits, with conditional
+  forwarding for local zones.
+- **Scanner-resistant firewall** — rendered nftables with an auto-refreshed
+  scanner-ASN blacklist and a management-overlay allowlist.
+- **Observability** — Prometheus `/metrics` on every binary plus a built-in Web
+  dashboard with fleet topology and per-node health.
+- **Safe lifecycle** — graceful drain, decommission/teardown, versioned upgrades
+  with a wire-contract gate, and built-in encrypted controller backup/restore.
 
 ---
 
@@ -235,11 +269,14 @@ wgfleet/
 │   └── examples/               example controller.yaml / agent.yaml
 ├── internal/version/           build version (stamped via -ldflags at compile)
 ├── docs/
-│   ├── adr/                    architecture decision records (0001–0019)
+│   ├── DESIGN.md               full project context + conventions
+│   ├── lessons.md              hard-won operational lessons baked into reconcile
+│   ├── adr/                    architecture decision records (0001–0027)
 │   ├── onboarding.md           node provisioning walkthrough
 │   ├── colocated-controller-master.md  co-location on the master (default for small fleets)
 │   ├── secrets-sops.md         SOPS/age secret provider setup
 │   └── upgrade.md              agent binary upgrade procedure + wire-contract versioning
+├── DISCLAIMER.md  ·  SECURITY.md  ·  CONTRIBUTING.md
 ```
 
 ---
@@ -831,9 +868,8 @@ Full records in [`docs/adr/`](docs/adr/):
 | 0019 | **Upgrade procedure + wire-contract versioning** (gRPC-metadata gate, reject+auto-upgrade, store migrations) |
 
 `docs/DESIGN.md` holds the full project context, the hard-won operational lessons, and
-the conventions. Upstream AmneziaWG sources used for verification live at
-`the upstream AmneziaWG sources` (kernel module, tools, and the wg-easy
-fork).
+the conventions. Behavior is verified against the upstream AmneziaWG sources
+(kernel module, tools, and the wg-easy fork).
 
 ---
 
