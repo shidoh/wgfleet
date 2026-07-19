@@ -1,6 +1,7 @@
 package mihomo
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -652,7 +653,9 @@ func TestRenderWithoutReserveKeepsSingleFlatGroup(t *testing.T) {
 	}
 }
 
-func TestRenderWithReserveBuildsTierHierarchy(t *testing.T) {
+// A reserve tier must NOT produce nested groups: mihomo cannot make a tier-level
+// decision over them (upstream #2588). One flat wg-best over the active tier only.
+func TestRenderWithReserveEmitsFlatGroupOverPrimaryTier(t *testing.T) {
 	in := sampleInput()
 	in.Spec.Balance = "consistent-hashing"
 	in.Spec.ExitTunnels[1].Reserve = true // exit-b to the reserve tier
@@ -663,27 +666,88 @@ func TestRenderWithReserveBuildsTierHierarchy(t *testing.T) {
 	}
 	groups := groupsByName(t, out)
 
-	top, ok := groups["wg-best"]
+	if len(groups) != 1 {
+		t.Fatalf("got %d groups, want exactly 1 — nested tier groups cannot fail over", len(groups))
+	}
+	for _, dead := range []string{"wg-primary", "wg-reserve"} {
+		if _, ok := groups[dead]; ok {
+			t.Errorf("nested group %q must no longer be emitted", dead)
+		}
+	}
+
+	best, ok := groups["wg-best"]
 	if !ok {
 		t.Fatal("wg-best must exist — the rules reference it by name")
 	}
-	if top["type"] != "fallback" {
-		t.Errorf("wg-best type = %v, want fallback", top["type"])
+	if best["type"] != "load-balance" {
+		t.Errorf("wg-best type = %v, want load-balance", best["type"])
 	}
-	if got := toStrings(top["proxies"].([]any)); len(got) != 2 ||
-		got[0] != "wg-primary" || got[1] != "wg-reserve" {
-		t.Errorf("wg-best members = %v, want [wg-primary wg-reserve]", got)
+	if best["strategy"] != "consistent-hashing" {
+		t.Errorf("wg-best strategy = %v, want consistent-hashing", best["strategy"])
 	}
+	if got := toStrings(best["proxies"].([]any)); len(got) != 1 || got[0] != "exit-a" {
+		t.Errorf("wg-best members = %v, want [exit-a] (primary tier only)", got)
+	}
+}
 
-	primary := groups["wg-primary"]
-	if primary["strategy"] != "consistent-hashing" {
-		t.Errorf("wg-primary strategy = %v, want consistent-hashing", primary["strategy"])
+// The agent flips ReserveActive when the primary tier is unusable; that must swap
+// the group's membership to the reserve tier, keeping the same group name so the
+// routing rules never change.
+func TestRenderReserveActiveSwitchesMembershipToReserveTier(t *testing.T) {
+	in := sampleInput()
+	in.Spec.Balance = "consistent-hashing"
+	in.Spec.ExitTunnels[1].Reserve = true
+	in.ReserveActive = true
+
+	groups := groupsByName(t, mustRender(t, in))
+	if len(groups) != 1 {
+		t.Fatalf("got %d groups, want exactly 1", len(groups))
 	}
-	if got := toStrings(primary["proxies"].([]any)); len(got) != 1 || got[0] != "exit-a" {
-		t.Errorf("wg-primary members = %v, want [exit-a]", got)
+	best := groups["wg-best"]
+	if got := toStrings(best["proxies"].([]any)); len(got) != 1 || got[0] != "exit-b" {
+		t.Errorf("wg-best members = %v, want [exit-b] (the reserve tier)", got)
 	}
-	if got := toStrings(groups["wg-reserve"]["proxies"].([]any)); len(got) != 1 || got[0] != "exit-b" {
-		t.Errorf("wg-reserve members = %v, want [exit-b]", got)
+	if best["strategy"] != "consistent-hashing" {
+		t.Errorf("balancing must survive the failover, strategy = %v", best["strategy"])
+	}
+}
+
+// Failing over must not disconnect the tier we left: its tunnels stay configured
+// proxies so established connections survive, exactly like a drained exit.
+func TestRenderReserveActiveKeepsInactiveTierAsProxies(t *testing.T) {
+	in := sampleInput()
+	in.Spec.ExitTunnels[1].Reserve = true
+	in.ReserveActive = true
+
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(mustRender(t, in)), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	proxies, _ := cfg["proxies"].([]any)
+	if len(proxies) != 2 {
+		t.Fatalf("got %d proxies, want 2 — the inactive tier must stay configured", len(proxies))
+	}
+	names := map[string]bool{}
+	for _, p := range proxies {
+		if m, ok := p.(map[string]any); ok {
+			names[fmt.Sprint(m["name"])] = true
+		}
+	}
+	if !names["exit-a"] {
+		t.Error("the now-inactive primary exit must still be rendered as a proxy")
+	}
+}
+
+// ReserveActive with nothing in reserve must not empty the group — mihomo rejects
+// an empty group, which would take the whole data plane down.
+func TestRenderReserveActiveWithoutReserveKeepsPrimary(t *testing.T) {
+	in := sampleInput()
+	in.ReserveActive = true // no tunnel is marked Reserve
+
+	groups := groupsByName(t, mustRender(t, in))
+	got := toStrings(groups["wg-best"]["proxies"].([]any))
+	if len(got) != 2 || got[0] != "exit-a" || got[1] != "exit-b" {
+		t.Errorf("wg-best members = %v, want both exits (no reserve tier to switch to)", got)
 	}
 }
 
@@ -729,15 +793,16 @@ func TestRenderDrainEmptiesPrimaryTierAndCollapses(t *testing.T) {
 	}
 }
 
-// ADR-0010's drain guarantee (a drained exit stays a configured proxy so
-// existing connections survive, even though it joins no tier) must hold under
-// the tiered shape too, not just the flat one (see TestRenderDrainExcludesFromLBGroup).
-func TestRenderDrainSurvivesAsProxyUnderTieredShape(t *testing.T) {
+// ADR-0010's drain guarantee (a drained exit stays a configured proxy so existing
+// connections survive, even though it joins no selection group) must hold when a
+// reserve tier is configured too, not only in the single-tier case (see
+// TestRenderDrainExcludesFromLBGroup).
+func TestRenderDrainSurvivesAsProxyWithReserveConfigured(t *testing.T) {
 	in := sampleInput()
 	in.Spec.ExitTunnels[0].Drained = true // drain exit-a
-	in.Spec.ExitTunnels[1].Reserve = true // exit-b to reserve, so both tiers... primary ends up empty
-	// Add a third, non-drained, non-reserve exit so the primary tier stays
-	// non-empty and we actually get the tiered (not collapsed) shape.
+	in.Spec.ExitTunnels[1].Reserve = true // exit-b is the reserve tier
+	// A third live, non-drained, non-reserve exit keeps the primary tier populated,
+	// so the drain is what excludes exit-a rather than an empty-tier fallback.
 	in.Spec.ExitTunnels = append(in.Spec.ExitTunnels, domain.ExitTunnel{
 		Name: "exit-c", Endpoint: "exit-c.example.net:60000",
 		ServerPublicKey: "cGVBcmJDaUJEc1oxMnAzeDdCRnpZaVJmVGJ1RmFrZFY=",
@@ -755,7 +820,7 @@ func TestRenderDrainSurvivesAsProxyUnderTieredShape(t *testing.T) {
 	// The drained proxy is still rendered (existing connections survive).
 	proxies, _ := cfg["proxies"].([]any)
 	if len(proxies) != 3 {
-		t.Fatalf("drained proxy must still be rendered under the tiered shape: %d proxies", len(proxies))
+		t.Fatalf("drained proxy must still be rendered: %d proxies", len(proxies))
 	}
 	found := false
 	for _, p := range proxies {
@@ -767,21 +832,10 @@ func TestRenderDrainSurvivesAsProxyUnderTieredShape(t *testing.T) {
 		t.Error("drained exit-a must still appear in proxies")
 	}
 
-	// It must join neither tier group.
+	// The active (primary) group carries only the live primary exit.
 	groups := groupsByName(t, out)
-	primary, ok := groups["wg-primary"]
-	if !ok {
-		t.Fatal("expected the tiered shape (wg-primary present) with a live non-reserve exit")
-	}
-	if members := toStrings(primary["proxies"].([]any)); len(members) != 1 || members[0] != "exit-c" {
-		t.Errorf("wg-primary members = %v, want [exit-c] (exit-a drained, exit-b reserve)", members)
-	}
-	reserve, ok := groups["wg-reserve"]
-	if !ok {
-		t.Fatal("expected wg-reserve present")
-	}
-	if members := toStrings(reserve["proxies"].([]any)); len(members) != 1 || members[0] != "exit-b" {
-		t.Errorf("wg-reserve members = %v, want [exit-b]", members)
+	if members := toStrings(groups["wg-best"]["proxies"].([]any)); len(members) != 1 || members[0] != "exit-c" {
+		t.Errorf("wg-best members = %v, want [exit-c] (exit-a drained, exit-b reserve)", members)
 	}
 	for name, g := range groups {
 		for _, m := range toStrings(g["proxies"].([]any)) {
@@ -789,6 +843,12 @@ func TestRenderDrainSurvivesAsProxyUnderTieredShape(t *testing.T) {
 				t.Errorf("drained exit-a must not appear in any selection group, found in %q", name)
 			}
 		}
+	}
+
+	// ...and a drained exit must stay excluded after failover too.
+	in.ReserveActive = true
+	if members := toStrings(groupsByName(t, mustRender(t, in))["wg-best"]["proxies"].([]any)); len(members) != 1 || members[0] != "exit-b" {
+		t.Errorf("after failover wg-best = %v, want [exit-b]", members)
 	}
 }
 

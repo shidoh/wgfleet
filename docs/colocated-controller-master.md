@@ -269,9 +269,9 @@ agent before the controller restart so the file is written before mihomo reloads
   healthcheck runs `wg show`, which cannot enumerate AmneziaWG interfaces. The real
   signal is the agent's `client-wg` health check (the controller marks the master `Ready`
   off that). Don't chase the wg-easy container health flag.
-- **Pin the mihomo version**, not `:latest`. ⚠️ The code default `v1.19.27` **crash-loops on
-  AmneziaWG-2.0 master↔exit junk**; set `compose.mihomo_tag: Alpha` (has the length guard, as the
-  running fleet does) until a fixed pinned tag ships. The AmneziaWG obfuscation
+- **Pin the mihomo version**, not `:latest` — and not `Alpha`, which is a moving tag that
+  defeats the pin. The code default is now `v1.19.29` (AmneziaWG 2.0 shipped in `v1.19.14`).
+  ⚠️ `v1.19.27` and older **crash-loop on AmneziaWG-2.0 master↔exit junk**. The AmneziaWG obfuscation
   params are derived safely by the platform — it floors `Jmin ≥ S4` so no junk packet is short
   enough to trip the unguarded S4-strip in older `amneziawg-go` builds (this was a real
   crash-loop: `Jmin=22` with `S4=52` panicked mihomo on a 41-byte junk packet; fixed in the

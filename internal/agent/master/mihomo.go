@@ -28,15 +28,33 @@ type mihomoPlanner struct {
 	// restart bounces the container (nil ⇒ real `docker compose restart mihomo`);
 	// injected in tests. Used when a wireguard-proxy change can't be hot-reloaded.
 	restart func(ctx context.Context) error
+	// tier decides whether wg-best routes to the reserve tier. Stateful across
+	// reconcile passes (it carries the hysteresis streaks), so the planner must be
+	// long-lived — constructed once by NewPlanners, not per pass. nil ⇒ never fail
+	// over, which is the correct degenerate behaviour for a fleet with no reserve.
+	tier *tierSelector
 }
 
 func (mihomoPlanner) Component() string { return "mihomo (data plane)" }
 
-func (p mihomoPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
+func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
 	if spec.Master == nil {
 		return nil, fmt.Errorf("mihomo: node has no master spec")
 	}
-	cfg, err := mihomo.RenderConfig(mihomo.RenderInput{Spec: *spec.Master, PrivateKey: p.privateKey})
+	// Decide the active tier BEFORE rendering: mihomo cannot choose between tiers
+	// itself (see mihomo.wgBestGroups), so the group's membership is our call.
+	reserveActive := false
+	if p.tier != nil {
+		primary, reserve := mihomo.TierMembers(*spec.Master)
+		addr, secret := spec.Master.ExternalController, clashSecret(spec.Master)
+		probe := func(ctx context.Context, name string) (int, int, error) {
+			return mihomo.ProbeMember(ctx, addr, secret, name, nil)
+		}
+		reserveActive = p.tier.ReserveActive(ctx, probe, primary, reserve)
+	}
+	cfg, err := mihomo.RenderConfig(mihomo.RenderInput{
+		Spec: *spec.Master, PrivateKey: p.privateKey, ReserveActive: reserveActive,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -89,13 +107,7 @@ func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML []byte, f
 
 	restart := p.restart
 	if restart == nil {
-		restart = func(ctx context.Context) error {
-			c := exec.CommandContext(ctx, "docker", "compose", "-f", compose, "restart", "mihomo")
-			if out, rerr := c.CombinedOutput(); rerr != nil {
-				return fmt.Errorf("mihomo restart failed: %w: %s", rerr, strings.TrimSpace(string(out)))
-			}
-			return nil
-		}
+		restart = composeRestartMihomo(compose)
 	}
 
 	// A wireguard-proxy change must restart the container: a hot reload cannot
@@ -222,6 +234,117 @@ func (p mihomoRedirPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]rec
 			return nil
 		})
 	return []reconcile.Action{restart}, nil
+}
+
+// --- mihomo leaked-wireguard-device self-heal ---
+
+// mihomoWGDupPlanner detects mihomo's leaked userspace AmneziaWG devices and
+// restarts the container to clear them.
+//
+// mihomo builds every `type: wireguard` proxy as an in-process userspace WireGuard
+// device bound to its own UDP socket. A Clash API hot reload (PUT /configs)
+// constructs the new proxy set but does NOT always tear the old devices down, so a
+// second device for the same exit can survive with its keepalive/rekey timers still
+// running (observed live 2026-07-19: two sockets per exit, leaked at two of ~22
+// reloads). mihomoPlanner's ProxiesChanged guard forces a restart when the proxies
+// section itself changes, but the leak also happens on reloads that guard lets
+// through — hence this independent, evidence-based check.
+//
+// Why the duplicate is destructive rather than merely wasteful: every exit tunnel
+// shares ONE master WireGuard identity, so the exit's kernel has a single peer slot
+// for that key. Two live devices make the peer's endpoint flap between their two
+// source ports, and whichever socket is not currently selected black-holes. A dial
+// through the losing device stalls until wireguard-go's REKEY_TIMEOUT expires
+// (measured: 7.1s), which surfaces as intermittent connection failures and multi-
+// second latency spikes on AWG exits only — REALITY/XHTTP is unaffected because it
+// is stateless TCP.
+//
+// Restarting is a blunt repair (it drops every client connection), so it is gated on
+// an OBSERVED duplicate rather than on config change: a transport switch or a drain
+// re-renders proxy-GROUP membership and hot-reloads with no restart at all.
+type mihomoWGDupPlanner struct {
+	compose string
+	// peerSockets counts connected UDP sockets whose peer is addr; nil ⇒ a passive
+	// socket-table read (udpPeerSocketCount). Injected in tests.
+	peerSockets func(addr string) (int, bool)
+	// restart bounces the container (nil ⇒ real `docker compose restart mihomo`).
+	restart func(ctx context.Context) error
+}
+
+func (mihomoWGDupPlanner) Component() string { return "mihomo wireguard devices" }
+
+func (p mihomoWGDupPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
+	if spec.Master == nil {
+		return nil, fmt.Errorf("mihomo wireguard devices: node has no master spec")
+	}
+
+	count := p.peerSockets
+	if count == nil {
+		count = udpPeerSocketCount
+	}
+
+	var dupes []string
+	for _, t := range spec.Master.ExitTunnels {
+		// Only AWG tunnels carry a userspace WireGuard device; a reality-xhttp exit
+		// dials plain TCP and cannot leak one.
+		if t.Transport.OrDefault() != domain.TransportAWG {
+			continue
+		}
+		n, ok := count(t.Endpoint)
+		if !ok {
+			// Unreadable socket table: fail safe. A restart drops every client
+			// connection, so never trigger one on a guess.
+			return []reconcile.Action{reconcile.NoChangeAction("mihomo wireguard devices",
+				"socket table unreadable — skipping duplicate-device check")}, nil
+		}
+		if n > 1 {
+			dupes = append(dupes, fmt.Sprintf("%s (%d devices on %s)", t.Name, n, t.Endpoint))
+		}
+	}
+
+	if len(dupes) == 0 {
+		return []reconcile.Action{reconcile.NoChangeAction("mihomo wireguard devices",
+			"one device per AWG exit")}, nil
+	}
+
+	restart := p.restart
+	if restart == nil {
+		restart = composeRestartMihomo(p.compose)
+	}
+	return []reconcile.Action{reconcile.CustomAction(reconcile.ActionUpdate, "mihomo wireguard devices",
+		"leaked AmneziaWG device(s) detected — restart mihomo to clear: "+strings.Join(dupes, ", "),
+		"docker compose restart mihomo", restart)}, nil
+}
+
+// udpPeerSocketCount counts connected UDP sockets whose PEER address is addr, read
+// passively from the kernel socket table. Only mihomo dials an exit's AWG port from
+// the master, so the peer address alone identifies its devices without needing to
+// resolve the container's PID. Reports ok=false when the table cannot be read, so
+// callers can fail safe rather than act on a guess.
+func udpPeerSocketCount(addr string) (int, bool) {
+	out, err := exec.Command("ss", "-unaH").CombinedOutput()
+	if err != nil {
+		return 0, false
+	}
+	n := 0
+	for line := range strings.SplitSeq(string(out), "\n") {
+		// ss udp columns: State Recv-Q Send-Q LocalAddress:Port PeerAddress:Port
+		if f := strings.Fields(line); len(f) >= 5 && f[4] == addr {
+			n++
+		}
+	}
+	return n, true
+}
+
+// composeRestartMihomo returns an apply closure that bounces the mihomo container.
+func composeRestartMihomo(compose string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		c := exec.CommandContext(ctx, "docker", "compose", "-f", compose, "restart", "mihomo")
+		if out, err := c.CombinedOutput(); err != nil {
+			return fmt.Errorf("mihomo restart failed: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
 }
 
 // socketListening reports whether a TCP socket is LISTENing on addr (host:port),

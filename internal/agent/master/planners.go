@@ -3,6 +3,7 @@ package master
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -68,7 +69,11 @@ func Planners(in Input) []reconcile.Planner {
 		// Dashboard before mihomo too: the agent populates the external-ui dir (mihomo
 		// only serves it, never downloads — see dashboardPlanner).
 		dashboardPlanner{uiDir: in.Paths.UIDir},
-		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey},
+		// The tier selector is constructed HERE, once, on purpose: it carries the
+		// failover hysteresis (streak counters + last-flip time) across reconcile
+		// passes. Building it per pass would reset that state every 30s and defeat
+		// the debounce entirely.
+		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey, tier: newTierSelector(slog.Default())},
 		masterNATPlanner{path: in.Paths.NFT, clientIface: in.ClientInterface},
 		dockerfw.NewForwardPlanner(
 			"master forwarding (ip_forward + DOCKER-USER)",
@@ -83,6 +88,13 @@ func Planners(in Input) []reconcile.Planner {
 		// lost its redir bind (the client iface was recreated under it, e.g. a wg-easy
 		// restart flapped the bind address) — DNAT'd client TCP black-holes otherwise.
 		mihomoRedirPlanner{compose: in.Paths.Compose},
+		// Also last: clear mihomo's leaked userspace AmneziaWG devices. A hot reload
+		// can leave a second device alive per AWG exit, and because every exit tunnel
+		// shares one master WG identity the exit's single peer slot then flaps between
+		// the two sockets — intermittent failures and ~7s REKEY_TIMEOUT stalls on AWG
+		// exits. Gated on an observed duplicate, never on config change, because the
+		// repair is a connection-dropping restart.
+		mihomoWGDupPlanner{compose: in.Paths.Compose},
 	}
 }
 

@@ -73,6 +73,17 @@ type RenderInput struct {
 	// render time and shared across all exit-tunnel proxies (one master identity
 	// that each exit peers). Never supplied by the controller.
 	PrivateKey string
+	// ReserveActive routes wg-best to the RESERVE tier instead of the primary one
+	// (ADR-0029, revised). The master agent sets it — not the controller — because
+	// the decision needs live per-member health that only the master observes, and
+	// because mihomo cannot make it itself (see wgBestGroups).
+	//
+	// It is deliberately NOT on MasterSpec/the wire: keeping it a render input makes
+	// RenderConfig a pure function of (spec, key, tier) and keeps failover policy on
+	// the node that has the evidence. The agent must debounce it — every flip
+	// rewrites config.yaml and reloads mihomo, so a flapping exit would otherwise
+	// churn the whole data plane.
+	ReserveActive bool
 }
 
 // RenderConfig renders mihomo's config.yaml. It validates each tunnel's AWG
@@ -146,7 +157,7 @@ func RenderConfig(in RenderInput) (string, error) {
 			balance:        in.Spec.Balance,
 			healthInterval: healthInterval,
 			maxFailedTimes: in.Spec.MaxFailedTimes,
-		}),
+		}, in.ReserveActive),
 		"rules": renderRules(in.Spec),
 	}
 	if in.Spec.ExternalController != "" {
@@ -244,8 +255,23 @@ func renderProxies(in RenderInput) (proxies []any, primary, reserve []string, er
 			return nil, nil, nil, perr
 		}
 		proxies = append(proxies, proxy)
-		// A drained exit stays a configured proxy (existing connections survive) but
-		// joins no tier, so no new traffic reaches it (ADR-0010).
+	}
+	primary, reserve = TierMembers(in.Spec)
+	return proxies, primary, reserve, nil
+}
+
+// TierMembers partitions the spec's exit tunnels into the primary and reserve
+// selection tiers (ADR-0029). A drained exit stays a configured proxy so existing
+// connections survive, but joins neither tier, so no new traffic reaches it
+// (ADR-0010).
+//
+// Exported because the master agent needs the same membership the renderer will
+// use, in order to probe the primary tier and decide RenderInput.ReserveActive.
+// Sharing one function keeps the decision and the rendered config from drifting
+// apart — an agent probing a tier that differs from the one it then renders would
+// fail over on evidence about the wrong exits.
+func TierMembers(spec domain.MasterSpec) (primary, reserve []string) {
+	for _, t := range spec.ExitTunnels {
 		if t.Drained {
 			continue
 		}
@@ -255,7 +281,7 @@ func renderProxies(in RenderInput) (proxies []any, primary, reserve []string, er
 			primary = append(primary, t.Name)
 		}
 	}
-	return proxies, primary, reserve, nil
+	return primary, reserve
 }
 
 // wireguardProxy renders a mihomo WireGuard proxy carrying the AmneziaWG-obfuscated
@@ -445,47 +471,62 @@ func selectionGroup(name string, members []string, o groupOpts) map[string]any {
 	return g
 }
 
-// wgBestGroups renders the master's exit-selection hierarchy (ADR-0029).
+// wgBestGroups renders the master's exit selection as ONE flat group named
+// wg-best over the members of the currently active tier (ADR-0029, revised).
 //
-// With no reserve tier it emits a SINGLE group named wg-best — byte-identical to
-// the pre-ADR-0029 output. That equality is load-bearing: any drift would rewrite
-// config.yaml on every fleet and force a mihomo hot reload, which resets the
-// group and re-selects an exit — the very churn this design removes.
+// It used to emit a `fallback` group over two nested `load-balance` tier groups.
+// That shape cannot make a TIER-level decision, verified against mihomo's source
+// (2026-07-19) and matching upstream MetaCubeX/mihomo#2588, open and unanswered
+// since 2026-02-28. Within a tier, consistent-hashing does rehash off a member
+// already marked dead; what is broken is the parent's choice BETWEEN tiers:
 //
-// With both tiers populated it emits a fallback group over two tier groups, so
-// traffic uses the reserve tier only when every primary member is down. The top
-// group keeps the name wg-best, so the routing rules never change.
+//   - Fallback picks a member by AliveForTestUrl, and the only thing that ever
+//     writes that flag on a nested GROUP is the parent's own URLTest.
+//   - A URLTest against a load-balance group is a real dial through
+//     LoadBalance.DialContext, which consistent-hashes on the *fixed test URL's*
+//     host — so it deterministically probes ONE member forever. "Is the tier up"
+//     silently degenerated into "is that one member up".
+//   - Real client dial failures through the tier update only that tier group's
+//     own private counters (GroupBase.onDialFailed); they never reach the parent's
+//     decision. Live proof: a 48-minute outage with every primary member dead
+//     logged "wg-primary failed multiple times" throughout while wg-best kept
+//     reporting now=wg-primary and the healthy reserve tier took no traffic.
 //
-// If either tier is empty the hierarchy collapses back to one flat wg-best over
-// whatever remains, since mihomo rejects an empty group. This function does not
-// itself guard against BOTH tiers being empty (it would return a group with
-// proxies: nil); RenderConfig's caller refuses that case before renderProxies'
-// output ever reaches here (see the "all exits are drained" check).
-func wgBestGroups(primary, reserve []string, o groupOpts) []any {
-	switch {
-	case len(reserve) == 0:
-		return []any{selectionGroup("wg-best", primary, o)}
-	case len(primary) == 0:
-		return []any{selectionGroup("wg-best", reserve, o)}
+// The worst case is not a dead tier but a DECEIVED one: under RKN's volume-freeze
+// a tiny HEAD probe still passes while real traffic dies, so no member is ever
+// marked dead, nothing escalates, and clients hashed onto the broken exit stay
+// broken indefinitely (observed live: pn8 answered the probe in 113ms while
+// google/github/youtube/telegram were 0/16 through it).
+//
+// No combination of interval/url/expected-status/group-type fixes this; it is
+// inherent to nesting a group inside a group. So tier SELECTION moves out of
+// mihomo and into the master agent (reserveActive), which can weigh evidence a
+// lightweight probe cannot see — throughput, multi-destination reachability — and
+// mihomo is left with the one job it does correctly: balancing across a flat set
+// of leaves whose liveness it checks individually.
+//
+// reserveActive picks which tier's members become wg-best's proxies. The inactive
+// tier's tunnels stay rendered as proxies (existing connections survive) but leave
+// the group, exactly like a drained exit. An empty chosen tier falls back to the
+// other one, since mihomo rejects an empty group; RenderConfig refuses the
+// both-empty case before this is reached (see the "all exits are drained" check).
+//
+// The group name is always wg-best, so routing rules never change and, with no
+// reserve tier configured, the output stays byte-identical to the pre-ADR-0029
+// config — load-bearing, because any drift rewrites config.yaml and forces a
+// reload the fleet does not need.
+func wgBestGroups(primary, reserve []string, o groupOpts, reserveActive bool) []any {
+	members := primary
+	if reserveActive && len(reserve) > 0 {
+		members = reserve
 	}
-	top := map[string]any{
-		"name":    "wg-best",
-		"type":    "fallback",
-		"proxies": toAnySlice([]string{"wg-primary", "wg-reserve"}),
-		"url":     "http://cp.cloudflare.com/generate_204",
-		// The tier groups run their own member health checks; the top group only
-		// needs to notice that a whole tier went dark.
-		"interval": o.healthInterval,
-		"lazy":     false,
+	if len(members) == 0 {
+		// Chosen tier is empty: use whatever remains rather than emit an empty group.
+		if members = primary; len(members) == 0 {
+			members = reserve
+		}
 	}
-	if o.maxFailedTimes > 0 {
-		top["max-failed-times"] = o.maxFailedTimes
-	}
-	return []any{
-		top,
-		selectionGroup("wg-primary", primary, o),
-		selectionGroup("wg-reserve", reserve, o),
-	}
+	return []any{selectionGroup("wg-best", members, o)}
 }
 
 func renderRules(spec domain.MasterSpec) []any {

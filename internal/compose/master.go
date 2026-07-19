@@ -29,12 +29,19 @@ const (
 // the same canonical defaults the renderer falls back to.
 const (
 	DefaultWGEasyImage = "ghcr.io/wg-easy/wg-easy:15"
-	// Pinned, NOT :latest (docs/DESIGN.md #8) — reproducible/auditable deploys. v1.19.27 is the
-	// operator's known-good prod version. (The AWG-param safety that keeps mihomo's
-	// amneziawg-go from panicking is handled in the derivation: Jmin is floored ≥ S4, so no
-	// junk packet underflows its S4-strip — see internal/wg junkS4Margin. So this pin is
-	// for reproducibility, not a kernel↔mihomo version-match requirement.)
-	DefaultMihomoImage = "metacubex/mihomo:v1.19.27"
+	// Pinned, NOT :latest and NOT :Alpha (docs/DESIGN.md #8) — reproducible/auditable
+	// deploys. (The AWG-param safety that keeps mihomo's amneziawg-go from panicking is
+	// handled in the derivation: Jmin is floored ≥ S4, so no junk packet underflows its
+	// S4-strip — see internal/wg junkS4Margin. So this pin is for reproducibility, not a
+	// kernel↔mihomo version-match requirement.)
+	//
+	// Bumped 1.19.27 → 1.19.29 to retire the fleet's `mihomo_tag: "Alpha"` override. That
+	// override existed because AWG 2.0 landed in Alpha before any release; it shipped in
+	// v1.19.14 (2025-09-24), so the rationale is long obsolete — and `Alpha` is a MOVING
+	// tag, which silently defeats the pin. Verified 2026-07-19 against the GitHub compare
+	// API: v1.19.29...Alpha is `identical`, 0 commits apart, so this bump is a zero-code
+	// delta from what the fleet already runs (live build alpha-8e2aba4).
+	DefaultMihomoImage = "metacubex/mihomo:v1.19.29"
 	// DefaultWGEasyWebPort is the wg-easy admin UI port when the spec leaves it
 	// unset. Exported so the controller UI can build a link to it.
 	DefaultWGEasyWebPort = 44423

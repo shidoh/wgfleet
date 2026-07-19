@@ -182,10 +182,10 @@ buttons or store flags.
 - **First real apply touches firewall/routing.** Use a VM with out-of-band console
   access for the first run; the baseline firewall + `Table = off` keep SSH/ZT
   reachable, but verify before depending on the box.
-- **Pin the mihomo version**, not `:latest`. ⚠️ The code default `v1.19.27` **crash-loops
-  on AmneziaWG-2.0 master↔exit junk** (the running fleet sets `compose.mihomo_tag: Alpha`,
-  which has the length guard); use `Alpha` (or a known-good build) until a fixed pinned tag
-  ships. The AmneziaWG-param safety is otherwise handled
+- **Pin the mihomo version**, not `:latest` — and not `Alpha` either, since a moving tag
+  defeats the pin. The code default is now `v1.19.29`, which carries AmneziaWG 2.0 (it
+  shipped in `v1.19.14`). ⚠️ Do not fall back to `v1.19.27` or older: those **crash-loop on
+  AmneziaWG-2.0 master↔exit junk**. The AmneziaWG-param safety is otherwise handled
   by the platform: it floors `Jmin ≥ S4` so no obfuscation junk packet is short enough to trip
   the unguarded S4-strip in older `amneziawg-go` (mihomo) builds. (This was a real crash-loop —
   our derivation once produced `Jmin=22` with `S4=52`, panicking mihomo on a 41-byte junk packet;
