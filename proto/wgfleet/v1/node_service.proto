@@ -153,6 +153,10 @@ message MasterSpec {
   // 0 ⇒ the agent's mihomo.DefaultHealthInterval. Additive; an older agent ignores
   // it and keeps the 60s default — backward-compatible, no wire-version bump.
   int32 health_check_interval = 14;
+  // Forced-health-check threshold for the exit-selection groups (mihomo
+  // max-failed-times). 0 ⇒ mihomo's default (5). Additive; an older agent ignores
+  // it and keeps the default — backward-compatible, no wire-version bump.
+  int32 max_failed_times = 15;
 }
 
 // ComposeSpec is the master's container-stack desired state (wg-easy + mihomo).
@@ -180,6 +184,11 @@ message ExitTunnel {
   // field carries the mihomo vless proxy params instead.
   string transport = 9;
   RealityTunnel reality = 10;
+  // Reserve puts this tunnel in the master's SECOND selection tier: it carries
+  // traffic only when every primary tunnel is down (ADR-0029). Additive; an older
+  // agent ignores it and renders one flat group — backward-compatible, no
+  // wire-version bump.
+  bool reserve = 11;
 }
 
 // RealityTunnel is the master-side mihomo vless+reality proxy descriptor for a

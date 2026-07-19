@@ -227,6 +227,33 @@ func TestMasterSpecRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMasterSpecRoundTripCarriesTiering(t *testing.T) {
+	in := &domain.MasterSpec{
+		BindAddress:    "10.73.0.1",
+		Balance:        "consistent-hashing",
+		MaxFailedTimes: 10,
+		ExitTunnels: []domain.ExitTunnel{
+			{Name: "vn1", Endpoint: "1.2.3.4:51820", Reserve: false},
+			{Name: "anz3", Endpoint: "5.6.7.8:51820", Reserve: true},
+		},
+	}
+
+	out := masterFromProto(masterToProto(in))
+
+	if out.MaxFailedTimes != 10 {
+		t.Errorf("MaxFailedTimes = %d, want 10", out.MaxFailedTimes)
+	}
+	if len(out.ExitTunnels) != 2 {
+		t.Fatalf("got %d tunnels, want 2", len(out.ExitTunnels))
+	}
+	if out.ExitTunnels[0].Reserve {
+		t.Error("vn1 must round-trip as primary")
+	}
+	if !out.ExitTunnels[1].Reserve {
+		t.Error("anz3 must round-trip as reserve")
+	}
+}
+
 func TestStatusExitHealthRoundTrip(t *testing.T) {
 	in := domain.NodeStatus{
 		NodeID: "master-xa-1",

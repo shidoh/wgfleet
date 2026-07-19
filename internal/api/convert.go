@@ -162,6 +162,7 @@ func masterToProto(m *domain.MasterSpec) *pb.MasterSpec {
 		ExternalController:  m.ExternalController,
 		Balance:             m.Balance,
 		HealthCheckInterval: int32(m.HealthCheckInterval),
+		MaxFailedTimes:      int32(m.MaxFailedTimes),
 		DirectCidrs:         append([]string(nil), m.DirectCIDRs...),
 		DirectGeo:           append([]string(nil), m.DirectGeo...),
 		SnifferSkip:         append([]string(nil), m.SnifferSkip...),
@@ -183,6 +184,7 @@ func masterToProto(m *domain.MasterSpec) *pb.MasterSpec {
 			Drained:         t.Drained,
 			Transport:       string(t.Transport),
 			Reality:         realityTunnelToProto(t.Reality),
+			Reserve:         t.Reserve,
 		})
 	}
 	return out
@@ -198,6 +200,7 @@ func masterFromProto(m *pb.MasterSpec) *domain.MasterSpec {
 		ExternalController:  m.GetExternalController(),
 		Balance:             m.GetBalance(),
 		HealthCheckInterval: int(m.GetHealthCheckInterval()),
+		MaxFailedTimes:      int(m.GetMaxFailedTimes()),
 		DirectCIDRs:         append([]string(nil), m.GetDirectCidrs()...),
 		DirectGeo:           append([]string(nil), m.GetDirectGeo()...),
 		SnifferSkip:         append([]string(nil), m.GetSnifferSkip()...),
@@ -219,6 +222,7 @@ func masterFromProto(m *pb.MasterSpec) *domain.MasterSpec {
 			Drained:         t.GetDrained(),
 			Transport:       domain.MasterTransport(t.GetTransport()),
 			Reality:         realityTunnelFromProto(t.GetReality()),
+			Reserve:         t.GetReserve(),
 		})
 	}
 	return out

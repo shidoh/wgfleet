@@ -880,8 +880,12 @@ type MasterSpec struct {
 	// 0 ⇒ the agent's mihomo.DefaultHealthInterval. Additive; an older agent ignores
 	// it and keeps the 60s default — backward-compatible, no wire-version bump.
 	HealthCheckInterval int32 `protobuf:"varint,14,opt,name=health_check_interval,json=healthCheckInterval,proto3" json:"health_check_interval,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Forced-health-check threshold for the exit-selection groups (mihomo
+	// max-failed-times). 0 ⇒ mihomo's default (5). Additive; an older agent ignores
+	// it and keeps the default — backward-compatible, no wire-version bump.
+	MaxFailedTimes int32 `protobuf:"varint,15,opt,name=max_failed_times,json=maxFailedTimes,proto3" json:"max_failed_times,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *MasterSpec) Reset() {
@@ -1012,6 +1016,13 @@ func (x *MasterSpec) GetHealthCheckInterval() int32 {
 	return 0
 }
 
+func (x *MasterSpec) GetMaxFailedTimes() int32 {
+	if x != nil {
+		return x.MaxFailedTimes
+	}
+	return 0
+}
+
 // ComposeSpec is the master's container-stack desired state (wg-easy + mihomo).
 type ComposeSpec struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
@@ -1111,8 +1122,13 @@ type ExitTunnel struct {
 	// Dual-transport (ADR-0025; additive). transport "" == "awg" (back-compat): the
 	// AWG/server_public_key/tunnel_ip fields apply. For "reality-xhttp" the reality
 	// field carries the mihomo vless proxy params instead.
-	Transport     string         `protobuf:"bytes,9,opt,name=transport,proto3" json:"transport,omitempty"`
-	Reality       *RealityTunnel `protobuf:"bytes,10,opt,name=reality,proto3" json:"reality,omitempty"`
+	Transport string         `protobuf:"bytes,9,opt,name=transport,proto3" json:"transport,omitempty"`
+	Reality   *RealityTunnel `protobuf:"bytes,10,opt,name=reality,proto3" json:"reality,omitempty"`
+	// Reserve puts this tunnel in the master's SECOND selection tier: it carries
+	// traffic only when every primary tunnel is down (ADR-0029). Additive; an older
+	// agent ignores it and renders one flat group — backward-compatible, no
+	// wire-version bump.
+	Reserve       bool `protobuf:"varint,11,opt,name=reserve,proto3" json:"reserve,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1215,6 +1231,13 @@ func (x *ExitTunnel) GetReality() *RealityTunnel {
 		return x.Reality
 	}
 	return nil
+}
+
+func (x *ExitTunnel) GetReserve() bool {
+	if x != nil {
+		return x.Reserve
+	}
+	return false
 }
 
 // RealityTunnel is the master-side mihomo vless+reality proxy descriptor for a
@@ -2441,7 +2464,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x04mode\x18\n" +
 	" \x01(\tR\x04mode\x12\x1d\n" +
 	"\n" +
-	"allow_ipv6\x18\v \x01(\bR\tallowIpv6\"\xd4\x04\n" +
+	"allow_ipv6\x18\v \x01(\bR\tallowIpv6\"\xfe\x04\n" +
 	"\n" +
 	"MasterSpec\x12!\n" +
 	"\fbind_address\x18\x01 \x01(\tR\vbindAddress\x12\x1d\n" +
@@ -2460,7 +2483,8 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x12dashboard_disabled\x18\v \x01(\bR\x11dashboardDisabled\x12#\n" +
 	"\rdashboard_url\x18\f \x01(\tR\fdashboardUrl\x12,\n" +
 	"\x12client_admin_ports\x18\r \x03(\x05R\x10clientAdminPorts\x122\n" +
-	"\x15health_check_interval\x18\x0e \x01(\x05R\x13healthCheckInterval\"\xe7\x01\n" +
+	"\x15health_check_interval\x18\x0e \x01(\x05R\x13healthCheckInterval\x12(\n" +
+	"\x10max_failed_times\x18\x0f \x01(\x05R\x0emaxFailedTimes\"\xe7\x01\n" +
 	"\vComposeSpec\x12\"\n" +
 	"\rwg_easy_image\x18\x01 \x01(\tR\vwgEasyImage\x12!\n" +
 	"\fmihomo_image\x18\x02 \x01(\tR\vmihomoImage\x12\x1b\n" +
@@ -2468,7 +2492,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x10wg_easy_web_port\x18\x04 \x01(\x05R\rwgEasyWebPort\x12\x1d\n" +
 	"\n" +
 	"client_dns\x18\x05 \x03(\tR\tclientDns\x12,\n" +
-	"\x12client_allowed_ips\x18\x06 \x01(\tR\x10clientAllowedIps\"\xd2\x02\n" +
+	"\x12client_allowed_ips\x18\x06 \x01(\tR\x10clientAllowedIps\"\xec\x02\n" +
 	"\n" +
 	"ExitTunnel\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
@@ -2481,7 +2505,8 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\adrained\x18\b \x01(\bR\adrained\x12\x1c\n" +
 	"\ttransport\x18\t \x01(\tR\ttransport\x123\n" +
 	"\areality\x18\n" +
-	" \x01(\v2\x19.wgfleet.v1.RealityTunnelR\areality\"\xa1\x02\n" +
+	" \x01(\v2\x19.wgfleet.v1.RealityTunnelR\areality\x12\x18\n" +
+	"\areserve\x18\v \x01(\bR\areserve\"\xa1\x02\n" +
 	"\rRealityTunnel\x12\x12\n" +
 	"\x04uuid\x18\x01 \x01(\tR\x04uuid\x12\x1d\n" +
 	"\n" +

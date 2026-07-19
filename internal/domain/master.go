@@ -24,6 +24,10 @@ type MasterSpec struct {
 	// HealthCheckInterval is how often (seconds) mihomo health-checks the exits in
 	// wg-best to detect/route around dead ones. 0 ⇒ mihomo.DefaultHealthInterval.
 	HealthCheckInterval int
+	// MaxFailedTimes is the consecutive-failure threshold after which mihomo forces
+	// an out-of-band health check on the exit-selection groups. 0 ⇒ mihomo's default
+	// (5). See ADR-0029: a forced re-check re-selects without consulting tolerance.
+	MaxFailedTimes int
 	// DirectCIDRs route via DIRECT (RU/private/own networks), never via an exit.
 	// Rendered both into the rules and the included direct-networks file.
 	DirectCIDRs []string
@@ -98,6 +102,10 @@ type ExitTunnel struct {
 	// excludes it from the load-balance group, so no new traffic routes to it.
 	// A standby transport on a dual-transport exit is rendered Drained (ADR-0025).
 	Drained bool
+	// Reserve places this tunnel in the master's second selection tier: it carries
+	// traffic only when every primary tunnel is down (ADR-0029). Orthogonal to
+	// Drained — a drained reserve tunnel is excluded from its tier like any other.
+	Reserve bool
 }
 
 // CustomConfig is the generic config-customization mechanism: operator-supplied
