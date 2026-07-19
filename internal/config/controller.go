@@ -297,7 +297,12 @@ type MihomoConfig struct {
 	// HealthInterval is how often mihomo health-checks the exits in wg-best (detect /
 	// route around dead exits). 0/unset ⇒ mihomo.DefaultHealthInterval (60s). Lower it
 	// to fail over off a dead exit faster. Rendered to seconds in the proxy group.
-	HealthInterval time.Duration     `koanf:"health_interval"`
+	HealthInterval time.Duration `koanf:"health_interval"`
+	// MaxFailedTimes is how many consecutive connection failures force an
+	// out-of-band health check on a proxy group. 0 ⇒ mihomo's own default (5).
+	// Raise it where some traffic legitimately fails (blocked destinations) and the
+	// forced re-check is noise rather than signal.
+	MaxFailedTimes int               `koanf:"max_failed_times"`
 	SnifferSkip    []string          `koanf:"sniffer_skip"` // sniffer skip-domain
 	Overrides      map[string]any    `koanf:"overrides"`    // deep-merged into rendered config.yaml
 	ExtraFiles     []ExtraFileConfig `koanf:"extra_files"`  // additional managed files
@@ -361,6 +366,13 @@ type MasterRouting struct {
 	//   url-test           — route everything through the lowest-latency exit (auto-best)
 	//   fallback           — primary exit, fail over to the next on timeout
 	Balance string `koanf:"balance"`
+	// ReserveExits names the exits this master keeps as a SECOND tier: traffic uses
+	// them only when every primary exit is down (ADR-0029). The primary tier is
+	// everything not listed here, so a newly added exit defaults to primary and no
+	// exit can fall out of both tiers. Entries are manifest exit names ("1cnode004"),
+	// not rendered proxy names ("1cnode004-reality") — the transport suffix is an
+	// implementation detail. Empty ⇒ a single flat group, exactly as before.
+	ReserveExits []string `koanf:"reserve_exits"`
 }
 
 // Exit WG listen-port derivation. When the manifest leaves listen_port unset, the
@@ -775,7 +787,28 @@ func (c ControllerConfig) Validate() error {
 	if err := validateRealityCamouflage(c.Fleet.RealityDefaultSNI, c.Fleet.RealityDefaultDest); err != nil {
 		errs = append(errs, fmt.Errorf("fleet: %w", err))
 	}
+	if err := c.validateReserveExits(); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
+}
+
+// validateReserveExits rejects a masters[].routing.reserve_exits entry that names
+// no declared exit. A typo must fail loudly: silently ignoring it would leave the
+// node in the primary tier, which is the opposite of what the operator asked for.
+func (c ControllerConfig) validateReserveExits() error {
+	declared := make(map[string]struct{}, len(c.Fleet.Exits))
+	for _, e := range c.Fleet.Exits {
+		declared[e.Name] = struct{}{}
+	}
+	for _, m := range c.Fleet.Masters {
+		for _, name := range m.Routing.ReserveExits {
+			if _, ok := declared[name]; !ok {
+				return fmt.Errorf("master %q: reserve_exits references unknown exit %q", m.Name, name)
+			}
+		}
+	}
+	return nil
 }
 
 // validateRealityCamouflage sanity-checks a REALITY camouflage SNI and dest
