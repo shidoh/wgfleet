@@ -559,9 +559,13 @@ func groupsByName(t *testing.T, cfg string) map[string]map[string]any {
 }
 
 // noReserveGoldenPaths maps every mihomo balance kind to its committed
-// byte-identity fixture for the no-reserve shape. Regenerate deliberately
-// (never hand-edit) via `GENERATE_FIXTURES=1 go test ./internal/mihomo/ -run
-// TestGenerateGoldenFixtures` (see gen_fixtures_test.go).
+// byte-identity fixture for the no-reserve shape.
+//
+// There is deliberately NO one-command regeneration: a diff against these
+// fixtures is a signal that something is wrong, not a chore to clear. If a
+// change to the rendered config really is intended, write a throwaway test that
+// dumps RenderConfig(sampleInput()) per balance kind, inspect the diff, and
+// commit the new fixtures with the reasoning. Never hand-edit them.
 //
 // A fixture per balance kind matters because the fleet is NOT deployed on
 // consistent-hashing on day one: the live master runs url-test at the moment
