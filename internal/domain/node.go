@@ -115,7 +115,10 @@ type ExitTunnelHealth struct {
 	Alive    bool          // mihomo reports the proxy up
 	Delay    time.Duration // last url-test delay (0 = no/failed measurement)
 	LastTest time.Time     // time of the last delay test (zero = none)
-	Selected bool          // currently chosen by the wg-best group (carrying traffic)
+	// Selected reports that this exit currently carries traffic. Under a
+	// single-carrier group kind (url-test, fallback) exactly one exit is selected;
+	// under load-balance every live member of the active tier is (ADR-0029).
+	Selected bool
 }
 
 // EgressReachability classifies WHY an exit's egress is or is not working, so an

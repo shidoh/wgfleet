@@ -38,6 +38,58 @@ func TestParseProxyHealth(t *testing.T) {
 	}
 }
 
+const nestedProxiesJSON = `{"proxies":{
+  "wg-best":    {"alive":true,"type":"Fallback","now":"wg-primary","all":["wg-primary","wg-reserve"]},
+  "wg-primary": {"alive":true,"type":"LoadBalance","now":"","all":["vn1","vn2"]},
+  "wg-reserve": {"alive":true,"type":"LoadBalance","now":"","all":["anz3"]},
+  "vn1":  {"alive":true,"history":[{"time":"2026-07-19T14:00:00Z","delay":100}]},
+  "vn2":  {"alive":true,"history":[{"time":"2026-07-19T14:00:00Z","delay":98}]},
+  "anz3": {"alive":true,"history":[{"time":"2026-07-19T14:00:00Z","delay":201}]}
+}}`
+
+func TestParseProxyHealthMarksWholeActiveTier(t *testing.T) {
+	got, err := ParseProxyHealth([]byte(nestedProxiesJSON), "wg-best", []string{"vn1", "vn2", "anz3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"vn1": true, "vn2": true, "anz3": false}
+	for _, h := range got {
+		if h.Selected != want[h.Name] {
+			t.Errorf("%s: Selected = %v, want %v", h.Name, h.Selected, want[h.Name])
+		}
+	}
+}
+
+// The pre-ADR-0029 flat shape must keep working: one selected exit, no tiers.
+func TestParseProxyHealthFlatGroupUnchanged(t *testing.T) {
+	const flat = `{"proxies":{
+      "wg-best": {"alive":true,"type":"URLTest","now":"vn2","all":["vn1","vn2"]},
+      "vn1": {"alive":true,"history":[{"time":"2026-07-19T14:00:00Z","delay":100}]},
+      "vn2": {"alive":true,"history":[{"time":"2026-07-19T14:00:00Z","delay":98}]}
+    }}`
+	got, err := ParseProxyHealth([]byte(flat), "wg-best", []string{"vn1", "vn2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range got {
+		if want := h.Name == "vn2"; h.Selected != want {
+			t.Errorf("%s: Selected = %v, want %v", h.Name, h.Selected, want)
+		}
+	}
+}
+
+// A group that points at itself must not hang the status pass.
+func TestParseProxyHealthSurvivesCycle(t *testing.T) {
+	const cyclic = `{"proxies":{
+      "wg-best": {"alive":true,"now":"loop","all":["loop"]},
+      "loop":    {"alive":true,"now":"wg-best","all":["wg-best"]},
+      "vn1":     {"alive":true,"history":[]}
+    }}`
+	if _, err := ParseProxyHealth([]byte(cyclic), "wg-best", []string{"vn1"}); err != nil {
+		t.Fatalf("a cyclic group must not error, got: %v", err)
+	}
+}
+
 func TestParseProxyHealthGarbage(t *testing.T) {
 	if _, err := ParseProxyHealth([]byte("not json"), "wg-best", []string{"x"}); err == nil {
 		t.Fatal("expected error on unparseable JSON")
