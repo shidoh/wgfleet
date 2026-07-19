@@ -793,22 +793,27 @@ func (c ControllerConfig) Validate() error {
 	return errors.Join(errs...)
 }
 
-// validateReserveExits rejects a masters[].routing.reserve_exits entry that names
-// no declared exit. A typo must fail loudly: silently ignoring it would leave the
-// node in the primary tier, which is the opposite of what the operator asked for.
+// validateReserveExits rejects any masters[].routing.reserve_exits entry that
+// names no declared exit. A typo must fail loudly: silently ignoring it would
+// leave the node in the primary tier, which is the opposite of what the
+// operator asked for. Every bad entry is accumulated (via errors.Join, like the
+// rest of Validate()) rather than stopping at the first one, so an operator
+// with several typos sees all of them on one deploy instead of fixing them one
+// redeploy at a time.
 func (c ControllerConfig) validateReserveExits() error {
 	declared := make(map[string]struct{}, len(c.Fleet.Exits))
 	for _, e := range c.Fleet.Exits {
 		declared[e.Name] = struct{}{}
 	}
+	var errs []error
 	for _, m := range c.Fleet.Masters {
 		for _, name := range m.Routing.ReserveExits {
 			if _, ok := declared[name]; !ok {
-				return fmt.Errorf("master %q: reserve_exits references unknown exit %q", m.Name, name)
+				errs = append(errs, fmt.Errorf("master %q: reserve_exits references unknown exit %q", m.Name, name))
 			}
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // validateRealityCamouflage sanity-checks a REALITY camouflage SNI and dest

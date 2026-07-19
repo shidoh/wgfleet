@@ -42,3 +42,20 @@ func TestReserveExitsEmptyIsValid(t *testing.T) {
 		t.Fatalf("empty reserve_exits must be valid: %v", err)
 	}
 }
+
+// Validate() accumulates every error via errors.Join rather than stopping at
+// the first (see the doc comment on Validate and errs = append(...) pattern
+// throughout it). validateReserveExits must follow the same contract: an
+// operator with two typos should see both on one deploy, not fix one, redeploy,
+// and get the next.
+func TestReserveExitsAccumulatesAllBadEntries(t *testing.T) {
+	err := cfgWithExits([]string{"typo-one", "anz3", "typo-two"}).validateReserveExits()
+	if err == nil {
+		t.Fatal("expected an error for two unknown entries")
+	}
+	for _, want := range []string{"typo-one", "typo-two"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error must name every offending entry, missing %q, got: %v", want, err)
+		}
+	}
+}

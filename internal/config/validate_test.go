@@ -263,6 +263,32 @@ func TestValidateRejectsCIDRInjection(t *testing.T) {
 	}
 }
 
+// TestValidateRejectsUnknownReserveExit drives the failure through the
+// top-level ControllerConfig.Validate() entry point rather than the unexported
+// validateReserveExits helper directly. validateReserveExits is unit-tested on
+// its own in reserve_exits_test.go, but nothing previously proved Validate()
+// actually calls it — if that call were ever dropped from Validate()'s list,
+// every existing test would still pass and a reserve_exits typo would ship to
+// the fleet silently.
+func TestValidateRejectsUnknownReserveExit(t *testing.T) {
+	cfg := baseValidController()
+	cfg.Fleet.Exits = []ExitConfig{{Name: "anz3", Egress: "warp"}}
+	cfg.Fleet.Masters = []MasterConfig{{
+		Name:    "m1",
+		Routing: MasterRouting{Balance: "consistent-hashing", ReserveExits: []string{"typo-node"}},
+	}}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "typo-node") {
+		t.Fatalf("expected reserve_exits rejection via Validate(), got %v", err)
+	}
+
+	// A declared exit name passes.
+	cfg.Fleet.Masters[0].Routing.ReserveExits = []string{"anz3"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("declared reserve_exits entry rejected via Validate(): %v", err)
+	}
+}
+
 func TestValidateDirectCIDRsCap(t *testing.T) {
 	over := make([]string, routing.MaxDirectCIDRs+1)
 	for i := range over {
