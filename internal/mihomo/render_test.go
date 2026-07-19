@@ -1,6 +1,7 @@
 package mihomo
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -557,6 +558,49 @@ func groupsByName(t *testing.T, cfg string) map[string]map[string]any {
 	return out
 }
 
+// noReserveGoldenPath is the committed byte-identity fixture for the no-reserve
+// shape. Regenerate it deliberately (never hand-edit) by temporarily writing
+// RenderConfig(sampleInput())'s output to this path, e.g.:
+//
+//	out, _ := RenderConfig(sampleInput())
+//	os.WriteFile(noReserveGoldenPath, []byte(out), 0o644)
+const noReserveGoldenPath = "testdata/no-reserve-config.yaml"
+
+// TestRenderWithoutReserveMatchesGolden pins RenderConfig's no-reserve output to
+// the exact bytes committed at testdata/no-reserve-config.yaml. This is the
+// load-bearing byte-identity property from ADR-0029: the agent hot-reloads
+// mihomo whenever config.yaml differs from what's on disk, and a reload
+// recreates the wg-best group, clears its selection, and forces every client to
+// re-pick an exit (a country/IP switch) — the exact churn ADR-0029 exists to
+// eliminate. A future edit that adds a key to selectionGroup, reorders a field,
+// or flips a default (e.g. "lazy: true") will fail THIS test even though it
+// would slip past every other assertion here, which check shape (group count,
+// names, types) rather than the full rendered text.
+//
+// If this test fails, the diff below IS the fleet-wide reload+switch that
+// change would cause. Do not "fix" it by silently updating the fixture —
+// confirm the change is deliberate, then regenerate testdata/no-reserve-config.yaml
+// from RenderConfig(sampleInput()) (see noReserveGoldenPath's doc comment) and
+// note the reload/switch consequence in the commit.
+func TestRenderWithoutReserveMatchesGolden(t *testing.T) {
+	out, err := RenderConfig(sampleInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	golden, err := os.ReadFile(noReserveGoldenPath)
+	if err != nil {
+		t.Fatalf("read golden fixture %s: %v", noReserveGoldenPath, err)
+	}
+	if out != string(golden) {
+		t.Errorf("no-reserve RenderConfig output drifted from %s.\n"+
+			"This means every fleet running with no reserve exits would get a spurious "+
+			"mihomo config rewrite -> hot reload -> wg-best group reset -> exit re-pick "+
+			"(country switch) on the next deploy. If this is deliberate, regenerate the "+
+			"fixture from RenderConfig(sampleInput()) and call it out in the commit.\n\n"+
+			"--- golden ---\n%s\n--- got ---\n%s", noReserveGoldenPath, golden, out)
+	}
+}
+
 // The no-reserve shape must not drift: any diff rewrites config.yaml on every
 // fleet, forcing a mihomo hot reload — the exact event ADR-0029 removes.
 func TestRenderWithoutReserveKeepsSingleFlatGroup(t *testing.T) {
@@ -627,15 +671,16 @@ func TestRenderReserveOnlyCollapsesToFlatGroup(t *testing.T) {
 	if len(groups) != 1 {
 		t.Fatalf("got %d groups, want 1 — an empty tier must never be emitted", len(groups))
 	}
-	if got := toStrings(groups["wg-best"]["proxies"].([]any)); len(got) != 2 {
-		t.Errorf("wg-best members = %v, want both exits", got)
+	if got := toStrings(groups["wg-best"]["proxies"].([]any)); len(got) != 2 ||
+		got[0] != "exit-a" || got[1] != "exit-b" {
+		t.Errorf("wg-best members = %v, want [exit-a exit-b] (both exits)", got)
 	}
 }
 
 func TestRenderDrainEmptiesPrimaryTierAndCollapses(t *testing.T) {
 	in := sampleInput()
-	in.Spec.ExitTunnels[0].Drained = true // the only primary is drained
-	in.Spec.ExitTunnels[1].Reserve = true
+	in.Spec.ExitTunnels[0].Drained = true // the only primary (exit-a) is drained
+	in.Spec.ExitTunnels[1].Reserve = true // exit-b is the reserve
 	out, err := RenderConfig(in)
 	if err != nil {
 		t.Fatal(err)
@@ -643,6 +688,76 @@ func TestRenderDrainEmptiesPrimaryTierAndCollapses(t *testing.T) {
 	groups := groupsByName(t, out)
 	if len(groups) != 1 {
 		t.Fatalf("got %d groups, want 1 (primary tier is empty after drain)", len(groups))
+	}
+	// Must collapse onto the surviving RESERVE exit, not the drained primary — an
+	// implementation that collapsed to a flat group over exit-a (drained) instead
+	// of exit-b (reserve) would still pass a bare len()==1 check while routing all
+	// traffic to a drained exit.
+	if got := toStrings(groups["wg-best"]["proxies"].([]any)); len(got) != 1 || got[0] != "exit-b" {
+		t.Errorf("wg-best members = %v, want [exit-b] (the surviving reserve exit, not the drained primary)", got)
+	}
+}
+
+// ADR-0010's drain guarantee (a drained exit stays a configured proxy so
+// existing connections survive, even though it joins no tier) must hold under
+// the tiered shape too, not just the flat one (see TestRenderDrainExcludesFromLBGroup).
+func TestRenderDrainSurvivesAsProxyUnderTieredShape(t *testing.T) {
+	in := sampleInput()
+	in.Spec.ExitTunnels[0].Drained = true // drain exit-a
+	in.Spec.ExitTunnels[1].Reserve = true // exit-b to reserve, so both tiers... primary ends up empty
+	// Add a third, non-drained, non-reserve exit so the primary tier stays
+	// non-empty and we actually get the tiered (not collapsed) shape.
+	in.Spec.ExitTunnels = append(in.Spec.ExitTunnels, domain.ExitTunnel{
+		Name: "exit-c", Endpoint: "exit-c.example.net:60000",
+		ServerPublicKey: "cGVBcmJDaUJEc1oxMnAzeDdCRnpZaVJmVGJ1RmFrZFY=",
+		TunnelIP:        "10.83.0.2", MTU: 1380, AWG: awgFor(9),
+	})
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// The drained proxy is still rendered (existing connections survive).
+	proxies, _ := cfg["proxies"].([]any)
+	if len(proxies) != 3 {
+		t.Fatalf("drained proxy must still be rendered under the tiered shape: %d proxies", len(proxies))
+	}
+	found := false
+	for _, p := range proxies {
+		if m, ok := p.(map[string]any); ok && m["name"] == "exit-a" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("drained exit-a must still appear in proxies")
+	}
+
+	// It must join neither tier group.
+	groups := groupsByName(t, out)
+	primary, ok := groups["wg-primary"]
+	if !ok {
+		t.Fatal("expected the tiered shape (wg-primary present) with a live non-reserve exit")
+	}
+	if members := toStrings(primary["proxies"].([]any)); len(members) != 1 || members[0] != "exit-c" {
+		t.Errorf("wg-primary members = %v, want [exit-c] (exit-a drained, exit-b reserve)", members)
+	}
+	reserve, ok := groups["wg-reserve"]
+	if !ok {
+		t.Fatal("expected wg-reserve present")
+	}
+	if members := toStrings(reserve["proxies"].([]any)); len(members) != 1 || members[0] != "exit-b" {
+		t.Errorf("wg-reserve members = %v, want [exit-b]", members)
+	}
+	for name, g := range groups {
+		for _, m := range toStrings(g["proxies"].([]any)) {
+			if m == "exit-a" {
+				t.Errorf("drained exit-a must not appear in any selection group, found in %q", name)
+			}
+		}
 	}
 }
 

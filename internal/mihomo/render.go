@@ -456,8 +456,11 @@ func selectionGroup(name string, members []string, o groupOpts) map[string]any {
 // traffic uses the reserve tier only when every primary member is down. The top
 // group keeps the name wg-best, so the routing rules never change.
 //
-// An empty tier is never emitted (mihomo rejects an empty group): if either side
-// is empty the hierarchy collapses back to one flat wg-best over whatever remains.
+// If either tier is empty the hierarchy collapses back to one flat wg-best over
+// whatever remains, since mihomo rejects an empty group. This function does not
+// itself guard against BOTH tiers being empty (it would return a group with
+// proxies: nil); RenderConfig's caller refuses that case before renderProxies'
+// output ever reaches here (see the "all exits are drained" check).
 func wgBestGroups(primary, reserve []string, o groupOpts) []any {
 	switch {
 	case len(reserve) == 0:
