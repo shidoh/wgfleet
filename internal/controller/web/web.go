@@ -1124,6 +1124,19 @@ func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
 // load-balancer-selected (carrying) entry, otherwise the matching entry with the
 // largest measured delay (the active-transport proxy). ok=false when none match or
 // no delay was measured.
+//
+// The prefix match means a dual-transport exit (ADR-0025) can have TWO health
+// entries — "exit-de-1" (AWG) and "exit-de-1-reality". This function assumes at
+// most one of them is ever Selected at a time: today the keybroker always
+// renders the standby transport as Drained (internal/controller/keybroker/broker.go,
+// the ExitTunnel literals for the AWG and reality tunnels both set
+// Drained: baseDrained || <other transport active>), and ADR-0029's tiered
+// consistent-hashing selection only marks a live, non-drained tier member as
+// carrying — so a drained standby is never Selected. If a future change ever
+// undrains both transports of the same exit at once, `carrying` here would
+// still just OR the two together (harmless), but the `d`/`ok` "largest delay
+// wins among Selected" tie-break would silently pick one arbitrarily instead of
+// surfacing that the exit is dual-carrying — worth revisiting at that point.
 func exitDelay(health []domain.ExitTunnelHealth, exitName string) (d time.Duration, carrying bool, ok bool) {
 	for _, e := range health {
 		if e.Name != exitName && !strings.HasPrefix(e.Name, exitName+"-") {
