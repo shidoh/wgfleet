@@ -33,15 +33,23 @@ func String() string {
 
 // Short renders just the version+commit, for status fields surfaced in the UI
 // and reported to the controller.
-func Short() string {
-	if Commit == "none" || Commit == "" {
-		return Version
+func Short() string { return ShortOf(Version, Commit) }
+
+// ShortOf renders the Short() identity for an arbitrary version/commit pair. It
+// exists so callers that recover these fields from somewhere else — the
+// controller parsing `wgfleet-agent --version` off a node during a rolling
+// upgrade — produce byte-identical strings to what that agent reports over gRPC.
+// A rolling upgrade gates on those two matching, so a divergence here would
+// silently turn every upgrade into a timeout-and-rollback.
+func ShortOf(v, commit string) string {
+	if commit == "none" || commit == "" {
+		return v
 	}
 	// Without git tags the Makefile stamps both Version and Commit from the same
 	// short SHA, so they are identical or differ only by a "-dirty" suffix. Avoid the
 	// redundant "sha+sha" — prefer the commit, which carries the dirty marker.
-	if Commit == Version || strings.HasPrefix(Commit, Version) {
-		return Commit
+	if commit == v || strings.HasPrefix(commit, v) {
+		return commit
 	}
-	return fmt.Sprintf("%s+%s", Version, Commit)
+	return fmt.Sprintf("%s+%s", v, commit)
 }

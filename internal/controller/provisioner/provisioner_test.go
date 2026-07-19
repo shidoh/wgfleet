@@ -63,6 +63,9 @@ func TestUpgradePlanIsBinaryAndRestartOnly(t *testing.T) {
 
 func TestUpgradeApplyUploadsBinary(t *testing.T) {
 	r := NewMockRunner()
+	// The upgrade verifies the uploaded binary's digest before it will restart the
+	// agent, so the mock must answer sha256sum with the digest of what was sent.
+	r.PrefixResponses["sha256sum"] = digestOf(testInput().AgentBinary) + "  " + remoteAgentBin
 	p := quietProvisioner()
 	if _, err := p.Upgrade(context.Background(), r, testInput(), ModeApply); err != nil {
 		t.Fatalf("upgrade apply: %v", err)

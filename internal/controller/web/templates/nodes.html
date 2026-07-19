@@ -5,6 +5,18 @@
   {{template "nodes-table" .}}
 </div>
 
+{{/* Rolling agent update. Polled faster than the fleet table (2s vs 5s): during a
+     rollout the phase transitions are what the operator is watching, and they move
+     in seconds. Only polls while a rollout is active — otherwise this is a static
+     button and a plan. */}}
+{{if .Rollout}}
+<div hx-get="/partials/rollout"
+     hx-trigger="{{if .Rollout.State.Active}}every 2s [document.visibilityState=='visible']{{else}}every 15s [document.visibilityState=='visible']{{end}}"
+     hx-swap="innerHTML">
+  {{template "rollout-panel" .Rollout}}
+</div>
+{{end}}
+
 <details class="backup-section">
   <summary class="backup-summary">BACKUP &amp; MIGRATE</summary>
   <div class="backup-card">

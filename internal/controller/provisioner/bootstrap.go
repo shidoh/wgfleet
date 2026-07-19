@@ -2,12 +2,15 @@ package provisioner
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/controller/pki"
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/version"
 )
 
 // BootstrapInput is everything needed to render a node's bootstrap plan.
@@ -52,14 +55,18 @@ type BootstrapInput struct {
 
 // Remote paths the bootstrap writes to. Kept here so plan and apply agree.
 const (
-	remoteAgentBin   = "/usr/local/bin/wgfleet-agent"
-	remoteUnit       = "/etc/systemd/system/wgfleet-agent.service"
-	remoteAgentYAML  = "/etc/wgfleet/agent.yaml"
-	remoteNodeCert   = "/etc/wgfleet/node.crt"
-	remoteNodeKey    = "/etc/wgfleet/node.key"
-	remoteCACert     = "/etc/wgfleet/ca.crt"
-	remoteHardenConf = "/etc/ssh/sshd_config.d/10-wgfleet-hardening.conf"
-	remoteFail2ban   = "/etc/fail2ban/jail.d/wgfleet.conf"
+	remoteAgentBin = "/usr/local/bin/wgfleet-agent"
+	// remoteAgentBinPrev holds the binary an upgrade replaced, so a node that comes
+	// back broken can be restored over SSH — a channel independent of the agent
+	// being upgraded, so a dead agent never blocks its own recovery.
+	remoteAgentBinPrev = remoteAgentBin + ".prev"
+	remoteUnit         = "/etc/systemd/system/wgfleet-agent.service"
+	remoteAgentYAML    = "/etc/wgfleet/agent.yaml"
+	remoteNodeCert     = "/etc/wgfleet/node.crt"
+	remoteNodeKey      = "/etc/wgfleet/node.key"
+	remoteCACert       = "/etc/wgfleet/ca.crt"
+	remoteHardenConf   = "/etc/ssh/sshd_config.d/10-wgfleet-hardening.conf"
+	remoteFail2ban     = "/etc/fail2ban/jail.d/wgfleet.conf"
 )
 
 // BuildPlan renders the ordered bootstrap steps for a node. The order is
@@ -182,23 +189,126 @@ func BuildPlan(in BootstrapInput) Plan {
 // blips and resumes against the same desired state.
 func BuildUpgradePlan(in BootstrapInput) Plan {
 	var steps []Step
-	if len(in.AgentBinary) > 0 {
-		steps = append(steps, uploadStep(
-			fmt.Sprintf("upload wgfleet-agent binary (%d bytes)", len(in.AgentBinary)),
-			remoteAgentBin, in.AgentBinary, 0o755, "<binary>"))
-	} else {
-		steps = append(steps, checkStep("agent binary upload (provide via --agent-bin / controller.agent_bin)",
-			"upload "+remoteAgentBin,
-			func(context.Context, Runner) error {
-				return fmt.Errorf("no agent binary configured; set controller.agent_bin")
-			}))
+	if len(in.AgentBinary) == 0 {
+		return Plan{Node: in.Node.Name, Steps: []Step{
+			checkStep("agent binary upload (provide via --agent-bin / controller.agent_bin)",
+				"upload "+remoteAgentBin,
+				func(context.Context, Runner) error {
+					return fmt.Errorf("no agent binary configured; set controller.agent_bin")
+				}),
+		}}
 	}
+
+	sum := sha256.Sum256(in.AgentBinary)
+	want := hex.EncodeToString(sum[:])
+
 	steps = append(steps,
+		// Snapshot before overwriting: this copy is the rollback target. `cp` (not
+		// `mv`) so the running binary's path keeps its inode — and it is conditional
+		// because a node whose binary is somehow absent must still be upgradable;
+		// it just has nothing to roll back to.
+		runStep("snapshot current agent binary for rollback",
+			fmt.Sprintf("test -f %s && cp -f %s %s || true",
+				shellQuote(remoteAgentBin), shellQuote(remoteAgentBin), shellQuote(remoteAgentBinPrev))),
+
+		uploadStep(fmt.Sprintf("upload wgfleet-agent binary (%d bytes, sha256 %s)", len(in.AgentBinary), want[:12]),
+			remoteAgentBin, in.AgentBinary, 0o755, "<binary>"),
+
+		// Verify BEFORE restarting. An interrupted transfer once left a truncated
+		// binary on a node: `cat > … && mv` reported success at every command level,
+		// systemd started it, and it SEGV-crash-looped — the failure was invisible
+		// until the node went silent. Comparing the digest of what actually landed
+		// against the source is the only check that catches a partial write, and it
+		// has to happen while the old binary is still the running one.
+		checkStep("verify uploaded binary sha256 matches source",
+			"sha256sum "+remoteAgentBin+"  # expect "+want,
+			func(ctx context.Context, r Runner) error {
+				return verifyRemoteSHA256(ctx, r, remoteAgentBin, want)
+			}),
+
 		// restart picks up the freshly uploaded binary; enable keeps it sticky
 		// across reboots if a manual install ever left it disabled.
 		runStep("restart agent", "systemctl enable wgfleet-agent && systemctl restart wgfleet-agent"),
 	)
 	return Plan{Node: in.Node.Name, Steps: steps}
+}
+
+// BuildRollbackPlan restores the binary an upgrade displaced and restarts the
+// agent. It runs over SSH, which is independent of the agent process, so it works
+// precisely when it is needed most: the new binary is dead and the node is no
+// longer reporting. It refuses when no snapshot exists rather than restarting a
+// node into the same broken binary.
+func BuildRollbackPlan(node string) Plan {
+	return Plan{Node: node, Steps: []Step{
+		checkStep("verify a rollback snapshot exists",
+			"test -s "+remoteAgentBinPrev,
+			func(ctx context.Context, r Runner) error {
+				if _, err := r.Run(ctx, "test -s "+shellQuote(remoteAgentBinPrev)); err != nil {
+					return fmt.Errorf("no rollback snapshot at %s: %w", remoteAgentBinPrev, err)
+				}
+				return nil
+			}),
+		runStep("restore previous agent binary",
+			fmt.Sprintf("cp -f %s %s && chmod 0755 %s",
+				shellQuote(remoteAgentBinPrev), shellQuote(remoteAgentBin), shellQuote(remoteAgentBin))),
+		runStep("restart agent on restored binary",
+			"systemctl enable wgfleet-agent && systemctl restart wgfleet-agent"),
+	}}
+}
+
+// verifyRemoteSHA256 compares the digest of a file on the node against want.
+// sha256sum prints "<hex>  <path>"; anything else (a missing tool, a truncated
+// read) is treated as a failure — an unverifiable binary is not an acceptable
+// one to restart into.
+func verifyRemoteSHA256(ctx context.Context, r Runner, remotePath, want string) error {
+	out, err := r.Run(ctx, "sha256sum "+shellQuote(remotePath))
+	if err != nil {
+		return fmt.Errorf("sha256sum %s: %w (output: %s)", remotePath, err, strings.TrimSpace(out))
+	}
+	fields := strings.Fields(strings.TrimSpace(out))
+	if len(fields) == 0 {
+		return fmt.Errorf("sha256sum %s: empty output", remotePath)
+	}
+	if got := fields[0]; !strings.EqualFold(got, want) {
+		return fmt.Errorf("uploaded binary corrupt: %s has sha256 %s, want %s "+
+			"(partial transfer — NOT restarting into it)", remotePath, got, want)
+	}
+	return nil
+}
+
+// ProbeAgentVersion runs the agent binary on the node with --version and returns
+// its version.Short() identity — the same string the agent reports over gRPC, so
+// a rolling upgrade can gate on "the version I installed is the version now
+// checking in" rather than on a timer.
+//
+// It doubles as an execution smoke test: a binary that is the right size and
+// digest but cannot run on this host (wrong arch, missing loader) fails here,
+// before the restart gate has to infer it from silence.
+func ProbeAgentVersion(ctx context.Context, r Runner) (string, error) {
+	out, err := r.Run(ctx, shellQuote(remoteAgentBin)+" --version")
+	if err != nil {
+		return "", fmt.Errorf("run %s --version: %w (output: %s)", remoteAgentBin, err, strings.TrimSpace(out))
+	}
+	return parseAgentVersion(out)
+}
+
+// parseAgentVersion extracts the Short() identity from `wgfleet-agent --version`
+// output, whose first line is "wgfleet-agent <version> (commit <sha>, built …)".
+// It reassembles the identity through version.ShortOf so this parse and what the
+// agent actually reports cannot drift apart.
+func parseAgentVersion(out string) (string, error) {
+	line := strings.TrimSpace(strings.SplitN(strings.TrimSpace(out), "\n", 2)[0])
+	fields := strings.Fields(line)
+	if len(fields) < 2 || fields[0] != "wgfleet-agent" {
+		return "", fmt.Errorf("unrecognized --version output %q", line)
+	}
+	ver := fields[1]
+	commit := "none"
+	if i := strings.Index(line, "(commit "); i >= 0 {
+		rest := line[i+len("(commit "):]
+		commit = strings.TrimSuffix(strings.Fields(rest)[0], ",")
+	}
+	return version.ShortOf(ver, commit), nil
 }
 
 // wgcfVersion pins the wgcf release the bootstrap installs. Bump deliberately;

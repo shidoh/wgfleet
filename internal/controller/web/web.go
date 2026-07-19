@@ -90,13 +90,21 @@ type Handler struct {
 	exportBackup func(ctx context.Context, recipient string) ([]byte, error)
 	sessionTTL   time.Duration
 	loginLimit   *auth.Limiter
+	// roller drives the fleet-wide rolling agent upgrade. nil ⇒ the fleet page
+	// omits the action entirely.
+	roller Roller
 }
+
+// SetRoller wires the rolling-upgrade coordinator. Optional and set after New so
+// the controller can build the coordinator over the same store this handler
+// reads, without threading it through an already-wide constructor.
+func (h *Handler) SetRoller(r Roller) { h.roller = r }
 
 // New builds the dashboard handler. renderer and prov may be nil (the spec
 // preview / provision action are then omitted). Each page is parsed as its own
 // template set so the per-page "content" definitions do not collide.
 func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTransport func(exitName string, t domain.MasterTransport) error, exportBackup func(ctx context.Context, recipient string) ([]byte, error), sessionTTL time.Duration) (*Handler, error) {
-	listTmpl, err := parsePage("templates/layout.html", "templates/nodes.html")
+	listTmpl, err := parsePage("templates/layout.html", "templates/nodes.html", "templates/rollout.html")
 	if err != nil {
 		return nil, fmt.Errorf("web: parse list templates: %w", err)
 	}
@@ -127,6 +135,7 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	h.mux.HandleFunc("POST /setup", h.handleSetup)
 	h.mux.HandleFunc("GET /{$}", h.handleIndex)
 	h.mux.HandleFunc("GET /partials/nodes", h.handleNodesPartial)
+	h.mux.HandleFunc("GET /partials/rollout", h.handleRolloutPartial)
 	h.mux.HandleFunc("GET /nodes/{id}", h.handleNode)
 	h.mux.HandleFunc("GET /nodes/{id}/status", h.handleNodeStatus)
 	// Mutating actions. POST-only; guarded by the mgmt/ZT bind, a Sec-Fetch-Site
@@ -140,6 +149,8 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	h.mux.HandleFunc("POST /nodes/{id}/transport/{transport}", h.handleTransport)
 	h.mux.HandleFunc("POST /nodes/{id}/delete", h.handleDelete)
 	h.mux.HandleFunc("POST /backup", h.handleBackupExport)
+	h.mux.HandleFunc("POST /rollout/start", h.handleRolloutStart)
+	h.mux.HandleFunc("POST /rollout/abort", h.handleRolloutAbort)
 	h.mux.HandleFunc("GET /profile", h.handleProfile)
 	h.mux.HandleFunc("POST /profile/password", h.handleChangePassword)
 	return h, nil
@@ -659,9 +670,10 @@ type listData struct {
 	User      string // logged-in admin (topbar)
 	Nodes     []nodeRow
 	Summary   []stateStat
-	Topology  *topology // master↔exit routing picture; nil when there is no master
-	Flash     string    // one-shot error surfaced from a failed action redirect
-	CSRF      string    // CSRF token for the backup-export form
+	Topology  *topology    // master↔exit routing picture; nil when there is no master
+	Flash     string       // one-shot error surfaced from a failed action redirect
+	CSRF      string       // CSRF token for the backup-export form
+	Rollout   *rolloutData // rolling agent upgrade panel; nil when not configured
 }
 
 // topology is the master↔exit routing picture shown on the fleet list — now the
@@ -858,6 +870,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Topology:  h.buildTopology(r.Context(), rows),
 		Flash:     h.takeFlash(w, r),
 		CSRF:      h.csrf,
+		Rollout:   h.rolloutView(),
 	}
 	h.render(w, h.listTmpl, "layout", data)
 }
@@ -1211,6 +1224,8 @@ func funcMap() template.FuncMap {
 		// lower accepts any stringish value (string, domain.Role, domain.NodeState).
 		"lower":   func(v any) string { return strings.ToLower(fmt.Sprint(v)) },
 		"relTime": relTime,
+		// add1 renders a 1-based index for range positions (rollout step numbers).
+		"add1": func(i int) int { return i + 1 },
 		// transportLabel renders a human label for a master↔exit transport.
 		"transportLabel": func(t domain.MasterTransport) string {
 			switch t.OrDefault() {

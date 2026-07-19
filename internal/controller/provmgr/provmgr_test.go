@@ -2,6 +2,8 @@ package provmgr
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"log/slog"
 	"os"
@@ -211,6 +213,10 @@ func TestUpgradeAgentUploadsBinaryAndRestarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	mock := provisioner.NewMockRunner()
+	// The upgrade digest-verifies the upload before it will restart the agent, so
+	// the mock must answer sha256sum with the digest of the bytes it received.
+	sum := sha256.Sum256([]byte("\x7fELF-fake-binary"))
+	mock.PrefixResponses["sha256sum"] = hex.EncodeToString(sum[:]) + "  /usr/local/bin/wgfleet-agent"
 	m, _ := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) { return mock, nil })
 	m.opts.AgentBinPath = bin
 

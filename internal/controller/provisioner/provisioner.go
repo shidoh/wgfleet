@@ -47,6 +47,14 @@ func (p *Provisioner) Upgrade(ctx context.Context, r Runner, in BootstrapInput, 
 	return p.run(ctx, r, BuildUpgradePlan(in), mode, "upgrade")
 }
 
+// Rollback restores the agent binary a previous Upgrade displaced (<bin>.prev)
+// and restarts the service. It is the recovery half of a rolling upgrade: SSH is
+// independent of the agent, so a node whose new binary will not run is still
+// reachable to be put back on the one that did.
+func (p *Provisioner) Rollback(ctx context.Context, r Runner, node string, mode Mode) (Report, error) {
+	return p.run(ctx, r, BuildRollbackPlan(node), mode, "rollback")
+}
+
 // run executes (or, in ModePlan, just returns) an ordered plan over the Runner.
 func (p *Provisioner) run(ctx context.Context, r Runner, plan Plan, mode Mode, kind string) (Report, error) {
 	report := Report{Mode: mode, Plan: plan}

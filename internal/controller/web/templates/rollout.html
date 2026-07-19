@@ -1,0 +1,79 @@
+{{/* rollout-panel — fleet-wide rolling agent upgrade.
+
+     Rendered inside a polling wrapper on the fleet page and served standalone at
+     /partials/rollout, so the whole panel (button ⇄ live progress) swaps as one
+     unit — the same shape as the nodes-table partial. */}}
+{{define "rollout-panel"}}
+{{if .}}
+<details class="rollout-section"{{if .State.Active}} open{{end}}>
+  <summary class="rollout-summary">
+    ROLLING AGENT UPDATE
+    {{if .State.Active}}<span class="roll-live"><span class="statusdot pulse"></span>RUNNING {{.State.Done}}/{{.State.Total}}</span>
+    {{else if .Plan.Outdated}}<span class="roll-count">{{.Plan.Outdated}} outdated</span>{{end}}
+  </summary>
+
+  <div class="rollout-card">
+    <p class="rollout-lead">
+      Updates exit agents <strong>one at a time</strong> — reserve tier first, primary last — and moves on only when a
+      node reports <em>Ready</em> on the new build. A node that does not come back is restored to its previous binary
+      over SSH and the rollout stops. Exits are never drained: the kernel WireGuard and xray data planes survive an
+      agent restart, so draining would only force a pointless rehash.
+    </p>
+
+    {{if .State.Nodes}}
+    <div class="roll-progress">
+      {{range .State.Nodes}}
+      <div class="roll-row {{.Phase}}">
+        <span class="roll-tier {{.Tier}}">{{.Tier}}</span>
+        <span class="roll-name">{{.Name}}</span>
+        <span class="roll-phase"><span class="led"></span>{{.Phase}}</span>
+        <span class="roll-ver">
+          {{if .Installed}}{{.Current}} → {{.Installed}}{{else if .Current}}{{.Current}}{{else}}—{{end}}
+        </span>
+        {{if .Err}}<span class="roll-err" title="{{.Err}}">{{.Err}}</span>{{end}}
+      </div>
+      {{end}}
+    </div>
+    {{if .State.Err}}<p class="error-note" role="alert">⚠ {{.State.Err}}</p>{{end}}
+    {{end}}
+
+    {{if .State.Active}}
+    <form class="rollout-form" method="post" action="/rollout/abort">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="btn ghost-amber" type="submit">■ Abort rollout</button>
+      <span class="rollout-hint">The node in flight is rolled back; nodes after it are left untouched.</span>
+    </form>
+
+    {{else if .Plan.Outdated}}
+    <div class="roll-plan">
+      <div class="field-label">PLANNED ORDER</div>
+      {{range $i, $t := .Plan.Targets}}
+      <div class="roll-planrow">
+        <span class="roll-idx">{{add1 $i}}</span>
+        <span class="roll-tier {{$t.Tier}}">{{$t.Tier}}</span>
+        <span class="roll-name">{{$t.Name}}</span>
+        <span class="roll-ver">{{if $t.Current}}{{$t.Current}}{{else}}never reported{{end}} → {{$.Plan.Want}}</span>
+      </div>
+      {{end}}
+      {{range .Plan.Skipped}}
+      <div class="roll-planrow skipped">
+        <span class="roll-idx">–</span>
+        <span class="roll-name">{{.Name}}</span>
+        <span class="roll-ver">{{.Reason}}</span>
+      </div>
+      {{end}}
+    </div>
+    <form class="rollout-form" method="post" action="/rollout/start"
+          onsubmit="return confirm('Update {{.Plan.Outdated}} exit agent(s), one at a time? A node that fails is rolled back and the rollout stops.');">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="btn go" type="submit">↻ Update {{.Plan.Outdated}} outdated exit{{if ne .Plan.Outdated 1}}s{{end}}</button>
+      <span class="rollout-hint">Masters are excluded — the master is co-located with this controller.</span>
+    </form>
+
+    {{else}}
+    <p class="rollout-ok"><span class="statusdot"></span>Every exit is on {{.Plan.Want}}. Nothing to roll.</p>
+    {{end}}
+  </div>
+</details>
+{{end}}
+{{end}}

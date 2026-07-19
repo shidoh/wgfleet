@@ -38,6 +38,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/controller/keybroker"
 	"github.com/shidoh/wgfleet/internal/controller/pki"
 	"github.com/shidoh/wgfleet/internal/controller/provmgr"
+	"github.com/shidoh/wgfleet/internal/controller/rollout"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/controller/sweeper"
 	"github.com/shidoh/wgfleet/internal/controller/web"
@@ -64,8 +65,9 @@ func run() error {
 		issueOut     = flag.String("issue-out", "", "output dir for --issue-node (default ./pki/<id>)")
 		provision    = flag.String("provision", "", "SSH-bootstrap the named fleet node, then exit")
 		upgradeAgent = flag.String("upgrade-agent", "", "roll the named node's agent binary forward (upload + restart) over SSH, then exit")
-		plan         = flag.Bool("plan", false, "with --provision/--upgrade-agent: dry-run, show the plan and change nothing")
-		agentBin     = flag.String("agent-bin", "", "with --provision/--upgrade-agent: path to the wgfleet-agent binary to install (default controller.agent_bin)")
+		rollingUp    = flag.Bool("rolling-upgrade", false, "roll every outdated EXIT agent forward one node at a time (reserve tier first), then exit")
+		plan         = flag.Bool("plan", false, "with --provision/--upgrade-agent/--rolling-upgrade: dry-run, show the plan and change nothing")
+		agentBin     = flag.String("agent-bin", "", "with --provision/--upgrade-agent/--rolling-upgrade: path to the wgfleet-agent binary to install (default controller.agent_bin)")
 		ctlEndpoint  = flag.String("controller-endpoint", "", "with --provision: controller mTLS endpoint the agent dials (default controller.listen)")
 		backupOut    = flag.String("backup", "", "snapshot controller (+co-located master) state to an age-encrypted archive at this path, then exit")
 		restoreIn    = flag.String("restore", "", "restore controller state from an age-encrypted archive at this path, then exit")
@@ -162,6 +164,9 @@ func run() error {
 	}
 	if *upgradeAgent != "" {
 		return upgradeAgentNode(cfg, ca, *upgradeAgent, *agentBin, *plan)
+	}
+	if *rollingUp {
+		return rollingUpgrade(cfg, ca, *agentBin, *plan)
 	}
 
 	return serve(cfg, ca, *configPath)
@@ -277,6 +282,17 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, configPath string) error {
 		if err != nil {
 			return fmt.Errorf("build web ui: %w", err)
 		}
+		// Fleet-wide rolling agent upgrade. One coordinator per process, so the UI
+		// action and any concurrent attempt contend on the same single-rollout lock.
+		// Bound to ctx: a rollout aborts (rolling back the node in flight) on SIGTERM
+		// rather than outliving the store it reads.
+		webHandler.SetRoller(&webRoller{
+			co:    rollout.New(provMgr, st, rollout.Config{}, slog.Default()),
+			st:    st,
+			fleet: cfg.Fleet,
+			ctx:   ctx,
+			log:   slog.Default(),
+		})
 		webSrv = &http.Server{Addr: cfg.Controller.WebUI, Handler: webHandler}
 		go func() {
 			if err := webSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
