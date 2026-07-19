@@ -90,7 +90,7 @@
       {{range .Exits}}
       <a class="topo-exit{{if .Carrying}} carrying{{end}}" href="/nodes/{{.ID}}">
         <div class="topo-exit-head">
-          <span class="topo-exit-name">{{.Name}}{{if .Carrying}}<span class="pill-carrying">CARRYING</span>{{end}}</span>
+          <span class="topo-exit-name">{{.Name}}{{if .Carrying}}<span class="pill-carrying">ACTIVE</span>{{end}}</span>
           <span class="topo-exit-status">
             <span class="state-pill {{lower .State}}"><span class="led"></span>{{.State}}</span>
             {{template "node-subbadges" .}}

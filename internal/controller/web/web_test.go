@@ -805,11 +805,33 @@ func TestFleetTopology(t *testing.T) {
 	_, body := get(t, h, "/")
 	for _, want := range []string{
 		"topo-panel", "master-xa-1", "balancing 2 exits", // master card
-		"pill-carrying", "CARRYING", "107ms", // carrying exit (de)
+		"pill-carrying", "ACTIVE", "107ms", // carrying exit (de)
 		`topo-exit-lat slow`, "1.088s", // slow exit (nl), formatted as seconds
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("fleet topology missing %q", want)
+		}
+	}
+}
+
+// TestExitDelayMarksEveryCarryingExit is a regression guard for tiered exit
+// selection: under the load-balance tier, several exits carry traffic at once, so
+// exitDelay must OR the carrying flag across every matching health entry rather
+// than picking a single winner. Pins the multi-carrier behaviour so a later
+// refactor cannot quietly reintroduce a single-winner assumption.
+func TestExitDelayMarksEveryCarryingExit(t *testing.T) {
+	health := []domain.ExitTunnelHealth{
+		{Name: "vn1", Delay: 100 * time.Millisecond, Selected: true},
+		{Name: "vn2", Delay: 98 * time.Millisecond, Selected: true},
+		{Name: "anz3", Delay: 201 * time.Millisecond, Selected: false},
+	}
+	for name, want := range map[string]bool{"vn1": true, "vn2": true, "anz3": false} {
+		_, carrying, ok := exitDelay(health, name)
+		if !ok {
+			t.Fatalf("%s: expected a delay reading", name)
+		}
+		if carrying != want {
+			t.Errorf("%s: carrying = %v, want %v", name, carrying, want)
 		}
 	}
 }

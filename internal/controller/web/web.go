@@ -711,7 +711,7 @@ type topoExit struct {
 	EgressIP      string
 	Transport     domain.MasterTransport
 	DualTransport bool   // exit runs more than one transport (switchable on the node page)
-	Carrying      bool   // currently selected by the master's wg-best load balancer
+	Carrying      bool   // currently carrying traffic (every live member of the active tier)
 	Latency       string // preformatted url-test delay ("107ms" / "1.088s"); "" if unknown
 	Slow          bool   // latency above the slow threshold → render amber
 	LineY         string // topology connector endpoint Y ("16%"), evenly spaced by index
