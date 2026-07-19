@@ -44,13 +44,18 @@ func testFleet() config.FleetSection {
 
 func newBroker(t *testing.T) (*Broker, store.Store) {
 	t.Helper()
+	return newBrokerWithFleet(t, testFleet())
+}
+
+func newBrokerWithFleet(t *testing.T, fleet config.FleetSection) (*Broker, store.Store) {
+	t.Helper()
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(st, testFleet(), log), st
+	return New(st, fleet, log), st
 }
 
 func seedNode(t *testing.T, st store.Store, id, mgmt, public, pubkey string, role domain.Role) {
@@ -958,5 +963,99 @@ func TestRealityCamouflageFleetDefaultAndOverride(t *testing.T) {
 	s2, _ := b.RenderNodeSpec(ctx, "exit-de-1")
 	if s2.Reality.ServerName != "github.com" {
 		t.Errorf("per-exit SNI override = %q, want github.com", s2.Reality.ServerName)
+	}
+}
+
+// ADR-0029: reserve_exits (Task 1) splits a master's exits into a primary and a
+// reserve selection tier. Task 3 resolves that tier per master and stamps it onto
+// each rendered ExitTunnel.
+func TestRenderMasterSpecMarksReserveExits(t *testing.T) {
+	ctx := context.Background()
+	fleet := testFleet()
+	fleet.Exits = append(fleet.Exits, config.ExitConfig{Name: "exit-nl-1", Egress: "warp", AddressPool: "10.83.0.0/24"})
+	fleet.Masters[0].Routing.ReserveExits = []string{"exit-nl-1"}
+	b, st := newBrokerWithFleet(t, fleet)
+
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+	seedNode(t, st, "exit-nl-1", "10.20.0.6", "198.51.100.8", "bGm5lqV2yYt8m6Dl0sFhT4xQ0r9p7zX1cV2bN3mK4U=", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if spec.Master == nil {
+		t.Fatal("master spec is nil")
+	}
+	deT, ok := tunnelByName(spec.Master.ExitTunnels, "exit-de-1")
+	if !ok {
+		t.Fatal("exit-de-1 tunnel missing")
+	}
+	if deT.Reserve {
+		t.Error("exit-de-1 not named in reserve_exits: Reserve should be false")
+	}
+	nlT, ok := tunnelByName(spec.Master.ExitTunnels, "exit-nl-1")
+	if !ok {
+		t.Fatal("exit-nl-1 tunnel missing")
+	}
+	if !nlT.Reserve {
+		t.Error("exit-nl-1 named in reserve_exits: Reserve should be true")
+	}
+}
+
+// Tier keys off the manifest exit name, so the "-reality" proxy-name suffix must
+// never enter the lookup: both transports of a dual-transport exit must land in
+// the same tier.
+func TestRenderMasterSpecReserveAppliesToBothTransports(t *testing.T) {
+	ctx := context.Background()
+	fleet := testFleet()
+	fleet.Exits[0].Transports = config.TransportsConfig{AWG: config.AWGTransportConfig{Enabled: true}, Reality: config.RealityTransportConfig{Enabled: true}}
+	fleet.Exits[0].ActiveTransport = "awg"
+	fleet.Exits[0].SSH = config.SSHConfig{Host: "198.51.100.7"}
+	fleet.Masters[0].Routing.ReserveExits = []string{"exit-de-1"}
+	b, st := newBrokerWithFleet(t, fleet)
+
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+	_, realityPub, err := xray.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetNodeRealityKey(ctx, "exit-de-1", realityPub); err != nil {
+		t.Fatal(err)
+	}
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if spec.Master == nil || len(spec.Master.ExitTunnels) != 2 {
+		t.Fatalf("exit tunnels = %+v, want 2 (awg + reality)", spec.Master)
+	}
+	for _, tun := range spec.Master.ExitTunnels {
+		if !tun.Reserve {
+			t.Errorf("tunnel %q (transport %v): Reserve = false, want true (both transports of exit-de-1 must share the tier)", tun.Name, tun.Transport)
+		}
+	}
+}
+
+func TestRenderMasterSpecCarriesMaxFailedTimes(t *testing.T) {
+	ctx := context.Background()
+	fleet := testFleet()
+	fleet.Masters[0].Mihomo.MaxFailedTimes = 10
+	b, st := newBrokerWithFleet(t, fleet)
+
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if spec.Master == nil {
+		t.Fatal("master spec is nil")
+	}
+	if spec.Master.MaxFailedTimes != 10 {
+		t.Errorf("MaxFailedTimes = %d, want 10 (from the manifest fixture)", spec.Master.MaxFailedTimes)
 	}
 }

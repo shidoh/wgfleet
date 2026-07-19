@@ -272,6 +272,13 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		DashboardDisabled:   master.Mihomo.DashboardDisabled,
 		ClientAdminPorts:    append([]int(nil), master.ClientAdminPorts...),
 		Custom:              masterCustomConfig(master),
+		MaxFailedTimes:      master.Mihomo.MaxFailedTimes,
+	}
+	// Tier membership is master-scoped (ADR-0029): the same exit may be primary for
+	// one master and reserve for another, so resolve it per master, not per exit.
+	reserveExits := make(map[string]struct{}, len(master.Routing.ReserveExits))
+	for _, name := range master.Routing.ReserveExits {
+		reserveExits[name] = struct{}{}
 	}
 	if addr, err := nthHost(master.ClientAWG.AddressPool, exitHostIndex); err == nil {
 		ms.BindAddress = addr.String() // master's own .1 in the client pool
@@ -350,6 +357,10 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		// published its reality pubkey AND its endpoint is dialable — until then the
 		// AWG tunnel keeps carrying traffic (no flip to a not-yet-ready transport).
 		baseDrained := exitNode.Drain || autoSuspend[exit.Name]
+		// Reserve is orthogonal to Drained: it keys off the manifest exit name (never
+		// the "-reality" proxy-name suffix), so both transports of a dual-transport
+		// exit land in the same tier.
+		_, isReserve := reserveExits[exit.Name]
 		active := resolveActiveTransport(exit, exitNode)
 		hasAWG, hasReality := false, false
 		for _, t := range exit.EnabledTransports() {
@@ -380,6 +391,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 				AWG:       &awg,
 				Transport: domain.TransportAWG,
 				Drained:   baseDrained || realityActive,
+				Reserve:   isReserve,
 			})
 		}
 		if realityRenderable {
@@ -401,6 +413,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 					EmptySNI:    rp.EmptySNI,
 				},
 				Drained: baseDrained || !realityActive,
+				Reserve: isReserve,
 			})
 		}
 		if exitNode.MgmtAddr != "" {
