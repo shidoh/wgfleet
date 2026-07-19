@@ -541,6 +541,131 @@ func TestRenderRealityProxy(t *testing.T) {
 	}
 }
 
+func groupsByName(t *testing.T, cfg string) map[string]map[string]any {
+	t.Helper()
+	var parsed map[string]any
+	if err := yaml.Unmarshal([]byte(cfg), &parsed); err != nil {
+		t.Fatalf("parse rendered config: %v", err)
+	}
+	raw, _ := parsed["proxy-groups"].([]any)
+	out := make(map[string]map[string]any, len(raw))
+	for _, g := range raw {
+		m, _ := g.(map[string]any)
+		name, _ := m["name"].(string)
+		out[name] = m
+	}
+	return out
+}
+
+// The no-reserve shape must not drift: any diff rewrites config.yaml on every
+// fleet, forcing a mihomo hot reload — the exact event ADR-0029 removes.
+func TestRenderWithoutReserveKeepsSingleFlatGroup(t *testing.T) {
+	in := sampleInput()
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := groupsByName(t, out)
+	if len(groups) != 1 {
+		t.Fatalf("got %d groups, want exactly 1 (wg-best)", len(groups))
+	}
+	if _, ok := groups["wg-best"]; !ok {
+		t.Error("the single group must still be named wg-best")
+	}
+	if _, ok := groups["wg-primary"]; ok {
+		t.Error("no tier groups may appear without reserve exits")
+	}
+}
+
+func TestRenderWithReserveBuildsTierHierarchy(t *testing.T) {
+	in := sampleInput()
+	in.Spec.Balance = "consistent-hashing"
+	in.Spec.ExitTunnels[1].Reserve = true // exit-b to the reserve tier
+
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := groupsByName(t, out)
+
+	top, ok := groups["wg-best"]
+	if !ok {
+		t.Fatal("wg-best must exist — the rules reference it by name")
+	}
+	if top["type"] != "fallback" {
+		t.Errorf("wg-best type = %v, want fallback", top["type"])
+	}
+	if got := toStrings(top["proxies"].([]any)); len(got) != 2 ||
+		got[0] != "wg-primary" || got[1] != "wg-reserve" {
+		t.Errorf("wg-best members = %v, want [wg-primary wg-reserve]", got)
+	}
+
+	primary := groups["wg-primary"]
+	if primary["strategy"] != "consistent-hashing" {
+		t.Errorf("wg-primary strategy = %v, want consistent-hashing", primary["strategy"])
+	}
+	if got := toStrings(primary["proxies"].([]any)); len(got) != 1 || got[0] != "exit-a" {
+		t.Errorf("wg-primary members = %v, want [exit-a]", got)
+	}
+	if got := toStrings(groups["wg-reserve"]["proxies"].([]any)); len(got) != 1 || got[0] != "exit-b" {
+		t.Errorf("wg-reserve members = %v, want [exit-b]", got)
+	}
+}
+
+func TestRenderReserveOnlyCollapsesToFlatGroup(t *testing.T) {
+	// Every exit in the reserve tier: emit one flat group rather than an empty
+	// wg-primary, which mihomo would reject.
+	in := sampleInput()
+	for i := range in.Spec.ExitTunnels {
+		in.Spec.ExitTunnels[i].Reserve = true
+	}
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := groupsByName(t, out)
+	if len(groups) != 1 {
+		t.Fatalf("got %d groups, want 1 — an empty tier must never be emitted", len(groups))
+	}
+	if got := toStrings(groups["wg-best"]["proxies"].([]any)); len(got) != 2 {
+		t.Errorf("wg-best members = %v, want both exits", got)
+	}
+}
+
+func TestRenderDrainEmptiesPrimaryTierAndCollapses(t *testing.T) {
+	in := sampleInput()
+	in.Spec.ExitTunnels[0].Drained = true // the only primary is drained
+	in.Spec.ExitTunnels[1].Reserve = true
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := groupsByName(t, out)
+	if len(groups) != 1 {
+		t.Fatalf("got %d groups, want 1 (primary tier is empty after drain)", len(groups))
+	}
+}
+
+func TestRenderMaxFailedTimes(t *testing.T) {
+	in := sampleInput()
+	if g := groupsByName(t, mustRender(t, in))["wg-best"]; g["max-failed-times"] != nil {
+		t.Error("max-failed-times must be omitted when unset, leaving mihomo's default")
+	}
+	in.Spec.MaxFailedTimes = 10
+	if g := groupsByName(t, mustRender(t, in))["wg-best"]; g["max-failed-times"] != 10 {
+		t.Errorf("max-failed-times = %v, want 10", g["max-failed-times"])
+	}
+}
+
+func mustRender(t *testing.T, in RenderInput) string {
+	t.Helper()
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 func TestRenderRealityFingerprintAndEmptySNI(t *testing.T) {
 	mk := func(tune func(*domain.RealityTunnel)) map[string]any {
 		in := sampleInput()

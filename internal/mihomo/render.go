@@ -86,14 +86,14 @@ func RenderConfig(in RenderInput) (string, error) {
 		return "", fmt.Errorf("mihomo render: no exit tunnels (no registered exits yet?)")
 	}
 
-	proxies, lbMembers, err := renderProxies(in)
+	proxies, primary, reserve, err := renderProxies(in)
 	if err != nil {
 		return "", err
 	}
-	if len(lbMembers) == 0 {
-		// Every exit is drained: the load-balance group would be empty (invalid)
-		// and there would be no egress. Refuse rather than emit a broken config;
-		// the operator must keep at least one exit in rotation.
+	if len(primary)+len(reserve) == 0 {
+		// Every exit is drained: both tiers would be empty and there would be no
+		// egress. Refuse rather than emit a broken config; the operator must keep at
+		// least one exit in rotation.
 		return "", fmt.Errorf("mihomo render: all exits are drained, the load balancer would be empty")
 	}
 
@@ -141,9 +141,13 @@ func RenderConfig(in RenderInput) (string, error) {
 				"interval": 60,
 			},
 		},
-		"proxies":      proxies,
-		"proxy-groups": []any{wgBestGroup(lbMembers, in.Spec.Balance, healthInterval)},
-		"rules":        renderRules(in.Spec),
+		"proxies": proxies,
+		"proxy-groups": wgBestGroups(primary, reserve, groupOpts{
+			balance:        in.Spec.Balance,
+			healthInterval: healthInterval,
+			maxFailedTimes: in.Spec.MaxFailedTimes,
+		}),
+		"rules": renderRules(in.Spec),
 	}
 	if in.Spec.ExternalController != "" {
 		base["external-controller"] = in.Spec.ExternalController
@@ -218,15 +222,16 @@ func RenderDirectNetworks(spec domain.MasterSpec) (string, error) {
 // DirectNetworksPath returns the on-node path of the included file.
 func DirectNetworksPath() string { return directNetworksPath }
 
-// renderProxies builds the proxy list and the load-balance member names.
-// Drained tunnels are still rendered as proxies (so existing connections via
-// them keep working) but excluded from lbMembers, so no new traffic routes to
-// them — a graceful drain.
-func renderProxies(in RenderInput) (proxies []any, lbMembers []string, err error) {
+// renderProxies builds the proxy list and partitions the non-drained tunnel
+// names into the primary and reserve exit-selection tiers (ADR-0029). Drained
+// tunnels are still rendered as proxies (so existing connections via them keep
+// working) but join neither tier, so no new traffic routes to them — a
+// graceful drain.
+func renderProxies(in RenderInput) (proxies []any, primary, reserve []string, err error) {
 	for _, t := range in.Spec.ExitTunnels {
 		host, port, perr := splitEndpoint(t.Endpoint)
 		if perr != nil {
-			return nil, nil, fmt.Errorf("exit %q: %w", t.Name, perr)
+			return nil, nil, nil, fmt.Errorf("exit %q: %w", t.Name, perr)
 		}
 		var proxy map[string]any
 		switch t.Transport.OrDefault() {
@@ -236,14 +241,21 @@ func renderProxies(in RenderInput) (proxies []any, lbMembers []string, err error
 			proxy, perr = wireguardProxy(t, host, port, in.PrivateKey)
 		}
 		if perr != nil {
-			return nil, nil, perr
+			return nil, nil, nil, perr
 		}
 		proxies = append(proxies, proxy)
-		if !t.Drained {
-			lbMembers = append(lbMembers, t.Name)
+		// A drained exit stays a configured proxy (existing connections survive) but
+		// joins no tier, so no new traffic reaches it (ADR-0010).
+		if t.Drained {
+			continue
+		}
+		if t.Reserve {
+			reserve = append(reserve, t.Name)
+		} else {
+			primary = append(primary, t.Name)
 		}
 	}
-	return proxies, lbMembers, nil
+	return proxies, primary, reserve, nil
 }
 
 // wireguardProxy renders a mihomo WireGuard proxy carrying the AmneziaWG-obfuscated
@@ -395,21 +407,25 @@ func awgOption(p domain.AWGParams) map[string]any {
 // generous tolerance prevents flapping between two similar exits.
 const urlTestToleranceMS = 150
 
-// wgBestGroup renders the master's exit-selection group. `balance` selects the
-// mihomo group kind: url-test (lowest-latency exit) and fallback (first-healthy,
-// ordered) are their own group TYPES; everything else is a load-balance with the
-// given strategy (round-robin default, or consistent-hashing / sticky-sessions).
-// All kinds share the same health check (url/interval) that detects dead exits.
-// healthInterval is the check cadence in seconds.
-func wgBestGroup(names []string, balance string, healthInterval int) map[string]any {
+// groupOpts are the exit-selection knobs shared by every rendered group.
+type groupOpts struct {
+	balance        string
+	healthInterval int
+	maxFailedTimes int
+}
+
+// selectionGroup renders one exit-selection group. `balance` picks the mihomo
+// group kind: url-test (lowest-latency member) and fallback (first healthy) are
+// distinct types; everything else is a load-balance strategy.
+func selectionGroup(name string, members []string, o groupOpts) map[string]any {
 	g := map[string]any{
-		"name":     "wg-best",
-		"proxies":  toAnySlice(names),
+		"name":     name,
+		"proxies":  toAnySlice(members),
 		"url":      "http://cp.cloudflare.com/generate_204",
-		"interval": healthInterval,
+		"interval": o.healthInterval,
 		"lazy":     false,
 	}
-	switch balance {
+	switch o.balance {
 	case "url-test":
 		g["type"] = "url-test"
 		g["tolerance"] = urlTestToleranceMS
@@ -417,13 +433,56 @@ func wgBestGroup(names []string, balance string, healthInterval int) map[string]
 		g["type"] = "fallback"
 	default:
 		g["type"] = "load-balance"
-		strategy := balance
+		strategy := o.balance
 		if strategy == "" {
 			strategy = "round-robin"
 		}
 		g["strategy"] = strategy
 	}
+	if o.maxFailedTimes > 0 {
+		g["max-failed-times"] = o.maxFailedTimes
+	}
 	return g
+}
+
+// wgBestGroups renders the master's exit-selection hierarchy (ADR-0029).
+//
+// With no reserve tier it emits a SINGLE group named wg-best — byte-identical to
+// the pre-ADR-0029 output. That equality is load-bearing: any drift would rewrite
+// config.yaml on every fleet and force a mihomo hot reload, which resets the
+// group and re-selects an exit — the very churn this design removes.
+//
+// With both tiers populated it emits a fallback group over two tier groups, so
+// traffic uses the reserve tier only when every primary member is down. The top
+// group keeps the name wg-best, so the routing rules never change.
+//
+// An empty tier is never emitted (mihomo rejects an empty group): if either side
+// is empty the hierarchy collapses back to one flat wg-best over whatever remains.
+func wgBestGroups(primary, reserve []string, o groupOpts) []any {
+	switch {
+	case len(reserve) == 0:
+		return []any{selectionGroup("wg-best", primary, o)}
+	case len(primary) == 0:
+		return []any{selectionGroup("wg-best", reserve, o)}
+	}
+	top := map[string]any{
+		"name":    "wg-best",
+		"type":    "fallback",
+		"proxies": toAnySlice([]string{"wg-primary", "wg-reserve"}),
+		"url":     "http://cp.cloudflare.com/generate_204",
+		// The tier groups run their own member health checks; the top group only
+		// needs to notice that a whole tier went dark.
+		"interval": o.healthInterval,
+		"lazy":     false,
+	}
+	if o.maxFailedTimes > 0 {
+		top["max-failed-times"] = o.maxFailedTimes
+	}
+	return []any{
+		top,
+		selectionGroup("wg-primary", primary, o),
+		selectionGroup("wg-reserve", reserve, o),
+	}
 }
 
 func renderRules(spec domain.MasterSpec) []any {
