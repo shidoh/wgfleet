@@ -1,0 +1,120 @@
+allow-lan: true
+bind-address: 10.80.0.1
+dns:
+  default-nameserver:
+    - 77.88.8.8
+    - 8.8.8.8
+  enable: true
+  ipv6: false
+  listen: 127.0.0.1:1053
+  nameserver:
+    - 77.88.8.8
+    - 8.8.8.8
+external-controller: 10.20.25.254:9090
+external-ui: ui
+geo-auto-update: true
+geo-update-interval: 24
+geodata-mode: true
+geox-url:
+  geoip: https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat
+  geosite: https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat
+ipv6: false
+log-level: info
+mode: rule
+proxies:
+  - amnezia-wg-option:
+      h1: 15384729-145384729
+      h2: 412847193-542847193
+      h3: 983471628-1113471628
+      h4: 1524719384-1654719384
+      i1: <r 2><b 0xdeadbeef>
+      jc: 7
+      jmax: 900
+      jmin: 60
+      s1: 102
+      s2: 67
+      s3: 143
+      s4: 38
+    ip: 10.81.0.2
+    mtu: 1380
+    name: exit-a
+    peers:
+      - allowed-ips:
+          - 0.0.0.0/0
+        port: 36050
+        public-key: tonqJKi1LFkgd150tF0eNEJDGyeRqT40QlUCtnWUh3A=
+        server: exit-a.example.net
+    persistent-keepalive: 25
+    private-key: MASTERPRIVKEYbase64ExampleValueForTestingABC=
+    type: wireguard
+    udp: true
+  - amnezia-wg-option:
+      h1: 15384729-145384729
+      h2: 412847193-542847193
+      h3: 983471628-1113471628
+      h4: 1524719384-1654719384
+      i1: <r 2><b 0xdeadbeef>
+      jc: 5
+      jmax: 900
+      jmin: 60
+      s1: 102
+      s2: 67
+      s3: 143
+      s4: 38
+    ip: 10.82.0.2
+    mtu: 1380
+    name: exit-b
+    peers:
+      - allowed-ips:
+          - 0.0.0.0/0
+        port: 57102
+        public-key: H5MvraCiOLEIP6z+EHobf33Nt9EUdtjTRfO0vftZomg=
+        server: exit-b.example.net
+    persistent-keepalive: 25
+    private-key: MASTERPRIVKEYbase64ExampleValueForTestingABC=
+    type: wireguard
+    udp: true
+proxy-groups:
+  - interval: 60
+    lazy: false
+    name: wg-best
+    proxies:
+      - exit-a
+      - exit-b
+    tolerance: 150
+    type: url-test
+    url: http://cp.cloudflare.com/generate_204
+redir-port: 7895
+rule-providers:
+  direct-networks:
+    behavior: ipcidr
+    interval: 60
+    path: /etc/mihomo/direct-networks.yaml
+    type: file
+rules:
+  - IP-CIDR,10.80.0.1/32,REJECT,no-resolve
+  - RULE-SET,direct-networks,DIRECT
+  - GEOSITE,category-ru,DIRECT
+  - GEOIP,RU,DIRECT,no-resolve
+  - MATCH,wg-best
+sniffer:
+  enable: true
+  force-dns-mapping: true
+  override-destination: true
+  parse-pure-ip: true
+  skip-domain:
+    - +.themoviedb.org
+    - +.cloudfront.net
+  sniff:
+    HTTP:
+      ports:
+        - 80
+        - 8080-8880
+    QUIC:
+      ports:
+        - 443
+        - 8443
+    TLS:
+      ports:
+        - 443
+        - 8443

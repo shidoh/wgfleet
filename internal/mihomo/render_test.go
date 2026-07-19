@@ -558,47 +558,74 @@ func groupsByName(t *testing.T, cfg string) map[string]map[string]any {
 	return out
 }
 
-// noReserveGoldenPath is the committed byte-identity fixture for the no-reserve
-// shape. Regenerate it deliberately (never hand-edit) by temporarily writing
-// RenderConfig(sampleInput())'s output to this path, e.g.:
+// noReserveGoldenPaths maps every mihomo balance kind to its committed
+// byte-identity fixture for the no-reserve shape. Regenerate deliberately
+// (never hand-edit) via `GENERATE_FIXTURES=1 go test ./internal/mihomo/ -run
+// TestGenerateGoldenFixtures` (see gen_fixtures_test.go).
 //
-//	out, _ := RenderConfig(sampleInput())
-//	os.WriteFile(noReserveGoldenPath, []byte(out), 0o644)
-const noReserveGoldenPath = "testdata/no-reserve-config.yaml"
+// A fixture per balance kind matters because the fleet is NOT deployed on
+// consistent-hashing on day one: the live master runs url-test at the moment
+// these binaries roll out, and only migrates to consistent-hashing via a
+// deliberate manifest change afterward (ADR-0029). Pinning only the
+// consistent-hashing render — what sampleInput() happens to default to —
+// would leave the url-test render (the one every existing fleet actually
+// renders at cutover) completely unguarded.
+var noReserveGoldenPaths = map[string]string{
+	"url-test":           "testdata/no-reserve-config-url-test.yaml",
+	"consistent-hashing": "testdata/no-reserve-config-consistent-hashing.yaml",
+	"fallback":           "testdata/no-reserve-config-fallback.yaml",
+	"":                   "testdata/no-reserve-config-round-robin.yaml", // "" defaults to round-robin
+}
 
-// TestRenderWithoutReserveMatchesGolden pins RenderConfig's no-reserve output to
-// the exact bytes committed at testdata/no-reserve-config.yaml. This is the
-// load-bearing byte-identity property from ADR-0029: the agent hot-reloads
-// mihomo whenever config.yaml differs from what's on disk, and a reload
-// recreates the wg-best group, clears its selection, and forces every client to
-// re-pick an exit (a country/IP switch) — the exact churn ADR-0029 exists to
-// eliminate. A future edit that adds a key to selectionGroup, reorders a field,
-// or flips a default (e.g. "lazy: true") will fail THIS test even though it
-// would slip past every other assertion here, which check shape (group count,
-// names, types) rather than the full rendered text.
+// TestRenderWithoutReserveMatchesGolden pins RenderConfig's no-reserve output,
+// for every balance kind the fleet can run, to the exact bytes committed under
+// testdata/. This is the load-bearing byte-identity property from ADR-0029:
+// the agent hot-reloads mihomo whenever config.yaml differs from what's on
+// disk, and a reload recreates the wg-best group, clears its selection, and
+// forces every client to re-pick an exit (a country/IP switch) — the exact
+// churn ADR-0029 exists to eliminate. A future edit that adds a key to
+// selectionGroup, reorders a field, or flips a default (e.g. "lazy: true")
+// will fail THIS test even though it would slip past every other assertion
+// here, which check shape (group count, names, types) rather than the full
+// rendered text.
 //
 // If this test fails, the diff below IS the fleet-wide reload+switch that
 // change would cause. Do not "fix" it by silently updating the fixture —
-// confirm the change is deliberate, then regenerate testdata/no-reserve-config.yaml
-// from RenderConfig(sampleInput()) (see noReserveGoldenPath's doc comment) and
-// note the reload/switch consequence in the commit.
+// confirm the change is deliberate, then regenerate the fixtures (see
+// noReserveGoldenPaths' doc comment) and note the reload/switch consequence in
+// the commit.
 func TestRenderWithoutReserveMatchesGolden(t *testing.T) {
-	out, err := RenderConfig(sampleInput())
-	if err != nil {
-		t.Fatal(err)
+	for balance, path := range noReserveGoldenPaths {
+		t.Run(balanceTestName(balance), func(t *testing.T) {
+			in := sampleInput()
+			in.Spec.Balance = balance
+			out, err := RenderConfig(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			golden, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read golden fixture %s: %v", path, err)
+			}
+			if out != string(golden) {
+				t.Errorf("no-reserve RenderConfig output (balance=%q) drifted from %s.\n"+
+					"This means every fleet running that balance kind with no reserve exits "+
+					"would get a spurious mihomo config rewrite -> hot reload -> wg-best group "+
+					"reset -> exit re-pick (country switch) on the next deploy. If this is "+
+					"deliberate, regenerate the fixture and call it out in the commit.\n\n"+
+					"--- golden ---\n%s\n--- got ---\n%s", balance, path, golden, out)
+			}
+		})
 	}
-	golden, err := os.ReadFile(noReserveGoldenPath)
-	if err != nil {
-		t.Fatalf("read golden fixture %s: %v", noReserveGoldenPath, err)
+}
+
+// balanceTestName gives the "" (round-robin default) balance kind a readable
+// subtest name instead of an empty one.
+func balanceTestName(balance string) string {
+	if balance == "" {
+		return "round-robin-default"
 	}
-	if out != string(golden) {
-		t.Errorf("no-reserve RenderConfig output drifted from %s.\n"+
-			"This means every fleet running with no reserve exits would get a spurious "+
-			"mihomo config rewrite -> hot reload -> wg-best group reset -> exit re-pick "+
-			"(country switch) on the next deploy. If this is deliberate, regenerate the "+
-			"fixture from RenderConfig(sampleInput()) and call it out in the commit.\n\n"+
-			"--- golden ---\n%s\n--- got ---\n%s", noReserveGoldenPath, golden, out)
-	}
+	return balance
 }
 
 // The no-reserve shape must not drift: any diff rewrites config.yaml on every
