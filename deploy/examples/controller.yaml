@@ -85,7 +85,25 @@ fleet:
       routing:
         direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
         direct_geo: [RU]
-        balance: url-test # url-test (best exit) | consistent-hashing | round-robin | sticky-sessions | fallback
+        # How the master picks an exit (ADR-0029):
+        #   consistent-hashing — same destination always via the same exit. Recommended:
+        #                        a service keeps one egress IP/country, and every exit
+        #                        carries traffic instead of one being saturated.
+        #   sticky-sessions    — same src+dst via the same exit.
+        #   round-robin        — every connection cycles exits (IP changes constantly).
+        #   fallback           — first healthy exit in list order; the rest idle.
+        #   url-test           — lowest-latency exit. NOT recommended: its selection
+        #                        resets whenever the config is reloaded, and the first
+        #                        pick after a reset ignores `tolerance` entirely, so the
+        #                        exit (and the client's apparent country) changes on
+        #                        events that have nothing to do with latency.
+        balance: consistent-hashing
+        # Optional second selection tier: these exits carry traffic ONLY when every
+        # primary exit is down. The primary tier is everything NOT listed here, so a
+        # newly added exit defaults to primary and none can fall out of both tiers.
+        # Use it to keep a slow or unreliable exit as a warm spare. Names are manifest
+        # exit names, never rendered proxy names (no "-reality" suffix).
+        # reserve_exits: [exit-slow-1]
       # Opt-in: let VPN clients reach admin UIs that bind the mgmt overlay (controller
       # Web UI :9000, mihomo dashboard :9090). By default the master input firewall
       # drops client TCP to these — clients get pings/DNS/web but not the dashboards.
@@ -122,6 +140,11 @@ fleet:
         # and route around dead ones. Unset ⇒ 60s. Range 5s..1h. Lower it to fail over off
         # a dead exit faster (at the cost of more frequent url-test probes through the tunnels).
         health_interval: 30s
+        # max_failed_times: consecutive connection failures after which mihomo forces an
+        # out-of-band health check on the selection groups. Unset ⇒ mihomo's default (5).
+        # Raise it where some traffic legitimately fails (blocked destinations), so the
+        # forced re-check is not triggered by noise.
+        # max_failed_times: 10
         # The mihomo web dashboard (zashboard) is auto-served at <external-controller>/ui
         # whenever the Clash API is enabled; geo databases are auto-configured (jsdelivr
         # mirror) when direct_geo is set. The RESTful API is UNAUTHENTICATED by default —
