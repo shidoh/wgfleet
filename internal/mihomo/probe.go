@@ -44,6 +44,12 @@ const probeTimeout = 6 * time.Second
 // egress, instead of the master's own connectivity. Returns the reachable count and
 // the number attempted; a transport error talking to the API is returned as an error
 // so the caller can hold its current decision rather than act on a blind sample.
+// enough is the reachable count at which a member is considered proven usable, so
+// probing can stop early. It mirrors the tier selector's threshold; keeping the two
+// in step matters only for latency, never for correctness (the selector re-checks
+// what it got).
+const enough = 2
+
 func ProbeMember(ctx context.Context, controllerAddr, secret, name string, urls []string) (ok, total int, err error) {
 	if controllerAddr == "" {
 		return 0, 0, fmt.Errorf("%w: no external-controller configured", ErrUnreachable)
@@ -52,18 +58,52 @@ func ProbeMember(ctx context.Context, controllerAddr, secret, name string, urls 
 		urls = DefaultProbeURLs
 	}
 
+	// Probe concurrently. Sequentially this costs len(urls) × probeTimeout in the
+	// worst case (~32s for the default set), which on a 30s reconcile interval means
+	// a sick fleet makes passes overlap — the pathology this whole change exists to
+	// avoid. Fanning out bounds the wall clock at one timeout.
+	type result struct {
+		reached bool
+		err     error
+	}
+	results := make(chan result, len(urls))
+	// Cancelled as soon as the outcome is decided, so the remaining in-flight probes
+	// stop rather than running out their timeouts.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	for _, target := range urls {
-		reached, perr := probeOne(ctx, controllerAddr, secret, name, target)
-		if perr != nil {
+		go func(target string) {
+			reached, perr := probeOne(ctx, controllerAddr, secret, name, target)
+			results <- result{reached, perr}
+		}(target)
+	}
+
+	var firstErr error
+	for range urls {
+		r := <-results
+		if r.err != nil {
 			// The API itself is unreachable — the whole sample is untrustworthy, not
-			// just this URL. Report it rather than counting it as a failed destination,
+			// just this URL. Remember it rather than counting a failed destination,
 			// which would look like the exit is blocked.
-			return ok, total, perr
+			if firstErr == nil {
+				firstErr = r.err
+			}
+			continue
 		}
 		total++
-		if reached {
+		if r.reached {
 			ok++
+			if ok >= enough {
+				// Already proven usable; the rest cannot change the verdict.
+				return ok, total, nil
+			}
 		}
+	}
+	if firstErr != nil && ok == 0 {
+		// Nothing usable was observed AND the API misbehaved: report the error so the
+		// caller holds its current decision instead of reading this as "exit is down".
+		return ok, total, firstErr
 	}
 	return ok, total, nil
 }
