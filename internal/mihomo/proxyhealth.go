@@ -42,6 +42,16 @@ const maxGroupDepth = 8
 //     across every member at once, so ALL of them carry and the walk fans out.
 //
 // A node that is neither is a leaf proxy — an exit — and is recorded.
+//
+// domain.ExitTunnelHealth.Selected promises "every live member of the active
+// tier", so the fan-out branch skips a member whose own payload entry reports
+// alive:false: consistent-hashing rehashes a dead member's destinations onto
+// its live siblings, so the dead member carries nothing even though it is
+// still listed in `all`. The single-`now` branch does NOT apply the same
+// check: mihomo only ever sets `now` to a member it considers selectable, and
+// url-test/fallback are single-carrier by construction — the one active leaf
+// is definitionally the one carrying traffic, dead-vs-alive is not a fan-out
+// ambiguity there the way it is when multiple members could be live.
 func collectCarrying(proxies map[string]clashProxy, name string, depth int, seen, out map[string]struct{}) {
 	if depth > maxGroupDepth {
 		return
@@ -60,6 +70,12 @@ func collectCarrying(proxies map[string]clashProxy, name string, depth int, seen
 		collectCarrying(proxies, p.Now, depth+1, seen, out)
 	case len(p.All) > 0:
 		for _, member := range p.All {
+			if mp, mok := proxies[member]; mok && !mp.Alive {
+				// Dead member: consistent-hashing has already rehashed its
+				// destinations onto live siblings, so it carries nothing even
+				// though it is still listed in `all`.
+				continue
+			}
 			collectCarrying(proxies, member, depth+1, seen, out)
 		}
 	default:
