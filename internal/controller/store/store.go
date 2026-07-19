@@ -48,6 +48,18 @@ type Store interface {
 	// the node is absent.
 	SetNodePublicKey(ctx context.Context, id, publicKey string) error
 
+	// SetNodeTunnelKey registers one PER-TUNNEL WireGuard public key for a node
+	// (ADR-0030): the master's dedicated identity for the tunnel named by tunnel
+	// (the exit's node name). Idempotent — re-publishing the same tunnel replaces
+	// the key. Returns ErrNotFound if the node is absent.
+	SetNodeTunnelKey(ctx context.Context, id, tunnel, publicKey string) error
+
+	// ListNodeTunnelKeys returns a node's per-tunnel WireGuard public keys keyed by
+	// tunnel name. An unknown node yields an empty map, not ErrNotFound: callers
+	// render peers from whatever is registered so far and converge (the same
+	// tolerance the unsuffixed key lookup has).
+	ListNodeTunnelKeys(ctx context.Context, id string) (map[string]string, error)
+
 	// SetNodeRealityKey registers an exit's REALITY x25519 public key (ADR-0025),
 	// stored separately from the WireGuard key. Returns ErrNotFound if the node
 	// is absent.

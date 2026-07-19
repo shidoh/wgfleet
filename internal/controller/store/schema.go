@@ -54,4 +54,20 @@ var migrations = []string{
 		session_secret BLOB NOT NULL,
 		updated_at     TEXT NOT NULL
 	)`,
+	// v8: per-tunnel WireGuard public keys (ADR-0030). The master publishes one
+	// identity per master↔exit tunnel instead of reusing nodes.public_key for all of
+	// them, so two exits can no longer be correlated by comparing one string and a
+	// single exit can be re-keyed in isolation. A separate table rather than more
+	// nodes columns because the row count is per (node, tunnel), not per node; the
+	// primary key makes re-publishing the same tunnel an idempotent upsert. Rows
+	// cascade with the owning node so a deleted master leaves no orphan keys.
+	// nodes.public_key stays populated and authoritative for the legacy shared
+	// identity — this table is strictly additive.
+	`CREATE TABLE IF NOT EXISTS node_tunnel_keys (
+		node_id    TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+		tunnel     TEXT NOT NULL,
+		public_key TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		PRIMARY KEY (node_id, tunnel)
+	)`,
 }

@@ -70,9 +70,19 @@ const directNetworksPath = "/etc/mihomo/direct-networks.yaml"
 type RenderInput struct {
 	Spec domain.MasterSpec
 	// PrivateKey is the master's WireGuard private key, injected by the agent at
-	// render time and shared across all exit-tunnel proxies (one master identity
-	// that each exit peers). Never supplied by the controller.
+	// render time. It is the identity for every tunnel that has no MasterKeyTunnel
+	// set, and the root the per-tunnel keys are derived from. Never supplied by the
+	// controller.
 	PrivateKey string
+	// TunnelPrivateKey resolves the master's dedicated private key for one tunnel
+	// (ADR-0030), called only for tunnels whose ExitTunnel.MasterKeyTunnel is set.
+	// The agent supplies it (wg.DeriveTunnelKey over its master key) so RenderConfig
+	// stays a pure function of its inputs and no key material is derived here.
+	// nil ⇒ per-tunnel keys are unavailable and a tunnel that asks for one is a hard
+	// error rather than a silent fall back to the shared key: falling back would
+	// render a config the exit's kernel rejects in the `on` phase, i.e. a dead
+	// tunnel that looks configured.
+	TunnelPrivateKey func(tunnel string) (string, error)
 	// ReserveActive routes wg-best to the RESERVE tier instead of the primary one
 	// (ADR-0029, revised). The master agent sets it — not the controller — because
 	// the decision needs live per-member health that only the master observes, and
@@ -249,7 +259,11 @@ func renderProxies(in RenderInput) (proxies []any, primary, reserve []string, er
 		case domain.TransportRealityXHTTP:
 			proxy, perr = realityProxy(t, host, port)
 		default: // TransportAWG (empty == awg, back-compat)
-			proxy, perr = wireguardProxy(t, host, port, in.PrivateKey)
+			key, kerr := masterKeyFor(in, t)
+			if kerr != nil {
+				return nil, nil, nil, kerr
+			}
+			proxy, perr = wireguardProxy(t, host, port, key)
 		}
 		if perr != nil {
 			return nil, nil, nil, perr
@@ -282,6 +296,27 @@ func TierMembers(spec domain.MasterSpec) (primary, reserve []string) {
 		}
 	}
 	return primary, reserve
+}
+
+// masterKeyFor picks the master's WireGuard private key for one tunnel: the
+// dedicated per-tunnel identity when the controller asked for one (ADR-0030),
+// otherwise the shared master key.
+func masterKeyFor(in RenderInput, t domain.ExitTunnel) (string, error) {
+	if t.MasterKeyTunnel == "" {
+		return in.PrivateKey, nil
+	}
+	if in.TunnelPrivateKey == nil {
+		return "", fmt.Errorf("exit %q: spec asks for the per-tunnel master key %q but none was supplied",
+			t.Name, t.MasterKeyTunnel)
+	}
+	key, err := in.TunnelPrivateKey(t.MasterKeyTunnel)
+	if err != nil {
+		return "", fmt.Errorf("exit %q: per-tunnel master key %q: %w", t.Name, t.MasterKeyTunnel, err)
+	}
+	if key == "" {
+		return "", fmt.Errorf("exit %q: empty per-tunnel master key %q", t.Name, t.MasterKeyTunnel)
+	}
+	return key, nil
 }
 
 // wireguardProxy renders a mihomo WireGuard proxy carrying the AmneziaWG-obfuscated

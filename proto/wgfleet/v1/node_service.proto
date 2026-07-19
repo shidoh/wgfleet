@@ -189,6 +189,12 @@ message ExitTunnel {
   // agent ignores it and renders one flat group — backward-compatible, no
   // wire-version bump.
   bool reserve = 11;
+  // Per-tunnel master WireGuard identity (ADR-0030). Empty ⇒ the master's single
+  // shared key (pre-ADR-0030 behaviour). Non-empty names the EXIT NODE the agent
+  // derives a dedicated key for — never the proxy name, which may carry a
+  // "-reality" suffix. Additive; an older agent ignores it and keeps using the
+  // shared key — backward-compatible, no wire-version bump.
+  string master_key_tunnel = 12;
 }
 
 // RealityTunnel is the master-side mihomo vless+reality proxy descriptor for a

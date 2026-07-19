@@ -18,6 +18,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/controller/pki"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/wg"
 )
 
 // harness wires a real mTLS gRPC server over a loopback listener plus a matching
@@ -215,5 +216,89 @@ func TestIdentityIsFromCertNotRequest(t *testing.T) {
 	}
 	if node.PublicKey != "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=" {
 		t.Errorf("pubkey landed on wrong node or missing: %q", node.PublicKey)
+	}
+}
+
+// TestEndToEndPerTunnelKeyPublication drives the ADR-0030 publication path over the
+// real transport: the master derives a per-tunnel identity, publishes it under the
+// "wireguard:<exit>" key type, and the exit's rendered spec peers it — without the
+// shared key ever being replaced.
+func TestEndToEndPerTunnelKeyPublication(t *testing.T) {
+	ctx := context.Background()
+	fleet := integrationFleet()
+	fleet.Exits[0].PerTunnelKey = string(domain.PerTunnelKeyDual)
+	h := newHarness(t, fleet)
+
+	masterPriv, err := wg.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	master := h.agentFor(t, "master-xa-1")
+	if _, err := master.Register(ctx, domain.RoleMaster, "203.0.113.1", "", "10.20.25.254"); err != nil {
+		t.Fatalf("register master: %v", err)
+	}
+	if err := master.PublishPublicKey(ctx, masterPriv.PublicKey); err != nil {
+		t.Fatalf("publish shared key: %v", err)
+	}
+
+	derived, err := wg.DeriveTunnelKey(masterPriv.PrivateKey, "exit-de-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := master.PublishTunnelKey(ctx, "exit-de-1", derived.PublicKey); err != nil {
+		t.Fatalf("publish per-tunnel key: %v", err)
+	}
+
+	// The shared identity must survive publication of a per-tunnel one — it is the
+	// back-compat peer every phase but `on` still relies on.
+	node, err := h.store.GetNode(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.PublicKey != masterPriv.PublicKey {
+		t.Fatalf("shared master key was clobbered: %q", node.PublicKey)
+	}
+
+	exit := h.agentFor(t, "exit-de-1")
+	if _, err := exit.Register(ctx, domain.RoleExit, "198.51.100.1", "de", "10.20.25.1"); err != nil {
+		t.Fatalf("register exit: %v", err)
+	}
+	spec, err := exit.PullSpec(ctx)
+	if err != nil {
+		t.Fatalf("pull exit spec: %v", err)
+	}
+
+	var gotShared, gotPerTunnel bool
+	for _, p := range spec.Peers {
+		switch p.PublicKey {
+		case masterPriv.PublicKey:
+			gotShared = true
+		case derived.PublicKey:
+			gotPerTunnel = true
+		}
+	}
+	if !gotShared || !gotPerTunnel {
+		t.Fatalf("dual phase must peer BOTH identities; shared=%v per-tunnel=%v peers=%+v",
+			gotShared, gotPerTunnel, spec.Peers)
+	}
+}
+
+// TestPublishUnknownKeyTypeRejected keeps the key_type surface closed: a free-form
+// field must not become a way to write arbitrary rows.
+func TestPublishUnknownKeyTypeRejected(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, integrationFleet())
+	master := h.agentFor(t, "master-xa-1")
+	if _, err := master.Register(ctx, domain.RoleMaster, "203.0.113.1", "", "10.20.25.254"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	kp, err := wg.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An exit that is not in the manifest must be refused rather than accumulating a
+	// dead row that nothing reads.
+	if err := master.PublishTunnelKey(ctx, "exit-does-not-exist", kp.PublicKey); err == nil {
+		t.Fatal("expected the controller to reject a key for an undeclared exit")
 	}
 }

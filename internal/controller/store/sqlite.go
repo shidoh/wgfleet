@@ -224,6 +224,53 @@ func (s *SQLiteStore) SetNodeRealityKey(ctx context.Context, id, publicKey strin
 	return requireAffected(res)
 }
 
+// SetNodeTunnelKey implements Store.
+func (s *SQLiteStore) SetNodeTunnelKey(ctx context.Context, id, tunnel, publicKey string) error {
+	if id == "" || tunnel == "" {
+		return errors.New("store: node ID and tunnel are required")
+	}
+	// The node row must exist: the FK would reject the insert anyway, but only as an
+	// opaque constraint error. Check first so the caller gets ErrNotFound and the
+	// gRPC layer can map it to FailedPrecondition ("node not registered"), matching
+	// how SetNodePublicKey behaves.
+	if _, err := s.GetNode(ctx, id); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO node_tunnel_keys (node_id, tunnel, public_key, updated_at)
+		 VALUES (?,?,?,?)
+		 ON CONFLICT(node_id, tunnel) DO UPDATE SET
+			public_key=excluded.public_key, updated_at=excluded.updated_at`,
+		id, tunnel, publicKey, fmtTime(s.now().UTC()))
+	if err != nil {
+		return fmt.Errorf("set tunnel key %q for %q: %w", tunnel, id, err)
+	}
+	return nil
+}
+
+// ListNodeTunnelKeys implements Store.
+func (s *SQLiteStore) ListNodeTunnelKeys(ctx context.Context, id string) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT tunnel, public_key FROM node_tunnel_keys WHERE node_id=?`, id)
+	if err != nil {
+		return nil, fmt.Errorf("list tunnel keys for %q: %w", id, err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]string)
+	for rows.Next() {
+		var tunnel, pub string
+		if err := rows.Scan(&tunnel, &pub); err != nil {
+			return nil, fmt.Errorf("scan tunnel key for %q: %w", id, err)
+		}
+		out[tunnel] = pub
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list tunnel keys for %q: %w", id, err)
+	}
+	return out, nil
+}
+
 // RecordStatus implements Store.
 func (s *SQLiteStore) RecordStatus(ctx context.Context, st domain.NodeStatus) error {
 	if st.NodeID == "" {

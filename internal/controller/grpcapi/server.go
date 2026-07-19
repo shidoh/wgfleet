@@ -26,6 +26,7 @@ type SpecRenderer interface {
 	RenderNodeSpec(ctx context.Context, nodeID string) (domain.NodeSpec, error)
 	RegisterPublicKey(ctx context.Context, nodeID, publicKey string) error
 	RegisterRealityKey(ctx context.Context, nodeID, publicKey string) error
+	RegisterTunnelKey(ctx context.Context, nodeID, tunnel, publicKey string) error
 }
 
 // Service implements pb.NodeServiceServer, backed by the store and key broker.
@@ -131,14 +132,25 @@ func (s *Service) PublishPublicKey(ctx context.Context, req *pb.PublishPublicKey
 	if req.GetPublicKey() == "" {
 		return nil, status.Error(codes.InvalidArgument, "public key is empty")
 	}
-	// Route by key type (ADR-0025): empty == WireGuard (back-compat); "reality" is
-	// the exit's REALITY x25519 key for the master's vless proxy.
+	// Route by key type: empty == WireGuard (back-compat); "reality" is the exit's
+	// REALITY x25519 key for the master's vless proxy (ADR-0025); "wireguard:<exit>"
+	// is the master's per-tunnel WireGuard identity for one master↔exit tunnel
+	// (ADR-0030). Anything else is rejected rather than silently stored under a type
+	// nothing reads.
 	register := s.renderer.RegisterPublicKey
 	keyType := req.GetKeyType()
-	if keyType == api.KeyTypeReality {
+	switch {
+	case keyType == api.KeyTypeWireGuard:
+	case keyType == api.KeyTypeReality:
 		register = s.renderer.RegisterRealityKey
-	} else if keyType != api.KeyTypeWireGuard {
-		return nil, status.Errorf(codes.InvalidArgument, "unknown key type %q", keyType)
+	default:
+		tunnel, ok := api.ParseTunnelKeyType(keyType)
+		if !ok {
+			return nil, status.Errorf(codes.InvalidArgument, "unknown key type %q", keyType)
+		}
+		register = func(ctx context.Context, nodeID, publicKey string) error {
+			return s.renderer.RegisterTunnelKey(ctx, nodeID, tunnel, publicKey)
+		}
 	}
 	if err := register(ctx, nodeID, req.GetPublicKey()); err != nil {
 		if errors.Is(err, store.ErrNotFound) {

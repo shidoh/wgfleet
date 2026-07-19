@@ -112,6 +112,12 @@ func (c *Client) PublishRealityKey(ctx context.Context, publicKey string) error 
 	return c.publishKey(ctx, publicKey, api.KeyTypeReality)
 }
 
+// PublishTunnelKey registers the master's per-tunnel WireGuard public key for one
+// master↔exit tunnel (ADR-0030). tunnel is the exit's node name.
+func (c *Client) PublishTunnelKey(ctx context.Context, tunnel, publicKey string) error {
+	return c.publishKey(ctx, publicKey, api.TunnelKeyType(tunnel))
+}
+
 func (c *Client) publishKey(ctx context.Context, publicKey, keyType string) error {
 	resp, err := c.rpc.PublishPublicKey(ctx, &pb.PublishPublicKeyRequest{
 		PublicKey: publicKey,

@@ -14,6 +14,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/mihomo"
+	"github.com/shidoh/wgfleet/internal/wg"
 )
 
 // --- mihomo config + included direct-networks ---
@@ -37,6 +38,18 @@ type mihomoPlanner struct {
 
 func (mihomoPlanner) Component() string { return "mihomo (data plane)" }
 
+// tunnelKey derives the master's dedicated private key for one master↔exit tunnel
+// (ADR-0030). It is the render input's key resolver, kept here rather than in the
+// renderer so mihomo.RenderConfig never touches key material — it only ever
+// receives a key it was handed.
+func (p mihomoPlanner) tunnelKey(tunnel string) (string, error) {
+	kp, err := wg.DeriveTunnelKey(p.privateKey, tunnel)
+	if err != nil {
+		return "", err
+	}
+	return kp.PrivateKey, nil
+}
+
 func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
 	if spec.Master == nil {
 		return nil, fmt.Errorf("mihomo: node has no master spec")
@@ -54,6 +67,7 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 	}
 	cfg, err := mihomo.RenderConfig(mihomo.RenderInput{
 		Spec: *spec.Master, PrivateKey: p.privateKey, ReserveActive: reserveActive,
+		TunnelPrivateKey: p.tunnelKey,
 	})
 	if err != nil {
 		return nil, err

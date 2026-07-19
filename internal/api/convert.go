@@ -185,6 +185,7 @@ func masterToProto(m *domain.MasterSpec) *pb.MasterSpec {
 			Transport:       string(t.Transport),
 			Reality:         realityTunnelToProto(t.Reality),
 			Reserve:         t.Reserve,
+			MasterKeyTunnel: t.MasterKeyTunnel,
 		})
 	}
 	return out
@@ -223,6 +224,7 @@ func masterFromProto(m *pb.MasterSpec) *domain.MasterSpec {
 			Transport:       domain.MasterTransport(t.GetTransport()),
 			Reality:         realityTunnelFromProto(t.GetReality()),
 			Reserve:         t.GetReserve(),
+			MasterKeyTunnel: t.GetMasterKeyTunnel(),
 		})
 	}
 	return out

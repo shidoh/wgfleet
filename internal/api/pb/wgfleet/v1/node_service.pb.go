@@ -1128,9 +1128,15 @@ type ExitTunnel struct {
 	// traffic only when every primary tunnel is down (ADR-0029). Additive; an older
 	// agent ignores it and renders one flat group — backward-compatible, no
 	// wire-version bump.
-	Reserve       bool `protobuf:"varint,11,opt,name=reserve,proto3" json:"reserve,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Reserve bool `protobuf:"varint,11,opt,name=reserve,proto3" json:"reserve,omitempty"`
+	// Per-tunnel master WireGuard identity (ADR-0030). Empty ⇒ the master's single
+	// shared key (pre-ADR-0030 behaviour). Non-empty names the EXIT NODE the agent
+	// derives a dedicated key for — never the proxy name, which may carry a
+	// "-reality" suffix. Additive; an older agent ignores it and keeps using the
+	// shared key — backward-compatible, no wire-version bump.
+	MasterKeyTunnel string `protobuf:"bytes,12,opt,name=master_key_tunnel,json=masterKeyTunnel,proto3" json:"master_key_tunnel,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ExitTunnel) Reset() {
@@ -1238,6 +1244,13 @@ func (x *ExitTunnel) GetReserve() bool {
 		return x.Reserve
 	}
 	return false
+}
+
+func (x *ExitTunnel) GetMasterKeyTunnel() string {
+	if x != nil {
+		return x.MasterKeyTunnel
+	}
+	return ""
 }
 
 // RealityTunnel is the master-side mihomo vless+reality proxy descriptor for a
@@ -2492,7 +2505,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x10wg_easy_web_port\x18\x04 \x01(\x05R\rwgEasyWebPort\x12\x1d\n" +
 	"\n" +
 	"client_dns\x18\x05 \x03(\tR\tclientDns\x12,\n" +
-	"\x12client_allowed_ips\x18\x06 \x01(\tR\x10clientAllowedIps\"\xec\x02\n" +
+	"\x12client_allowed_ips\x18\x06 \x01(\tR\x10clientAllowedIps\"\x98\x03\n" +
 	"\n" +
 	"ExitTunnel\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
@@ -2506,7 +2519,8 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\ttransport\x18\t \x01(\tR\ttransport\x123\n" +
 	"\areality\x18\n" +
 	" \x01(\v2\x19.wgfleet.v1.RealityTunnelR\areality\x12\x18\n" +
-	"\areserve\x18\v \x01(\bR\areserve\"\xa1\x02\n" +
+	"\areserve\x18\v \x01(\bR\areserve\x12*\n" +
+	"\x11master_key_tunnel\x18\f \x01(\tR\x0fmasterKeyTunnel\"\xa1\x02\n" +
 	"\rRealityTunnel\x12\x12\n" +
 	"\x04uuid\x18\x01 \x01(\tR\x04uuid\x12\x1d\n" +
 	"\n" +

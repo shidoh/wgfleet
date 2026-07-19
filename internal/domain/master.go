@@ -80,9 +80,10 @@ type ComposeSpec struct {
 func (c ComposeSpec) Enabled() bool { return c.WGEasyImage != "" || c.MihomoImage != "" }
 
 // ExitTunnel is one master→exit mihomo WireGuard proxy. The master's own private
-// key is injected by the agent at render time and is shared across all tunnels
-// (the master has a single WG identity that each exit peers); it is not stored
-// here. The AmneziaWG params for this tunnel MUST match the exit's interface.
+// key is injected by the agent at render time and never stored here. Historically
+// one shared key served every tunnel; with ADR-0030 the agent instead derives a
+// dedicated identity per tunnel when MasterKeyTunnel is set. The AmneziaWG params
+// for this tunnel MUST match the exit's interface.
 type ExitTunnel struct {
 	Name            string // proxy name == exit node name (+ transport suffix when multi)
 	Endpoint        string // exit public endpoint "host:port"
@@ -102,6 +103,17 @@ type ExitTunnel struct {
 	// excludes it from the load-balance group, so no new traffic routes to it.
 	// A standby transport on a dual-transport exit is rendered Drained (ADR-0025).
 	Drained bool
+	// MasterKeyTunnel selects the master's WireGuard identity for this proxy
+	// (ADR-0030). Empty ⇒ the master's single shared key (pre-ADR-0030 behaviour, and
+	// what an exit still in phase off/dual gets). Non-empty ⇒ the agent derives a
+	// dedicated key from its master key and THIS name, which is always the EXIT NODE
+	// NAME — never the proxy Name, which carries a "-reality" suffix on a
+	// dual-transport exit and would derive a second, unpublished identity.
+	//
+	// The controller sets it only once the exit is in a phase where its kernel
+	// already accepts the derived pubkey, so the field flipping is exactly the
+	// master-side half of the migration.
+	MasterKeyTunnel string
 	// Reserve places this tunnel in the master's second selection tier: it carries
 	// traffic only when every primary tunnel is down (ADR-0029). Orthogonal to
 	// Drained — a drained reserve tunnel is excluded from its tier like any other.

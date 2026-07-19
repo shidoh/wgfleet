@@ -1,6 +1,8 @@
 package wg
 
 import (
+	"crypto/hkdf"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,6 +40,57 @@ func PublicKeyOf(privateKey string) (string, error) {
 func ValidKey(s string) bool {
 	_, err := wgtypes.ParseKey(s)
 	return err == nil
+}
+
+// tunnelKeySalt namespaces the per-tunnel key derivation. It is not a secret —
+// HKDF's security rests on the master private key fed in as the input keying
+// material; the salt only separates this derivation from any future one over the
+// same secret. Versioned so the whole per-tunnel key set can be rotated fleet-wide
+// by bumping it (which is a phase-1→phase-3 roll on every exit, not a free change).
+const tunnelKeySalt = "wgfleet-master-tunnel-wg-v1"
+
+// DeriveTunnelKey derives the master's dedicated WireGuard identity for ONE
+// master↔exit tunnel from its long-lived master private key and the exit's name.
+//
+// Why derive instead of storing N key files: the master's on-disk secret story
+// stays exactly one file (wg.key), the result is reproducible after a controller
+// backup/restore without adding N files to the backup set, and no new state has to
+// be kept in sync with the manifest when an exit is added or renamed. The tradeoff
+// is that rotating the master key rotates every per-tunnel key at once — which is
+// the correct blast radius, since that key IS the master's root identity.
+//
+// The derived scalar is clamped the way X25519 requires (and the way
+// wgtypes.GeneratePrivateKey clamps its own output): without clamping, wgtypes
+// would happily accept the raw HKDF bytes as a key, but the two ends can disagree
+// about the public key for a non-canonical scalar. Clamp here so PublicKeyOf on
+// the derived private key always matches what the peer's kernel computes.
+//
+// tunnel is the EXIT NODE NAME, never a mihomo proxy name: a dual-transport exit
+// renders a second "<name>-reality" proxy that carries no WireGuard key at all, and
+// keying off the proxy name would derive a second, unpublished identity for it.
+func DeriveTunnelKey(masterPrivateKey, tunnel string) (KeyPair, error) {
+	if tunnel == "" {
+		return KeyPair{}, fmt.Errorf("derive tunnel key: empty tunnel name")
+	}
+	root, err := wgtypes.ParseKey(masterPrivateKey)
+	if err != nil {
+		return KeyPair{}, fmt.Errorf("derive tunnel key for %q: parse master private key: %w", tunnel, err)
+	}
+	raw, err := hkdf.Key(sha256.New, root[:], []byte(tunnelKeySalt), tunnel, wgtypes.KeyLen)
+	if err != nil {
+		return KeyPair{}, fmt.Errorf("derive tunnel key for %q: %w", tunnel, err)
+	}
+	// X25519 scalar clamping (RFC 7748 §5): clear the low 3 bits, clear the top bit,
+	// set the second-highest bit.
+	raw[0] &= 248
+	raw[31] &= 127
+	raw[31] |= 64
+
+	k, err := wgtypes.NewKey(raw)
+	if err != nil {
+		return KeyPair{}, fmt.Errorf("derive tunnel key for %q: %w", tunnel, err)
+	}
+	return KeyPair{PrivateKey: k.String(), PublicKey: k.PublicKey().String()}, nil
 }
 
 // LoadOrCreateKey returns the private key stored at path, generating and

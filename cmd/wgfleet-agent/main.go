@@ -400,6 +400,21 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		return a.teardown(ctx, plan)
 	}
 
+	// Per-tunnel master identities (ADR-0030). This runs AFTER PullSpec, not
+	// alongside the shared-key publish above, because the master learns which exits
+	// exist only from its own spec — there is no exit list before the first pull.
+	// The consequence is deliberate two-pass convergence: pass N publishes the keys,
+	// pass N+1 renders exit peers from them. That matches how the fleet already
+	// converges as nodes register, and it is why the rollout requires confirming a
+	// key is registered before advancing an exit's phase.
+	if !plan && a.role == domain.RoleMaster && spec.Master != nil {
+		if err := a.publishTunnelKeys(ctx, kp.PrivateKey, spec.Master.ExitTunnels); err != nil {
+			// Non-fatal: the shared key still works in every phase up to `switch`, so a
+			// publish failure must not stop the reconcile that keeps traffic flowing.
+			a.log.Warn("failed to publish per-tunnel master keys; the fleet keeps using the shared key", "err", err)
+		}
+	}
+
 	// Censorship-adaptive failover (ADR-0017): converge to the agent-selected active
 	// egress within the chain, not blindly to the controller's preferred one. The
 	// selector defaults to the preferred egress until a confirmed block demotes it;
@@ -696,6 +711,49 @@ func (a *agent) planners(privateKey, realityPrivateKey, adminUser, adminPass str
 	}
 	in.WARP = a.readWARPProfile()
 	return exit.Planners(in)
+}
+
+// publishTunnelKeys derives and publishes the master's per-tunnel WireGuard public
+// key for every AWG exit tunnel in the spec (ADR-0030). Only public keys cross the
+// wire; the derived private keys are recomputed on demand at render time and are
+// never written to disk (the master's single wg.key remains the only secret).
+//
+// Keys are published for every exit unconditionally, regardless of that exit's
+// migration phase — the controller decides when to USE one, and having the key
+// already registered is what makes the operator's off→dual step a pure exit-side
+// change with nothing to wait for.
+func (a *agent) publishTunnelKeys(ctx context.Context, masterPrivateKey string, tunnels []domain.ExitTunnel) error {
+	seen := make(map[string]struct{}, len(tunnels))
+	var errs []error
+	for _, t := range tunnels {
+		// Reality proxies carry no WireGuard identity, and a dual-transport exit
+		// contributes both an AWG and a "<name>-reality" tunnel. Deriving off the
+		// reality proxy name would mint a key for a tunnel that can never use it.
+		if t.Transport.OrDefault() != domain.TransportAWG {
+			continue
+		}
+		// The derivation input is the exit NAME. For AWG tunnels the proxy name is the
+		// exit name, but prefer MasterKeyTunnel when the controller supplied it so the
+		// two sides can never disagree about which string was hashed.
+		tunnel := t.MasterKeyTunnel
+		if tunnel == "" {
+			tunnel = t.Name
+		}
+		if _, dup := seen[tunnel]; dup {
+			continue
+		}
+		seen[tunnel] = struct{}{}
+
+		kp, err := wg.DeriveTunnelKey(masterPrivateKey, tunnel)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := a.client.PublishTunnelKey(ctx, tunnel, kp.PublicKey); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // ensureRealityKey returns the exit's REALITY x25519 keypair (ADR-0025). With

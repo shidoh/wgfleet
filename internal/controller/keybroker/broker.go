@@ -78,6 +78,30 @@ func (b *Broker) RegisterRealityKey(ctx context.Context, nodeID, publicKey strin
 	return b.store.SetNodeRealityKey(ctx, nodeID, publicKey)
 }
 
+// RegisterTunnelKey records ONE of the master's per-tunnel WireGuard public keys
+// (ADR-0030). tunnel is the exit node's name; the key is the master's dedicated
+// identity for that single master↔exit tunnel.
+//
+// The tunnel name is checked against the manifest's declared exits before storing.
+// It is not a security boundary — the row is written under the CALLING node's ID,
+// so a rogue exit publishing tunnel keys only pollutes its own rows, which nothing
+// reads — but an unknown name is always either a typo or a stale manifest, and
+// silently accumulating dead rows would make the migration harder to reason about.
+func (b *Broker) RegisterTunnelKey(ctx context.Context, nodeID, tunnel, publicKey string) error {
+	if publicKey == "" {
+		return fmt.Errorf("keybroker: empty per-tunnel public key for %q tunnel %q", nodeID, tunnel)
+	}
+	// Same injection guard as RegisterPublicKey: this value is rendered verbatim as
+	// `PublicKey = <value>` into the exit's awg0.conf, which awg-quick executes.
+	if !wg.ValidKey(publicKey) {
+		return fmt.Errorf("keybroker: malformed per-tunnel WireGuard public key for %q tunnel %q", nodeID, tunnel)
+	}
+	if _, ok := b.findExit(tunnel); !ok {
+		return fmt.Errorf("keybroker: per-tunnel key for unknown exit %q (from %q)", tunnel, nodeID)
+	}
+	return b.store.SetNodeTunnelKey(ctx, nodeID, tunnel, publicKey)
+}
+
 // RenderNodeSpec builds the desired NodeSpec for nodeID from its fleet-config
 // entry and the registered public keys of its peers. Peers whose public key is
 // not yet registered are skipped (the spec converges as more nodes register),
@@ -180,18 +204,53 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		return spec, nil
 	}
 	masterNode, masterPub := b.lookupPubKey(ctx, master.Name)
-	if masterPub == "" {
-		b.log.Warn("master public key not yet registered; rendering exit without master peer",
-			"exit", exit.Name, "master", master.Name)
-	} else {
-		spec.Peers = append(spec.Peers, domain.PeerSpec{
-			Name:       master.Name,
-			PublicKey:  masterPub,
-			Endpoint:   "", // master dials the exit; exit is the server side
-			AllowedIPs: []string{host32(masterAddr)},
-			Keepalive:  domain.DefaultKeepaliveSeconds,
-			MTU:        serverMTU,
-		})
+	phase := exit.PerTunnelKeyPhase()
+
+	// Legacy shared-identity peer. Kept in every phase but `on`, so the master always
+	// has a working way in until the operator has verified the per-tunnel one.
+	if phase.ExitAcceptsLegacyKey() {
+		if masterPub == "" {
+			b.log.Warn("master public key not yet registered; rendering exit without master peer",
+				"exit", exit.Name, "master", master.Name)
+		} else {
+			spec.Peers = append(spec.Peers, domain.PeerSpec{
+				Name:       master.Name,
+				PublicKey:  masterPub,
+				Endpoint:   "", // master dials the exit; exit is the server side
+				AllowedIPs: []string{host32(masterAddr)},
+				Keepalive:  domain.DefaultKeepaliveSeconds,
+				MTU:        serverMTU,
+			})
+		}
+	}
+
+	// Per-tunnel identity peer (ADR-0030), on its OWN address so it does not contend
+	// with the legacy peer for the same /32 in the AllowedIPs trie.
+	if phase.ExitAcceptsPerTunnelKey() {
+		perTunnelAddr, aerr := nthHost(exit.AddressPool, masterPerTunnelHostIndex)
+		if aerr != nil {
+			return domain.NodeSpec{}, fmt.Errorf("exit %q: per-tunnel master address: %w", exit.Name, aerr)
+		}
+		perTunnelPub := b.tunnelPubKey(ctx, master.Name, exit.Name)
+		switch {
+		case perTunnelPub == "":
+			// The master has not published this tunnel's key yet (it publishes after it
+			// first sees the exit in its own spec, so this is normal for a pass or two).
+			// Refusing to render the phase would be wrong; the legacy peer is still
+			// there in dual/switch. In `on` there would be NO peer at all, which is why
+			// the rollout requires confirming the key is registered before `on`.
+			b.log.Warn("master per-tunnel public key not yet registered; rendering exit without the per-tunnel peer",
+				"exit", exit.Name, "master", master.Name, "phase", phase)
+		default:
+			spec.Peers = append(spec.Peers, domain.PeerSpec{
+				Name:       master.Name + " (per-tunnel)",
+				PublicKey:  perTunnelPub,
+				Endpoint:   "",
+				AllowedIPs: []string{host32(perTunnelAddr)},
+				Keepalive:  domain.DefaultKeepaliveSeconds,
+				MTU:        serverMTU,
+			})
+		}
 	}
 
 	// Routing intent: client traffic egresses via WARP, but management and the
@@ -313,6 +372,19 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		if err != nil {
 			return domain.NodeSpec{}, err
 		}
+		// ADR-0030: in the phases where the master dials with its per-tunnel identity,
+		// it must also move to the per-tunnel address — the exit peers the two keys on
+		// two distinct /32s (they cannot share one, see domain.PerTunnelKeyPhase).
+		// Address and key flip together, in the single manifest step `dual`→`switch`.
+		keyTunnel := ""
+		if exit.PerTunnelKeyPhase().MasterUsesPerTunnelKey() {
+			perTunnelAddr, aerr := nthHost(exit.AddressPool, masterPerTunnelHostIndex)
+			if aerr != nil {
+				return domain.NodeSpec{}, fmt.Errorf("exit %q: per-tunnel master address: %w", exit.Name, aerr)
+			}
+			masterAddr = perTunnelAddr
+			keyTunnel = exit.Name
+		}
 		// Resolve the exit's public IP (the WG endpoint the master dials). Prefer the
 		// store value (set by provisioning, preserved across agent Register), but fall
 		// back to the manifest's public_ip / ssh.host. Without this fallback, an exit
@@ -387,11 +459,12 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 				TunnelIP:        masterAddr.String(),
 				// Must match the exit's awg0 server MTU (serverMTU in renderExitSpec); both
 				// derive from this exit's link_mtu so a narrow path lowers both ends.
-				MTU:       exitTunnelMTU(exit, masterAddr.Is6()),
-				AWG:       &awg,
-				Transport: domain.TransportAWG,
-				Drained:   baseDrained || realityActive,
-				Reserve:   isReserve,
+				MTU:             exitTunnelMTU(exit, masterAddr.Is6()),
+				AWG:             &awg,
+				Transport:       domain.TransportAWG,
+				MasterKeyTunnel: keyTunnel,
+				Drained:         baseDrained || realityActive,
+				Reserve:         isReserve,
 			})
 		}
 		if realityRenderable {
@@ -798,6 +871,21 @@ func (b *Broker) lookupPubKey(ctx context.Context, name string) (domain.Node, st
 		return domain.Node{}, ""
 	}
 	return node, node.PublicKey
+}
+
+// tunnelPubKey returns the master's per-tunnel WireGuard public key for one exit
+// (ADR-0030), or "" when it has not been published yet. A store error is treated
+// the same as "not yet registered": callers already tolerate a missing key by
+// rendering the legacy peer, and failing the whole spec render over it would take
+// the master down for a key that is only additive.
+func (b *Broker) tunnelPubKey(ctx context.Context, masterName, exitName string) string {
+	keys, err := b.store.ListNodeTunnelKeys(ctx, masterName)
+	if err != nil {
+		b.log.Warn("failed to read per-tunnel keys; falling back to the shared master key",
+			"master", masterName, "exit", exitName, "err", err)
+		return ""
+	}
+	return keys[exitName]
 }
 
 func (b *Broker) masterDirectCIDRs(m config.MasterConfig) []string {

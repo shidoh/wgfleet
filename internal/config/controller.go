@@ -434,6 +434,23 @@ type ExitConfig struct {
 	// Empty ⇒ the first enabled transport. The operator flips this (or via the UI)
 	// to switch the live path between AWG and REALITY.
 	ActiveTransport string `koanf:"active_transport"`
+	// PerTunnelKey drives the ADR-0030 migration from the master's single shared
+	// WireGuard identity to a per-tunnel one, for THIS exit only. It is deliberately
+	// operator-controlled and per-exit so the fleet rolls one node at a time with a
+	// verification point between every step; nothing about it is automatic.
+	//
+	// Each step moves exactly ONE side of the tunnel, which is what makes it
+	// rollback-safe — see domain.PerTunnelKeyPhase.
+	PerTunnelKey string `koanf:"per_tunnel_key"`
+}
+
+// PerTunnelKeyPhase returns the exit's ADR-0030 migration phase, defaulting to
+// PerTunnelKeyOff (the pre-ADR-0030 shared-key behaviour) when unset.
+func (e ExitConfig) PerTunnelKeyPhase() domain.PerTunnelKeyPhase {
+	if e.PerTunnelKey == "" {
+		return domain.PerTunnelKeyOff
+	}
+	return domain.PerTunnelKeyPhase(e.PerTunnelKey)
 }
 
 // TransportsConfig holds the two master↔exit transport sections (ADR-0025). Each
@@ -779,6 +796,11 @@ func (c ControllerConfig) Validate() error {
 		}
 		if err := validateRealityCamouflage(r.SNI, r.DestHostPort()); err != nil {
 			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): %w", i, e.Name, err))
+		}
+		if !e.PerTunnelKeyPhase().Valid() {
+			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): per_tunnel_key %q invalid (want %q, %q, %q or %q)",
+				i, e.Name, e.PerTunnelKey, domain.PerTunnelKeyOff, domain.PerTunnelKeyDual,
+				domain.PerTunnelKeySwitch, domain.PerTunnelKeyOn))
 		}
 	}
 	if err := validateProbeURL(c.Fleet.EgressThroughputProbeURL); err != nil {
