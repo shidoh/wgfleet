@@ -322,6 +322,10 @@ message FirewallSpec {
   repeated string whitelist = 2;
   int32 wg_port = 3;
   int32 reality_port = 4; // TCP port for the REALITY/XHTTP inbound (ADR-0025); 0 = not opened
+  // TCP ports opened to the WORLD (no interface scope) for publicly reachable
+  // services, e.g. the decoy web listener. Role-agnostic. Contrast
+  // MasterSpec.client_admin_ports, which is scoped to the client WG interface.
+  repeated int32 public_tcp_ports = 5;
 }
 
 message RoutingSpec {

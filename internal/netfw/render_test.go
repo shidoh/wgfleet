@@ -489,3 +489,73 @@ func TestRenderCanonicalizesWhitelist(t *testing.T) {
 		t.Errorf("whitelist not canonicalized (want masked 10.5.6.0/24, IPv6 skipped):\n%s", out)
 	}
 }
+
+// Public TCP ports are world-facing (no iifname scope) and role-agnostic: the
+// same knob opens the master's decoy web listener and, on an exit, any other
+// publicly reachable TCP service. Contrast ClientAdminPorts, which is scoped to
+// the client interface and master-only.
+func TestRenderRulesetPublicTCPPorts(t *testing.T) {
+	for _, role := range []domain.Role{domain.RoleMaster, domain.RoleExit} {
+		t.Run(string(role), func(t *testing.T) {
+			out, err := RenderRuleset(RenderInput{
+				Role: role,
+				Firewall: domain.FirewallSpec{
+					WGPort: 51820,
+					// Unsorted, duplicated and out-of-range entries on purpose: the
+					// renderer must normalise so the rendered file is stable across
+					// passes (an unstable render would re-apply the ruleset forever).
+					PublicTCPPorts: []int{443, 80, 443, 0, 70000, -1},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{
+				"tcp dport 80 accept\n",
+				"tcp dport 443 accept\n",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("ruleset missing %q:\n%s", want, out)
+				}
+			}
+			if n := strings.Count(out, "tcp dport 443 accept"); n != 1 {
+				t.Errorf("port 443 rendered %d times, want 1 (dedupe):\n%s", n, out)
+			}
+			for _, bad := range []string{"tcp dport 0 accept", "tcp dport 70000 accept", "tcp dport -1 accept"} {
+				if strings.Contains(out, bad) {
+					t.Errorf("ruleset should not contain out-of-range rule %q:\n%s", bad, out)
+				}
+			}
+			// Ascending order keeps the render deterministic regardless of manifest order.
+			if i, j := strings.Index(out, "tcp dport 80 accept"), strings.Index(out, "tcp dport 443 accept"); i > j {
+				t.Errorf("ports not rendered in ascending order:\n%s", out)
+			}
+			// World-facing: must NOT be scoped to an interface.
+			if strings.Contains(out, `iifname "wg0" tcp dport 443`) {
+				t.Errorf("public port must not be interface-scoped:\n%s", out)
+			}
+		})
+	}
+}
+
+// An empty/absent list must render nothing at all — no stray rules, and no
+// difference from a manifest that never mentioned the knob.
+func TestRenderRulesetPublicTCPPortsEmpty(t *testing.T) {
+	with, err := RenderRuleset(RenderInput{
+		Role:     domain.RoleExit,
+		Firewall: domain.FirewallSpec{WGPort: 51820, PublicTCPPorts: []int{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	without, err := RenderRuleset(RenderInput{
+		Role:     domain.RoleExit,
+		Firewall: domain.FirewallSpec{WGPort: 51820},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if with != without {
+		t.Errorf("empty public_tcp_ports changed the render:\n--- with ---\n%s\n--- without ---\n%s", with, without)
+	}
+}

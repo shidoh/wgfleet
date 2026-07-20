@@ -191,9 +191,10 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		EgressThroughputProbeURL: b.fleet.EgressThroughputProbeURL,
 		DNS:                      b.renderDNS(ctx, exit),
 		Firewall: domain.FirewallSpec{
-			ASBlacklist: exit.Firewall.ASBlacklist,
-			Whitelist:   mergeUnique(exit.Firewall.Whitelist, mgmtCIDRs),
-			WGPort:      port,
+			ASBlacklist:    exit.Firewall.ASBlacklist,
+			Whitelist:      mergeUnique(exit.Firewall.Whitelist, mgmtCIDRs),
+			WGPort:         port,
+			PublicTCPPorts: append([]int(nil), exit.Firewall.PublicTCPPorts...),
 		},
 		Exporters: domain.ExportersSpec{Node: true, WG: true, WARP: egress == domain.EgressWARP},
 	}
@@ -316,7 +317,12 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		// mgmt overlay in its whitelist as well (the iifname "zt*" accept already
 		// covers ZT inbound; this also allows any non-overlay mgmt sources the
 		// operator lists). WGPort opens the client-facing AWG listener.
-		Firewall:  domain.FirewallSpec{WGPort: clientPort, Whitelist: b.fleet.MgmtCIDRs()},
+		Firewall: domain.FirewallSpec{
+			WGPort:    clientPort,
+			Whitelist: b.fleet.MgmtCIDRs(),
+			// World-facing TCP services on the master (e.g. the decoy web listener).
+			PublicTCPPorts: append([]int(nil), master.PublicTCPPorts...),
+		},
 		Exporters: domain.ExportersSpec{Node: true, WG: true},
 	}
 

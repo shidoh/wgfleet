@@ -19,7 +19,11 @@ const (
 	// WireContractVersion is the protocol version this build speaks.
 	// v2: additive StatusReport.exit_health (master per-exit tunnel health). An
 	// older agent simply omits it; an older controller ignores it.
-	WireContractVersion uint32 = 2
+	// v3: additive FirewallSpec.public_tcp_ports (world-facing TCP accepts). A v2
+	// agent silently drops the field and renders a ruleset WITHOUT the accept, so
+	// the operator's configured port stays closed with no error — a convergence
+	// difference the agent must understand, hence the bump.
+	WireContractVersion uint32 = 3
 
 	// MinSupportedWire is the oldest agent wire version the controller will serve
 	// a spec to. Agents below it are refused (fail-safe) and, where possible,

@@ -468,24 +468,32 @@ func dnsFromProto(d *pb.DNSFilterSpec) domain.DNSFilterSpec {
 }
 
 func firewallToProto(f domain.FirewallSpec) *pb.FirewallSpec {
-	return &pb.FirewallSpec{
+	out := &pb.FirewallSpec{
 		AsBlacklist: f.ASBlacklist,
 		Whitelist:   append([]string(nil), f.Whitelist...),
 		WgPort:      int32(f.WGPort),
 		RealityPort: int32(f.RealityPort),
 	}
+	for _, p := range f.PublicTCPPorts {
+		out.PublicTcpPorts = append(out.PublicTcpPorts, int32(p))
+	}
+	return out
 }
 
 func firewallFromProto(f *pb.FirewallSpec) domain.FirewallSpec {
 	if f == nil {
 		return domain.FirewallSpec{}
 	}
-	return domain.FirewallSpec{
+	out := domain.FirewallSpec{
 		ASBlacklist: f.GetAsBlacklist(),
 		Whitelist:   append([]string(nil), f.GetWhitelist()...),
 		WGPort:      int(f.GetWgPort()),
 		RealityPort: int(f.GetRealityPort()),
 	}
+	for _, p := range f.GetPublicTcpPorts() {
+		out.PublicTCPPorts = append(out.PublicTCPPorts, int(p))
+	}
+	return out
 }
 
 func routingToProto(r domain.RoutingSpec) *pb.RoutingSpec {

@@ -212,6 +212,19 @@ type FirewallSpec struct {
 	// (ADR-0025). Unlike the AWG WGPort (UDP), this is TCP. 0 ⇒ not opened (the exit
 	// does not run the reality transport).
 	RealityPort int
+	// PublicTCPPorts are TCP ports opened to the WORLD (no interface scope), for
+	// services that must be reachable from the public internet — e.g. the decoy web
+	// listener on 80/443. Role-agnostic: it applies to masters and exits alike.
+	//
+	// Distinct from MasterSpec.ClientAdminPorts, which is scoped to the client WG
+	// interface and exposes admin UIs to the client pool only. Opening a port here
+	// exposes it to every source the drop policy would otherwise block, so keep the
+	// list to services that are genuinely meant to be public.
+	//
+	// The renderer normalises the list (drops out-of-range entries, dedupes, sorts)
+	// so the rendered ruleset is byte-stable across passes regardless of manifest
+	// order — an unstable render would re-apply the firewall on every reconcile.
+	PublicTCPPorts []int
 }
 
 // RoutingSpec captures policy-routing intent, translated to ip rule/route by

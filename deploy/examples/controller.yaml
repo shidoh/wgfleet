@@ -112,6 +112,12 @@ fleet:
       # The mgmt address must sit under direct_cidrs above (172.16.0.0/12 covers it) so
       # the traffic bypasses the client→mihomo DNAT and reaches the local port.
       # client_admin_ports: [9000, 9090]
+      # World-facing TCP ports (NO interface scope) for services that must be
+      # reachable from the public internet — e.g. a decoy web listener on 80.
+      # Unlike client_admin_ports above, anything listed here is reachable from
+      # EVERY source the drop policy would otherwise block, so keep it to services
+      # genuinely meant to be public. Same knob exists per-exit under firewall:.
+      # public_tcp_ports: [80]
       # Master-tier blocky resolver (ADR-0024): when dns_filter is on, the master runs
       # a client-facing blocky that becomes the clients' single DNS. It BLOCKS (denylists
       # below), forwards LOCAL zones to internal DNS (conditional mappings), and forwards
@@ -254,6 +260,11 @@ fleet:
         # on/off switch. Whitelist still wins over the blacklist.
         as_blacklist: true
         whitelist: [10.20.0.0/16] # mgmt overlay; real values from local config
+        # World-facing TCP ports (NO interface scope) — e.g. a decoy web listener
+        # on 80. Reachable from every source, so keep it to genuinely public
+        # services. NB: the REALITY inbound port is opened automatically from the
+        # transport config; it does not belong here.
+        # public_tcp_ports: [80]
       ssh:
         host: 198.51.100.7
         # port: 22 # set if SSH is not on 22 or via a forwarded/bastion port

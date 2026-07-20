@@ -279,6 +279,12 @@ type MasterConfig struct {
 	// strict default (admin reachable only over the mgmt overlay). See
 	// domain.MasterSpec.ClientAdminPorts for the security trade-off.
 	ClientAdminPorts []int `koanf:"client_admin_ports"`
+	// PublicTCPPorts are TCP ports opened to the WORLD (no interface scope) for
+	// publicly reachable services — e.g. the decoy web listener on 80. Distinct from
+	// ClientAdminPorts above, which is scoped to the client WG interface: anything
+	// listed here is reachable from every source the drop policy would otherwise
+	// block, so keep it to genuinely public services.
+	PublicTCPPorts []int `koanf:"public_tcp_ports"`
 	// DNSFilter enables the master-tier blocky resolver (ADR-0024): a client-facing
 	// filtering resolver clients use as their DNS. It blocks + forwards local zones to
 	// internal DNS (DNS.overrides conditional mappings) + forwards everything else to
@@ -594,6 +600,11 @@ func (e ExitConfig) WGListenPort() int {
 type FirewallConfig struct {
 	ASBlacklist bool     `koanf:"as_blacklist"`
 	Whitelist   []string `koanf:"whitelist"`
+	// PublicTCPPorts are TCP ports opened to the WORLD (no interface scope) for
+	// publicly reachable services — e.g. the decoy web listener on 80. Unlike
+	// masters[].client_admin_ports (client-interface scoped), anything listed here
+	// is reachable from every source, so keep it to genuinely public services.
+	PublicTCPPorts []int `koanf:"public_tcp_ports"`
 }
 
 const (

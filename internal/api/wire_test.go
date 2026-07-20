@@ -66,8 +66,10 @@ func indexOf(s, sub string) int {
 	return -1
 }
 
-func TestWireContractVersionIs2(t *testing.T) {
-	if WireContractVersion != 2 {
-		t.Fatalf("WireContractVersion = %d, want 2 (bumped for additive exit_health)", WireContractVersion)
+// Guard: the wire version must never drift by accident. Changing it is a
+// deliberate act with a rollout consequence, so it takes a deliberate test edit.
+func TestWireContractVersionIs3(t *testing.T) {
+	if WireContractVersion != 3 {
+		t.Fatalf("WireContractVersion = %d, want 3 (bumped for additive public_tcp_ports)", WireContractVersion)
 	}
 }

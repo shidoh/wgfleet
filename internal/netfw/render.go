@@ -7,6 +7,7 @@ package netfw
 import (
 	"fmt"
 	"net/netip"
+	"sort"
 	"strings"
 
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -188,6 +189,30 @@ func mssClampExpr(mss int) string {
 	return fmt.Sprintf("tcp flags syn / syn,rst tcp option maxseg size > %d tcp option maxseg size set %d", mss, mss)
 }
 
+// normalizePorts drops out-of-range entries, dedupes and sorts a port list so the
+// rendered ruleset is byte-stable regardless of manifest order. Stability matters:
+// the firewall planner re-applies whenever the rendered file changes, so an
+// order-dependent render would reload nftables on every reconcile pass forever.
+func normalizePorts(ports []int) []int {
+	if len(ports) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(ports))
+	out := make([]int, 0, len(ports))
+	for _, p := range ports {
+		if p <= 0 || p > 65535 {
+			continue
+		}
+		if _, dup := seen[p]; dup {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	sort.Ints(out)
+	return out
+}
+
 func RenderRuleset(in RenderInput) (string, error) {
 	if in.Firewall.WGPort <= 0 || in.Firewall.WGPort > 65535 {
 		return "", fmt.Errorf("netfw render: invalid WG port %d", in.Firewall.WGPort)
@@ -272,6 +297,12 @@ func RenderRuleset(in RenderInput) (string, error) {
 	// master can dial the reality transport; 0 ⇒ the exit does not run reality.
 	if in.Firewall.RealityPort > 0 {
 		fmt.Fprintf(&b, "\t\ttcp dport %d accept\n", in.Firewall.RealityPort)
+	}
+	// World-facing TCP services (FirewallSpec.PublicTCPPorts) — no iifname scope, so
+	// these are reachable from any source the drop policy would otherwise block.
+	// Role-agnostic by design: the same knob serves a master and an exit.
+	for _, port := range normalizePorts(in.Firewall.PublicTCPPorts) {
+		fmt.Fprintf(&b, "\t\ttcp dport %d accept\n", port)
 	}
 	// Master only: let client TCP that prerouting DNAT'd to the local mihomo redir
 	// port reach mihomo. After DNAT the destination is the master's own address, so

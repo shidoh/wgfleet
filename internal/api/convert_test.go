@@ -275,3 +275,34 @@ func TestStatusExitHealthRoundTrip(t *testing.T) {
 		t.Fatalf("exit-nl-1 should be down")
 	}
 }
+
+// PublicTCPPorts must survive the wire intact: the agent's firewall renderer is
+// the only thing standing between the manifest and an nftables accept rule, so a
+// silently dropped field would leave a "configured" port closed with no error.
+func TestFirewallPublicTCPPortsRoundTrip(t *testing.T) {
+	in := domain.NodeSpec{
+		Role: domain.RoleMaster,
+		Firewall: domain.FirewallSpec{
+			WGPort:         51820,
+			PublicTCPPorts: []int{80, 443},
+		},
+	}
+	got := SpecFromProto(SpecToProto(in))
+	if len(got.Firewall.PublicTCPPorts) != 2 ||
+		got.Firewall.PublicTCPPorts[0] != 80 || got.Firewall.PublicTCPPorts[1] != 443 {
+		t.Errorf("PublicTCPPorts round-trip = %v, want [80 443]", got.Firewall.PublicTCPPorts)
+	}
+}
+
+// An absent list must stay absent rather than becoming an empty non-nil slice —
+// the two are equivalent for the renderer, but a spurious diff would show up in
+// the operator-facing spec preview.
+func TestFirewallPublicTCPPortsEmptyRoundTrip(t *testing.T) {
+	got := SpecFromProto(SpecToProto(domain.NodeSpec{
+		Role:     domain.RoleExit,
+		Firewall: domain.FirewallSpec{WGPort: 51820},
+	}))
+	if got.Firewall.PublicTCPPorts != nil {
+		t.Errorf("PublicTCPPorts = %v, want nil", got.Firewall.PublicTCPPorts)
+	}
+}
