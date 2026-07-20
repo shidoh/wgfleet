@@ -335,3 +335,47 @@ func TestTierHealthyTierStillProbesOnlyOneMember(t *testing.T) {
 		t.Fatalf("healthy tier probed %d members, want 1 (early exit)", got)
 	}
 }
+
+// A fully drained primary tier (ADR-0010) is starvation, not ill health: there is
+// nothing left to probe. wgBestGroups already falls back to the non-empty tier, so
+// the selector must report the reserve — otherwise its own view of where traffic
+// goes contradicts the config it just rendered, and warmStandby then keeps the
+// CARRYING tier warm while letting the idle one go cold.
+func TestTierEmptyPrimaryReportsReserve(t *testing.T) {
+	s := newTestSelector(fixedProbe(map[string][2]int{"1cnode004": {4, 4}}))
+	if !s.active(nil, reserve) {
+		t.Fatal("a fully drained primary must route to the reserve tier")
+	}
+	if !s.reserveActive {
+		t.Fatal("internal state must agree with the reported tier")
+	}
+}
+
+// With no reserve there is nowhere to go, drained primary or not.
+func TestTierEmptyPrimaryAndNoReserveStaysPrimary(t *testing.T) {
+	s := newTestSelector(fixedProbe(nil))
+	if s.active(nil, nil) {
+		t.Fatal("with no reserve there is nothing to fail over to")
+	}
+}
+
+// Coming back from starvation must go through the normal recovery hysteresis, not
+// snap straight back the moment one primary member returns.
+func TestTierRecoveryFromStarvationUsesHysteresis(t *testing.T) {
+	table := map[string][2]int{"vn1": {4, 4}, "vn2": {4, 4}, "1cnode004": {4, 4}}
+	s := newTestSelector(fixedProbe(table))
+	s.minHold = 0
+
+	if !s.active(nil, reserve) {
+		t.Fatal("expected the starved primary to report reserve")
+	}
+	// Primary members return. The first passes must NOT flip back immediately.
+	for i := range defaultTierRecoverStreak - 1 {
+		if !s.active(primary, reserve) {
+			t.Fatalf("pass %d: must not fail back before the recovery streak is met", i)
+		}
+	}
+	if s.active(primary, reserve) {
+		t.Fatal("must fail back once the recovery streak is met")
+	}
+}

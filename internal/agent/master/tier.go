@@ -141,12 +141,30 @@ func (s *TierSelector) warmStandby(ctx context.Context, probe memberProbe, membe
 // nowhere to fail over to, so probing would burn API calls for no decision.
 func (s *TierSelector) ReserveActive(ctx context.Context, probe memberProbe, primary, reserve []string) bool {
 	s.pass++
-	if len(reserve) == 0 || len(primary) == 0 {
-		// Nothing to choose between. Reset the streaks so a later reserve tier starts
-		// from a clean slate rather than inheriting a stale count.
+	if len(reserve) == 0 {
+		// Nowhere to fail over to. Reset the streaks so a reserve tier added later
+		// starts from a clean slate rather than inheriting a stale count.
 		s.consecFail, s.consecOK = 0, 0
 		s.reserveActive = false
 		return false
+	}
+	if len(primary) == 0 {
+		// Primary is STARVED, not merely unhealthy — every member is drained
+		// (ADR-0010), so there is nothing left to probe and nothing to decide.
+		//
+		// This must report the RESERVE, not the primary. wgBestGroups falls back to
+		// whatever tier is non-empty, so an empty primary already puts live traffic on
+		// the reserve; returning false here would make the selector's own view of
+		// where traffic goes disagree with what it just rendered. That divergence is
+		// not cosmetic — warmStandby uses it to pick which tier to keep warm, so the
+		// selector would warm the tier that is actually carrying traffic and leave the
+		// idle one to go cold, i.e. exactly backwards.
+		//
+		// Streaks reset because there is no primary health signal to accumulate; when
+		// primary members return, the normal recovery streak governs the way back.
+		s.consecFail, s.consecOK = 0, 0
+		s.reserveActive = true
+		return true
 	}
 
 	// Keep the reserve tier warm while it is idle. The flat group leaves its proxies
