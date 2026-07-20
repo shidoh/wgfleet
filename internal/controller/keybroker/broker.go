@@ -339,6 +339,27 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		Custom:              masterCustomConfig(master),
 		MaxFailedTimes:      master.Mihomo.MaxFailedTimes,
 	}
+
+	// Route client traffic to the master's OWN public IP DIRECT, exactly as each
+	// exit's public IP is handled below. Without it the prerouting DNAT catches
+	// client TCP to the master's own address and sends it into mihomo instead of
+	// letting it terminate locally: SSH and the admin UIs then hang off the proxy
+	// being healthy, and every packet takes a pointless userspace round trip.
+	// Found live 2026-07-20 — the DNAT guard list carried all five exits and not
+	// the master, because the exit-public-IP fix was never applied to the node
+	// that hosts the rule.
+	if ip := b.masterPublicIP(ctx, master); ip != "" {
+		if addr, err := netip.ParseAddr(ip); err == nil {
+			bits := 32
+			if addr.Is6() {
+				bits = 128
+			}
+			ms.DirectCIDRs = append(ms.DirectCIDRs, netip.PrefixFrom(addr, bits).String())
+		} else {
+			b.log.Warn("master has unparseable public IP; omitting from DIRECT cidrs",
+				"master", master.Name, "public_ip", ip)
+		}
+	}
 	// Tier membership is master-scoped (ADR-0029): the same exit may be primary for
 	// one master and reserve for another, so resolve it per master, not per exit.
 	reserveExits := make(map[string]struct{}, len(master.Routing.ReserveExits))
@@ -896,6 +917,17 @@ func (b *Broker) tunnelPubKey(ctx context.Context, masterName, exitName string) 
 
 func (b *Broker) masterDirectCIDRs(m config.MasterConfig) []string {
 	return append([]string(nil), m.Routing.DirectCIDRs...)
+}
+
+// masterPublicIP resolves the master's public address the same way the compose
+// spec does: prefer what the store discovered, fall back to the manifest. The
+// co-located master is hand-onboarded and never SSH-provisioned, so its store
+// record can legitimately carry no public IP. Returns "" when neither has one.
+func (b *Broker) masterPublicIP(ctx context.Context, m config.MasterConfig) string {
+	if node, err := b.store.GetNode(ctx, m.Name); err == nil && node.PublicIP != "" {
+		return node.PublicIP
+	}
+	return m.PublicIP
 }
 
 // mergeUnique concatenates a and b, dropping empties and duplicates while keeping

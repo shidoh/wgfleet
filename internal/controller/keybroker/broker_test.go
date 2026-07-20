@@ -1059,3 +1059,47 @@ func TestRenderMasterSpecCarriesMaxFailedTimes(t *testing.T) {
 		t.Errorf("MaxFailedTimes = %d, want 10 (from the manifest fixture)", spec.Master.MaxFailedTimes)
 	}
 }
+
+// The master's OWN public IP must route DIRECT, exactly like every exit's does.
+// Without it, client TCP to the master's public address is DNAT'd into mihomo
+// instead of terminating locally: SSH and admin access to the master from a
+// full-tunnel client then depend on the proxy being healthy, and the traffic
+// makes a pointless userspace round trip. Same class as the exit-public-IP fix,
+// which was never applied to the master itself (found live 2026-07-20: the DNAT
+// guard list carried all five exits and not the master).
+func TestRenderMasterSpecMasterOwnPublicIPIsDirect(t *testing.T) {
+	ctx := context.Background()
+	b, st := newBroker(t)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if spec.Master == nil {
+		t.Fatal("master spec missing")
+	}
+	if !contains(spec.Master.DirectCIDRs, "203.0.113.1/32") {
+		t.Errorf("master's own public IP missing from DIRECT cidrs: %v", spec.Master.DirectCIDRs)
+	}
+}
+
+// The manifest's public_ip is the fallback when the store has not discovered one
+// — the co-located master is hand-onboarded and never SSH-provisioned, so its
+// store record can legitimately carry no public IP.
+func TestRenderMasterSpecOwnPublicIPFallsBackToManifest(t *testing.T) {
+	ctx := context.Background()
+	fleet := testFleet()
+	fleet.Masters[0].PublicIP = "203.0.113.77"
+	b, st := newBrokerWithFleet(t, fleet)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !contains(spec.Master.DirectCIDRs, "203.0.113.77/32") {
+		t.Errorf("manifest public_ip fallback missing from DIRECT cidrs: %v", spec.Master.DirectCIDRs)
+	}
+}
