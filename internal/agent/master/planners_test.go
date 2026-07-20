@@ -305,7 +305,11 @@ func writeMasterCompose(t *testing.T, path string, spec domain.NodeSpec) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(yamlText), 0o644); err != nil {
+	// 0600, matching what composePlanner renders: this file carries the wg-easy
+	// INIT_PASSWORD, so FileAction refuses any group/world-readable mode for it.
+	// Seeding 0644 here made every "steady state" assertion see a legitimate
+	// mode-drift repair and fail.
+	if err := os.WriteFile(path, []byte(yamlText), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -553,4 +557,34 @@ func hasChangingSummary(acts []reconcile.Action, substr string) bool {
 		}
 	}
 	return false
+}
+
+// A compose file left group/world-readable by an older binary must be surfaced as
+// a change, because it carries the wg-easy INIT_PASSWORD. The chmod itself is
+// covered by reconcile's own tests; what matters here is that the PLANNER does not
+// treat a mode-only repair as steady state and skip it.
+//
+// Note the second action: composePlanner gates on Action.Changes(), which cannot
+// distinguish "content changed" from "mode repaired", so a pure permission fix also
+// re-runs `docker compose up -d`. Harmless (compose diffs the rendered service
+// config, not file modes) but pinned here so the coupling is visible.
+func TestComposePlannerSurfacesWorldReadableModeRepair(t *testing.T) {
+	spec, _ := masterSpec(t)
+	paths := testPaths(t)
+	writeMasterCompose(t, paths.Compose, spec)
+	if err := os.Chmod(paths.Compose, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pl := composePlanner{path: paths.Compose, up: func(string) bool { return true }}
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) == 0 || !actions[0].Changes() {
+		t.Fatalf("a world-readable compose file must not read as steady state, got %+v", actions)
+	}
+	if !strings.Contains(actions[0].Summary, "repairing mode to 600") {
+		t.Fatalf("expected a mode-repair action, got %q", actions[0].Summary)
+	}
 }

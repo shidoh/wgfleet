@@ -55,6 +55,16 @@ type Action struct {
 }
 
 // Changes reports whether the action would mutate anything.
+//
+// CAUTION for callers that gate a restart or reload on this: it does NOT tell you
+// WHAT changed. A FileAction returns an update for a pure permission repair
+// (content identical, mode wrong) exactly as it does for a content rewrite, so a
+// planner written as `if file.Changes() { restart() }` will bounce a service over a
+// chmod. Both current callers survive that by luck rather than design —
+// composePlanner's `docker compose up -d` is idempotent, and mihomoPlanner's
+// restart decision runs through mihomo.ProxiesChanged, which compares bytes and so
+// correctly ignores a mode-only change. A future caller mapping Changes() straight
+// to "must restart" would not be so lucky: compare content explicitly.
 func (a Action) Changes() bool { return a.Kind != ActionNoChange }
 
 // run executes the action's effect, or is a no-op when there is nothing to do.
