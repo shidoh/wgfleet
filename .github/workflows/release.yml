@@ -4,9 +4,10 @@ name: release
 #
 #   git tag v0.1.0 && git push origin v0.1.0
 #
-# Produces statically-linked Linux binaries for both controller and agent on
-# linux/amd64 and linux/arm64, a SHA256SUMS file, and a GitHub Release with the
-# assets attached. Can also be run manually (workflow_dispatch) against a tag.
+# Produces ONE self-contained tarball per architecture (linux/amd64 and
+# linux/arm64) — statically-linked controller + agent binaries, the installer,
+# INSTALL.md and reference configs — plus a SHA256SUMS file, attached to a
+# GitHub Release. Can also be run manually (workflow_dispatch) against a tag.
 
 on:
   push:
@@ -43,20 +44,20 @@ jobs:
           echo "COMMIT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
           echo "Building $TAG @ $(git rev-parse --short HEAD)"
 
-      - name: Build binaries (linux amd64 + arm64)
+      - name: Build release archives (linux amd64 + arm64)
         run: |
           for arch in amd64 arm64; do
-            make agent-linux controller-linux \
+            make release-archive \
               ARCH="$arch" \
               VERSION="$TAG" \
               COMMIT="$COMMIT" \
               EXTRA_LDFLAGS="-s -w"
           done
-          ls -lh dist/
+          ls -lh dist/*.tar.gz
 
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum wgfleet-* > SHA256SUMS   # binaries only, not the sums file itself
+        run: sha256sum *.tar.gz > SHA256SUMS   # archives only, not the sums file itself
 
       - name: Generate changelog
         run: |
@@ -81,11 +82,11 @@ jobs:
           # Create the release with all assets, or update notes + assets if it exists.
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --notes-file release-notes.md
-            gh release upload "$TAG" dist/* --clobber
+            gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --clobber
           else
             gh release create "$TAG" \
               --title "$TAG" \
               --notes-file release-notes.md \
               $PRERELEASE \
-              dist/*
+              dist/*.tar.gz dist/SHA256SUMS
           fi

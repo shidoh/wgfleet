@@ -50,6 +50,38 @@ Cross-compile for Linux deployment targets with `make agent-linux` /
 3. No secrets, real IPs, or hostnames in the diff.
 4. Docs/ADRs updated if behavior or architecture changed.
 
+## Cutting a release
+
+Tag and push — the `release` workflow does the rest:
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+It builds **one self-contained archive per architecture** and attaches them,
+plus a `SHA256SUMS`, to a GitHub Release:
+
+| Asset | Contents |
+|---|---|
+| `wgfleet-linux-amd64.tar.gz` | `wgfleet-controller`, `wgfleet-agent`, `install.sh`, `INSTALL.md` (the quickstart), `prepare-node.sh`, `examples/`, `systemd/`, `VERSION` |
+| `wgfleet-linux-arm64.tar.gz` | same, for ARM |
+| `SHA256SUMS` | checksums over the archives |
+
+Tags with a pre-release suffix (`v0.1.0-rc1`) are published as prereleases.
+Build the same archive locally with `make release-archive ARCH=amd64` — do that
+before tagging if you changed packaging, and smoke-test the installer:
+
+```sh
+make release-archive ARCH=amd64
+docker run --rm --platform linux/amd64 -v "$PWD/dist/wgfleet-linux-amd64:/pkg:ro" \
+  ubuntu:24.04 bash -c 'cp -r /pkg /p && cd /p && SKIP_DEPS=1 ./install.sh'
+```
+
+Archive filenames are **unversioned** on purpose so that
+`releases/latest/download/wgfleet-linux-<arch>.tar.gz` — the URL `install.sh`
+uses in standalone mode — keeps resolving. The build identity lives inside
+(`VERSION`, and `--version` on either binary).
+
 ## Background reading
 
 - `README.md` — architecture, configuration, CLI, operations.

@@ -6,8 +6,14 @@ running `wgfleet-controller` and a `wgfleet-agent --role master` on the **same b
 is a fully supported topology. It is the recommended default for small fleets where
 a dedicated controller VM is not worth it.
 
-> **Fast path:** the one-line installer automates steps 1–6 below (deps, binaries,
-> dirs, units, config templates) on a fresh Ubuntu/Debian VM:
+> **Fast path:** [QUICKSTART.md](QUICKSTART.md) is the short, step-by-step
+> version of this document (master + one exit + clients, ~30 min). Its installer
+> automates steps 1–6 below (deps, binaries, dirs, units, config templates) on a
+> fresh Ubuntu/Debian VM — either from the release archive:
+> ```sh
+> tar xzf wgfleet-linux-amd64.tar.gz && cd wgfleet-linux-amd64 && sudo ./install.sh
+> ```
+> or straight off the internet:
 > ```sh
 > curl -fsSL https://raw.githubusercontent.com/shidoh/wgfleet/main/install.sh | sudo bash
 > ```

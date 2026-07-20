@@ -405,31 +405,36 @@ non-root/dev runs.
 
 ## 9. Installation & deployment
 
-### 9.0 One-line master bootstrap (fastest path)
+### 9.0 Master bootstrap (fastest path)
 
-To stand up the **first master** on a fresh Ubuntu/Debian VM, the installer
-fetches the release binaries (checksum-verified), installs the host deps
-(AmneziaWG kernel module, ZeroTier, Docker), drops the systemd units and config
-templates, and prints the remaining operator steps:
+**New here? Follow [`docs/QUICKSTART.md`](docs/QUICKSTART.md)** — two blank
+Ubuntu servers to a working VPN in ~30 minutes, no prior knowledge assumed.
+
+Each release ships **one archive per architecture**
+(`wgfleet-linux-amd64.tar.gz` / `wgfleet-linux-arm64.tar.gz`) containing both
+binaries, the installer, `INSTALL.md` (the quickstart), reference configs and
+the systemd units. Unpack it on the master and run the installer — it installs
+the host deps (AmneziaWG kernel module, ZeroTier, Docker), the binaries, the
+systemd units and config templates, then prints the remaining operator steps:
+
+```sh
+tar xzf wgfleet-linux-amd64.tar.gz && cd wgfleet-linux-amd64
+sudo ./install.sh
+# or seed values up front:
+sudo ZT_NETWORK=<id> PUBLIC_IP=<ip> ./install.sh
+```
+
+The same script also works standalone, downloading and checksum-verifying the
+archive itself (needs a **public repo** and a **published release** — see
+[CONTRIBUTING.md § Cutting a release](CONTRIBUTING.md#cutting-a-release)):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/shidoh/wgfleet/main/install.sh | sudo bash
-# or seed values up front:
-curl -fsSL https://raw.githubusercontent.com/shidoh/wgfleet/main/install.sh \
-  | sudo ZT_NETWORK=<id> PUBLIC_IP=<ip> bash
-```
-
-Prefer to read before piping to a shell:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/shidoh/wgfleet/main/install.sh -o install.sh
-less install.sh && sudo bash install.sh
 ```
 
 It is idempotent and **does not start anything** — the master needs a filled-in
 config and a locally-issued mTLS identity first; the installer prints those exact
-steps. It requires a **published release** (see §16 / the `release` workflow) and
-a **public repo** for the download URLs. The manual, step-by-step equivalent is
+steps. The manual, annotated equivalent is
 [`docs/colocated-controller-master.md`](docs/colocated-controller-master.md).
 
 ### 9.1 Per-node prerequisites

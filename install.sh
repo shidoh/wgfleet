@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
-# wgfleet master bootstrap — one-line installer for the FIRST master node.
+# wgfleet master bootstrap — installer for the FIRST master node.
 #
-#   curl -fsSL https://raw.githubusercontent.com/shidoh/wgfleet/main/install.sh | sudo bash
+# Two ways to run it, same result:
 #
-# Prefer to read before you pipe to a shell:
-#   curl -fsSL https://raw.githubusercontent.com/shidoh/wgfleet/main/install.sh -o install.sh
-#   less install.sh && sudo bash install.sh
+#   A) from the release archive (recommended — see docs/QUICKSTART.md):
+#        tar xzf wgfleet-linux-amd64.tar.gz && cd wgfleet-linux-amd64
+#        sudo ./install.sh
+#      Binaries sitting next to this script are installed as-is; nothing is
+#      downloaded.
+#
+#   B) one-line, straight off the internet:
+#        curl -fsSL https://raw.githubusercontent.com/shidoh/wgfleet/main/install.sh | sudo bash
+#      This downloads the release archive for this arch and verifies it against
+#      the release SHA256SUMS before installing.
 #
 # What it does (idempotent, safe to re-run):
 #   1. installs host deps (AmneziaWG kernel module via DKMS, ZeroTier, Docker)
-#   2. downloads the release binaries for this arch and VERIFIES them against
-#      the release SHA256SUMS, then installs controller + agent to /usr/local/bin
+#   2. installs controller + agent to /usr/local/bin (from the archive it runs
+#      in, or downloaded + checksum-verified)
 #   3. creates /etc/wgfleet and /var/lib/wgfleet
 #   4. installs the controller + agent systemd units (left DISABLED)
 #   5. drops controller.yaml / agent.yaml templates (only if absent)
@@ -116,33 +123,49 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2. download + verify + install binaries
+# 2. install the binaries — from the archive we live in, or downloaded
 # ---------------------------------------------------------------------------
-if [ "$VERSION" = "latest" ]; then
-  base="https://github.com/${REPO}/releases/latest/download"
-else
-  base="https://github.com/${REPO}/releases/download/${VERSION}"
+# When piped from curl, BASH_SOURCE is unset/stdin, so src stays empty and we
+# fall through to the download path.
+src=""
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]:-}" ]; then
+  src="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
 
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-fetch() { # url dest
-  curl -fSL --retry 3 -o "$2" "$1" \
-    || die "download failed: $1 (is the repo public and a release published?)"
-}
+if [ -n "$src" ] && [ -f "$src/wgfleet-controller" ] && [ -f "$src/wgfleet-agent" ]; then
+  # --- local mode: running from an unpacked release archive ---
+  log "installing from the local archive ($src)"
+  [ -f "$src/VERSION" ] && log "archive build: $(cat "$src/VERSION")"
+  install -m 0755 "$src/wgfleet-controller" "$PREFIX/wgfleet-controller"
+  install -m 0755 "$src/wgfleet-agent"      "$PREFIX/wgfleet-agent"
+else
+  # --- remote mode: fetch the release archive and verify it ---
+  if [ "$VERSION" = "latest" ]; then
+    base="https://github.com/${REPO}/releases/latest/download"
+  else
+    base="https://github.com/${REPO}/releases/download/${VERSION}"
+  fi
 
-log "downloading binaries + checksums from $base"
-ctrl="wgfleet-controller-linux-${ARCH}"
-agent="wgfleet-agent-linux-${ARCH}"
-fetch "$base/$ctrl"        "$tmp/$ctrl"
-fetch "$base/$agent"       "$tmp/$agent"
-fetch "$base/SHA256SUMS"   "$tmp/SHA256SUMS"
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  tgz="wgfleet-linux-${ARCH}.tar.gz"
 
-log "verifying SHA256 checksums"
-( cd "$tmp" && grep -E "  ($ctrl|$agent)\$" SHA256SUMS | sha256sum -c - ) \
-  || die "checksum verification FAILED — refusing to install"
+  log "downloading $tgz + checksums from $base"
+  for f in "$tgz" SHA256SUMS; do
+    curl -fSL --retry 3 -o "$tmp/$f" "$base/$f" \
+      || die "download failed: $base/$f (is the repo public and a release published?)"
+  done
 
-install -m 0755 "$tmp/$ctrl"  "$PREFIX/wgfleet-controller"
-install -m 0755 "$tmp/$agent" "$PREFIX/wgfleet-agent"
+  log "verifying SHA256 checksum"
+  ( cd "$tmp" && grep -E "  ${tgz}\$" SHA256SUMS | sha256sum -c - ) \
+    || die "checksum verification FAILED — refusing to install"
+
+  tar -xzf "$tmp/$tgz" -C "$tmp"
+  unpacked="$tmp/wgfleet-linux-${ARCH}"
+  [ -f "$unpacked/wgfleet-controller" ] || die "unexpected archive layout in $tgz"
+  install -m 0755 "$unpacked/wgfleet-controller" "$PREFIX/wgfleet-controller"
+  install -m 0755 "$unpacked/wgfleet-agent"      "$PREFIX/wgfleet-agent"
+fi
+
 log "installed: $("$PREFIX/wgfleet-controller" --version 2>/dev/null || echo wgfleet-controller)"
 
 # ---------------------------------------------------------------------------
@@ -150,6 +173,15 @@ log "installed: $("$PREFIX/wgfleet-controller" --version 2>/dev/null || echo wgf
 # ---------------------------------------------------------------------------
 install -d -m 0755 "$ETC"
 install -d -m 0700 "$VAR"
+
+# Fully annotated reference configs, for when the minimal template below is not
+# enough (exit definitions, mihomo tuning, transports, ...). Reference only —
+# nothing reads them.
+if [ -n "$src" ] && [ -d "$src/examples" ]; then
+  install -d -m 0755 "$ETC/examples"
+  install -m 0644 "$src"/examples/*.yaml "$ETC/examples/"
+  log "copied reference configs to $ETC/examples/"
+fi
 
 # ---------------------------------------------------------------------------
 # 4. systemd units (left disabled — config + PKI come first)
@@ -189,8 +221,11 @@ NoNewPrivileges=yes
 WantedBy=multi-user.target
 UNIT
 
-systemctl daemon-reload
-log "installed systemd units (disabled): wgfleet-controller, wgfleet-agent"
+# Non-fatal: containers/WSL have the unit files but no running systemd, and there
+# is no reason to abort the rest of the install (configs, next steps) over it.
+systemctl daemon-reload 2>/dev/null \
+  && log "installed systemd units (disabled): wgfleet-controller, wgfleet-agent" \
+  || warn "systemd not available here — units written to $UNITDIR but not reloaded"
 
 # ---------------------------------------------------------------------------
 # 5. config templates (never overwrite an existing config)
@@ -285,5 +320,8 @@ $( [ -z "$ZT_NETWORK" ] && echo "   (join first:  zerotier-cli join <zt-network-
    Reconciling -> Ready once wg-easy + mihomo are up. Add exits from there or:
      wgfleet-controller --config $ETC/controller.yaml --provision <exit> --plan
 
-Full walkthrough: docs/colocated-controller-master.md
+7. Add your exit servers — see step 7 of the quickstart.
+
+Full walkthrough: INSTALL.md (in this archive) — or docs/QUICKSTART.md upstream.
+Reference: docs/colocated-controller-master.md
 EOF

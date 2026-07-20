@@ -26,7 +26,7 @@ VPKG      := github.com/shidoh/wgfleet/internal/version
 EXTRA_LDFLAGS ?=
 LDFLAGS   := -X $(VPKG).Version=$(VERSION) -X $(VPKG).Commit=$(COMMIT) -X $(VPKG).BuildDate=$(DATE) $(EXTRA_LDFLAGS)
 
-.PHONY: all build test race vet fmt lint proto tidy clean agent-linux controller-linux
+.PHONY: all build test race vet fmt lint proto tidy clean agent-linux controller-linux release-archive
 
 all: fmt vet test build
 
@@ -71,6 +71,27 @@ controller-linux:
 	GOOS=linux GOARCH=$(ARCH) CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
 		-o $(DIST)/wgfleet-controller-linux-$(ARCH) ./cmd/wgfleet-controller
 	@echo "built $(DIST)/wgfleet-controller-linux-$(ARCH)"
+
+# Pack a self-contained release archive for one architecture: both binaries, the
+# installer, the quickstart, reference configs and the systemd units. This is
+# what a GitHub release ships (one tarball per arch, instead of loose binaries)
+# — see .github/workflows/release.yml. Hand someone the tarball and INSTALL.md
+# inside it walks them from a blank VM to a working fleet.
+PKG := wgfleet-linux-$(ARCH)
+release-archive: agent-linux controller-linux
+	@rm -rf $(DIST)/$(PKG) $(DIST)/$(PKG).tar.gz
+	@mkdir -p $(DIST)/$(PKG)/examples $(DIST)/$(PKG)/systemd
+	cp $(DIST)/wgfleet-controller-linux-$(ARCH) $(DIST)/$(PKG)/wgfleet-controller
+	cp $(DIST)/wgfleet-agent-linux-$(ARCH)      $(DIST)/$(PKG)/wgfleet-agent
+	cp install.sh                               $(DIST)/$(PKG)/install.sh
+	cp docs/QUICKSTART.md                       $(DIST)/$(PKG)/INSTALL.md
+	cp deploy/prepare-node.sh                   $(DIST)/$(PKG)/prepare-node.sh
+	cp deploy/examples/controller.yaml deploy/examples/agent.yaml $(DIST)/$(PKG)/examples/
+	cp deploy/systemd/*.service                 $(DIST)/$(PKG)/systemd/
+	@echo "$(VERSION) $(COMMIT) $(DATE) linux/$(ARCH)" > $(DIST)/$(PKG)/VERSION
+	chmod 0755 $(DIST)/$(PKG)/wgfleet-controller $(DIST)/$(PKG)/wgfleet-agent $(DIST)/$(PKG)/*.sh
+	tar -C $(DIST) -czf $(DIST)/$(PKG).tar.gz $(PKG)
+	@echo "packed $(DIST)/$(PKG).tar.gz"
 
 tidy:
 	$(GO) mod tidy
