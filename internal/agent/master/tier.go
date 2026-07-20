@@ -27,6 +27,27 @@ const (
 	// count as usable. Above 1 on purpose: a member that answers exactly one
 	// destination is the signature of a destination-scoped block, not of health.
 	defaultMinReachable = 2
+	// defaultWarmEvery is how often (in reconcile passes) the INACTIVE tier is
+	// probed. At the 30s reconcile interval this is once a minute.
+	//
+	// It exists because the flat-group rendering (ADR-0029 rev 2) leaves the
+	// inactive tier's proxies configured but in no group, so mihomo never dials
+	// them. Observed live 2026-07-19: within ~1.5h of the cutover the only AWG
+	// reserve exit went Degraded on `wg-handshake — stale handshake (1h23m45s
+	// old)` while every other check passed. Two problems, and the second is the
+	// real one:
+	//
+	//  1. An idle reserve exit LOOKS broken, which is noise at best and blocks a
+	//     rolling update at worst (its gate requires Ready).
+	//  2. The reserve goes COLD. WireGuard re-handshakes about every 2 minutes
+	//     under traffic; with no traffic the tunnel must be built from scratch at
+	//     the exact moment failover needs it — latency added precisely when it
+	//     hurts. A warm standby that is only warm on paper is not a standby.
+	//
+	// Probing the inactive tier fixes both and, as a bonus, is the only source of
+	// health data about the tier we would fail over TO — without it that decision
+	// is made blind.
+	defaultWarmEvery = 2
 )
 
 // memberProbe reports how many of the probe destinations `name` could reach, and
@@ -52,6 +73,7 @@ type tierSelector struct {
 	recoverStreak int
 	minHold       time.Duration
 	minReachable  int
+	warmEvery     int
 	now           func() time.Time
 
 	// state carried across reconcile passes
@@ -59,6 +81,13 @@ type tierSelector struct {
 	consecFail    int
 	consecOK      int
 	lastFlip      time.Time
+	pass          int
+	// standbyUsable/standbyTotal are the last warm-probe result for the INACTIVE
+	// tier: how many of its members could reach enough destinations. Without this
+	// the failover decision is one-sided — we would know the active tier is dying
+	// but nothing about the tier we are about to move every client onto.
+	standbyUsable int
+	standbyTotal  int
 }
 
 func newTierSelector(log *slog.Logger) *tierSelector {
@@ -68,7 +97,42 @@ func newTierSelector(log *slog.Logger) *tierSelector {
 		recoverStreak: defaultTierRecoverStreak,
 		minHold:       defaultTierMinHold,
 		minReachable:  defaultMinReachable,
+		warmEvery:     defaultWarmEvery,
 		now:           time.Now,
+	}
+}
+
+// StandbyHealth reports the last warm-probe result for the inactive tier: how many
+// of its members were usable, out of how many were probed. total == 0 means it has
+// not been sampled yet.
+func (s *tierSelector) StandbyHealth() (usable, total int) {
+	return s.standbyUsable, s.standbyTotal
+}
+
+// warmStandby probes the currently INACTIVE tier so its tunnels stay established
+// and its health is known. Its result never feeds the tier decision — that would
+// couple "should we leave the active tier" to the standby's condition, which is a
+// different question — but it is logged and exposed via StandbyHealth.
+func (s *tierSelector) warmStandby(ctx context.Context, probe memberProbe, members []string) {
+	if len(members) == 0 || s.warmEvery <= 0 || s.pass%s.warmEvery != 0 {
+		return
+	}
+	usable, total := 0, 0
+	for _, m := range members {
+		ok, probed, err := probe(ctx, m)
+		if err != nil {
+			continue // blind sample; leave it out of the tally entirely
+		}
+		total++
+		if probed > 0 && ok >= min(s.minReachable, probed) {
+			usable++
+		}
+	}
+	s.standbyUsable, s.standbyTotal = usable, total
+	if usable == 0 && total > 0 && s.log != nil {
+		// Worth a warning on its own: it means a failover right now would land every
+		// client on a tier that cannot reach the internet.
+		s.log.Warn("standby tier has no usable member", "probed", total)
 	}
 }
 
@@ -76,12 +140,21 @@ func newTierSelector(log *slog.Logger) *tierSelector {
 // the reserve tier. With no reserve configured it always returns false — there is
 // nowhere to fail over to, so probing would burn API calls for no decision.
 func (s *tierSelector) ReserveActive(ctx context.Context, probe memberProbe, primary, reserve []string) bool {
+	s.pass++
 	if len(reserve) == 0 || len(primary) == 0 {
 		// Nothing to choose between. Reset the streaks so a later reserve tier starts
 		// from a clean slate rather than inheriting a stale count.
 		s.consecFail, s.consecOK = 0, 0
 		s.reserveActive = false
 		return false
+	}
+
+	// Keep the reserve tier warm while it is idle. The flat group leaves its proxies
+	// in no group, so nothing else ever dials them (see defaultWarmEvery). Only when
+	// the reserve is INACTIVE: once it is carrying traffic it is warm by definition,
+	// and the primary is then probed every pass anyway as the recovery check.
+	if !s.reserveActive {
+		defer func() { s.warmStandby(ctx, probe, reserve) }()
 	}
 
 	// Which tier's health decides the next move: while on reserve we are asking
