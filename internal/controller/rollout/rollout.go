@@ -104,6 +104,12 @@ type Config struct {
 	// FreshWithin bounds how stale the node's LastSeen may be and still count as
 	// "reporting now".
 	FreshWithin time.Duration
+	// LockPath is the cross-process rollout lock (see lock.go). Empty in Config
+	// means DefaultLockPath; set it to "-" to disable locking entirely, which only
+	// tests should do. The Coordinator's own Active flag guards one PROCESS; this
+	// guards the fleet, because the serving controller and the --rolling-upgrade
+	// CLI are separate processes with separate in-memory state.
+	LockPath string
 }
 
 const (
@@ -125,6 +131,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.FreshWithin <= 0 {
 		c.FreshWithin = defaultFreshWithin
+	}
+	if c.LockPath == "" {
+		c.LockPath = DefaultLockPath
 	}
 	return c
 }
@@ -157,6 +166,9 @@ type Coordinator struct {
 	mu     sync.Mutex
 	state  State
 	cancel context.CancelFunc
+	// lock is the cross-process rollout lock, held for the whole run and released
+	// in run()'s teardown. Guarded by mu like the rest of the run state.
+	lock *procLock
 }
 
 // New builds a Coordinator.
@@ -212,6 +224,18 @@ func (c *Coordinator) Start(ctx context.Context, plan Plan) error {
 		c.mu.Unlock()
 		return ErrBusy
 	}
+	// Take the fleet-wide lock BEFORE marking ourselves active, so a refusal leaves
+	// no half-started state behind.
+	lockPath := c.cfg.LockPath
+	if lockPath == "-" {
+		lockPath = ""
+	}
+	lock, err := acquireLock(lockPath)
+	if err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	c.lock = lock
 	runCtx, cancel := context.WithCancel(ctx)
 	nodes := make([]NodeProgress, 0, len(plan.Targets))
 	for _, t := range plan.Targets {
@@ -254,6 +278,10 @@ func (c *Coordinator) run(ctx context.Context) {
 		c.state.Active = false
 		c.state.EndedAt = c.now()
 		c.state.LastUpdate = c.now()
+		// Release the fleet-wide lock only once the run is genuinely over, so a
+		// second process cannot start while this one is still mid-node.
+		c.lock.release()
+		c.lock = nil
 		c.mu.Unlock()
 	}()
 

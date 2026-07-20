@@ -16,9 +16,20 @@ import (
 	"github.com/shidoh/wgfleet/internal/version"
 )
 
-// rollingUpgrade drives a fleet-wide rolling agent upgrade from the CLI, over
-// the same coordinator the Web UI action uses. Progress streams to stdout so it
-// is usable from a script; --plan prints the ordered plan and touches nothing.
+// rollingUpgrade drives a fleet-wide rolling agent upgrade from the CLI.
+// Progress streams to stdout so it is usable from a script; --plan prints the
+// ordered plan and touches nothing.
+//
+// It builds its OWN provmgr.Manager and rollout.Coordinator — this is a separate
+// process from the serving controller, so it shares none of that process's memory.
+// An earlier version of this comment claimed it ran "over the same coordinator the
+// Web UI action uses"; that was never true, and because both the coordinator's
+// Active flag and provmgr's per-node inflight map are plain in-memory state,
+// nothing stopped a CLI run and a UI run from picking the same exit and driving
+// its upload/verify/restart concurrently — or, on failure, each rolling back the
+// other's work and flapping that node's agent. Fleet-wide exclusion now comes from
+// an flock (internal/controller/rollout/lock.go), which the kernel releases if the
+// holder dies; a second rollout is refused with ErrLockHeld rather than queued.
 //
 // It may run alongside a serving controller: it opens the store like --provision
 // does (sqlite WAL tolerates the concurrent open), and it only ever touches

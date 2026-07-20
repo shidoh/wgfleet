@@ -110,7 +110,10 @@ func (s *fakeStore) GetNode(_ context.Context, id string) (domain.Node, error) {
 }
 
 func testCoordinator(up Upgrader, read NodeReader, clk *fakeClock) *Coordinator {
-	c := New(up, read, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// LockPath "-" disables the cross-process flock: these tests exercise the
+	// coordinator's logic, not fleet-wide exclusion (see lock_test.go for that),
+	// and they must not contend on a real lock file or need /var/lib.
+	c := New(up, read, Config{LockPath: "-"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	c.now = clk.now
 	c.sleep = clk.sleep
 	return c
