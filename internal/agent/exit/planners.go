@@ -211,7 +211,43 @@ type wgPlanner struct {
 
 func (wgPlanner) Component() string { return "wireguard interface" }
 
+// awgTransportDisabled reports whether this exit has EXPLICITLY turned the AWG
+// master↔exit transport off (ADR-0025).
+//
+// The test is deliberately narrow. NodeSpec.Transports() treats an EMPTY
+// EnabledTransports as [TransportAWG] for back-compat, so an old controller, a
+// conversion bug, or any spec that simply fails to populate the field reads as
+// "AWG enabled" — and this returns false, i.e. we never tear anything down on
+// missing information. Only a spec that names its transports AND omits AWG
+// counts as an instruction to remove the interface.
+//
+// That asymmetry is the whole point: bringing an interface down on a bad spec
+// costs an exit's data plane, while leaving a stale one up costs some dropped
+// packets. Fail toward the cheap mistake.
+func awgTransportDisabled(spec domain.NodeSpec) bool {
+	return len(spec.EnabledTransports) > 0 && !spec.HasTransport(domain.TransportAWG)
+}
+
 func (p wgPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
+	// A reality-only exit must not keep an AWG server interface up. Rendering it
+	// unconditionally left pn8 (awg.enabled=false) carrying awg0 with the master's
+	// stale peer and no endpoint, quietly accumulating TX drops — and, because the
+	// peer still held the pre-ADR-0030 shared master key, a live trap for whenever
+	// AWG got re-enabled there. Observed 2026-07-19; the interface was deleted by
+	// hand and the agent had rebuilt it within the day, which is what identified
+	// this planner rather than a leftover as the source.
+	if awgTransportDisabled(spec) {
+		if !p.isUp() {
+			return []reconcile.Action{reconcile.NoChangeAction("wireguard interface",
+				"awg transport disabled; interface already down")}, nil
+		}
+		// Down only — the config file stays. Re-enabling then needs no special path
+		// (the render/up branch below just runs again), and the firewall planner
+		// still derives its interface name from that path.
+		return []reconcile.Action{reconcile.BestEffortExecAction(
+			"awg transport disabled — bring the interface down", "awg-quick", "down", p.path)}, nil
+	}
+
 	// AmneziaWG obfuscation is interface-level (spec.WGServer.AWG); peers are plain.
 	cfg, err := wg.RenderInterface(wg.RenderInput{
 		Spec:       spec.WGServer,

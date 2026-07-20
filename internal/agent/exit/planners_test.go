@@ -755,3 +755,66 @@ func TestXrayPlannerStopsWhenTransportRemoved(t *testing.T) {
 		t.Error("reality removed + xray already down: must not re-issue down")
 	}
 }
+
+// A reality-only exit must not keep an AWG server interface up. Rendering it
+// unconditionally left pn8 carrying awg0 with the master's stale peer, dropping
+// TX packets, and holding the pre-ADR-0030 shared key as a trap for re-enablement.
+func TestWGPlannerBringsInterfaceDownWhenAWGDisabled(t *testing.T) {
+	spec := domain.NodeSpec{
+		Role:              domain.RoleExit,
+		EnabledTransports: []domain.MasterTransport{domain.TransportRealityXHTTP},
+	}
+	pl := wgPlanner{path: filepath.Join(t.TempDir(), "awg0.conf"), up: func(string) bool { return true }}
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 1 || !actions[0].Changes() {
+		t.Fatalf("expected a single down action, got %+v", actions)
+	}
+	if !strings.Contains(actions[0].Summary, "disabled") {
+		t.Errorf("summary must explain why, got %q", actions[0].Summary)
+	}
+}
+
+// Idempotent: an already-down interface must not re-run awg-quick down forever.
+func TestWGPlannerQuietWhenDisabledAndAlreadyDown(t *testing.T) {
+	spec := domain.NodeSpec{
+		Role:              domain.RoleExit,
+		EnabledTransports: []domain.MasterTransport{domain.TransportRealityXHTTP},
+	}
+	pl := wgPlanner{path: filepath.Join(t.TempDir(), "awg0.conf"), up: func(string) bool { return false }}
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actions[0].Changes() {
+		t.Fatalf("an already-down interface must be a no-change, got %+v", actions[0])
+	}
+}
+
+// The safety asymmetry: an EMPTY transport set means AWG (back-compat), so a spec
+// that simply fails to populate the field must never tear down a live interface.
+// Bringing an interface down on bad information costs an exit's data plane;
+// leaving a stale one up costs dropped packets.
+func TestWGPlannerNeverTearsDownOnMissingTransportInfo(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  []domain.MasterTransport
+	}{
+		{"empty means awg (back-compat)", nil},
+		{"awg explicitly enabled", []domain.MasterTransport{domain.TransportAWG}},
+		{"dual transport", []domain.MasterTransport{domain.TransportAWG, domain.TransportRealityXHTTP}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if awgTransportDisabled(domain.NodeSpec{EnabledTransports: tc.set}) {
+				t.Fatal("must not report AWG disabled — teardown would drop a live tunnel")
+			}
+		})
+	}
+	if !awgTransportDisabled(domain.NodeSpec{
+		EnabledTransports: []domain.MasterTransport{domain.TransportRealityXHTTP},
+	}) {
+		t.Fatal("an explicit reality-only set must report AWG disabled")
+	}
+}
