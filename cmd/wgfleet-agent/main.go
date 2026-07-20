@@ -182,6 +182,10 @@ func run() error {
 		client:   conn,
 		log:      slog.With("node", cfg.Agent.NodeID, "role", role),
 	}
+	if role == domain.RoleMaster {
+		// Built ONCE for the process, not per reconcile pass — see agent.tier.
+		a.tier = master.NewTierSelector(a.log)
+	}
 
 	// Agent /metrics (own reconcile/health counters). Defaults to mgmt:9301 so the
 	// endpoint comes up without an explicit flag; --metrics overrides, 'off' disables.
@@ -265,6 +269,12 @@ type agent struct {
 	metrics  *metrics.AgentMetrics // nil when /metrics is disabled
 	client   *client.Client
 	log      *slog.Logger
+	// tier carries the master's exit-tier failover decision for the PROCESS
+	// lifetime. It must not live in the planner list: planners() is called on every
+	// reconcile pass (the engine is rebuilt each time), so a per-pass selector has
+	// its hysteresis reset every 30s — streaks never reach their thresholds, so
+	// failover can never fire and the standby is never warmed. Nil for exits.
+	tier *master.TierSelector
 
 	// lastSpecPrint fingerprints the spec from the previous applied pass. A pass
 	// that changes resources while this is unchanged is config drift (the world
@@ -693,6 +703,7 @@ func (a *agent) masterPaths() master.Paths {
 func (a *agent) planners(privateKey, realityPrivateKey, adminUser, adminPass string) []reconcile.Planner {
 	if a.role == domain.RoleMaster {
 		return master.Planners(master.Input{
+			Tier:          a.tier,
 			Paths:         a.masterPaths(),
 			PrivateKey:    privateKey,
 			AdminUsername: adminUser,

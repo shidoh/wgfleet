@@ -3,7 +3,6 @@ package master
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"strings"
 
@@ -37,6 +36,15 @@ type Input struct {
 	// OverlayMSS clamps TCP MSS on the mgmt overlay (control-plane insurance);
 	// 0 disables. See config.AgentSection.MgmtOverlayMSS and netfw.RenderInput.
 	OverlayMSS int
+	// Tier carries the exit-tier failover decision ACROSS reconcile passes. It must
+	// be owned by the caller and reused, because Planners() is invoked once per pass
+	// (cmd/wgfleet-agent: the engine is rebuilt every 30s). A selector constructed
+	// here would have its hysteresis reset every pass — streaks would never reach
+	// their thresholds, so failover could never fire and the standby would never be
+	// warmed. That is not hypothetical: it is exactly what happened when this was
+	// first built, and it was invisible because every individual pass looked correct.
+	// nil ⇒ a throwaway selector, i.e. no failover: safe for tests, wrong in prod.
+	Tier *TierSelector
 }
 
 const defaultClientInterface = "wg0"
@@ -69,11 +77,7 @@ func Planners(in Input) []reconcile.Planner {
 		// Dashboard before mihomo too: the agent populates the external-ui dir (mihomo
 		// only serves it, never downloads — see dashboardPlanner).
 		dashboardPlanner{uiDir: in.Paths.UIDir},
-		// The tier selector is constructed HERE, once, on purpose: it carries the
-		// failover hysteresis (streak counters + last-flip time) across reconcile
-		// passes. Building it per pass would reset that state every 30s and defeat
-		// the debounce entirely.
-		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey, tier: newTierSelector(slog.Default())},
+		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey, tier: in.Tier},
 		masterNATPlanner{path: in.Paths.NFT, clientIface: in.ClientInterface},
 		dockerfw.NewForwardPlanner(
 			"master forwarding (ip_forward + DOCKER-USER)",

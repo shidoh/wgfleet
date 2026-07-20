@@ -30,10 +30,11 @@ type mihomoPlanner struct {
 	// injected in tests. Used when a wireguard-proxy change can't be hot-reloaded.
 	restart func(ctx context.Context) error
 	// tier decides whether wg-best routes to the reserve tier. Stateful across
-	// reconcile passes (it carries the hysteresis streaks), so the planner must be
-	// long-lived — constructed once by NewPlanners, not per pass. nil ⇒ never fail
-	// over, which is the correct degenerate behaviour for a fleet with no reserve.
-	tier *tierSelector
+	// reconcile passes (hysteresis streaks, warm-up cadence), so it is OWNED BY THE
+	// AGENT and passed in via Input.Tier — Planners() runs once per pass, so a
+	// selector built here would reset every 30s and silently never fail over.
+	// nil ⇒ never fail over (the correct degenerate behaviour with no reserve).
+	tier *TierSelector
 }
 
 func (mihomoPlanner) Component() string { return "mihomo (data plane)" }

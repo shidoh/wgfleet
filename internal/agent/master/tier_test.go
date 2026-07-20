@@ -21,7 +21,7 @@ func fixedProbe(t map[string][2]int) memberProbe {
 
 // testSelector pairs a selector with its probe so tests read like the call site.
 type testSelector struct {
-	*tierSelector
+	*TierSelector
 	probe memberProbe
 }
 
@@ -30,9 +30,9 @@ func (s testSelector) active(primary, reserve []string) bool {
 }
 
 func newTestSelector(p memberProbe) testSelector {
-	s := newTierSelector(nil)
+	s := NewTierSelector(nil)
 	s.now = func() time.Time { return time.Unix(0, 0) }
-	return testSelector{tierSelector: s, probe: p}
+	return testSelector{TierSelector: s, probe: p}
 }
 
 var (
@@ -264,5 +264,42 @@ func TestTierDoesNotWarmWhileReserveIsActive(t *testing.T) {
 	if hits["1cnode004"] != before {
 		t.Fatalf("reserve probed %d more times while ACTIVE; it is warm by definition",
 			hits["1cnode004"]-before)
+	}
+}
+
+// Planners() runs on EVERY reconcile pass (the agent rebuilds the engine each
+// time), so the selector must come from the caller and be reused. When it was
+// constructed inside Planners the hysteresis reset every 30s: streaks never
+// reached their thresholds, so failover could not fire and the standby was never
+// warmed — and every individual pass still looked correct, which is why it went
+// unnoticed until a reserve exit went Degraded on a stale handshake.
+func TestPlannersReusesTheCallersTierSelector(t *testing.T) {
+	tier := NewTierSelector(nil)
+	var found *TierSelector
+	for _, p := range Planners(Input{Paths: PathsUnder(t.TempDir()), Tier: tier}) {
+		if mp, ok := p.(mihomoPlanner); ok {
+			found = mp.tier
+		}
+	}
+	if found == nil {
+		t.Fatal("no mihomoPlanner in the master planner set")
+	}
+	if found != tier {
+		t.Fatal("mihomoPlanner must carry the caller's selector, not a fresh one — " +
+			"a per-pass selector silently disables failover")
+	}
+}
+
+// Two consecutive passes on ONE selector must accumulate, which is the property a
+// per-pass selector destroys.
+func TestTierStreaksSurviveAcrossPasses(t *testing.T) {
+	s := newTestSelector(fixedProbe(map[string][2]int{"vn1": {0, 4}, "vn2": {0, 4}}))
+	s.active(primary, reserve)
+	if s.consecFail != 1 {
+		t.Fatalf("after one failed pass consecFail = %d, want 1", s.consecFail)
+	}
+	s.active(primary, reserve)
+	if !s.reserveActive {
+		t.Fatal("streaks must accumulate across passes and trigger failover")
 	}
 }

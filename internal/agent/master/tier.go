@@ -55,7 +55,7 @@ const (
 // API is unreachable), NOT that the member is down.
 type memberProbe func(ctx context.Context, name string) (ok, total int, err error)
 
-// tierSelector decides whether the master routes to the reserve tier, with
+// TierSelector decides whether the master routes to the reserve tier, with
 // hysteresis so a flapping exit cannot churn the data plane.
 //
 // It exists because mihomo cannot make this decision itself: a `fallback` group
@@ -66,7 +66,7 @@ type memberProbe func(ctx context.Context, name string) (ok, total int, err erro
 // independent destinations, which is what exposes a censored-but-"healthy" exit.
 //
 // Not safe for concurrent use; the reconcile loop is single-threaded per pass.
-type tierSelector struct {
+type TierSelector struct {
 	log *slog.Logger
 
 	failStreak    int
@@ -90,8 +90,8 @@ type tierSelector struct {
 	standbyTotal  int
 }
 
-func newTierSelector(log *slog.Logger) *tierSelector {
-	return &tierSelector{
+func NewTierSelector(log *slog.Logger) *TierSelector {
+	return &TierSelector{
 		log:           log,
 		failStreak:    defaultTierFailStreak,
 		recoverStreak: defaultTierRecoverStreak,
@@ -105,7 +105,7 @@ func newTierSelector(log *slog.Logger) *tierSelector {
 // StandbyHealth reports the last warm-probe result for the inactive tier: how many
 // of its members were usable, out of how many were probed. total == 0 means it has
 // not been sampled yet.
-func (s *tierSelector) StandbyHealth() (usable, total int) {
+func (s *TierSelector) StandbyHealth() (usable, total int) {
 	return s.standbyUsable, s.standbyTotal
 }
 
@@ -113,7 +113,7 @@ func (s *tierSelector) StandbyHealth() (usable, total int) {
 // and its health is known. Its result never feeds the tier decision — that would
 // couple "should we leave the active tier" to the standby's condition, which is a
 // different question — but it is logged and exposed via StandbyHealth.
-func (s *tierSelector) warmStandby(ctx context.Context, probe memberProbe, members []string) {
+func (s *TierSelector) warmStandby(ctx context.Context, probe memberProbe, members []string) {
 	if len(members) == 0 || s.warmEvery <= 0 || s.pass%s.warmEvery != 0 {
 		return
 	}
@@ -139,7 +139,7 @@ func (s *tierSelector) warmStandby(ctx context.Context, probe memberProbe, membe
 // ReserveActive returns the tier decision for this pass: true routes wg-best to
 // the reserve tier. With no reserve configured it always returns false — there is
 // nowhere to fail over to, so probing would burn API calls for no decision.
-func (s *tierSelector) ReserveActive(ctx context.Context, probe memberProbe, primary, reserve []string) bool {
+func (s *TierSelector) ReserveActive(ctx context.Context, probe memberProbe, primary, reserve []string) bool {
 	s.pass++
 	if len(reserve) == 0 || len(primary) == 0 {
 		// Nothing to choose between. Reset the streaks so a later reserve tier starts
@@ -184,7 +184,7 @@ func (s *tierSelector) ReserveActive(ctx context.Context, probe memberProbe, pri
 }
 
 // flip changes tiers unless the minimum hold since the last flip has not elapsed.
-func (s *tierSelector) flip(toReserve bool, why string) {
+func (s *TierSelector) flip(toReserve bool, why string) {
 	if !s.lastFlip.IsZero() && s.now().Sub(s.lastFlip) < s.minHold {
 		if s.log != nil {
 			s.log.Info("tier flip suppressed by min-hold",
@@ -206,7 +206,7 @@ func (s *tierSelector) flip(toReserve bool, why string) {
 // One healthy member is enough: mihomo balances across whatever remains, so a tier
 // is "down" only when every member is. known=false means the probe could not be
 // taken at all and the caller must not act on the result.
-func (s *tierSelector) tierUsable(ctx context.Context, probe memberProbe, members []string) (usable, known bool) {
+func (s *TierSelector) tierUsable(ctx context.Context, probe memberProbe, members []string) (usable, known bool) {
 	anyKnown := false
 	for _, m := range members {
 		ok, total, err := probe(ctx, m)
