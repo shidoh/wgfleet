@@ -54,13 +54,45 @@ func FileAction(target string, content []byte, perm os.FileMode, redact Redactor
 		kind = ActionNoChange
 	}
 
+	// Mode drift is a change even when the bytes match. The mode is only ever
+	// applied on a write, so a file whose content is already current keeps whatever
+	// mode it has — including one left behind by an older binary, a hand-edit, or a
+	// bad umask. That is how /etc/wgfleet/docker-compose.yml sat at 0644 holding the
+	// wg-easy admin password AFTER both the code fix and a manual chmod: the fix
+	// landed, the content never changed again, so nothing re-applied the mode.
+	//
+	// Repairing it here rather than in each caller matters because this is the one
+	// place that knows the DESIRED mode; a reconciler whose job is convergence must
+	// converge permissions too, not only bytes (ADR-0015 drift repair).
+	modeDrift := false
+	if kind == ActionNoChange {
+		if fi, serr := os.Stat(target); serr == nil && fi.Mode().Perm() != perm {
+			modeDrift = true
+			kind = ActionUpdate
+		}
+	}
+
+	summary := fmt.Sprintf("%d bytes, mode %o", len(content), perm)
+	if modeDrift {
+		summary = fmt.Sprintf("content current; repairing mode to %o", perm)
+	}
 	a := Action{
 		Kind:    kind,
 		Target:  target,
-		Summary: fmt.Sprintf("%d bytes, mode %o", len(content), perm),
+		Summary: summary,
 		Display: display,
 	}
-	if kind != ActionNoChange {
+	switch {
+	case modeDrift:
+		// Content already matches, so a chmod is enough — rewriting the bytes would
+		// churn the file's mtime and, for watched files, trigger needless reloads.
+		a.apply = func(context.Context) error {
+			if cerr := os.Chmod(target, perm); cerr != nil {
+				return fmt.Errorf("repair mode on %q: %w", target, cerr)
+			}
+			return nil
+		}
+	case kind != ActionNoChange:
 		// Capture content/perm by value for the closure.
 		data := append([]byte(nil), content...)
 		a.apply = func(context.Context) error { return atomicWrite(target, data, perm) }
