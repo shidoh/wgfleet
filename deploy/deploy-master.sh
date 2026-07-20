@@ -26,6 +26,13 @@
 # Order note: when deploying BOTH, the agent is installed/restarted FIRST, then
 # the controller. A controller restart re-reads the fleet manifest and serves a
 # new spec; the (already-updated) agent then reconciles it correctly.
+#
+# EXCEPT when this build bumps the wire contract, where that order is a trap and
+# the script flips it automatically (see wire_order_flip below).
+#
+# Transfer tuning (both optional, via env):
+#   SCP_LIMIT=8000   # cap the copy at N kbit/s so interactive SSH stays usable
+#   SCP_COMPRESS=0   # disable on-the-wire compression (on by default)
 
 set -euo pipefail
 
@@ -34,6 +41,14 @@ MASTER="${MASTER:-}"
 ARCH="${ARCH:-amd64}"
 WHAT="both"
 PLAN=0
+# Bandwidth cap for the binary copy, in kbit/s. Empty ⇒ unlimited. A ~28 MB
+# binary pushed at line rate fills the uplink queue and makes interactive SSH to
+# the same host unusable for the duration (observed live 2026-07-20: the box was
+# idle at load 0.04 while ssh crawled — bufferbloat on the path, not the server).
+SCP_LIMIT="${SCP_LIMIT:-}"
+# On-the-wire compression. Go binaries compress well (~50%), so this roughly
+# halves both transfer time and queue pressure. Set 0 to disable.
+SCP_COMPRESS="${SCP_COMPRESS:-1}"
 
 log()  { printf '\n\033[1;32m[deploy-master]\033[0m %s\n' "$*"; }
 warn() { printf '\n\033[1;33m[deploy-master]\033[0m %s\n' "$*"; }
@@ -99,8 +114,12 @@ deploy_one() {
     warn "[plan] would: roll back to .prev if $svc does not come up"
     return 0
   fi
-  log "uploading $bin to $MASTER (sha256 ${want:0:12})"
-  scp -q "$dist" "$MASTER:$staged"
+  local scp_opts="-q"
+  [ "$SCP_COMPRESS" = "1" ] && scp_opts="$scp_opts -C"
+  [ -n "$SCP_LIMIT" ] && scp_opts="$scp_opts -l $SCP_LIMIT"
+  log "uploading $bin to $MASTER (sha256 ${want:0:12}${SCP_LIMIT:+, capped ${SCP_LIMIT}kbit/s})"
+  # shellcheck disable=SC2086 # scp_opts is a deliberate word-split option list
+  scp $scp_opts "$dist" "$MASTER:$staged"
   log "verifying, snapshotting and installing /usr/local/bin/$bin, restarting $svc"
   ssh_run "
     set -e
@@ -156,13 +175,61 @@ case "$WHAT" in
   both)       build_one agent-linux "$agent_dist"; build_one controller-linux "$controller_dist" ;;
 esac
 
-# --- deploy (agent first, then controller — see order note) -----------------
+# local_wire — the wire contract this working tree builds, read from source.
+# The built binary is a Linux cross-build we cannot execute here, so parse the
+# constant instead.
+local_wire() {
+  # BRE only — \+ is a GNU extension and this script runs from a macOS shell too.
+  sed -n 's/.*WireContractVersion uint32 = \([0-9][0-9]*\).*/\1/p' internal/api/wire.go | head -1
+}
+
+# remote_wire — the wire contract the master's INSTALLED controller serves.
+# Empty when it cannot be determined (no binary, older build with no such line);
+# callers must treat empty as "unknown" and fall back to the safe order.
+remote_wire() {
+  ssh "$MASTER" '/usr/local/bin/wgfleet-controller --version 2>/dev/null' 2>/dev/null |
+    sed -n 's/.*wire-contract version \([0-9][0-9]*\).*/\1/p' | head -1
+}
+
+# wire_order_flip — is the controller's wire contract moving FORWARD in this
+# deploy? If so, the default agent-first order is a trap and must be reversed.
+#
+# The asymmetry is in api.CheckWire:
+#   agent NEWER than controller → WireAgentTooNew → controller REFUSES the agent
+#                                 a spec entirely; the node stops converging.
+#   agent OLDER than controller → WireCompatible (down to MinSupportedWire) →
+#                                 the agent keeps reconciling, simply ignoring
+#                                 fields it does not know.
+#
+# So on a bump, controller-first is safe to interrupt at ANY point, while
+# agent-first leaves a hard-dead agent if the controller copy fails. That is not
+# hypothetical: it stranded this master for ~10 minutes on 2026-07-20 when a
+# 28 MB controller upload stalled after the agent had already been installed.
+wire_order_flip() {
+  local lw rw
+  lw="$(local_wire)"
+  rw="$(remote_wire)"
+  [ -n "$lw" ] && [ -n "$rw" ] || { warn "wire version undetermined (local='${lw:-?}' remote='${rw:-?}') — using controller-first as the safe default"; return 0; }
+  [ "$lw" -gt "$rw" ]
+}
+
+# --- deploy -----------------------------------------------------------------
 case "$WHAT" in
   agent)      deploy_one "$agent_dist"      wgfleet-agent      wgfleet-agent ;;
   controller) deploy_one "$controller_dist" wgfleet-controller wgfleet-controller ;;
   both)
-    deploy_one "$agent_dist"      wgfleet-agent      wgfleet-agent
-    deploy_one "$controller_dist" wgfleet-controller wgfleet-controller
+    # Decide the order ONCE (the probe is read-only, so it runs in plan mode too
+    # — a plan that showed a different order than the real run would be worse
+    # than no plan at all).
+    if wire_order_flip; then
+      log "wire contract moves forward ($(remote_wire) -> $(local_wire)) — deploying CONTROLLER FIRST (see wire_order_flip)"
+      deploy_one "$controller_dist" wgfleet-controller wgfleet-controller
+      deploy_one "$agent_dist"      wgfleet-agent      wgfleet-agent
+    else
+      log "wire contract unchanged — deploying agent first (default order)"
+      deploy_one "$agent_dist"      wgfleet-agent      wgfleet-agent
+      deploy_one "$controller_dist" wgfleet-controller wgfleet-controller
+    fi
     ;;
 esac
 
