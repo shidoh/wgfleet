@@ -195,6 +195,19 @@ func (m *Manager) UpgradeAgent(ctx context.Context, nodeID string, mode provisio
 	if m.opts.AgentBinPath == "" {
 		return provisioner.Report{}, fmt.Errorf("no agent binary configured (set controller.agent_bin)")
 	}
+	// Take the per-node lock before touching the node. This is the THIRD entry point
+	// that upgrades an agent — alongside the rollout coordinator
+	// (UpgradeAgentVerified) and the wire-version gate (TriggerUpgrade) — and it was
+	// the only one unguarded, so `--upgrade-agent <node>` could drive a second
+	// concurrent SSH upload+restart against a node a rolling upgrade was already
+	// mid-way through. Plan mode executes nothing, so it stays lock-free: blocking a
+	// dry-run behind a running upgrade would be user-hostile for no safety gain.
+	if mode == provisioner.ModeApply {
+		if err := m.acquire(nodeID); err != nil {
+			return provisioner.Report{}, err
+		}
+		defer m.clearInflight(nodeID)
+	}
 	bin, err := os.ReadFile(m.opts.AgentBinPath)
 	if err != nil {
 		return provisioner.Report{}, fmt.Errorf("read agent binary: %w", err)

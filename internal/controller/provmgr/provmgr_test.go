@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -298,4 +299,37 @@ func waitState(t *testing.T, st store.Store, id string, want domain.NodeState) {
 	}
 	n, _ := st.GetNode(context.Background(), id)
 	t.Fatalf("node %q state = %q, want %q", id, n.State, want)
+}
+
+// --upgrade-agent is the third path that upgrades an agent, alongside the rollout
+// coordinator and the wire-version gate. It was the only one that took no per-node
+// lock, so it could drive a second concurrent SSH upload+restart against a node a
+// rolling upgrade was already mid-way through.
+func TestUpgradeAgentTakesThePerNodeLock(t *testing.T) {
+	m, _ := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) { return readyMock(), nil })
+	if err := m.acquire("exit-1"); err != nil {
+		t.Fatal(err)
+	}
+	defer m.clearInflight("exit-1")
+
+	_, err := m.UpgradeAgent(context.Background(), "exit-1", provisioner.ModeApply)
+	if err == nil {
+		t.Fatal("an upgrade must be refused while that node is already in flight")
+	}
+}
+
+// A dry run executes nothing, so it must not be blocked behind a running upgrade.
+func TestUpgradeAgentPlanIsNotBlockedByInflight(t *testing.T) {
+	m, _ := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) { return readyMock(), nil })
+	if err := m.acquire("exit-1"); err != nil {
+		t.Fatal(err)
+	}
+	defer m.clearInflight("exit-1")
+
+	// It may still fail for unrelated reasons (no ssh target / no binary in the test
+	// fixture); what matters is that it is not refused BY THE LOCK.
+	_, err := m.UpgradeAgent(context.Background(), "exit-1", provisioner.ModePlan)
+	if err != nil && strings.Contains(err.Error(), "in flight") {
+		t.Fatalf("plan mode must not contend on the per-node lock: %v", err)
+	}
 }
