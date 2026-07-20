@@ -206,9 +206,19 @@ func (s *TierSelector) flip(toReserve bool, why string) {
 // One healthy member is enough: mihomo balances across whatever remains, so a tier
 // is "down" only when every member is. known=false means the probe could not be
 // taken at all and the caller must not act on the result.
+//
+// The walk STARTS AT A ROTATING OFFSET. Stopping at the first usable member is what
+// keeps the probe cheap on a healthy tier, but starting at index 0 every time meant
+// members[0] absorbed the entire probe load forever while the rest were never
+// sampled. Measured live 2026-07-19/20: vn1 took ~5 samples per 30s cycle against
+// vn2's 1, and vn1's latency spread was 27ms (90-117) versus vn2's 1ms (96-97) — in
+// the same datacentre off the same floor. The "vn1/vn2 latency spike" chased all
+// evening as a network fault was substantially self-inflicted probe contention.
+// Rotating spreads the load without giving up the early exit.
 func (s *TierSelector) tierUsable(ctx context.Context, probe memberProbe, members []string) (usable, known bool) {
 	anyKnown := false
-	for _, m := range members {
+	for i := range members {
+		m := members[(s.pass+i)%len(members)]
 		ok, total, err := probe(ctx, m)
 		if err != nil {
 			continue // this sample is blind; try the other members

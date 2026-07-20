@@ -303,3 +303,35 @@ func TestTierStreaksSurviveAcrossPasses(t *testing.T) {
 		t.Fatal("streaks must accumulate across passes and trigger failover")
 	}
 }
+
+// The early exit keeps a healthy tier cheap, but a fixed start index made
+// members[0] absorb every probe forever: measured live, vn1 took ~5 samples per
+// cycle to vn2's 1, and only vn1 showed latency spread. Probing must rotate.
+func TestTierProbeLoadRotatesAcrossMembers(t *testing.T) {
+	hits := map[string]int{}
+	table := map[string][2]int{"vn1": {4, 4}, "vn2": {4, 4}, "1cnode004": {4, 4}}
+	s := newTestSelector(countingProbe(table, hits))
+	for range 10 {
+		s.active(primary, reserve)
+	}
+	if hits["vn1"] == 0 || hits["vn2"] == 0 {
+		t.Fatalf("both primary members must be sampled, got vn1=%d vn2=%d", hits["vn1"], hits["vn2"])
+	}
+	// Neither may carry more than ~2x the other's share.
+	hi, lo := max(hits["vn1"], hits["vn2"]), min(hits["vn1"], hits["vn2"])
+	if hi > lo*2 {
+		t.Fatalf("probe load is lopsided: vn1=%d vn2=%d", hits["vn1"], hits["vn2"])
+	}
+}
+
+// Rotation must not cost the early exit — a healthy tier still stops at one member.
+func TestTierHealthyTierStillProbesOnlyOneMember(t *testing.T) {
+	hits := map[string]int{}
+	table := map[string][2]int{"vn1": {4, 4}, "vn2": {4, 4}, "1cnode004": {4, 4}}
+	s := newTestSelector(countingProbe(table, hits))
+	s.warmEvery = 0 // isolate the decision probe from the warm probe
+	s.active(primary, reserve)
+	if got := hits["vn1"] + hits["vn2"]; got != 1 {
+		t.Fatalf("healthy tier probed %d members, want 1 (early exit)", got)
+	}
+}
