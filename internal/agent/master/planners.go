@@ -141,9 +141,11 @@ func (p composePlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]recon
 		return nil, err
 	}
 	// Redact INIT_PASSWORD so the dry-run plan / Web UI preview never print the
-	// wg-easy admin password (it is written verbatim to the on-disk compose file,
-	// which is root-only).
-	file, err := reconcile.FileAction(p.path, []byte(yamlText), 0o644, compose.RedactComposeEnv)
+	// wg-easy admin password. Redaction is display-only — the password IS written
+	// verbatim to this file — so the mode is what actually protects it. It shipped
+	// 0644 while the comment claimed "root-only"; that claim is now enforced by
+	// FileAction, which refuses a group/world-readable mode for redacted content.
+	file, err := reconcile.FileAction(p.path, []byte(yamlText), 0o600, compose.RedactComposeEnv)
 	if err != nil {
 		return nil, err
 	}

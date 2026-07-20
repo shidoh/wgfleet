@@ -77,7 +77,7 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 	// whether the wireguard proxies (AmneziaWG params) changed and a hot reload would
 	// silently no-op (see applyConfigAction / mihomo.ProxiesChanged).
 	oldCfg, _ := os.ReadFile(p.paths.MihomoConfig)
-	configAction, err := reconcile.FileAction(p.paths.MihomoConfig, []byte(cfg), 0o644, mihomo.RedactConfig)
+	configAction, err := reconcile.FileAction(p.paths.MihomoConfig, []byte(cfg), 0o600, mihomo.RedactConfig)
 	if err != nil {
 		return nil, err
 	}

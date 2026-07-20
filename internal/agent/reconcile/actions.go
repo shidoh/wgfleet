@@ -22,6 +22,22 @@ type Redactor func(string) string
 // an apply closure that writes content atomically with perm. Display is the
 // redacted content, safe to print in dry-run.
 func FileAction(target string, content []byte, perm os.FileMode, redact Redactor) (Action, error) {
+	// A redactor is the caller's own declaration that this content carries secrets.
+	// Redaction only ever applies to the plan/dry-run Display string — the bytes
+	// written to disk are the real thing — so the ONLY at-rest control is the mode.
+	// Refuse to write secret-bearing content group/world-readable.
+	//
+	// This existed as a convention the exit side followed (0600 alongside
+	// wg.RedactConfig / xray.RedactConfig) and the master side quietly broke: the
+	// rendered mihomo config went out 0644 while holding one WireGuard private key
+	// per exit, and the master compose file 0644 while holding the wg-easy admin
+	// password. Found in review 2026-07-20. A convention that is only documented
+	// gets violated; make it an invariant the code enforces.
+	if redact != nil && perm&0o077 != 0 {
+		return Action{}, fmt.Errorf("refusing to write %q with mode %#o: content is "+
+			"secret-bearing (a redactor was supplied) and must not be group/world-readable", target, perm)
+	}
+
 	display := string(content)
 	if redact != nil {
 		display = redact(display)
