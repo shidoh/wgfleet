@@ -3,6 +3,7 @@ package backup
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -71,5 +72,54 @@ func TestGatherItemsMissingRequiredFails(t *testing.T) {
 	src := Sources{ControllerYAML: "/nonexistent/controller.yaml"}
 	if _, _, err := GatherItems(src, "/nonexistent/snap.db", os.Stat); err == nil {
 		t.Fatal("expected error for missing required controller item")
+	}
+}
+
+// The master's wg.key is the ROOT of every master↔exit tunnel identity: since
+// ADR-0030 each per-tunnel key is derived from it, so losing it invalidates every
+// tunnel at once rather than possibly none. It must be in the master layer.
+func TestGatherItemsCapturesMasterWGKey(t *testing.T) {
+	dir := t.TempDir()
+	wgKey := filepath.Join(dir, "wg.key")
+	if err := os.WriteFile(wgKey, []byte("QK9uYm90aGluZ3Rvc2VlaGVyZW5vdGhpbmdhdGFsbA=\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db := filepath.Join(dir, "snap.db")
+	ca := filepath.Join(dir, "ca.crt")
+	cfg := filepath.Join(dir, "controller.yaml")
+	for _, p := range []string{db, ca, cfg} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	items, layers, err := GatherItems(
+		Sources{ControllerYAML: cfg, StateDB: db, CACert: ca, WGKey: wgKey},
+		db, os.Stat)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var found *Item
+	for i := range items {
+		if items[i].Name == "master/wg.key" {
+			found = &items[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("master/wg.key missing from the backup — a restore would mint a new " +
+			"master identity and break every exit tunnel until the fleet reconverges")
+	}
+	if found.Layer != LayerMaster {
+		t.Errorf("wg.key layer = %v, want the master layer", found.Layer)
+	}
+	if found.Dest != "/etc/wgfleet/wg.key" {
+		t.Errorf("wg.key restore dest = %q", found.Dest)
+	}
+	if found.Mode.Perm() != 0o600 {
+		t.Errorf("wg.key mode = %o, want 0600 — it is a private key", found.Mode.Perm())
+	}
+	if !slices.Contains(layers, LayerMaster) {
+		t.Error("master layer must be reported when wg.key is present")
 	}
 }

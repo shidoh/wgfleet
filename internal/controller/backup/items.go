@@ -16,6 +16,7 @@ const (
 	destNodeCert    = "/etc/wgfleet/node.crt"
 	destNodeKey     = "/etc/wgfleet/node.key"
 	destAgentYAML   = "/etc/wgfleet/agent.yaml"
+	destWGKey       = "/etc/wgfleet/wg.key"
 )
 
 // Sources are the on-disk locations the export reads from.
@@ -30,6 +31,19 @@ type Sources struct {
 	NodeCert       string
 	NodeKey        string
 	AgentYAML      string
+	// WGKey is the master's WireGuard private key. It is the ROOT of every
+	// master↔exit tunnel identity: since ADR-0030 each per-tunnel key is derived
+	// from it (HKDF over the exit name), so losing it changes not one identity but
+	// all of them at once.
+	//
+	// It was originally left out on the "only capture what cannot be regenerated"
+	// rule, and strictly that holds — a restored master mints a fresh key,
+	// republishes, and the exits re-peer from the controller-rendered spec. But the
+	// cost of exercising that path is a fleet-wide tunnel outage lasting until every
+	// exit has reconciled, and with derived keys it is guaranteed to hit every exit
+	// rather than possibly none. Capturing 45 bytes turns that reconvergence into a
+	// no-op.
+	WGKey string
 }
 
 // DefaultSources fills Sources from config plus the fixed master paths.
@@ -53,6 +67,7 @@ func DefaultSources(cfg *config.ControllerConfig, configPath string) Sources {
 		SOPSFile:       sops,
 		WGEasyDB:       mp.WGEasyDB,
 		WGEasyAdmin:    mp.WGEasyAdmin,
+		WGKey:          destWGKey,
 		NodeCert:       destNodeCert,
 		NodeKey:        destNodeKey,
 		AgentYAML:      destAgentYAML,
@@ -101,6 +116,7 @@ func GatherItems(src Sources, dbSnapshot string, exists func(string) (os.FileInf
 	masterItems := []struct{ path, name, dest string }{
 		{src.WGEasyDB, "master/wg-easy.db", src.WGEasyDB},
 		{src.WGEasyAdmin, "master/wg-easy-admin-password", destWGEasyAdmin},
+		{src.WGKey, "master/wg.key", destWGKey},
 		{src.NodeCert, "master/node.crt", destNodeCert},
 		{src.NodeKey, "master/node.key", destNodeKey},
 		{src.AgentYAML, "master/agent.yaml", destAgentYAML},
