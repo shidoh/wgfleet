@@ -69,6 +69,12 @@ const (
 	remoteFail2ban     = "/etc/fail2ban/jail.d/wgfleet.conf"
 )
 
+// awgHeldPackages are the AmneziaWG apt packages held back from unattended
+// upgrades. The data plane depends on the tools and the kernel module agreeing
+// with each other and with the params we generate; an upgrade of either is an
+// operator decision, made with the fleet watched. See the hold step in BuildPlan.
+var awgHeldPackages = []string{"amneziawg", "amneziawg-dkms", "amneziawg-tools"}
+
 // BuildPlan renders the ordered bootstrap steps for a node. The order is
 // deliberate: harden and firewall BEFORE the node accepts traffic, install
 // dependencies, join the mgmt overlay, then install the agent identity and unit,
@@ -108,6 +114,19 @@ func BuildPlan(in BootstrapInput) Plan {
 		steps = append(steps, checkStep("dependencies already present", "(no packages to install)",
 			func(context.Context, Runner) error { return nil }))
 	}
+
+	// Phase 1c-1: pin the AmneziaWG packages. An unattended `apt-get upgrade` of
+	// these has already taken the fleet down once: amneziawg-tools v1.0.20260618
+	// parsed H1/H2 with `== NULL`, so the params never reached the kernel and every
+	// master<->exit handshake died silently (fixed in v1.0.20260618-2). The kernel
+	// module is equally load-bearing — a DKMS rebuild against a new kernel is a
+	// deliberate act, not something an unattended upgrade should trigger.
+	//
+	// Applied unconditionally, not only when we just installed something: nodes
+	// provisioned before this step exist and are unpinned (pn80 was, 2026-07-20).
+	// `apt-mark hold` is idempotent and succeeds on an already-held package.
+	steps = append(steps, runStep("hold AmneziaWG packages (no unattended upgrades)",
+		"apt-mark hold "+join(awgHeldPackages)))
 
 	// Phase 1c-2: Docker engine. Every role runs containers — exits run blocky,
 	// the master runs mihomo + wg-easy — so the compose reconcilers need it.

@@ -127,6 +127,38 @@ func TestBootstrapInstallsWgcfAndDocker(t *testing.T) {
 	}
 }
 
+func TestBootstrapHoldsAmneziaWGPackages(t *testing.T) {
+	// An unattended upgrade of amneziawg-tools has already taken the fleet down
+	// once (v1.0.20260618 dropped H1/H2 on the floor). The hold must be emitted
+	// on every role, and — critically — even when there is nothing to install,
+	// since already-provisioned nodes are the ones found unpinned.
+	for _, role := range []domain.Role{domain.RoleExit, domain.RoleMaster} {
+		for _, complete := range []bool{false, true} {
+			in := testInput()
+			in.Node.Role = role
+			in.Facts = Facts{OS: "Linux", Arch: "x86_64", HasAWGKmod: true}
+			if complete {
+				// Nothing missing: the apt install step is skipped entirely.
+				in.Facts = Facts{
+					OS: "Linux", Arch: "x86_64", HasAWGKmod: true,
+					HasAWGTools: true, HasWGTools: true, HasNft: true,
+					HasConntrack: true, HasTracepath: true, HasFail2ban: true,
+					HasAge: true, HasDocker: true, HasWgcf: true,
+				}
+			}
+			got := planText(BuildPlan(in))
+			for _, pkg := range awgHeldPackages {
+				if !strings.Contains(got, pkg) {
+					t.Errorf("role=%s complete=%v: hold missing %q:\n%s", role, complete, pkg, got)
+				}
+			}
+			if !strings.Contains(got, "apt-mark hold") {
+				t.Errorf("role=%s complete=%v: no apt-mark hold step:\n%s", role, complete, got)
+			}
+		}
+	}
+}
+
 func TestProvisionPlanModeChangesNothing(t *testing.T) {
 	r := readyRunner()
 	p := quietProvisioner()

@@ -28,7 +28,18 @@ const (
 // Exported so the controller can resolve operator image/tag overrides against
 // the same canonical defaults the renderer falls back to.
 const (
-	DefaultWGEasyImage = "ghcr.io/wg-easy/wg-easy:15"
+	// Pinned by DIGEST, not by the `:15` major tag. `:15` is a MOVING tag — the same
+	// trap the mihomo `Alpha` override fell into below — and here it is materially
+	// worse: wg-easy ships schema migrations that run automatically on container
+	// start (7 as of v15.3.0, five of them after v15.0.0, two in June 2026), and we
+	// write that SQLite schema DIRECTLY for the AWG params, because wg-easy exposes
+	// no env or API for them (ADR-0008). A moving tag therefore lets an unattended
+	// `docker pull` migrate the schema out from under our writes.
+	//
+	// Digest resolved 2026-07-20 from the image the fleet was actually running
+	// (v15.3.0, built 2026-05-18). Bumping this is an operator decision: re-check
+	// internal/wgeasy/awg.go ColumnsFromSpec against the new schema first.
+	DefaultWGEasyImage = "ghcr.io/wg-easy/wg-easy:15@sha256:93bbd593e07bab98d02807a28770ac87ab6c48818e319e68c1f66561feb99876"
 	// Pinned, NOT :latest and NOT :Alpha (docs/DESIGN.md #8) — reproducible/auditable
 	// deploys. (The AWG-param safety that keeps mihomo's amneziawg-go from panicking is
 	// handled in the derivation: Jmin is floored ≥ S4, so no junk packet underflows its
