@@ -70,27 +70,81 @@ build_one() {
   [ -f "$2" ] || die "build did not produce $2"
 }
 
+# local_sha256 <file> — portable digest (macOS shasum / Linux sha256sum).
+local_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+# ssh_run <remote-script> — run over SSH, allocating a tty only when we HAVE one.
+#
+# This used to always pass -t. Without a controlling terminal (a CI job, a
+# background invocation, a tool driving the script) sshd's tty request hangs
+# instead of failing, and the deploy stalls mid-way with the binary already staged
+# — observed live 2026-07-19, where killing the stuck run truncated the in-flight
+# copy and left a half-written binary on the master.
+ssh_run() {
+  if [ -t 1 ]; then ssh -t "$MASTER" "$1"; else ssh "$MASTER" "$1"; fi
+}
+
 # deploy_one <dist-artifact> <bin-name> <service>
 deploy_one() {
   local dist="$1" bin="$2" svc="$3"
   local staged="/tmp/${bin}.deploy.$$"
+  local want; want="$(local_sha256 "$dist")"
   if [ "$PLAN" -eq 1 ]; then
-    warn "[plan] would scp $dist -> $MASTER:$staged"
-    warn "[plan] would: sudo mv -f $staged /usr/local/bin/$bin && sudo systemctl restart $svc"
+    warn "[plan] would scp $dist -> $MASTER:$staged (sha256 ${want:0:12})"
+    warn "[plan] would: verify sha256, snapshot /usr/local/bin/$bin -> .prev, install, restart $svc"
+    warn "[plan] would: roll back to .prev if $svc does not come up"
     return 0
   fi
-  log "uploading $bin to $MASTER"
+  log "uploading $bin to $MASTER (sha256 ${want:0:12})"
   scp -q "$dist" "$MASTER:$staged"
-  log "installing /usr/local/bin/$bin and restarting $svc (sudo on master)"
-  # -t for a tty so sudo can prompt if NOPASSWD is not configured.
-  ssh -t "$MASTER" "
+  log "verifying, snapshotting and installing /usr/local/bin/$bin, restarting $svc"
+  ssh_run "
     set -e
+
+    # VERIFY BEFORE INSTALLING. An interrupted transfer leaves a truncated binary
+    # that is indistinguishable from success at the command level: scp exits 0, the
+    # file exists, and the service then dies with SIGSEGV on a partial ELF. That is
+    # not hypothetical — it crash-looped this master 42 times on 2026-07-19.
+    got=\$(sha256sum '$staged' | cut -d' ' -f1)
+    if [ \"\$got\" != '$want' ]; then
+      rm -f '$staged'
+      echo \"sha256 mismatch for $bin: got \$got want $want — refusing to install\" >&2
+      exit 1
+    fi
+
+    # Snapshot for rollback. The exits get this from the rolling updater; the
+    # master is deployed by this script instead, and without a snapshot its only
+    # recovery path is a rebuild from source.
+    if [ -f '/usr/local/bin/${bin}' ]; then
+      sudo cp -f '/usr/local/bin/${bin}' '/usr/local/bin/${bin}.prev'
+    fi
+
     sudo install -o root -g root -m 0755 '$staged' '/usr/local/bin/${bin}.new'
     sudo mv -f '/usr/local/bin/${bin}.new' '/usr/local/bin/${bin}'
     rm -f '$staged'
     sudo systemctl restart '$svc'
-    sleep 1
-    systemctl is-active '$svc' >/dev/null && echo \"  $svc: \$(systemctl is-active $svc)\"
+    sleep 3
+
+    # Roll back on a service that will not come up. Restarting straight into a bad
+    # binary is how a routine deploy becomes an outage on the one node that also
+    # runs the controller.
+    if ! systemctl is-active --quiet '$svc'; then
+      if [ -f '/usr/local/bin/${bin}.prev' ]; then
+        echo \"  $svc failed to start — rolling back to .prev\" >&2
+        sudo cp -f '/usr/local/bin/${bin}.prev' '/usr/local/bin/${bin}'
+        sudo systemctl restart '$svc'
+        sleep 2
+        echo \"  after rollback: \$(systemctl is-active $svc)\" >&2
+      else
+        echo \"  $svc failed to start and there is no .prev to roll back to\" >&2
+      fi
+      exit 1
+    fi
+    echo \"  $svc: \$(systemctl is-active $svc)\"
     /usr/local/bin/${bin} --version
   "
 }
