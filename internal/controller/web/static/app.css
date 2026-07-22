@@ -648,6 +648,31 @@ a:focus-visible,
 .backup-section[open] .backup-summary::before { content: "▾"; }
 
 .backup-section[open] .backup-card { margin-top: 14px; }
+
+/* section-link: a navigation entry point styled like the backup-summary pill
+   (bordered, uppercase-spaced, blue ▸ marker), for links to a sub-page. */
+.section-nav { margin-top: 30px; }
+.section-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  width: max-content;
+  font-size: var(--fs-meta);
+  letter-spacing: 2px;
+  color: var(--text-bright);
+  background: var(--panel-2);
+  border: 1px solid var(--border-badge);
+  border-radius: var(--r-btn);
+  padding: 9px 15px;
+  text-decoration: none;
+  transition: border-color .12s, color .12s;
+}
+.section-link::before {
+  content: "▸";
+  color: var(--blue);
+  font-size: var(--fs-tablehead);
+}
+.section-link:hover { border-color: var(--blue); color: var(--blue); }
 .backup-card {
   background: var(--panel);
   border: 1px solid var(--border);

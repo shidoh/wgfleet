@@ -92,7 +92,9 @@
   </div>
   {{template "inventory-panel" .}}
 </div>
-<p class="node-actions"><a class="btn" href="/nodes/{{.Node.ID}}/clients">Manage VLESS clients →</a></p>
+<div class="section-nav">
+  <a class="section-link" href="/nodes/{{.Node.ID}}/clients">VLESS CLIENTS</a>
+</div>
 {{else if .Transports}}
 <div class="panels cols-3">
   <div class="panel" hx-get="/nodes/{{.Node.ID}}/status" hx-trigger="every 5s [document.visibilityState=='visible']" hx-swap="innerHTML">
