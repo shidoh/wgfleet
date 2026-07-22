@@ -54,6 +54,12 @@ type SpecRenderer interface {
 	// ExitTransportInfo returns an exit's resolved active transport + enabled set
 	// for the fleet list (cheap — no spec render). ok=false for non-exits.
 	ExitTransportInfo(node domain.Node) (active domain.MasterTransport, enabled []domain.MasterTransport, ok bool)
+	// IssueVLESSClient mints and persists a client-facing VLESS credential for a
+	// master (client VLESS transport); ListVLESSClients / RevokeVLESSClient manage
+	// the issued set. Credentials are non-secret (the REALITY key stays on-node).
+	IssueVLESSClient(ctx context.Context, masterID, name string) (domain.VLESSClient, error)
+	ListVLESSClients(ctx context.Context, masterID string) ([]domain.VLESSClient, error)
+	RevokeVLESSClient(ctx context.Context, masterID, name string) error
 }
 
 // Provisioner triggers asynchronous node provisioning. *provmgr.Manager satisfies
@@ -78,6 +84,7 @@ type Handler struct {
 	nodeTmpl    *template.Template // layout + node detail
 	authTmpl    *template.Template // auth-layout (login / setup screens)
 	profileTmpl *template.Template // layout + admin profile / change-password
+	clientsTmpl *template.Template // layout + client-VLESS credential management (master)
 	mux         *http.ServeMux
 	csrf        string       // per-process CSRF token, embedded in forms and double-submit cookie
 	log         *slog.Logger // structured logger; surfaces render failures the page swallows
@@ -120,11 +127,15 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	if err != nil {
 		return nil, fmt.Errorf("web: parse profile templates: %w", err)
 	}
+	clientsTmpl, err := parsePage("templates/layout.html", "templates/clients.html")
+	if err != nil {
+		return nil, fmt.Errorf("web: parse clients templates: %w", err)
+	}
 	token, err := newCSRFToken()
 	if err != nil {
 		return nil, fmt.Errorf("web: generate csrf token: %w", err)
 	}
-	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute)}
+	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, clientsTmpl: clientsTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute)}
 
 	staticHandler := http.FileServer(http.FS(staticFS))
 	h.mux.Handle("GET /static/", staticHandler)
@@ -147,6 +158,10 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	h.mux.HandleFunc("POST /nodes/{id}/decommission", h.handleDecommission)
 	h.mux.HandleFunc("POST /nodes/{id}/recommission", h.handleRecommission)
 	h.mux.HandleFunc("POST /nodes/{id}/transport/{transport}", h.handleTransport)
+	// Client-facing VLESS credential management (master only).
+	h.mux.HandleFunc("GET /nodes/{id}/clients", h.handleClients)
+	h.mux.HandleFunc("POST /nodes/{id}/clients/issue", h.handleClientIssue)
+	h.mux.HandleFunc("POST /nodes/{id}/clients/{name}/revoke", h.handleClientRevoke)
 	h.mux.HandleFunc("POST /nodes/{id}/delete", h.handleDelete)
 	h.mux.HandleFunc("POST /backup", h.handleBackupExport)
 	h.mux.HandleFunc("POST /rollout/start", h.handleRolloutStart)

@@ -310,6 +310,11 @@ func (s NodeSpec) Validate() error {
 	if s.HasTransport(TransportRealityXHTTP) && s.Reality == nil {
 		errs = append(errs, errors.New("reality-xhttp transport enabled but Reality server spec is missing"))
 	}
+	if s.Master != nil && s.Master.ClientVLESS != nil {
+		if err := s.Master.ClientVLESS.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("client vless: %w", err))
+		}
+	}
 	if s.WGServer.ListenPort <= 0 || s.WGServer.ListenPort > 65535 {
 		errs = append(errs, fmt.Errorf("WG listen port %d out of range", s.WGServer.ListenPort))
 	}

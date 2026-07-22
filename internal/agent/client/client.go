@@ -112,6 +112,13 @@ func (c *Client) PublishRealityKey(ctx context.Context, publicKey string) error 
 	return c.publishKey(ctx, publicKey, api.KeyTypeReality)
 }
 
+// PublishClientVlessKey registers this master's CLIENT-FACING REALITY x25519
+// public key (the client VLESS inbound), stored separately from the WireGuard and
+// exit-reality keys.
+func (c *Client) PublishClientVlessKey(ctx context.Context, publicKey string) error {
+	return c.publishKey(ctx, publicKey, api.KeyTypeClientVless)
+}
+
 // PublishTunnelKey registers the master's per-tunnel WireGuard public key for one
 // master↔exit tunnel (ADR-0030). tunnel is the exit's node name.
 func (c *Client) PublishTunnelKey(ctx context.Context, tunnel, publicKey string) error {

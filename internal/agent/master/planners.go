@@ -23,6 +23,11 @@ import (
 type Input struct {
 	Paths      Paths
 	PrivateKey string
+	// RealityPrivateKey is the master's CLIENT-FACING REALITY x25519 private key
+	// (agent-local, persisted on the master, never on the wire). Empty ⇒ the
+	// client-vless planner no-ops until the key is available (same gate as the exit
+	// reality inbound). Only used when spec.Master.ClientVLESS is set.
+	RealityPrivateKey string
 	// ClientInterface is the client WG interface the NAT/forward rules reference.
 	// Default is applied when empty. (The master masquerades on every egress except
 	// this interface, so a separate egress iface no longer needs detecting.)
@@ -87,6 +92,15 @@ func Planners(in Input) []reconcile.Planner {
 		// (the client gateway it binds) exists. Renders config + its own compose,
 		// restarts blocky on change (no hot-reload for upstreams), self-heals when down.
 		dnsPlanner{configPath: in.Paths.DNS, composePath: in.Paths.DNSCompose},
+		// Client-facing VLESS+REALITY+XHTTP inbound (xray). Runs after mihomo is up:
+		// its outbound forwards decrypted client traffic to mihomo's loopback SOCKS
+		// listener. Renders config (holding the master's REALITY private key) + its own
+		// compose, restarts on change, self-heals when down, tears down when disabled.
+		clientVlessPlanner{
+			configPath:  in.Paths.ClientVLESS,
+			composePath: in.Paths.ClientVLESSYML,
+			privateKey:  in.RealityPrivateKey,
+		},
 		// Last: ensure mihomo's redirect listener is actually bound. It runs after the
 		// stack is up and wg0 exists, and self-heals the case where mihomo silently
 		// lost its redir bind (the client iface was recreated under it, e.g. a wg-easy

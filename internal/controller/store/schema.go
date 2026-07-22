@@ -70,4 +70,21 @@ var migrations = []string{
 		updated_at TEXT NOT NULL,
 		PRIMARY KEY (node_id, tunnel)
 	)`,
+	// v9: the master's CLIENT-FACING REALITY x25519 public key (the client VLESS
+	// inbound), published separately from the exit reality_public_key; a co-located
+	// controller+master node carries both. Used to build clients' vless:// links.
+	`ALTER TABLE nodes ADD COLUMN client_vless_public_key TEXT NOT NULL DEFAULT ''`,
+	// v10: per-client VLESS credentials issued through the Web UI (UUID + REALITY
+	// short-id + label). A separate table because the row count is per (master,
+	// client), not per node; rows cascade with the owning master. Not secret — the
+	// REALITY private key stays on the master — so the controller enumerates these
+	// to render the inbound's clients list and to build/revoke vless:// links.
+	`CREATE TABLE IF NOT EXISTS client_vless_credentials (
+		master_id  TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+		name       TEXT NOT NULL,
+		uuid       TEXT NOT NULL,
+		short_id   TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL,
+		PRIMARY KEY (master_id, name)
+	)`,
 }

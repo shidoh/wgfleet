@@ -70,6 +70,24 @@ type Store interface {
 	// if the node is absent.
 	SetNodeActiveTransport(ctx context.Context, id string, transport domain.MasterTransport) error
 
+	// SetNodeClientVlessKey registers the master's CLIENT-FACING REALITY x25519
+	// public key, stored separately from the WireGuard and exit-reality keys.
+	// Returns ErrNotFound if the node is absent.
+	SetNodeClientVlessKey(ctx context.Context, id, publicKey string) error
+
+	// ListVLESSClients returns a master's issued VLESS client credentials, ordered
+	// by name. An unknown master yields an empty slice, not ErrNotFound.
+	ListVLESSClients(ctx context.Context, masterID string) ([]domain.VLESSClient, error)
+
+	// AddVLESSClient issues one VLESS client credential for a master (idempotent on
+	// (master, name): re-issuing the same name replaces its UUID/short-id). Returns
+	// ErrNotFound if the master is absent.
+	AddVLESSClient(ctx context.Context, masterID string, c domain.VLESSClient) error
+
+	// RevokeVLESSClient removes a master's VLESS client credential by name. Returns
+	// ErrNotFound if the (master, name) pair is absent.
+	RevokeVLESSClient(ctx context.Context, masterID, name string) error
+
 	// RecordStatus stores the latest status report for a node, overwriting any
 	// previous report, and stamps the node's LastSeen.
 	RecordStatus(ctx context.Context, s domain.NodeStatus) error

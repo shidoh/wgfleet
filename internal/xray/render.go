@@ -1,9 +1,15 @@
-// Package xray renders the exit-side VLESS+REALITY+XHTTP inbound config for
-// xray-core (ADR-0025). It is the REALITY counterpart of internal/dnsfilter
-// (blocky) and internal/mihomo: a pure render of domain.RealityServerSpec into a
-// config the agent writes and runs via docker compose. The REALITY x25519 private
-// key is generated locally on the exit and injected here at render time; it never
-// crosses the wire (keybroker principle #2).
+// Package xray renders VLESS+REALITY+XHTTP inbound configs for xray-core. It
+// serves two inbounds that share the REALITY machinery:
+//
+//   - the exit-side master↔exit transport (ADR-0025), a single fleet-internal
+//     user, egressing via a freedom outbound (→ WARP); see RenderConfig.
+//   - the master-side client-facing inbound (docs/research/2026-07-client-transport-dpi.md),
+//     MANY end users, forwarding decrypted traffic to mihomo over a loopback SOCKS
+//     outbound so VLESS clients share the AWG clients' routing; see RenderClientConfig.
+//
+// Both are pure renders of a domain spec into a config the agent writes and runs
+// via docker compose. The REALITY x25519 private key is generated locally on the
+// node and injected at render time; it never crosses the wire (keybroker principle #2).
 package xray
 
 import (
@@ -27,12 +33,20 @@ const DefaultXHTTPMode = "packet-up"
 // routing planner). 0 ⇒ no sockopt.mark emitted (direct egress).
 const EgressMark = 0x33 // 51
 
-// RenderInput is everything needed to render the inbound: the desired server spec
-// plus the locally-generated REALITY private key and the egress fwmark.
+// RenderInput is everything needed to render the exit inbound: the desired server
+// spec plus the locally-generated REALITY private key and the egress fwmark.
 type RenderInput struct {
 	Spec       domain.RealityServerSpec
 	PrivateKey string // REALITY x25519 private key (exit-local; redacted in plans)
 	EgressMark int    // SO_MARK for the freedom outbound (→ WARP); 0 = none
+}
+
+// ClientRenderInput is everything needed to render the master's client-facing
+// inbound: the desired server spec (with its issued clients) plus the master's
+// locally-generated REALITY private key.
+type ClientRenderInput struct {
+	Spec       domain.ClientVLESSServerSpec
+	PrivateKey string // REALITY x25519 private key (master-local; redacted in plans)
 }
 
 // config mirrors the subset of xray's config.json we emit. Typed structs keep the
@@ -46,7 +60,7 @@ type config struct {
 
 // dnsConfig pins xray's resolver IP-version. queryStrategy "UseIPv4" makes xray
 // request/use A records only (no servers ⇒ system resolver), so the REALITY steal
-// to an AAAA-only dest can't black-hole on the IPv4-only exit data plane.
+// to an AAAA-only dest can't black-hole on the IPv4-only data plane.
 type dnsConfig struct {
 	QueryStrategy string `json:"queryStrategy"`
 }
@@ -96,7 +110,7 @@ type xhttpSettings struct {
 type outbound struct {
 	Protocol       string             `json:"protocol"`
 	Tag            string             `json:"tag"`
-	Settings       *freedomSettings   `json:"settings,omitempty"`
+	Settings       any                `json:"settings,omitempty"` // *freedomSettings (exit) | *socksSettings (client)
 	StreamSettings *outStreamSettings `json:"streamSettings,omitempty"`
 }
 
@@ -104,6 +118,18 @@ type outbound struct {
 // the proxied-traffic egress to IPv4 (pairs with dns.queryStrategy for the steal).
 type freedomSettings struct {
 	DomainStrategy string `json:"domainStrategy"`
+}
+
+// socksSettings points the client-facing inbound's outbound at the master's mihomo
+// loopback SOCKS listener, so decrypted client traffic is routed exactly like the
+// AWG clients' (one data plane).
+type socksSettings struct {
+	Servers []socksServer `json:"servers"`
+}
+
+type socksServer struct {
+	Address string `json:"address"`
+	Port    int    `json:"port"`
 }
 
 type outStreamSettings struct {
@@ -114,7 +140,64 @@ type sockopt struct {
 	Mark int `json:"mark"`
 }
 
-// RenderConfig renders xray's config.json for the inbound described by in.
+// xhttpModeOr defaults an empty XHTTP mode to packet-up.
+func xhttpModeOr(mode string) string {
+	if mode == "" {
+		return DefaultXHTTPMode
+	}
+	return mode
+}
+
+// pathOr defaults an empty XHTTP path to "/".
+func pathOr(path string) string {
+	if path == "" {
+		return "/"
+	}
+	return path
+}
+
+// serverNamesFor lists the SNIs the inbound accepts. emptySNI prepends "" so a
+// ClientHello carrying no SNI extension is accepted (the client then sends no
+// SNI) — a strong RU TSPU bypass.
+func serverNamesFor(sni string, emptySNI bool) []string {
+	if emptySNI {
+		return []string{"", sni}
+	}
+	return []string{sni}
+}
+
+// realityStream builds the REALITY streamSettings. In vision mode it stays tcp
+// (the caller sets client.Flow); otherwise xhttp with the given path/mode.
+func realityStream(dest, privateKey string, serverNames, shortIDs []string, mode, xhttpMode, path string) streamSettings {
+	ss := streamSettings{
+		Network:  "tcp",
+		Security: "reality",
+		RealitySettings: realitySettings{
+			Show:        false,
+			Target:      dest,
+			ServerNames: serverNames,
+			PrivateKey:  privateKey,
+			ShortIDs:    shortIDs,
+		},
+	}
+	if mode != domain.RealityModeVision {
+		ss.Network = "xhttp"
+		ss.XHTTPSettings = &xhttpSettings{Path: path, Mode: xhttpMode}
+	}
+	return ss
+}
+
+// vlessClient builds one inbound client, setting the vision flow when in vision
+// mode (never in xhttp mode — flow is incompatible with XHTTP).
+func vlessClient(uuid, mode string) client {
+	cl := client{ID: uuid}
+	if mode == domain.RealityModeVision {
+		cl.Flow = "xtls-rprx-vision"
+	}
+	return cl
+}
+
+// RenderConfig renders xray's config.json for the exit inbound described by in.
 func RenderConfig(in RenderInput) (string, error) {
 	s := in.Spec
 	switch {
@@ -129,27 +212,13 @@ func RenderConfig(in RenderInput) (string, error) {
 	case s.Dest == "":
 		return "", fmt.Errorf("xray render: REALITY camouflage dest is required")
 	}
-	mode := s.XHTTPMode
-	if mode == "" {
-		mode = DefaultXHTTPMode
-	}
-	path := s.XHTTPPath
-	if path == "" {
-		path = "/"
-	}
 	// shortIds always carries "" (matches any client short-id) plus the configured
 	// one when set — mirrors the documented REALITY template.
 	shortIDs := []string{""}
 	if s.ShortID != "" {
 		shortIDs = []string{"", s.ShortID}
 	}
-	// serverNames lists the SNIs the inbound accepts. AllowEmptySNI prepends ""
-	// so a ClientHello carrying no SNI extension is accepted (the master then
-	// sends the exit IP as a placeholder so uTLS omits SNI) — the RU TSPU bypass.
-	serverNames := []string{s.ServerName}
-	if s.AllowEmptySNI {
-		serverNames = []string{"", s.ServerName}
-	}
+	serverNames := serverNamesFor(s.ServerName, s.AllowEmptySNI)
 
 	out := outbound{Protocol: "freedom", Tag: "direct"}
 	if in.EgressMark > 0 {
@@ -165,28 +234,7 @@ func RenderConfig(in RenderInput) (string, error) {
 		out.Settings = &freedomSettings{DomainStrategy: "UseIPv4"}
 	}
 
-	cl := client{ID: s.UUID}
-	ss := streamSettings{
-		Network:  "tcp",
-		Security: "reality",
-		RealitySettings: realitySettings{
-			Show:        false,
-			Target:      s.Dest,
-			ServerNames: serverNames,
-			PrivateKey:  in.PrivateKey,
-			ShortIDs:    shortIDs,
-		},
-	}
-	// Transport mode (ADR-0025): xhttp (default; packet-up dodges the volume-freeze)
-	// or vision (classic TCP + xtls-rprx-vision — the most battle-tested REALITY combo,
-	// no XHTTP layer). A quick switch to isolate XHTTP interop / fall back to a known-good path.
-	if s.Mode == domain.RealityModeVision {
-		cl.Flow = "xtls-rprx-vision"
-	} else {
-		ss.Network = "xhttp"
-		ss.XHTTPSettings = &xhttpSettings{Path: path, Mode: mode}
-	}
-
+	ss := realityStream(s.Dest, in.PrivateKey, serverNames, shortIDs, s.Mode, xhttpModeOr(s.XHTTPMode), pathOr(s.XHTTPPath))
 	cfg := config{
 		Log: logCfg{Loglevel: "warning"},
 		DNS: dnsCfg,
@@ -195,14 +243,83 @@ func RenderConfig(in RenderInput) (string, error) {
 			Port:     s.ListenPort,
 			Protocol: "vless",
 			Settings: inboundSetting{
-				Clients:    []client{cl},
+				Clients:    []client{vlessClient(s.UUID, s.Mode)},
 				Decryption: "none",
 			},
 			StreamSettings: ss,
 		}},
 		Outbounds: []outbound{out},
 	}
+	return marshal(cfg)
+}
 
+// RenderClientConfig renders xray's config.json for the master's client-facing
+// inbound: a VLESS+REALITY+XHTTP inbound with one entry per issued client, whose
+// decrypted traffic is forwarded to the master's mihomo loopback SOCKS listener.
+func RenderClientConfig(in ClientRenderInput) (string, error) {
+	s := in.Spec
+	switch {
+	case in.PrivateKey == "":
+		return "", fmt.Errorf("xray client render: REALITY private key is required")
+	case s.ListenPort <= 0 || s.ListenPort > 65535:
+		return "", fmt.Errorf("xray client render: listen port %d out of range", s.ListenPort)
+	case s.ServerName == "":
+		return "", fmt.Errorf("xray client render: REALITY server name (SNI) is required")
+	case s.Dest == "":
+		return "", fmt.Errorf("xray client render: REALITY camouflage dest is required")
+	}
+	// One inbound client per issued credential; shortIds unions "" (match-any) with
+	// every client's short-id so each user's own short-id is accepted. An enabled
+	// inbound with no issued clients is valid (it just authenticates no one yet).
+	clients := make([]client, 0, len(s.Clients))
+	shortIDs := []string{""}
+	seenSID := map[string]struct{}{"": {}}
+	for _, c := range s.Clients {
+		clients = append(clients, vlessClient(c.UUID, s.Mode))
+		if c.ShortID != "" {
+			if _, dup := seenSID[c.ShortID]; !dup {
+				shortIDs = append(shortIDs, c.ShortID)
+				seenSID[c.ShortID] = struct{}{}
+			}
+		}
+	}
+	serverNames := serverNamesFor(s.ServerName, s.AllowEmptySNI)
+
+	// The outbound forwards to the master's mihomo mixed/socks inbound, which then
+	// applies the SAME geo/LB/exit routing as for AWG clients.
+	out := outbound{
+		Protocol: "socks",
+		Tag:      "mihomo",
+		Settings: &socksSettings{Servers: []socksServer{{Address: "127.0.0.1", Port: s.ResolvedSocksPort()}}},
+	}
+	// Pin the REALITY steal's resolution to IPv4 on the IPv4-only data plane (#20).
+	// The proxied traffic itself is resolved by mihomo (downstream of the socks hop),
+	// so no freedom domainStrategy applies here.
+	var dnsCfg *dnsConfig
+	if !s.AllowIPv6 {
+		dnsCfg = &dnsConfig{QueryStrategy: "UseIPv4"}
+	}
+
+	ss := realityStream(s.Dest, in.PrivateKey, serverNames, shortIDs, s.Mode, xhttpModeOr(s.XHTTPMode), pathOr(s.XHTTPPath))
+	cfg := config{
+		Log: logCfg{Loglevel: "warning"},
+		DNS: dnsCfg,
+		Inbounds: []inbound{{
+			Listen:   "0.0.0.0",
+			Port:     s.ListenPort,
+			Protocol: "vless",
+			Settings: inboundSetting{
+				Clients:    clients,
+				Decryption: "none",
+			},
+			StreamSettings: ss,
+		}},
+		Outbounds: []outbound{out},
+	}
+	return marshal(cfg)
+}
+
+func marshal(cfg config) (string, error) {
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("xray render: %w", err)

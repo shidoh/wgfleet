@@ -62,6 +62,11 @@ type MasterSpec struct {
 	// Compose describes the master's container stack (wg-easy + mihomo). The
 	// agent renders a docker-compose.yml from it and keeps the containers up.
 	Compose ComposeSpec
+	// ClientVLESS is the client-facing VLESS+REALITY+XHTTP inbound (an alternative
+	// to client↔master AmneziaWG for DPI-throttled paths). nil ⇒ the master runs no
+	// client VLESS inbound. Its decrypted traffic converges into mihomo over a
+	// loopback SOCKS hop, so VLESS clients share the AWG clients' routing.
+	ClientVLESS *ClientVLESSServerSpec
 }
 
 // ComposeSpec is the master's container-stack desired state, rendered by the

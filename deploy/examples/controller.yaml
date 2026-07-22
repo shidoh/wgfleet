@@ -82,6 +82,22 @@ fleet:
       client_awg:
         listen_port: 443 # standard UDP port is less conspicuous
         address_pool: 10.80.0.0/24
+      # client_vless: a DPI-resistant alternative client transport (VLESS+REALITY+
+      # XHTTP via xray) that runs ALONGSIDE the client AWG, for users whose AWG is
+      # throttled by RU TSPU (docs/adr/0031, docs/research/2026-07-client-transport-dpi.md).
+      # Per-client credentials are issued/revoked in the Web UI (vless:// link + QR),
+      # not here. Omit the block to leave it off.
+      client_vless:
+        enabled: true
+        # listen_port: 0 ⇒ a per-master high port derived in [40000,60000]. Unlike the
+        # AWG UDP port, the TLS leg deliberately prefers a HIGH port — RU TSPU inspects
+        # 443 deeply but passes high ports (2026 recon). Set explicitly to pin it.
+        # listen_port: 49443
+        # dest_domain: www.python.org  # camouflage; MUST support X25519MLKEM768
+        # sni: www.python.org          # empty ⇒ dest_domain / fleet default
+        # mode: xhttp                  # xhttp (default) | vision
+        # empty_sni: true              # DEFAULT on: no-SNI ClientHello (RU-TSPU bypass); set false to disable
+        # allow_ipv6: false            # false ⇒ pin xray resolution to IPv4 (IPv4-only data plane)
       routing:
         direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
         direct_geo: [RU]

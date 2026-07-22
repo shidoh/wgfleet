@@ -10,6 +10,7 @@ package keybroker
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -76,6 +77,92 @@ func (b *Broker) RegisterRealityKey(ctx context.Context, nodeID, publicKey strin
 		return fmt.Errorf("keybroker: malformed REALITY public key for %q", nodeID)
 	}
 	return b.store.SetNodeRealityKey(ctx, nodeID, publicKey)
+}
+
+// RegisterClientVlessKey records the master's CLIENT-FACING REALITY x25519 public
+// key (the client VLESS inbound). It validates the key before the store write so a
+// CA-authenticated-but-rogue node cannot inject arbitrary text that later renders
+// into a vless:// link (same guard as RegisterRealityKey).
+func (b *Broker) RegisterClientVlessKey(ctx context.Context, nodeID, publicKey string) error {
+	if publicKey == "" {
+		return fmt.Errorf("keybroker: empty client vless public key for %q", nodeID)
+	}
+	if !xray.ValidPublicKey(publicKey) {
+		return fmt.Errorf("keybroker: malformed client vless public key for %q", nodeID)
+	}
+	return b.store.SetNodeClientVlessKey(ctx, nodeID, publicKey)
+}
+
+// clientVLESSSpec resolves a master's client-facing VLESS+REALITY+XHTTP inbound
+// desired state, or nil when the transport is disabled. Camouflage falls back
+// per-exit-style (manifest → fleet default → safe built-in); the issued client
+// credentials come from the store (UI-managed), and empty_sni defaults ON.
+func (b *Broker) clientVLESSSpec(ctx context.Context, master config.MasterConfig) *domain.ClientVLESSServerSpec {
+	cv := master.ClientVLESS
+	if !cv.Enabled {
+		return nil
+	}
+	sni := firstNonEmpty(cv.SNI, cv.DestDomain, b.fleet.RealityDefaultSNI, DefaultRealitySNI)
+	dest := firstNonEmpty(cv.DestHostPort(), b.fleet.RealityDefaultDest, sni+":443")
+	clients, err := b.store.ListVLESSClients(ctx, master.Name)
+	if err != nil {
+		// Render the inbound with no clients rather than failing the whole master
+		// spec — the listener still comes up; issuance re-renders it.
+		b.log.Warn("listing client vless credentials failed; rendering inbound with none",
+			"master", master.Name, "err", err)
+		clients = nil
+	}
+	return &domain.ClientVLESSServerSpec{
+		ListenPort:    master.ClientVLESSListenPort(),
+		Clients:       clients,
+		ServerName:    sni,
+		Dest:          dest,
+		XHTTPPath:     cv.XHTTPPath,
+		XHTTPMode:     xray.DefaultXHTTPMode,
+		Mode:          cv.Mode,
+		AllowEmptySNI: cv.ResolvedEmptySNI(),
+		AllowIPv6:     cv.AllowIPv6,
+		SocksPort:     domain.ClientVLESSSocksPort,
+		Image:         config.ResolveImage(cv.Image, cv.Tag, compose.DefaultXrayImage),
+	}
+}
+
+// IssueVLESSClient mints a fresh client credential (random UUID + REALITY short-id)
+// for the master and persists it. The short-id gives per-client REALITY granularity
+// and revocation; neither value is secret (the private key stays on the master).
+func (b *Broker) IssueVLESSClient(ctx context.Context, masterID, name string) (domain.VLESSClient, error) {
+	c := domain.VLESSClient{Name: name, UUID: randomUUID(), ShortID: randomShortID()}
+	if err := b.store.AddVLESSClient(ctx, masterID, c); err != nil {
+		return domain.VLESSClient{}, err
+	}
+	return c, nil
+}
+
+// ListVLESSClients returns a master's issued client credentials (UI listing).
+func (b *Broker) ListVLESSClients(ctx context.Context, masterID string) ([]domain.VLESSClient, error) {
+	return b.store.ListVLESSClients(ctx, masterID)
+}
+
+// RevokeVLESSClient removes a master's client credential by name; the next spec
+// render drops it from the inbound's clients list.
+func (b *Broker) RevokeVLESSClient(ctx context.Context, masterID, name string) error {
+	return b.store.RevokeVLESSClient(ctx, masterID, name)
+}
+
+// randomUUID returns a random RFC-4122 v4 UUID (the VLESS user id).
+func randomUUID() string {
+	var u [16]byte
+	_, _ = rand.Read(u[:])
+	u[6] = (u[6] & 0x0f) | 0x40 // version 4
+	u[8] = (u[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
+}
+
+// randomShortID returns a random 8-hex-char REALITY short-id.
+func randomShortID() string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 // RegisterTunnelKey records ONE of the master's per-tunnel WireGuard public keys
@@ -373,6 +460,12 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		ms.ExternalController = master.MgmtAddr + ":9090" // Clash API on mgmt only
 	}
 	ms.Compose = b.composeSpec(ctx, master)
+	// Client-facing VLESS+REALITY+XHTTP inbound (a DPI-resistant alternative to the
+	// client AWG). Its world-facing TCP port opens like any other public service.
+	ms.ClientVLESS = b.clientVLESSSpec(ctx, master)
+	if ms.ClientVLESS != nil {
+		spec.Firewall.PublicTCPPorts = append(spec.Firewall.PublicTCPPorts, ms.ClientVLESS.ListenPort)
+	}
 
 	autoSuspend := b.throughputAutoSuspend(ctx)
 

@@ -266,14 +266,15 @@ type SSHConfig struct {
 
 // MasterConfig describes one master node in the fleet manifest.
 type MasterConfig struct {
-	Name      string          `koanf:"name"`
-	MgmtAddr  string          `koanf:"mgmt_addr"`
-	PublicIP  string          `koanf:"public_ip"` // public IP peers/clients reach this node at; defaults to ssh.host when empty
-	ClientAWG ClientAWGConfig `koanf:"client_awg"`
-	Routing   MasterRouting   `koanf:"routing"`
-	Mihomo    MihomoConfig    `koanf:"mihomo"`  // master data-plane (mihomo) tuning
-	Compose   ComposeConfig   `koanf:"compose"` // master container stack tuning
-	SSH       SSHConfig       `koanf:"ssh"`     // bootstrap target
+	Name        string            `koanf:"name"`
+	MgmtAddr    string            `koanf:"mgmt_addr"`
+	PublicIP    string            `koanf:"public_ip"` // public IP peers/clients reach this node at; defaults to ssh.host when empty
+	ClientAWG   ClientAWGConfig   `koanf:"client_awg"`
+	ClientVLESS ClientVLESSConfig `koanf:"client_vless"` // client-facing VLESS+REALITY+XHTTP (DPI-resistant alternative to client AWG)
+	Routing     MasterRouting     `koanf:"routing"`
+	Mihomo      MihomoConfig      `koanf:"mihomo"`  // master data-plane (mihomo) tuning
+	Compose     ComposeConfig     `koanf:"compose"` // master container stack tuning
+	SSH         SSHConfig         `koanf:"ssh"`     // bootstrap target
 	// ClientAdminPorts opens admin UI ports (controller Web UI, mihomo dashboard)
 	// on the master's mgmt address to the VPN client pool. Opt-in: empty keeps the
 	// strict default (admin reachable only over the mgmt overlay). See
@@ -358,6 +359,85 @@ func (m MasterConfig) ClientListenPort() int {
 		return DefaultMasterClientPort
 	}
 	return m.ClientAWG.ListenPort
+}
+
+// ClientVLESSEmptySNIDefault is the empty_sni default for the client-facing VLESS
+// inbound: ON. An SNI-less ClientHello lifted the RU TSPU block in 100% of one
+// 2026 field test (docs/research/2026-07-client-transport-dpi.md), so the client
+// leg opts in by default; an operator can force it off with empty_sni: false.
+const ClientVLESSEmptySNIDefault = true
+
+// clientVLESSPortLo/Hi bound the high-port window the client VLESS inbound's port
+// is derived into when unset. High ports (47000+) evade the deep TLS inspection RU
+// TSPU applies to 443 (2026 recon), so — unlike the AWG UDP port —
+// the client TLS leg deliberately prefers a high, non-standard port.
+const (
+	clientVLESSPortLo = 40000
+	clientVLESSPortHi = 60000
+)
+
+// ClientVLESSConfig is the operator's tuning for the master's CLIENT-FACING
+// VLESS+REALITY+XHTTP inbound — a DPI-resistant alternative to client↔master
+// AmneziaWG that runs alongside it. Like RealityTransportConfig, the REALITY
+// x25519 keypair is generated on the master and only the pubkey is published;
+// per-client UUID/short-id credentials are NOT here either — they are issued and
+// revoked through the Web UI and persisted in the controller store. This carries
+// only operator-facing camouflage/transport choices.
+type ClientVLESSConfig struct {
+	Enabled    bool   `koanf:"enabled"`
+	ListenPort int    `koanf:"listen_port"` // TCP; 0 ⇒ a per-master high port derived in [40000,60000]
+	DestDomain string `koanf:"dest_domain"` // camouflage target host; empty ⇒ fleet default / SNI
+	DestPort   int    `koanf:"dest_port"`   // camouflage target port; 0 ⇒ 443
+	SNI        string `koanf:"sni"`         // camouflage SNI (ClientHello); empty ⇒ dest_domain / fleet default
+	// Mode is the REALITY transport: "xhttp" (default; packet-up addresses the
+	// behavioural throttling RU TSPU applies to persistent TLS flows) or "vision"
+	// (classic TCP + xtls-rprx-vision, no XHTTP layer).
+	Mode string `koanf:"mode"`
+	// EmptySNI accepts/sends a ClientHello with NO SNI extension. Pointer so an unset
+	// value defaults ON (ClientVLESSEmptySNIDefault) — the client leg's strongest
+	// reported RU-TSPU bypass; set `empty_sni: false` to force it off.
+	EmptySNI *bool `koanf:"empty_sni"`
+	// AllowIPv6 lets xray resolve the camouflage dest over IPv6. Default false ⇒
+	// pinned to IPv4 (the data plane is IPv4-only, an earlier finding).
+	AllowIPv6 bool   `koanf:"allow_ipv6"`
+	XHTTPPath string `koanf:"xhttp_path"` // XHTTP path; empty ⇒ "/"
+	Image     string `koanf:"image"`      // xray image (repo, optionally :tag); empty ⇒ default pinned
+	Tag       string `koanf:"tag"`        // explicit tag; overrides a tag in image
+}
+
+// DestHostPort returns the camouflage target as "host:port" (dest_port 0 ⇒ 443),
+// or "" when no domain is set — the keybroker then falls back to the fleet default
+// or the SNI.
+func (c ClientVLESSConfig) DestHostPort() string {
+	if c.DestDomain == "" {
+		return ""
+	}
+	port := c.DestPort
+	if port == 0 {
+		port = DefaultRealityDestPort
+	}
+	return fmt.Sprintf("%s:%d", c.DestDomain, port)
+}
+
+// ResolvedEmptySNI resolves the empty_sni tri-state: unset ⇒ default (ON).
+func (c ClientVLESSConfig) ResolvedEmptySNI() bool {
+	if c.EmptySNI == nil {
+		return ClientVLESSEmptySNIDefault
+	}
+	return *c.EmptySNI
+}
+
+// ClientVLESSListenPort returns the configured client VLESS port, or a stable
+// per-master port derived deterministically from the master name into the high
+// window [40000,60000] when unset (so it survives restarts and differs per node).
+func (m MasterConfig) ClientVLESSListenPort() int {
+	if m.ClientVLESS.ListenPort > 0 {
+		return m.ClientVLESS.ListenPort
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte("wgfleet-client-vless-port|" + m.Name))
+	span := uint32(clientVLESSPortHi - clientVLESSPortLo + 1)
+	return clientVLESSPortLo + int(h.Sum32()%span)
 }
 
 // MasterRouting captures the master's geo-routing / load-balancing intent.
@@ -736,6 +816,29 @@ func (c ControllerConfig) Validate() error {
 		if m.ClientAWG.AddressPool != "" {
 			if _, err := netip.ParsePrefix(m.ClientAWG.AddressPool); err != nil {
 				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.address_pool %q is not a valid CIDR: %w", i, m.ClientAWG.AddressPool, err))
+			}
+		}
+		if cv := m.ClientVLESS; cv.Enabled {
+			if p := cv.ListenPort; p != 0 && (p < 1 || p > 65535) {
+				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_vless.listen_port %d out of range", i, p))
+			}
+			if p := cv.DestPort; p != 0 && (p < 1 || p > 65535) {
+				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_vless.dest_port %d out of range", i, p))
+			}
+			// The client VLESS (TCP) inbound and the client AWG (UDP) listener are
+			// different protocols, but sharing a number is confusing and blocks moving
+			// AWG to TCP later; flag a collision when the operator pins the VLESS port.
+			if cv.ListenPort != 0 && cv.ListenPort == m.ClientListenPort() {
+				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_vless.listen_port %d collides with the client AWG port", i, cv.ListenPort))
+			}
+			switch cv.Mode {
+			case "", domain.RealityModeXHTTP, domain.RealityModeVision:
+			default:
+				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_vless.mode %q invalid (want %q or %q)",
+					i, cv.Mode, domain.RealityModeXHTTP, domain.RealityModeVision))
+			}
+			if err := validateRealityCamouflage(cv.SNI, cv.DestHostPort()); err != nil {
+				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_vless: %w", i, err))
 			}
 		}
 		if err := validateMgmtAddr(m.MgmtAddr); err != nil {

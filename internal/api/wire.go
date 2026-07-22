@@ -23,7 +23,14 @@ const (
 	// agent silently drops the field and renders a ruleset WITHOUT the accept, so
 	// the operator's configured port stays closed with no error — a convergence
 	// difference the agent must understand, hence the bump.
-	WireContractVersion uint32 = 3
+	// v4: MasterSpec.client_vless (client-facing VLESS+REALITY+XHTTP inbound). A v3
+	// agent silently drops it and renders the master WITHOUT the client VLESS
+	// listener the operator configured (and never publishes the master's REALITY
+	// key), so the client transport stays down with no error — same "configured
+	// port stays closed" convergence hazard as v3, hence the bump. Deploy the
+	// controller FIRST: an agent newer than the controller is refused
+	// entirely (WireAgentTooNew), while an older agent stays compatible.
+	WireContractVersion uint32 = 4
 
 	// MinSupportedWire is the oldest agent wire version the controller will serve
 	// a spec to. Agents below it are refused (fail-safe) and, where possible,

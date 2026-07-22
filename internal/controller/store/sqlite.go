@@ -86,15 +86,17 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 	// existing row; new rows fall back to now.
 	const q = `
 		INSERT INTO nodes (
-			id, name, role, region, mgmt_addr, public_ip, public_key, reality_public_key, state,
+			id, name, role, region, mgmt_addr, public_ip, public_key, reality_public_key,
+			client_vless_public_key, state,
 			drain, decommission, active_transport, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
 			agent_version, wire_version,
 			created_at, updated_at, last_seen
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			name=excluded.name, role=excluded.role, region=excluded.region,
 			mgmt_addr=excluded.mgmt_addr, public_ip=excluded.public_ip,
 			public_key=excluded.public_key, reality_public_key=excluded.reality_public_key,
+			client_vless_public_key=excluded.client_vless_public_key,
 			state=excluded.state,
 			drain=excluded.drain, decommission=excluded.decommission,
 			active_transport=excluded.active_transport,
@@ -105,7 +107,8 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 			updated_at=excluded.updated_at, last_seen=excluded.last_seen`
 	_, err := s.db.ExecContext(ctx, q,
 		n.ID, n.Name, string(n.Role), n.Region, n.MgmtAddr, n.PublicIP,
-		n.PublicKey, n.RealityPublicKey, string(n.State), boolToInt(n.Drain), boolToInt(n.Decommission),
+		n.PublicKey, n.RealityPublicKey, n.ClientVLESSPublicKey,
+		string(n.State), boolToInt(n.Drain), boolToInt(n.Decommission),
 		string(n.ActiveTransport), n.LastError,
 		n.SSH.Host, n.SSH.Port, n.SSH.User, n.SSH.KeyPath,
 		n.AgentVersion, n.WireVersion,
@@ -120,6 +123,7 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 // GetNode implements Store.
 func (s *SQLiteStore) GetNode(ctx context.Context, id string) (domain.Node, error) {
 	const q = `SELECT id, name, role, region, mgmt_addr, public_ip, public_key, reality_public_key,
+		client_vless_public_key,
 		state, drain, decommission, active_transport, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
 		agent_version, wire_version, created_at, updated_at, last_seen FROM nodes WHERE id = ?`
 	return scanNode(s.db.QueryRowContext(ctx, q, id))
@@ -128,6 +132,7 @@ func (s *SQLiteStore) GetNode(ctx context.Context, id string) (domain.Node, erro
 // ListNodes implements Store.
 func (s *SQLiteStore) ListNodes(ctx context.Context) ([]domain.Node, error) {
 	const q = `SELECT id, name, role, region, mgmt_addr, public_ip, public_key, reality_public_key,
+		client_vless_public_key,
 		state, drain, decommission, active_transport, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
 		agent_version, wire_version, created_at, updated_at, last_seen FROM nodes ORDER BY name`
 	rows, err := s.db.QueryContext(ctx, q)
@@ -220,6 +225,74 @@ func (s *SQLiteStore) SetNodeRealityKey(ctx context.Context, id, publicKey strin
 		publicKey, fmtTime(s.now().UTC()), id)
 	if err != nil {
 		return fmt.Errorf("set reality key for %q: %w", id, err)
+	}
+	return requireAffected(res)
+}
+
+// SetNodeClientVlessKey implements Store: records the master's client-facing
+// REALITY x25519 public key, separate from the WireGuard and exit-reality keys.
+func (s *SQLiteStore) SetNodeClientVlessKey(ctx context.Context, id, publicKey string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE nodes SET client_vless_public_key=?, updated_at=? WHERE id=?`,
+		publicKey, fmtTime(s.now().UTC()), id)
+	if err != nil {
+		return fmt.Errorf("set client vless key for %q: %w", id, err)
+	}
+	return requireAffected(res)
+}
+
+// ListVLESSClients implements Store.
+func (s *SQLiteStore) ListVLESSClients(ctx context.Context, masterID string) ([]domain.VLESSClient, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT name, uuid, short_id FROM client_vless_credentials WHERE master_id=? ORDER BY name`, masterID)
+	if err != nil {
+		return nil, fmt.Errorf("list vless clients for %q: %w", masterID, err)
+	}
+	defer rows.Close()
+
+	var out []domain.VLESSClient
+	for rows.Next() {
+		var c domain.VLESSClient
+		if err := rows.Scan(&c.Name, &c.UUID, &c.ShortID); err != nil {
+			return nil, fmt.Errorf("scan vless client for %q: %w", masterID, err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list vless clients for %q: %w", masterID, err)
+	}
+	return out, nil
+}
+
+// AddVLESSClient implements Store.
+func (s *SQLiteStore) AddVLESSClient(ctx context.Context, masterID string, c domain.VLESSClient) error {
+	if masterID == "" || c.Name == "" || c.UUID == "" {
+		return errors.New("store: master ID, client name and UUID are required")
+	}
+	// The master row must exist: the FK would reject the insert anyway, but only as
+	// an opaque constraint error. Check first so the caller gets ErrNotFound and the
+	// web layer can report "master not registered" (mirrors SetNodeTunnelKey).
+	if _, err := s.GetNode(ctx, masterID); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO client_vless_credentials (master_id, name, uuid, short_id, created_at)
+		 VALUES (?,?,?,?,?)
+		 ON CONFLICT(master_id, name) DO UPDATE SET
+			uuid=excluded.uuid, short_id=excluded.short_id`,
+		masterID, c.Name, c.UUID, c.ShortID, fmtTime(s.now().UTC()))
+	if err != nil {
+		return fmt.Errorf("add vless client %q for %q: %w", c.Name, masterID, err)
+	}
+	return nil
+}
+
+// RevokeVLESSClient implements Store.
+func (s *SQLiteStore) RevokeVLESSClient(ctx context.Context, masterID, name string) error {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM client_vless_credentials WHERE master_id=? AND name=?`, masterID, name)
+	if err != nil {
+		return fmt.Errorf("revoke vless client %q for %q: %w", name, masterID, err)
 	}
 	return requireAffected(res)
 }
@@ -358,6 +431,7 @@ func scanNode(row rowScanner) (domain.Node, error) {
 	)
 	err := row.Scan(
 		&n.ID, &n.Name, &roleS, &n.Region, &n.MgmtAddr, &n.PublicIP, &n.PublicKey, &n.RealityPublicKey,
+		&n.ClientVLESSPublicKey,
 		&stateS, &drain, &decommission, &activeXport, &n.LastError, &n.SSH.Host, &n.SSH.Port, &n.SSH.User, &n.SSH.KeyPath,
 		&n.AgentVersion, &n.WireVersion,
 		&createdAt, &updatedAt, &seen,

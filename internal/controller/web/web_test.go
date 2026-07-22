@@ -38,6 +38,16 @@ func (s stubRenderer) ExitTransportInfo(node domain.Node) (domain.MasterTranspor
 	return s.spec.ActiveTransport.OrDefault(), s.spec.Transports(), true
 }
 
+func (s stubRenderer) IssueVLESSClient(context.Context, string, string) (domain.VLESSClient, error) {
+	return domain.VLESSClient{}, nil
+}
+
+func (s stubRenderer) ListVLESSClients(context.Context, string) ([]domain.VLESSClient, error) {
+	return nil, nil
+}
+
+func (s stubRenderer) RevokeVLESSClient(context.Context, string, string) error { return nil }
+
 func newTestHandler(t *testing.T, renderer SpecRenderer) (*Handler, store.Store) {
 	t.Helper()
 	st, err := store.Open(":memory:")

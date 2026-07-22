@@ -157,6 +157,42 @@ message MasterSpec {
   // max-failed-times). 0 ⇒ mihomo's default (5). Additive; an older agent ignores
   // it and keeps the default — backward-compatible, no wire-version bump.
   int32 max_failed_times = 15;
+  // Client-facing VLESS+REALITY+XHTTP inbound (a DPI-resistant alternative to the
+  // client AWG). Carries no private key — the master generates its REALITY x25519
+  // keypair locally and publishes only the public key. Unlike the additive fields
+  // above, a too-old agent that silently drops this leaves the operator-configured
+  // client listener CLOSED with no error (a convergence difference, like
+  // public_tcp_ports at v3), so it rides the wire-version bump to v4.
+  ClientVlessSpec client_vless = 16;
+}
+
+// ClientVlessSpec is the master-side, client-facing VLESS+REALITY+XHTTP inbound
+// desired state (xray-core). It fronts many end users (unlike the single-user
+// exit RealitySrvSpec) and forwards their decrypted traffic to mihomo over a
+// loopback SOCKS hop, so VLESS clients share the AWG clients' routing. Carries no
+// private key — the master generates its REALITY x25519 keypair locally and
+// publishes only the public key.
+message ClientVlessSpec {
+  int32 listen_port = 1;             // world-facing TCP port (high/non-standard, 2026 recon)
+  repeated VlessClient clients = 2;  // issued, non-revoked end-user credentials
+  string server_name = 3;            // camouflage SNI (serverNames[0])
+  string dest = 4;                   // camouflage target host:port (steal/fallback)
+  string xhttp_path = 5;             // XHTTP path
+  string xhttp_mode = 6;             // XHTTP mode ("packet-up")
+  string mode = 7;                   // "" / "xhttp" (default) / "vision"
+  bool allow_empty_sni = 8;          // accept a ClientHello with no SNI (RU TSPU bypass)
+  bool allow_ipv6 = 9;               // false ⇒ pin xray resolution to IPv4 (#20)
+  int32 socks_port = 10;             // loopback mihomo mixed/socks port to forward to; 0 = default
+  string image = 11;                 // xray container image (pinned repo:tag)
+}
+
+// VlessClient is one issued end-user credential (UUID + REALITY short-id). Not
+// secret — the REALITY private key stays on the master — so the controller stores
+// and enumerates them to build vless:// links and to revoke access.
+message VlessClient {
+  string name = 1;     // operator-facing label, unique per master
+  string uuid = 2;     // VLESS user id
+  string short_id = 3; // this user's REALITY short-id (hex)
 }
 
 // ComposeSpec is the master's container-stack desired state (wg-easy + mihomo).

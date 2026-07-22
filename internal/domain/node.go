@@ -56,6 +56,12 @@ type Node struct {
 	// reality transport. Like PublicKey, the private key never leaves the node.
 	RealityPublicKey string
 
+	// ClientVLESSPublicKey is the master's CLIENT-FACING REALITY x25519 public key
+	// (the client VLESS inbound), published separately from RealityPublicKey — a
+	// co-located controller+master carries both. It seeds the vless:// links the UI
+	// hands end users. Like the others, the private key never leaves the master.
+	ClientVLESSPublicKey string
+
 	// Drain, when set, takes the node out of the load balancer: it stays a
 	// configured peer/proxy (existing connections survive) but receives no new
 	// traffic. The operator drains, then deletes. Independent of State (health).

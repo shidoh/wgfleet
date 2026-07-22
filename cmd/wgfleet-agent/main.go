@@ -382,6 +382,25 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			}
 		}
 	}
+	// Masters carry their own REALITY x25519 key for the client-facing VLESS inbound.
+	// Generate+publish it unconditionally (like the exit's above) so the controller
+	// can build clients' vless:// links the moment the operator enables client_vless —
+	// no chicken-and-egg. Master-local; only the pubkey crosses the wire.
+	if a.role == domain.RoleMaster {
+		cvPriv, cvPub, cvEph, cerr := a.ensureClientVlessKey(!plan)
+		if cerr != nil {
+			return fmt.Errorf("ensure client vless key: %w", cerr)
+		}
+		if cvEph && plan {
+			a.log.Info("client VLESS REALITY key absent; using an ephemeral key for the plan (apply would generate one)")
+		}
+		realityPriv = cvPriv
+		if !plan {
+			if err := a.client.PublishClientVlessKey(ctx, cvPub); err != nil {
+				return fmt.Errorf("publish client vless key: %w", err)
+			}
+		}
+	}
 
 	spec, err := a.client.PullSpec(ctx)
 	if err != nil {
@@ -703,12 +722,13 @@ func (a *agent) masterPaths() master.Paths {
 func (a *agent) planners(privateKey, realityPrivateKey, adminUser, adminPass string) []reconcile.Planner {
 	if a.role == domain.RoleMaster {
 		return master.Planners(master.Input{
-			Tier:          a.tier,
-			Paths:         a.masterPaths(),
-			PrivateKey:    privateKey,
-			AdminUsername: adminUser,
-			AdminPassword: adminPass,
-			OverlayMSS:    a.cfg.Agent.MgmtOverlayMSS,
+			Tier:              a.tier,
+			Paths:             a.masterPaths(),
+			PrivateKey:        privateKey,
+			RealityPrivateKey: realityPrivateKey,
+			AdminUsername:     adminUser,
+			AdminPassword:     adminPass,
+			OverlayMSS:        a.cfg.Agent.MgmtOverlayMSS,
 		})
 	}
 	in := exit.Input{
@@ -781,6 +801,28 @@ func (a *agent) ensureRealityKey(persist bool) (priv, pub string, ephemeral bool
 		pk, perr := xray.PublicKeyFor(p)
 		if perr != nil {
 			return "", "", false, fmt.Errorf("stored reality key invalid: %w", perr)
+		}
+		return p, pk, false, nil
+	}
+	priv, pub, err = xray.GenerateKeypair()
+	return priv, pub, true, err
+}
+
+// ensureClientVlessKey returns the master's client-facing REALITY x25519 keypair,
+// mirroring ensureRealityKey but keyed at the master's own key path. With
+// persist=true (apply) it loads or creates+persists the private key (0600); with
+// persist=false (plan) it loads an existing key or generates an ephemeral one just
+// for rendering, so dry-run never writes anything.
+func (a *agent) ensureClientVlessKey(persist bool) (priv, pub string, ephemeral bool, err error) {
+	if persist {
+		priv, pub, _, err = xray.LoadOrCreateKey(a.paths.ClientVLESSKey)
+		return priv, pub, false, err
+	}
+	if data, rerr := os.ReadFile(a.paths.ClientVLESSKey); rerr == nil {
+		p := strings.TrimSpace(string(data))
+		pk, perr := xray.PublicKeyFor(p)
+		if perr != nil {
+			return "", "", false, fmt.Errorf("stored client vless key invalid: %w", perr)
 		}
 		return p, pk, false, nil
 	}

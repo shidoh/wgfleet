@@ -26,6 +26,7 @@ type SpecRenderer interface {
 	RenderNodeSpec(ctx context.Context, nodeID string) (domain.NodeSpec, error)
 	RegisterPublicKey(ctx context.Context, nodeID, publicKey string) error
 	RegisterRealityKey(ctx context.Context, nodeID, publicKey string) error
+	RegisterClientVlessKey(ctx context.Context, nodeID, publicKey string) error
 	RegisterTunnelKey(ctx context.Context, nodeID, tunnel, publicKey string) error
 }
 
@@ -143,6 +144,8 @@ func (s *Service) PublishPublicKey(ctx context.Context, req *pb.PublishPublicKey
 	case keyType == api.KeyTypeWireGuard:
 	case keyType == api.KeyTypeReality:
 		register = s.renderer.RegisterRealityKey
+	case keyType == api.KeyTypeClientVless:
+		register = s.renderer.RegisterClientVlessKey
 	default:
 		tunnel, ok := api.ParseTunnelKeyType(keyType)
 		if !ok {

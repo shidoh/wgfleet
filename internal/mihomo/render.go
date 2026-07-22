@@ -170,6 +170,20 @@ func RenderConfig(in RenderInput) (string, error) {
 		}, in.ReserveActive),
 		"rules": renderRules(in.Spec),
 	}
+	// Client-facing VLESS terminates in xray on the master; its decrypted traffic is
+	// forwarded to this loopback SOCKS listener, so VLESS clients traverse the SAME
+	// rules / geo / load-balance / exit selection as the AWG clients — one routing
+	// brain, no second data plane. Loopback-only: reachable solely from xray on the
+	// same host, never from the network.
+	if cv := in.Spec.ClientVLESS; cv != nil {
+		base["listeners"] = []any{map[string]any{
+			"name":   "client-vless-in",
+			"type":   "socks",
+			"listen": "127.0.0.1",
+			"port":   cv.ResolvedSocksPort(),
+			"udp":    false,
+		}}
+	}
 	if in.Spec.ExternalController != "" {
 		base["external-controller"] = in.Spec.ExternalController
 		// Serve the web dashboard alongside the API unless the operator disabled it.

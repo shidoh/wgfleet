@@ -1,0 +1,70 @@
+{{define "content"}}
+<div class="detail-head">
+  <a class="back" href="/nodes/{{.NodeID}}">← {{.NodeName}}</a>
+  <h1 class="detail-title">VLESS clients</h1>
+</div>
+{{if .Flash}}<p class="error-note" role="alert">⚠ {{.Flash}}</p>{{end}}
+
+{{if .Notice}}
+<div class="panel">
+  <p class="dim">{{.Notice}}</p>
+</div>
+{{end}}
+
+{{if .Enabled}}
+<div class="panels cols-2">
+  <div class="panel">
+    <div class="panel-label">ISSUE CLIENT</div>
+    {{if .Ready}}
+    <p class="dim">Endpoint <span class="strong">{{.Endpoint}}</span> · REALITY + XHTTP. Import the link or scan the QR in v2rayTun.</p>
+    {{else}}
+    <p class="dim">Endpoint not ready yet — you can still issue credentials; links appear once the master publishes its key.</p>
+    {{end}}
+    <form class="auth-form" method="post" action="/nodes/{{.NodeID}}/clients/issue" onsubmit="return lockAction(this)">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <label class="field"><span class="field-label">Client name</span>
+        <input class="input" type="text" name="name" placeholder="alice-iphone" required
+               pattern="[A-Za-z0-9._-]{1,64}" title="letters, digits, '-', '_' or '.' (max 64)"></label>
+      <button class="btn go" type="submit" data-pending="Issuing…">Issue client</button>
+    </form>
+  </div>
+  <div class="panel">
+    <div class="panel-label">TRANSPORT</div>
+    <dl class="kv">
+      <dt>Type</dt><dd class="strong">VLESS + REALITY + XHTTP</dd>
+      <dt>Clients</dt><dd class="strong">{{len .Clients}}</dd>
+    </dl>
+    <p class="dim">Client VLESS runs alongside the AmneziaWG client transport. Its traffic
+      converges into mihomo, so it shares the same geo-routing, load-balancing and exits.</p>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-label">ISSUED CREDENTIALS</div>
+  {{if not .Clients}}
+  <p class="dim">No clients issued yet.</p>
+  {{else}}
+  <ul class="client-list">
+    {{range .Clients}}
+    <li class="client-row">
+      <div class="client-main">
+        <div class="client-name strong">{{.Name}}</div>
+        <div class="client-uuid dim mono">{{.UUID}}</div>
+        {{if .Link}}
+        <input class="input mono client-link" type="text" readonly value="{{.Link}}"
+               onclick="this.select()" aria-label="vless link for {{.Name}}">
+        {{end}}
+      </div>
+      {{if .QR}}<img class="client-qr" src="{{.QR}}" alt="QR for {{.Name}}" width="140" height="140">{{end}}
+      <form class="client-revoke" method="post" action="/nodes/{{$.NodeID}}/clients/{{.Name}}/revoke"
+            onsubmit="return lockAction(this)" data-confirm="Revoke {{.Name}}? Its config stops working after the master reconciles.">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        <button class="btn danger" type="submit" data-pending="Revoking…">Revoke</button>
+      </form>
+    </li>
+    {{end}}
+  </ul>
+  {{end}}
+</div>
+{{end}}
+{{end}}

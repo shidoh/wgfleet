@@ -116,6 +116,50 @@ func realityServerFromProto(r *pb.RealitySrvSpec) *domain.RealityServerSpec {
 	}
 }
 
+func clientVlessToProto(c *domain.ClientVLESSServerSpec) *pb.ClientVlessSpec {
+	if c == nil {
+		return nil
+	}
+	out := &pb.ClientVlessSpec{
+		ListenPort:    int32(c.ListenPort),
+		ServerName:    c.ServerName,
+		Dest:          c.Dest,
+		XhttpPath:     c.XHTTPPath,
+		XhttpMode:     c.XHTTPMode,
+		Mode:          c.Mode,
+		AllowEmptySni: c.AllowEmptySNI,
+		AllowIpv6:     c.AllowIPv6,
+		SocksPort:     int32(c.SocksPort),
+		Image:         c.Image,
+	}
+	for _, cl := range c.Clients {
+		out.Clients = append(out.Clients, &pb.VlessClient{Name: cl.Name, Uuid: cl.UUID, ShortId: cl.ShortID})
+	}
+	return out
+}
+
+func clientVlessFromProto(c *pb.ClientVlessSpec) *domain.ClientVLESSServerSpec {
+	if c == nil {
+		return nil
+	}
+	out := &domain.ClientVLESSServerSpec{
+		ListenPort:    int(c.GetListenPort()),
+		ServerName:    c.GetServerName(),
+		Dest:          c.GetDest(),
+		XHTTPPath:     c.GetXhttpPath(),
+		XHTTPMode:     c.GetXhttpMode(),
+		Mode:          c.GetMode(),
+		AllowEmptySNI: c.GetAllowEmptySni(),
+		AllowIPv6:     c.GetAllowIpv6(),
+		SocksPort:     int(c.GetSocksPort()),
+		Image:         c.GetImage(),
+	}
+	for _, cl := range c.GetClients() {
+		out.Clients = append(out.Clients, domain.VLESSClient{Name: cl.GetName(), UUID: cl.GetUuid(), ShortID: cl.GetShortId()})
+	}
+	return out
+}
+
 func realityTunnelToProto(r *domain.RealityTunnel) *pb.RealityTunnel {
 	if r == nil {
 		return nil
@@ -171,6 +215,7 @@ func masterToProto(m *domain.MasterSpec) *pb.MasterSpec {
 		ClientAdminPorts:    intsToInt32s(m.ClientAdminPorts),
 		Custom:              customToProto(m.Custom),
 		Compose:             composeToProto(m.Compose),
+		ClientVless:         clientVlessToProto(m.ClientVLESS),
 	}
 	for _, t := range m.ExitTunnels {
 		out.ExitTunnels = append(out.ExitTunnels, &pb.ExitTunnel{
@@ -210,6 +255,7 @@ func masterFromProto(m *pb.MasterSpec) *domain.MasterSpec {
 		ClientAdminPorts:    int32sToInts(m.GetClientAdminPorts()),
 		Custom:              customFromProto(m.GetCustom()),
 		Compose:             composeFromProto(m.GetCompose()),
+		ClientVLESS:         clientVlessFromProto(m.GetClientVless()),
 	}
 	for _, t := range m.GetExitTunnels() {
 		out.ExitTunnels = append(out.ExitTunnels, domain.ExitTunnel{

@@ -8,6 +8,12 @@ import "strings"
 const (
 	KeyTypeWireGuard = ""        // node's WireGuard public key (default)
 	KeyTypeReality   = "reality" // exit's REALITY x25519 public key
+	// KeyTypeClientVless is the master's CLIENT-FACING REALITY x25519 public key
+	// (the client VLESS inbound). Distinct from KeyTypeReality, which is the exit's
+	// master↔exit inbound key: a co-located controller+master node publishes both.
+	// Free-form like the others, so it needs no proto/wire change of its own (the
+	// wire bump to v4 is for the ClientVlessSpec on MasterSpec, not this key type).
+	KeyTypeClientVless = "client-vless"
 
 	// KeyTypeWireGuardTunnelPrefix marks a PER-TUNNEL WireGuard public key
 	// (ADR-0030): "wireguard:<exit-name>" is the master's dedicated identity for the

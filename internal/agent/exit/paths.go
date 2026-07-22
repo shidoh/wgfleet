@@ -23,6 +23,11 @@ type Paths struct {
 	XrayKey     string // REALITY x25519 private key (0600, generated on-node)
 	XrayConfig  string // rendered xray config.json
 	XrayCompose string // docker-compose.yml for the xray container
+	// ClientVLESSKey is the MASTER's client-facing REALITY x25519 private key (0600,
+	// generated on-node). Distinct from XrayKey (the exit's master↔exit reality key);
+	// a node is either master or exit, so only one is ever used. Empty on plans that
+	// don't need it. Lives here because Paths is the agent's shared on-node key store.
+	ClientVLESSKey string
 	// RoutingState records the last-applied policy-routing intent so the routing
 	// steps (ip rule/sysctl/conntrack -D) run only when it changes. It lives on
 	// tmpfs (/run): a reboot clears the kernel rules and the state file together,
@@ -42,19 +47,20 @@ type Paths struct {
 // DefaultPaths returns the production-default file locations.
 func DefaultPaths() Paths {
 	return Paths{
-		WGKey:        "/etc/wgfleet/wg.key",
-		WGConf:       "/etc/amnezia/amneziawg/awg0.conf",
-		NFT:          "/etc/wgfleet/wgfleet.nft",
-		WGCF:         "/etc/wireguard/wgcf.conf",
-		WARPDir:      "/etc/wgfleet/warp",
-		DNS:          "/etc/wgfleet/blocky/config.yml",
-		DNSCompose:   "/etc/wgfleet/blocky/docker-compose.yml",
-		XrayKey:      "/etc/wgfleet/reality.key",
-		XrayConfig:   "/etc/wgfleet/xray/config.json",
-		XrayCompose:  "/etc/wgfleet/xray/docker-compose.yml",
-		RoutingState: "/run/wgfleet/routing.applied",
-		ASBlacklist:  "/var/lib/wgfleet/as-blacklist.lst",
-		WARPMTUCache: "/var/lib/wgfleet/warp-mtu",
+		WGKey:          "/etc/wgfleet/wg.key",
+		WGConf:         "/etc/amnezia/amneziawg/awg0.conf",
+		NFT:            "/etc/wgfleet/wgfleet.nft",
+		WGCF:           "/etc/wireguard/wgcf.conf",
+		WARPDir:        "/etc/wgfleet/warp",
+		DNS:            "/etc/wgfleet/blocky/config.yml",
+		DNSCompose:     "/etc/wgfleet/blocky/docker-compose.yml",
+		XrayKey:        "/etc/wgfleet/reality.key",
+		XrayConfig:     "/etc/wgfleet/xray/config.json",
+		XrayCompose:    "/etc/wgfleet/xray/docker-compose.yml",
+		ClientVLESSKey: "/etc/wgfleet/client-vless.key",
+		RoutingState:   "/run/wgfleet/routing.applied",
+		ASBlacklist:    "/var/lib/wgfleet/as-blacklist.lst",
+		WARPMTUCache:   "/var/lib/wgfleet/warp-mtu",
 	}
 }
 
@@ -62,18 +68,19 @@ func DefaultPaths() Paths {
 // (and tests) where the production /etc layout is not writable.
 func PathsUnder(dir string) Paths {
 	return Paths{
-		WGKey:        filepath.Join(dir, "wg.key"),
-		WGConf:       filepath.Join(dir, "awg0.conf"),
-		NFT:          filepath.Join(dir, "wgfleet.nft"),
-		WGCF:         filepath.Join(dir, "wgcf.conf"),
-		WARPDir:      filepath.Join(dir, "warp"),
-		DNS:          filepath.Join(dir, "blocky", "config.yml"),
-		DNSCompose:   filepath.Join(dir, "blocky", "docker-compose.yml"),
-		XrayKey:      filepath.Join(dir, "reality.key"),
-		XrayConfig:   filepath.Join(dir, "xray", "config.json"),
-		XrayCompose:  filepath.Join(dir, "xray", "docker-compose.yml"),
-		RoutingState: filepath.Join(dir, "routing.applied"),
-		ASBlacklist:  filepath.Join(dir, "as-blacklist.lst"),
-		WARPMTUCache: filepath.Join(dir, "warp-mtu"),
+		WGKey:          filepath.Join(dir, "wg.key"),
+		WGConf:         filepath.Join(dir, "awg0.conf"),
+		NFT:            filepath.Join(dir, "wgfleet.nft"),
+		WGCF:           filepath.Join(dir, "wgcf.conf"),
+		WARPDir:        filepath.Join(dir, "warp"),
+		DNS:            filepath.Join(dir, "blocky", "config.yml"),
+		DNSCompose:     filepath.Join(dir, "blocky", "docker-compose.yml"),
+		XrayKey:        filepath.Join(dir, "reality.key"),
+		XrayConfig:     filepath.Join(dir, "xray", "config.json"),
+		XrayCompose:    filepath.Join(dir, "xray", "docker-compose.yml"),
+		ClientVLESSKey: filepath.Join(dir, "client-vless.key"),
+		RoutingState:   filepath.Join(dir, "routing.applied"),
+		ASBlacklist:    filepath.Join(dir, "as-blacklist.lst"),
+		WARPMTUCache:   filepath.Join(dir, "warp-mtu"),
 	}
 }

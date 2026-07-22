@@ -25,6 +25,8 @@ type Paths struct {
 	WGEasyAdmin    string // wg-easy admin password file (agent-local, 0600; never crosses the wire)
 	DNS            string // master-tier blocky resolver config (config.yml, ADR-0024)
 	DNSCompose     string // docker-compose.yml for the master blocky container
+	ClientVLESS    string // client-facing xray inbound config.json (holds the REALITY private key, 0600)
+	ClientVLESSYML string // docker-compose.yml for the master client-vless xray container
 }
 
 // DefaultPaths returns the production-default file locations.
@@ -41,6 +43,8 @@ func DefaultPaths() Paths {
 		WGEasyAdmin:    "/etc/wgfleet/wg-easy-admin-password",
 		DNS:            "/etc/wgfleet/blocky/config.yml",
 		DNSCompose:     "/etc/wgfleet/blocky/docker-compose.yml",
+		ClientVLESS:    "/etc/wgfleet/client-vless/config.json",
+		ClientVLESSYML: "/etc/wgfleet/client-vless/docker-compose.yml",
 	}
 }
 
@@ -58,5 +62,7 @@ func PathsUnder(dir string) Paths {
 		WGEasyAdmin:    filepath.Join(dir, "wg-easy-admin-password"),
 		DNS:            filepath.Join(dir, "blocky", "config.yml"),
 		DNSCompose:     filepath.Join(dir, "blocky", "docker-compose.yml"),
+		ClientVLESS:    filepath.Join(dir, "client-vless", "config.json"),
+		ClientVLESSYML: filepath.Join(dir, "client-vless", "docker-compose.yml"),
 	}
 }
