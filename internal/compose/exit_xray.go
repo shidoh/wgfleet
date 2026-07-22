@@ -26,7 +26,17 @@ type XrayInput struct {
 	// (mihomo) and never marks a socket, so it leaves this false and runs with all
 	// capabilities dropped (#9, least privilege).
 	NetAdmin bool
+	// ListenPort is the inbound's world-facing TCP port. When it is privileged
+	// (< 1024, e.g. the exit REALITY inbound on 443) the container needs
+	// CAP_NET_BIND_SERVICE to bind it: cap_drop [ALL] strips the default capability
+	// that otherwise lets the container's root bind low ports (#9 regression). Zero
+	// or a high port adds nothing.
+	ListenPort int
 }
+
+// privilegedPortMax is the highest port that requires CAP_NET_BIND_SERVICE to
+// bind; ports at or below it are privileged.
+const privilegedPortMax = 1023
 
 // RenderXrayCompose renders docker-compose.yml for the exit's xray-core REALITY
 // inbound. xray runs on the host network so its listen port and SO_MARK'd outbound
@@ -63,13 +73,27 @@ func RenderXrayCompose(in XrayInput) (string, error) {
 		"cap_drop":     []any{"ALL"},
 		"security_opt": []any{"no-new-privileges:true"},
 	}
+	// Add back only the capabilities this leg actually needs, in a fixed order so the
+	// rendered YAML stays byte-stable (a non-deterministic list would drift-loop the
+	// reconciler). NET_ADMIN for the exit's WARP egress; NET_BIND_SERVICE when the
+	// inbound sits on a privileged port.
+	var capAdd []any
 	if in.NetAdmin {
 		// NET_ADMIN lets the freedom outbound set SO_MARK (sockopt.mark), which the
 		// host policy routing matches to send xray's egress through WARP (ADR-0025,
 		// an earlier finding). Without it the mark is silently dropped and egress misroutes.
 		// The client-facing master inbound forwards to a loopback SOCKS and never marks
-		// a socket, so it stays capability-free.
-		svc["cap_add"] = []any{"NET_ADMIN"}
+		// a socket, so it does not request this.
+		capAdd = append(capAdd, "NET_ADMIN")
+	}
+	if in.ListenPort > 0 && in.ListenPort <= privilegedPortMax {
+		// cap_drop [ALL] removes CAP_NET_BIND_SERVICE, without which even the
+		// container's root cannot bind a port < 1024. The exit REALITY inbound is on
+		// 443, so it must add it back or xray fails to listen (silent Degraded loop).
+		capAdd = append(capAdd, "NET_BIND_SERVICE")
+	}
+	if len(capAdd) > 0 {
+		svc["cap_add"] = capAdd
 	}
 	if len(env) > 0 {
 		svc["environment"] = env

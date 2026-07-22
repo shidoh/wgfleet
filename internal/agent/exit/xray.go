@@ -55,7 +55,8 @@ func (p xrayPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcil
 	composeYAML, err := compose.RenderXrayCompose(compose.XrayInput{
 		Image:      spec.Reality.Image,
 		ConfigPath: p.configPath,
-		NetAdmin:   true, // exit freedom outbound sets SO_MARK for the WARP egress path
+		NetAdmin:   true,                    // exit freedom outbound sets SO_MARK for the WARP egress path
+		ListenPort: spec.Reality.ListenPort, // 443 is privileged → needs NET_BIND_SERVICE
 	})
 	if err != nil {
 		return nil, fmt.Errorf("render reality compose: %w", err)

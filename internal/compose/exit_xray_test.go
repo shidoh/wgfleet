@@ -7,8 +7,10 @@ import (
 
 func TestRenderXrayCompose(t *testing.T) {
 	// Exit leg: the freedom outbound sets SO_MARK for the WARP egress path, so it
-	// needs NET_ADMIN.
-	out, err := RenderXrayCompose(XrayInput{ConfigPath: "/etc/wgfleet/xray/config.json", NetAdmin: true})
+	// needs NET_ADMIN; the REALITY inbound sits on 443 (a privileged port), so with
+	// all caps dropped it also needs NET_BIND_SERVICE to bind it (#9 regression:
+	// cap_drop [ALL] strips the default CAP_NET_BIND_SERVICE that let root bind 443).
+	out, err := RenderXrayCompose(XrayInput{ConfigPath: "/etc/wgfleet/xray/config.json", NetAdmin: true, ListenPort: 443})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -19,12 +21,26 @@ func TestRenderXrayCompose(t *testing.T) {
 		"container_name: xray",
 		"0:0",                    // run as root: read the 0600 config (holds the REALITY private key)
 		"NET_ADMIN",              // SO_MARK for the WARP egress path
+		"NET_BIND_SERVICE",       // bind the privileged REALITY port (443) after cap_drop ALL
 		"ALL",                    // cap_drop: [ALL] — drop everything, add back only what's needed
 		"no-new-privileges:true", // no privilege escalation
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("compose missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestRenderXrayComposeHighPortNoBindCap guards that a non-privileged listen port
+// does NOT request NET_BIND_SERVICE — a high-port inbound (the recommended
+// client-vless port) can bind with all caps dropped, so it stays capability-free.
+func TestRenderXrayComposeHighPortNoBindCap(t *testing.T) {
+	out, err := RenderXrayCompose(XrayInput{ConfigPath: "/etc/wgfleet/client-vless/config.json", ListenPort: 47252})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(out, "NET_BIND_SERVICE") {
+		t.Errorf("high port must not request NET_BIND_SERVICE:\n%s", out)
 	}
 }
 

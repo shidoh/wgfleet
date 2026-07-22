@@ -60,6 +60,7 @@ func (p clientVlessPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]r
 	composeYAML, err := compose.RenderXrayCompose(compose.XrayInput{
 		Image:      cv.Image,
 		ConfigPath: p.configPath,
+		ListenPort: cv.ListenPort, // adds NET_BIND_SERVICE only if the operator chose a privileged port
 	})
 	if err != nil {
 		return nil, fmt.Errorf("render client vless compose: %w", err)
