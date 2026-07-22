@@ -85,6 +85,12 @@ the load balancer on the master.
 - **AmneziaWG-first, REALITY fallback** — AmneziaWG is the primary master↔exit
   transport; each exit can also run a VLESS + REALITY + XHTTP transport as a
   fallback for when AWG is blocked by DPI, switchable live from the Web UI.
+- **DPI-resistant client transport** — clients can also connect over VLESS +
+  REALITY + XHTTP (alongside client AmneziaWG) for paths where AWG is throttled.
+  Per-client credentials are issued in the Web UI — vless:// link, QR, a
+  subscription, and a ready-to-import Clash config — and their traffic converges
+  into the same mihomo routing, so internal/ZeroTier networks stay reachable
+  through the master (ADR-0031).
 - **Two-tier DNS filtering** — blocky on the master and exits, with conditional
   forwarding for local zones.
 - **Scanner-resistant firewall** — rendered nftables with an auto-refreshed
@@ -541,6 +547,12 @@ fleet:
       client_awg:
         listen_port: 443                    # UDP; standard ports are less conspicuous
         address_pool: 10.80.0.0/24          # client WG subnet
+      client_vless:                         # DPI-resistant client transport, alongside client_awg (ADR-0031)
+        enabled: true                       # omit the block to leave it off
+        # listen_port: 0 ⇒ per-master high port in [40000,60000] (443 is inspected; high ports pass)
+        # empty_sni: true (default) — no-SNI ClientHello (RU-TSPU bypass)
+        route_through_cidrs:                # internal nets clients route THROUGH the tunnel (else macOS bypasses them)
+          - 172.29.0.0/16                   # e.g. the ZeroTier mgmt overlay
       routing:
         direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
         direct_geo:   [RU]                  # GEOSITE/GEOIP → DIRECT
@@ -732,6 +744,26 @@ Plan output shows files (with secrets redacted), commands, and DB updates.
     (stop services, clear routing/firewall, best-effort reverse reconcile; ADR-0012).
   - **Delete** — remove the node from inventory.
   - **Download backup** — export an age-encrypted archive of the controller (and co-located master) state.
+
+### Client access (VLESS)
+
+On a master with `client_vless.enabled`, its node page has a **VLESS clients** entry.
+There you **issue** per-client credentials and hand each user one of:
+
+- **Clash config (`.yaml`)** — the recommended client on macOS. It bakes in the
+  proxy plus tun `strict-route` (macOS otherwise leaves RFC1918 off the tunnel, so
+  the master's internal/ZeroTier networks would be unreachable) and DNS pointed at
+  the master's blocky over the tunnel (so private-domain split-horizon resolves).
+  Import into **Clash Verge Rev** and enable Tun Mode.
+- **vless:// link / QR** — for v2rayTun and other clients. To reach internal
+  networks in v2rayTun, also import the routing object (Routing → import from
+  clipboard, `v2rayTun://import_route/…`, shown on the page).
+- **Subscription URL** — carries the vless link and the routing rules in a
+  `routing` response header (reachable over the mgmt/ZT overlay).
+
+`client_vless.route_through_cidrs` in the manifest controls which internal networks
+clients route through the tunnel. See `maintainer notes` #29 for the hard-won
+client-side details (strict-route, DNS split, import formats).
 
 ### Backup & restore
 
