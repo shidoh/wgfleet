@@ -34,6 +34,13 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 		actions = append(actions, reconcile.BestEffortExecAction("bring the blocky resolver down",
 			"docker", "compose", "-f", p.paths.DNSCompose, "down"))
 	}
+	// Client-facing VLESS inbound (xray) runs as its own compose project (ADR-0031);
+	// bring it down too. Otherwise decommission leaves the container serving valid
+	// client credentials with the REALITY private key long after teardown "completes".
+	if p.paths.ClientVLESSYML != "" {
+		actions = append(actions, reconcile.BestEffortExecAction("bring the client vless inbound down",
+			"docker", "compose", "-f", p.paths.ClientVLESSYML, "down"))
+	}
 
 	// Wipe the rendered config and the wg-easy DB once the stack is down: on
 	// decommission the master is gone, so its client-AWG database (keys included)
@@ -47,6 +54,12 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 		{p.paths.WGEasyDB, "wg-easy client database"},
 		{p.paths.DNS, "blocky resolver config"},
 		{p.paths.DNSCompose, "blocky compose file"},
+		// client-vless config.json holds the REALITY private key AND every issued
+		// client UUID; the key file is the master's client-facing REALITY private key.
+		// Both must be destroyed with the node's identity (ADR-0031).
+		{p.paths.ClientVLESS, "client vless config (REALITY key + client UUIDs)"},
+		{p.paths.ClientVLESSYML, "client vless compose file"},
+		{p.paths.ClientVLESSKey, "client vless REALITY private key"},
 	}
 	for _, w := range wipe {
 		if w.path == "" {

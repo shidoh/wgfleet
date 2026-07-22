@@ -105,6 +105,26 @@ wgfleet_node_egress_info{egress_ip="104.16.0.1",node="exit-de-1"} 1
 	}
 }
 
+func TestStoreCollectorClientVLESSClients(t *testing.T) {
+	reg, st, _ := newCollectorWithStore(t)
+	ctx := context.Background()
+	_ = st.UpsertNode(ctx, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+	_ = st.UpsertNode(ctx, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+	_ = st.AddVLESSClient(ctx, "master-xa-1", domain.VLESSClient{Name: "phone", UUID: "u-phone"})
+	_ = st.AddVLESSClient(ctx, "master-xa-1", domain.VLESSClient{Name: "laptop", UUID: "u-laptop"})
+
+	// Masters report their issued client count (ADR-0031); exits, which never run
+	// the client-facing inbound, are absent from this gauge entirely.
+	want := `
+# HELP wgfleet_node_client_vless_clients Number of VLESS/REALITY clients issued for a master's client-facing inbound (ADR-0031).
+# TYPE wgfleet_node_client_vless_clients gauge
+wgfleet_node_client_vless_clients{node="master-xa-1"} 2
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "wgfleet_node_client_vless_clients"); err != nil {
+		t.Error(err)
+	}
+}
+
 func TestStoreCollectorLastReportAge(t *testing.T) {
 	_, st, c := newCollectorWithStore(t)
 	ctx := context.Background()

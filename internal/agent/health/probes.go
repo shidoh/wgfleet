@@ -47,9 +47,13 @@ func DefaultExitProbes(spec domain.NodeSpec) ExitProbes {
 // DefaultMasterProbes wires the real probes for a master node.
 func DefaultMasterProbes(spec domain.NodeSpec) MasterProbes {
 	var controller, secret string
+	var clientVLESSPort int
 	if spec.Master != nil {
 		controller = spec.Master.ExternalController
 		secret = clashSecret(spec.Master.Custom.Overrides)
+		if spec.Master.ClientVLESS != nil {
+			clientVLESSPort = spec.Master.ClientVLESS.ListenPort
+		}
 	}
 	return MasterProbes{
 		// The master's client-facing interface is managed by wg-easy, which names
@@ -62,6 +66,11 @@ func DefaultMasterProbes(spec domain.NodeSpec) MasterProbes {
 		// it the same way the exit does (ADR-0024). MasterChecks omits the check unless
 		// spec.DNS is enabled, so this is nil-safe for a master without a resolver.
 		DNSResolves: dnsResolvesProbe(dnsListenAddr(spec.DNS)),
+		// Client-facing VLESS/REALITY inbound (ADR-0031): reuse the socket-table probe
+		// (reads `ss -ltnH`, never dials — a dial would only exercise REALITY's
+		// camouflage fallback, not the proxy). MasterChecks omits the check unless the
+		// master spec carries ClientVLESS, so a zero port here is never checked.
+		ClientVLESSUp: realityInboundProbe(clientVLESSPort),
 	}
 }
 

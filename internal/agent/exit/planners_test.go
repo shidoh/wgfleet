@@ -704,7 +704,7 @@ func TestXrayPlannerRendersAndEnsuresUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	composeYAML, err := compose.RenderXrayCompose(compose.XrayInput{Image: spec.Reality.Image, ConfigPath: cfgPath})
+	composeYAML, err := compose.RenderXrayCompose(compose.XrayInput{Image: spec.Reality.Image, ConfigPath: cfgPath, NetAdmin: true})
 	if err != nil {
 		t.Fatal(err)
 	}

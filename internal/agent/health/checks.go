@@ -21,9 +21,10 @@ type ExitProbes struct {
 
 // MasterProbes are the injectable probes for a master node's self-checks.
 type MasterProbes struct {
-	MihomoAPI   Probe // mihomo Clash API responds
-	WGServerUp  Probe // client-facing WG/AWG interface is up
-	DNSResolves Probe // master-tier blocky resolves (ADR-0024); nil when no resolver
+	MihomoAPI     Probe // mihomo Clash API responds
+	WGServerUp    Probe // client-facing WG/AWG interface is up
+	DNSResolves   Probe // master-tier blocky resolves (ADR-0024); nil when no resolver
+	ClientVLESSUp Probe // client-facing VLESS/REALITY inbound is listening (ADR-0031); nil when not run
 }
 
 // ExitChecks builds an exit node's check set from spec + probes. Checks that are
@@ -70,6 +71,12 @@ func MasterChecks(spec domain.NodeSpec, p MasterProbes) []Check {
 	// Degraded during the startup window before the resolver has a bind.
 	if spec.DNS.Enabled && spec.DNS.MgmtAddr != "" && p.DNSResolves != nil {
 		checks = append(checks, Check{Name: "dns-filter", Probe: p.DNSResolves})
+	}
+	// Client-facing VLESS/REALITY inbound (ADR-0031): when the master runs it
+	// alongside client AWG, a down inbound must show Degraded — DPI-throttled clients
+	// rely on it. Only checked when the master spec actually carries the inbound.
+	if spec.Master != nil && spec.Master.ClientVLESS != nil && p.ClientVLESSUp != nil {
+		checks = append(checks, Check{Name: "client-vless", Probe: p.ClientVLESSUp})
 	}
 	return checks
 }

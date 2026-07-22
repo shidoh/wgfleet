@@ -43,6 +43,22 @@ type ClientVLESSServerSpec struct {
 	// XHTTPMode is the XHTTP mode; "packet-up" splits the upstream into many short
 	// POSTs. Empty ⇒ xray.DefaultXHTTPMode.
 	XHTTPMode string
+	// Fingerprint is the uTLS ClientHello fingerprint the client presents (vless://
+	// `fp`, mihomo `client-fingerprint`). Empty ⇒ a stable, off-chrome default
+	// (ClientVLESSFingerprintDefault): chrome is the fingerprint RU TSPU is reported
+	// to flag under active blocking, so the client leg blends into a different real
+	// browser instead — a STABLE choice (not per-connection randomized, which can
+	// itself trip the freeze-under-changing-fingerprint heuristic). "none" ⇒ omit it
+	// (the client's Go-default fingerprint), mirroring the exit realityProxy.
+	Fingerprint string
+	// Mux enables XHTTP connection reuse (XMUX, mihomo xhttp-opts.reuse-settings) in
+	// the generated client profile: many streams ride one underlying XHTTP
+	// connection, so the REALITY handshake + dest-steal is amortized instead of paid
+	// per request. This is the strongest mitigation for the handshake-parallelism
+	// volume-freeze RU TSPU applies to bursts of TLS handshakes to a foreign DC.
+	// Client-side only (the xray inbound is unaffected) and honoured only in xhttp
+	// mode (vision/TCP ignores it). Mirrors RealityTunnel.Mux.
+	Mux bool
 	// Mode is the REALITY transport mode (RealityModeXHTTP | RealityModeVision);
 	// empty ⇒ XHTTP.
 	Mode string
@@ -106,6 +122,32 @@ func (c ClientVLESSServerSpec) Validate() error {
 	}
 	return errors.Join(errs...)
 }
+
+// Client-leg uTLS/XMUX defaults. The fingerprint is deliberately off "chrome" (the
+// exit leg's default and the signature RU TSPU is reported to flag first) and STABLE
+// (a per-connection randomized fingerprint can trip the freeze-under-change
+// heuristic). Mux defaults ON because amortizing the REALITY handshake is the top
+// handshake-parallelism-freeze mitigation. See config.ClientVLESSConfig for the
+// operator override. "none" as a fingerprint omits client-fingerprint entirely.
+const (
+	ClientVLESSFingerprintDefault = "firefox"
+	ClientVLESSFingerprintNone    = "none"
+	ClientVLESSMuxDefault         = true
+)
+
+// ResolvedFingerprint returns the client uTLS fingerprint, defaulting an unset value
+// to the off-chrome default. "none" is returned verbatim (the caller omits the key).
+func (c ClientVLESSServerSpec) ResolvedFingerprint() string {
+	if c.Fingerprint == "" {
+		return ClientVLESSFingerprintDefault
+	}
+	return c.Fingerprint
+}
+
+// ResolvedMux reports whether XMUX is on for the client profile. The spec field is a
+// plain bool (keybroker resolves the operator tri-state); this exists so link/clash
+// builders and tests read intent through one method.
+func (c ClientVLESSServerSpec) ResolvedMux() bool { return c.Mux }
 
 // ClientVLESSSocksPort is the master-loopback port the client-facing xray inbound
 // forwards decrypted traffic to, where mihomo picks it up and applies the same

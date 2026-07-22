@@ -96,6 +96,8 @@ fleet:
         # dest_domain: www.python.org  # camouflage; MUST support X25519MLKEM768
         # sni: www.python.org          # empty ⇒ dest_domain / fleet default
         # mode: xhttp                  # xhttp (default) | vision
+        # mux: true                    # DEFAULT on (xhttp only): XMUX reuse amortizes the REALITY handshake — top handshake-freeze mitigation; set false to disable
+        # fingerprint: firefox         # client uTLS ClientHello: firefox (default; off the chrome signature RU TSPU flags first) | chrome | safari | none (omit it)
         # empty_sni: true              # DEFAULT on: no-SNI ClientHello (RU-TSPU bypass); set false to disable
         # allow_ipv6: false            # false ⇒ pin xray resolution to IPv4 (IPv4-only data plane)
         # route_through_cidrs: internal nets the CLIENT should route THROUGH the tunnel

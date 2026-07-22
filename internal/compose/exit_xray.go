@@ -11,7 +11,8 @@ import (
 // overrides against the same canonical default the renderer falls back to.
 const DefaultXrayImage = "ghcr.io/xtls/xray-core:26.6.22"
 
-// XrayInput is everything needed to render the exit node's REALITY inbound stack.
+// XrayInput is everything needed to render an xray-core REALITY container (both the
+// exit inbound and the client-facing master inbound render through this).
 type XrayInput struct {
 	Image string // container image; defaults to DefaultXrayImage
 	// ConfigPath is the host path of the rendered xray config.json; it is mounted
@@ -19,6 +20,12 @@ type XrayInput struct {
 	ConfigPath string
 	// Timezone synchronizes container log timestamps with the host (optional).
 	Timezone string
+	// NetAdmin grants CAP_NET_ADMIN. Only the EXIT inbound needs it: its freedom
+	// outbound sets SO_MARK so host policy routing sends egress through WARP (ADR-0025,
+	// an earlier finding). The client-facing MASTER inbound forwards to a loopback SOCKS
+	// (mihomo) and never marks a socket, so it leaves this false and runs with all
+	// capabilities dropped (#9, least privilege).
+	NetAdmin bool
 }
 
 // RenderXrayCompose renders docker-compose.yml for the exit's xray-core REALITY
@@ -50,10 +57,19 @@ func RenderXrayCompose(in XrayInput) (string, error) {
 		// key, kept root-only on the host) — the xray-core image otherwise runs as a
 		// non-root user and gets "permission denied".
 		"user": "0:0",
+		// Least privilege (#9): drop ALL capabilities and forbid privilege escalation,
+		// then add back ONLY what a leg needs. A REALITY inbound needs none by itself;
+		// the exit's WARP egress adds NET_ADMIN below.
+		"cap_drop":     []any{"ALL"},
+		"security_opt": []any{"no-new-privileges:true"},
+	}
+	if in.NetAdmin {
 		// NET_ADMIN lets the freedom outbound set SO_MARK (sockopt.mark), which the
 		// host policy routing matches to send xray's egress through WARP (ADR-0025,
 		// an earlier finding). Without it the mark is silently dropped and egress misroutes.
-		"cap_add": []any{"NET_ADMIN"},
+		// The client-facing master inbound forwards to a loopback SOCKS and never marks
+		// a socket, so it stays capability-free.
+		svc["cap_add"] = []any{"NET_ADMIN"}
 	}
 	if len(env) > 0 {
 		svc["environment"] = env

@@ -27,6 +27,7 @@ type Paths struct {
 	DNSCompose     string // docker-compose.yml for the master blocky container
 	ClientVLESS    string // client-facing xray inbound config.json (holds the REALITY private key, 0600)
 	ClientVLESSYML string // docker-compose.yml for the master client-vless xray container
+	ClientVLESSKey string // master's client-facing REALITY x25519 private key (0600); wiped on teardown
 }
 
 // DefaultPaths returns the production-default file locations.
@@ -45,6 +46,10 @@ func DefaultPaths() Paths {
 		DNSCompose:     "/etc/wgfleet/blocky/docker-compose.yml",
 		ClientVLESS:    "/etc/wgfleet/client-vless/config.json",
 		ClientVLESSYML: "/etc/wgfleet/client-vless/docker-compose.yml",
+		// Mirrors exit.Paths.ClientVLESSKey — the agent generates/reads the master's
+		// client-facing REALITY key there (main.go ensureClientVlessKey); teardown
+		// wipes the same file so a decommissioned master leaves no key behind.
+		ClientVLESSKey: "/etc/wgfleet/client-vless.key",
 	}
 }
 
@@ -64,5 +69,6 @@ func PathsUnder(dir string) Paths {
 		DNSCompose:     filepath.Join(dir, "blocky", "docker-compose.yml"),
 		ClientVLESS:    filepath.Join(dir, "client-vless", "config.json"),
 		ClientVLESSYML: filepath.Join(dir, "client-vless", "docker-compose.yml"),
+		ClientVLESSKey: filepath.Join(dir, "client-vless.key"),
 	}
 }

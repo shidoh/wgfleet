@@ -127,3 +127,85 @@ func (l *Limiter) Reset() {
 	l.fails = 0
 	l.until = time.Time{}
 }
+
+// IPLimiter is a per-source-IP variant of Limiter for endpoints served to MANY
+// independent callers (e.g. the client subscription fetch): a global lock there
+// would let one bad actor lock out every legitimate client, so each IP gets its own
+// consecutive-fail counter. The tracked-IP map is bounded by `max` so a spray of
+// distinct source IPs cannot exhaust memory; at the cap, expired entries are dropped
+// first and, if still full, the whole map is cleared (a rare, self-healing reset).
+type IPLimiter struct {
+	mu       sync.Mutex
+	maxFails int
+	lock     time.Duration
+	max      int
+	entries  map[string]*ipEntry
+}
+
+type ipEntry struct {
+	fails int
+	until time.Time
+}
+
+// NewIPLimiter builds a per-IP throttle: maxFails consecutive failures lock an IP
+// for `lock`; at most `max` IPs are tracked at once.
+func NewIPLimiter(maxFails int, lock time.Duration, max int) *IPLimiter {
+	return &IPLimiter{maxFails: maxFails, lock: lock, max: max, entries: make(map[string]*ipEntry)}
+}
+
+// Allowed reports whether a request from ip may proceed now.
+func (l *IPLimiter) Allowed(ip string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e := l.entries[ip]
+	return e == nil || time.Now().After(e.until)
+}
+
+// Fail records a failed attempt from ip, arming its lock at the threshold.
+func (l *IPLimiter) Fail(ip string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e := l.entries[ip]
+	if e == nil {
+		l.evictLocked()
+		e = &ipEntry{}
+		l.entries[ip] = e
+	}
+	e.fails++
+	if e.fails >= l.maxFails {
+		e.until = time.Now().Add(l.lock)
+		e.fails = 0
+	}
+}
+
+// Reset clears ip's failure count + lock after a successful fetch.
+func (l *IPLimiter) Reset(ip string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.entries, ip)
+}
+
+// Tracked returns the number of IPs currently held (for tests / metrics).
+func (l *IPLimiter) Tracked() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.entries)
+}
+
+// evictLocked keeps the map under `max`: it first drops entries whose lock has
+// expired (dead weight), and if the map is still at the cap, clears it wholesale.
+// Caller holds l.mu.
+func (l *IPLimiter) evictLocked() {
+	if len(l.entries) < l.max {
+		return
+	}
+	now := time.Now()
+	for ip, e := range l.entries {
+		if now.After(e.until) {
+			delete(l.entries, ip)
+		}
+	}
+	if len(l.entries) >= l.max {
+		l.entries = make(map[string]*ipEntry)
+	}
+}

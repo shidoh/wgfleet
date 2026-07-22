@@ -36,6 +36,7 @@ type StoreCollector struct {
 	nodeAgentInfo    *prometheus.Desc
 	nodeDrain        *prometheus.Desc
 	nodeDecommission *prometheus.Desc
+	nodeVLESSClients *prometheus.Desc
 }
 
 var _ prometheus.Collector = (*StoreCollector)(nil)
@@ -82,6 +83,10 @@ func NewStoreCollector(reg *prometheus.Registry, st store.Store) *StoreCollector
 			prometheus.BuildFQName(namespace, "node", "decommission"),
 			"1 if the node is flagged for decommission (data plane torn down), else 0.",
 			[]string{"node"}, nil),
+		nodeVLESSClients: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "node", "client_vless_clients"),
+			"Number of VLESS/REALITY clients issued for a master's client-facing inbound (ADR-0031).",
+			[]string{"node"}, nil),
 	}
 	reg.MustRegister(c)
 	return c
@@ -98,6 +103,7 @@ func (c *StoreCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.nodeAgentInfo
 	ch <- c.nodeDrain
 	ch <- c.nodeDecommission
+	ch <- c.nodeVLESSClients
 }
 
 // Collect implements prometheus.Collector. Store errors yield no metrics for
@@ -132,6 +138,16 @@ func (c *StoreCollector) Collect(ch chan<- prometheus.Metric) {
 		if n.AgentVersion != "" || n.WireVersion != 0 {
 			ch <- prometheus.MustNewConstMetric(c.nodeAgentInfo, prometheus.GaugeValue, 1,
 				n.Name, n.AgentVersion, strconv.FormatUint(uint64(n.WireVersion), 10))
+		}
+
+		// Only masters run the client-facing VLESS inbound (ADR-0031). Emitting the
+		// gauge just for masters keeps exits out of the series entirely rather than
+		// reporting a misleading 0.
+		if n.Role == domain.RoleMaster {
+			if clients, err := c.store.ListVLESSClients(ctx, n.ID); err == nil {
+				ch <- prometheus.MustNewConstMetric(c.nodeVLESSClients, prometheus.GaugeValue,
+					float64(len(clients)), n.Name)
+			}
 		}
 
 		c.collectStatus(ctx, ch, n.Name)

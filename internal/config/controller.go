@@ -367,6 +367,14 @@ func (m MasterConfig) ClientListenPort() int {
 // leg opts in by default; an operator can force it off with empty_sni: false.
 const ClientVLESSEmptySNIDefault = true
 
+// ClientVLESSFingerprintDefault / ClientVLESSMuxDefault re-export the client-leg
+// uTLS/XMUX defaults from the domain layer (their rationale lives on the domain
+// consts) so config, keybroker, and the web link builders all resolve to one value.
+const (
+	ClientVLESSFingerprintDefault = domain.ClientVLESSFingerprintDefault
+	ClientVLESSMuxDefault         = domain.ClientVLESSMuxDefault
+)
+
 // clientVLESSPortLo/Hi bound the high-port window the client VLESS inbound's port
 // is derived into when unset. High ports (47000+) evade the deep TLS inspection RU
 // TSPU applies to 443 (2026 recon), so — unlike the AWG UDP port —
@@ -397,6 +405,16 @@ type ClientVLESSConfig struct {
 	// value defaults ON (ClientVLESSEmptySNIDefault) — the client leg's strongest
 	// reported RU-TSPU bypass; set `empty_sni: false` to force it off.
 	EmptySNI *bool `koanf:"empty_sni"`
+	// Fingerprint is the client's uTLS ClientHello fingerprint (vless:// `fp`, mihomo
+	// `client-fingerprint`): "firefox" (default; off the chrome signature RU TSPU
+	// flags first), "chrome", "safari", … or "none" to omit it. Empty ⇒
+	// ClientVLESSFingerprintDefault.
+	Fingerprint string `koanf:"fingerprint"`
+	// Mux enables XMUX (XHTTP connection reuse) in the generated client profile.
+	// Pointer so an unset value defaults ON (ClientVLESSMuxDefault): amortizing the
+	// REALITY handshake across streams is the strongest handshake-parallelism-freeze
+	// mitigation. Only effective in xhttp mode. Set `mux: false` to disable.
+	Mux *bool `koanf:"mux"`
 	// AllowIPv6 lets xray resolve the camouflage dest over IPv6. Default false ⇒
 	// pinned to IPv4 (the data plane is IPv4-only, an earlier finding).
 	AllowIPv6 bool   `koanf:"allow_ipv6"`
@@ -435,6 +453,23 @@ func (c ClientVLESSConfig) ResolvedEmptySNI() bool {
 		return ClientVLESSEmptySNIDefault
 	}
 	return *c.EmptySNI
+}
+
+// ResolvedFingerprint resolves the client uTLS fingerprint: unset ⇒ the off-chrome
+// default; any explicit value (including "none") is honoured verbatim.
+func (c ClientVLESSConfig) ResolvedFingerprint() string {
+	if c.Fingerprint == "" {
+		return ClientVLESSFingerprintDefault
+	}
+	return c.Fingerprint
+}
+
+// ResolvedMux resolves the mux tri-state: unset ⇒ default (ON).
+func (c ClientVLESSConfig) ResolvedMux() bool {
+	if c.Mux == nil {
+		return ClientVLESSMuxDefault
+	}
+	return *c.Mux
 }
 
 // ClientVLESSListenPort returns the configured client VLESS port, or a stable

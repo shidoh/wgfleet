@@ -119,6 +119,8 @@ func (b *Broker) clientVLESSSpec(ctx context.Context, master config.MasterConfig
 		Dest:          dest,
 		XHTTPPath:     cv.XHTTPPath,
 		XHTTPMode:     xray.DefaultXHTTPMode,
+		Fingerprint:   cv.ResolvedFingerprint(),
+		Mux:           cv.ResolvedMux(),
 		Mode:          cv.Mode,
 		AllowEmptySNI: cv.ResolvedEmptySNI(),
 		AllowIPv6:     cv.AllowIPv6,

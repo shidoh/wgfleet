@@ -124,8 +124,8 @@ func TestBuildClashConfig(t *testing.T) {
 	c := domain.VLESSClient{Name: "alice", UUID: "u-1", ShortID: "0badc0de"}
 	out := buildClashConfig("203.0.113.1", cv, "PBK", "172.29.3.10", c)
 	for _, want := range []string{
-		"strict-route: true", "type: vless", "server: 203.0.113.1", "port: 47252",
-		"uuid: u-1", "public-key: PBK", `short-id: "0badc0de"`, "servername: www.python.org",
+		"strict-route: true", "type: vless", `server: "203.0.113.1"`, "port: 47252",
+		`uuid: "u-1"`, `public-key: "PBK"`, `short-id: "0badc0de"`, `servername: "www.python.org"`,
 		"mode: packet-up", "- MATCH,wgfleet", `"172.29.3.10#wgfleet"`,
 	} {
 		if !strings.Contains(out, want) {
@@ -136,5 +136,117 @@ func TestBuildClashConfig(t *testing.T) {
 	out2 := buildClashConfig("h", cv, "PBK", "", c)
 	if strings.Contains(out2, "redir-host") || strings.Contains(out2, "#wgfleet") {
 		t.Errorf("empty blockyAddr should yield plain DNS:\n%s", out2)
+	}
+}
+
+// TestBuildClashConfigVision guards that the Clash config honours vision mode:
+// classic TCP + xtls-rprx-vision, NOT xhttp. Emitting xhttp for a vision inbound
+// ships a config that cannot connect (the recommended Clash Verge Rev client).
+func TestBuildClashConfigVision(t *testing.T) {
+	cv := domain.ClientVLESSServerSpec{
+		ListenPort: 47252, ServerName: "www.python.org", Mode: domain.RealityModeVision,
+	}
+	c := domain.VLESSClient{Name: "bob", UUID: "u-2", ShortID: "0badc0de"}
+	out := buildClashConfig("203.0.113.1", cv, "PBK", "", c)
+	for _, want := range []string{"network: tcp", "flow: xtls-rprx-vision"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("vision clash config missing %q\n---\n%s", want, out)
+		}
+	}
+	for _, bad := range []string{"network: xhttp", "xhttp-opts"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("vision clash config must not contain %q\n---\n%s", bad, out)
+		}
+	}
+}
+
+// TestBuildClashConfigEmptySNI guards the anti-DPI empty-SNI lever: when the
+// inbound accepts an empty SNI, the client must send no SNI. uTLS omits the SNI
+// extension when servername is a literal IP, so servername must be the server IP,
+// not the camouflage domain (which would leak the real SNI on every connection).
+func TestBuildClashConfigEmptySNI(t *testing.T) {
+	cv := domain.ClientVLESSServerSpec{
+		ListenPort: 47252, ServerName: "www.python.org", AllowEmptySNI: true, XHTTPMode: "packet-up",
+	}
+	c := domain.VLESSClient{Name: "alice", UUID: "u-1", ShortID: "0badc0de"}
+	out := buildClashConfig("203.0.113.1", cv, "PBK", "", c)
+	if !strings.Contains(out, `servername: "203.0.113.1"`) {
+		t.Errorf("empty-sni must set servername to the server IP\n---\n%s", out)
+	}
+	if strings.Contains(out, "www.python.org") {
+		t.Errorf("empty-sni must NOT leak the camouflage SNI\n---\n%s", out)
+	}
+}
+
+// TestBuildClashConfigFingerprint guards the uTLS fingerprint knob (#12): an unset
+// fingerprint resolves to the off-chrome stable default; "none" omits the key.
+func TestBuildClashConfigFingerprint(t *testing.T) {
+	c := domain.VLESSClient{Name: "a", UUID: "u", ShortID: "0badc0de"}
+
+	def := domain.ClientVLESSServerSpec{ListenPort: 47252, ServerName: "s", XHTTPMode: "packet-up"}
+	out := buildClashConfig("h", def, "PBK", "", c)
+	if !strings.Contains(out, "client-fingerprint: firefox") {
+		t.Errorf("unset fingerprint must default to firefox\n---\n%s", out)
+	}
+	if strings.Contains(out, "chrome") {
+		t.Errorf("client leg must not default to chrome\n---\n%s", out)
+	}
+
+	explicit := def
+	explicit.Fingerprint = "safari"
+	if out := buildClashConfig("h", explicit, "PBK", "", c); !strings.Contains(out, "client-fingerprint: safari") {
+		t.Errorf("explicit fingerprint must be honoured\n---\n%s", out)
+	}
+
+	none := def
+	none.Fingerprint = "none"
+	if out := buildClashConfig("h", none, "PBK", "", c); strings.Contains(out, "client-fingerprint") {
+		t.Errorf(`"none" must omit client-fingerprint entirely\n---\n%s`, out)
+	}
+}
+
+// TestBuildClashConfigMux guards XMUX (hardening #1): mux ON adds xhttp-opts
+// reuse-settings; mux OFF omits it; vision mode ignores mux (no XHTTP layer).
+func TestBuildClashConfigMux(t *testing.T) {
+	c := domain.VLESSClient{Name: "a", UUID: "u", ShortID: "0badc0de"}
+
+	on := domain.ClientVLESSServerSpec{ListenPort: 47252, ServerName: "s", XHTTPMode: "packet-up", Mux: true}
+	out := buildClashConfig("h", on, "PBK", "", c)
+	for _, want := range []string{"reuse-settings", "max-concurrency", "h-max-request-times", "h-max-reusable-secs"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("mux-on clash config missing %q\n---\n%s", want, out)
+		}
+	}
+
+	off := on
+	off.Mux = false
+	if out := buildClashConfig("h", off, "PBK", "", c); strings.Contains(out, "reuse-settings") {
+		t.Errorf("mux-off must omit reuse-settings\n---\n%s", out)
+	}
+
+	vision := domain.ClientVLESSServerSpec{ListenPort: 47252, ServerName: "s", Mode: domain.RealityModeVision, Mux: true}
+	if out := buildClashConfig("h", vision, "PBK", "", c); strings.Contains(out, "reuse-settings") {
+		t.Errorf("vision mode must ignore mux (no XHTTP layer)\n---\n%s", out)
+	}
+}
+
+// TestBuildVlessLinkFingerprint guards the link-side fingerprint knob: unset ⇒
+// firefox; "none" ⇒ no fp param.
+func TestBuildVlessLinkFingerprint(t *testing.T) {
+	base := domain.ClientVLESSServerSpec{ListenPort: 49443, ServerName: "s", XHTTPMode: "packet-up"}
+	c := domain.VLESSClient{Name: "a", UUID: "u", ShortID: "sid"}
+
+	link := buildVlessLink("h", 49443, base, "PBK", "m", c)
+	u, _ := url.Parse(link)
+	if u.Query().Get("fp") != "firefox" {
+		t.Errorf("unset fingerprint must default to firefox, got %q", u.Query().Get("fp"))
+	}
+
+	none := base
+	none.Fingerprint = "none"
+	link = buildVlessLink("h", 49443, none, "PBK", "m", c)
+	u, _ = url.Parse(link)
+	if _, ok := u.Query()["fp"]; ok {
+		t.Errorf(`"none" must omit the fp param, got %q`, u.Query().Get("fp"))
 	}
 }

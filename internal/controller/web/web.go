@@ -100,6 +100,10 @@ type Handler struct {
 	exportBackup func(ctx context.Context, recipient string) ([]byte, error)
 	sessionTTL   time.Duration
 	loginLimit   *auth.Limiter
+	// subLimit throttles the auth-exempt /sub/{master}/{token} fetch per source IP:
+	// the token is a client's UUID, so a per-IP consecutive-fail lock blunts a
+	// brute-force sweep without one bad caller locking out every legitimate client.
+	subLimit *auth.IPLimiter
 	// roller drives the fleet-wide rolling agent upgrade. nil ⇒ the fleet page
 	// omits the action entirely.
 	roller Roller
@@ -138,7 +142,7 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	if err != nil {
 		return nil, fmt.Errorf("web: generate csrf token: %w", err)
 	}
-	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, clientsTmpl: clientsTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute)}
+	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, clientsTmpl: clientsTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute), subLimit: auth.NewIPLimiter(10, time.Minute, 4096)}
 
 	staticHandler := http.FileServer(http.FS(staticFS))
 	h.mux.Handle("GET /static/", staticHandler)

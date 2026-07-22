@@ -81,10 +81,11 @@ need the agent `/metrics` (step 1).
 | `wgfleet_node_info` | `node,role,region,state` | inventory (=1) |
 | `wgfleet_node_last_report_age_seconds` | `node` | staleness of the last status report |
 | `wgfleet_node_reconcile_failed` | `node` | 1 if last reconcile errored |
-| `wgfleet_node_health_check` | `node,check` | 1 ok / 0 failing (incl. `egress-throughput`, `egress-reachability`) |
+| `wgfleet_node_health_check` | `node,check` | 1 ok / 0 failing (incl. `egress-throughput`, `egress-reachability`, `client-vless`) |
 | `wgfleet_node_egress_info` | `node,egress_ip` | observed egress IP (=1) |
 | `wgfleet_node_agent_info` | `node,agent_version,wire_version` | reported agent build (=1) |
 | `wgfleet_node_drain` / `wgfleet_node_decommission` | `node` | admin intent (0/1) |
+| `wgfleet_node_client_vless_clients` | `node` | VLESS/REALITY clients issued for a master's client-facing inbound (ADR-0031); masters only |
 | `wgfleet_build_info` | `component,version,commit` | controller build (=1) |
 
 **Agent** (`wgfleet_agent_*`, every series carries `node` + `role`):

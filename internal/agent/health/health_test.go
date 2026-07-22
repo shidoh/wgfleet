@@ -136,6 +136,23 @@ func TestMasterChecks(t *testing.T) {
 	if names := checkNames(MasterChecks(specDNSPending, dnsProbes)); len(names) != 2 {
 		t.Errorf("dns pending (no mgmt addr): want 2 checks (no dns-filter), got %v", names)
 	}
+
+	// Client-facing VLESS inbound (ADR-0031): when the master runs it, a
+	// client-vless check is added so a down inbound shows Degraded. Omitted when the
+	// master does not run it, or when the probe is unwired.
+	cvProbes := MasterProbes{WGServerUp: passing("wg"), ClientVLESSUp: passing("listening")}
+	specCV := domain.NodeSpec{
+		Role:   domain.RoleMaster,
+		Master: &domain.MasterSpec{ClientVLESS: &domain.ClientVLESSServerSpec{ListenPort: 47252}},
+	}
+	if names := checkNames(MasterChecks(specCV, cvProbes)); !contains(names, "client-vless") {
+		t.Errorf("client-vless master: want a client-vless check, got %v", names)
+	}
+	// No ClientVLESS spec ⇒ no client-vless check even if the probe is wired.
+	specNoCV := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}}
+	if names := checkNames(MasterChecks(specNoCV, cvProbes)); contains(names, "client-vless") {
+		t.Errorf("master without client-vless spec must omit the check, got %v", names)
+	}
 }
 
 func TestEndToEndExitReady(t *testing.T) {
