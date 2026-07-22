@@ -16,7 +16,7 @@
   <div class="panel">
     <div class="panel-label">ISSUE CLIENT</div>
     {{if .Ready}}
-    <p class="dim">Endpoint <span class="strong">{{.Endpoint}}</span> · REALITY + XHTTP. Import the link or scan the QR in v2rayTun.</p>
+    <p class="dim">Endpoint <span class="strong">{{.Endpoint}}</span> · REALITY + XHTTP. Import the <span class="strong">subscription</span> in v2rayTun (it also carries routing); the direct vless link connects without routing.</p>
     {{else}}
     <p class="dim">Endpoint not ready yet — you can still issue credentials; links appear once the master publishes its key.</p>
     {{end}}
@@ -29,13 +29,13 @@
     </form>
   </div>
   <div class="panel">
-    <div class="panel-label">TRANSPORT</div>
-    <dl class="kv">
-      <dt>Type</dt><dd class="strong">VLESS + REALITY + XHTTP</dd>
-      <dt>Clients</dt><dd class="strong">{{len .Clients}}</dd>
-    </dl>
-    <p class="dim">Client VLESS runs alongside the AmneziaWG client transport. Its traffic
-      converges into mihomo, so it shares the same geo-routing, load-balancing and exits.</p>
+    <div class="panel-label">ROUTING · THROUGH VPN</div>
+    {{if .RouteThru}}
+    <p class="dim">These networks route <span class="strong">through the tunnel</span> (manifest <code>client_vless.route_through_cidrs</code>). The client picks them up automatically from the <span class="strong">subscription</span> — v2rayTun only accepts the routing object via the subscription's <code>routing</code> header, not as a pasted config.</p>
+    <ul class="cidr-list">{{range .RouteThru}}<li class="mono">{{.}}</li>{{end}}</ul>
+    {{else}}
+    <p class="dim">No route-through networks configured. Clients bypass private/LAN ranges by default, so the master's ZT overlay and internal nets aren't reachable over the VPN. Add <code>client_vless.route_through_cidrs</code> to this master in the manifest.</p>
+    {{end}}
   </div>
 </div>
 
@@ -50,12 +50,21 @@
       <div class="client-main">
         <div class="client-name strong">{{.Name}}</div>
         <div class="client-uuid dim mono">{{.UUID}}</div>
+        {{if .SubURL}}
+        <div class="field-label">SUBSCRIPTION · import this (connection + routing)</div>
+        <input class="input mono client-link" type="text" readonly value="{{.SubURL}}"
+               onclick="this.select()" aria-label="subscription url for {{.Name}}">
+        {{end}}
         {{if .Link}}
-        <input class="input mono client-link" type="text" readonly value="{{.Link}}"
-               onclick="this.select()" aria-label="vless link for {{.Name}}">
+        <details class="client-direct">
+          <summary class="dim">direct vless link · connection only, no routing</summary>
+          <input class="input mono client-link" type="text" readonly value="{{.Link}}"
+                 onclick="this.select()" aria-label="vless link for {{.Name}}">
+          {{if .QR}}<img class="client-qr sm" src="{{.QR}}" alt="vless QR for {{.Name}}" width="120" height="120">{{end}}
+        </details>
         {{end}}
       </div>
-      {{if .QR}}<img class="client-qr" src="{{.QR}}" alt="QR for {{.Name}}" width="140" height="140">{{end}}
+      {{if .SubQR}}<img class="client-qr" src="{{.SubQR}}" alt="Subscription QR for {{.Name}}" width="140" height="140">{{end}}
       <form class="client-revoke" method="post" action="/nodes/{{$.NodeID}}/clients/{{.Name}}/revoke"
             onsubmit="return lockAction(this)" data-confirm="Revoke {{.Name}}? Its config stops working after the master reconciles.">
         <input type="hidden" name="csrf_token" value="{{$.CSRF}}">

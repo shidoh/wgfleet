@@ -1,12 +1,51 @@
 package web
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/shidoh/wgfleet/internal/domain"
 )
+
+func TestBuildRoutingObject(t *testing.T) {
+	cidrs := []string{"10.0.0.0/8", "172.19.57.0/24", "172.29.0.0/16"}
+	b64 := buildRoutingObject(cidrs)
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("routing object is not valid base64: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		t.Fatalf("decoded routing object is not valid JSON: %v\n%s", err, raw)
+	}
+	rules, ok := obj["rules"].([]any)
+	if !ok || len(rules) != 1 {
+		t.Fatalf("want 1 rule, got %v", obj["rules"])
+	}
+	rule := rules[0].(map[string]any)
+	if rule["type"] != "field" || rule["outboundTag"] != "proxy" {
+		t.Errorf("rule must be field→proxy, got %v", rule)
+	}
+	ips, _ := rule["ip"].([]any)
+	if len(ips) != len(cidrs) {
+		t.Fatalf("ip list = %v, want %v", ips, cidrs)
+	}
+	for i, c := range cidrs {
+		if ips[i].(string) != c {
+			t.Errorf("ip[%d] = %q, want %q", i, ips[i], c)
+		}
+	}
+}
+
+func TestBuildRoutingObjectEmpty(t *testing.T) {
+	// Zero CIDRs still yields a valid object with an empty ip list (caller gates on len).
+	if b64 := buildRoutingObject(nil); b64 == "" {
+		t.Error("expected a non-empty base64 even for no CIDRs")
+	}
+}
 
 func TestBuildVlessLinkXHTTP(t *testing.T) {
 	cv := domain.ClientVLESSServerSpec{

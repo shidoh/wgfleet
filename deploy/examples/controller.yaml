@@ -98,6 +98,15 @@ fleet:
         # mode: xhttp                  # xhttp (default) | vision
         # empty_sni: true              # DEFAULT on: no-SNI ClientHello (RU-TSPU bypass); set false to disable
         # allow_ipv6: false            # false ⇒ pin xray resolution to IPv4 (IPv4-only data plane)
+        # route_through_cidrs: internal nets the CLIENT should route THROUGH the tunnel
+        # (clients bypass private/LAN by default, so the master's ZT overlay + nets it
+        # forwards to are otherwise unreachable over the VPN). Delivered to the client via
+        # the subscription's `routing` header (v2rayTun accepts the routing object ONLY
+        # that way, not as a pasted config) and shown in the Web UI. List what the master
+        # can actually reach.
+        # route_through_cidrs:
+        #   - 172.29.0.0/16   # ZeroTier mgmt overlay (master UI, other nodes)
+        #   - 10.0.0.0/8      # example: internal/work nets the master forwards to
       routing:
         direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
         direct_geo: [RU]

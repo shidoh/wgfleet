@@ -403,6 +403,16 @@ type ClientVLESSConfig struct {
 	XHTTPPath string `koanf:"xhttp_path"` // XHTTP path; empty ⇒ "/"
 	Image     string `koanf:"image"`      // xray image (repo, optionally :tag); empty ⇒ default pinned
 	Tag       string `koanf:"tag"`        // explicit tag; overrides a tag in image
+	// RouteThroughCIDRs are the internal networks a CLIENT must route THROUGH the
+	// tunnel rather than bypass (v2rayTun & most clients send private/LAN ranges
+	// DIRECT by default, so the master's ZT overlay and operator work-nets behind it
+	// are otherwise unreachable over the VPN). The controller builds a v2rayTun
+	// "routing" object from these and both shows it in the Web UI (base64 + QR) and
+	// serves it in the subscription's `routing` response header, so an importing
+	// client reaches them. Empty ⇒ no routing object (bare vless; the client's own
+	// routing applies). Operator-managed — list the CIDRs the master can actually
+	// reach (its ZT mgmt subnet + any nets it forwards to).
+	RouteThroughCIDRs []string `koanf:"route_through_cidrs"`
 }
 
 // DestHostPort returns the camouflage target as "host:port" (dest_port 0 ⇒ 443),
@@ -839,6 +849,16 @@ func (c ControllerConfig) Validate() error {
 			}
 			if err := validateRealityCamouflage(cv.SNI, cv.DestHostPort()); err != nil {
 				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_vless: %w", i, err))
+			}
+			// route_through_cidrs is interpolated into the client routing object; reject
+			// a non-CIDR value so a typo can't produce a broken import.
+			for _, c := range cv.RouteThroughCIDRs {
+				if c = strings.TrimSpace(c); c == "" {
+					continue
+				}
+				if _, err := netip.ParsePrefix(c); err != nil {
+					errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_vless.route_through_cidrs entry %q is not a valid CIDR: %w", i, c, err))
+				}
 			}
 		}
 		if err := validateMgmtAddr(m.MgmtAddr); err != nil {

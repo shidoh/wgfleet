@@ -23,8 +23,9 @@ const testSessionTTL = time.Hour
 var errInjected = errors.New("injected failure")
 
 type stubRenderer struct {
-	spec domain.NodeSpec
-	err  error
+	spec         domain.NodeSpec
+	err          error
+	routeThrough []string
 }
 
 func (s stubRenderer) RenderNodeSpec(context.Context, string) (domain.NodeSpec, error) {
@@ -47,6 +48,8 @@ func (s stubRenderer) ListVLESSClients(context.Context, string) ([]domain.VLESSC
 }
 
 func (s stubRenderer) RevokeVLESSClient(context.Context, string, string) error { return nil }
+
+func (s stubRenderer) ClientVLESSRouteThrough(string) []string { return s.routeThrough }
 
 func newTestHandler(t *testing.T, renderer SpecRenderer) (*Handler, store.Store) {
 	t.Helper()

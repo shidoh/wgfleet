@@ -2,8 +2,10 @@ package web
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"net"
 	"net/http"
 	"net/url"
@@ -18,18 +20,21 @@ import (
 
 // clientsData is the client-VLESS management page view model.
 type clientsData struct {
-	Title     string
-	NodeCount int
-	User      string
-	Flash     string
-	CSRF      string
-	NodeID    string
-	NodeName  string
-	Enabled   bool        // the master runs the client VLESS inbound
-	Ready     bool        // endpoint + published key present, so links can be built
-	Notice    string      // why links aren't ready yet (empty when Ready)
-	Endpoint  string      // host:port clients dial
-	Clients   []clientRow // issued credentials with links + QR
+	Title      string
+	NodeCount  int
+	User       string
+	Flash      string
+	CSRF       string
+	NodeID     string
+	NodeName   string
+	Enabled    bool        // the master runs the client VLESS inbound
+	Ready      bool        // endpoint + published key present, so links can be built
+	Notice     string      // why links aren't ready yet (empty when Ready)
+	Endpoint   string      // host:port clients dial
+	Clients    []clientRow // issued credentials with links + QR
+	RouteThru  []string    // CIDRs routed through the tunnel (config-managed)
+	RoutingB64 string      // v2rayTun routing object (base64) built from RouteThru
+	RoutingQR  template.URL
 }
 
 // clientRow is one issued VLESS credential rendered for the page.
@@ -37,8 +42,10 @@ type clientRow struct {
 	Name    string
 	UUID    string
 	ShortID string
-	Link    string // vless:// share link
-	QR      string // data:image/png;base64,… QR of Link
+	Link    string       // vless:// share link
+	QR      template.URL // data:image/png;base64,… QR of Link (template.URL so it isn't sanitized to #ZgotmplZ)
+	SubURL  string       // subscription URL (carries the routing header)
+	SubQR   template.URL // QR of SubURL
 }
 
 // handleClients renders the master's client-VLESS credential management page.
@@ -83,6 +90,14 @@ func (h *Handler) handleClients(w http.ResponseWriter, r *http.Request) {
 		data.Endpoint = net.JoinHostPort(host, strconv.Itoa(cv.ListenPort))
 	}
 
+	// Routing object (config-managed): the internal nets clients should route THROUGH
+	// the tunnel. Shown as base64 + QR, and served in the subscription's routing header.
+	data.RouteThru = h.renderer.ClientVLESSRouteThrough(id)
+	if len(data.RouteThru) > 0 {
+		data.RoutingB64 = buildRoutingObject(data.RouteThru)
+		data.RoutingQR = h.qr(data.RoutingB64)
+	}
+
 	clients, err := h.renderer.ListVLESSClients(r.Context(), id)
 	if err != nil {
 		data.Notice = "listing clients failed: " + err.Error()
@@ -93,15 +108,126 @@ func (h *Handler) handleClients(w http.ResponseWriter, r *http.Request) {
 		row := clientRow{Name: c.Name, UUID: c.UUID, ShortID: c.ShortID}
 		if data.Ready {
 			row.Link = buildVlessLink(host, cv.ListenPort, *cv, pubkey, node.Name, c)
-			if png, qerr := qrcode.Encode(row.Link, qrcode.Medium, 256); qerr == nil {
-				row.QR = "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
-			} else {
-				h.log.Warn("web: QR encode failed", "client", c.Name, "error", qerr)
-			}
+			row.QR = h.qr(row.Link)
+			// Subscription URL: fetched by the client, it returns this vless link and
+			// carries the routing object in the `routing` response header. Built from
+			// the host the operator is browsing (the mgmt/ZT overlay).
+			row.SubURL = subscriptionURL(r, id, c.UUID)
+			row.SubQR = h.qr(row.SubURL)
 		}
 		data.Clients = append(data.Clients, row)
 	}
 	h.render(w, h.clientsTmpl, "layout", data)
+}
+
+// handleSubscription serves a client's subscription: the vless link (base64 body,
+// standard subscription format) plus the v2rayTun `routing` header carrying the
+// route-through-tunnel rules. Auth-exempt — the client fetches it unauthenticated,
+// identified by its UUID token (already its secret credential).
+func (h *Handler) handleSubscription(w http.ResponseWriter, r *http.Request) {
+	master := r.PathValue("master")
+	token := r.PathValue("token")
+	clients, err := h.renderer.ListVLESSClients(r.Context(), master)
+	if err != nil {
+		http.Error(w, "subscription unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var found domain.VLESSClient
+	for _, c := range clients {
+		if c.UUID == token {
+			found = c
+			break
+		}
+	}
+	if found.UUID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	node, err := h.store.GetNode(r.Context(), master)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	spec, err := h.renderer.RenderNodeSpec(r.Context(), master)
+	if err != nil || spec.Master == nil || spec.Master.ClientVLESS == nil {
+		http.Error(w, "subscription not ready", http.StatusServiceUnavailable)
+		return
+	}
+	cv := spec.Master.ClientVLESS
+	host := endpointHost(node, spec)
+	if host == "" || node.ClientVLESSPublicKey == "" {
+		http.Error(w, "subscription not ready", http.StatusServiceUnavailable)
+		return
+	}
+	link := buildVlessLink(host, cv.ListenPort, *cv, node.ClientVLESSPublicKey, node.Name, found)
+
+	if cidrs := h.renderer.ClientVLESSRouteThrough(master); len(cidrs) > 0 {
+		w.Header().Set("routing", buildRoutingObject(cidrs))
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Profile-Update-Interval", "24")
+	_, _ = w.Write([]byte(base64.StdEncoding.EncodeToString([]byte(link + "\n"))))
+}
+
+// qr renders s as a PNG QR data-URI safe for an <img src>. template.URL keeps
+// html/template from sanitizing the data: URI to "#ZgotmplZ" (a broken image).
+func (h *Handler) qr(s string) template.URL {
+	png, err := qrcode.Encode(s, qrcode.Medium, 256)
+	if err != nil {
+		h.log.Warn("web: QR encode failed", "error", err)
+		return ""
+	}
+	return template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(png))
+}
+
+// subscriptionURL builds the client's subscription URL from the request host (so it
+// matches the mgmt/ZT address the operator is browsing). HTTP: the panel rides the
+// ZT overlay without TLS.
+func subscriptionURL(r *http.Request, master, uuid string) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s/sub/%s/%s", scheme, r.Host, url.PathEscape(master), url.PathEscape(uuid))
+}
+
+// routingRule / routingObject mirror the v2rayTun (Xray) routing schema. IP rules
+// with outboundTag "proxy" send those CIDRs THROUGH the tunnel.
+type routingObject struct {
+	DomainStrategy string        `json:"domainStrategy"`
+	DomainMatcher  string        `json:"domainMatcher"`
+	Balancers      []any         `json:"balancers"`
+	Name           string        `json:"name"`
+	Rules          []routingRule `json:"rules"`
+}
+
+type routingRule struct {
+	Type        string   `json:"type"`
+	OutboundTag string   `json:"outboundTag"`
+	Name        string   `json:"__name__"`
+	IP          []string `json:"ip"`
+}
+
+// buildRoutingObject returns the base64-encoded v2rayTun routing object that routes
+// cidrs through the tunnel (outboundTag "proxy").
+func buildRoutingObject(cidrs []string) string {
+	obj := routingObject{
+		DomainStrategy: "AsIs",
+		DomainMatcher:  "hybrid",
+		Balancers:      []any{},
+		Name:           "wgfleet internal via VPN",
+		Rules: []routingRule{{
+			Type:        "field",
+			OutboundTag: "proxy",
+			Name:        "wgfleet internal via VPN",
+			IP:          append([]string(nil), cidrs...),
+		}},
+	}
+	raw, err := json.Marshal(obj)
+	if err != nil {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(raw)
 }
 
 // handleClientIssue mints a new VLESS credential for the master.

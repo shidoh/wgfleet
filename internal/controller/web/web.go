@@ -60,6 +60,9 @@ type SpecRenderer interface {
 	IssueVLESSClient(ctx context.Context, masterID, name string) (domain.VLESSClient, error)
 	ListVLESSClients(ctx context.Context, masterID string) ([]domain.VLESSClient, error)
 	RevokeVLESSClient(ctx context.Context, masterID, name string) error
+	// ClientVLESSRouteThrough returns the CIDRs the master's clients should route
+	// through the tunnel (for the routing object + subscription header).
+	ClientVLESSRouteThrough(masterID string) []string
 }
 
 // Provisioner triggers asynchronous node provisioning. *provmgr.Manager satisfies
@@ -162,6 +165,9 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	h.mux.HandleFunc("GET /nodes/{id}/clients", h.handleClients)
 	h.mux.HandleFunc("POST /nodes/{id}/clients/issue", h.handleClientIssue)
 	h.mux.HandleFunc("POST /nodes/{id}/clients/{name}/revoke", h.handleClientRevoke)
+	// Client subscription (auth-exempt; UUID-token in path). Serves the vless link
+	// with the routing object in the `routing` response header.
+	h.mux.HandleFunc("GET /sub/{master}/{token}", h.handleSubscription)
 	h.mux.HandleFunc("POST /nodes/{id}/delete", h.handleDelete)
 	h.mux.HandleFunc("POST /backup", h.handleBackupExport)
 	h.mux.HandleFunc("POST /rollout/start", h.handleRolloutStart)
@@ -638,6 +644,10 @@ func authExempt(p string) bool {
 	case p == "/login", p == "/logout", p == "/setup":
 		return true
 	case strings.HasPrefix(p, "/static/"):
+		return true
+	case strings.HasPrefix(p, "/sub/"):
+		// Client subscription endpoint: fetched unauthenticated by the VPN client,
+		// gated instead by the per-client UUID token in the path (its own secret).
 		return true
 	default:
 		return false

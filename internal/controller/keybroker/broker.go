@@ -149,6 +149,19 @@ func (b *Broker) RevokeVLESSClient(ctx context.Context, masterID, name string) e
 	return b.store.RevokeVLESSClient(ctx, masterID, name)
 }
 
+// ClientVLESSRouteThrough returns the CIDRs a master's clients should route THROUGH
+// the tunnel (config.ClientVLESSConfig.RouteThroughCIDRs). Controller-side routing
+// metadata for the subscription / UI — not node desired-state, so it is not on the
+// wire. Empty for an unknown master or when none are configured.
+func (b *Broker) ClientVLESSRouteThrough(masterID string) []string {
+	for _, m := range b.fleet.Masters {
+		if m.Name == masterID {
+			return append([]string(nil), m.ClientVLESS.RouteThroughCIDRs...)
+		}
+	}
+	return nil
+}
+
 // randomUUID returns a random RFC-4122 v4 UUID (the VLESS user id).
 func randomUUID() string {
 	var u [16]byte
