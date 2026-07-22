@@ -31,8 +31,14 @@
   <div class="panel">
     <div class="panel-label">ROUTING · THROUGH VPN</div>
     {{if .RouteThru}}
-    <p class="dim">These networks route <span class="strong">through the tunnel</span> (manifest <code>client_vless.route_through_cidrs</code>). The client picks them up automatically from the <span class="strong">subscription</span> — v2rayTun only accepts the routing object via the subscription's <code>routing</code> header, not as a pasted config.</p>
+    <p class="dim">These networks route <span class="strong">through the tunnel</span> (manifest <code>client_vless.route_through_cidrs</code>). Import the routing object below into v2rayTun via <span class="strong">Routing → import from clipboard</span> (it also rides the subscription's <code>routing</code> header for ZT-reachable clients).</p>
     <ul class="cidr-list">{{range .RouteThru}}<li class="mono">{{.}}</li>{{end}}</ul>
+    {{if .RoutingB64}}
+    <div class="field-label">ROUTING OBJECT · copy → v2rayTun “import from clipboard”</div>
+    <input class="input mono client-link" type="text" readonly value="{{.RoutingB64}}"
+           onclick="this.select()" aria-label="routing object base64">
+    {{if .RoutingQR}}<img class="client-qr sm" src="{{.RoutingQR}}" alt="routing object QR" width="120" height="120">{{end}}
+    {{end}}
     {{else}}
     <p class="dim">No route-through networks configured. Clients bypass private/LAN ranges by default, so the master's ZT overlay and internal nets aren't reachable over the VPN. Add <code>client_vless.route_through_cidrs</code> to this master in the manifest.</p>
     {{end}}

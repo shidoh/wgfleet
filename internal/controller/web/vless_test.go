@@ -12,7 +12,7 @@ import (
 
 func TestBuildRoutingObject(t *testing.T) {
 	cidrs := []string{"10.0.0.0/8", "172.19.57.0/24", "172.29.0.0/16"}
-	b64 := buildRoutingObject(cidrs)
+	b64 := buildRoutingObject("master-xa-1", cidrs)
 	raw, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {
 		t.Fatalf("routing object is not valid base64: %v", err)
@@ -42,7 +42,7 @@ func TestBuildRoutingObject(t *testing.T) {
 
 func TestBuildRoutingObjectEmpty(t *testing.T) {
 	// Zero CIDRs still yields a valid object with an empty ip list (caller gates on len).
-	if b64 := buildRoutingObject(nil); b64 == "" {
+	if b64 := buildRoutingObject("m", nil); b64 == "" {
 		t.Error("expected a non-empty base64 even for no CIDRs")
 	}
 }

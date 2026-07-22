@@ -1,6 +1,7 @@
 package web
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -94,7 +95,7 @@ func (h *Handler) handleClients(w http.ResponseWriter, r *http.Request) {
 	// the tunnel. Shown as base64 + QR, and served in the subscription's routing header.
 	data.RouteThru = h.renderer.ClientVLESSRouteThrough(id)
 	if len(data.RouteThru) > 0 {
-		data.RoutingB64 = buildRoutingObject(data.RouteThru)
+		data.RoutingB64 = buildRoutingObject(id, data.RouteThru)
 		data.RoutingQR = h.qr(data.RoutingB64)
 	}
 
@@ -162,7 +163,7 @@ func (h *Handler) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	link := buildVlessLink(host, cv.ListenPort, *cv, node.ClientVLESSPublicKey, node.Name, found)
 
 	if cidrs := h.renderer.ClientVLESSRouteThrough(master); len(cidrs) > 0 {
-		w.Header().Set("routing", buildRoutingObject(cidrs))
+		w.Header().Set("routing", buildRoutingObject(master, cidrs))
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Profile-Update-Interval", "24")
@@ -191,43 +192,62 @@ func subscriptionURL(r *http.Request, master, uuid string) string {
 	return fmt.Sprintf("%s://%s/sub/%s/%s", scheme, r.Host, url.PathEscape(master), url.PathEscape(uuid))
 }
 
-// routingRule / routingObject mirror the v2rayTun (Xray) routing schema. IP rules
-// with outboundTag "proxy" send those CIDRs THROUGH the tunnel.
+// routingObject / routingRule mirror the v2rayTun (Xray) routing schema, INCLUDING
+// the id fields v2rayTun keys its rules by — without them the clipboard/header
+// import is silently dropped (the docs require "exactly as you got from the
+// application"). IP rules with outboundTag "proxy" send those CIDRs THROUGH the
+// tunnel. The ids are derived from the master so re-renders are byte-stable (a
+// re-import updates the same rule instead of duplicating it).
 type routingObject struct {
 	DomainStrategy string        `json:"domainStrategy"`
-	DomainMatcher  string        `json:"domainMatcher"`
+	ID             string        `json:"id"`
 	Balancers      []any         `json:"balancers"`
-	Name           string        `json:"name"`
+	DomainMatcher  string        `json:"domainMatcher"`
 	Rules          []routingRule `json:"rules"`
+	Name           string        `json:"name"`
 }
 
 type routingRule struct {
-	Type        string   `json:"type"`
+	ID          string   `json:"id"`
 	OutboundTag string   `json:"outboundTag"`
+	Type        string   `json:"type"`
 	Name        string   `json:"__name__"`
 	IP          []string `json:"ip"`
 }
 
 // buildRoutingObject returns the base64-encoded v2rayTun routing object that routes
-// cidrs through the tunnel (outboundTag "proxy").
-func buildRoutingObject(cidrs []string) string {
+// cidrs through the tunnel (outboundTag "proxy"), for masterID.
+func buildRoutingObject(masterID string, cidrs []string) string {
 	obj := routingObject{
 		DomainStrategy: "AsIs",
-		DomainMatcher:  "hybrid",
+		ID:             routingUUID(masterID + "|wgfleet-routing"),
 		Balancers:      []any{},
-		Name:           "wgfleet internal via VPN",
+		DomainMatcher:  "hybrid",
 		Rules: []routingRule{{
-			Type:        "field",
+			ID:          routingUUID(masterID + "|wgfleet-routing-rule"),
 			OutboundTag: "proxy",
+			Type:        "field",
 			Name:        "wgfleet internal via VPN",
 			IP:          append([]string(nil), cidrs...),
 		}},
+		Name: "wgfleet internal via VPN",
 	}
 	raw, err := json.Marshal(obj)
 	if err != nil {
 		return ""
 	}
 	return base64.StdEncoding.EncodeToString(raw)
+}
+
+// routingUUID derives a stable upper-case UUID from a seed (v2rayTun keys routing
+// rules by id; a stable id makes a re-import update rather than duplicate).
+func routingUUID(seed string) string {
+	sum := sha256.Sum256([]byte(seed))
+	var u [16]byte
+	copy(u[:], sum[:16])
+	u[6] = (u[6] & 0x0f) | 0x40 // version 4
+	u[8] = (u[8] & 0x3f) | 0x80 // variant 10
+	return strings.ToUpper(fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16]))
 }
 
 // handleClientIssue mints a new VLESS credential for the master.
