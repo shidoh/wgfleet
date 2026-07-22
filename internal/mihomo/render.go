@@ -175,13 +175,20 @@ func RenderConfig(in RenderInput) (string, error) {
 	// rules / geo / load-balance / exit selection as the AWG clients — one routing
 	// brain, no second data plane. Loopback-only: reachable solely from xray on the
 	// same host, never from the network.
+	//
+	// udp: true is REQUIRED. A tun-mode client (v2rayTun) sends DNS over UDP through
+	// the tunnel; xray forwards it to this SOCKS outbound, and with udp:false mihomo
+	// drops the UDP associate — DNS black-holes and the whole session looks dead
+	// ("connects, then nothing resolves"). Enabling UDP lets DNS (and other UDP)
+	// route through mihomo. The master's QUIC/UDP-443 drop is a separate nftables
+	// concern for the AWG client pool, not this loopback bridge.
 	if cv := in.Spec.ClientVLESS; cv != nil {
 		base["listeners"] = []any{map[string]any{
 			"name":   "client-vless-in",
 			"type":   "socks",
 			"listen": "127.0.0.1",
 			"port":   cv.ResolvedSocksPort(),
-			"udp":    false,
+			"udp":    true,
 		}}
 	}
 	if in.Spec.ExternalController != "" {
