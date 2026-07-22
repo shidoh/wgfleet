@@ -564,6 +564,10 @@ fleet:
         dashboard_disabled: false           # set true to disable the web dashboard entirely
         overrides:                          # deep-merged into the rendered mihomo config.yaml
           log-level: info
+          # Resolve via the master's blocky so private/internal domains resolve for proxied
+          # clients (the sniffer rewrites dst to the SNI domain and mihomo re-resolves it; public
+          # DNS doesn't know blocky's split → ERR_CONNECTION_CLOSED, an earlier finding). Needs dns_filter.
+          # dns: { nameserver: [127.0.0.1:53] }
         extra_files:                        # provisioned alongside config.yaml (mihomo include files)
           - path: direct-domains.yaml
             content: |

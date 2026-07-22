@@ -188,6 +188,14 @@ fleet:
         overrides: # deep-merged into the rendered mihomo config.yaml
           log-level: info
           # secret: "set-a-strong-api-secret-here" # authenticates the Clash API + dashboard
+          # Resolve via the master's blocky (loopback) so PRIVATE domains resolve for proxied
+          # clients: the sniffer rewrites a connection's dst to its SNI domain and mihomo
+          # re-resolves it — public DNS doesn't know blocky's conditional-split internal zones,
+          # so they fail with "dns resolve failed" / ERR_CONNECTION_CLOSED. REQUIRES
+          # dns_filter: true (blocky binds 127.0.0.1:53). Enable both together.
+          # dns:
+          #   nameserver:
+          #     - 127.0.0.1:53
         extra_files: # provisioned alongside config.yaml (mihomo include files)
           - path: direct-domains.yaml
             content: |
