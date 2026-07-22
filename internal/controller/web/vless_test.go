@@ -118,3 +118,23 @@ func TestValidClientName(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildClashConfig(t *testing.T) {
+	cv := domain.ClientVLESSServerSpec{ListenPort: 47252, ServerName: "www.python.org", XHTTPMode: "packet-up"}
+	c := domain.VLESSClient{Name: "alice", UUID: "u-1", ShortID: "0badc0de"}
+	out := buildClashConfig("203.0.113.1", cv, "PBK", "172.29.3.10", c)
+	for _, want := range []string{
+		"strict-route: true", "type: vless", "server: 203.0.113.1", "port: 47252",
+		"uuid: u-1", "public-key: PBK", `short-id: "0badc0de"`, "servername: www.python.org",
+		"mode: packet-up", "- MATCH,wgfleet", `"172.29.3.10#wgfleet"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("clash config missing %q\n---\n%s", want, out)
+		}
+	}
+	// No blocky ⇒ public DNS, no redir-host.
+	out2 := buildClashConfig("h", cv, "PBK", "", c)
+	if strings.Contains(out2, "redir-host") || strings.Contains(out2, "#wgfleet") {
+		t.Errorf("empty blockyAddr should yield plain DNS:\n%s", out2)
+	}
+}
