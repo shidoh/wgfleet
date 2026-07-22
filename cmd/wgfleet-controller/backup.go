@@ -8,18 +8,18 @@ import (
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/api"
-	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/backup"
 )
 
 // runBackup snapshots the controller (and co-located master, if present) into an
-// age-encrypted archive at outPath.
-func runBackup(cfg *config.ControllerConfig, configPath, outPath, recipient string, encrypt backup.EncryptFunc) error {
+// age-encrypted archive at outPath. Sources are injected so callers (and tests)
+// control which on-disk paths are read; production passes backup.DefaultSources.
+func runBackup(src backup.Sources, outPath, recipient string, encrypt backup.EncryptFunc) error {
 	if encrypt == nil {
 		encrypt = backup.AgeEncryptor(recipient)
 	}
 	archive, err := backup.Export(context.Background(), backup.ExportOptions{
-		Sources:     backup.DefaultSources(cfg, configPath),
+		Sources:     src,
 		WireVersion: int(api.WireContractVersion),
 		Encrypt:     encrypt,
 	})

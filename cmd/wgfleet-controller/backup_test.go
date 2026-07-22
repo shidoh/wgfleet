@@ -10,7 +10,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/shidoh/wgfleet/internal/config"
+	"github.com/shidoh/wgfleet/internal/controller/backup"
 )
 
 func seedSQLite(t *testing.T, path string) {
@@ -35,14 +35,27 @@ func TestRunBackupRestoreRoundTripCLI(t *testing.T) {
 	caCert := filepath.Join(dir, "ca.crt")
 	_ = os.WriteFile(caCert, []byte("CERT"), 0o600)
 
-	cfg := &config.ControllerConfig{}
-	cfg.Controller.Store = storePath
-	cfg.Controller.PKI.CACert = caCert
-	cfg.Controller.PKI.CAKey = config.Secret("") // no key file in this test
+	// A master layer, seeded in the temp dir, so the round-trip exercises both
+	// layers hermetically. Sources are passed explicitly rather than via
+	// DefaultSources, whose fixed /etc/wgfleet/* master paths would otherwise make
+	// this test read host files — and fail on a live node where e.g. wg.key exists
+	// but is root-only (os.Stat succeeds, os.ReadFile is denied).
+	wgKey := filepath.Join(dir, "wg.key")
+	_ = os.WriteFile(wgKey, []byte("PRIVKEY"), 0o600)
+	nodeCert := filepath.Join(dir, "node.crt")
+	_ = os.WriteFile(nodeCert, []byte("NODECERT"), 0o600)
+
+	src := backup.Sources{
+		ControllerYAML: cfgPath,
+		StateDB:        storePath,
+		CACert:         caCert,
+		WGKey:          wgKey,
+		NodeCert:       nodeCert,
+	}
 
 	out := filepath.Join(dir, "backup.tar.age")
 	identityEnc := func(_ context.Context, p []byte) ([]byte, error) { return p, nil }
-	if err := runBackup(cfg, cfgPath, out, "", identityEnc); err != nil {
+	if err := runBackup(src, out, "", identityEnc); err != nil {
 		t.Fatalf("runBackup: %v", err)
 	}
 	if fi, err := os.Stat(out); err != nil || fi.Size() == 0 {
