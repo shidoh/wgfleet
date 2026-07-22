@@ -21,22 +21,27 @@ import (
 
 // clientsData is the client-VLESS management page view model.
 type clientsData struct {
-	Title      string
-	NodeCount  int
-	User       string
-	Flash      string
-	CSRF       string
-	NodeID     string
-	NodeName   string
-	Enabled    bool        // the master runs the client VLESS inbound
-	Ready      bool        // endpoint + published key present, so links can be built
-	Notice     string      // why links aren't ready yet (empty when Ready)
-	Endpoint   string      // host:port clients dial
-	Clients    []clientRow // issued credentials with links + QR
-	RouteThru  []string    // CIDRs routed through the tunnel (config-managed)
-	RoutingB64 string      // v2rayTun routing object (base64) built from RouteThru
-	RoutingQR  template.URL
+	Title       string
+	NodeCount   int
+	User        string
+	Flash       string
+	CSRF        string
+	NodeID      string
+	NodeName    string
+	Enabled     bool         // the master runs the client VLESS inbound
+	Ready       bool         // endpoint + published key present, so links can be built
+	Notice      string       // why links aren't ready yet (empty when Ready)
+	Endpoint    string       // host:port clients dial
+	Clients     []clientRow  // issued credentials with links + QR
+	RouteThru   []string     // CIDRs routed through the tunnel (config-managed)
+	RoutingLink string       // v2rayTun://import_route/<base64> deep link (clipboard/QR import)
+	RoutingQR   template.URL // QR of RoutingLink
 }
+
+// routingImportPrefix is the v2rayTun deep-link scheme its "import from clipboard"
+// (and QR) expects in front of the base64 routing object. A bare base64 is not
+// recognised — only this deep link imports.
+const routingImportPrefix = "v2rayTun://import_route/"
 
 // clientRow is one issued VLESS credential rendered for the page.
 type clientRow struct {
@@ -95,8 +100,8 @@ func (h *Handler) handleClients(w http.ResponseWriter, r *http.Request) {
 	// the tunnel. Shown as base64 + QR, and served in the subscription's routing header.
 	data.RouteThru = h.renderer.ClientVLESSRouteThrough(id)
 	if len(data.RouteThru) > 0 {
-		data.RoutingB64 = buildRoutingObject(id, data.RouteThru)
-		data.RoutingQR = h.qr(data.RoutingB64)
+		data.RoutingLink = routingImportPrefix + buildRoutingObject(id, data.RouteThru)
+		data.RoutingQR = h.qr(data.RoutingLink)
 	}
 
 	clients, err := h.renderer.ListVLESSClients(r.Context(), id)
@@ -119,6 +124,115 @@ func (h *Handler) handleClients(w http.ResponseWriter, r *http.Request) {
 		data.Clients = append(data.Clients, row)
 	}
 	h.render(w, h.clientsTmpl, "layout", data)
+}
+
+// handleClientClash serves a ready-to-use Clash/mihomo (Clash Verge Rev) YAML
+// config for one client. It bundles what a macOS tun client needs that a bare
+// vless link cannot express: tun strict-route (so RFC1918 reaches the tunnel — the
+// macOS default bypasses it), and DNS pointed at the master's blocky over the
+// tunnel (so the operator's private-domain split resolves). Auth-gated (operator
+// download from the UI).
+func (h *Handler) handleClientClash(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	name := r.PathValue("name")
+	node, err := h.store.GetNode(r.Context(), id)
+	if err != nil {
+		httpError(w, "load node", err)
+		return
+	}
+	spec, err := h.renderer.RenderNodeSpec(r.Context(), id)
+	if err != nil || spec.Master == nil || spec.Master.ClientVLESS == nil {
+		http.Error(w, "client VLESS not enabled on this master", http.StatusNotFound)
+		return
+	}
+	cv := spec.Master.ClientVLESS
+	host := endpointHost(node, spec)
+	if host == "" || node.ClientVLESSPublicKey == "" {
+		http.Error(w, "config not ready (no endpoint / published key yet)", http.StatusServiceUnavailable)
+		return
+	}
+	clients, err := h.renderer.ListVLESSClients(r.Context(), id)
+	if err != nil {
+		httpError(w, "list clients", err)
+		return
+	}
+	var found domain.VLESSClient
+	for _, c := range clients {
+		if c.Name == name {
+			found = c
+			break
+		}
+	}
+	if found.UUID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	yaml := buildClashConfig(host, *cv, node.ClientVLESSPublicKey, node.MgmtAddr, found)
+	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", "wgfleet-"+name+".yaml"))
+	_, _ = w.Write([]byte(yaml))
+}
+
+// buildClashConfig renders a mihomo (Clash Verge Rev) client config for one
+// credential: a vless+reality+xhttp proxy, a tun with strict-route, DNS via the
+// master's blocky over the tunnel, and MATCH → proxy (the master then routes
+// geo/exits/internal). blockyAddr empty ⇒ plain public DNS (no split).
+func buildClashConfig(host string, cv domain.ClientVLESSServerSpec, pubkey, blockyAddr string, c domain.VLESSClient) string {
+	path := cv.XHTTPPath
+	if path == "" {
+		path = "/"
+	}
+	mode := cv.XHTTPMode
+	if mode == "" {
+		mode = "packet-up"
+	}
+	dns := "  nameserver:\n    - 1.1.1.1\n    - 8.8.8.8\n"
+	if blockyAddr != "" {
+		// redir-host + the master blocky dialed THROUGH the proxy: private-domain
+		// split resolves, real IPs come back and route through the tunnel.
+		dns = fmt.Sprintf("  enhanced-mode: redir-host\n  default-nameserver:\n    - 1.1.1.1\n    - 8.8.8.8\n  nameserver:\n    - %q\n", blockyAddr+"#wgfleet")
+	}
+	return fmt.Sprintf(`# wgfleet client — %s
+mixed-port: 7890
+mode: rule
+log-level: info
+ipv6: false
+unified-delay: true
+
+# strict-route forces even RFC1918 into the tunnel (the macOS default bypasses it).
+tun:
+  enable: true
+  stack: gvisor
+  auto-route: true
+  strict-route: true
+  auto-detect-interface: true
+  dns-hijack: [any:53]
+
+dns:
+  enable: true
+  ipv6: false
+%s
+proxies:
+  - name: wgfleet
+    type: vless
+    server: %s
+    port: %d
+    uuid: %s
+    tls: true
+    udp: true
+    network: xhttp
+    servername: %s
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: %s
+      short-id: "%s"
+    xhttp-opts:
+      path: "%s"
+      mode: %s
+
+rules:
+  - MATCH,wgfleet
+`, c.Name, dns, host, cv.ListenPort, c.UUID, cv.ServerName, pubkey, c.ShortID, path, mode)
 }
 
 // handleSubscription serves a client's subscription: the vless link (base64 body,

@@ -165,6 +165,7 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	h.mux.HandleFunc("GET /nodes/{id}/clients", h.handleClients)
 	h.mux.HandleFunc("POST /nodes/{id}/clients/issue", h.handleClientIssue)
 	h.mux.HandleFunc("POST /nodes/{id}/clients/{name}/revoke", h.handleClientRevoke)
+	h.mux.HandleFunc("GET /nodes/{id}/clients/{name}/clash", h.handleClientClash)
 	// Client subscription (auth-exempt; UUID-token in path). Serves the vless link
 	// with the routing object in the `routing` response header.
 	h.mux.HandleFunc("GET /sub/{master}/{token}", h.handleSubscription)

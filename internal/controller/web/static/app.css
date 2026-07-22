@@ -673,6 +673,49 @@ a:focus-visible,
   font-size: var(--fs-tablehead);
 }
 .section-link:hover { border-color: var(--blue); color: var(--blue); }
+
+/* ============================================================
+   CLIENT-VLESS MANAGEMENT (nodes/{id}/clients)
+   ============================================================ */
+.mono   { font-family: var(--font-mono); }
+.strong { color: var(--text-strong); font-weight: 600; }
+.dim    { color: var(--text-dim); }
+
+.cidr-list { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.cidr-list li {
+  font-size: var(--fs-meta); color: var(--text-bright);
+  background: var(--panel-inset); border: 1px solid var(--border-input);
+  border-radius: 6px; padding: 3px 9px;
+}
+
+.client-list { display: flex; flex-direction: column; gap: 14px; }
+.client-card {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: var(--r-panel); padding: 18px 20px 20px;
+}
+.client-card-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 14px; margin-bottom: 16px; padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-rule);
+}
+.client-name { font-size: 14px; color: var(--text-strong); font-weight: 600; }
+.client-uuid { margin-top: 5px; font-size: var(--fs-meta); color: var(--text-dim); }
+
+.client-cfg { display: flex; flex-direction: column; gap: 18px; }
+.cfg-row  { display: flex; gap: 18px; align-items: flex-start; }
+.cfg-main { flex: 1; min-width: 0; }              /* KEY: lets .input (min-width 260) shrink in the card */
+.cfg-main .input { width: 100%; min-width: 0; }
+.cfg-actions { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+.cfg-hint { font-size: var(--fs-meta); color: var(--text-dim); }
+.cfg-qr {
+  flex: none; width: 128px; height: 128px;
+  border-radius: 8px; background: #fff; padding: 6px; object-fit: contain;
+}
+details.cfg-direct summary { cursor: pointer; color: var(--text-dim); font-size: var(--fs-meta); list-style: none; }
+details.cfg-direct summary::-webkit-details-marker { display: none; }
+details.cfg-direct summary::before { content: "\25B8 "; color: var(--blue); }
+details.cfg-direct[open] summary::before { content: "\25BE "; }
+details.cfg-direct[open] .cfg-row { margin-top: 12px; }
 .backup-card {
   background: var(--panel);
   border: 1px solid var(--border);

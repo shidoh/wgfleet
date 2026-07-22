@@ -6,9 +6,7 @@
 {{if .Flash}}<p class="error-note" role="alert">⚠ {{.Flash}}</p>{{end}}
 
 {{if .Notice}}
-<div class="panel">
-  <p class="dim">{{.Notice}}</p>
-</div>
+<div class="panel"><p class="dim">{{.Notice}}</p></div>
 {{end}}
 
 {{if .Enabled}}
@@ -16,9 +14,9 @@
   <div class="panel">
     <div class="panel-label">ISSUE CLIENT</div>
     {{if .Ready}}
-    <p class="dim">Endpoint <span class="strong">{{.Endpoint}}</span> · REALITY + XHTTP. Import the <span class="strong">subscription</span> in v2rayTun (it also carries routing); the direct vless link connects without routing.</p>
+    <p class="dim">Endpoint <span class="strong">{{.Endpoint}}</span> · REALITY + XHTTP. On macOS use the <span class="strong">Clash config</span> (it bakes in tun strict-route + the DNS split); elsewhere import the subscription or vless link.</p>
     {{else}}
-    <p class="dim">Endpoint not ready yet — you can still issue credentials; links appear once the master publishes its key.</p>
+    <p class="dim">Endpoint not ready yet — you can still issue credentials; configs appear once the master publishes its key.</p>
     {{end}}
     <form class="auth-form" method="post" action="/nodes/{{.NodeID}}/clients/issue" onsubmit="return lockAction(this)">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
@@ -31,54 +29,74 @@
   <div class="panel">
     <div class="panel-label">ROUTING · THROUGH VPN</div>
     {{if .RouteThru}}
-    <p class="dim">These networks route <span class="strong">through the tunnel</span> (manifest <code>client_vless.route_through_cidrs</code>). Import the routing object below into v2rayTun via <span class="strong">Routing → import from clipboard</span> (it also rides the subscription's <code>routing</code> header for ZT-reachable clients).</p>
+    <p class="dim">These networks route <span class="strong">through the tunnel</span> (manifest <code>route_through_cidrs</code>). Baked into the Clash config; for v2rayTun import the routing object below.</p>
     <ul class="cidr-list">{{range .RouteThru}}<li class="mono">{{.}}</li>{{end}}</ul>
-    {{if .RoutingB64}}
-    <div class="field-label">ROUTING OBJECT · copy → v2rayTun “import from clipboard”</div>
-    <input class="input mono client-link" type="text" readonly value="{{.RoutingB64}}"
-           onclick="this.select()" aria-label="routing object base64">
-    {{if .RoutingQR}}<img class="client-qr sm" src="{{.RoutingQR}}" alt="routing object QR" width="120" height="120">{{end}}
+    {{if .RoutingLink}}
+    <div class="field-label" style="margin-top:16px">ROUTING IMPORT · v2rayTun “import from clipboard”</div>
+    <input class="input mono" type="text" readonly value="{{.RoutingLink}}"
+           onclick="this.select()" aria-label="routing import deep link">
     {{end}}
     {{else}}
-    <p class="dim">No route-through networks configured. Clients bypass private/LAN ranges by default, so the master's ZT overlay and internal nets aren't reachable over the VPN. Add <code>client_vless.route_through_cidrs</code> to this master in the manifest.</p>
+    <p class="dim">No route-through networks configured. Add <code>client_vless.route_through_cidrs</code> to this master in the manifest to reach its internal/ZT nets over the VPN.</p>
     {{end}}
   </div>
 </div>
 
 <div class="panel">
-  <div class="panel-label">ISSUED CREDENTIALS</div>
+  <div class="panel-label">ISSUED CREDENTIALS · {{len .Clients}}</div>
   {{if not .Clients}}
   <p class="dim">No clients issued yet.</p>
   {{else}}
-  <ul class="client-list">
+  <div class="client-list">
     {{range .Clients}}
-    <li class="client-row">
-      <div class="client-main">
-        <div class="client-name strong">{{.Name}}</div>
-        <div class="client-uuid dim mono">{{.UUID}}</div>
+    <div class="client-card">
+      <div class="client-card-head">
+        <div>
+          <div class="client-name">{{.Name}}</div>
+          <div class="client-uuid mono">{{.UUID}}</div>
+        </div>
+        <form method="post" action="/nodes/{{$.NodeID}}/clients/{{.Name}}/revoke"
+              onsubmit="return lockAction(this)" data-confirm="Revoke {{.Name}}? Its config stops working after the master reconciles.">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+          <button class="btn ghost-red" type="submit" data-pending="Revoking…">Revoke</button>
+        </form>
+      </div>
+      {{if $.Ready}}
+      <div class="client-cfg">
+        <div class="cfg-row">
+          <div class="cfg-main">
+            <div class="field-label">CLASH CONFIG · macOS / Clash Verge Rev (recommended)</div>
+            <div class="cfg-actions">
+              <a class="btn go" href="/nodes/{{$.NodeID}}/clients/{{.Name}}/clash">↓ Download .yaml</a>
+              <span class="cfg-hint">tun strict-route + DNS split baked in</span>
+            </div>
+          </div>
+        </div>
         {{if .SubURL}}
-        <div class="field-label">SUBSCRIPTION · import this (connection + routing)</div>
-        <input class="input mono client-link" type="text" readonly value="{{.SubURL}}"
-               onclick="this.select()" aria-label="subscription url for {{.Name}}">
+        <div class="cfg-row">
+          <div class="cfg-main">
+            <div class="field-label">SUBSCRIPTION · import as subscription</div>
+            <input class="input mono" type="text" readonly value="{{.SubURL}}"
+                   onclick="this.select()" aria-label="subscription url for {{.Name}}">
+          </div>
+          {{if .SubQR}}<img class="cfg-qr" src="{{.SubQR}}" alt="Subscription QR for {{.Name}}" width="128" height="128">{{end}}
+        </div>
         {{end}}
         {{if .Link}}
-        <details class="client-direct">
-          <summary class="dim">direct vless link · connection only, no routing</summary>
-          <input class="input mono client-link" type="text" readonly value="{{.Link}}"
-                 onclick="this.select()" aria-label="vless link for {{.Name}}">
-          {{if .QR}}<img class="client-qr sm" src="{{.QR}}" alt="vless QR for {{.Name}}" width="120" height="120">{{end}}
+        <details class="cfg-direct">
+          <summary>direct vless link · connection only, no routing</summary>
+          <div class="cfg-row">
+            <div class="cfg-main"><input class="input mono" type="text" readonly value="{{.Link}}"
+                   onclick="this.select()" aria-label="vless link for {{.Name}}"></div>
+            {{if .QR}}<img class="cfg-qr" src="{{.QR}}" alt="vless QR for {{.Name}}" width="128" height="128">{{end}}
+          </div>
         </details>
         {{end}}
       </div>
-      {{if .SubQR}}<img class="client-qr" src="{{.SubQR}}" alt="Subscription QR for {{.Name}}" width="140" height="140">{{end}}
-      <form class="client-revoke" method="post" action="/nodes/{{$.NodeID}}/clients/{{.Name}}/revoke"
-            onsubmit="return lockAction(this)" data-confirm="Revoke {{.Name}}? Its config stops working after the master reconciles.">
-        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-        <button class="btn danger" type="submit" data-pending="Revoking…">Revoke</button>
-      </form>
-    </li>
+      {{end}}
+    </div>
     {{end}}
-  </ul>
+  </div>
   {{end}}
 </div>
 {{end}}
