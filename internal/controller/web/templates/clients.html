@@ -79,7 +79,7 @@
             <input class="input mono" type="text" readonly value="{{.Link}}"
                    onclick="this.select()" aria-label="vless link for {{.Name}}">
           </div>
-          {{if .QR}}<img class="cfg-qr" src="{{.QR}}" alt="vless QR for {{.Name}}" width="128" height="128">{{end}}
+          {{if .QR}}<img class="cfg-qr" src="{{.QR}}" alt="vless QR for {{.Name}}" width="168" height="168">{{end}}
         </div>
         {{end}}
         {{if .SubURL}}
@@ -88,7 +88,7 @@
           <div class="cfg-row">
             <div class="cfg-main"><input class="input mono" type="text" readonly value="{{.SubURL}}"
                    onclick="this.select()" aria-label="subscription url for {{.Name}}"></div>
-            {{if .SubQR}}<img class="cfg-qr" src="{{.SubQR}}" alt="Subscription QR for {{.Name}}" width="128" height="128">{{end}}
+            {{if .SubQR}}<img class="cfg-qr" src="{{.SubQR}}" alt="Subscription QR for {{.Name}}" width="168" height="168">{{end}}
           </div>
         </details>
         {{end}}

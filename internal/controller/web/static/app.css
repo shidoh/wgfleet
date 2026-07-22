@@ -708,7 +708,7 @@ a:focus-visible,
 .cfg-actions { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
 .cfg-hint { font-size: var(--fs-meta); color: var(--text-dim); }
 .cfg-qr {
-  flex: none; width: 128px; height: 128px;
+  flex: none; width: 168px; height: 168px;
   border-radius: 8px; background: #fff; padding: 6px; object-fit: contain;
 }
 details.cfg-direct summary { cursor: pointer; color: var(--text-dim); font-size: var(--fs-meta); list-style: none; }
