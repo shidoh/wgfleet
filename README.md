@@ -625,6 +625,9 @@ fleet:
       firewall:
         as_blacklist: true
         whitelist: [10.20.0.0/16]
+        # public_tcp_ports: [80]           # TCP ports opened to the WORLD (no interface scope),
+                                            #   e.g. a decoy web listener on 80 — keep to genuinely
+                                            #   public services (bypasses the default drop policy)
       ssh:
         host: 198.51.100.7
         port: 22
@@ -818,6 +821,9 @@ wgfleet_node_last_report_age_seconds{node}                 # since last status r
 wgfleet_node_reconcile_failed{node}                        # 1 if last reconcile errored
 wgfleet_node_health_check{node,check}                      # 1 ok / 0 failing
 wgfleet_node_egress_info{node,egress_ip}                   # observed egress IP (=1)
+wgfleet_node_drain{node}                                   # 1 if administratively drained (out of LB)
+wgfleet_node_decommission{node}                            # 1 if flagged for decommission (data plane torn down)
+wgfleet_node_client_vless_clients{node}                    # VLESS/REALITY clients issued on a master (ADR-0031)
 ```
 
 **Agent** (its own reconcile/health counters):
@@ -842,7 +848,8 @@ the derived state:
   `egress-reachability` (censorship signal: ok | degraded | blocked),
   `warp-egress` (egress via Cloudflare WARP, when `egress=warp`), `dns-filter`.
 - **Master checks:** `client-wg` (interface up), `mihomo-api` (Clash API
-  `/version`).
+  `/version`), and — when `client_vless.enabled` — `client-vless` (the
+  VLESS+REALITY inbound is up; a down inbound shows **Degraded**).
 
 Aggregation: reconcile failed → **Error**; all checks pass → **Ready**; any check
 fails → **Degraded**; no checks → **Reconciling**.
