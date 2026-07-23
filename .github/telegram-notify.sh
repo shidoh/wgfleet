@@ -56,7 +56,11 @@ BODY_HTML="$(printf '%s' "$BODY" | escape_html | sed -E \
   -e 's|`([^`]+)`|<code>\1</code>|g')"
 
 TAG_HTML="$(printf '%s' "$TAG" | escape_html)"
-CAPTION="$(printf '🚀 <b>wgfleet %s</b>\n<blockquote expandable>%s</blockquote>' \
+# Header layout: the app name on its own line, then the release version alone on
+# a dedicated bold line so it reads as the most prominent token. Telegram bot
+# messages have no font-size control, so "bigger" comes from weight + a line to
+# itself + a distinct emoji, not an actual larger font.
+CAPTION="$(printf '🚀 <b>wgfleet</b>\n\n🏷 <b>%s</b>\n<blockquote expandable>%s</blockquote>' \
   "$TAG_HTML" "$BODY_HTML")"
 
 # --- Collect build archives ---------------------------------------------------
