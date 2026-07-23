@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# Announce a wgfleet release in a Telegram channel.
+# Announce a wgfleet release in a Telegram channel — as a SINGLE message.
 #
 #   TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... \
 #     .github/telegram-notify.sh <tag> <release-notes.md> <dist-dir>
 #
-# Posts the changelog as a message, then attaches the build archives
-# (tar.gz + SHA256SUMS) as documents via sendMediaGroup. If any archive
-# exceeds Telegram's 50 MB bot-upload limit, the upload is skipped and the
-# message points at the GitHub Release assets instead (the message always
-# carries the release URL, so nothing is lost).
+# Sends the build archives (tar.gz + SHA256SUMS) as one document album via
+# sendMediaGroup, with the changelog attached as the album caption: an HTML
+# header plus the changelog inside a collapsible <blockquote expandable> so a
+# long release note stays tidy. If an archive exceeds Telegram's 50 MB
+# bot-upload limit (or none is found), the changelog is posted on its own with
+# sendMessage. No repository links — the repo is private.
 #
-# Requires: curl. Preinstalled on ubuntu-latest runners.
+# Requires: curl, jq. Both are preinstalled on ubuntu-latest runners.
 
 set -euo pipefail
 
@@ -21,83 +22,98 @@ DIST_DIR="${3:?missing dist dir}"
 : "${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}"
 : "${TELEGRAM_CHAT_ID:?TELEGRAM_CHAT_ID is required}"
 
-REPO_URL="${REPO_URL:-https://github.com/shidoh/wgfleet}"
-RELEASE_URL="$REPO_URL/releases/tag/$TAG"
 API="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}"
-
 MAX_BYTES=$((50 * 1024 * 1024))   # Telegram bot sendDocument upload ceiling
-TG_MSG_LIMIT=4096                 # Telegram sendMessage text ceiling (chars)
+CAPTION_BUDGET=950                # Telegram caption ceiling is 1024; leave headroom
 
-# --- Changelog message --------------------------------------------------------
-# Plain text (no parse_mode) sidesteps MarkdownV2 escaping; Telegram auto-links
-# bare URLs. Strip Markdown noise that renders poorly as plain text: ATX
-# headers, bold markers, inline-code backticks. Bullets and links stay intact.
-BODY="$(sed -E \
-  -e 's/^#+[[:space:]]*//' \
-  -e 's/\*\*//g' \
-  -e 's/`//g' \
-  "$NOTES_FILE")"
+# --- Build the HTML caption ---------------------------------------------------
+# escape_html: neutralize &, <, > so they don't collide with our own HTML tags.
+escape_html() { sed -E -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
 
-MESSAGE="$(printf '🚀 wgfleet %s\n\n%s\n\n%s' "$TAG" "$BODY" "$RELEASE_URL")"
+# Drop the repo compare-link footer (private repo — the link is useless here),
+# then keep whole changelog lines until the caption budget is spent. Truncating
+# on line boundaries never splits a **bold** / `code` marker mid-token, which
+# would otherwise yield unbalanced HTML tags that Telegram rejects.
+RAW="$(grep -vE '^\*\*Full Changelog\*\*:' "$NOTES_FILE" | sed -E '/^[[:space:]]*$/d')"
+BODY=""
+truncated=0
+while IFS= read -r line; do
+  if [ $(( ${#BODY} + ${#line} + 1 )) -gt "$CAPTION_BUDGET" ]; then
+    truncated=1
+    break
+  fi
+  BODY+="${line}"$'\n'
+done <<< "$RAW"
+[ "$truncated" -eq 1 ] && BODY+="…"$'\n'
 
-# Telegram rejects messages over 4096 chars — truncate on a safe boundary and
-# keep the release link as the tail so the full changelog stays reachable.
-if [ "${#MESSAGE}" -gt "$TG_MSG_LIMIT" ]; then
-  MESSAGE="$(printf '%s' "$MESSAGE" | cut -c1-3900)"$'\n\n…\n\n'"Full changelog: $RELEASE_URL"
-fi
+# Markdown -> Telegram HTML. Escape first, then map markers to tags so the tags
+# we add are never re-escaped. Section headers (### / ####) become bold lines.
+# NB: the '|' delimiter is required — a '#' delimiter would collide with the
+# literal '#' in the ^#+ header pattern (ambiguous on both GNU and BSD sed).
+BODY_HTML="$(printf '%s' "$BODY" | escape_html | sed -E \
+  -e 's|^#+[[:space:]]*(.*)$|<b>\1</b>|' \
+  -e 's|\*\*([^*]+)\*\*|<b>\1</b>|g' \
+  -e 's|`([^`]+)`|<code>\1</code>|g')"
 
-echo "Sending changelog message to Telegram chat ${TELEGRAM_CHAT_ID}"
-curl -fsS -X POST "$API/sendMessage" \
-  --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
-  --data-urlencode "text=${MESSAGE}" \
-  --data-urlencode "disable_web_page_preview=true" \
-  >/dev/null
+TAG_HTML="$(printf '%s' "$TAG" | escape_html)"
+CAPTION="$(printf '🚀 <b>wgfleet %s</b>\n<blockquote expandable>%s</blockquote>' \
+  "$TAG_HTML" "$BODY_HTML")"
 
-# --- Build archives -----------------------------------------------------------
+# --- Collect build archives ---------------------------------------------------
 FILES=()
 for f in "$DIST_DIR"/*.tar.gz "$DIST_DIR"/SHA256SUMS; do
   [ -f "$f" ] && FILES+=("$f")
 done
 
+# Fall back to a caption-only message when there is nothing (small enough) to
+# attach: no files, or any file over the 50 MB bot-upload limit.
+send_caption_only() {
+  echo "Posting changelog-only message (reason: $1)"
+  curl -fsS -X POST "$API/sendMessage" \
+    --form-string "chat_id=${TELEGRAM_CHAT_ID}" \
+    --form-string "text=${CAPTION}" \
+    --form-string "parse_mode=HTML" \
+    --form-string "disable_web_page_preview=true" \
+    >/dev/null
+}
+
 if [ "${#FILES[@]}" -eq 0 ]; then
-  echo "No build archives found in ${DIST_DIR} — changelog posted, nothing to attach."
+  send_caption_only "no archives found in ${DIST_DIR}"
   exit 0
 fi
-
-# Any oversized archive → skip the upload entirely; the message already links to
-# the GitHub Release, where the assets live without a size limit.
 for f in "${FILES[@]}"; do
-  sz="$(stat -c%s "$f")"
-  if [ "$sz" -gt "$MAX_BYTES" ]; then
-    echo "Archive $(basename "$f") is ${sz} bytes (> 50 MB Telegram limit) — skipping upload; assets remain on the GitHub Release."
+  if [ "$(stat -c%s "$f")" -gt "$MAX_BYTES" ]; then
+    send_caption_only "$(basename "$f") exceeds the 50 MB Telegram limit"
     exit 0
   fi
 done
 
-echo "Attaching ${#FILES[@]} archive(s) to Telegram"
+# --- Single combined message: archives + changelog caption --------------------
+echo "Sending ${#FILES[@]} archive(s) + changelog as one Telegram message"
 
 if [ "${#FILES[@]}" -eq 1 ]; then
-  # sendMediaGroup needs 2..10 items; a lone file goes via sendDocument.
-  # --form-string for chat_id: a value like "@channel" would otherwise be read
-  # by curl -F as an "@file" upload reference (curl error 26).
+  # sendMediaGroup requires 2..10 items; a lone file goes via sendDocument.
+  # --form-string keeps curl from reading a leading "@" (as in "@channel") or
+  # "<" value as a local file (curl error 26); only real files use -F "@path".
   curl -fsS -X POST "$API/sendDocument" \
     --form-string "chat_id=${TELEGRAM_CHAT_ID}" \
+    --form-string "caption=${CAPTION}" \
+    --form-string "parse_mode=HTML" \
     -F "document=@${FILES[0]}" \
     >/dev/null
+  echo "Telegram announcement complete."
   exit 0
 fi
 
-# Build the media array (attach:// references) and the matching -F file parts.
-media_json='['
-for i in "${!FILES[@]}"; do
-  [ "$i" -eq 0 ] || media_json+=','
-  media_json+="{\"type\":\"document\",\"media\":\"attach://file${i}\"}"
-done
-media_json+=']'
+# The caption rides on the first album item. jq builds the media array so the
+# multi-line HTML caption is JSON-escaped correctly.
+media_json="$(jq -cn --arg cap "$CAPTION" '
+  [ $ARGS.positional | to_entries[]
+    | { type: "document", media: ("attach://file" + (.key | tostring)) } ]
+  | .[0].caption = $cap
+  | .[0].parse_mode = "HTML"
+' --args "${FILES[@]}")"
 
-# --form-string for chat_id/media: curl -F reads a value starting with "@" (a
-# "@channel" chat id) or "<" as a local file, which fails (curl error 26). Only
-# the actual file parts below use -F "@path".
 curl_args=(--form-string "chat_id=${TELEGRAM_CHAT_ID}" --form-string "media=${media_json}")
 for i in "${!FILES[@]}"; do
   curl_args+=(-F "file${i}=@${FILES[$i]}")
