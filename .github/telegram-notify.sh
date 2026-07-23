@@ -78,8 +78,10 @@ echo "Attaching ${#FILES[@]} archive(s) to Telegram"
 
 if [ "${#FILES[@]}" -eq 1 ]; then
   # sendMediaGroup needs 2..10 items; a lone file goes via sendDocument.
+  # --form-string for chat_id: a value like "@channel" would otherwise be read
+  # by curl -F as an "@file" upload reference (curl error 26).
   curl -fsS -X POST "$API/sendDocument" \
-    -F "chat_id=${TELEGRAM_CHAT_ID}" \
+    --form-string "chat_id=${TELEGRAM_CHAT_ID}" \
     -F "document=@${FILES[0]}" \
     >/dev/null
   exit 0
@@ -93,7 +95,10 @@ for i in "${!FILES[@]}"; do
 done
 media_json+=']'
 
-curl_args=(-F "chat_id=${TELEGRAM_CHAT_ID}" -F "media=${media_json}")
+# --form-string for chat_id/media: curl -F reads a value starting with "@" (a
+# "@channel" chat id) or "<" as a local file, which fails (curl error 26). Only
+# the actual file parts below use -F "@path".
+curl_args=(--form-string "chat_id=${TELEGRAM_CHAT_ID}" --form-string "media=${media_json}")
 for i in "${!FILES[@]}"; do
   curl_args+=(-F "file${i}=@${FILES[$i]}")
 done
