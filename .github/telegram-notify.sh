@@ -105,13 +105,15 @@ if [ "${#FILES[@]}" -eq 1 ]; then
   exit 0
 fi
 
-# The caption rides on the first album item. jq builds the media array so the
-# multi-line HTML caption is JSON-escaped correctly.
+# The caption rides on the LAST album item: in a document album each file is its
+# own bubble, so a caption on the first item renders text sandwiched between the
+# files. Anchoring it to the last item puts the changelog below all the files.
+# jq builds the media array so the multi-line HTML caption is JSON-escaped.
 media_json="$(jq -cn --arg cap "$CAPTION" '
   [ $ARGS.positional | to_entries[]
     | { type: "document", media: ("attach://file" + (.key | tostring)) } ]
-  | .[0].caption = $cap
-  | .[0].parse_mode = "HTML"
+  | .[-1].caption = $cap
+  | .[-1].parse_mode = "HTML"
 ' --args "${FILES[@]}")"
 
 curl_args=(--form-string "chat_id=${TELEGRAM_CHAT_ID}" --form-string "media=${media_json}")
