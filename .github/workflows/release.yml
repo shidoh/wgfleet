@@ -90,3 +90,20 @@ jobs:
               $PRERELEASE \
               dist/*.tar.gz dist/SHA256SUMS
           fi
+
+      # Announce the release in a Telegram channel: the changelog as a message
+      # plus the build archives as attached documents. Skipped for prereleases
+      # (tags with a suffix, e.g. v0.1.0-rc1) and when the bot secrets are unset.
+      #   Repo secrets required: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+      #   (chat id = @channelusername or the numeric -100… id).
+      - name: Announce on Telegram
+        if: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_CHAT_ID}" ]; then
+            echo "Telegram secrets not configured — skipping channel announcement."
+            exit 0
+          fi
+          bash .github/telegram-notify.sh "$TAG" release-notes.md dist
