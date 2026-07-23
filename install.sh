@@ -4,7 +4,7 @@
 # Two ways to run it, same result:
 #
 #   A) from the release archive (recommended — see docs/QUICKSTART.md):
-#        tar xzf wgfleet-linux-amd64.tar.gz && cd wgfleet-linux-amd64
+#        tar xzf wgfleet-<version>-linux-amd64.tar.gz && cd wgfleet-linux-amd64
 #        sudo ./install.sh
 #      Binaries sitting next to this script are installed as-is; nothing is
 #      downloaded.
@@ -140,14 +140,19 @@ if [ -n "$src" ] && [ -f "$src/wgfleet-controller" ] && [ -f "$src/wgfleet-agent
   install -m 0755 "$src/wgfleet-agent"      "$PREFIX/wgfleet-agent"
 else
   # --- remote mode: fetch the release archive and verify it ---
+  # Release assets are named per-version (wgfleet-<version>-linux-<arch>.tar.gz),
+  # so we need the concrete tag even for "latest". Resolve it from the
+  # /releases/latest redirect, whose effective URL ends in /tag/<version>.
   if [ "$VERSION" = "latest" ]; then
-    base="https://github.com/${REPO}/releases/latest/download"
-  else
-    base="https://github.com/${REPO}/releases/download/${VERSION}"
+    VERSION="$(curl -fsSLo /dev/null -w '%{url_effective}' \
+      "https://github.com/${REPO}/releases/latest" | sed 's#.*/tag/##')"
+    [ -n "$VERSION" ] || die "could not resolve the latest release version"
+    log "latest release resolves to $VERSION"
   fi
+  base="https://github.com/${REPO}/releases/download/${VERSION}"
 
   tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-  tgz="wgfleet-linux-${ARCH}.tar.gz"
+  tgz="wgfleet-${VERSION}-linux-${ARCH}.tar.gz"
 
   log "downloading $tgz + checksums from $base"
   for f in "$tgz" SHA256SUMS; do

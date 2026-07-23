@@ -26,9 +26,12 @@ This is the short path. For the reasoning behind each step see
   public IP. 1 vCPU / 1 GB RAM is enough for an exit; give the master 2 vCPU.
 - A free **ZeroTier** account — <https://my.zerotier.com>. wgfleet uses it as a
   private management network so no admin port is ever exposed to the internet.
-- The release archive for your CPU: `wgfleet-linux-amd64.tar.gz` (Intel/AMD) or
-  `wgfleet-linux-arm64.tar.gz` (ARM / Ampere / Graviton). Check with `uname -m`
-  on the server: `x86_64` → amd64, `aarch64` → arm64.
+- The release archive for your CPU, from the Releases page:
+  `wgfleet-<version>-linux-amd64.tar.gz` (Intel/AMD) or
+  `wgfleet-<version>-linux-arm64.tar.gz` (ARM / Ampere / Graviton). Check with
+  `uname -m` on the server: `x86_64` → amd64, `aarch64` → arm64. The commands
+  below use `<version>` as a stand-in — substitute the release you downloaded
+  (e.g. `v0.2.0`); the folder it unpacks into is always `wgfleet-linux-<arch>`.
 
 > Every command below runs as **root** on the server (`sudo -i` first).
 
@@ -47,9 +50,9 @@ Leave the tab open — you will come back to authorize each server.
 Copy the archive to the master server and unpack it:
 
 ```bash
-scp wgfleet-linux-amd64.tar.gz root@<MASTER-IP>:/root/
+scp wgfleet-<version>-linux-amd64.tar.gz root@<MASTER-IP>:/root/
 ssh root@<MASTER-IP>
-tar xzf wgfleet-linux-amd64.tar.gz
+tar xzf wgfleet-<version>-linux-amd64.tar.gz
 cd wgfleet-linux-amd64
 ```
 
@@ -139,9 +142,9 @@ You should see the master node, `Ready`.
 On the **exit** server, do the OS prep and join the same ZeroTier network:
 
 ```bash
-scp wgfleet-linux-amd64.tar.gz root@<EXIT-IP>:/root/
+scp wgfleet-<version>-linux-amd64.tar.gz root@<EXIT-IP>:/root/
 ssh root@<EXIT-IP>
-tar xzf wgfleet-linux-amd64.tar.gz
+tar xzf wgfleet-<version>-linux-amd64.tar.gz
 ./wgfleet-linux-amd64/prepare-node.sh <NETWORK-ID>
 ```
 

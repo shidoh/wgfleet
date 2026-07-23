@@ -63,8 +63,8 @@ plus a `SHA256SUMS`, to a GitHub Release:
 
 | Asset | Contents |
 |---|---|
-| `wgfleet-linux-amd64.tar.gz` | `wgfleet-controller`, `wgfleet-agent`, `install.sh`, `INSTALL.md` (the quickstart), `prepare-node.sh`, `examples/`, `systemd/`, `VERSION` |
-| `wgfleet-linux-arm64.tar.gz` | same, for ARM |
+| `wgfleet-<version>-linux-amd64.tar.gz` | `wgfleet-controller`, `wgfleet-agent`, `install.sh`, `INSTALL.md` (the quickstart), `prepare-node.sh`, `examples/`, `systemd/`, `VERSION` (unpacks into `wgfleet-linux-amd64/`) |
+| `wgfleet-<version>-linux-arm64.tar.gz` | same, for ARM |
 | `SHA256SUMS` | checksums over the archives |
 
 Tags with a pre-release suffix (`v0.1.0-rc1`) are published as prereleases.

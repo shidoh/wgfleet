@@ -416,15 +416,16 @@ non-root/dev runs.
 **New here? Follow [`docs/QUICKSTART.md`](docs/QUICKSTART.md)** — two blank
 Ubuntu servers to a working VPN in ~30 minutes, no prior knowledge assumed.
 
-Each release ships **one archive per architecture**
-(`wgfleet-linux-amd64.tar.gz` / `wgfleet-linux-arm64.tar.gz`) containing both
-binaries, the installer, `INSTALL.md` (the quickstart), reference configs and
-the systemd units. Unpack it on the master and run the installer — it installs
-the host deps (AmneziaWG kernel module, ZeroTier, Docker), the binaries, the
-systemd units and config templates, then prints the remaining operator steps:
+Each release ships **one archive per architecture**, version-stamped in the
+filename (`wgfleet-<version>-linux-amd64.tar.gz` /
+`wgfleet-<version>-linux-arm64.tar.gz`) containing both binaries, the installer,
+`INSTALL.md` (the quickstart), reference configs and the systemd units. Unpack
+it on the master and run the installer — it installs the host deps (AmneziaWG
+kernel module, ZeroTier, Docker), the binaries, the systemd units and config
+templates, then prints the remaining operator steps:
 
 ```sh
-tar xzf wgfleet-linux-amd64.tar.gz && cd wgfleet-linux-amd64
+tar xzf wgfleet-<version>-linux-amd64.tar.gz && cd wgfleet-linux-amd64
 sudo ./install.sh
 # or seed values up front:
 sudo ZT_NETWORK=<id> PUBLIC_IP=<ip> ./install.sh

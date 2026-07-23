@@ -11,7 +11,7 @@ a dedicated controller VM is not worth it.
 > automates steps 1–6 below (deps, binaries, dirs, units, config templates) on a
 > fresh Ubuntu/Debian VM — either from the release archive:
 > ```sh
-> tar xzf wgfleet-linux-amd64.tar.gz && cd wgfleet-linux-amd64 && sudo ./install.sh
+> tar xzf wgfleet-<version>-linux-amd64.tar.gz && cd wgfleet-linux-amd64 && sudo ./install.sh
 > ```
 > or straight off the internet:
 > ```sh

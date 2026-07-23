@@ -77,9 +77,13 @@ controller-linux:
 # what a GitHub release ships (one tarball per arch, instead of loose binaries)
 # — see .github/workflows/release.yml. Hand someone the tarball and INSTALL.md
 # inside it walks them from a blank VM to a working fleet.
-PKG := wgfleet-linux-$(ARCH)
+# PKG is the directory inside the tarball (kept version-free so install.sh and
+# the docs can `cd wgfleet-linux-<arch>` regardless of release). ARCHIVE is the
+# tarball filename, which DOES carry the version.
+PKG     := wgfleet-linux-$(ARCH)
+ARCHIVE := wgfleet-$(VERSION)-linux-$(ARCH)
 release-archive: agent-linux controller-linux
-	@rm -rf $(DIST)/$(PKG) $(DIST)/$(PKG).tar.gz
+	@rm -rf $(DIST)/$(PKG) $(DIST)/wgfleet-*-linux-$(ARCH).tar.gz
 	@mkdir -p $(DIST)/$(PKG)/examples $(DIST)/$(PKG)/systemd
 	cp $(DIST)/wgfleet-controller-linux-$(ARCH) $(DIST)/$(PKG)/wgfleet-controller
 	cp $(DIST)/wgfleet-agent-linux-$(ARCH)      $(DIST)/$(PKG)/wgfleet-agent
@@ -90,8 +94,8 @@ release-archive: agent-linux controller-linux
 	cp deploy/systemd/*.service                 $(DIST)/$(PKG)/systemd/
 	@echo "$(VERSION) $(COMMIT) $(DATE) linux/$(ARCH)" > $(DIST)/$(PKG)/VERSION
 	chmod 0755 $(DIST)/$(PKG)/wgfleet-controller $(DIST)/$(PKG)/wgfleet-agent $(DIST)/$(PKG)/*.sh
-	tar -C $(DIST) -czf $(DIST)/$(PKG).tar.gz $(PKG)
-	@echo "packed $(DIST)/$(PKG).tar.gz"
+	tar -C $(DIST) -czf $(DIST)/$(ARCHIVE).tar.gz $(PKG)
+	@echo "packed $(DIST)/$(ARCHIVE).tar.gz"
 
 tidy:
 	$(GO) mod tidy
