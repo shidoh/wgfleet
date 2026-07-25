@@ -1,4 +1,4 @@
-# wgfleet — RU / non-RU split tunnel + basic DNS filtering
+# wgfleet — RU / non-RU split tunnel + DNS filtering
 # =========================================================
 # A ready-to-adapt controller config for the most common goal: your devices
 # reach RUSSIAN sites directly (fast, local IP, no foreign hop) while EVERYTHING
@@ -11,10 +11,11 @@
 #                                       │
 #                                       └─ RU sites/IPs go DIRECT from here (no exit hop)
 #
-# Only the keys that PRODUCE this behavior are called out with ★. The rest is the
-# minimum needed to stand a fleet up. Full annotated reference: deploy/examples/
-# controller.yaml and README §10.1. Recipe walkthrough + verification:
-# docs/recipes/ru-split-tunnel-dns-filter.md.
+# Only the keys that PRODUCE this behavior are called out with ★. Blocks marked
+# ‡ are production HARDENING for RU networks (fresh geo data, resilient blocklist
+# loading, private-zone DNS) — recommended, explained in the recipe. Full
+# annotated reference: deploy/examples/controller.yaml and README §10.1.
+# Walkthrough + verification: docs/recipes/ru-split-tunnel-dns-filter.md.
 #
 # Replace every <placeholder>. This file holds WG/REALITY keys + passwords once
 # populated — keep it chmod 0600.
@@ -30,7 +31,7 @@ controller:
 
 fleet:
   zerotier_network: "<zt-network-id>"   # 16-hex mgmt overlay id; exits join it during provisioning
-  mgmt_subnet: 10.20.0.0/16             # your ZeroTier CIDR — routed DIRECT + trusted by every exit
+  mgmt_subnet: 172.29.0.0/16            # your ZeroTier CIDR — routed DIRECT + trusted by every exit
 
   masters:
     - name: master-1
@@ -38,7 +39,7 @@ fleet:
       public_ip: "<master-public-ip>"   # WG endpoint your devices dial; seeds wg-easy first run
       client_awg:
         listen_port: 443                # UDP; a standard port is less conspicuous
-        address_pool: 10.80.0.0/24      # the client WireGuard subnet
+        address_pool: 10.73.0.0/24      # the client WireGuard subnet (its .1 is the clients' DNS)
 
       # ★ THE SPLIT. mihomo routing rules are evaluated top-down:
       #     1. direct_cidrs  → DIRECT  (private/LAN nets never enter the tunnel)
@@ -50,8 +51,8 @@ fleet:
         direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
         direct_geo:   [RU]                              # ★ the RU/non-RU split
         balance:      consistent-hashing                # ★ each destination keeps ONE exit/egress
-                                                        #   country; every exit shares load. See the
-                                                        #   reference config for the other strategies.
+                                                        #   country; every exit shares load.
+        # reserve_exits: [exit-slow]   # optional: used ONLY when every primary exit is down
 
       # ★ CLIENT-FACING DNS FILTER (ADR-0024). With this on, the master runs a blocky
       #   resolver that becomes your devices' single DNS: it BLOCKS the denylists below
@@ -59,46 +60,124 @@ fleet:
       #   everything else to the exits' resolvers. Off ⇒ no filtering.
       dns_filter: true
       dns:
+        prometheus: true                # export blocky metrics (mgmt/ZT bind)
         # allowlist wins over every denylist — put anything a list breaks here.
-        allowlist: ["*.mts.ru", "*.gosuslugi.ru"]      # examples; platform infra is auto-added
+        allowlist: ["*.gosuslugi.ru", "payment.mts.ru"]   # examples; platform infra is auto-added
         overrides:
           blocking:
+            # ‡ Serve DNS immediately, load/refresh lists in the BACKGROUND. A slow or
+            #   blocked GitHub from RU then never stalls resolution (blocking just stays
+            #   empty until a refresh succeeds). Strongly recommended on RU masters.
+            loading:
+              strategy: fast
+              refreshPeriod: 24h
+              downloads: { timeout: 30s, attempts: 5, cooldown: 30s }
             denylists:
               ads:
                 - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.txt
+                - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/popupads.txt
+                - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/spam-tlds-adblock.txt
+              trackers:                 # native.* = device telemetry (Amazon/Apple/MS/TikTok)
+                - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/native.amazon.txt
+                - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/native.apple.txt
+                - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/native.winoffice.txt
             clientGroupsBlock:
-              default: [ads]
+              default: [ads, trackers]
           caching: { minTime: 5m, prefetching: true }
+          # ‡ Resolve internal/private domains for proxied clients. Pair
+          #   with mihomo.overrides.dns.nameserver below. Map your real zones → internal DNS.
+          # conditional:
+          #   fallbackUpstream: true
+          #   mapping:
+          #     corp.internal: 10.0.0.53
+          #     corp.lan:      10.0.0.53
+
+      mihomo:
+        health_interval: 30s
+        # ‡ Don't sniff these — SNI-fronted CDNs / metadata APIs break under
+        #   override-destination.
+        sniffer_skip:
+          - "+.themoviedb.org"
+          - "+.tmdb.org"
+          - "+.thetvdb.com"
+          - "+.cloudfront.net"          # AWS CloudFront
+          - "+.akamaized.net"           # Akamai
+          - "+.fastly.net"              # Fastly
+        overrides:
+          log-level: info
+          # ‡ Authenticate the mihomo Clash API + dashboard. Binds the mgmt overlay,
+          #   but anyone on it can otherwise drive mihomo. Generate a long random string;
+          #   NEVER commit a real value.
+          # secret: "<generate-a-long-random-string>"
+          # ‡ Resolve via the master's blocky (needs dns_filter: true) so private domains
+          #   resolve for proxied clients — see the conditional mapping above.
+          # dns: { nameserver: ["127.0.0.1:53"] }
+
+          # ‡ KEEP RU GEO FRESH. direct_geo emits GEOSITE/GEOIP rules that need the geo
+          #   .dat, whose auto-updater has NO direct detour → on an RU master it fetches
+          #   through the exit (or fails at startup) and drifts stale. These .mrs
+          #   rule-providers honour `proxy: DIRECT`, so they refresh over the master's
+          #   direct path. Turn the .dat updater off and REPLACE the rules to use them.
+          #   (The self-dial REJECT guard is re-injected as the first rule automatically.)
+          # geo-auto-update: false
+          # rule-providers:
+          #   geoip-ru:
+          #     type: http
+          #     behavior: ipcidr
+          #     format: mrs
+          #     proxy: DIRECT
+          #     url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/ru.mrs"
+          #     path: ./rules/geoip-ru.mrs
+          #     interval: 86400
+          #   geosite-ru:
+          #     type: http
+          #     behavior: domain
+          #     format: mrs
+          #     proxy: DIRECT
+          #     url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ru.mrs"
+          #     path: ./rules/geosite-ru.mrs
+          #     interval: 86400
+          # rules:
+          #   - RULE-SET,direct-domains,DIRECT      # optional, see extra_files below
+          #   - RULE-SET,direct-networks,DIRECT
+          #   - RULE-SET,geosite-ru,DIRECT
+          #   - RULE-SET,geoip-ru,DIRECT,no-resolve
+          #   - MATCH,wg-best
+
+        # Domains you always want DIRECT regardless of geo (referenced by the optional
+        # direct-domains rule above). Written into /etc/mihomo alongside config.yaml.
+        # extra_files:
+        #   - path: direct-domains.yaml
+        #     content: |
+        #       payload:
+        #         - '+.themoviedb.org'
 
       compose:
         wg_easy_web_port: 51821         # wg-easy admin UI (client QR codes), mgmt/ZT only
-        # mihomo_tag defaults to a pinned, AWG-2.0-safe version — do NOT pin :latest or "Alpha".
+        # mihomo pinned to a safe default (v1.19.29). Do NOT set :latest or "Alpha".
 
   exits:
     - name: exit-1
       region: de                        # free-form label
       egress: warp                      # leave via Cloudflare WARP (hides the exit's datacenter IP)
       warp_mtu: 1380                    # pin if the real WARP path is < 1500
-      address_pool: 10.81.0.0/24        # MUST be unique per exit
+      address_pool: 10.71.0.0/24        # MUST be unique per exit
       mgmt_addr: "<exit-mgmt-zt-ip>"    # the exit's ZeroTier address
 
       # ★ Upstream half of the DNS filter: a clean resolver the master forwards to.
-      #   Turning filtering on here too means it applies even to mihomo's own
-      #   re-resolution, and adds defense in depth. Required for the master's
-      #   dns_filter to have an upstream to point at.
+      #   Required so the master's dns_filter has an upstream; filtering here too is
+      #   defense in depth.
       dns_filter: true
       dns:
         overrides:
           blocking:
             denylists:
-              ads:
-                - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.txt
-            clientGroupsBlock:
-              default: [ads]
+              ads: [https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.txt]
+            clientGroupsBlock: { default: [ads] }
 
       firewall:
         as_blacklist: true              # drop known VPN-scanner ASNs before the WG/SSH accepts
-        whitelist: ["10.20.0.0/16"]     # the mgmt overlay
+        whitelist: ["172.29.0.0/16"]    # the mgmt overlay
       ssh:
         host: "<exit-public-ip>"
         port: 22
