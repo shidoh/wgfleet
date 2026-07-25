@@ -64,7 +64,7 @@ Two independent layers, both `blocky`:
 
 Denylists and the allowlist live under `dns.overrides.blocking` /
 `dns.allowlist`. The allowlist always wins — use it the moment a list breaks a
-site you need (banking, gosuslugi, etc.).
+site you need (banking, a government portal, etc.).
 
 ---
 
@@ -83,7 +83,7 @@ fleet:
         balance:      consistent-hashing   # ← each destination keeps one exit / egress country
       dns_filter: true                     # ← master = clients' filtering DNS
       dns:
-        allowlist: ["*.gosuslugi.ru", "payment.mts.ru"]   # never blocked (wins over denylists)
+        allowlist: ["*.example.ru"]     # your own never-block domains (wins over denylists)
         overrides:
           blocking:
             denylists:
@@ -236,12 +236,10 @@ SNI-fronted CDNs and metadata APIs break when you do. Exempt them:
 ```yaml
 mihomo:
   sniffer_skip:
-    - "+.themoviedb.org"
-    - "+.tmdb.org"
-    - "+.thetvdb.com"
     - "+.cloudfront.net"      # AWS CloudFront
     - "+.akamaized.net"       # Akamai
     - "+.fastly.net"          # Fastly
+    # + any SNI-fronted API/metadata service whose first requests break under sniffing
 ```
 
 ### 5. Lock down the mihomo API
