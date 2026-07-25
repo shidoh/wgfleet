@@ -60,6 +60,12 @@ type AgentSection struct {
 	// ASBlacklistInterval is how often a stale feed cache is refreshed. 0 falls back
 	// to the asnfeed default (24h). A failed refresh keeps the last-good list.
 	ASBlacklistInterval time.Duration `koanf:"as_blacklist_interval"`
+	// MgmtIgnoreCIDRs are the management-overlay scopes fail2ban must never ban
+	// (loopback is always added). Baked in at provisioning from fleet.MgmtCIDRs();
+	// the agent's host fail2ban planner renders the sshd jail's ignoreip from it.
+	// Empty leaves the fail2ban jail unmanaged by reconcile (the bootstrap jail stays),
+	// so an un-reprovisioned node is never regressed to a narrower ignoreip.
+	MgmtIgnoreCIDRs []string `koanf:"mgmt_ignore_cidrs"`
 }
 
 // IdentitySection holds the node's mTLS client certificate material. The key is

@@ -1,15 +1,5 @@
 package provisioner
 
-// sshHardening is the drop-in sshd config applied in Phase 1: key-only auth, no
-// root password login. Placed in sshd_config.d so it overrides distro defaults
-// without rewriting the main config.
-const sshHardening = `# Managed by wgfleet — bootstrap hardening.
-PermitRootLogin prohibit-password
-PasswordAuthentication no
-ChallengeResponseAuthentication no
-KbdInteractiveAuthentication no
-`
-
 // baselineNFT is the minimal firewall installed BEFORE the node accepts traffic
 // (Phase 1): only SSH, the management overlay (ZeroTier), and the WG port are
 // reachable. The agent's reconcile later replaces this with the full per-role
@@ -39,29 +29,6 @@ table inet wgfleet_baseline {
 	chain forward { type filter hook forward priority 0; policy drop; }
 	chain output { type filter hook output priority 0; policy accept; }
 }
-`
-
-// fail2banJail is the drop-in jail config installed in Phase 1c-4 (placed in
-// jail.d so it overrides distro defaults without rewriting jail.local). It bans
-// SSH brute-force sources seen in the systemd journal. It coexists with the
-// wgfleet nft ruleset: fail2ban's nftables action manages its OWN table, and a
-// ban DROP there is terminal regardless of the wgfleet accept at the same hook,
-// so banned scanners are dropped while legitimate (key-auth) logins are never
-// touched. %s is the ignoreip list (loopback + the mgmt overlay).
-const fail2banJail = `# Managed by wgfleet — SSH brute-force protection.
-[DEFAULT]
-backend = systemd
-banaction = nftables[type=multiport]
-bantime = 1h
-findtime = 10m
-maxretry = 5
-# Never ban loopback or the management overlay: the operator and control plane
-# reach nodes over it. Key auth never fails so a ban is unlikely anyway — this is
-# belt-and-suspenders against self-lockout.
-ignoreip = %s
-
-[sshd]
-enabled = true
 `
 
 // The agent's Prometheus /metrics endpoint binds on the node's mgmt/overlay address

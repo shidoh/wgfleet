@@ -10,6 +10,7 @@ import (
 
 	"github.com/shidoh/wgfleet/internal/controller/pki"
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/hardening"
 	"github.com/shidoh/wgfleet/internal/version"
 )
 
@@ -65,8 +66,8 @@ const (
 	remoteNodeCert     = "/etc/wgfleet/node.crt"
 	remoteNodeKey      = "/etc/wgfleet/node.key"
 	remoteCACert       = "/etc/wgfleet/ca.crt"
-	remoteHardenConf   = "/etc/ssh/sshd_config.d/10-wgfleet-hardening.conf"
-	remoteFail2ban     = "/etc/fail2ban/jail.d/wgfleet.conf"
+	remoteHardenConf   = hardening.SSHDDropInPath
+	remoteFail2ban     = hardening.Fail2banJailPath
 )
 
 // awgHeldPackages are the AmneziaWG apt packages held back from unattended
@@ -92,9 +93,10 @@ func BuildPlan(in BootstrapInput) Plan {
 				return nil
 			}),
 
-		// Phase 1a: SSH hardening — key-only, no root password login.
+		// Phase 1a: SSH hardening — key-only, no root password login, no X11. The same
+		// managed drop-in the agent's host planner re-asserts every reconcile pass.
 		uploadStep("harden sshd (no root password, key-only auth)", remoteHardenConf,
-			[]byte(sshHardening), 0o644, sshHardening),
+			[]byte(hardening.SSHDConfig), 0o644, hardening.SSHDConfig),
 		runStep("reload sshd", "systemctl reload sshd || systemctl reload ssh"),
 
 		// Phase 1b: baseline firewall before the node is reachable for traffic.
@@ -151,7 +153,7 @@ func BuildPlan(in BootstrapInput) Plan {
 	// the dependency phase above (MissingPackages adds it when absent); here we drop
 	// our jail and (re)start the service. Idempotent — safe to re-run on an already
 	// protected node.
-	fail2banConf := renderFail2banJail(in)
+	fail2banConf := hardening.RenderFail2banJail(in.MgmtIgnoreCIDRs)
 	steps = append(steps,
 		uploadStep("install fail2ban sshd jail", remoteFail2ban,
 			[]byte(fail2banConf), 0o644, fail2banConf),
@@ -386,6 +388,16 @@ func renderAgentYAML(in BootstrapInput) string {
 	if in.ASBlacklistInterval > 0 {
 		extra += fmt.Sprintf("  as_blacklist_interval: %s\n", in.ASBlacklistInterval)
 	}
+	// Management-overlay scopes fail2ban must never ban. Baked in so the agent's host
+	// fail2ban planner can re-render the sshd jail's ignoreip every reconcile pass
+	// (agent-local, from fleet.MgmtCIDRs()). Omitted when empty so the planner leaves
+	// the bootstrap jail untouched rather than narrowing its ignoreip.
+	if cidrs := trimCIDRs(in.MgmtIgnoreCIDRs); len(cidrs) > 0 {
+		extra += "  mgmt_ignore_cidrs:\n"
+		for _, c := range cidrs {
+			extra += fmt.Sprintf("    - %q\n", c)
+		}
+	}
 	return fmt.Sprintf(`agent:
   role: %s
   controller: %q
@@ -398,17 +410,15 @@ func renderAgentYAML(in BootstrapInput) string {
 		remoteNodeCert, remoteNodeKey, remoteCACert)
 }
 
-// renderFail2banJail fills the sshd jail with the ignoreip scope: always loopback,
-// plus every management-overlay CIDR so the operator/control plane reaching nodes
-// over the overlay is never banned.
-func renderFail2banJail(in BootstrapInput) string {
-	ignore := "127.0.0.1/8 ::1"
-	for _, c := range in.MgmtIgnoreCIDRs {
+// trimCIDRs drops blank entries and trims whitespace, preserving order.
+func trimCIDRs(cidrs []string) []string {
+	out := make([]string, 0, len(cidrs))
+	for _, c := range cidrs {
 		if c = strings.TrimSpace(c); c != "" {
-			ignore += " " + c
+			out = append(out, c)
 		}
 	}
-	return fmt.Sprintf(fail2banJail, ignore)
+	return out
 }
 
 func join(s []string) string {

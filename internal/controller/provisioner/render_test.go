@@ -23,25 +23,27 @@ func TestRenderAgentYAMLIncludesMgmtAddr(t *testing.T) {
 	}
 }
 
-func TestRenderFail2banJail(t *testing.T) {
-	in := BootstrapInput{MgmtIgnoreCIDRs: []string{"10.20.3.10/32", "10.20.3.20/32"}}
-	got := renderFail2banJail(in)
+func TestRenderAgentYAMLBakesMgmtIgnoreCIDRs(t *testing.T) {
+	base := BootstrapInput{
+		Node:               domain.Node{ID: "exit-de-1", Role: domain.RoleExit},
+		ControllerEndpoint: "master-xa-1.mgmt:8443",
+	}
+	// Set: the mgmt CIDRs are baked as a YAML list the agent's fail2ban planner reads.
+	in := base
+	in.MgmtIgnoreCIDRs = []string{"172.29.0.0/16", "  ", "10.20.3.20/32"}
+	got := renderAgentYAML(in)
 	for _, want := range []string{
-		"backend = systemd",
-		"banaction = nftables[type=multiport]",
-		"[sshd]",
-		"enabled = true",
-		"ignoreip = 127.0.0.1/8 ::1 10.20.3.10/32 10.20.3.20/32",
+		"  mgmt_ignore_cidrs:\n",
+		`    - "172.29.0.0/16"`,
+		`    - "10.20.3.20/32"`,
 	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("fail2ban jail missing %q:\n%s", want, got)
+			t.Errorf("agent.yaml missing %q:\n%s", want, got)
 		}
 	}
-}
-
-func TestRenderFail2banJailLoopbackOnlyWithoutMgmtCIDRs(t *testing.T) {
-	if got := renderFail2banJail(BootstrapInput{}); !strings.Contains(got, "ignoreip = 127.0.0.1/8 ::1\n") {
-		t.Fatalf("ignoreip should be loopback-only when no mgmt CIDRs:\n%s", got)
+	// Unset: the key is omitted so the fail2ban planner leaves the bootstrap jail alone.
+	if got := renderAgentYAML(base); strings.Contains(got, "mgmt_ignore_cidrs") {
+		t.Fatalf("agent.yaml should omit mgmt_ignore_cidrs when unset:\n%s", got)
 	}
 }
 

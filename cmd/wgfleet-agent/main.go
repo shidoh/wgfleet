@@ -35,6 +35,7 @@ import (
 	egressfo "github.com/shidoh/wgfleet/internal/agent/egress"
 	"github.com/shidoh/wgfleet/internal/agent/exit"
 	"github.com/shidoh/wgfleet/internal/agent/health"
+	"github.com/shidoh/wgfleet/internal/agent/host"
 	"github.com/shidoh/wgfleet/internal/agent/master"
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/api"
@@ -42,6 +43,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/controller/pki"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/egress"
+	"github.com/shidoh/wgfleet/internal/hardening"
 	"github.com/shidoh/wgfleet/internal/metrics"
 	"github.com/shidoh/wgfleet/internal/mihomo"
 	"github.com/shidoh/wgfleet/internal/version"
@@ -720,8 +722,9 @@ func (a *agent) masterPaths() master.Paths {
 // plane is mihomo + NAT; the exit's is the WG/AWG interface + wgcf + routing +
 // nftables + DNS.
 func (a *agent) planners(privateKey, realityPrivateKey, adminUser, adminPass string) []reconcile.Planner {
+	var base []reconcile.Planner
 	if a.role == domain.RoleMaster {
-		return master.Planners(master.Input{
+		base = master.Planners(master.Input{
 			Tier:              a.tier,
 			Paths:             a.masterPaths(),
 			PrivateKey:        privateKey,
@@ -730,18 +733,31 @@ func (a *agent) planners(privateKey, realityPrivateKey, adminUser, adminPass str
 			AdminPassword:     adminPass,
 			OverlayMSS:        a.cfg.Agent.MgmtOverlayMSS,
 		})
+	} else {
+		in := exit.Input{
+			Paths:               a.paths,
+			PrivateKey:          privateKey,
+			RealityPrivateKey:   realityPrivateKey,
+			OverlayMSS:          a.cfg.Agent.MgmtOverlayMSS,
+			ASBlacklistV4URL:    a.cfg.Agent.ASBlacklistV4URL,
+			ASBlacklistV6URL:    a.cfg.Agent.ASBlacklistV6URL,
+			ASBlacklistInterval: a.cfg.Agent.ASBlacklistInterval,
+		}
+		in.WARP = a.readWARPProfile()
+		base = exit.Planners(in)
 	}
-	in := exit.Input{
-		Paths:               a.paths,
-		PrivateKey:          privateKey,
-		RealityPrivateKey:   realityPrivateKey,
-		OverlayMSS:          a.cfg.Agent.MgmtOverlayMSS,
-		ASBlacklistV4URL:    a.cfg.Agent.ASBlacklistV4URL,
-		ASBlacklistV6URL:    a.cfg.Agent.ASBlacklistV6URL,
-		ASBlacklistInterval: a.cfg.Agent.ASBlacklistInterval,
+	// Host hardening (sshd drop-in + fail2ban jail) is role-agnostic: applied on every
+	// node so a drifted or hand-overwritten file self-heals on the next reconcile pass,
+	// rather than persisting until the node is re-provisioned.
+	hostIn := host.Input{MgmtIgnoreCIDRs: a.cfg.Agent.MgmtIgnoreCIDRs}
+	if a.stateDir != "" {
+		// Root managed files under the state dir for non-root/dev runs (--state-dir),
+		// exactly like exit/master paths — never touch the real host's /etc in a sandbox.
+		hostIn.SSHDConfigPath = filepath.Join(a.stateDir, hardening.SSHDDropInPath)
+		hostIn.Fail2banJailPath = filepath.Join(a.stateDir, hardening.Fail2banJailPath)
 	}
-	in.WARP = a.readWARPProfile()
-	return exit.Planners(in)
+	base = append(base, host.Planners(hostIn)...)
+	return base
 }
 
 // publishTunnelKeys derives and publishes the master's per-tunnel WireGuard public
