@@ -107,7 +107,7 @@ fleet:
         # that way, not as a pasted config) and shown in the Web UI. List what the master
         # can actually reach.
         # route_through_cidrs:
-        #   - 172.29.0.0/16   # ZeroTier mgmt overlay (master UI, other nodes)
+        #   - 10.20.0.0/16    # ZeroTier mgmt overlay (master UI, other nodes)
         #   - 10.0.0.0/8      # example: internal/work nets the master forwards to
       routing:
         direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
@@ -154,21 +154,21 @@ fleet:
       # dns_filter: true
       # dns:
       #   prometheus: true
-      #   allowlist: ["*.example.com", payment.mts.ru]      # never blocked (platform infra auto-added)
+      #   allowlist: ["*.example.com", "*.example.ru"]      # never blocked (platform infra auto-added)
       #   # upstreams: [...]   # pin DNS upstreams; default = the active exit blockys
       #   overrides:           # the rich surface (deep-merged into config.yml)
       #     conditional:
       #       fallbackUpstream: true
       #       mapping:
-      #         sln.internal: 10.20.2.1,10.20.2.2          # local zones → internal DNS (over ZT)
-      #         bootsman.lan: 10.200.99.1
+      #         corp.internal: 10.20.2.1,10.20.2.2         # local zones → internal DNS (over ZT)
+      #         corp.lan: 10.20.2.1
       #     blocking:
       #       denylists:
       #         ads: ["https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.txt"]
       #       clientGroupsBlock: { default: [ads] }
       #     caching: { minTime: 5m, prefetching: true, prefetchThreshold: 15 }
       mihomo: # master data-plane tuning + custom-config hooks
-        sniffer_skip: ["+.themoviedb.org", "+.cloudfront.net"] # CDNs that break under sniffing
+        sniffer_skip: ["+.cloudfront.net", "+.akamaized.net"] # CDNs that break under sniffing
         # health_interval: how often mihomo health-checks the exits in wg-best to detect
         # and route around dead ones. Unset ⇒ 60s. Range 5s..1h. Lower it to fail over off
         # a dead exit faster (at the cost of more frequent url-test probes through the tunnels).
@@ -282,7 +282,7 @@ fleet:
         overrides: # raw blocky YAML, deep-merged onto the rendered base
           conditional: # split-horizon internal domains
             mapping:
-              lab.lan: 10.20.2.1,10.20.2.2
+              corp.lan: 10.20.2.1,10.20.2.2
           blocking: # opt in to filtering (empty by default)
             denylists:
               ads: [https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.txt]

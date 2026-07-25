@@ -91,6 +91,8 @@ release-archive: agent-linux controller-linux
 	cp docs/QUICKSTART.md                       $(DIST)/$(PKG)/INSTALL.md
 	cp deploy/prepare-node.sh                   $(DIST)/$(PKG)/prepare-node.sh
 	cp deploy/examples/controller.yaml deploy/examples/agent.yaml $(DIST)/$(PKG)/examples/
+	cp deploy/examples/controller-split-ru.yaml $(DIST)/$(PKG)/examples/
+	cp docs/recipes/ru-split-tunnel-dns-filter.md $(DIST)/$(PKG)/examples/RU-SPLIT-TUNNEL.md
 	cp deploy/systemd/*.service                 $(DIST)/$(PKG)/systemd/
 	@echo "$(VERSION) $(COMMIT) $(DATE) linux/$(ARCH)" > $(DIST)/$(PKG)/VERSION
 	chmod 0755 $(DIST)/$(PKG)/wgfleet-controller $(DIST)/$(PKG)/wgfleet-agent $(DIST)/$(PKG)/*.sh

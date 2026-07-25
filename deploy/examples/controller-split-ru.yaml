@@ -13,9 +13,9 @@
 #
 # Only the keys that PRODUCE this behavior are called out with ★. Blocks marked
 # ‡ are production HARDENING for RU networks (fresh geo data, resilient blocklist
-# loading, private-zone DNS) — recommended, explained in the recipe. Full
-# annotated reference: deploy/examples/controller.yaml and README §10.1.
-# Walkthrough + verification: docs/recipes/ru-split-tunnel-dns-filter.md.
+# loading, private-zone DNS) — recommended, explained in the walkthrough that
+# ships beside this file: RU-SPLIT-TUNNEL.md. The exhaustive knob-by-knob
+# reference is controller.yaml in this same examples/ folder.
 #
 # Replace every <placeholder>. This file holds WG/REALITY keys + passwords once
 # populated — keep it chmod 0600.

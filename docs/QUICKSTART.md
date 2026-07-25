@@ -240,9 +240,9 @@ wgfleet-agent --config /etc/wgfleet/agent.yaml --plan   # dry run: what would ch
 
 The setup above sends **all** client traffic through the exit. To instead keep
 Russian sites local (direct, full speed) and route only the rest abroad — plus
-filter ads/trackers on DNS — follow
-[recipes/ru-split-tunnel-dns-filter.md](recipes/ru-split-tunnel-dns-filter.md).
-It changes only a handful of keys in `controller.yaml`; a ready-to-adapt config
-ships as `examples/controller-split-ru.yaml` in the archive.
+filter ads/trackers on DNS — use the ready-to-adapt
+[`examples/controller-split-ru.yaml`](examples/controller-split-ru.yaml) and its
+walkthrough [`examples/RU-SPLIT-TUNNEL.md`](examples/RU-SPLIT-TUNNEL.md) (both in
+this archive). It changes only a handful of keys from the setup above.
 
 Fully annotated reference configs are in `examples/` inside the archive.
