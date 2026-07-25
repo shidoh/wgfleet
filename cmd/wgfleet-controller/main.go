@@ -92,6 +92,13 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	// Self-heal the manifest mode: it carries WG/REALITY private keys and the wg-easy
+	// admin password, so it must be owner-only. A hand-created or hand-edited
+	// controller.yaml is easily left group/other-readable (a 2026-07-25 audit found it
+	// 0644); tighten it best-effort on every startup rather than trusting every author.
+	if err := os.Chmod(*configPath, 0o600); err != nil && !os.IsNotExist(err) {
+		slog.Warn("could not tighten manifest permissions to 0600", "path", *configPath, "err", err)
+	}
 	if *storePath != "" { // flag overrides file, per config-driven principle
 		cfg.Controller.Store = *storePath
 	}

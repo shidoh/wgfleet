@@ -92,13 +92,17 @@ func keyIs(line, key string) bool {
 	return s == key+":" || strings.HasPrefix(s, key+": ")
 }
 
+// manifestMode is the on-disk mode of the controller manifest. It carries secrets
+// (WG/REALITY private keys, the wg-easy admin password), so it is always owner-only
+// — never group/other-readable.
+const manifestMode = os.FileMode(0o600)
+
 // writeFileAtomic writes data to a temp file in the same directory and renames it
-// over path, preserving path's mode so a 0600 manifest stays 0600.
+// over path. It forces the secret-bearing manifest to 0600, tightening a
+// pre-existing 0644 rather than preserving it — the earlier mode-preserve behaviour
+// silently kept a world-readable manifest world-readable (2026-07-25 audit finding).
 func writeFileAtomic(path string, data []byte) error {
-	mode := os.FileMode(0o600)
-	if fi, err := os.Stat(path); err == nil {
-		mode = fi.Mode().Perm()
-	}
+	mode := manifestMode
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".controller-*.yaml.tmp")
 	if err != nil {

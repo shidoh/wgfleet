@@ -105,6 +105,25 @@ func TestSetExitActiveTransport_InsertWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestSetExitActiveTransport_TightensManifestPerms(t *testing.T) {
+	// A world-readable manifest (0644) must be rewritten owner-only: it holds WG/REALITY
+	// private keys and the wg-easy admin password. Preserving the mode kept it 0644.
+	p := filepath.Join(t.TempDir(), "controller.yaml")
+	if err := os.WriteFile(p, []byte(sampleManifest), 0o644); err != nil {
+		t.Fatalf("seed manifest: %v", err)
+	}
+	if err := SetExitActiveTransport(p, "exit-1", domain.TransportAWG); err != nil {
+		t.Fatalf("SetExitActiveTransport: %v", err)
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Errorf("manifest perms = %04o, want 0600 (secret-bearing, must not be group/other-readable)", perm)
+	}
+}
+
 func TestSetExitActiveTransport_UnknownExit(t *testing.T) {
 	p := writeManifest(t, sampleManifest)
 	if err := SetExitActiveTransport(p, "exit-ghost", domain.TransportAWG); err == nil {

@@ -264,7 +264,7 @@ fleet:
       compose:    { wg_easy_web_port: 51821, mihomo_tag: "Alpha" }
   exits: []                      # add exits later, then: wgfleet-controller --provision <name>
 YAML
-  chmod 0644 "$ETC/controller.yaml"
+  chmod 0600 "$ETC/controller.yaml"   # holds WG/REALITY private keys + passwords once populated
   log "wrote $ETC/controller.yaml (template)"
 else
   warn "$ETC/controller.yaml exists — left untouched"
