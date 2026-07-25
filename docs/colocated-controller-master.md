@@ -290,7 +290,9 @@ agent before the controller restart so the file is written before mihomo reloads
     over the host's direct path; mihomo only serves the static dir (the renderer emits `external-ui`
     with no `external-ui-url`). `dashboard_url` / `dashboard_disabled` drive the agent.
   - **Geo**: keep `geo-auto-update: false` and serve RU geo via `.mrs` HTTP rule-providers with
-    `proxy: DIRECT` (they auto-update over the direct path) — see the prodmatch example.
+    `proxy: DIRECT` (they auto-update over the direct path) — see the hardening section of
+    [recipes/ru-split-tunnel-dns-filter.md](recipes/ru-split-tunnel-dns-filter.md) and its
+    `deploy/examples/controller-split-ru.yaml`.
 
   If GitHub is blocked even directly from the master, set `dashboard_disabled: true`.
 - **Convergence takes a pass or two.** The master can only render its mihomo proxies once
