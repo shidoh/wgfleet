@@ -261,7 +261,7 @@ fleet:
       public_ip: "${pub}"        # seeds wg-easy first run (INIT_HOST)
       client_awg: { listen_port: 443, address_pool: 10.80.0.0/24 }
       routing:    { direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16], balance: health }
-      compose:    { wg_easy_web_port: 51821, mihomo_tag: "Alpha" }
+      compose:    { wg_easy_web_port: 51821 }   # mihomo pinned to a safe default (v1.19.29); do NOT set :latest or "Alpha"
   exits: []                      # add exits later, then: wgfleet-controller --provision <name>
 YAML
   chmod 0600 "$ETC/controller.yaml"   # holds WG/REALITY private keys + passwords once populated

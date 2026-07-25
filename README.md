@@ -287,6 +287,7 @@ wgfleet/
 │   ├── adr/                    architecture decision records (0001–0027)
 │   ├── onboarding.md           node provisioning walkthrough
 │   ├── colocated-controller-master.md  co-location on the master (default for small fleets)
+│   ├── recipes/                task-oriented config recipes (RU split-tunnel + DNS filter, …)
 │   ├── secrets-sops.md         SOPS/age secret provider setup
 │   └── upgrade.md              agent binary upgrade procedure + wire-contract versioning
 ├── DISCLAIMER.md  ·  SECURITY.md  ·  CONTRIBUTING.md
@@ -516,6 +517,12 @@ Two YAML files: the **controller config** (`controller.yaml`, which embeds the
 **fleet manifest**) and the per-node **agent config** (`agent.yaml`). Flags
 override file values; `WGFLEET_`-prefixed env vars override too (e.g.
 `WGFLEET_CONTROLLER_LISTEN=...` → `controller.listen`).
+
+> **Want a specific outcome, not the full surface?** The reference below is
+> exhaustive. For the common goal — RU sites direct, everything else abroad,
+> ads/trackers filtered on DNS — start from
+> [`docs/recipes/ru-split-tunnel-dns-filter.md`](docs/recipes/ru-split-tunnel-dns-filter.md)
+> and its ready-to-adapt [`deploy/examples/controller-split-ru.yaml`](deploy/examples/controller-split-ru.yaml).
 
 ### 10.1 `controller.yaml`
 

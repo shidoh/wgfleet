@@ -1,0 +1,108 @@
+# wgfleet — RU / non-RU split tunnel + basic DNS filtering
+# =========================================================
+# A ready-to-adapt controller config for the most common goal: your devices
+# reach RUSSIAN sites directly (fast, local IP, no foreign hop) while EVERYTHING
+# ELSE leaves through an exit abroad — plus ad/tracker filtering on DNS.
+#
+# It is the co-located topology: the controller and the client-facing master run
+# on ONE server near you; one exit server abroad carries the non-RU traffic.
+#
+#   your phone/laptop ──AmneziaWG──► MASTER (near you) ──AmneziaWG──► EXIT (abroad) ──► internet
+#                                       │
+#                                       └─ RU sites/IPs go DIRECT from here (no exit hop)
+#
+# Only the keys that PRODUCE this behavior are called out with ★. The rest is the
+# minimum needed to stand a fleet up. Full annotated reference: deploy/examples/
+# controller.yaml and README §10.1. Recipe walkthrough + verification:
+# docs/recipes/ru-split-tunnel-dns-filter.md.
+#
+# Replace every <placeholder>. This file holds WG/REALITY keys + passwords once
+# populated — keep it chmod 0600.
+
+controller:
+  listen:  "<mgmt-zt-ip>:8443"     # the master's ZeroTier IP; agents dial this, it seeds the cert SAN
+  webui:   "127.0.0.1:9000"        # read-only dashboard; loopback (SSH-tunnel to it) or mgmt/ZT only
+  metrics: "127.0.0.1:9300"        # Prometheus /metrics; loopback or mgmt/ZT only
+  store:   "/var/lib/wgfleet/state.db"
+  pki:
+    ca_cert: "/etc/wgfleet/ca.crt"
+    ca_key:  "file:///etc/wgfleet/ca.key"   # file:// so the CLI can sign certs; keep it chmod 600
+
+fleet:
+  zerotier_network: "<zt-network-id>"   # 16-hex mgmt overlay id; exits join it during provisioning
+  mgmt_subnet: 10.20.0.0/16             # your ZeroTier CIDR — routed DIRECT + trusted by every exit
+
+  masters:
+    - name: master-1
+      mgmt_addr: "<mgmt-zt-ip>"         # same ZeroTier address as controller.listen host
+      public_ip: "<master-public-ip>"   # WG endpoint your devices dial; seeds wg-easy first run
+      client_awg:
+        listen_port: 443                # UDP; a standard port is less conspicuous
+        address_pool: 10.80.0.0/24      # the client WireGuard subnet
+
+      # ★ THE SPLIT. mihomo routing rules are evaluated top-down:
+      #     1. direct_cidrs  → DIRECT  (private/LAN nets never enter the tunnel)
+      #     2. direct_geo    → DIRECT  (RU GEOSITE + GEOIP: .ru sites AND Russian IP ranges)
+      #     3. everything else         → the exit(s) abroad
+      #   So direct_geo: [RU] is exactly "RU stays local, the rest goes abroad".
+      #   Add more regions (e.g. [RU, BY]) to keep those local too.
+      routing:
+        direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+        direct_geo:   [RU]                              # ★ the RU/non-RU split
+        balance:      consistent-hashing                # ★ each destination keeps ONE exit/egress
+                                                        #   country; every exit shares load. See the
+                                                        #   reference config for the other strategies.
+
+      # ★ CLIENT-FACING DNS FILTER (ADR-0024). With this on, the master runs a blocky
+      #   resolver that becomes your devices' single DNS: it BLOCKS the denylists below
+      #   (query never resolves → the ad/tracker is never contacted) and forwards
+      #   everything else to the exits' resolvers. Off ⇒ no filtering.
+      dns_filter: true
+      dns:
+        # allowlist wins over every denylist — put anything a list breaks here.
+        allowlist: ["*.mts.ru", "*.gosuslugi.ru"]      # examples; platform infra is auto-added
+        overrides:
+          blocking:
+            denylists:
+              ads:
+                - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.txt
+            clientGroupsBlock:
+              default: [ads]
+          caching: { minTime: 5m, prefetching: true }
+
+      compose:
+        wg_easy_web_port: 51821         # wg-easy admin UI (client QR codes), mgmt/ZT only
+        # mihomo_tag defaults to a pinned, AWG-2.0-safe version — do NOT pin :latest or "Alpha".
+
+  exits:
+    - name: exit-1
+      region: de                        # free-form label
+      egress: warp                      # leave via Cloudflare WARP (hides the exit's datacenter IP)
+      warp_mtu: 1380                    # pin if the real WARP path is < 1500
+      address_pool: 10.81.0.0/24        # MUST be unique per exit
+      mgmt_addr: "<exit-mgmt-zt-ip>"    # the exit's ZeroTier address
+
+      # ★ Upstream half of the DNS filter: a clean resolver the master forwards to.
+      #   Turning filtering on here too means it applies even to mihomo's own
+      #   re-resolution, and adds defense in depth. Required for the master's
+      #   dns_filter to have an upstream to point at.
+      dns_filter: true
+      dns:
+        overrides:
+          blocking:
+            denylists:
+              ads:
+                - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.txt
+            clientGroupsBlock:
+              default: [ads]
+
+      firewall:
+        as_blacklist: true              # drop known VPN-scanner ASNs before the WG/SSH accepts
+        whitelist: ["10.20.0.0/16"]     # the mgmt overlay
+      ssh:
+        host: "<exit-public-ip>"
+        port: 22
+        user: root
+        key_path: "/root/.ssh/id_ed25519"
+        # host_key: "ssh-ed25519 AAAA..."   # STRONGLY recommended — bootstrap ships the node's
+        #   mTLS identity over this channel; pin it (ssh-keyscan -t ed25519 <exit-public-ip>).
