@@ -107,6 +107,14 @@ func RenderBlocky(spec domain.DNSFilterSpec) (string, error) {
 			// never dials and no exit is blamed for a block we chose ourselves.
 			// Overridable per node via the spec's blocky overrides.
 			"blockType": "nxDomain",
+			// blocky's default blockTTL is 6h, which bounds how long a STALE decision
+			// survives in client caches — in both directions. Switching blockType took
+			// ~8 minutes to take effect fleet-wide purely because clients still held the
+			// old answer, and the worse case is un-blocking: drop a domain from a denylist
+			// and it stays unreachable for the rest of the day. A blocked answer is
+			// generated locally from the in-memory list and never touches an upstream, so
+			// a short TTL costs nothing but a few more local queries.
+			"blockTTL": "1m",
 			"allowlists": map[string]any{
 				"security": inlineList(allowlist(spec.Allowlist)),
 			},

@@ -214,6 +214,12 @@ func TestRenderBlockyBlocksWithNXDomain(t *testing.T) {
 	if got := blocking["blockType"]; got != "nxDomain" {
 		t.Errorf("blockType = %v, want nxDomain:\n%s", got, out)
 	}
+	// Short TTL so a filter decision — block OR un-block — is not pinned in client
+	// caches for blocky's 6h default. Blocked answers never reach an upstream, so
+	// re-querying is local and cheap.
+	if got := blocking["blockTTL"]; got != "1m" {
+		t.Errorf("blockTTL = %v, want 1m:\n%s", got, out)
+	}
 
 	// Still an operator knob — a node that wants a block page keeps custom IPs.
 	out2, err := RenderBlocky(domain.DNSFilterSpec{
