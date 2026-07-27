@@ -32,6 +32,49 @@ func TestRenderMasterNAT(t *testing.T) {
 	}
 }
 
+func TestRenderMasterNATEgressLeakGuard(t *testing.T) {
+	// The master masquerades its client pool just as an exit does, so it inherits the
+	// same failure: a packet conntrack cannot place carries no NAT binding and would
+	// leave with a client's private source, after which upstream returns replies to
+	// that address and conntrack rewrites the source port to resolve the collision.
+	// The guard asserts the outcome — nothing leaves with a pool source — and must run
+	// AFTER srcnat so translated packets have already stopped matching.
+	out, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"chain egress_leak_guard",
+		"type filter hook postrouting priority srcnat + 10",
+		// Mirrors the masquerade's scope exactly, or it would either miss the leak or
+		// fire on traffic that was translated correctly.
+		`ip saddr 10.80.0.0/24 oifname != "wg0" counter drop`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("master egress leak guard missing %q:\n%s", want, out)
+		}
+	}
+
+	// The guard must use the CANONICAL pool, never the raw operator string — this
+	// ruleset is applied as root, so an unparsed CIDR here would be an injection point
+	// exactly as it is for the masquerade.
+	out2, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.7/24",
+		RedirAddr:       "10.80.0.1:7895",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out2, `ip saddr 10.80.0.0/24 oifname != "wg0" counter drop`) {
+		t.Errorf("guard did not canonicalize the client pool:\n%s", out2)
+	}
+}
+
 func TestRenderMasterNATRejectsCIDRInjection(t *testing.T) {
 	// A crafted direct-CIDR value must never reach the rendered nft script verbatim:
 	// it is parsed and re-emitted canonically, so injection attempts fail the render.

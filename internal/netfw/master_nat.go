@@ -74,6 +74,29 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q masquerade\n", clientCIDR, in.ClientInterface)
 	b.WriteString("\t}\n")
 
+	// Enforce what the masquerade above promises: no client-pool source ever reaches
+	// the wire. Sibling of the exit's egress_leak_guard, and here for the same reason
+	// — NAT is applied per CONNECTION, so a packet conntrack cannot place (a late FIN
+	// retransmit whose entry already aged out, an out-of-window segment) carries no
+	// NAT binding and would leave with a client's private address. Upstream then holds
+	// a return path for it, later replies come back addressed to it, and conntrack
+	// resolves the resulting tuple collision by rewriting the TCP source port — the
+	// far end receives data on a port it never dialed and resets. Traced end-to-end on
+	// an exit 2026-07-27; the master masquerades its client pool the same way, for
+	// split-tunnel traffic that bypasses mihomo, so the same failure is available here.
+	//
+	// This chain runs AFTER srcnat, so every packet NAT did translate has already
+	// stopped matching; a pool address surviving to this point is by definition one NAT
+	// never saw. It mirrors the masquerade's scope exactly (same pool, same
+	// `oifname != <client iface>`), so it cannot fire on legitimate traffic, and it is
+	// deliberately redundant with `ct state invalid drop` in the filter table's forward
+	// chain: that rule removes the known cause, this one asserts the outcome regardless
+	// of cause.
+	b.WriteString("\n\tchain egress_leak_guard {\n")
+	b.WriteString("\t\ttype filter hook postrouting priority srcnat + 10; policy accept;\n")
+	fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q counter drop\n", clientCIDR, in.ClientInterface)
+	b.WriteString("\t}\n")
+
 	b.WriteString("}\n")
 	return b.String(), nil
 }
