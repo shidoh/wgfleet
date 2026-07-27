@@ -61,7 +61,34 @@ func (b *Broker) RegisterPublicKey(ctx context.Context, nodeID, publicKey string
 	if !wg.ValidKey(publicKey) {
 		return fmt.Errorf("keybroker: malformed WireGuard public key for %q", nodeID)
 	}
-	return b.store.SetNodePublicKey(ctx, nodeID, publicKey)
+	if b.keyUnchanged(ctx, nodeID, publicKey, func(n domain.Node) string { return n.PublicKey }) {
+		return nil
+	}
+	if err := b.store.SetNodePublicKey(ctx, nodeID, publicKey); err != nil {
+		return err
+	}
+	b.log.Info("WireGuard public key registered", "node", nodeID)
+	return nil
+}
+
+// keyUnchanged reports whether the registry already holds publicKey for nodeID in
+// the column read by field.
+//
+// Agents republish EVERY key they hold on EVERY reconcile pass (~30s each), so
+// without this guard the controller rewrote byte-identical rows around the clock:
+// constant WAL churn plus an INFO line per key per pass, which is most of the
+// control plane's ~59k INFO/day. The dedup lives ABOVE the store seam on purpose —
+// under the HA plan (ADR-0027 phase B) writes become replicated raft commands, and
+// a no-op write deduped only inside SQLiteStore would still have been replicated.
+//
+// A lookup error counts as "changed": the write path is authoritative and surfaces
+// the real error (ErrNotFound → FailedPrecondition), rather than us swallowing it.
+func (b *Broker) keyUnchanged(ctx context.Context, nodeID, publicKey string, field func(domain.Node) string) bool {
+	node, err := b.store.GetNode(ctx, nodeID)
+	if err != nil {
+		return false
+	}
+	return field(node) == publicKey
 }
 
 // RegisterRealityKey records an exit's REALITY x25519 public key (ADR-0025),
@@ -76,7 +103,14 @@ func (b *Broker) RegisterRealityKey(ctx context.Context, nodeID, publicKey strin
 	if !xray.ValidPublicKey(publicKey) {
 		return fmt.Errorf("keybroker: malformed REALITY public key for %q", nodeID)
 	}
-	return b.store.SetNodeRealityKey(ctx, nodeID, publicKey)
+	if b.keyUnchanged(ctx, nodeID, publicKey, func(n domain.Node) string { return n.RealityPublicKey }) {
+		return nil
+	}
+	if err := b.store.SetNodeRealityKey(ctx, nodeID, publicKey); err != nil {
+		return err
+	}
+	b.log.Info("REALITY public key registered", "node", nodeID)
+	return nil
 }
 
 // RegisterClientVlessKey records the master's CLIENT-FACING REALITY x25519 public
@@ -90,7 +124,14 @@ func (b *Broker) RegisterClientVlessKey(ctx context.Context, nodeID, publicKey s
 	if !xray.ValidPublicKey(publicKey) {
 		return fmt.Errorf("keybroker: malformed client vless public key for %q", nodeID)
 	}
-	return b.store.SetNodeClientVlessKey(ctx, nodeID, publicKey)
+	if b.keyUnchanged(ctx, nodeID, publicKey, func(n domain.Node) string { return n.ClientVLESSPublicKey }) {
+		return nil
+	}
+	if err := b.store.SetNodeClientVlessKey(ctx, nodeID, publicKey); err != nil {
+		return err
+	}
+	b.log.Info("client VLESS REALITY public key registered", "node", nodeID)
+	return nil
 }
 
 // clientVLESSSpec resolves a master's client-facing VLESS+REALITY+XHTTP inbound
@@ -201,7 +242,17 @@ func (b *Broker) RegisterTunnelKey(ctx context.Context, nodeID, tunnel, publicKe
 	if _, ok := b.findExit(tunnel); !ok {
 		return fmt.Errorf("keybroker: per-tunnel key for unknown exit %q (from %q)", tunnel, nodeID)
 	}
-	return b.store.SetNodeTunnelKey(ctx, nodeID, tunnel, publicKey)
+	// Same steady-state dedup as the node-level keys (see keyUnchanged): a master
+	// republishes one key per exit on every pass, so this is the largest single
+	// contributor to the churn.
+	if cur, err := b.store.ListNodeTunnelKeys(ctx, nodeID); err == nil && cur[tunnel] == publicKey {
+		return nil
+	}
+	if err := b.store.SetNodeTunnelKey(ctx, nodeID, tunnel, publicKey); err != nil {
+		return err
+	}
+	b.log.Info("per-tunnel WireGuard public key registered", "node", nodeID, "tunnel", tunnel)
+	return nil
 }
 
 // RenderNodeSpec builds the desired NodeSpec for nodeID from its fleet-config

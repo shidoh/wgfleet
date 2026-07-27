@@ -93,14 +93,17 @@ func (s *Service) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Re
 	wire, agentVersion := reportedVersions(ctx)
 
 	node, err := s.store.GetNode(ctx, nodeID)
+	known := true
 	switch {
 	case errors.Is(err, store.ErrNotFound):
+		known = false
 		node = domain.Node{ID: nodeID, Name: nodeID}
 		s.log.Warn("node registering without prior inventory entry; auto-creating",
 			"node", nodeID, "role", role)
 	case err != nil:
 		return nil, status.Errorf(codes.Internal, "lookup node %q: %v", nodeID, err)
 	}
+	before := node
 
 	node.Role = role
 	if req.GetPublicIp() != "" {
@@ -116,6 +119,16 @@ func (s *Service) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Re
 	node.WireVersion = wire
 	if node.State == "" || node.State == domain.StatePending {
 		node.State = domain.StateReconciling
+	}
+	// Register is called on EVERY agent reconcile pass (~every 30s per node), and in
+	// steady state nothing it carries has changed. Writing anyway rewrote identical
+	// rows around the clock — pure WAL churn — and logging anyway buried the real
+	// events under ~59k INFO lines/day. So persist and announce only on an actual
+	// delta; the unchanged case is a DEBUG line and no write at all. Liveness does
+	// not depend on this write: ReportStatus stamps last_seen on every report.
+	if known && node == before {
+		s.log.Debug("node re-registered (unchanged)", "node", nodeID, "role", role)
+		return &pb.RegisterResponse{NodeId: nodeID, State: string(node.State)}, nil
 	}
 	if err := s.store.UpsertNode(ctx, node); err != nil {
 		return nil, status.Errorf(codes.Internal, "persist node %q: %v", nodeID, err)
@@ -161,7 +174,10 @@ func (s *Service) PublishPublicKey(ctx context.Context, req *pb.PublishPublicKey
 		}
 		return nil, status.Errorf(codes.Internal, "register %s key for %q: %v", keyTypeLabel(keyType), nodeID, err)
 	}
-	s.log.Info("public key registered", "node", nodeID, "type", keyTypeLabel(keyType))
+	// DEBUG, not INFO: this fires on every publish, and agents republish every key
+	// on every reconcile pass. The keybroker logs at INFO when a key actually
+	// changes, so a real rotation is still visible without the per-pass noise.
+	s.log.Debug("public key published", "node", nodeID, "type", keyTypeLabel(keyType))
 	return &pb.PublishPublicKeyResponse{Accepted: true}, nil
 }
 
