@@ -1,6 +1,22 @@
 package egress
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
+
+// The probe must pin IPv4: the WARP endpoint resolves AAAA-first, and a v6 probe
+// black-holes on the IPv4-only data plane until the caller's timeout kills it,
+// which disabled auto-MTU discovery fleet-wide.
+func TestTracepathArgsForceIPv4(t *testing.T) {
+	args := tracepathArgs("engage.cloudflareclient.com")
+	if !slices.Contains(args, "-4") {
+		t.Errorf("tracepath args %q do not force IPv4 (-4)", args)
+	}
+	if got := args[len(args)-1]; got != "engage.cloudflareclient.com" {
+		t.Errorf("host = %q, want it last in %q", got, args)
+	}
+}
 
 func TestLastPMTU(t *testing.T) {
 	out := ` 1?: [LOCALHOST]                      pmtu 1500
