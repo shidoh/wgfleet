@@ -101,12 +101,12 @@ provisioning time, which means **changing them requires re-provisioning the node
 | `fleet.mgmt_subnet` | CIDR | derived | The management overlay's CIDR. When set, this is the authoritative trust scope: exits route it DIRECT (never through WARP) and accept it in the firewall, without you listing it per node. Empty ⇒ derived from each node's `mgmt_addr` as /32s |
 | `fleet.mgmt_overlay_mss` | int | `0` (off) | **baked.** TCP MSS clamp on the ZeroTier interface. Control-plane insurance: keeps the agent↔controller TLS handshake alive if the overlay MTU is larger than the real path. Recommended `1240`; valid `536`–`1460` |
 | `fleet.reconcile_interval` | duration | `30s` | **baked.** How often every agent reconciles — governs drift repair and self-heal latency. Valid `5s`–`1h`. A node's own `agent.reconcile_interval` still wins |
-| `fleet.min_egress_throughput_kbytes` | int | `250` | Egress throughput floor in KiB/s below which an exit is pulled from the load balancer (ADR-0021). mihomo's latency-only health check cannot see a throttled-but-responsive exit. Negative disables the watchdog fleet-wide |
+| `fleet.min_egress_throughput_kbytes` | int | `250` | Egress throughput floor in KiB/s below which an exit is pulled from the load balancer. mihomo's latency-only health check cannot see a throttled-but-responsive exit. Negative disables the watchdog fleet-wide |
 | `fleet.egress_throughput_probe_url` | URL | Cloudflare speed endpoint | What each exit downloads to measure its own throughput |
 | `fleet.as_blacklist_v4_url` | URL | C24Be AS_Network_List v4 | **baked.** Source feed of scanner ASNs the exit firewall drops. Per-exit enable is `fleet.exits[].firewall.as_blacklist` |
 | `fleet.as_blacklist_v6_url` | URL | C24Be AS_Network_List v6 | **baked.** IPv6 half of the same feed |
 | `fleet.as_blacklist_interval` | duration | `24h` | **baked.** Feed refresh cadence. Valid `1m`–`168h`. A failed refresh keeps the last-good list |
-| `fleet.reality_default_sni` | string | `www.python.org` | Fleet-wide REALITY camouflage SNI. **The target must support X25519MLKEM768** or the handshake fails silently |
+| `fleet.reality_default_sni` | string | `www.python.org` | Fleet-wide REALITY camouflage SNI. **The target must support X25519MLKEM768** or the handshake fails silently — verify a candidate with `xray tls ping <host>` |
 | `fleet.reality_default_dest` | string | = SNI | Fleet-wide camouflage `host:port` the REALITY inbound borrows its certificate from |
 
 ---
@@ -115,7 +115,7 @@ provisioning time, which means **changing them requires re-provisioning the node
 
 > Exactly one master is supported today. The controller rejects a manifest with
 > more than one: the key broker peers every exit to the first master only, so a
-> second would render specs that silently never connect. Multi-master is ADR-0027.
+> second would render specs that silently never connect. Multi-master is planned but not yet implemented.
 
 ### Identity and exposure
 
@@ -131,10 +131,10 @@ provisioning time, which means **changing them requires re-provisioning the node
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fleet.masters[].client_awg.listen_port` | int | `443` | UDP port real VPN clients connect to. 443 blends with HTTPS |
+| `fleet.masters[].client_awg.listen_port` | int | `443` | UDP port real VPN clients connect to. 443 blends with HTTPS traffic |
 | `fleet.masters[].client_awg.address_pool` | CIDR | — | Address pool handed to clients |
 
-### `client_vless` — DPI-resistant client transport (ADR-0031)
+### `client_vless` — DPI-resistant client transport
 
 A VLESS+REALITY+XHTTP inbound that runs **alongside** client AmneziaWG, for clients
 whose AWG is throttled by DPI. Traffic converges into mihomo, so VLESS clients get
@@ -165,7 +165,7 @@ the same geo-routing, load balancing, exits and DNS. Per-client credentials
 | `fleet.masters[].routing.direct_cidrs` | []CIDR | none | Destinations routed DIRECT, never through an exit. Each consumes a routing priority; there is a hard cap. Values are interpolated into the nft ruleset and are strictly parsed |
 | `fleet.masters[].routing.direct_geo` | []string | none | Geo codes routed DIRECT, e.g. `["RU"]` |
 | `fleet.masters[].routing.balance` | string | `round-robin` | How the exit group picks: `round-robin`, `consistent-hashing` (same dst → same exit; alias `health`), `sticky-sessions` (same src+dst → same exit), `url-test` (lowest latency wins), `fallback` (primary, fail over on timeout) |
-| `fleet.masters[].routing.reserve_exits` | []string | none | Exits kept as a **second tier**, used only when every primary is down (ADR-0029). Everything not listed is primary, so a newly added exit defaults to primary. Use manifest exit names, not rendered proxy names |
+| `fleet.masters[].routing.reserve_exits` | []string | none | Exits kept as a **second tier**, used only when every primary is down. Everything not listed is primary, so a newly added exit defaults to primary. Use manifest exit names, not rendered proxy names |
 
 ### `mihomo` — the master data plane
 
@@ -200,7 +200,7 @@ See [§9 third-party configuration](#9-third-party-configuration) for the passth
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fleet.masters[].dns_filter` | bool | `false` | Run a master-tier blocky resolver clients use directly (ADR-0024): filters, forwards local zones internally, and forwards the rest to the active exit resolvers |
+| `fleet.masters[].dns_filter` | bool | `false` | Run a master-tier blocky resolver clients use directly: filters, forwards local zones internally, and forwards the rest to the active exit resolvers |
 | `fleet.masters[].dns.*` | — | — | Same shape as the exit resolver — see [§6 DNS](#6-dns-blocky) |
 
 ---
@@ -217,7 +217,7 @@ See [§9 third-party configuration](#9-third-party-configuration) for the passth
 | `fleet.exits[].public_ip` | string | = `ssh.host` | Public IP the master dials for the WireGuard endpoint |
 | `fleet.exits[].address_pool` | CIDR | — | Address pool for this exit's tunnel |
 | `fleet.exits[].egress` | string | — | Preferred egress: `warp` or `direct` |
-| `fleet.exits[].egress_fallback` | []string | none | Ordered fallbacks for censorship-adaptive failover (ADR-0017), e.g. `[direct]`. Empty disables failover |
+| `fleet.exits[].egress_fallback` | []string | none | Ordered fallbacks for censorship-adaptive failover, e.g. `[direct]`. Empty disables failover |
 | `fleet.exits[].min_egress_throughput_kbytes` | int | fleet value | Per-exit throughput floor. `>0` custom, `0` inherit, negative disables the watchdog here |
 | `fleet.exits[].listen_port` | int | derived `20000`–`32000` | Legacy top-level WireGuard port. Prefer `fleet.exits[].transports.awg.listen_port` |
 
@@ -229,9 +229,9 @@ in this system: a tunnel that establishes and then intermittently hangs.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `fleet.exits[].warp_mtu` | int | `1380` | MTU of the WARP interface. Set it when the real WARP path is smaller (typically 1320–1420). Unset, the agent probes the path daily |
-| `fleet.exits[].link_mtu` | int | `1500` | Physical path MTU of the master↔exit link. Measure with `ping -M do -s N <exit-ip>` from the master: path MTU = largest passing N + 28. Lowers **both** tunnel ends and the client interface, so client payloads never exceed what survives the narrowest exit (ADR-0014) |
+| `fleet.exits[].link_mtu` | int | `1500` | Physical path MTU of the master↔exit link. Measure with `ping -M do -s N <exit-ip>` from the master: path MTU = largest passing N + 28. Lowers **both** tunnel ends and the client interface, so client payloads never exceed what survives the narrowest exit |
 
-### `transports` — master↔exit transport selection (ADR-0025)
+### `transports` — master↔exit transport selection
 
 Two independently enabled sections. Neither enabled ⇒ AWG-only. Both enabled ⇒ both
 run warm and you can switch the live path instantly.
@@ -243,7 +243,7 @@ run warm and you can switch the live path instantly.
 | `fleet.exits[].transports.awg.listen_port` | int | derived from name | UDP port. Derived per exit so the fleet is not fingerprintable by one shared port |
 | `fleet.exits[].transports.reality.enabled` | bool | `false` | Run the VLESS+REALITY+XHTTP inbound |
 | `fleet.exits[].transports.reality.listen_port` | int | `443` | TCP port. Must differ from the AWG port so both can run warm |
-| `fleet.exits[].transports.reality.dest_domain` | string | fleet default | Camouflage target host. **Must support X25519MLKEM768** |
+| `fleet.exits[].transports.reality.dest_domain` | string | fleet default | Camouflage target host. **Must support X25519MLKEM768** — check with `xray tls ping <host>` |
 | `fleet.exits[].transports.reality.dest_port` | int | `443` | Camouflage target port |
 | `fleet.exits[].transports.reality.sni` | string | = `dest_domain` | Camouflage SNI |
 | `fleet.exits[].transports.reality.mode` | string | `xhttp` | `xhttp` or `vision`. Flip to isolate XHTTP interop problems |
@@ -258,7 +258,7 @@ run warm and you can switch the live path instantly.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fleet.exits[].firewall.as_blacklist` | bool | `false` | Drop traffic from known scanner ASNs, hiding the WireGuard port and SSH from active VPN scanning (ADR-0023). Feed URLs are fleet-wide |
+| `fleet.exits[].firewall.as_blacklist` | bool | `false` | Drop traffic from known scanner ASNs, hiding the WireGuard port and SSH from active VPN scanning. Feed URLs are fleet-wide |
 | `fleet.exits[].firewall.whitelist` | []CIDR | mgmt scope | Additional sources always accepted. The management overlay is merged in automatically |
 | `fleet.exits[].firewall.public_tcp_ports` | []int | none | TCP ports opened to the whole internet |
 
@@ -266,7 +266,7 @@ run warm and you can switch the live path instantly.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fleet.exits[].per_tunnel_key` | string | `off` | ADR-0030 migration from the master's single shared WireGuard identity to a per-tunnel one, **for this exit only**. Phases in order: `off` → `dual` → `switch` → `on`. Each step moves exactly one side of the tunnel, which is what makes it rollback-safe. Deliberately manual — roll one node at a time and verify between steps |
+| `fleet.exits[].per_tunnel_key` | string | `off` | Staged migration from the master's single shared WireGuard identity to a per-tunnel one, **for this exit only**. Phases in order: `off` → `dual` → `switch` → `on`. Each step moves exactly one side of the tunnel, which is what makes it rollback-safe. Deliberately manual — roll one node at a time and verify between steps |
 
 ### Exit DNS
 
@@ -355,7 +355,7 @@ renderer, firewall and routing consistent. If wgfleet does not model it, use
 | **mihomo** (Clash.Meta) | Master data plane: transparent proxy, geo-routing, exit load balancing | `fleet.masters[].mihomo.overrides` merged into `config.yaml` | <https://wiki.metacubex.one/en/config/> |
 | **blocky** | DNS filtering and forwarding on masters and exits | `fleet.masters[].dns.overrides` / `fleet.exits[].dns.overrides` | <https://0xerr0r.github.io/blocky/latest/configuration/> |
 | **xray-core** | REALITY/VLESS/XHTTP inbounds, both master↔exit and client-facing | Modelled keys only; the rendered config is not user-merged | <https://xtls.github.io/en/config/> · REALITY: <https://github.com/XTLS/REALITY> |
-| **AmneziaWG** | Obfuscated WireGuard on all tunnels | Not user-tunable: obfuscation parameters are **generated** per tunnel, collision-safe (ADR-0022). Hand-editing breaks the pairing | <https://docs.amnezia.org/documentation/amnezia-wg/> |
+| **AmneziaWG** | Obfuscated WireGuard on all tunnels | Not user-tunable: obfuscation parameters are **generated** per tunnel, collision-safe. Hand-editing breaks the pairing | <https://docs.amnezia.org/documentation/amnezia-wg/> |
 | **wg-easy** | Client management UI and client WireGuard server on the master | `fleet.masters[].compose.*`; state lives in its SQLite DB, which wgfleet writes directly | <https://github.com/wg-easy/wg-easy/wiki> |
 | **wgcf / Cloudflare WARP** | Exit egress | `fleet.exits[].warp_mtu`, `fleet.exits[].egress` | <https://github.com/ViRb3/wgcf> |
 | **ZeroTier** | Management overlay | `fleet.zerotier_network` | <https://docs.zerotier.com/> |

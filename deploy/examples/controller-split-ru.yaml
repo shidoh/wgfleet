@@ -54,7 +54,7 @@ fleet:
                                                         #   country; every exit shares load.
         # reserve_exits: [exit-slow]   # optional: used ONLY when every primary exit is down
 
-      # ★ CLIENT-FACING DNS FILTER (ADR-0024). With this on, the master runs a blocky
+      # ★ CLIENT-FACING DNS FILTER. With this on, the master runs a blocky
       #   resolver that becomes your devices' single DNS: it BLOCKS the denylists below
       #   (query never resolves → the ad/tracker is never contacted) and forwards
       #   everything else to the exits' resolvers. Off ⇒ no filtering.

@@ -2,7 +2,7 @@
 # wgfleet node OS-prep — run ONCE on a fresh Ubuntu VM before provisioning.
 #
 # It handles only the environmental / kernel-risky bits the wgfleet provisioner
-# deliberately does NOT do (docs/DESIGN.md open Q#7): building the AmneziaWG kernel
+# deliberately does NOT do: building the AmneziaWG kernel
 # module via DKMS, and joining the ZeroTier management overlay (which needs
 # out-of-band authorization). Everything else — hardening, nftables, apt deps,
 # Docker, wgcf, the agent — is the provisioner's job (`controller --provision`).

@@ -85,7 +85,7 @@ need the agent `/metrics` (step 1).
 | `wgfleet_node_egress_info` | `node,egress_ip` | observed egress IP (=1) |
 | `wgfleet_node_agent_info` | `node,agent_version,wire_version` | reported agent build (=1) |
 | `wgfleet_node_drain` / `wgfleet_node_decommission` | `node` | admin intent (0/1) |
-| `wgfleet_node_client_vless_clients` | `node` | VLESS/REALITY clients issued for a master's client-facing inbound (ADR-0031); masters only |
+| `wgfleet_node_client_vless_clients` | `node` | VLESS/REALITY clients issued for a master's client-facing inbound; masters only |
 | `wgfleet_build_info` | `component,version,commit` | controller build (=1) |
 
 **Agent** (`wgfleet_agent_*`, every series carries `node` + `role`):
@@ -97,10 +97,10 @@ need the agent `/metrics` (step 1).
 | `wgfleet_agent_reconcile_changes` | | resources changed last pass |
 | `wgfleet_agent_state_info` | `state` | current lifecycle state (=1) |
 | `wgfleet_agent_health_check` / `_latency_seconds` | `check` | self-check result / probe latency |
-| `wgfleet_agent_drift_total` / `_resources` | `component` | config-drift repairs (ADR-0015) |
-| `wgfleet_agent_egress_reachability` | `state` | ok/degraded/blocked (ADR-0016) |
-| `wgfleet_agent_egress_active` | `method` | active egress, warp/direct (ADR-0017) |
-| `wgfleet_agent_egress_throughput_bytes` | | measured egress bandwidth (ADR-0021) |
+| `wgfleet_agent_drift_total` / `_resources` | `component` | config-drift repairs |
+| `wgfleet_agent_egress_reachability` | `state` | ok/degraded/blocked |
+| `wgfleet_agent_egress_active` | `method` | active egress, warp/direct |
+| `wgfleet_agent_egress_throughput_bytes` | | measured egress bandwidth |
 | `wgfleet_agent_start_time_seconds` | | process start (for uptime) |
 
 **Scheduled probes** (`wgfleet_probe_*`, agent endpoint, `node` + `role` labels).
@@ -132,7 +132,7 @@ groups:
   - name: wgfleet-probes
     rules:
       # The probe runs and fails every time: it has attempted, but never once
-      # produced a result. This is the exact shape of the an earlier finding outage.
+      # produced a result. This is the shape of a probe that is dead but silent.
       - alert: WgfleetProbeNeverSucceeded
         expr: wgfleet_probe_last_success_timestamp_seconds == 0
         for: 2h

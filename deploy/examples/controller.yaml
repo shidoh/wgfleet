@@ -1,5 +1,5 @@
 # Example controller config. Real IPs/keys are NOT committed: use *.local.yaml
-# or env/secret references. See docs/DESIGN.md §8.
+# or env/secret references. Every key is documented in CONFIGURATION.md.
 controller:
   listen: "10.20.25.254:8443" # gRPC/HTTPS API for agents (mTLS); the mgmt/ZT address
   # agents reach the controller at. This host is baked into each agent's config as its
@@ -38,7 +38,8 @@ controller:
 fleet:
   zerotier_network: "8056c2e21c000001" # mgmt overlay nodes join during bootstrap
   # mgmt_subnet: the ZeroTier overlay CIDR. When set, every exit routes it DIRECT
-  # (never via WARP — an earlier finding) and accepts it in its firewall, automatically.
+  # (never via WARP — otherwise the overlay is unreachable from the exit and the
+  # node can lock itself out) and accepts it in its firewall, automatically.
   # Leave unset to derive trust from each node's mgmt_addr /32 instead. Either way the
   # exit firewall also accepts the overlay interface wholesale (iifname "zt*") as a
   # fail-safe, so a rebooted node stays reachable over ZeroTier regardless of this.
@@ -51,7 +52,7 @@ fleet:
   # overlay MTU. The clamp only lowers an MSS, so it is a no-op when the MTU is already
   # correct. The real fix is still a correct ZeroTier MTU; this just survives a reset.
   mgmt_overlay_mss: 1240
-  # min_egress_throughput_kbytes: egress throughput floor in KB/s (ADR-0021). mihomo's
+  # min_egress_throughput_kbytes: egress throughput floor in KB/s. mihomo's
   # url-test is latency-only and cannot see a throttled exit (a node with 88ms latency
   # but 25 KB/s gets rated BEST and parked on). Each exit measures real throughput; a
   # sustained collapse fails over to a fallback egress (if configured) and/or the
@@ -83,7 +84,7 @@ fleet:
   # reality_default_dest is the real "host:port" the inbound borrows a TLS handshake
   # from (unset ⇒ the SNI on 443).
   # CRITICAL: the target MUST support X25519MLKEM768, or an otherwise-correct
-  # handshake fails silently (an earlier finding — microsoft.com does not, python.org does).
+  # handshake fails silently (microsoft.com does not support it, python.org does).
   # Verify with: xray tls ping <host>
   # Prefer a target whose hosting ASN is plausible for that exit's provider; a single
   # fleet-wide default is a starting point, ASN-diverse exits should override per-exit.
@@ -97,7 +98,7 @@ fleet:
         address_pool: 10.80.0.0/24
       # client_vless: a DPI-resistant alternative client transport (VLESS+REALITY+
       # XHTTP via xray) that runs ALONGSIDE the client AWG, for users whose AWG is
-      # throttled by RU TSPU (docs/adr/0031, docs/research/2026-07-client-transport-dpi.md).
+      # throttled by DPI (RU TSPU and similar). See CONFIGURATION.md for every key.
       # Per-client credentials are issued/revoked in the Web UI (vless:// link + QR),
       # not here. Omit the block to leave it off.
       client_vless:
@@ -130,7 +131,7 @@ fleet:
       routing:
         direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
         direct_geo: [RU]
-        # How the master picks an exit (ADR-0029):
+        # How the master picks an exit:
         #   consistent-hashing — same destination always via the same exit. Recommended:
         #                        a service keeps one egress IP/country, and every exit
         #                        carries traffic instead of one being saturated.
@@ -163,12 +164,12 @@ fleet:
       # EVERY source the drop policy would otherwise block, so keep it to services
       # genuinely meant to be public. Same knob exists per-exit under firewall:.
       # public_tcp_ports: [80]
-      # Master-tier blocky resolver (ADR-0024): when dns_filter is on, the master runs
+      # Master-tier blocky resolver: when dns_filter is on, the master runs
       # a client-facing blocky that becomes the clients' single DNS. It BLOCKS (denylists
       # below), forwards LOCAL zones to internal DNS (conditional mappings), and forwards
       # everything else to the ACTIVE exit blockys (auto-discovered — a new exit joins the
       # upstream set as soon as it registers). The client-pool gateway bind is added
-      # automatically. Off ⇒ clients point at the exit blockys directly (pre-ADR-0024).
+      # automatically. Off ⇒ clients point at the exit blockys directly.
       # dns_filter: true
       # dns:
       #   prometheus: true
@@ -262,14 +263,14 @@ fleet:
     - name: exit-de-1
       region: de
       egress: warp # warp | direct (preferred)
-      # egress_fallback: deliberately NOT set. ADR-0017 would auto-switch warp→direct when WARP is blocked/throttled, but DIRECT egress exits under the node's datacenter IP (exposes the server). With no fallback, a blocked/throttled exit is instead auto-suspended from the LB (ADR-0021) — it stops carrying client traffic without ever revealing its IP. Only set egress_fallback once you have a non-exposing fallback transport (e.g. Reality, wishlist).
-      # warp_mtu: 1380 # pin the WARP interface MTU when the real path is < 1500 (an earlier finding: 1320-1420). 0/unset ⇒ default 1380, refined per-exit by an auto-probe (tracepath to the WARP endpoint; capped at 1380, only lowers). Also lowers the client MTU so packets never fragment at egress.
+      # egress_fallback: deliberately NOT set. Setting it would auto-switch warp→direct when WARP is blocked/throttled, but DIRECT egress exits under the node's datacenter IP (exposes the server). With no fallback, a blocked/throttled exit is instead auto-suspended from the load balancer — it stops carrying client traffic without ever revealing its IP. Only set egress_fallback once you have a non-exposing fallback transport.
+      # warp_mtu: 1380 # pin the WARP interface MTU when the real path is < 1500 (typically 1320-1420). 0/unset ⇒ default 1380, refined per-exit by an auto-probe (tracepath to the WARP endpoint; capped at 1380, only lowers). Also lowers the client MTU so packets never fragment at egress.
       # link_mtu: 1400 # physical/path MTU of the MASTER↔EXIT link when it is < 1500 (a DC overlay, PPPoE, narrow transit). Measure from the master: `ping -M do -s N <exit-ip>` — path MTU = largest passing N + 28. Lowers BOTH ends of this exit's master↔exit tunnel AND the client MTU so the AmneziaWG carrier packets fit instead of black-holing (the "tunnel up but intermittently hangs" symptom). 0/unset = assume 1500.
-      # min_egress_throughput_kbytes: 250 # per-exit override of the fleet egress throughput floor (ADR-0021). >0 custom floor, 0 inherit the fleet default, NEGATIVE disables the watchdog for this exit (e.g. a deliberately low-bandwidth node).
+      # min_egress_throughput_kbytes: 250 # per-exit override of the fleet egress throughput floor. >0 custom floor, 0 inherit the fleet default, NEGATIVE disables the watchdog for this exit (e.g. a deliberately low-bandwidth node).
       # public_ip: 198.51.100.7 # WG endpoint the master dials this exit at; defaults to ssh.host. Set explicitly when SSH goes via a bastion or a forwarded local port (e.g. Lima).
       address_pool: 10.81.0.0/24
       mgmt_addr: 10.20.0.5 # ZT overlay address (admin/metrics/DNS bind)
-      # transports (ADR-0025): which master↔exit transport(s) this exit runs and how.
+      # transports: which master↔exit transport(s) this exit runs and how.
       # Each section is gated by `enabled`; both on = dual-transport (the inactive one is
       # a warm standby). active_transport picks the one placed in the load balancer; flip
       # it live from the Web UI (writes through to here). Omit the whole block ⇒ AWG-only.
@@ -291,11 +292,11 @@ fleet:
           mux: true # XMUX connection reuse — amortizes the per-connection REALITY handshake across requests (xhttp mode only; xray needs no change)
           fingerprint: chrome # master-side uTLS ClientHello: chrome (default) | firefox | none (omit it → Go default)
           empty_sni: false # true ⇒ send/accept a ClientHello with NO SNI (an RU-TSPU heuristic bypass)
-          allow_ipv6: false # false ⇒ pin xray's dest/egress resolution to IPv4 (the data plane is IPv4-only, an earlier finding)
+          allow_ipv6: false # false ⇒ pin xray's dest/egress resolution to IPv4 (the data plane is IPv4-only)
           # xhttp_path: "/abc123" # XHTTP path; unset ⇒ /<short-id> (derived per exit)
           # image: ghcr.io/xtls/xray-core:26.6.22 # xray image; unset ⇒ the pinned default
       active_transport: awg # transport the master routes to: awg | reality-xhttp
-      # per_tunnel_key: ADR-0030 migration of THIS exit off the master's single shared
+      # per_tunnel_key: staged migration of THIS exit off the master's single shared
       # WireGuard identity onto a per-tunnel one. Phases IN ORDER, one exit at a time,
       # verifying between each: off (default, shared key) → dual (exit accepts both) →
       # switch (master starts using the per-tunnel key) → on (exit accepts only it).
