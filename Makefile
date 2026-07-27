@@ -84,16 +84,19 @@ PKG     := wgfleet-linux-$(ARCH)
 ARCHIVE := wgfleet-$(VERSION)-linux-$(ARCH)
 release-archive: agent-linux controller-linux
 	@rm -rf $(DIST)/$(PKG) $(DIST)/wgfleet-*-linux-$(ARCH).tar.gz
-	@mkdir -p $(DIST)/$(PKG)/examples $(DIST)/$(PKG)/systemd
+	@mkdir -p $(DIST)/$(PKG)/examples $(DIST)/$(PKG)/systemd $(DIST)/$(PKG)/monitoring
 	cp $(DIST)/wgfleet-controller-linux-$(ARCH) $(DIST)/$(PKG)/wgfleet-controller
 	cp $(DIST)/wgfleet-agent-linux-$(ARCH)      $(DIST)/$(PKG)/wgfleet-agent
 	cp install.sh                               $(DIST)/$(PKG)/install.sh
 	cp docs/QUICKSTART.md                       $(DIST)/$(PKG)/INSTALL.md
+	cp docs/configuration.md                    $(DIST)/$(PKG)/CONFIGURATION.md
 	cp deploy/prepare-node.sh                   $(DIST)/$(PKG)/prepare-node.sh
 	cp deploy/examples/controller.yaml deploy/examples/agent.yaml $(DIST)/$(PKG)/examples/
 	cp deploy/examples/controller-split-ru.yaml $(DIST)/$(PKG)/examples/
 	cp docs/recipes/ru-split-tunnel-dns-filter.md $(DIST)/$(PKG)/examples/RU-SPLIT-TUNNEL.md
 	cp deploy/systemd/*.service                 $(DIST)/$(PKG)/systemd/
+	cp deploy/monitoring/grafana-dashboard.json deploy/monitoring/README.md $(DIST)/$(PKG)/monitoring/
+	cp deploy/monitoring/servicemonitor.yaml deploy/monitoring/scrapeconfig.yaml deploy/monitoring/vmstaticscrape.yaml $(DIST)/$(PKG)/monitoring/
 	@echo "$(VERSION) $(COMMIT) $(DATE) linux/$(ARCH)" > $(DIST)/$(PKG)/VERSION
 	chmod 0755 $(DIST)/$(PKG)/wgfleet-controller $(DIST)/$(PKG)/wgfleet-agent $(DIST)/$(PKG)/*.sh
 	tar -C $(DIST) -czf $(DIST)/$(ARCHIVE).tar.gz $(PKG)

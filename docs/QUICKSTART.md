@@ -89,7 +89,7 @@ ip -4 addr show | grep 10.147 # the address is on a zt* interface
 nano /etc/wgfleet/controller.yaml
 ```
 
-Replace every `<placeholder>`:
+Replace every `<placeholder>` (see `CONFIGURATION.md` for every other key you can set):
 
 | Placeholder | Value |
 |---|---|
@@ -245,4 +245,13 @@ filter ads/trackers on DNS — use the ready-to-adapt
 walkthrough [`examples/RU-SPLIT-TUNNEL.md`](examples/RU-SPLIT-TUNNEL.md) (both in
 this archive). It changes only a handful of keys from the setup above.
 
-Fully annotated reference configs are in `examples/` inside the archive.
+## Every configuration option
+
+`CONFIGURATION.md` in this archive is the complete reference: every key in
+`controller.yaml` and `agent.yaml`, with its type, default and meaning, plus links
+to the upstream documentation of every third-party component wgfleet drives
+(mihomo, blocky, xray/REALITY, wg-easy, wgcf, ZeroTier) for the settings passed
+through via `overrides` and `extra_files`.
+
+Fully annotated reference configs are in `examples/` inside the archive; every key
+listed in `CONFIGURATION.md` appears there too, commented.

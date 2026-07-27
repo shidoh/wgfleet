@@ -16,6 +16,8 @@ controller:
   store: "/var/lib/wgfleet/state.db"
   metrics: "10.20.25.254:9300" # Prometheus /metrics; bind mgmt/ZT only (empty disables)
   staleness_after: 3m # demote silent Ready/Reconciling nodes to Degraded after this (0=default, <0 disables)
+  # session_ttl: sliding lifetime of a Web UI login session. 0/unset ⇒ 7 days.
+  # session_ttl: 168h
   agent_bin: /usr/local/bin/wgfleet-agent # binary installed during UI-triggered provisioning
   pki:
     ca_cert: "/etc/wgfleet/ca.crt"
@@ -76,6 +78,17 @@ fleet:
   # as_blacklist_interval: 24h
   # as_blacklist_v4_url: "https://raw.githubusercontent.com/C24Be/AS_Network_List/main/blacklists/blacklist-v4.txt"
   # as_blacklist_v6_url: "https://raw.githubusercontent.com/C24Be/AS_Network_List/main/blacklists/blacklist-v6.txt"
+  # Fleet-wide REALITY camouflage target, used by any exit/master that does not set
+  # its own. reality_default_sni is the SNI the ClientHello impersonates;
+  # reality_default_dest is the real "host:port" the inbound borrows a TLS handshake
+  # from (unset ⇒ the SNI on 443).
+  # CRITICAL: the target MUST support X25519MLKEM768, or an otherwise-correct
+  # handshake fails silently (an earlier finding — microsoft.com does not, python.org does).
+  # Verify with: xray tls ping <host>
+  # Prefer a target whose hosting ASN is plausible for that exit's provider; a single
+  # fleet-wide default is a starting point, ASN-diverse exits should override per-exit.
+  # reality_default_sni: "www.python.org"
+  # reality_default_dest: "www.python.org:443"
   masters:
     - name: master-xa-1
       mgmt_addr: 10.20.25.254 # ZT overlay address
@@ -100,6 +113,11 @@ fleet:
         # fingerprint: firefox         # client uTLS ClientHello: firefox (default; off the chrome signature RU TSPU flags first) | chrome | safari | none (omit it)
         # empty_sni: true              # DEFAULT on: no-SNI ClientHello (RU-TSPU bypass); set false to disable
         # allow_ipv6: false            # false ⇒ pin xray resolution to IPv4 (IPv4-only data plane)
+        # xhttp_path: "/"              # XHTTP path in the generated client profile; empty ⇒ "/"
+        # dest_port: 443               # camouflage target port; 0 ⇒ 443
+        # image / tag: pin the xray container (empty ⇒ the built-in pinned image)
+        # image: "ghcr.io/xtls/xray-core"
+        # tag: "26.6.22"
         # route_through_cidrs: internal nets the CLIENT should route THROUGH the tunnel
         # (clients bypass private/LAN by default, so the master's ZT overlay + nets it
         # forwards to are otherwise unreachable over the VPN). Delivered to the client via
@@ -178,6 +196,10 @@ fleet:
         # Raise it where some traffic legitimately fails (blocked destinations), so the
         # forced re-check is not triggered by noise.
         # max_failed_times: 10
+        # redir_port: the transparent-proxy redirect port client traffic is DNAT'd to.
+        # Unset ⇒ 7895. Change it only if something else on the master wants that port —
+        # the firewall rule that accepts client TCP on it is derived from this value.
+        # redir_port: 7895
         # The mihomo web dashboard (zashboard) is auto-served at <external-controller>/ui
         # whenever the Clash API is enabled; geo databases are auto-configured (jsdelivr
         # mirror) when direct_geo is set. The RESTful API is UNAUTHENTICATED by default —
@@ -270,15 +292,25 @@ fleet:
           fingerprint: chrome # master-side uTLS ClientHello: chrome (default) | firefox | none (omit it → Go default)
           empty_sni: false # true ⇒ send/accept a ClientHello with NO SNI (an RU-TSPU heuristic bypass)
           allow_ipv6: false # false ⇒ pin xray's dest/egress resolution to IPv4 (the data plane is IPv4-only, an earlier finding)
+          # xhttp_path: "/abc123" # XHTTP path; unset ⇒ /<short-id> (derived per exit)
           # image: ghcr.io/xtls/xray-core:26.6.22 # xray image; unset ⇒ the pinned default
       active_transport: awg # transport the master routes to: awg | reality-xhttp
+      # per_tunnel_key: ADR-0030 migration of THIS exit off the master's single shared
+      # WireGuard identity onto a per-tunnel one. Phases IN ORDER, one exit at a time,
+      # verifying between each: off (default, shared key) → dual (exit accepts both) →
+      # switch (master starts using the per-tunnel key) → on (exit accepts only it).
+      # Each step moves exactly ONE side of the tunnel, which is what makes it
+      # rollback-safe. Nothing here is automatic — this is a deliberate operator action.
+      # per_tunnel_key: "off"
       dns_filter: true # run blocky (Docker); binds loopback + mgmt_addr ONLY (never public)
       dns: # optional blocky tuning — safety (ZT-only binds) is enforced regardless
         image: spx01/blocky # repository; pin a tag below or inline as repo:tag
         tag: latest # explicit tag (overrides any tag in image); default spx01/blocky:latest
         # upstreams: defaults to Quad9/Mullvad DoT + digitale-gesellschaft DoH
         allowlist: ["*.example.com", "*.example.net"] # never blocked (platform infra auto-added)
-        # ports: { dns: 53, tls: 853, http: 4000 }  # bound on 127.0.0.1 + mgmt_addr only
+        # ports: per-protocol blocky listeners, bound on 127.0.0.1 + mgmt_addr only.
+        # Unset ⇒ dns 53, tls 853, http 4000; https is DISABLED unless given a port.
+        # ports: { dns: 53, tls: 853, http: 4000, https: 443 }
         overrides: # raw blocky YAML, deep-merged onto the rendered base
           conditional: # split-horizon internal domains
             mapping:

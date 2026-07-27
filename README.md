@@ -282,6 +282,7 @@ wgfleet/
 │   └── examples/               example controller.yaml / agent.yaml
 ├── internal/version/           build version (stamped via -ldflags at compile)
 ├── docs/
+│   ├── configuration.md        COMPLETE config reference (every key) + upstream doc links
 │   ├── DESIGN.md               full project context + conventions
 │   ├── lessons.md              hard-won operational lessons baked into reconcile
 │   ├── adr/                    architecture decision records (0001–0027)
@@ -518,9 +519,14 @@ Two YAML files: the **controller config** (`controller.yaml`, which embeds the
 override file values; `WGFLEET_`-prefixed env vars override too (e.g.
 `WGFLEET_CONTROLLER_LISTEN=...` → `controller.listen`).
 
-> **Want a specific outcome, not the full surface?** The reference below is
-> exhaustive. For the common goal — RU sites direct, everything else abroad,
-> ads/trackers filtered on DNS — start from
+> **Looking for the exhaustive list?** [`docs/configuration.md`](docs/configuration.md)
+> documents **every** key in `controller.yaml` and `agent.yaml` — type, default,
+> meaning — plus links to the upstream docs of every third-party component wgfleet
+> drives, for the surface reachable through `overrides`/`extra_files`. A test fails
+> the build if a key exists in code but is missing there, so it cannot drift.
+>
+> **Want a specific outcome instead?** For the common goal — RU sites direct,
+> everything else abroad, ads/trackers filtered on DNS — start from
 > [`docs/recipes/ru-split-tunnel-dns-filter.md`](docs/recipes/ru-split-tunnel-dns-filter.md)
 > and its ready-to-adapt [`deploy/examples/controller-split-ru.yaml`](deploy/examples/controller-split-ru.yaml).
 
