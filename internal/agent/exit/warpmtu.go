@@ -76,7 +76,7 @@ func (warpMTUPlanner) Component() string { return "warp path-mtu probe" }
 // out of the drift detector (mirrors the AS-feed planner).
 func (warpMTUPlanner) Scheduled() bool { return true }
 
-func (p warpMTUPlanner) attemptPath() string { return p.cachePath + ".attempt" }
+func (p warpMTUPlanner) attemptPath() string { return AttemptMarkerPath(p.cachePath) }
 
 func (p warpMTUPlanner) nowTime() time.Time {
 	if p.now != nil {

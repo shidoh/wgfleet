@@ -115,6 +115,27 @@ func wgIfacesForRole(role domain.Role) []string {
 	return []string{"wg0"}
 }
 
+// scheduledProbes lists the timer-driven probes whose success/attempt markers the
+// probe collector reports on. Both are exit planners (the WARP path-MTU probe and
+// the scanner-ASN feed refresh); a master runs neither.
+func scheduledProbes(role domain.Role, paths exit.Paths) []metrics.Probe {
+	if role != domain.RoleExit {
+		return nil
+	}
+	return []metrics.Probe{
+		{
+			Name:        "warp_path_mtu",
+			SuccessPath: paths.WARPMTUCache,
+			AttemptPath: exit.AttemptMarkerPath(paths.WARPMTUCache),
+		},
+		{
+			Name:        "as_blacklist_feed",
+			SuccessPath: paths.ASBlacklist,
+			AttemptPath: exit.AttemptMarkerPath(paths.ASBlacklist),
+		},
+	}
+}
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("agent exited with error", "err", err)
@@ -209,6 +230,13 @@ func run() error {
 		// wgfleet), but the collector is safe to register everywhere.
 		metrics.NewWGCollector(reg, cfg.Agent.NodeID, string(role), wgIfacesForRole(role), nil)
 		metrics.NewFWCollector(reg, cfg.Agent.NodeID, string(role), nil)
+		// Scheduled probes degrade silently by design (a failure keeps the last-good
+		// value and only WARNs), so without this a probe that fails 100% of the time
+		// looks exactly like one that works — which is how the WARP path-MTU probe
+		// stayed dead fleet-wide. Exit-only: both probes are exit
+		// planners, and on a master the markers never exist, so the collector would
+		// emit nothing anyway.
+		metrics.NewProbeCollector(reg, cfg.Agent.NodeID, string(role), scheduledProbes(role, a.paths))
 		metricsSrv := &http.Server{Addr: bind, Handler: metricsMux(reg)}
 		go func() {
 			// The mgmt/overlay (ZeroTier) address may not be on an interface yet at agent

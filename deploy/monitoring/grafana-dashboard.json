@@ -1793,6 +1793,260 @@
      "refId": "A"
     }
    ]
+  },
+  {
+   "type": "row",
+   "title": "Scheduled probes (auto-MTU / AS-feed)",
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 64
+   },
+   "id": 80,
+   "panels": []
+  },
+  {
+   "type": "stat",
+   "title": "Probes that never succeeded",
+   "description": "Scheduled probes that have run at least once but have NEVER produced a result. Non-zero means the probe is dead while the node still reports Ready: it degrades to a default on failure, so nothing else surfaces it.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 5,
+    "x": 0,
+    "y": 65
+   },
+   "id": 81,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "count(wgfleet_probe_last_success_timestamp_seconds{node=~\"$node\"} == 0) or vector(0)",
+     "instant": true,
+     "refId": "A"
+    }
+   ]
+  },
+  {
+   "type": "stat",
+   "title": "Probes stale > 7d",
+   "description": "Probes that succeeded once but not in the last 7 days. Both probes run about daily, so this is a probe that started failing and kept the last-good value in force ever since.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 5,
+    "x": 5,
+    "y": 65
+   },
+   "id": 82,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "count((wgfleet_probe_last_success_timestamp_seconds{node=~\"$node\"} > 0) and (time() - wgfleet_probe_last_success_timestamp_seconds{node=~\"$node\"} > 604800)) or vector(0)",
+     "instant": true,
+     "refId": "A"
+    }
+   ]
+  },
+  {
+   "type": "table",
+   "title": "Time since last successful probe run",
+   "description": "Per node and probe: how long ago the probe last SUCCEEDED. A probe that has never succeeded shows an absurd age (measured from epoch) and colors red \u2014 that is the signature to look for. Rows appear only once a probe has actually run on that node.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 14,
+    "x": 10,
+    "y": 65
+   },
+   "id": 83,
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      },
+      "inspect": false
+     },
+     "mappings": []
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "since last success"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "s"
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "green",
+           "value": null
+          },
+          {
+           "color": "orange",
+           "value": 172800
+          },
+          {
+           "color": "red",
+           "value": 604800
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "showHeader": true,
+    "cellHeight": "sm",
+    "footer": {
+     "show": false,
+     "reducer": [
+      "sum"
+     ],
+     "fields": ""
+    }
+   },
+   "transformations": [
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {
+       "Time": true,
+       "__name__": true,
+       "job": true,
+       "instance": true,
+       "role": true
+      },
+      "renameByName": {
+       "Value": "since last success"
+      },
+      "indexByName": {
+       "node": 0,
+       "probe": 1,
+       "Value": 2
+      }
+     }
+    }
+   ],
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "time() - wgfleet_probe_last_success_timestamp_seconds{node=~\"$node\"}",
+     "format": "table",
+     "instant": true,
+     "refId": "A"
+    }
+   ]
   }
  ]
 }

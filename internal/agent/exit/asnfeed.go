@@ -82,8 +82,8 @@ func (asnFeedPlanner) Scheduled() bool { return true }
 
 // attemptPath is the marker touched on every refresh ATTEMPT (success or failure)
 // so a failing source backs off to the retry window instead of refetching every
-// pass. It sits next to the cache.
-func (p asnFeedPlanner) attemptPath() string { return p.cachePath + ".attempt" }
+// pass. See AttemptMarkerPath.
+func (p asnFeedPlanner) attemptPath() string { return AttemptMarkerPath(p.cachePath) }
 
 func (p asnFeedPlanner) nowTime() time.Time {
 	if p.now != nil {

@@ -102,3 +102,55 @@ need the agent `/metrics` (step 1).
 | `wgfleet_agent_egress_active` | `method` | active egress, warp/direct (ADR-0017) |
 | `wgfleet_agent_egress_throughput_bytes` | | measured egress bandwidth (ADR-0021) |
 | `wgfleet_agent_start_time_seconds` | | process start (for uptime) |
+
+**Scheduled probes** (`wgfleet_probe_*`, agent endpoint, `node` + `role` labels).
+These cover the timer-driven probes that refresh a cache on their own schedule —
+the WARP path-MTU auto-probe (`warp_path_mtu`, daily) and the scanner-ASN feed
+refresh (`as_blacklist_feed`):
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `wgfleet_probe_last_success_timestamp_seconds` | `probe` | unix time of the last successful run; **0 = never succeeded** |
+| `wgfleet_probe_last_attempt_timestamp_seconds` | `probe` | unix time of the last attempt, successful or not; 0 = never ran |
+
+A probe that has never even attempted to run on a node (feature disabled, or
+`warp_mtu` pinned by the operator) emits **no series at all** — an all-zero pair
+would be indistinguishable from a broken probe.
+
+Why they exist: these probes fail *softly* by design — the error is non-fatal, the
+last-good/default value stays in force, and only a `WARN` is logged. That is the
+right behaviour, but it makes total failure look exactly like normal operation.
+The WARP path-MTU probe failed on 100% of runs on every node while the whole fleet
+reported `Ready`, so auto-MTU discovery was dead and a real PMTU
+regression would have gone unnoticed. These two timestamps make "attempting on
+schedule, never succeeding" a visible state.
+
+## 4. Alerts worth having
+
+```yaml
+groups:
+  - name: wgfleet-probes
+    rules:
+      # The probe runs and fails every time: it has attempted, but never once
+      # produced a result. This is the exact shape of the an earlier finding outage.
+      - alert: WgfleetProbeNeverSucceeded
+        expr: wgfleet_probe_last_success_timestamp_seconds == 0
+        for: 2h
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.probe }} on {{ $labels.node }} has never succeeded"
+          description: "The probe is attempting on schedule but has never produced a result; the node is silently running on the built-in default."
+
+      # It worked once and then stopped. Both probes run about daily.
+      - alert: WgfleetProbeStale
+        expr: |
+          (wgfleet_probe_last_success_timestamp_seconds > 0)
+          and (time() - wgfleet_probe_last_success_timestamp_seconds > 7 * 24 * 3600)
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.probe }} on {{ $labels.node }} has not succeeded in 7d"
+          description: "Last-good value still in force; the probe has been failing since {{ $value | humanizeTimestamp }}."
+```
+
+Both are also on the dashboard's **Scheduled probes** row.

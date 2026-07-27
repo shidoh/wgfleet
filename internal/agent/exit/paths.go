@@ -64,6 +64,17 @@ func DefaultPaths() Paths {
 	}
 }
 
+// AttemptMarkerPath is the marker a scheduled probe touches on EVERY attempt,
+// successful or not, so a failing source backs off to its retry window instead of
+// being refetched every pass. It sits next to the probe's cache file.
+//
+// The pair (cache mtime, marker mtime) is the probe's persisted outcome history:
+// the cache advances only on success, the marker on every try. That is what makes
+// "attempting regularly but never succeeding" observable from outside the process
+// — see metrics.NewProbeCollector. Exported so the planners and the collector
+// derive the path the same way.
+func AttemptMarkerPath(cachePath string) string { return cachePath + ".attempt" }
+
 // PathsUnder roots every managed file under dir. Useful for non-root or dev runs
 // (and tests) where the production /etc layout is not writable.
 func PathsUnder(dir string) Paths {
