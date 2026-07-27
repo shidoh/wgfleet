@@ -196,6 +196,49 @@ func TestRenderBlockyOperatorOverridesDeepMerge(t *testing.T) {
 	}
 }
 
+func TestRenderBlockyBlocksWithNXDomain(t *testing.T) {
+	// blocky's zeroIP default answers a blocked name with 0.0.0.0, which a client
+	// behind the tunnel treats as a real address and dials. That dial reaches the
+	// catch-all rule, goes to the exit proxy group, fails, and mihomo charges the
+	// failure to the GROUP — so the health signal that tiered failover reads ends up
+	// tracking ad traffic rather than exit health. NXDOMAIN stops the client dialing.
+	out, err := RenderBlocky(domain.DNSFilterSpec{Enabled: true, MgmtAddr: "10.20.4.10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatalf("invalid YAML: %v\n%s", err, out)
+	}
+	blocking, _ := cfg["blocking"].(map[string]any)
+	if got := blocking["blockType"]; got != "nxDomain" {
+		t.Errorf("blockType = %v, want nxDomain:\n%s", got, out)
+	}
+
+	// Still an operator knob — a node that wants a block page keeps custom IPs.
+	out2, err := RenderBlocky(domain.DNSFilterSpec{
+		Enabled:  true,
+		MgmtAddr: "10.20.4.10",
+		Custom: domain.CustomConfig{
+			Overrides: map[string]any{"blocking": map[string]any{"blockType": "192.0.2.1"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg2 map[string]any
+	if err := yaml.Unmarshal([]byte(out2), &cfg2); err != nil {
+		t.Fatalf("invalid YAML: %v\n%s", err, out2)
+	}
+	blocking2, _ := cfg2["blocking"].(map[string]any)
+	if got := blocking2["blockType"]; got != "192.0.2.1" {
+		t.Errorf("operator override of blockType lost: %v", got)
+	}
+	if _, ok := blocking2["allowlists"]; !ok {
+		t.Errorf("override clobbered the base allowlists: %v", blocking2)
+	}
+}
+
 func TestRenderBlockyRequiresMgmtAddr(t *testing.T) {
 	if _, err := RenderBlocky(domain.DNSFilterSpec{Enabled: true}); err == nil {
 		t.Fatal("expected error without mgmt address (must not bind public iface)")

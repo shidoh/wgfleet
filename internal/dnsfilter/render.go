@@ -93,6 +93,20 @@ func RenderBlocky(spec domain.DNSFilterSpec) (string, error) {
 		// denylists are configured; clientGroupsBlock starts empty (no filtering
 		// by default — the operator adds denylists + groups via overrides).
 		"blocking": map[string]any{
+			// Answer blocked A/AAAA with NXDOMAIN, not blocky's zeroIP default. In a
+			// proxied fleet 0.0.0.0 is a trap: the client treats it as a real answer and
+			// dials it, the connection matches the catch-all rule and is handed to the
+			// wg-best proxy group, and mihomo counts the inevitable failure AGAINST THE
+			// GROUP. Measured on the live master 2026-07-27: ~8400 bogus
+			// "dial wg-best ... connect tcp 0.0.0.0:443: connection was refused" and 1625
+			// "because wg-best failed multiple times, activate health check" in three
+			// hours — roughly 47 and 9 per minute, forever. That pollutes the exact health
+			// signal tiered exit selection reads to decide whether to fail over to the
+			// reserve tier, so a node's apparent health tracked how much ad traffic the
+			// clients generated. NXDOMAIN says the name does not exist, so the client
+			// never dials and no exit is blamed for a block we chose ourselves.
+			// Overridable per node via the spec's blocky overrides.
+			"blockType": "nxDomain",
 			"allowlists": map[string]any{
 				"security": inlineList(allowlist(spec.Allowlist)),
 			},
