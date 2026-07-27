@@ -341,6 +341,23 @@ func RenderRuleset(in RenderInput) (string, error) {
 
 	b.WriteString("\tchain forward {\n")
 	b.WriteString("\t\ttype filter hook forward priority 0; policy accept;\n")
+	// Drop transit packets conntrack cannot tie to a tracked flow. netfilter applies
+	// NAT per CONNECTION, not per packet: an INVALID packet has no conntrack entry, so
+	// it also has no NAT binding and the masquerade below never runs on it. Forwarded
+	// as-is, it leaves the egress carrying the master's PRIVATE tunnel source.
+	//
+	// That leak is not cosmetic. Traced live 2026-07-27: a late FIN (its entry already
+	// expired under Claude Code's heavy connection churn) escaped with SRC=10.74.0.3;
+	// WARP then held a return path for that private address, so subsequent replies came
+	// back addressed to it. Conntrack reads such a reply as a NEW connection whose reply
+	// tuple collides with the still-live flow, and resolves the collision the only way
+	// it can — by rewriting the SOURCE PORT. The master then receives server data on a
+	// port it never dialed, has no matching connection, and resets it: long streams die
+	// mid-response while short requests finish before the poison lands.
+	//
+	// The input chain has carried this rule from the start; forward did not, and an exit
+	// is nothing BUT forwarding.
+	b.WriteString("\t\tct state invalid drop\n")
 	// MSS clamp for TLS/large transfers through the nested encapsulation
 	// (client→master→exit→WARP). Clamp BOTH directions to a fixed size bounded by the
 	// tightest tunnel along the client path — not just the egress (see ClampMSS).
@@ -432,6 +449,22 @@ func RenderRuleset(in RenderInput) (string, error) {
 		b.WriteString("\n\tchain postrouting {\n")
 		b.WriteString("\t\ttype nat hook postrouting priority srcnat; policy accept;\n")
 		fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q masquerade\n", pool, wg)
+		b.WriteString("\t}\n")
+
+		// Enforce the invariant the masquerade above is supposed to guarantee: nothing
+		// leaves this node for the outside world still carrying a client-pool source.
+		// This chain runs AFTER srcnat, so every packet NAT actually translated no longer
+		// matches — a pool address surviving to here is by definition one NAT never saw.
+		//
+		// Deliberately redundant with `ct state invalid drop` in forward. That rule fixes
+		// the known cause; this one asserts the outcome, and so also covers causes we have
+		// not met yet (a future rule ordering mistake, a conntrack table exhaustion, a
+		// packet path that bypasses forward). The two mirror each other exactly — same
+		// pool, same `oifname != <wg>` scope as the masquerade — so a leak has to defeat
+		// both to reach the wire.
+		b.WriteString("\n\tchain egress_leak_guard {\n")
+		b.WriteString("\t\ttype filter hook postrouting priority srcnat + 10; policy accept;\n")
+		fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q counter drop\n", pool, wg)
 		b.WriteString("\t}\n")
 	}
 

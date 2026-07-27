@@ -214,6 +214,88 @@ func TestRenderExitEgressNAT(t *testing.T) {
 	}
 }
 
+func TestRenderForwardDropsInvalid(t *testing.T) {
+	// Transit packets conntrack cannot place must be dropped, NOT forwarded. An
+	// INVALID packet carries no NAT binding, so forwarding it lets a client-pool
+	// source escape the egress un-masqueraded — which poisons the upstream return
+	// path and ends in mid-stream resets (traced live 2026-07-27). The rule belongs
+	// to the forward chain specifically: input already had it, and an exit forwards.
+	for _, role := range []domain.Role{domain.RoleExit, domain.RoleMaster} {
+		out, err := RenderRuleset(RenderInput{
+			Role:       role,
+			Firewall:   domain.FirewallSpec{WGPort: 51820},
+			ClientCIDR: "10.71.0.0/24",
+		})
+		if err != nil {
+			t.Fatalf("role %v: %v", role, err)
+		}
+		forward, ok := chainBody(out, "chain forward")
+		if !ok {
+			t.Fatalf("role %v: no forward chain rendered:\n%s", role, out)
+		}
+		if !strings.Contains(forward, "ct state invalid drop") {
+			t.Errorf("role %v: forward chain must drop invalid:\n%s", role, forward)
+		}
+	}
+}
+
+func TestRenderExitEgressLeakGuard(t *testing.T) {
+	// The guard asserts what the masquerade promises: no client-pool source may reach
+	// the wire. It must sit AFTER srcnat (so translated packets no longer match) and
+	// mirror the masquerade's scope exactly, or it would either fire on legitimate
+	// traffic or miss the leak it exists to catch.
+	out, err := RenderRuleset(RenderInput{
+		Role:            domain.RoleExit,
+		Firewall:        domain.FirewallSpec{WGPort: 51820},
+		ClientCIDR:      "10.71.0.0/24",
+		WGInterface:     "awg0",
+		EgressInterface: "wgcf",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard, ok := chainBody(out, "chain egress_leak_guard")
+	if !ok {
+		t.Fatalf("exit must render an egress leak guard:\n%s", out)
+	}
+	for _, want := range []string{
+		// After srcnat: a packet still carrying the pool here is one NAT never saw.
+		"type filter hook postrouting priority srcnat + 10",
+		// Same pool and same interface scope as the masquerade it backs up.
+		`ip saddr 10.71.0.0/24 oifname != "awg0" counter drop`,
+	} {
+		if !strings.Contains(guard, want) {
+			t.Errorf("egress leak guard missing %q:\n%s", want, guard)
+		}
+	}
+
+	// No client pool ⇒ nothing to guard (and no pool literal to render).
+	out2, _ := RenderRuleset(RenderInput{Role: domain.RoleExit, Firewall: domain.FirewallSpec{WGPort: 51820}})
+	if strings.Contains(out2, "egress_leak_guard") {
+		t.Errorf("no guard expected without ClientCIDR:\n%s", out2)
+	}
+	// A master SNATs in its own table; this guard is the exit's.
+	out3, _ := RenderRuleset(RenderInput{Role: domain.RoleMaster, Firewall: domain.FirewallSpec{WGPort: 443}, ClientCIDR: "10.73.0.0/24"})
+	if strings.Contains(out3, "egress_leak_guard") {
+		t.Errorf("master must not carry the exit egress guard:\n%s", out3)
+	}
+}
+
+// chainBody returns the text of a rendered chain, from its header to the closing
+// brace. Assertions scoped to one chain cannot be satisfied by a matching rule that
+// happens to live in a different chain.
+func chainBody(ruleset, header string) (string, bool) {
+	start := strings.Index(ruleset, header)
+	if start < 0 {
+		return "", false
+	}
+	body, _, ok := strings.Cut(ruleset[start:], "\n\t}")
+	if !ok {
+		return "", false
+	}
+	return body, true
+}
+
 func TestRenderOverlayMSSClamp(t *testing.T) {
 	// With OverlayMSS set, a postrouting MSS clamp on the overlay interface appears
 	// (control-plane insurance against a too-large ZeroTier MTU).
