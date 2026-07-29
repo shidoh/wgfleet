@@ -3,7 +3,7 @@
 #
 # Two ways to run it, same result:
 #
-#   A) from the release archive (recommended — see docs/QUICKSTART.md):
+#   A) from the release archive (recommended — see INSTALL.md in the archive):
 #        tar xzf wgfleet-<version>-linux-amd64.tar.gz && cd wgfleet-linux-amd64
 #        sudo ./install.sh
 #      Binaries sitting next to this script are installed as-is; nothing is
@@ -243,7 +243,7 @@ if [ ! -e "$ETC/controller.yaml" ]; then
   cat > "$ETC/controller.yaml" <<YAML
 # wgfleet controller config (co-located controller + master). Replace every
 # <placeholder>. The mgmt address is the master's ZeroTier IP (assigned when you
-# authorize the node in ZeroTier Central). See docs/colocated-controller-master.md.
+# authorize the node in ZeroTier Central). See COLOCATED-MASTER.md in the archive.
 controller:
   listen:  "${mgmt}:8443"        # agents dial this; seeds the cert SAN
   webui:   "127.0.0.1:9000"      # mgmt/ZT or loopback only
@@ -327,6 +327,8 @@ $( [ -z "$ZT_NETWORK" ] && echo "   (join first:  zerotier-cli join <zt-network-
 
 7. Add your exit servers — see step 7 of the quickstart.
 
-Full walkthrough: INSTALL.md (in this archive) — or docs/QUICKSTART.md upstream.
-Reference: docs/colocated-controller-master.md
+Full walkthrough:  INSTALL.md          (in this archive)
+Configuration:     CONFIGURATION.md    (in this archive)
+This topology:     COLOCATED-MASTER.md (in this archive)
+License:           LICENSE (AGPL-3.0) + DISCLAIMER.md
 EOF

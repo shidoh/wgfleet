@@ -6,7 +6,8 @@ running `wgfleet-controller` and a `wgfleet-agent --role master` on the **same b
 is a fully supported topology. It is the recommended default for small fleets where
 a dedicated controller VM is not worth it.
 
-> **Fast path:** [QUICKSTART.md](QUICKSTART.md) is the short, step-by-step
+> **Fast path:** [QUICKSTART.md](QUICKSTART.md) — shipped as `INSTALL.md` in the
+> release archive — is the short, step-by-step
 > version of this document (master + one exit + clients, ~30 min). Its installer
 > automates steps 1–6 below (deps, binaries, dirs, units, config templates) on a
 > fresh Ubuntu/Debian VM — either from the release archive:

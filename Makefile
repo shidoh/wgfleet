@@ -92,6 +92,7 @@ release-archive: agent-linux controller-linux
 	cp DISCLAIMER.md                            $(DIST)/$(PKG)/DISCLAIMER.md
 	cp docs/QUICKSTART.md                       $(DIST)/$(PKG)/INSTALL.md
 	cp docs/configuration.md                    $(DIST)/$(PKG)/CONFIGURATION.md
+	cp docs/colocated-controller-master.md      $(DIST)/$(PKG)/COLOCATED-MASTER.md
 	cp deploy/prepare-node.sh                   $(DIST)/$(PKG)/prepare-node.sh
 	cp deploy/examples/controller.yaml deploy/examples/agent.yaml $(DIST)/$(PKG)/examples/
 	cp deploy/examples/controller-split-ru.yaml $(DIST)/$(PKG)/examples/
