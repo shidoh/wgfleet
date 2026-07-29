@@ -26,7 +26,7 @@ everywhere else.
 > using such tools varies by jurisdiction and is **your responsibility**. Read
 > [DISCLAIMER.md](DISCLAIMER.md) before using it.
 
-📄 [Disclaimer](DISCLAIMER.md) · [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+📄 [Disclaimer](DISCLAIMER.md) · [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [License: AGPL-3.0](LICENSE)
 
 ---
 
@@ -48,6 +48,7 @@ everywhere else.
 14. [Security model](#14-security-model)
 15. [Design decisions (ADRs)](#15-design-decisions-adrs)
 16. [Roadmap](#16-roadmap)
+17. [License](#17-license)
 
 ---
 
@@ -1002,3 +1003,25 @@ support X25519MLKEM768. Per-exit knobs: `transports.reality.{dest_domain,
 dest_port,sni,listen_port,mode,mux,fingerprint,empty_sni,allow_ipv6,image}`.
 Switching is manual today; automatic AWG→REALITY failover (analogous to the
 WARP→direct egress failover) is on the roadmap.
+
+---
+
+## 17. License
+
+wgfleet is licensed under the **GNU Affero General Public License, version 3**
+(AGPL-3.0) — see [LICENSE](LICENSE).
+
+Copyright (C) 2026 John Smith and wgfleet contributors.
+
+The AGPL's network clause (section 13) is deliberate: wgfleet is control-plane
+software whose typical deployment is a **service** rather than a distributed
+binary. If you run a modified wgfleet to operate a fleet for anyone other than
+yourself, you must offer those users the corresponding source of your
+modifications. Running an unmodified wgfleet, or running a modified one purely
+for your own use, triggers no such obligation.
+
+This program is distributed in the hope that it will be useful, but **WITHOUT
+ANY WARRANTY**; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the license for details, and
+[DISCLAIMER.md](DISCLAIMER.md) for the operational and legal caveats specific to
+running censorship-circumvention infrastructure.

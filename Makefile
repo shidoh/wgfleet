@@ -88,6 +88,8 @@ release-archive: agent-linux controller-linux
 	cp $(DIST)/wgfleet-controller-linux-$(ARCH) $(DIST)/$(PKG)/wgfleet-controller
 	cp $(DIST)/wgfleet-agent-linux-$(ARCH)      $(DIST)/$(PKG)/wgfleet-agent
 	cp install.sh                               $(DIST)/$(PKG)/install.sh
+	cp LICENSE                                  $(DIST)/$(PKG)/LICENSE
+	cp DISCLAIMER.md                            $(DIST)/$(PKG)/DISCLAIMER.md
 	cp docs/QUICKSTART.md                       $(DIST)/$(PKG)/INSTALL.md
 	cp docs/configuration.md                    $(DIST)/$(PKG)/CONFIGURATION.md
 	cp deploy/prepare-node.sh                   $(DIST)/$(PKG)/prepare-node.sh

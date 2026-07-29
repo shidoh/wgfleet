@@ -63,7 +63,7 @@ plus a `SHA256SUMS`, to a GitHub Release:
 
 | Asset | Contents |
 |---|---|
-| `wgfleet-<version>-linux-amd64.tar.gz` | `wgfleet-controller`, `wgfleet-agent`, `install.sh`, `INSTALL.md` (the quickstart), `prepare-node.sh`, `examples/`, `systemd/`, `VERSION` (unpacks into `wgfleet-linux-amd64/`) |
+| `wgfleet-<version>-linux-amd64.tar.gz` | `wgfleet-controller`, `wgfleet-agent`, `install.sh`, `INSTALL.md` (the quickstart), `CONFIGURATION.md`, `LICENSE`, `DISCLAIMER.md`, `prepare-node.sh`, `examples/`, `systemd/`, `monitoring/`, `VERSION` (unpacks into `wgfleet-linux-amd64/`) |
 | `wgfleet-<version>-linux-arm64.tar.gz` | same, for ARM |
 | `SHA256SUMS` | checksums over the archives |
 
@@ -77,10 +77,13 @@ docker run --rm --platform linux/amd64 -v "$PWD/dist/wgfleet-linux-amd64:/pkg:ro
   ubuntu:24.04 bash -c 'cp -r /pkg /p && cd /p && SKIP_DEPS=1 ./install.sh'
 ```
 
-Archive filenames are **unversioned** on purpose so that
-`releases/latest/download/wgfleet-linux-<arch>.tar.gz` — the URL `install.sh`
-uses in standalone mode — keeps resolving. The build identity lives inside
-(`VERSION`, and `--version` on either binary).
+Archive filenames carry the **version** (`wgfleet-<version>-linux-<arch>.tar.gz`),
+so `releases/latest/download/...` cannot be used as a fixed URL. In standalone
+mode `install.sh` therefore resolves the current tag first — it follows the
+`/releases/latest` redirect, reads the version off the effective `/tag/<version>`
+URL, and builds the download URL from it. If you change the archive naming, change
+that resolution step in `install.sh` in the same commit. The build identity is
+also inside the archive (`VERSION`, and `--version` on either binary).
 
 ## Background reading
 
@@ -88,3 +91,8 @@ uses in standalone mode — keeps resolving. The build identity lives inside
 - `docs/DESIGN.md` — full project context and conventions.
 - `maintainer notes` — hard-won operational lessons the platform must honor.
 - `docs/adr/` — architecture decision records.
+
+## License of contributions
+
+wgfleet is licensed under the **AGPL-3.0** (see [LICENSE](LICENSE)). By opening a
+pull request you agree that your contribution is licensed under the same terms.
