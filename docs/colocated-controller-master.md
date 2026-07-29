@@ -100,8 +100,10 @@ sudo mkdir -p /etc/wgfleet /var/lib/wgfleet
 
 Both binaries stamp their build version from git via `-ldflags` (shown by
 `wgfleet-controller --version`); the wire-contract version they speak must match
-between controller and agent (ADR-0019 — for a co-located pair built from the same
-checkout they always do).
+between controller and agent. The controller rejects `Register`/`PullSpec` from an
+agent whose contract version it does not serve, so a half-upgraded pair fails loudly
+instead of drifting; for a co-located pair built from the same checkout they always
+match. `--version` prints the contract version under the build identity.
 
 ### 3. `controller.yaml`
 
@@ -133,7 +135,9 @@ fleet:
     - name: exit-de-1           # provisioned later over SSH from this controller
       region: de
       egress: warp
-      # warp_mtu: 1400          # pin if the real WARP path is < 1500
+      # warp_mtu: 1400          # pin if the real WARP path is < 1500. Too high and large
+                                # packets vanish into a PMTU black hole: handshakes and
+                                # pings work, TLS and downloads stall. 1380 is a safe floor.
       address_pool: 10.81.0.0/24
       mgmt_addr: "<exit-mgmt>"
       ssh: { host: "<exit-public-ip>", port: 22, user: root, key_path: "~/.ssh/id_ed25519", host_key: "ssh-ed25519 AAAA..." }
@@ -304,6 +308,6 @@ agent before the controller restart so the file is written before mihomo reloads
   so it lands on the INPUT hook, not FORWARD. The master input firewall must accept
   `iifname "wg0" tcp dport <redir-port>` or the drop policy swallows every web
   connection while ICMP (accepted) and DNS (forwarded to an exit) still work. The
-  agent renders this automatically (ADR-0020); the symptom only appears with a stale
-  agent that predates the fix.
+  agent renders that accept rule automatically as part of trusting the management
+  overlay; the symptom only appears with a stale agent that predates the fix.
 ```
