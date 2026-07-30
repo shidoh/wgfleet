@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" width="1200" height="620" role="img" aria-label="wgfleet architecture. Control plane: a single wgfleet-controller binary holds desired state and inventory in SQLite, runs the PKI and per-node mTLS certificates, brokers public keys only, renders each NodeSpec, provisions blank VMs over SSH, and serves a gRPC API, Web UI and metrics. Agents on every node pull their NodeSpec and push status plus their public key over gRPC with mTLS. Data plane: clients connect over AmneziaWG or VLESS to the master, which runs wg-easy, mihomo routing and load balancing, nftables and blocky; the master reaches each exit over its own AmneziaWG tunnel; each exit runs awg-quick, wgcf for Cloudflare WARP egress, policy routing, nftables and blocky, and leaves to the internet under a WARP IP. Russian and private destinations go direct, never through an exit, and all management interfaces bind the ZeroTier overlay only.">
+  <title>wgfleet architecture — control plane above, data plane below</title>
+  <defs>
+    <radialGradient id="pg" cx="50%" cy="-15%" r="130%">
+      <stop offset="0%" stop-color="#11161f"/>
+      <stop offset="58%" stop-color="#0a0d12"/>
+      <stop offset="100%" stop-color="#0a0d12"/>
+    </radialGradient>
+    <marker id="ab" markerWidth="9" markerHeight="9" refX="7.5" refY="4.5" orient="auto">
+      <path d="M0,1 L8,4.5 L0,8 Z" fill="#5b8def"/>
+    </marker>
+    <marker id="ag" markerWidth="9" markerHeight="9" refX="7.5" refY="4.5" orient="auto">
+      <path d="M0,1 L8,4.5 L0,8 Z" fill="#3ddc84"/>
+    </marker>
+    <clipPath id="card"><rect x="0" y="0" width="1200" height="620" rx="14"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#card)" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+    <rect width="1200" height="620" fill="url(#pg)"/>
+
+    <!-- ================= CONTROL PLANE ================= -->
+    <text x="40" y="46" font-size="18" font-weight="700" fill="#5b8def" letter-spacing="2.4">CONTROL PLANE</text>
+    <rect x="40" y="58" width="1120" height="1" fill="#161b24"/>
+
+    <rect x="210" y="80" width="780" height="152" rx="13" fill="#0c1017" stroke="rgba(91,141,239,.35)"/>
+    <text x="236" y="116" font-size="24" font-weight="700" fill="#f1f3f7">wgfleet-controller</text>
+    <text x="964" y="116" font-size="17" fill="#5a6270" text-anchor="end">one binary</text>
+    <rect x="236" y="132" width="728" height="1" fill="#161b24"/>
+
+    <g font-size="17" fill="#8b93a1">
+      <text x="236" y="160">desired state + inventory (SQLite)</text>
+      <text x="236" y="186">PKI · CA · per-node mTLS certs</text>
+      <text x="236" y="212">key broker — <tspan fill="#3ddc84">public keys only</tspan></text>
+      <text x="630" y="160">NodeSpec renderer + AWG params</text>
+      <text x="630" y="186">provisioner — blank VM → Ready</text>
+      <text x="630" y="212">gRPC API · Web UI · /metrics</text>
+    </g>
+
+    <!-- control-plane arrows -->
+    <path d="M320,232 L320,312" stroke="#5b8def" stroke-width="1.6" stroke-dasharray="5 4" fill="none" marker-end="url(#ab)" opacity=".8"/>
+    <path d="M880,232 L880,312" stroke="#5b8def" stroke-width="1.6" stroke-dasharray="5 4" fill="none" marker-end="url(#ab)" opacity=".8"/>
+    <text x="600" y="266" font-size="17" fill="#5b8def" text-anchor="middle">pull NodeSpec  ·  push status + pubkey</text>
+    <text x="600" y="290" font-size="16" fill="#5a6270" text-anchor="middle">gRPC over mTLS — identity is the cert CN</text>
+
+    <!-- ================= DATA PLANE ================= -->
+    <text x="40" y="352" font-size="18" font-weight="700" fill="#3ddc84" letter-spacing="2.4">DATA PLANE</text>
+    <rect x="40" y="364" width="1120" height="1" fill="#161b24"/>
+
+    <!-- clients -->
+    <rect x="40" y="404" width="150" height="118" rx="11" fill="#0d1119" stroke="#1c222c"/>
+    <text x="115" y="446" font-size="21" font-weight="700" fill="#e6e9ef" text-anchor="middle">clients</text>
+    <text x="115" y="474" font-size="16" fill="#8b93a1" text-anchor="middle">AmneziaWG</text>
+    <text x="115" y="496" font-size="16" fill="#5b8def" text-anchor="middle">or VLESS</text>
+
+    <path d="M196,463 L226,463" stroke="#3ddc84" stroke-width="1.8" fill="none" marker-end="url(#ag)"/>
+
+    <!-- master -->
+    <rect x="238" y="384" width="304" height="176" rx="13" fill="#0c1017" stroke="rgba(61,220,132,.28)"/>
+    <circle cx="264" cy="414" r="4.5" fill="#3ddc84"/>
+    <text x="280" y="421" font-size="22" font-weight="700" fill="#f1f3f7">master</text>
+    <text x="518" y="420" font-size="15" fill="#5a6270" text-anchor="end">agent role</text>
+    <rect x="262" y="436" width="256" height="1" fill="#161b24"/>
+    <g font-size="17" fill="#8b93a1">
+      <text x="262" y="464">wg-easy — client AWG</text>
+      <text x="262" y="490">mihomo — route + balance</text>
+      <text x="262" y="516">nftables — DNAT / NAT</text>
+      <text x="262" y="542">blocky — DNS filtering</text>
+    </g>
+
+    <path d="M548,463 L628,463" stroke="#3ddc84" stroke-width="1.8" fill="none" marker-end="url(#ag)"/>
+    <text x="588" y="446" font-size="15" fill="#3ddc84" text-anchor="middle">AmneziaWG</text>
+    <text x="588" y="492" font-size="15" fill="#5a6270" text-anchor="middle">one tunnel</text>
+    <text x="588" y="512" font-size="15" fill="#5a6270" text-anchor="middle">per exit</text>
+
+    <!-- exits (stacked) -->
+    <rect x="654" y="372" width="304" height="176" rx="13" fill="#0a0e14" stroke="#161b24"/>
+    <rect x="648" y="378" width="304" height="176" rx="13" fill="#0b0f16" stroke="#1c222c"/>
+    <rect x="640" y="384" width="304" height="176" rx="13" fill="#0c1017" stroke="rgba(61,220,132,.28)"/>
+    <circle cx="666" cy="414" r="4.5" fill="#3ddc84"/>
+    <text x="682" y="421" font-size="22" font-weight="700" fill="#f1f3f7">exit</text>
+    <text x="920" y="420" font-size="15" fill="#5a6270" text-anchor="end">× N</text>
+    <rect x="664" y="436" width="256" height="1" fill="#161b24"/>
+    <g font-size="17" fill="#8b93a1">
+      <text x="664" y="464">awg-quick — AWG server</text>
+      <text x="664" y="490">wgcf — Cloudflare WARP</text>
+      <text x="664" y="516">policy routing + nftables</text>
+      <text x="664" y="542">blocky — DNS filtering</text>
+    </g>
+
+    <path d="M950,463 L1000,463" stroke="#3ddc84" stroke-width="1.8" fill="none" marker-end="url(#ag)"/>
+
+    <!-- internet -->
+    <rect x="1010" y="404" width="150" height="118" rx="11" fill="#0d1119" stroke="#1c222c"/>
+    <text x="1085" y="446" font-size="21" font-weight="700" fill="#e6e9ef" text-anchor="middle">internet</text>
+    <text x="1085" y="474" font-size="15" fill="#8b93a1" text-anchor="middle">under a</text>
+    <text x="1085" y="494" font-size="15" fill="#8b93a1" text-anchor="middle">WARP IP</text>
+
+    <!-- footnotes -->
+    <rect x="40" y="578" width="1120" height="1" fill="#161b24"/>
+    <text x="40" y="604" font-size="16" fill="#5a6270">RU / private destinations → <tspan fill="#8b93a1">DIRECT</tspan>, never through an exit</text>
+    <text x="1160" y="604" font-size="16" fill="#5a6270" text-anchor="end">admin UI · metrics · DNS bind the <tspan fill="#8b93a1">ZeroTier overlay only</tspan></text>
+
+    <rect x="0.5" y="0.5" width="1199" height="619" rx="14" fill="none" stroke="#1c222c"/>
+  </g>
+</svg>

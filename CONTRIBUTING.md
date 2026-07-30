@@ -29,6 +29,63 @@ make all      # fmt + vet + test + build
 Cross-compile for Linux deployment targets with `make agent-linux` /
 `make controller-linux` (`ARCH=amd64|arm64`).
 
+## Repository layout
+
+```
+wgfleet/
+├── cmd/
+│   ├── wgfleet-controller/     control plane: API + UI + metrics + provisioner + PKI tooling
+│   └── wgfleet-agent/          node agent: reconcile daemon (role from config)
+├── internal/
+│   ├── domain/                 core types: NodeSpec, AWG params, MasterSpec, CustomConfig …
+│   ├── config/                 koanf/YAML config + secret references
+│   ├── api/                    proto ⇄ domain conversion (+ generated pb)
+│   ├── controller/
+│   │   ├── store/              SQLite inventory / pubkey registry / status
+│   │   ├── pki/                CA + per-node certs + mTLS configs
+│   │   ├── keybroker/          pubkey registry + NodeSpec/topology rendering
+│   │   ├── grpcapi/            NodeService gRPC server (mTLS)
+│   │   ├── provisioner/        SSH bootstrap pipeline (facts, plan, runner+mock)
+│   │   ├── provmgr/            provisioning orchestration (sync CLI + async UI)
+│   │   ├── sweeper/            demotes silent nodes to Degraded
+│   │   └── web/                dashboard + drain/undrain/delete actions
+│   ├── agent/
+│   │   ├── client/             agent mTLS gRPC client
+│   │   ├── reconcile/          plan/apply engine (dry-run core)
+│   │   ├── exit/               exit-role planners
+│   │   ├── master/             master-role planners (mihomo + NAT + wg-easy AWG)
+│   │   └── health/             self-checks → node lifecycle state
+│   ├── wg/                     WG/AWG render, key gen, MTU math, AWG param generator
+│   ├── netfw/                  nftables render (exit firewall + master NAT)
+│   ├── routing/                policy-routing render (ip rule/route, fwmark)
+│   ├── egress/                 wgcf / WARP config render
+│   ├── dnsfilter/              blocky config render
+│   ├── mihomo/                 mihomo config render (+ overrides deep-merge)
+│   ├── compose/                master docker-compose render (wg-easy + mihomo)
+│   ├── wgeasy/                 wg-easy SQLite AWG configuration
+│   └── metrics/                Prometheus collectors (controller store + agent)
+├── proto/wgfleet/v1/           gRPC contract
+├── deploy/
+│   ├── systemd/                unit templates
+│   └── examples/               example controller.yaml / agent.yaml
+├── internal/version/           build version (stamped via -ldflags at compile)
+├── docs/
+│   ├── QUICKSTART.md           two blank servers to a working VPN (ships as INSTALL.md)
+│   ├── manifest.md             annotated controller.yaml / agent.yaml + secret schemes
+│   ├── configuration.md        COMPLETE config reference (every key) + upstream doc links
+│   ├── cli.md                  every flag on both binaries
+│   ├── operations.md           dashboard, VLESS clients, backup/restore, metrics, health
+│   ├── DESIGN.md               full project context + conventions
+│   ├── lessons.md              hard-won operational lessons baked into reconcile
+│   ├── adr/                    architecture decision records (0001–0027)
+│   ├── onboarding.md           node provisioning walkthrough
+│   ├── colocated-controller-master.md  co-location on the master (default for small fleets)
+│   ├── recipes/                task-oriented config recipes (RU split-tunnel + DNS filter, …)
+│   ├── secrets-sops.md         SOPS/age secret provider setup
+│   └── upgrade.md              agent binary upgrade procedure + wire-contract versioning
+├── DISCLAIMER.md  ·  SECURITY.md  ·  CONTRIBUTING.md
+```
+
 ## Conventions
 
 - **Commits** follow [Conventional Commits](https://www.conventionalcommits.org/):

@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 480" width="1200" height="480" role="img" aria-label="wgfleet — a control plane for WireGuard and AmneziaWG exit fleets. Declare the fleet; wgfleet builds it and holds it there. Beside the title, a terminal panel shows real dry-run output from wgfleet-agent --plan for node exit-de-1: it would create awg0.conf with PrivateKey redacted and derived AmneziaWG obfuscation parameters, and run awg-quick — writing nothing.">
+  <title>wgfleet — a control plane for WireGuard / AmneziaWG exit fleets</title>
+  <defs>
+    <radialGradient id="pg" cx="50%" cy="-15%" r="130%">
+      <stop offset="0%" stop-color="#11161f"/>
+      <stop offset="58%" stop-color="#0a0d12"/>
+      <stop offset="100%" stop-color="#0a0d12"/>
+    </radialGradient>
+    <linearGradient id="rule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1c222c" stop-opacity="0"/>
+      <stop offset="12%" stop-color="#1c222c" stop-opacity="1"/>
+      <stop offset="88%" stop-color="#1c222c" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#1c222c" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="card"><rect x="0" y="0" width="1200" height="480" rx="14"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#card)">
+    <rect width="1200" height="480" fill="url(#pg)"/>
+
+    <!-- ============ header bar ============ -->
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+      <text x="48" y="46" font-size="29" font-weight="700" fill="#f1f3f7">wg<tspan fill="#3ddc84">·</tspan>fleet</text>
+      <circle cx="212" cy="38" r="4" fill="#3ddc84"/>
+      <text x="228" y="45" font-size="18" fill="#5a6270">control plane</text>
+      <text x="1152" y="45" font-size="18" fill="#5a6270" text-anchor="end">AGPL-3.0 <tspan fill="#2a313d">·</tspan> Go 1.26 <tspan fill="#2a313d">·</tspan> wire v4</text>
+    </g>
+    <rect x="0" y="72" width="1200" height="1" fill="url(#rule)"/>
+
+    <!-- ============ left: the claim ============ -->
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+      <text x="48" y="146" font-size="18" font-weight="600" fill="#7a828f" letter-spacing="2.4">WIREGUARD / AMNEZIAWG EXIT FLEETS</text>
+
+      <text x="48" y="212" font-size="40" font-weight="700" fill="#f1f3f7">Declare the fleet.</text>
+      <text x="48" y="262" font-size="40" font-weight="700" fill="#f1f3f7">wgfleet builds it</text>
+      <text x="48" y="312" font-size="40" font-weight="700" fill="#f1f3f7">and <tspan fill="#3ddc84">holds it there.</tspan></text>
+
+      <text x="48" y="362" font-size="20" fill="#8b93a1">Blank Ubuntu VM to a <tspan fill="#cdd3dd">Ready</tspan> exit node —</text>
+      <text x="48" y="390" font-size="20" fill="#8b93a1">then a reconcile loop keeps it that way.</text>
+
+      <!-- chips -->
+      <g>
+        <rect x="48" y="416" width="132" height="30" rx="7" fill="rgba(61,220,132,.09)" stroke="rgba(61,220,132,.28)"/>
+        <text x="114" y="436" font-size="17" fill="#3ddc84" text-anchor="middle">declarative</text>
+
+        <rect x="190" y="416" width="150" height="30" rx="7" fill="rgba(91,141,239,.10)" stroke="rgba(91,141,239,.35)"/>
+        <text x="265" y="436" font-size="17" fill="#5b8def" text-anchor="middle">dry-run first</text>
+
+        <rect x="350" y="416" width="188" height="30" rx="7" fill="#0d1119" stroke="#2a313d"/>
+        <text x="444" y="436" font-size="17" fill="#8b93a1" text-anchor="middle">keys stay on node</text>
+      </g>
+    </g>
+
+    <!-- ============ right: real plan output ============ -->
+    <g>
+      <rect x="612" y="112" width="540" height="330" rx="13" fill="#0c1017" stroke="#1c222c"/>
+      <rect x="612" y="112" width="540" height="44" rx="13" fill="#0d1119"/>
+      <rect x="612" y="143" width="540" height="13" fill="#0d1119"/>
+      <rect x="612" y="155" width="540" height="1" fill="#161b24"/>
+
+      <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+        <circle cx="636" cy="134" r="4" fill="#f5b14c"/>
+        <text x="652" y="140" font-size="16" fill="#cdd3dd">agent --plan <tspan fill="#3a4150">·</tspan> <tspan fill="#8b93a1">exit-de-1</tspan></text>
+        <text x="1130" y="140" font-size="15" fill="#5a6270" text-anchor="end">writes nothing</text>
+
+        <g font-size="14.5">
+          <text y="190"><tspan x="636" fill="#3ddc84" font-weight="700">+ create</tspan><tspan x="724" fill="#8b93a1">awg0.conf — 567 B, mode 600</tspan></text>
+          <text x="660" y="213" fill="#5a6270">| <tspan fill="#8b93a1">[Interface]</tspan></text>
+          <text x="660" y="236" fill="#5a6270">| PrivateKey = <tspan fill="#f5b14c">&lt;redacted&gt;</tspan></text>
+          <text x="660" y="259" fill="#5a6270">| ListenPort = <tspan fill="#8b93a1">22891</tspan></text>
+          <text x="660" y="282" fill="#5a6270">| S1 = <tspan fill="#8b93a1">27</tspan> S2 = <tspan fill="#8b93a1">38</tspan> S3 = <tspan fill="#8b93a1">63</tspan> S4 = <tspan fill="#8b93a1">23</tspan></text>
+          <text x="660" y="305" fill="#5a6270">| H1 = <tspan fill="#8b93a1">29838687-159838687</tspan></text>
+          <text x="660" y="328" fill="#5a6270">| I1 = <tspan fill="#8b93a1">&lt;b 0xc10000000104&gt;&lt;r 4&gt;…</tspan></text>
+          <text y="356"><tspan x="636" fill="#f5b14c" font-weight="700">! exec</tspan><tspan x="724" fill="#8b93a1">awg-quick — bring interface up</tspan></text>
+          <text x="660" y="379" fill="#5a6270">| awg-quick up awg0.conf</text>
+          <text y="407"><tspan x="636" fill="#3a4150" font-weight="700">no-change</tspan><tspan x="732" fill="#5a6270">DOCKER-USER — docker not up</tspan></text>
+        </g>
+      </g>
+    </g>
+
+    <rect x="0.5" y="0.5" width="1199" height="479" rx="14" fill="none" stroke="#1c222c"/>
+  </g>
+</svg>

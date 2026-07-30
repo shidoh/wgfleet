@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 260" width="1200" height="260" role="img" aria-label="Node lifecycle. A node moves from Pending, meaning it is in the config but not yet touched, to Provisioning during SSH bootstrap of the blank VM, to Reconciling while it converges to its NodeSpec, to Ready once every self-check passes. From Reconciling or Ready a node drops to Degraded when a self-check fails or the agent goes silent past the staleness window, or to Error when a reconcile pass fails. Both recover back to Ready on the next good pass.">
+  <title>wgfleet node lifecycle — Pending to Provisioning to Reconciling to Ready</title>
+  <defs>
+    <radialGradient id="pg" cx="50%" cy="-30%" r="140%">
+      <stop offset="0%" stop-color="#11161f"/>
+      <stop offset="58%" stop-color="#0a0d12"/>
+      <stop offset="100%" stop-color="#0a0d12"/>
+    </radialGradient>
+    <marker id="am" markerWidth="9" markerHeight="9" refX="7.5" refY="4.5" orient="auto">
+      <path d="M0,1 L8,4.5 L0,8 Z" fill="#3a4150"/>
+    </marker>
+    <marker id="aa" markerWidth="9" markerHeight="9" refX="7.5" refY="4.5" orient="auto">
+      <path d="M0,1 L8,4.5 L0,8 Z" fill="#3a3320"/>
+    </marker>
+    <clipPath id="card"><rect x="0" y="0" width="1200" height="260" rx="14"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#card)" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+    <rect width="1200" height="260" fill="url(#pg)"/>
+
+    <text x="40" y="44" font-size="18" font-weight="700" fill="#7a828f" letter-spacing="2.4">NODE LIFECYCLE</text>
+    <text x="1160" y="44" font-size="16" fill="#5a6270" text-anchor="end">driven by the agent's own self-checks</text>
+    <rect x="40" y="58" width="1120" height="1" fill="#161b24"/>
+
+    <!-- Pending -->
+    <rect x="40" y="96" width="176" height="48" rx="9" fill="#0d1119" stroke="#2a313d"/>
+    <circle cx="66" cy="120" r="4.5" fill="#5a6270"/>
+    <text x="82" y="127" font-size="19" font-weight="600" fill="#8b93a1">Pending</text>
+    <text x="128" y="168" font-size="15" fill="#5a6270" text-anchor="middle">in config,</text>
+    <text x="128" y="188" font-size="15" fill="#5a6270" text-anchor="middle">not yet touched</text>
+
+    <path d="M226,120 L262,120" stroke="#3a4150" stroke-width="1.6" fill="none" marker-end="url(#am)"/>
+
+    <!-- Provisioning -->
+    <rect x="272" y="96" width="200" height="48" rx="9" fill="#0d1119" stroke="#2a313d"/>
+    <circle cx="298" cy="120" r="4.5" fill="#8b93a1"/>
+    <text x="314" y="127" font-size="19" font-weight="600" fill="#cdd3dd">Provisioning</text>
+    <text x="372" y="168" font-size="15" fill="#5a6270" text-anchor="middle">SSH bootstrap</text>
+    <text x="372" y="188" font-size="15" fill="#5a6270" text-anchor="middle">of a blank VM</text>
+
+    <path d="M482,120 L518,120" stroke="#3a4150" stroke-width="1.6" fill="none" marker-end="url(#am)"/>
+
+    <!-- Reconciling -->
+    <rect x="528" y="96" width="196" height="48" rx="9" fill="rgba(91,141,239,.10)" stroke="rgba(91,141,239,.35)"/>
+    <circle cx="554" cy="120" r="4.5" fill="#5b8def"/>
+    <text x="570" y="127" font-size="19" font-weight="600" fill="#cfe0ff">Reconciling</text>
+    <text x="626" y="168" font-size="15" fill="#5a6270" text-anchor="middle">converging to</text>
+    <text x="626" y="188" font-size="15" fill="#5a6270" text-anchor="middle">its NodeSpec</text>
+
+    <path d="M734,120 L770,120" stroke="#3a4150" stroke-width="1.6" fill="none" marker-end="url(#am)"/>
+
+    <!-- Ready -->
+    <rect x="780" y="96" width="160" height="48" rx="9" fill="rgba(61,220,132,.12)" stroke="rgba(61,220,132,.30)"/>
+    <circle cx="806" cy="120" r="4.5" fill="#3ddc84"/>
+    <text x="822" y="127" font-size="19" font-weight="700" fill="#3ddc84">Ready</text>
+    <text x="860" y="168" font-size="15" fill="#5a6270" text-anchor="middle">all self-checks pass</text>
+
+    <!-- fault branch -->
+    <path d="M950,110 L998,110" stroke="#3a3320" stroke-width="1.6" fill="none" marker-end="url(#aa)"/>
+    <path d="M950,130 L998,130" stroke="#3a3320" stroke-width="1.6" fill="none" marker-end="url(#aa)"/>
+
+    <rect x="1008" y="86" width="152" height="40" rx="9" fill="rgba(245,177,76,.08)" stroke="#3a3320"/>
+    <circle cx="1030" cy="106" r="4.5" fill="#f5b14c"/>
+    <text x="1046" y="112" font-size="17" font-weight="600" fill="#c9b894">Degraded</text>
+
+    <rect x="1008" y="134" width="152" height="40" rx="9" fill="rgba(248,113,113,.07)" stroke="#3a2424"/>
+    <circle cx="1030" cy="154" r="4.5" fill="#f87171"/>
+    <text x="1046" y="160" font-size="17" font-weight="600" fill="#d98a8a">Error</text>
+
+    <text x="1160" y="206" font-size="15" fill="#5a6270" text-anchor="end">a check fails, or the agent goes silent</text>
+    <text x="1160" y="228" font-size="15" fill="#5a6270" text-anchor="end">recovers to Ready on the next good pass</text>
+
+    <rect x="0.5" y="0.5" width="1199" height="259" rx="14" fill="none" stroke="#1c222c"/>
+  </g>
+</svg>
