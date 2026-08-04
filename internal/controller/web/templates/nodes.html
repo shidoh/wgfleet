@@ -65,6 +65,7 @@
     <span class="badge-master">MASTER</span>
     <span class="topo-trunk-name">{{.Name}}</span>
     <span class="state-pill {{lower .State}}"><span class="led"></span>{{.State}}</span>
+    {{if .Region}}<span class="topo-tag">{{.Region}}</span>{{end}}
     {{template "node-subbadges" .}}
     <span class="topo-spacer"></span>
     <span class="addr topo-trunk-addr">

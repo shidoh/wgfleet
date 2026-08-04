@@ -419,7 +419,7 @@ a:focus-visible,
 }
 .topo-rail.is-live {
   background: repeating-linear-gradient(180deg, var(--green) 0 4px, transparent 4px 11px);
-  filter: drop-shadow(0 0 5px rgba(61,220,132,.55));
+  filter: drop-shadow(var(--dot-glow-green));
   animation: railflow 1.1s linear infinite;
 }
 @keyframes railflow { to { background-position-y: -15px } }
@@ -444,7 +444,7 @@ a:focus-visible,
 .topo-row.is-carrying::before {
   height: 2px; margin-top: -1px;
   background: repeating-linear-gradient(90deg, var(--green) 0 4px, transparent 4px 9px);
-  filter: drop-shadow(0 0 5px rgba(61,220,132,.55));
+  filter: drop-shadow(var(--dot-glow-green));
   animation: tapflow 1.1s linear infinite;
 }
 @keyframes tapflow { to { background-position-x: 13px } }
