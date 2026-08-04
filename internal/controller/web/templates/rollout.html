@@ -46,6 +46,15 @@
 
     {{else if .Plan.Outdated}}
     <div class="roll-plan">
+      {{/* The plan is suppressed while a finished run is still on screen above.
+           State.Nodes is not cleared when a run ends (only Active flips) and Plan
+           is recomputed every poll, so both used to render and listed the same
+           nodes twice — once with phases and versions, once again without them.
+           That window lasts until every agent re-reports its new version, and
+           never closes at all if a node was skipped, failed or stopped reporting.
+           The action below is kept either way: it is the plan LIST that is
+           redundant next to the progress list, not the ability to roll again. */}}
+      {{if not .State.Nodes}}
       <div class="field-label">PLANNED ORDER</div>
       {{range $i, $t := .Plan.Targets}}
       <div class="roll-planrow">
@@ -55,12 +64,19 @@
         <span class="roll-ver">{{if $t.Current}}{{$t.Current}}{{else}}never reported{{end}} → {{$.Plan.Want}}</span>
       </div>
       {{end}}
+      {{end}}
+      {{/* Skipped nodes are never in State.Nodes — the rollout does not touch
+           them — so this is the only place their reason is shown. It survives the
+           suppression above, with its own label so it is not left headerless. */}}
+      {{if .Plan.Skipped}}
+      <div class="field-label">SKIPPED</div>
       {{range .Plan.Skipped}}
       <div class="roll-planrow skipped">
         <span class="roll-idx">–</span>
         <span class="roll-name">{{.Name}}</span>
         <span class="roll-ver">{{.Reason}}</span>
       </div>
+      {{end}}
       {{end}}
     </div>
     <form class="rollout-form" method="post" action="/rollout/start"
