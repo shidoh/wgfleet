@@ -19,6 +19,7 @@ func TestNodeCollectorsReachBeyondWgfleetsOwnSurface(t *testing.T) {
 		{"--disk-usage", "journal volume — a log-spewing unit is invisible without it"},
 		{"df ", "disk headroom"},
 		{"date ", "UTC clock, or logs from several nodes cannot be stitched"},
+		{"uniq -c", "per-unit journal volume — the busy-loop-unit diagnosis this task exists for"},
 	} {
 		if !strings.Contains(cmds, want.needle) {
 			t.Errorf("no collector runs %q — needed for %s", want.needle, want.why)

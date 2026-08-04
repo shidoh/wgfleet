@@ -49,10 +49,11 @@ func NodeCollectors(role string) []Collector {
 		{File: "logs.txt", Name: "controller journal", Cmd: "journalctl -u wgfleet-controller -n 300 --no-pager -o short-iso"},
 		{File: "logs.txt", Name: "journal disk usage", Cmd: "journalctl --disk-usage"},
 		{File: "logs.txt", Name: "disk headroom", Cmd: "df -h /"},
-		{File: "logs.txt", Name: "journal lines per unit (last hour)", Cmd: "journalctl --since=-1h --no-pager -o short-iso | awk '{print $3}' | sed -E 's/\\[[0-9]+\\]:?$//;s/:$//' | sort | uniq -c | sort -rn | head -50"},
+		{File: "logs.txt", Name: "journal lines per unit (last hour)", Cmd: "journalctl --since=-1h -n 20000 --no-pager -o short-iso | awk '{print $3}' | sed -E 's/\\[[0-9]+\\]:?$//;s/:$//' | sort | uniq -c | sort -rn | head -50"},
 
 		// containers.txt — bounded tails of the containers we know this fleet
-		// runs. A missing container is a normal failure, not an error to chase.
+		// runs (wg-easy included: it runs on masters only, but a missing
+		// container on an exit is a normal failure, not an error to chase).
 		{File: "containers.txt", Name: "mihomo log", Cmd: "docker logs --tail 100 mihomo 2>&1"},
 		{File: "containers.txt", Name: "xray log", Cmd: "docker logs --tail 100 xray 2>&1"},
 		{File: "containers.txt", Name: "blocky log", Cmd: "docker logs --tail 100 blocky 2>&1"},
@@ -61,8 +62,6 @@ func NodeCollectors(role string) []Collector {
 
 	if role == "master" {
 		cs = append(cs,
-			// services.txt — master-only container, since wg-easy runs only there.
-			Collector{File: "services.txt", Name: "docker compose ps (master)", Cmd: "docker compose ps"},
 			// network.txt — the ZeroTier management overlay only masters carry.
 			Collector{File: "network.txt", Name: "zerotier status", Cmd: "zerotier-cli listnetworks"},
 		)
