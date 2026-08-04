@@ -297,7 +297,7 @@ fleet:
           # image: ghcr.io/xtls/xray-core:26.6.22 # xray image; unset ⇒ the pinned default
       active_transport: awg # transport the master routes to: awg | reality-xhttp
       # per_tunnel_key: staged migration of THIS exit off the master's single shared
-      # WireGuard identity onto a per-tunnel one. Phases IN ORDER, one exit at a time,
+      # AmneziaWG identity onto a per-tunnel one. Phases IN ORDER, one exit at a time,
       # verifying between each: off (default, shared key) → dual (exit accepts both) →
       # switch (master starts using the per-tunnel key) → on (exit accepts only it).
       # Each step moves exactly ONE side of the tunnel, which is what makes it

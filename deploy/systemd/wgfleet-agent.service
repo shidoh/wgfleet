@@ -14,7 +14,7 @@ Type=simple
 ExecStart=/usr/local/bin/wgfleet-agent --config /etc/wgfleet/agent.yaml --log-format json
 Restart=on-failure
 RestartSec=5
-# The agent manages WireGuard/AmneziaWG interfaces, nftables and policy routing.
+# The agent manages AmneziaWG interfaces, nftables and policy routing.
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
 NoNewPrivileges=yes
 

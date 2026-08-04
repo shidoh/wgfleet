@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 480" width="1200" height="480" role="img" aria-label="wgfleet — a control plane for WireGuard and AmneziaWG exit fleets. Declare the fleet; wgfleet builds it and holds it there. Beside the title, a terminal panel shows real dry-run output from wgfleet-agent --plan for node exit-de-1: it would create awg0.conf with PrivateKey redacted and derived AmneziaWG obfuscation parameters, and run awg-quick — writing nothing.">
-  <title>wgfleet — a control plane for WireGuard / AmneziaWG exit fleets</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 480" width="1200" height="480" role="img" aria-label="wgfleet — a control plane for AmneziaWG exit fleets. Declare the fleet; wgfleet builds it and holds it there. Beside the title, a terminal panel shows real dry-run output from wgfleet-agent --plan for node exit-de-1: it would create awg0.conf with PrivateKey redacted and derived AmneziaWG obfuscation parameters, and run awg-quick — writing nothing.">
+  <title>wgfleet — a control plane for AmneziaWG exit fleets</title>
   <defs>
     <radialGradient id="pg" cx="50%" cy="-15%" r="130%">
       <stop offset="0%" stop-color="#11161f"/>
@@ -29,7 +29,7 @@
 
     <!-- ============ left: the claim ============ -->
     <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
-      <text x="48" y="146" font-size="18" font-weight="600" fill="#7a828f" letter-spacing="2.4">WIREGUARD / AMNEZIAWG EXIT FLEETS</text>
+      <text x="48" y="146" font-size="18" font-weight="600" fill="#7a828f" letter-spacing="2.4">AMNEZIAWG EXIT FLEETS</text>
 
       <text x="48" y="212" font-size="40" font-weight="700" fill="#f1f3f7">Declare the fleet.</text>
       <text x="48" y="262" font-size="40" font-weight="700" fill="#f1f3f7">wgfleet builds it</text>

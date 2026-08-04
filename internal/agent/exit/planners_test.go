@@ -166,7 +166,7 @@ func TestExitPlanModeWritesNothing(t *testing.T) {
 	// The rendered artifacts must be visible in the plan.
 	for _, want := range []string{
 		"firewall (nftables)", "table inet wgfleet",
-		"wireguard interface", "ListenPort = 51820",
+		"amneziawg interface", "ListenPort = 51820",
 		"policy routing", "ip rule add to 203.0.113.1 lookup main",
 		"warp egress (wgcf)", "wgcf register --accept-tos",
 		"dns filter (blocky)", "10.20.0.5:53", "image: spx01/blocky",

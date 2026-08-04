@@ -127,7 +127,7 @@ provisioning time, which means **changing them requires re-provisioning the node
 | `fleet.masters[].client_admin_ports` | []int | none | Admin ports (Web UI, mihomo dashboard) opened **to the VPN client pool** on the mgmt address. Opt-in; default keeps admin reachable only over the overlay |
 | `fleet.masters[].public_tcp_ports` | []int | none | TCP ports opened **to the whole internet** — e.g. `80` for a decoy web listener. Unlike the previous key this is unscoped, so keep it to genuinely public services |
 
-### `client_awg` — the client-facing WireGuard listener
+### `client_awg` — the client-facing AmneziaWG listener
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -214,12 +214,12 @@ See [§9 third-party configuration](#9-third-party-configuration) for the passth
 | `fleet.exits[].name` | string | **required** | Stable node name; also seeds derived ports |
 | `fleet.exits[].region` | string | — | Free-form label: `de`, `nl`, `fi` |
 | `fleet.exits[].mgmt_addr` | string | — | ZeroTier/overlay address (admin, metrics, DNS bind) |
-| `fleet.exits[].public_ip` | string | = `ssh.host` | Public IP the master dials for the WireGuard endpoint |
+| `fleet.exits[].public_ip` | string | = `ssh.host` | Public IP the master dials for the AmneziaWG endpoint |
 | `fleet.exits[].address_pool` | CIDR | — | Address pool for this exit's tunnel |
 | `fleet.exits[].egress` | string | — | Preferred egress: `warp` or `direct` |
 | `fleet.exits[].egress_fallback` | []string | none | Ordered fallbacks for censorship-adaptive failover, e.g. `[direct]`. Empty disables failover |
 | `fleet.exits[].min_egress_throughput_kbytes` | int | fleet value | Per-exit throughput floor. `>0` custom, `0` inherit, negative disables the watchdog here |
-| `fleet.exits[].listen_port` | int | derived `20000`–`32000` | Legacy top-level WireGuard port. Prefer `fleet.exits[].transports.awg.listen_port` |
+| `fleet.exits[].listen_port` | int | derived `20000`–`32000` | Legacy top-level AmneziaWG port. Prefer `fleet.exits[].transports.awg.listen_port` |
 
 ### MTU
 
@@ -258,7 +258,7 @@ run warm and you can switch the live path instantly.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fleet.exits[].firewall.as_blacklist` | bool | `false` | Drop traffic from known scanner ASNs, hiding the WireGuard port and SSH from active VPN scanning. Feed URLs are fleet-wide |
+| `fleet.exits[].firewall.as_blacklist` | bool | `false` | Drop traffic from known scanner ASNs, hiding the AmneziaWG port and SSH from active VPN scanning. Feed URLs are fleet-wide |
 | `fleet.exits[].firewall.whitelist` | []CIDR | mgmt scope | Additional sources always accepted. The management overlay is merged in automatically |
 | `fleet.exits[].firewall.public_tcp_ports` | []int | none | TCP ports opened to the whole internet |
 
@@ -266,7 +266,7 @@ run warm and you can switch the live path instantly.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fleet.exits[].per_tunnel_key` | string | `off` | Staged migration from the master's single shared WireGuard identity to a per-tunnel one, **for this exit only**. Phases in order: `off` → `dual` → `switch` → `on`. Each step moves exactly one side of the tunnel, which is what makes it rollback-safe. Deliberately manual — roll one node at a time and verify between steps |
+| `fleet.exits[].per_tunnel_key` | string | `off` | Staged migration from the master's single shared AmneziaWG identity to a per-tunnel one, **for this exit only**. Phases in order: `off` → `dual` → `switch` → `on`. Each step moves exactly one side of the tunnel, which is what makes it rollback-safe. Deliberately manual — roll one node at a time and verify between steps |
 
 ### Exit DNS
 
@@ -356,7 +356,7 @@ renderer, firewall and routing consistent. If wgfleet does not model it, use
 | **blocky** | DNS filtering and forwarding on masters and exits | `fleet.masters[].dns.overrides` / `fleet.exits[].dns.overrides` | <https://0xerr0r.github.io/blocky/latest/configuration/> |
 | **xray-core** | REALITY/VLESS/XHTTP inbounds, both master↔exit and client-facing | Modelled keys only; the rendered config is not user-merged | <https://xtls.github.io/en/config/> · REALITY: <https://github.com/XTLS/REALITY> |
 | **AmneziaWG** | Obfuscated WireGuard on all tunnels | Not user-tunable: obfuscation parameters are **generated** per tunnel, collision-safe. Hand-editing breaks the pairing | <https://docs.amnezia.org/documentation/amnezia-wg/> |
-| **wg-easy** | Client management UI and client WireGuard server on the master | `fleet.masters[].compose.*`; state lives in its SQLite DB, which wgfleet writes directly | <https://github.com/wg-easy/wg-easy/wiki> |
+| **wg-easy** | Client management UI and client-facing AmneziaWG server on the master | `fleet.masters[].compose.*`; state lives in its SQLite DB, which wgfleet writes directly | <https://github.com/wg-easy/wg-easy/wiki> |
 | **wgcf / Cloudflare WARP** | Exit egress | `fleet.exits[].warp_mtu`, `fleet.exits[].egress` | <https://github.com/ViRb3/wgcf> |
 | **ZeroTier** | Management overlay | `fleet.zerotier_network` | <https://docs.zerotier.com/> |
 | **nftables** | Node firewall | `fleet.exits[].firewall.*`; the ruleset itself is rendered, not user-supplied | <https://wiki.nftables.org/> |

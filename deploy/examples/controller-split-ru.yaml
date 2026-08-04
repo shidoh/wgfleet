@@ -39,7 +39,7 @@ fleet:
       public_ip: "<master-public-ip>"   # WG endpoint your devices dial; seeds wg-easy first run
       client_awg:
         listen_port: 443                # UDP; a standard port is less conspicuous
-        address_pool: 10.80.0.0/24      # the client WireGuard subnet (its .1 is the clients' DNS)
+        address_pool: 10.80.0.0/24      # the client AmneziaWG subnet (its .1 is the clients' DNS)
 
       # ★ THE SPLIT. mihomo routing rules are evaluated top-down:
       #     1. direct_cidrs  → DIRECT  (private/LAN nets never enter the tunnel)

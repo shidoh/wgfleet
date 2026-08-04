@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/readme/hero.svg" width="100%" alt="wgfleet — a control plane for WireGuard and AmneziaWG exit fleets. Declare the fleet; wgfleet builds it and holds it there. A terminal panel shows real dry-run output from wgfleet-agent --plan for node exit-de-1: it would create awg0.conf with the private key redacted and derived AmneziaWG obfuscation parameters, then run awg-quick — writing nothing.">
+  <img src="assets/readme/hero.svg" width="100%" alt="wgfleet — a control plane for AmneziaWG exit fleets. Declare the fleet; wgfleet builds it and holds it there. A terminal panel shows real dry-run output from wgfleet-agent --plan for node exit-de-1: it would create awg0.conf with the private key redacted and derived AmneziaWG obfuscation parameters, then run awg-quick — writing nothing.">
 </p>
 
 <p align="center">
@@ -21,7 +21,7 @@
 
 ---
 
-# A control plane for WireGuard / AmneziaWG exit fleets
+# A control plane for AmneziaWG exit fleets
 
 You declare the fleet in one config file. wgfleet takes a blank Ubuntu VM,
 provisions it into a working exit node — AmneziaWG server, Cloudflare WARP
@@ -44,7 +44,7 @@ from running that by hand live in the reconcile logic, not in a wiki.
 | Without wgfleet | With wgfleet |
 |---|---|
 | SSH into each VM, run Ansible or manual steps | Declare the node in the fleet manifest |
-| Copy WireGuard keys around by hand | Keys generated on-node; the controller brokers public keys only |
+| Copy AmneziaWG keys around by hand | Keys generated on-node; the controller brokers public keys only |
 | Hand-edit AmneziaWG obfuscation in a UI | Parameters derived deterministically, then rendered and applied |
 | Tweak mihomo / nftables / routing per node | Rendered from desired state, idempotently |
 | Hope nothing drifted | A reconcile loop converges and reports health |
@@ -74,7 +74,7 @@ reconcile plan — 36 change(s)
       | #!/usr/sbin/nft -f
       …
 
-=== wireguard interface ===
+=== amneziawg interface ===
   + create    state/exit-de-1/awg0.conf — 567 bytes, mode 600
       | [Interface]
       | PrivateKey = <redacted>
@@ -134,7 +134,7 @@ everywhere else.
   converges every node and keeps it there.
 - **Autoprovisioning** — a blank Ubuntu VM (SSH only) becomes a `Ready` exit
   node and joins the load balancer, from the CLI or a button in the Web UI.
-- **Key broker, not key store** — WireGuard keys are generated on-node and never
+- **Key broker, not key store** — AmneziaWG keys are generated on-node and never
   leave it. A compromised controller cannot leak node private keys.
 - **Dry-run everywhere** — plan mode for reconcile, provisioning, upgrades and
   restore.
@@ -288,7 +288,7 @@ build DKMS for you. Full walkthrough: [`docs/onboarding.md`](docs/onboarding.md)
   converge each node toward its rendered `NodeSpec` and keep it there.
 - **Dry-run is first-class.** `Plan()` is side-effect-free by construction;
   effects run only in apply mode.
-- **The controller brokers public keys, never private ones.** WireGuard keys are
+- **The controller brokers public keys, never private ones.** AmneziaWG keys are
   generated and kept on each node; only the public key is published.
 - **mTLS identity.** Each node gets a client certificate at bootstrap whose CN
   is its node ID. Revoking the certificate removes the node from the fleet.
@@ -330,7 +330,7 @@ Full rules and their rationale: [`docs/adr/`](docs/adr/) and
 
 ## Security model
 
-- Node WireGuard private keys are generated and stay **on the node**; the
+- Node AmneziaWG private keys are generated and stay **on the node**; the
   controller stores public keys only.
 - **mTLS** between controller and agents, one client certificate per node
   (CN = node ID), issued at bootstrap. Revocation removes the node.

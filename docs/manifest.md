@@ -176,7 +176,7 @@ When `controller.secrets.sops_file` is set to a SOPS-encrypted YAML file (age/PG
 **CA private keys can use `secret://` and are loaded in-memory** (never written to disk);
 the CA cert still reads from a `file://` path. (See `docs/secrets-sops.md` for setup.)
 
-WireGuard private keys are generated and persisted **on the node** (0600) and are
+AmneziaWG private keys are generated and persisted **on the node** (0600) and are
 never sent to the controller. `--state-dir <dir>` relocates them (and all managed
 files) for non-root/dev runs.
 

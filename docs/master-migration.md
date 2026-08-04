@@ -1,6 +1,6 @@
 # Migrating the master to another VM
 
-Moving a co-located controller+master (control plane + client-facing WireGuard)
+Moving a co-located controller+master (control plane + client-facing AmneziaWG)
 to a new box. Exits are not touched and keep running throughout — they reconnect
 on their own at the end.
 
@@ -33,7 +33,7 @@ scp root@old-master:/root/fleet.tar.age .
 
 Captured: the store db (consistent snapshot), CA cert + key, `controller.yaml`,
 the sops secrets file, and — because this box is also a master — the wg-easy
-client db, the wg-easy admin password, the WireGuard key, and the node identity
+client db, the wg-easy admin password, the AmneziaWG key, and the node identity
 (`node.crt`, `node.key`, `agent.yaml`).
 
 Not captured, because the agent regenerates it all on first reconcile: nftables

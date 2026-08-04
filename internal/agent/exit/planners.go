@@ -201,7 +201,7 @@ func (p firewallPlanner) isLoaded() bool {
 	return p.loaded()
 }
 
-// --- wireguard / amneziawg interface ---
+// --- amneziawg interface ---
 
 type wgPlanner struct {
 	path       string
@@ -209,7 +209,7 @@ type wgPlanner struct {
 	up         func(name string) bool
 }
 
-func (wgPlanner) Component() string { return "wireguard interface" }
+func (wgPlanner) Component() string { return "amneziawg interface" }
 
 // awgTransportDisabled reports whether this exit has EXPLICITLY turned the AWG
 // master↔exit transport off (ADR-0025).
@@ -238,7 +238,7 @@ func (p wgPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Ac
 	// this planner rather than a leftover as the source.
 	if awgTransportDisabled(spec) {
 		if !p.isUp() {
-			return []reconcile.Action{reconcile.NoChangeAction("wireguard interface",
+			return []reconcile.Action{reconcile.NoChangeAction("amneziawg interface",
 				"awg transport disabled; interface already down")}, nil
 		}
 		// Down only — the config file stays. Re-enabling then needs no special path
