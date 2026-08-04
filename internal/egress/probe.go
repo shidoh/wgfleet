@@ -60,10 +60,33 @@ func ProbeWARPMTU(ctx context.Context, endpoint string) (int, error) {
 	return mtu, nil
 }
 
-// tracepathArgs builds the tracepath invocation for host. Split out from the
-// exec call so the -4 pin is covered by a test rather than only by a comment.
+// maxProbeHops caps tracepath's TTL walk.
+//
+// tracepath decides it has ARRIVED when the destination answers ICMP
+// port-unreachable. Cloudflare's anycast edge never does — and stops answering
+// altogether a few hops in — so an uncapped run has no stop condition and walks its
+// full 30-hop default at roughly a second per silent hop. That overruns the 30s
+// deadline the caller gives the probe, and the resulting SIGKILL discards
+// tracepath's block-buffered stdout, so ProbeWARPMTU's `len(out) == 0` salvage path
+// never sees the partial output it was written for. Net effect before this cap:
+// every exit in the fleet logged "signal: killed" and auto-MTU discovery was dead,
+// silently, with the conservative default masking it.
+//
+// Nothing is lost by stopping early: the hops beyond the cap are the silent ones,
+// and the pmtu that matters is reported by the near hops (the constrained link is
+// the first one, e.g. a provider gateway advertising 1456). A path that narrows
+// beyond the cap is still safe — ProbeWARPMTU clamps to wg.DefaultWARPMTU, so a
+// missed constraint leaves the conservative default rather than raising the MTU.
+//
+// Measured 2026-08-04 on vn0/anz3/pn80: capped, tracepath exits 0 in 9-16s and
+// prints "Resume: pmtu N", which is what lastPMTU parses.
+const maxProbeHops = 10
+
+// tracepathArgs builds the tracepath invocation for host. Split out from the exec
+// call so the -4 pin and the hop cap are covered by tests rather than only by
+// comments.
 func tracepathArgs(host string) []string {
-	return []string{"-4", "-n", host}
+	return []string{"-4", "-n", "-m", strconv.Itoa(maxProbeHops), host}
 }
 
 // lastPMTU returns the last pmtu value in tracepath output, or 0 if none.

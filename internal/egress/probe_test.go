@@ -2,6 +2,7 @@ package egress
 
 import (
 	"slices"
+	"strconv"
 	"testing"
 )
 
@@ -15,6 +16,31 @@ func TestTracepathArgsForceIPv4(t *testing.T) {
 	}
 	if got := args[len(args)-1]; got != "engage.cloudflareclient.com" {
 		t.Errorf("host = %q, want it last in %q", got, args)
+	}
+}
+
+// The probe must cap the hop count. tracepath decides it has arrived when the
+// destination answers ICMP port-unreachable; Cloudflare's anycast edge never does,
+// and stops answering at all a few hops in, so an uncapped run walks its full
+// 30-hop default at roughly a second per silent hop. That overruns the caller's
+// 30s deadline, and the SIGKILL discards tracepath's block-buffered stdout, so the
+// salvage path in ProbeWARPMTU never sees the partial output it was written for —
+// auto-MTU discovery failed on every exit in the fleet.
+func TestTracepathArgsCapsHops(t *testing.T) {
+	args := tracepathArgs("engage.cloudflareclient.com")
+	i := slices.Index(args, "-m")
+	if i < 0 || i == len(args)-1 {
+		t.Fatalf("tracepath args %q do not cap the hop count (-m)", args)
+	}
+	n, err := strconv.Atoi(args[i+1])
+	if err != nil {
+		t.Fatalf("hop cap %q is not a number (args %q)", args[i+1], args)
+	}
+	// Measured 2026-08-04 on three exits: capped at 10 hops tracepath exits 0 in
+	// 9-16s and prints "Resume: pmtu N". The bound keeps a later bump from silently
+	// walking back past the 30s deadline this cap exists to fit inside.
+	if n <= 0 || n > 15 {
+		t.Errorf("hop cap = %d, want a small positive cap that fits the probe deadline", n)
 	}
 }
 
