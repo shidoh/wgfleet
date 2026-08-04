@@ -187,3 +187,79 @@ func TestGateCatchesASecretBearingKeyInAManifestEntryErr(t *testing.T) {
 		t.Errorf("File = %q, want the manifest path", le.File)
 	}
 }
+
+// Round 2 regression: a JSON-quoted key evaded the coarse check entirely.
+// `\bsecret\b\s*[:=]` never matches `"secret":` because a closing quote sits
+// between the key and the colon — and a JSON-configured collector's log line
+// (xray, for one — see Task 3's containers.txt) is exactly the uncontrolled
+// text this layer exists for.
+func TestScrubMasksJSONQuotedSecretValues(t *testing.T) {
+	const leak = "superSecretPayloadDoNotLeak"
+	cases := []struct {
+		name string
+		line string
+	}{
+		{"double-quoted key and value", `{"secret": "` + leak + `"}`},
+		{"space before colon", `{"password" : "` + leak + `"}`},
+		{"bare key, quoted value", `password: "` + leak + `"`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Scrub(tc.line)
+			if strings.Contains(got, leak) {
+				t.Errorf("scrub left the secret in place: %q -> %q", tc.line, got)
+			}
+
+			nodes := []Node{{Name: "n", Files: map[string]string{"a.txt": tc.line + "\n"}}}
+			if err := Gate(nodes, nil); err == nil {
+				t.Errorf("gate passed an unmasked JSON-shaped secret: %q", tc.line)
+			}
+		})
+	}
+}
+
+// Regression guard over value SHAPE, not position: both round 1 (multi-word)
+// and round 2 (JSON-quoted) defects came from a value shape the original
+// `\S+` capture — and then the interim `.+` capture — did not anticipate.
+// Every case here must have its secret masked by Scrub AND survive a
+// Scrub-then-Gate round trip, so the two stay provably consistent as new
+// shapes are added later.
+func TestScrubAndGateAgreeAcrossValueShapes(t *testing.T) {
+	const leak = "superSecretPayloadDoNotLeak"
+	cases := []struct {
+		name string
+		line string
+	}{
+		{"bare token", "token=" + leak},
+		{"key: value", "secret: " + leak},
+		{"bearer", "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9." + leak + ".sig"},
+		{"basic auth", "Authorization: Basic " + leak},
+		{"multi-word password", "password: correct horse battery staple " + leak},
+		{"trailing prose", "token=" + leak + " and then started"},
+		{"json double-quoted", `{"secret": "` + leak + `"}`},
+		{"json space before colon", `{"password" : "` + leak + `"}`},
+		{"bare key, quoted value", `password: "` + leak + `"`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := tc.line + "\n"
+
+			rawNodes := []Node{{Name: "n", Files: map[string]string{"a.txt": raw}}}
+			if err := Gate(rawNodes, nil); err == nil {
+				t.Fatalf("gate passed an unmasked value: %q", tc.line)
+			}
+
+			scrubbed := Scrub(raw)
+			if strings.Contains(scrubbed, leak) {
+				t.Fatalf("scrub left the secret in place: %q -> %q", tc.line, scrubbed)
+			}
+
+			scrubbedNodes := []Node{{Name: "n", Files: map[string]string{"a.txt": scrubbed}}}
+			if err := Gate(scrubbedNodes, nil); err != nil {
+				t.Errorf("gate rejected Scrub's own output for %q: %v", tc.line, err)
+			}
+		})
+	}
+}

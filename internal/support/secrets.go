@@ -7,23 +7,35 @@ import (
 	"strings"
 )
 
-// secretKeyRe matches a line whose KEY names it as secret-bearing, in either
-// `key: value` or `key = value` or `key=value` form. Used by both Scrub (mask)
-// and Gate (refuse) — it is the coarse layer, for uncontrolled text such as
-// container logs where we do not control the format.
+// secretKeyRe matches a line whose KEY names it as secret-bearing, in
+// `key: value`, `key = value`, `key=value`, or JSON `"key": "value"` form.
+// Used by both Scrub (mask) and Gate (refuse) — it is the coarse layer, for
+// uncontrolled text such as container logs where we do not control the
+// format.
 //
-// The value group (2) is greedy to end-of-line ("." does not match "\n" in
-// Go's RE2 without the "s" flag, so this stays bounded to one line), not
-// `\S+`. A single whitespace-delimited token would only catch the first word
-// of a multi-word secret — e.g. an "Authorization: Bearer <jwt>" header — and
-// Scrub would mask "Bearer" while leaving the token in plain sight, which
-// Gate would then wave through because that first token becomes exactly
-// "<redacted>". Over-masking a line of trailing prose is the correct
-// tradeoff here: under-masking leaks a secret, over-masking only costs
-// readability, and this is explicitly the layer for text whose format we do
-// not control. Sharing this regex also keeps Scrub and Gate consistent by
-// construction — Gate cannot fire on a line Scrub already fully redacted.
-var secretKeyRe = regexp.MustCompile(`(?i)\b(private[_-]?key|pre[_-]?shared[_-]?key|secret|password|passwd|token|authorization|api[_-]?key)\b\s*[:=]\s*(.+)`)
+// The optional `["']?` around the separator absorbs a JSON key's closing
+// quote (`"secret":`) and a JSON value's surrounding quotes (`"secret":
+// "value"`) without requiring them — a bare `key: value` line still matches.
+// Without this, `\bsecret\b\s*[:=]` never matches `"secret":` because a
+// closing quote sits between the key and the colon, and a JSON-configured
+// collector's log line (xray, for one — see Task 3's containers.txt) sails
+// through ungated.
+//
+// The value group (2) is lazy but anchored to end-of-line with `(?m)$` and a
+// trailing `["']?\s*` so it still captures the ENTIRE value — including a
+// multi-word secret, and past its own closing quote and any trailing
+// punctuation — while stripping a matched wrapping quote where one is
+// present. ("." does not match "\n" in Go's RE2 without the "s" flag, so
+// this stays bounded to one line regardless.) This was `\S+` originally,
+// which only caught the first whitespace-delimited token of a multi-word
+// secret (e.g. "Authorization: Bearer <jwt>" masked only "Bearer", leaving
+// the token itself in plain sight). Over-masking trailing prose or
+// punctuation on a matched line is the correct tradeoff here: under-masking
+// leaks a secret, over-masking only costs readability, and this is
+// explicitly the layer for text whose format we do not control. Sharing
+// this regex also keeps Scrub and Gate consistent by construction — Gate
+// cannot fire on a line Scrub already fully redacted.
+var secretKeyRe = regexp.MustCompile(`(?im)\b(private[_-]?key|pre[_-]?shared[_-]?key|secret|password|passwd|token|authorization|api[_-]?key)\b["']?\s*[:=]\s*["']?(.+?)["']?\s*$`)
 
 // redactedMarker is what an already-masked value looks like. The renderers emit
 // it, so the gate must treat it as safe rather than as a surviving secret.
