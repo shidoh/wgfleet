@@ -56,6 +56,24 @@ log()  { printf '\n%s[wgfleet]%s %s\n' "$c_g" "$c_0" "$*"; }
 warn() { printf '\n%s[wgfleet]%s %s\n' "$c_y" "$c_0" "$*"; }
 die()  { printf '\n%s[wgfleet] ERROR:%s %s\n' "$c_r" "$c_0" "$*" >&2; exit 1; }
 
+# module_loaded <name> / zt_joined <network-id>
+#
+# NOT `lsmod | grep -q` or `zerotier-cli listnetworks | grep -q`. Under
+# `set -o pipefail`, `grep -q` exits at the first match and closes the pipe; the
+# producer then dies of SIGPIPE (141) with output still unwritten, and the
+# pipeline reports 141 even though the match SUCCEEDED. Whether it happens
+# depends on how early the match appears and how much is left to write, so the
+# identical check passes on one host and fails on the next. awk consumes all of
+# stdin, so there is no SIGPIPE; matching lsmod's column 1 exactly is also more
+# correct than `grep -w`, which would match the name in another module's
+# "Used by" column.
+module_loaded() {
+  lsmod | awk -v m="$1" '$1 == m { found = 1 } END { exit !found }'
+}
+zt_joined() {
+  zerotier-cli listnetworks 2>/dev/null | awk -v n="$1" 'index($0, n) { found = 1 } END { exit !found }'
+}
+
 [ "$(id -u)" -eq 0 ] || die "run as root (e.g. pipe to 'sudo bash')"
 command -v apt-get >/dev/null 2>&1 || die "this installer targets Debian/Ubuntu (apt-get not found)"
 command -v curl    >/dev/null 2>&1 || { apt-get update -y && apt-get install -y curl; }
@@ -74,7 +92,7 @@ export DEBIAN_FRONTEND=noninteractive
 # ---------------------------------------------------------------------------
 install_deps() {
   # --- AmneziaWG kernel module (DKMS) — client-facing interface needs it ---
-  if lsmod | grep -qw amneziawg || modinfo amneziawg >/dev/null 2>&1; then
+  if module_loaded amneziawg || modinfo amneziawg >/dev/null 2>&1; then
     log "AmneziaWG kernel module already present"
   else
     log "installing AmneziaWG kernel module (DKMS)"
@@ -99,7 +117,7 @@ install_deps() {
     curl -fsSL https://install.zerotier.com | bash
   fi
   if [ -n "$ZT_NETWORK" ]; then
-    if zerotier-cli listnetworks 2>/dev/null | grep -q "$ZT_NETWORK"; then
+    if zt_joined "$ZT_NETWORK"; then
       log "already joined ZeroTier network $ZT_NETWORK"
     else
       log "joining ZeroTier network $ZT_NETWORK"

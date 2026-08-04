@@ -22,8 +22,34 @@ set -euo pipefail
 
 ZT_NETWORK="${1:-${ZT_NETWORK:-}}"
 
-log() { printf '\n\033[1;32m[prepare-node]\033[0m %s\n' "$*"; }
-die() { printf '\n\033[1;31m[prepare-node] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+log()  { printf '\n\033[1;32m[prepare-node]\033[0m %s\n' "$*"; }
+info() { printf '  %s\n' "$*"; }
+warn() { printf '\n\033[1;33m[prepare-node] WARN:\033[0m %s\n' "$*" >&2; }
+die()  { printf '\n\033[1;31m[prepare-node] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# module_loaded <name> — is this kernel module currently loaded?
+#
+# NOT `lsmod | grep -q <name>`. Under `set -o pipefail`, `grep -q` exits at the
+# first match and closes the pipe; lsmod then dies of SIGPIPE (141) with output
+# still unwritten, and the pipeline reports 141 even though the match SUCCEEDED.
+# Whether it happens depends on how early the module appears in lsmod's output
+# and how much is left to write — so the identical check passes on one host and
+# fails on the next. It cost a real debugging session on a node where the module
+# was loaded and healthy the entire time, and the error it produced ("module
+# built but not loaded") pointed at exactly the wrong thing.
+#
+# awk consumes all of stdin, so there is no SIGPIPE, and it matches column 1
+# exactly — also more correct than `grep -w`, which would match the name where
+# it appears in some OTHER module's "Used by" column.
+module_loaded() {
+  lsmod | awk -v m="$1" '$1 == m { found = 1 } END { exit !found }'
+}
+
+# zt_joined <network-id> — is this node already a member of that ZeroTier network?
+# Same SIGPIPE reasoning as module_loaded: never `| grep -q` under pipefail.
+zt_joined() {
+  zerotier-cli listnetworks 2>/dev/null | awk -v n="$1" 'index($0, n) { found = 1 } END { exit !found }'
+}
 
 [ "$(id -u)" -eq 0 ] || die "run as root (sudo)"
 command -v apt-get >/dev/null 2>&1 || die "this script targets Debian/Ubuntu (apt-get not found)"
@@ -35,8 +61,11 @@ export DEBIAN_FRONTEND=noninteractive
 # DKMS compiles against the running kernel, so it needs matching headers and can
 # fail in environment-specific ways — better here, before reconcile, than mid-
 # provision.
-if lsmod | grep -qw amneziawg || modinfo amneziawg >/dev/null 2>&1; then
-  log "AmneziaWG kernel module already present — skipping DKMS build"
+if module_loaded amneziawg; then
+  log "AmneziaWG kernel module already loaded — skipping DKMS build"
+  info "version: $(modinfo -F version amneziawg 2>/dev/null || echo unknown)   kernel: $(uname -r)"
+elif modinfo amneziawg >/dev/null 2>&1; then
+  log "AmneziaWG kernel module built but not loaded — skipping DKMS build, will modprobe below"
 else
   log "installing AmneziaWG kernel module via DKMS"
   apt-get update -y
@@ -64,8 +93,19 @@ if [ ! -f /etc/modules-load.d/amneziawg.conf ]; then
 fi
 
 modinfo amneziawg >/dev/null 2>&1 || die "AmneziaWG module not built for $(uname -r) — re-run after installing linux-headers-$(uname -r)"
-lsmod | grep -qw amneziawg || die "AmneziaWG module built but not loaded (modprobe failed)"
-log "AmneziaWG module OK (loaded for kernel $(uname -r))"
+if ! module_loaded amneziawg; then
+  # Show the evidence rather than asserting a cause. The previous version of this
+  # check claimed "modprobe failed" without ever looking at modprobe's output.
+  warn "AmneziaWG module is not loaded. Evidence:"
+  info "running kernel: $(uname -r)"
+  info "modprobe says:  $(modprobe amneziawg 2>&1 || true)"
+  info "dkms status:"
+  dkms status 2>/dev/null | grep -i amnezia | sed 's/^/      /' || info "      (no amneziawg entry)"
+  info "module file:    $(modinfo -n amneziawg 2>/dev/null || echo "not found for $(uname -r)")"
+  die "AmneziaWG module could not be loaded — see the evidence above"
+fi
+log "AmneziaWG module OK"
+info "version: $(modinfo -F version amneziawg 2>/dev/null || echo unknown)   kernel: $(uname -r)"
 
 # --- 2. Journal size cap ------------------------------------------------------
 # systemd's default is uncapped (up to 10% of the filesystem), which is the wrong
@@ -102,7 +142,7 @@ else
 fi
 
 if [ -n "$ZT_NETWORK" ]; then
-  if zerotier-cli listnetworks 2>/dev/null | grep -q "$ZT_NETWORK"; then
+  if zt_joined "$ZT_NETWORK"; then
     log "already joined ZeroTier network $ZT_NETWORK"
   else
     log "joining ZeroTier network $ZT_NETWORK"
@@ -123,4 +163,20 @@ else
   log "join manually later: zerotier-cli join <network-id>"
 fi
 
-log "OS prep complete — node is ready for 'controller --provision'"
+# A closing summary of what is now TRUE on this box. The operator is about to
+# hand these values to the provisioner or paste them into a bug report, and
+# re-deriving them by hand is exactly the friction this script should absorb.
+log "OS prep complete — summary"
+info "host:        $(hostname)"
+info "os:          $(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME" || echo unknown)"
+info "kernel:      $(uname -r) ($(uname -m))"
+info "amneziawg:   loaded, version $(modinfo -F version amneziawg 2>/dev/null || echo unknown)"
+info "journal cap: $(grep -h '^SystemMaxUse' /etc/systemd/journald.conf.d/wgfleet.conf 2>/dev/null | cut -d= -f2 || echo 'not set')"
+if command -v zerotier-cli >/dev/null 2>&1; then
+  info "zerotier:    node $(zerotier-cli info 2>/dev/null | awk '{print $3}'), networks: $(zerotier-cli listnetworks 2>/dev/null | awk 'NR>1 {printf "%s ", $3}' || echo none)"
+  info "zt address:  $(ip -4 -o addr show 2>/dev/null | awk '$2 ~ /^zt/ {print $4; exit}' || echo '(none yet — authorize in ZeroTier Central)')"
+else
+  info "zerotier:    not installed"
+fi
+info ""
+info "Node is ready for 'wgfleet-controller --provision'."
