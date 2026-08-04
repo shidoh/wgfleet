@@ -227,6 +227,7 @@ Done. Your traffic now goes device → master → exit → internet.
 | Web UI unreachable | the SSH tunnel from step 6 must stay open |
 | Client connects but no websites | you used the plain WireGuard app — use **AmneziaWG** |
 | Exit provisioning fails on SSH | test `ssh -i /root/.ssh/id_ed25519 root@<EXIT-IP>` from the master first |
+| None of the above explains it, and you need to send someone diagnostics with no access to your servers | `wgfleet-agent --support-bundle` (or `wgfleet-controller --support-bundle --fleet`) — see `SUPPORT-BUNDLE.md` in this archive |
 
 Useful commands on any node:
 

@@ -93,7 +93,9 @@ release-archive: agent-linux controller-linux
 	cp docs/QUICKSTART.md                       $(DIST)/$(PKG)/INSTALL.md
 	cp docs/configuration.md                    $(DIST)/$(PKG)/CONFIGURATION.md
 	cp docs/master-migration.md                 $(DIST)/$(PKG)/MIGRATION.md
+	cp docs/support-bundle.md                   $(DIST)/$(PKG)/SUPPORT-BUNDLE.md
 	cp deploy/prepare-node.sh                   $(DIST)/$(PKG)/prepare-node.sh
+	cp deploy/client-diag.sh                    $(DIST)/$(PKG)/client-diag.sh
 	cp deploy/examples/controller.yaml deploy/examples/agent.yaml $(DIST)/$(PKG)/examples/
 	cp deploy/examples/controller-split-ru.yaml $(DIST)/$(PKG)/examples/
 	cp docs/recipes/ru-split-tunnel-dns-filter.md $(DIST)/$(PKG)/examples/RU-SPLIT-TUNNEL.md
