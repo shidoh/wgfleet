@@ -56,9 +56,10 @@
 </div>
 
 {{with .Topology}}
-{{/* The fleet topology is the single fleet view: the master load-balancer hub, the
-     exits it balances, and (folded in from the old flat table) every per-node field
-     on each card. Cards are links to the node detail page. */}}
+{{/* The fleet topology is the single fleet view: a master trunk row, and beneath
+     it the exits it balances, grouped into carrying/reserve rows joined by a CSS
+     rail. Every per-node field the old flat table showed is folded into the
+     trunk/rows. Both the trunk and every row are links to the node detail page. */}}
 <div class="topo-panel">
   {{with .Master}}
   <a class="topo-trunk" href="/nodes/{{.ID}}">
@@ -87,8 +88,8 @@
   {{with .Carrying}}
   <div class="topo-grp"><span class="topo-grp-lbl">CARRYING</span><span class="topo-grp-line"></span><span class="topo-grp-n">{{len .}}</span></div>
   <div class="topo-group">
-    <div class="topo-rail"></div>
-    <div class="topo-rail is-live"></div>
+    <div class="topo-rail" aria-hidden="true"></div>
+    <div class="topo-rail is-live" aria-hidden="true"></div>
     {{range .}}{{template "topo-row" .}}{{end}}
   </div>
   {{end}}
@@ -96,7 +97,7 @@
   {{with .Reserve}}
   <div class="topo-grp"><span class="topo-grp-lbl">RESERVE</span><span class="topo-grp-line"></span><span class="topo-grp-n">{{len .}}</span></div>
   <div class="topo-group">
-    <div class="topo-rail"></div>
+    <div class="topo-rail" aria-hidden="true"></div>
     {{range .}}{{template "topo-row" .}}{{end}}
   </div>
   {{end}}

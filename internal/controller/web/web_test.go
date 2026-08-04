@@ -801,10 +801,14 @@ func TestMasterDetailShowsExitTunnelHealth(t *testing.T) {
 
 // TestFleetTopology covers the fleet-list topology panel: it derives the carrying
 // exit and per-exit latency from the master's ExitHealth report, formats latency
-// the way the design shows it, and flags a slow path amber.
+// the way the design shows it, and flags a slow path amber. It also pins the
+// master trunk's own field set (Region, MgmtAddr, PublicIP, handshake/seen) —
+// commit 336b3d0 silently dropped the trunk's Region and c0bfc21 had to restore
+// it, with this suite green throughout, because nothing here asserted on the
+// trunk beyond its name and balancing count.
 func TestFleetTopology(t *testing.T) {
 	h, st := newTestHandler(t, nil)
-	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, MgmtAddr: "10.20.3.10", State: domain.StateReady})
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, Region: "fi", MgmtAddr: "10.20.3.10", PublicIP: "203.0.113.10", State: domain.StateReady})
 	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, Region: "de", State: domain.StateReady})
 	seed(t, st, domain.Node{ID: "exit-nl-1", Name: "exit-nl-1", Role: domain.RoleExit, Region: "nl", State: domain.StateReady})
 	// The master's view of the two tunnels: de carries traffic at 107ms; nl is slow.
@@ -819,6 +823,11 @@ func TestFleetTopology(t *testing.T) {
 	_, body := get(t, h, "/")
 	for _, want := range []string{
 		"topo-panel", "master-xa-1", "balancing 2 exits", // master trunk
+		`<span class="topo-tag">fi</span>`, // master trunk Region (fi is unique — "ru" collides with the node ID)
+		"10.20.3.10",                       // master trunk MgmtAddr
+		">MGMT<",                           // master trunk MGMT label
+		"203.0.113.10",                     // master trunk PublicIP
+		"seen ",                            // master trunk handshake/seen footer
 		"topo-rail is-live",                // traffic reaches the carrying group
 		"pill-carrying", "ACTIVE", "107ms", // carrying exit (de)
 		`topo-exit-lat slow`, "1.088s", // slow exit (nl), formatted as seconds
@@ -1105,6 +1114,34 @@ func TestTopologyOrdersCarryingFirstThenAlphabetical(t *testing.T) {
 	}
 	if len(topo.Carrying) != 2 {
 		t.Errorf("Carrying = %d exits, want 2", len(topo.Carrying))
+	}
+
+	// The struct assertions above pin the data; this pins the render. Reading
+	// topo.Carrying/topo.Reserve directly doesn't notice a template edit that
+	// swaps the {{with .Carrying}} and {{with .Reserve}} blocks — the struct
+	// would still be right and the page would still be wrong. Assert on the
+	// actual HTML body: the CARRYING label must come before RESERVE, and the
+	// node names must appear in the same carrying-then-alphabetical order.
+	_, body := get(t, h, "/")
+	carryIdx := strings.Index(body, "CARRYING")
+	reserveIdx := strings.Index(body, "RESERVE")
+	if carryIdx == -1 || reserveIdx == -1 {
+		t.Fatalf("rendered body missing CARRYING/RESERVE group labels")
+	}
+	if carryIdx >= reserveIdx {
+		t.Errorf("rendered body: CARRYING label at %d, RESERVE at %d — want CARRYING first", carryIdx, reserveIdx)
+	}
+
+	lastIdx := -1
+	for _, name := range want {
+		idx := strings.Index(body, name)
+		if idx == -1 {
+			t.Fatalf("rendered body missing exit %q", name)
+		}
+		if idx <= lastIdx {
+			t.Errorf("rendered body: %q at %d, want it after previous entry at %d (order should be %v)", name, idx, lastIdx, want)
+		}
+		lastIdx = idx
 	}
 }
 

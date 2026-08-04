@@ -413,15 +413,28 @@ a:focus-visible,
 
 .topo-group { position: relative; padding-left: 34px; }
 .topo-rail {
-  position: absolute; left: 17px; top: 0; bottom: 26px;
+  position: absolute; left: 17px; top: 0;
+  /* bottom: 26px terminates the rail at the last row's tap (.topo-row::before is
+     vertically centred on the row). Holds as long as rows stay taller than
+     ~52px — the real floor is ~70px given current row padding — so a future
+     change to row padding/min-height that shrinks it below that must adjust
+     this offset too, or the rail will overshoot/undershoot the last tap. */
+  bottom: 26px;
   width: 2px; border-radius: 1px; background: var(--border-badge);
 }
 .topo-rail.is-live {
+  /* background-size pins the gradient tile to exactly one dash period (11px)
+     regardless of the rail's rendered height, which is otherwise almost never
+     a multiple of 11px (default background-size ties the tile to the element
+     box). Without this the tile wraps mid-dash, producing a visible seam that
+     travels as the animation runs. The animation then steps by exactly one
+     tile (11px) so each frame is a pure phase shift, not a re-tiling. */
   background: repeating-linear-gradient(180deg, var(--green) 0 4px, transparent 4px 11px);
+  background-size: 2px 11px;
   filter: drop-shadow(var(--dot-glow-green));
   animation: railflow 1.1s linear infinite;
 }
-@keyframes railflow { to { background-position-y: -15px } }
+@keyframes railflow { to { background-position-y: -11px } }
 
 .topo-row {
   position: relative; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
@@ -442,23 +455,22 @@ a:focus-visible,
 .topo-row.is-carrying:hover { border-color: var(--green); }
 .topo-row.is-carrying::before {
   height: 2px; margin-top: -1px;
+  /* No explicit background-size needed here (unlike .topo-rail.is-live): the
+     tap's width is fixed at 18px full-size / 9px at the 819px breakpoint (see
+     .topo-row::before above and its media-query override) — both exact
+     multiples of this gradient's 9px dash period, so the default tile (tied
+     to the element box) never wraps mid-dash. The animation steps by exactly
+     one period (9px) so each frame is a pure phase shift. */
   background: repeating-linear-gradient(90deg, var(--green) 0 4px, transparent 4px 9px);
   filter: drop-shadow(var(--dot-glow-green));
   animation: tapflow 1.1s linear infinite;
 }
-@keyframes tapflow { to { background-position-x: 13px } }
+@keyframes tapflow { to { background-position-x: 9px } }
 .topo-row-name { font-size: var(--fs-body); color: var(--text-bright); min-width: 96px; }
 .topo-row.is-carrying .topo-row-name { color: var(--text-strong); font-weight: 500; }
 .topo-row-lines { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 210px; }
 .topo-trunk-addr { flex: none; }
 
-/* header row: MASTER badge + live state pill */
-.topo-card-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
 .badge-master {
   display: inline-block;
   font-size: var(--fs-tablehead);
@@ -494,8 +506,9 @@ a:focus-visible,
 }
 .topo-exit-lat.slow { color: var(--amber); }
 
-/* shared address grid + footer on every topology card */
-.topo-card-addr { margin-top: 2px; }
+/* shared footer (handshake/seen) on every topology card. In a .topo-row-lines
+   column this reads as a separator; inside .topo-trunk it's a horizontal flex
+   sibling instead, so the border/padding-top there is overridden below. */
 .topo-card-foot {
   display: flex;
   align-items: center;
@@ -506,6 +519,7 @@ a:focus-visible,
   color: var(--text-dim);
 }
 .topo-card-foot .foot-sep { color: var(--text-zero); }
+.topo-trunk .topo-card-foot { border-top: 0; padding-top: 0; }
 
 /* ============================================================
    ADDRESS GRID (shared by every topology card)
@@ -1039,8 +1053,8 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
 
 /* ============================================================
    RESPONSIVE — one breakpoint at <820px (the rest reflow on their own:
-   summary chips via flex-wrap, detail panels via auto-fit, the topology cards
-   stack into a single column).
+   summary chips via flex-wrap, detail panels via auto-fit, the topology
+   trunk + rows wrap their fields and tighten their indent).
    ============================================================ */
 @media (max-width: 819px) {
   .topbar { padding: 15px 16px; }
@@ -1051,6 +1065,10 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   .topo-rail { left: 8px; }
   .topo-row::before { left: -9px; width: 9px; }
   .topo-row-name { min-width: auto; }
+  /* .topo-row-lines' 210px min-width otherwise stops the row flex item from
+     shrinking below that width (a flex item can't shrink under an explicit
+     min-width), forcing horizontal overflow at narrow viewports (e.g. 320px). */
+  .topo-row-lines { min-width: 0; }
 }
 
 /* ── Auth screens (login / setup) ─────────────────────────────────────── */
