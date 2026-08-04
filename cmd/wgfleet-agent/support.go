@@ -40,13 +40,24 @@ const (
 // execRunner runs a collector's command locally via sh -c, implementing
 // support.Runner. A non-zero exit becomes an error carrying the combined
 // output (Collect records err.Error() as the section body on failure), and a
-// command that outruns supportCommandTimeout is reported as a timeout the same
-// way — so a wedged docker/zerotier-cli daemon shows up as one failed section,
-// not a hung bundle.
-type execRunner struct{}
+// command that outruns its timeout is reported as a timeout the same way — so
+// a wedged docker/zerotier-cli daemon shows up as one failed section, not a
+// hung bundle.
+type execRunner struct {
+	// timeout bounds each command; zero (the production zero-value execRunner{}
+	// used everywhere in this file) means supportCommandTimeout. It exists as a
+	// field, not just the const, so a test can drive it down to ~100ms and
+	// prove the group-kill below actually cuts a hung command off — without
+	// waiting out the real 10s production bound to do it.
+	timeout time.Duration
+}
 
-func (execRunner) Run(ctx context.Context, cmd string) (string, error) {
-	cctx, cancel := context.WithTimeout(ctx, supportCommandTimeout)
+func (r execRunner) Run(ctx context.Context, cmd string) (string, error) {
+	timeout := r.timeout
+	if timeout <= 0 {
+		timeout = supportCommandTimeout
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	c := exec.CommandContext(cctx, "sh", "-c", cmd)
@@ -70,7 +81,7 @@ func (execRunner) Run(ctx context.Context, cmd string) (string, error) {
 
 	out, err := c.CombinedOutput()
 	if cctx.Err() == context.DeadlineExceeded {
-		return "", fmt.Errorf("timed out after %s", supportCommandTimeout)
+		return "", fmt.Errorf("timed out after %s", timeout)
 	}
 	if err != nil {
 		return "", fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
@@ -93,7 +104,7 @@ type supportOpts struct {
 	Out     string   // archive path to write; must not exist until the gate passes
 	Node    string   // node id, becomes the archive's <node>/ directory
 	Role    string   // "master" or "exit" — selects NodeCollectors
-	Note    string   // tester's own description of the problem, embedded in MANIFEST.txt
+	Note    string   // tester's own description of the problem, scrubbed+gated then embedded in MANIFEST.txt
 	Secrets []string // this node's own secret values; Gate refuses if any appears verbatim
 
 	// extra is a test seam: production passes none.
@@ -129,8 +140,28 @@ func writeSupportBundle(ctx context.Context, opts supportOpts) error {
 		node.Entries = append(node.Entries, support.ManifestEntry{File: s.File, Name: s.Name, Bytes: len(s.Body)})
 	}
 
+	// --note is free-form text a tester types (or pastes) describing what went
+	// wrong — the single likeliest place someone drops a key or a config
+	// fragment without meaning to. It never lives in node.Files (it is embedded
+	// directly into MANIFEST.txt's header via Meta.Note below), so without this
+	// it would skip both Scrub and Gate entirely: found by review, reproduced
+	// against the first version of this file (a secret pasted into --note
+	// shipped in MANIFEST.txt with the gate reporting no error), fixed here.
+	scrubbedNote := support.Scrub(opts.Note)
+
 	nodes := []support.Node{*node}
-	if err := support.Gate(nodes, opts.Secrets); err != nil {
+
+	// Gate the note in the SAME pass as the real nodes, via a throwaway node
+	// that is never appended to `nodes` and never reaches WriteArchive — it
+	// exists only so Gate's exact-secret-match and secret-key-name checks run
+	// over the note text too. Its File is named "MANIFEST.txt" (matching where
+	// the note actually lands) so a refusal's LeakError points at the real
+	// destination, not an invented one.
+	gateInput := append(append([]support.Node{}, nodes...), support.Node{
+		Name:  opts.Node,
+		Files: map[string]string{"MANIFEST.txt": scrubbedNote},
+	})
+	if err := support.Gate(gateInput, opts.Secrets); err != nil {
 		return err
 	}
 
@@ -140,7 +171,7 @@ func writeSupportBundle(ctx context.Context, opts supportOpts) error {
 		return fmt.Errorf("create archive: %w", err)
 	}
 	meta := support.Meta{
-		Note:         opts.Note,
+		Note:         scrubbedNote,
 		NotCollected: support.NotCollected(),
 		CreatedAt:    time.Now().UTC(),
 	}
