@@ -121,7 +121,6 @@
 
 /* ---- Keyframes ----------------------------------------------------- */
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
-@keyframes flow  { to { stroke-dashoffset: -20 } }
 
 /* ---- Global resets ------------------------------------------------- */
 * { box-sizing: border-box; }
@@ -453,68 +452,6 @@ a:focus-visible,
 .topo-row-lines { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 210px; }
 .topo-trunk-addr { flex: none; }
 
-/* Flexbox 3-column layout — master card · connector column · exits column —
-   that stacks to a single column on mobile (see the 819px breakpoint). */
-.topo-stage {
-  display: flex;
-  gap: 18px;
-  align-items: stretch;
-}
-/* connector column: a fixed 56px channel holding the absolutely-filled SVG whose
-   lines intentionally overshoot (the 18px flex gaps) to touch the cards. */
-.topo-connector {
-  flex: 0 0 56px;
-  position: relative;
-  align-self: stretch;
-  min-height: 200px;
-}
-.topo-svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  overflow: visible;
-}
-/* connector line styling (applied to <line> elements) */
-.topo-svg .flow {
-  stroke: var(--green);
-  stroke-width: 2;
-  stroke-dasharray: 4 7;
-  animation: flow 1.1s linear infinite;
-  filter: drop-shadow(0 0 5px rgba(61,220,132,.55));
-}
-.topo-svg .static-line {
-  stroke: #222a36;
-  stroke-width: 1.5;
-}
-.topo-svg .master-node {
-  fill: var(--blue);
-  filter: drop-shadow(var(--dot-glow-blue));
-}
-
-/* master card — now a clickable link to the master detail page */
-.topo-master {
-  flex: 0 0 250px;
-  align-self: center;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  background: linear-gradient(180deg, rgba(91,141,239,.07), var(--panel-2));
-  border: 1px solid var(--blue-35);
-  border-radius: var(--r-chip);
-  padding: 16px;
-  box-shadow: 0 10px 30px rgba(0,0,0,.35);
-  text-decoration: none;
-  color: inherit;
-  cursor: pointer;
-  transition: border-color .12s, transform .12s, box-shadow .12s;
-}
-.topo-master:hover {
-  border-color: var(--blue);
-  transform: translateY(-1px);
-  box-shadow: 0 14px 34px rgba(0,0,0,.5);
-}
 /* header row: MASTER badge + live state pill */
 .topo-card-top {
   display: flex;
@@ -532,84 +469,6 @@ a:focus-visible,
   border-radius: var(--r-badge);
   padding: 3px 9px;
 }
-.topo-master-name {
-  margin-top: 13px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-strong);
-}
-.topo-master-meta {
-  margin-top: 7px;
-  font-size: 11.5px;
-  color: var(--text-muted);
-}
-.topo-master-bal {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 13px;
-  font-size: var(--fs-micro);
-  color: var(--green);
-}
-.topo-master-bal .statusdot { width: 5px; height: 5px; box-shadow: 0 0 6px var(--green); }
-
-/* exit cards — vertical, info-rich, clickable link cards */
-.topo-exits {
-  flex: 1.4;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.topo-exit {
-  display: flex;
-  flex-direction: column;
-  gap: 11px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-mini);
-  padding: 14px 16px;
-  text-decoration: none;
-  color: inherit;
-  cursor: pointer;
-  transition: border-color .12s, transform .12s, box-shadow .12s, background .12s;
-}
-.topo-exit:hover {
-  border-color: var(--blue);
-  transform: translateY(-1px);
-  box-shadow: 0 12px 28px rgba(0,0,0,.45);
-}
-.topo-exit.carrying {
-  background: linear-gradient(180deg, var(--green-06), var(--panel-2));
-  border-color: var(--green-30);
-}
-.topo-exit.carrying:hover { border-color: var(--green); }
-
-/* header: name (+ carrying) on the left, state pill + sub-badges on the right */
-.topo-exit-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px 12px;
-  flex-wrap: wrap;
-}
-.topo-exit-name {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  font-size: var(--fs-table);
-  font-weight: 500;
-  color: var(--text-bright);
-}
-.topo-exit.carrying .topo-exit-name { color: var(--text); }
-.topo-exit-status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  flex-wrap: wrap;
-}
 .pill-carrying {
   font-size: 8.5px;
   letter-spacing: 1px;
@@ -619,13 +478,6 @@ a:focus-visible,
   padding: 2px 6px;
 }
 
-/* tags row: region · transport · latency (latency pushed to the right edge) */
-.topo-exit-tags {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
 .topo-tag {
   font-size: var(--fs-label);
   letter-spacing: .5px;
@@ -640,7 +492,6 @@ a:focus-visible,
   font-size: var(--fs-meta);
   color: var(--text-muted);
 }
-.topo-exit.carrying .topo-exit-lat { color: var(--green); }
 .topo-exit-lat.slow { color: var(--amber); }
 
 /* shared address grid + footer on every topology card */
@@ -655,10 +506,6 @@ a:focus-visible,
   color: var(--text-dim);
 }
 .topo-card-foot .foot-sep { color: var(--text-zero); }
-/* the master card spaces its stacked rows like the old layout did */
-.topo-master .topo-card-addr,
-.topo-master .topo-card-foot,
-.topo-master .topo-master-bal { margin-top: 13px; }
 
 /* ============================================================
    ADDRESS GRID (shared by every topology card)
@@ -1198,11 +1045,12 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
 @media (max-width: 819px) {
   .topbar { padding: 15px 16px; }
   .shell { padding: 20px 16px 56px; }
-  /* Topology stacks: master card full-width on top, exit cards below; the
-     connector channel is meaningless once stacked, so hide it. */
-  .topo-stage { flex-direction: column; }
-  .topo-master { flex: 1 1 auto; }
-  .topo-connector { display: none; }
+  /* The bus stays below the breakpoint — unlike the old horizontal fan-out it is
+     still meaningful when rows stack; only the indent tightens. */
+  .topo-group { padding-left: 16px; }
+  .topo-rail { left: 8px; }
+  .topo-row::before { left: -9px; width: 9px; }
+  .topo-row-name { min-width: auto; }
 }
 
 /* ── Auth screens (login / setup) ─────────────────────────────────────── */
