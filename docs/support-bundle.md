@@ -9,7 +9,7 @@ send it anywhere.
 | Situation | Run |
 |---|---|
 | One node — you have a shell on it | `wgfleet-agent --support-bundle [--note "..."]` |
-| The whole fleet — from the controller | `wgfleet-controller --support-bundle --fleet [--note "..."]` |
+| Every exit, plus a fleet inventory — from the controller | `wgfleet-controller --support-bundle --fleet [--note "..."]` |
 
 Run either as root, same as the rest of wgfleet. Both write a `.tar.gz` into
 the current directory:
@@ -25,9 +25,19 @@ it. The controller form does not require a fully healthy fleet either: an
 exit it cannot reach over SSH becomes one entry in the archive saying so,
 instead of stopping the whole run.
 
+**`--fleet` does not collect anything about the co-located master itself
+beyond one inventory line** — no network state, no services, no container
+logs for that box (see "What it collects" below for what the inventory line
+does and doesn't carry). If the problem looks master-side, also run
+`wgfleet-agent --support-bundle` on the master, same as you would on any
+other node — that is the existing per-node path, it just has to be run
+locally rather than walked over SSH.
+
 ## What it collects
 
-Per node: hostname, uptime, kernel, current time; network state (addresses,
+Per node: hostname, uptime, kernel, current time, timezone, and the
+installed `wgfleet-agent`/`wgfleet-controller` version — often the single
+most useful field for triaging a report; network state (addresses,
 routes, routing rules, the AmneziaWG routing table, `awg show`, the nft
 firewall ruleset, listening sockets, conntrack count); wgfleet's own unit
 status plus every *failed* systemd unit fleet-wide, not just wgfleet's two;
@@ -46,8 +56,10 @@ that print a private key — are never run; only `awg show`, which prints
 In `--fleet` mode the controller adds one more section: its own inventory —
 every node's name, role, state, agent version, mgmt address, last-seen time,
 and drain/decommission flags, a strict subset of what the dashboard already
-shows — then walks every exit's SSH target from the fleet manifest, running
-the identical per-node collection over SSH.
+shows — then walks every *exit's* SSH target from the fleet manifest,
+running the identical per-node collection over SSH. The co-located master
+is not walked; it appears only as one line in that inventory, same as every
+other node.
 
 Each captured section is capped at 256 KiB and the whole per-node bundle at
 8 MiB; logs are the one thing that can turn "small text bundle" into
@@ -82,8 +94,10 @@ tar xzf wgfleet-support-<node>-<timestamp>.tar.gz    # unpack and read it
 ```
 
 Everything in it is plain text. `MANIFEST.txt` at the top indexes every
-file with the exact command that produced it, so what you read matches what
-actually ran.
+file, and for most entries names the exact command that produced it, so
+what you read matches what actually ran. One entry is built in-process
+instead of shelled out — the fleet inventory in `--fleet` mode — and shows
+no command there; that's expected, not a gap.
 
 ## Read-only and unencrypted — both on purpose
 
@@ -98,10 +112,15 @@ encryption layer would be protecting — only friction it would add.
 ## `--note`
 
 `--note "what you were seeing"` is embedded in the archive's manifest and is
-the fastest way to give a maintainer context. It goes through the exact same
-checks as everything the tool collects on its own — paste a key or a
-password into it by accident and the tool refuses the archive for the same
-reason it would refuse a captured log line.
+the fastest way to give a maintainer context. It goes through the same
+mask-then-check pipeline as everything else the tool collects (see "What it
+never collects" above): a note shaped like `password: hunter2` gets
+**silently masked** to `<redacted>` before the archive is written, not
+refused — you'll see the redaction sitting in `MANIFEST.txt` where your
+note used to have the value, and that's expected, not a bug. Refusal is
+reserved for the narrower case: the exact, unlabeled text of a secret this
+node actually holds surviving verbatim in the note, unmasked because it
+didn't have the recognizable `key: value` shape masking looks for.
 
 ## If it refuses to write the archive
 
@@ -109,18 +128,24 @@ reason it would refuse a captured log line.
 refusing to write the bundle: <node>/<file>:<line> <reason>
 ```
 
-It found something secret-shaped — a value matching a real secret this node
-holds, or text naming a secret-bearing field — and stopped before creating
-anything. Nothing partial is left on disk; the file is only created after
-this check passes. That is a bug in a collector, or in the check itself, not
-a limit to work around: report it, quoting the file and line from the
-message (never the value), rather than editing the note or the output to
-get past it.
+This is not the same thing as a masked `--note` above — masking already
+handles the ordinary "pasted a config line by accident" case silently.
+Refusal means something stronger got through unmasked: either the exact
+value of a secret this node actually holds, found verbatim anywhere in the
+assembled output including the note; or, in a failed command's raw error
+text specifically (the one place collected output isn't run through
+masking first), something still shaped like a secret-bearing field. Either
+way, nothing partial is left on disk — the file is only created after this
+check passes. That is a bug in a collector, or in the check itself, not a
+limit to work around: report it, quoting the file and line from the message
+(never the value), rather than editing the note or the output to get past
+it.
 
-## Fleet mode's one gap
+## Fleet mode's secret-check gap
 
-The controller's exact-secret check covers what the controller itself
-holds directly — its own CA private key and every exit's SSH bootstrap key.
+(Separate from the master-collection gap noted above.) The controller's
+exact-secret check covers what the controller itself holds directly — its
+own CA private key and every exit's SSH bootstrap key.
 It cannot check an exit's *own* on-disk secrets (its AmneziaWG key, its
 xray key) against that exit's collected output, because the controller does
 not hold them, and fetching them over SSH just to check them would mean
