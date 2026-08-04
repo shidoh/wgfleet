@@ -100,3 +100,90 @@ func TestGateIgnoresEmptySecrets(t *testing.T) {
 }
 
 func asLeakError(err error, target **LeakError) bool { return errors.As(err, target) }
+
+// Regression for a value capture that stopped at the first whitespace: an
+// "Authorization: Bearer <jwt>" header has the secret in its SECOND word, and
+// a `\S+` value group would mask only "Bearer", leaving the token in the
+// clear while Gate — re-checking its own first token, now "<redacted>" —
+// waved the whole line through.
+func TestScrubMasksMultiWordSecretValues(t *testing.T) {
+	in := "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.superSecretPayloadDoNotLeak.sig\n"
+	got := Scrub(in)
+	if strings.Contains(got, "superSecretPayloadDoNotLeak") {
+		t.Errorf("scrub left part of a multi-word secret value in place: %q", got)
+	}
+	if !strings.Contains(got, "Authorization: <redacted>") {
+		t.Errorf("scrub did not mask the full multi-word value, got %q", got)
+	}
+}
+
+func TestGateCatchesMultiWordSecretValues(t *testing.T) {
+	nodes := []Node{{
+		Name:  "exit-de-1",
+		Files: map[string]string{"headers.txt": "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.superSecretPayloadDoNotLeak.sig\n"},
+	}}
+	if err := Gate(nodes, nil); err == nil {
+		t.Error("gate passed a multi-word secret value that was not fully masked")
+	}
+}
+
+// A bundle that has been through Scrub first must pass Gate: the two share
+// one regex specifically so Gate cannot fire on a line Scrub already handled.
+func TestGateAcceptsAMultiWordValueAfterScrub(t *testing.T) {
+	in := "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.superSecretPayloadDoNotLeak.sig\n"
+	nodes := []Node{{
+		Name:  "exit-de-1",
+		Files: map[string]string{"headers.txt": Scrub(in)},
+	}}
+	if err := Gate(nodes, nil); err != nil {
+		t.Errorf("gate rejected a line Scrub had already fully redacted: %v", err)
+	}
+}
+
+// Task 1's renderManifest writes ManifestEntry.Cmd and .Err into MANIFEST.txt,
+// and a failing collector's error text can carry command output — so Gate
+// must check entries too, not just Files, or a secret can ship ungated.
+func TestGateCatchesARealSecretInAManifestEntryCmd(t *testing.T) {
+	nodes := []Node{{
+		Name:  "exit-de-1",
+		Files: map[string]string{"state.txt": "nothing sensitive\n"},
+		Entries: []ManifestEntry{
+			{File: "state.txt", Name: "dump-keys", Cmd: "wg show wg0 private-key " + privKey},
+		},
+	}}
+	err := Gate(nodes, []string{privKey})
+	if err == nil {
+		t.Fatal("gate passed a manifest entry command containing a real private key")
+	}
+	var le *LeakError
+	if !asLeakError(err, &le) {
+		t.Fatalf("error is %T, want *LeakError", err)
+	}
+	if le.File != "exit-de-1/MANIFEST.txt" {
+		t.Errorf("File = %q, want the manifest path", le.File)
+	}
+	if strings.Contains(err.Error(), privKey) {
+		t.Error("the gate printed the secret it was refusing to leak")
+	}
+}
+
+func TestGateCatchesASecretBearingKeyInAManifestEntryErr(t *testing.T) {
+	nodes := []Node{{
+		Name:  "master-1",
+		Files: map[string]string{"state.txt": "nothing sensitive\n"},
+		Entries: []ManifestEntry{
+			{File: "containers.txt", Name: "docker-logs", Err: "failed: secret: hunter2hunter2hunter2"},
+		},
+	}}
+	err := Gate(nodes, nil)
+	if err == nil {
+		t.Fatal("gate passed a manifest entry error naming a secret-bearing key")
+	}
+	var le *LeakError
+	if !asLeakError(err, &le) {
+		t.Fatalf("error is %T, want *LeakError", err)
+	}
+	if le.File != "master-1/MANIFEST.txt" {
+		t.Errorf("File = %q, want the manifest path", le.File)
+	}
+}

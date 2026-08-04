@@ -11,7 +11,19 @@ import (
 // `key: value` or `key = value` or `key=value` form. Used by both Scrub (mask)
 // and Gate (refuse) — it is the coarse layer, for uncontrolled text such as
 // container logs where we do not control the format.
-var secretKeyRe = regexp.MustCompile(`(?i)\b(private[_-]?key|pre[_-]?shared[_-]?key|secret|password|passwd|token|authorization|api[_-]?key)\b\s*[:=]\s*(\S+)`)
+//
+// The value group (2) is greedy to end-of-line ("." does not match "\n" in
+// Go's RE2 without the "s" flag, so this stays bounded to one line), not
+// `\S+`. A single whitespace-delimited token would only catch the first word
+// of a multi-word secret — e.g. an "Authorization: Bearer <jwt>" header — and
+// Scrub would mask "Bearer" while leaving the token in plain sight, which
+// Gate would then wave through because that first token becomes exactly
+// "<redacted>". Over-masking a line of trailing prose is the correct
+// tradeoff here: under-masking leaks a secret, over-masking only costs
+// readability, and this is explicitly the layer for text whose format we do
+// not control. Sharing this regex also keeps Scrub and Gate consistent by
+// construction — Gate cannot fire on a line Scrub already fully redacted.
+var secretKeyRe = regexp.MustCompile(`(?i)\b(private[_-]?key|pre[_-]?shared[_-]?key|secret|password|passwd|token|authorization|api[_-]?key)\b\s*[:=]\s*(.+)`)
 
 // redactedMarker is what an already-masked value looks like. The renderers emit
 // it, so the gate must treat it as safe rather than as a surviving secret.
@@ -66,7 +78,11 @@ func Scrub(s string) string {
 // an empty needle is always true, and one such entry would fail every bundle.
 //
 // Files are walked in sorted name order (nodes by Name, then files by name
-// within each node) so the first hit reported is deterministic.
+// within each node) so the first hit reported is deterministic. Each node's
+// ManifestEntry.Cmd and .Err are checked too — renderManifest (Task 1) writes
+// both into MANIFEST.txt, and a failing collector's error text can carry
+// command output, so it is not safe to gate Files and leave the manifest
+// ungated.
 func Gate(nodes []Node, secrets []string) error {
 	trimmed := make([]string, 0, len(secrets))
 	for _, s := range secrets {
@@ -91,7 +107,17 @@ func Gate(nodes []Node, secrets []string) error {
 		sort.Strings(fileNames)
 
 		for _, f := range fileNames {
-			if err := gateFile(n.Name, f, n.Files[f], trimmed); err != nil {
+			if err := gateContent(n.Name+"/"+f, n.Files[f], trimmed); err != nil {
+				return err
+			}
+		}
+
+		manifestPath := n.Name + "/MANIFEST.txt"
+		for _, e := range n.Entries {
+			if err := gateContent(manifestPath, e.Cmd, trimmed); err != nil {
+				return err
+			}
+			if err := gateContent(manifestPath, e.Err, trimmed); err != nil {
 				return err
 			}
 		}
@@ -100,10 +126,10 @@ func Gate(nodes []Node, secrets []string) error {
 	return nil
 }
 
-// gateFile checks one file's content line by line, returning the first
-// LeakError found or nil.
-func gateFile(node, file, content string, secrets []string) error {
-	path := node + "/" + file
+// gateContent checks one field's content line by line, returning the first
+// LeakError found or nil. path identifies where the content will land in the
+// archive (a collected file, or the manifest for entry Cmd/Err text).
+func gateContent(path, content string, secrets []string) error {
 	lines := strings.Split(content, "\n")
 
 	for i, line := range lines {
