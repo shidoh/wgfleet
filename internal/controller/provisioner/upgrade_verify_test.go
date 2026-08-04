@@ -5,10 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/version"
 )
 
 func upgradeInput(bin []byte) BootstrapInput {
@@ -242,5 +245,38 @@ func TestProbeAgentVersionFailsWhenTheBinaryCannotRun(t *testing.T) {
 
 	if _, err := ProbeAgentVersion(context.Background(), r); err == nil {
 		t.Fatal("expected an error when the uploaded binary cannot execute")
+	}
+}
+
+// TestProbeLocalAgentVersionReadsTheBinaryOnDisk covers the local sibling of
+// ProbeAgentVersion. A rolling upgrade selects nodes against this value, so it
+// must be the identity of the binary that will actually be pushed — reading it
+// from anywhere else is what let a rollout "succeed" while installing the
+// version each node already had.
+func TestProbeLocalAgentVersionReadsTheBinaryOnDisk(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "wgfleet-agent")
+	script := "#!/bin/sh\necho 'wgfleet-agent v0.1.5-8-g3ae9df0 (commit 3ae9df0, built 2026-07-27T10:35:22Z, go1.26.5)'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake agent: %v", err)
+	}
+
+	got, err := ProbeLocalAgentVersion(context.Background(), bin)
+	if err != nil {
+		t.Fatalf("ProbeLocalAgentVersion: %v", err)
+	}
+	if want := version.ShortOf("v0.1.5-8-g3ae9df0", "3ae9df0"); got != want {
+		t.Errorf("version = %q, want %q", got, want)
+	}
+}
+
+// A binary that cannot run must report an error, not an empty version — an empty
+// want would silently select every node in the fleet.
+func TestProbeLocalAgentVersionErrorsOnAnUnrunnableBinary(t *testing.T) {
+	bad := filepath.Join(t.TempDir(), "not-an-agent")
+	if err := os.WriteFile(bad, []byte("not executable content"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got, err := ProbeLocalAgentVersion(context.Background(), bad); err == nil {
+		t.Errorf("expected an error, got version %q", got)
 	}
 }

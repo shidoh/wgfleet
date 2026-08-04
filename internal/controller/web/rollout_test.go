@@ -257,3 +257,30 @@ func TestRolloutEndpointsReportUnconfigured(t *testing.T) {
 		t.Error("rolloutView returned data with no roller configured")
 	}
 }
+
+// TestRolloutPanelReportsAnUnidentifiableBinary pins the third state apart from
+// "nothing to roll". When the agent binary this controller would push cannot be
+// identified, whether any node is outdated is unknowable — rendering the
+// all-clear would assert something false, and offering a roll would describe
+// work that cannot be named.
+func TestRolloutPanelReportsAnUnidentifiableBinary(t *testing.T) {
+	r := &fakeRoller{plan: rollout.Plan{Unavailable: `stat agent binary: no such file or directory`}}
+	h := rollerHandler(t, r)
+
+	w := httptest.NewRecorder()
+	h.mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/partials/rollout", nil))
+	body := w.Body.String()
+
+	if !strings.Contains(body, "Cannot determine what would be rolled") {
+		t.Error("panel does not surface why no plan could be built")
+	}
+	if !strings.Contains(body, "no such file or directory") {
+		t.Error("panel drops the underlying reason")
+	}
+	if strings.Contains(body, "Nothing to roll") {
+		t.Error("an unidentifiable binary rendered as the all-clear — that is a false claim")
+	}
+	if strings.Contains(body, "/rollout/start") {
+		t.Error("panel offers a roll it cannot describe")
+	}
+}

@@ -235,3 +235,15 @@ esac
 
 [ "$PLAN" -eq 1 ] && { log "plan only — nothing changed"; exit 0; }
 log "done — $WHAT updated on $MASTER"
+
+# Deploying ONLY the controller leaves controller.agent_bin on the old build, and
+# that binary — not this controller — is what a rolling upgrade pushes to exits.
+# The rollout selects against it too, so the fleet correctly reads as "nothing to
+# roll" rather than looping on an upgrade that installs the version each node
+# already had. Say so, because "the controller is newer than the fleet" otherwise
+# looks like the rollout is broken.
+if [ "$WHAT" = "controller" ]; then
+  warn "controller only — the agent binary on $MASTER is unchanged, so a rolling
+  upgrade still ships that older build to the exits. Re-run with --agent (or
+  --both) before rolling the fleet."
+fi

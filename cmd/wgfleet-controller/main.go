@@ -294,11 +294,12 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, configPath string) error {
 		// Bound to ctx: a rollout aborts (rolling back the node in flight) on SIGTERM
 		// rather than outliving the store it reads.
 		webHandler.SetRoller(&webRoller{
-			co:    rollout.New(provMgr, st, rollout.Config{}, slog.Default()),
-			st:    st,
-			fleet: cfg.Fleet,
-			ctx:   ctx,
-			log:   slog.Default(),
+			co:     rollout.New(provMgr, st, rollout.Config{}, slog.Default()),
+			st:     st,
+			fleet:  cfg.Fleet,
+			binVer: &agentBinVersion{path: cfg.Controller.AgentBin},
+			ctx:    ctx,
+			log:    slog.Default(),
 		})
 		webSrv = &http.Server{Addr: cfg.Controller.WebUI, Handler: webHandler}
 		go func() {

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -311,6 +312,24 @@ func ProbeAgentVersion(ctx context.Context, r Runner) (string, error) {
 		return "", fmt.Errorf("run %s --version: %w (output: %s)", remoteAgentBin, err, strings.TrimSpace(out))
 	}
 	return parseAgentVersion(out)
+}
+
+// ProbeLocalAgentVersion runs a LOCAL agent binary with --version and returns its
+// version.Short() identity. Sibling of ProbeAgentVersion, which does the same over
+// SSH on a node; both go through parseAgentVersion so the two cannot drift.
+//
+// It exists so a rolling upgrade can select nodes against the binary it is about
+// to push rather than against the controller's own build. Those are the same tree
+// only when both binaries were deployed together — deploying just one (which
+// deploy-master.sh supports) breaks the assumption, and the rollout then upgrades
+// every node to the version it already had while the panel keeps reporting them
+// outdated: a roll that always succeeds and never converges.
+func ProbeLocalAgentVersion(ctx context.Context, path string) (string, error) {
+	out, err := exec.CommandContext(ctx, path, "--version").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("run %s --version: %w (output: %s)", path, err, strings.TrimSpace(string(out)))
+	}
+	return parseAgentVersion(string(out))
 }
 
 // parseAgentVersion extracts the Short() identity from `wgfleet-agent --version`
