@@ -22,7 +22,7 @@ wgfleet-support-fleet-<timestamp>.tar.gz           # controller --fleet
 The agent form runs locally and never dials the controller — deliberate,
 since a wedged node with no controller connectivity is exactly when you need
 it. The controller form does not require a fully healthy fleet either: an
-exit it cannot reach over SSH becomes one line in the archive saying so,
+exit it cannot reach over SSH becomes one entry in the archive saying so,
 instead of stopping the whole run.
 
 ## What it collects
@@ -31,20 +31,21 @@ Per node: hostname, uptime, kernel, current time; network state (addresses,
 routes, routing rules, the AmneziaWG routing table, `awg show`, the nft
 firewall ruleset, listening sockets, conntrack count); wgfleet's own unit
 status plus every *failed* systemd unit fleet-wide, not just wgfleet's two;
-bounded journal tails for `wgfleet-agent`/`wgfleet-controller` (last ~300
-lines each), journal disk usage, root disk headroom, and a per-unit line
-count over the last hour so a noisy unit that isn't wgfleet's still shows
-up; and bounded log tails from the containers wgfleet runs (mihomo, xray,
-blocky, wg-easy — a missing one on a node that doesn't run it is normal, not
-an error). A master additionally reports its ZeroTier overlay status.
+the list of running containers (`docker ps`); bounded journal tails for
+`wgfleet-agent`/`wgfleet-controller` (last ~300 lines each), journal disk
+usage, root disk headroom, and a per-unit line count over the last hour so a
+noisy unit that isn't wgfleet's still shows up; and bounded log tails from
+the containers wgfleet runs (mihomo, xray, blocky, wg-easy — a missing one
+on a node that doesn't run it is normal, not an error). A master
+additionally reports its ZeroTier overlay status.
 
 Every command is read-only. `awg showconf` / `wg showconf` — the commands
 that print a private key — are never run; only `awg show`, which prints
 `(hidden)` in their place.
 
 In `--fleet` mode the controller adds one more section: its own inventory —
-every node's name, role, state, agent version, last-seen time, and
-drain/decommission flags, a strict subset of what the dashboard already
+every node's name, role, state, agent version, mgmt address, last-seen time,
+and drain/decommission flags, a strict subset of what the dashboard already
 shows — then walks every exit's SSH target from the fleet manifest, running
 the identical per-node collection over SSH.
 
