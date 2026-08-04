@@ -145,15 +145,17 @@ func main() {
 
 func run() error {
 	var (
-		configPath  = flag.String("config", "/etc/wgfleet/agent.yaml", "path to agent config")
-		logFormat   = flag.String("log-format", "text", "log format: text | json")
-		plan        = flag.Bool("plan", false, "dry-run: show what reconcile would change, apply nothing")
-		once        = flag.Bool("once", false, "run a single reconcile pass and exit")
-		publicIP    = flag.String("public-ip", "", "this node's public IP to advertise (peer endpoint)")
-		mgmtAddr    = flag.String("mgmt-addr", "", "this node's mgmt/ZT address (admin + metrics + DNS bind)")
-		stateDir    = flag.String("state-dir", "", "root managed files under this dir instead of /etc (non-root/dev runs)")
-		metricsBind = flag.String("metrics", "", "override the agent /metrics bind (mgmt/ZT only); default <mgmt-addr>:9301, 'off' disables")
-		showVersion = flag.Bool("version", false, "print build version and exit")
+		configPath    = flag.String("config", "/etc/wgfleet/agent.yaml", "path to agent config")
+		logFormat     = flag.String("log-format", "text", "log format: text | json")
+		plan          = flag.Bool("plan", false, "dry-run: show what reconcile would change, apply nothing")
+		once          = flag.Bool("once", false, "run a single reconcile pass and exit")
+		publicIP      = flag.String("public-ip", "", "this node's public IP to advertise (peer endpoint)")
+		mgmtAddr      = flag.String("mgmt-addr", "", "this node's mgmt/ZT address (admin + metrics + DNS bind)")
+		stateDir      = flag.String("state-dir", "", "root managed files under this dir instead of /etc (non-root/dev runs)")
+		metricsBind   = flag.String("metrics", "", "override the agent /metrics bind (mgmt/ZT only); default <mgmt-addr>:9301, 'off' disables")
+		showVersion   = flag.Bool("version", false, "print build version and exit")
+		supportBundle = flag.Bool("support-bundle", false, "write a read-only diagnostic archive (no secrets, not encrypted) and exit")
+		supportNote   = flag.String("note", "", "with --support-bundle: describe what went wrong, embedded in the archive")
 	)
 	flag.Parse()
 
@@ -174,6 +176,18 @@ func run() error {
 		return err
 	}
 
+	paths := exit.DefaultPaths()
+	if *stateDir != "" {
+		paths = exit.PathsUnder(*stateDir)
+	}
+
+	// --support-bundle exits here, before anything that touches the controller:
+	// it must work on a node whose controller connectivity is exactly what is
+	// broken (see runSupportBundle's doc comment).
+	if *supportBundle {
+		return runSupportBundle(role, paths, *stateDir, cfg.Agent.NodeID, *supportNote)
+	}
+
 	tlsCfg, err := buildClientTLS(cfg)
 	if err != nil {
 		return fmt.Errorf("build mTLS: %w", err)
@@ -191,10 +205,6 @@ func run() error {
 		mgmt = strings.TrimSpace(cfg.Agent.MgmtAddr)
 	}
 
-	paths := exit.DefaultPaths()
-	if *stateDir != "" {
-		paths = exit.PathsUnder(*stateDir)
-	}
 	a := &agent{
 		cfg:      cfg,
 		role:     role,
