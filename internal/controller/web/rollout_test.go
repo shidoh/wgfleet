@@ -64,6 +64,59 @@ func rawPost(h *Handler, path, csrf string) *httptest.ResponseRecorder {
 	return w
 }
 
+// TestRolloutPlanHiddenWhileAFinishedRunIsOnScreen pins the panel to ONE list of
+// nodes. State.Nodes is not cleared when a run ends (only Active flips), and Plan
+// is recomputed live — so a finished run plus a still-outdated plan rendered the
+// same nodes twice: once with phases and versions, once again under PLANNED ORDER
+// without them. The window is not momentary: it lasts until every agent
+// re-reports its new version, and never closes at all if a node was skipped,
+// failed, or stopped reporting.
+//
+// Skipped nodes are the exception and must survive: they are never in State.Nodes,
+// so hiding them with the plan would drop the only place their reason is shown.
+func TestRolloutPlanHiddenWhileAFinishedRunIsOnScreen(t *testing.T) {
+	r := &fakeRoller{
+		plan: rollout.Plan{
+			Want: "new-build",
+			Targets: []rollout.Target{
+				{NodeID: "anz3", Name: "anz3", Tier: rollout.TierReserve, Current: "june"},
+				{NodeID: "vn1", Name: "vn1", Tier: rollout.TierPrimary, Current: "june"},
+			},
+			Skipped: []rollout.Skipped{{Name: "old", Reason: "no ssh target in the manifest"}},
+		},
+		state: rollout.State{
+			Active: false,
+			Nodes: []rollout.NodeProgress{
+				{Target: rollout.Target{Name: "anz3", Tier: rollout.TierReserve}, Phase: rollout.PhaseDone, Installed: "new-build"},
+				{Target: rollout.Target{Name: "vn1", Tier: rollout.TierPrimary}, Phase: rollout.PhaseDone, Installed: "new-build"},
+			},
+		},
+	}
+	h := rollerHandler(t, r)
+
+	w := httptest.NewRecorder()
+	h.mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/partials/rollout", nil))
+	body := w.Body.String()
+
+	if strings.Contains(body, "PLANNED ORDER") {
+		t.Error("PLANNED ORDER renders under a finished run — the same nodes are listed twice")
+	}
+	if n := strings.Count(body, `class="roll-planrow"`); n != 0 {
+		t.Errorf("%d plan rows render under a finished run, want 0", n)
+	}
+	// What must still be there: the finished run itself, the way to roll again,
+	// and the skipped node's reason.
+	if n := strings.Count(body, `class="roll-row`); n != 2 {
+		t.Errorf("finished-run progress rows = %d, want 2", n)
+	}
+	if !strings.Contains(body, "Update 2 outdated exits") {
+		t.Error("the start button must remain — the plan list is redundant, the action is not")
+	}
+	if !strings.Contains(body, "no ssh target in the manifest") {
+		t.Error("skipped nodes are never in the progress list, so their reason must survive")
+	}
+}
+
 func TestRolloutPartialRendersPlannedOrder(t *testing.T) {
 	r := &fakeRoller{plan: rollout.Plan{
 		Want: "new-build",
