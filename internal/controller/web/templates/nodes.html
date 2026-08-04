@@ -60,78 +60,76 @@
      exits it balances, and (folded in from the old flat table) every per-node field
      on each card. Cards are links to the node detail page. */}}
 <div class="topo-panel">
-  <div class="topo-stage">
-    {{with .Master}}
-    <a class="topo-master" href="/nodes/{{.ID}}">
-      <div class="topo-card-top">
-        <span class="badge-master">MASTER</span>
-        <span class="state-pill {{lower .State}}"><span class="led"></span>{{.State}}</span>
-      </div>
-      <div class="topo-master-name">{{.Name}}</div>
-      <div class="topo-master-meta">{{or .MgmtAddr "—"}}{{if .Region}} · {{.Region}}{{end}}</div>
-      {{template "node-subbadges" .}}
-      <div class="topo-master-bal"><span class="statusdot"></span>balancing {{.Balancing}} exit{{if ne .Balancing 1}}s{{end}}</div>
-      <div class="addr topo-card-addr">
-        <span class="addr-tag">PUBLIC</span><span class="addr-val" title="Node public IP">{{or .PublicIP "—"}}</span>
-      </div>
-      <div class="topo-card-foot">
-        <span>handshake {{if and .HasStatus (not .LastHandshake.IsZero)}}{{relTime .LastHandshake}}{{else}}—{{end}}</span>
-        <span class="foot-sep">·</span>
-        <span>seen {{relTime .LastSeen}}</span>
-      </div>
-    </a>
-    {{end}}
+  {{with .Master}}
+  <a class="topo-trunk" href="/nodes/{{.ID}}">
+    <span class="badge-master">MASTER</span>
+    <span class="topo-trunk-name">{{.Name}}</span>
+    <span class="state-pill {{lower .State}}"><span class="led"></span>{{.State}}</span>
+    {{template "node-subbadges" .}}
+    <span class="topo-spacer"></span>
+    <span class="addr topo-trunk-addr">
+      {{if .MgmtAddr}}<span class="addr-tag">MGMT</span><span class="addr-val" title="Mgmt (ZeroTier) address">{{.MgmtAddr}}</span>{{end}}
+      <span class="addr-tag">PUBLIC</span><span class="addr-val" title="Node public IP">{{or .PublicIP "—"}}</span>
+    </span>
+    <span class="topo-trunk-bal"><span class="statusdot"></span>balancing {{.Balancing}} exit{{if ne .Balancing 1}}s{{end}}</span>
+    <span class="topo-card-foot">
+      <span>handshake {{if and .HasStatus (not .LastHandshake.IsZero)}}{{relTime .LastHandshake}}{{else}}—{{end}}</span>
+      <span class="foot-sep">·</span>
+      <span>seen {{relTime .LastSeen}}</span>
+    </span>
+  </a>
+  {{end}}
 
-    {{if and .Master .Exits}}
-    {{/* Connector column: fan-out lines from the master (left) to each exit card
-         (right). Coords overshoot the 56px channel so they touch the blocks; the
-         carrying line is green + animated. Hidden on mobile (the lines are
-         meaningless once the layout stacks). */}}
-    <div class="topo-connector">
-      <svg class="topo-svg" aria-hidden="true">
-        {{range .Exits}}
-        <line x1="-32%" y1="50%" x2="132%" y2="{{.LineY}}" class="{{if .Carrying}}flow{{else}}static-line{{end}}"></line>
-        {{end}}
-        <circle class="master-node" cx="-32%" cy="50%" r="4"></circle>
-      </svg>
-    </div>
-    {{end}}
-
-    {{if .Exits}}
-    <div class="topo-exits">
-      {{range .Exits}}
-      <a class="topo-exit{{if .Carrying}} carrying{{end}}" href="/nodes/{{.ID}}">
-        <div class="topo-exit-head">
-          <span class="topo-exit-name">{{.Name}}{{if .Carrying}}<span class="pill-carrying">ACTIVE</span>{{end}}</span>
-          <span class="topo-exit-status">
-            <span class="state-pill {{lower .State}}"><span class="led"></span>{{.State}}</span>
-            {{template "node-subbadges" .}}
-          </span>
-        </div>
-        <div class="topo-exit-tags">
-          {{if .Region}}<span class="topo-tag">{{.Region}}</span>{{end}}
-          <span class="xport {{transportSlug .Transport}}" title="Active master↔exit transport{{if .DualTransport}} (switchable on the node page){{end}}">{{transportLabel .Transport}}{{if .DualTransport}} ⇄{{end}}</span>
-          {{if .Latency}}<span class="topo-exit-lat{{if .Slow}} slow{{end}}" title="master↔exit url-test latency">{{.Latency}}</span>{{end}}
-        </div>
-        <div class="addr topo-card-addr">
-          {{if .MgmtAddr}}<span class="addr-tag">MGMT</span><span class="addr-val" title="Mgmt (ZeroTier) address">{{.MgmtAddr}}</span>{{end}}
-          <span class="addr-tag">PUBLIC</span><span class="addr-val" title="Node public IP">{{or .PublicIP "—"}}</span>
-          {{if and .EgressIP (ne .EgressIP .PublicIP)}}<span class="addr-tag">WARP</span><span class="addr-val warp" title="Actual egress IP (Cloudflare WARP)">{{.EgressIP}}</span>{{end}}
-        </div>
-        <div class="topo-card-foot">
-          <span>handshake {{if and .HasStatus (not .LastHandshake.IsZero)}}{{relTime .LastHandshake}}{{else}}—{{end}}</span>
-          <span class="foot-sep">·</span>
-          <span>seen {{relTime .LastSeen}}</span>
-        </div>
-      </a>
-      {{end}}
-    </div>
-    {{end}}
+  {{/* One block per non-empty group. The carrying block's rail carries the
+       animated overlay, so "how far traffic reaches" is read from the grouping
+       itself — no measurement, no JS. */}}
+  {{with .Carrying}}
+  <div class="topo-grp"><span class="topo-grp-lbl">CARRYING</span><span class="topo-grp-line"></span><span class="topo-grp-n">{{len .}}</span></div>
+  <div class="topo-group">
+    <div class="topo-rail"></div>
+    <div class="topo-rail is-live"></div>
+    {{range .}}{{template "topo-row" .}}{{end}}
   </div>
+  {{end}}
+
+  {{with .Reserve}}
+  <div class="topo-grp"><span class="topo-grp-lbl">RESERVE</span><span class="topo-grp-line"></span><span class="topo-grp-n">{{len .}}</span></div>
+  <div class="topo-group">
+    <div class="topo-rail"></div>
+    {{range .}}{{template "topo-row" .}}{{end}}
+  </div>
+  {{end}}
 </div>
 {{else}}
 <div class="empty">No nodes registered yet. Provision one with <code>wgfleet-controller --provision &lt;node&gt;</code>.</div>
 {{end}}
+{{end}}
+
+{{/* topo-row — one exit in the vertical topology. Same fields the old exit card
+     carried; only the layout changed. */}}
+{{define "topo-row"}}
+<a class="topo-row{{if .Carrying}} is-carrying{{end}}" href="/nodes/{{.ID}}">
+  <span class="topo-row-name">{{.Name}}</span>
+  {{if .Carrying}}<span class="pill-carrying">ACTIVE</span>{{end}}
+  <span class="topo-row-lines">
+    <span class="addr">
+      {{if .MgmtAddr}}<span class="addr-tag">MGMT</span><span class="addr-val" title="Mgmt (ZeroTier) address">{{.MgmtAddr}}</span>{{end}}
+      <span class="addr-tag">PUBLIC</span><span class="addr-val" title="Node public IP">{{or .PublicIP "—"}}</span>
+      {{if and .EgressIP (ne .EgressIP .PublicIP)}}<span class="addr-tag">WARP</span><span class="addr-val warp" title="Actual egress IP (Cloudflare WARP)">{{.EgressIP}}</span>{{end}}
+    </span>
+    <span class="topo-card-foot">
+      <span>handshake {{if and .HasStatus (not .LastHandshake.IsZero)}}{{relTime .LastHandshake}}{{else}}—{{end}}</span>
+      <span class="foot-sep">·</span>
+      <span>seen {{relTime .LastSeen}}</span>
+    </span>
+  </span>
+  <span class="topo-spacer"></span>
+  {{if .Region}}<span class="topo-tag">{{.Region}}</span>{{end}}
+  <span class="state-pill {{lower .State}}"><span class="led"></span>{{.State}}</span>
+  {{template "node-subbadges" .}}
+  <span class="xport {{transportSlug .Transport}}" title="Active master↔exit transport{{if .DualTransport}} (switchable on the node page){{end}}">{{transportLabel .Transport}}{{if .DualTransport}} ⇄{{end}}</span>
+  {{if .Latency}}<span class="topo-exit-lat{{if .Slow}} slow{{end}}" title="master↔exit url-test latency">{{.Latency}}</span>{{end}}
+</a>
 {{end}}
 
 {{/* node-subbadges — censorship / lifecycle flags shown under a node's state pill.

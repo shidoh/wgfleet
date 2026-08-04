@@ -818,7 +818,8 @@ func TestFleetTopology(t *testing.T) {
 
 	_, body := get(t, h, "/")
 	for _, want := range []string{
-		"topo-panel", "master-xa-1", "balancing 2 exits", // master card
+		"topo-panel", "master-xa-1", "balancing 2 exits", // master trunk
+		"topo-rail is-live",                // traffic reaches the carrying group
 		"pill-carrying", "ACTIVE", "107ms", // carrying exit (de)
 		`topo-exit-lat slow`, "1.088s", // slow exit (nl), formatted as seconds
 	} {
@@ -1104,5 +1105,31 @@ func TestTopologyOrdersCarryingFirstThenAlphabetical(t *testing.T) {
 	}
 	if len(topo.Carrying) != 2 {
 		t.Errorf("Carrying = %d exits, want 2", len(topo.Carrying))
+	}
+}
+
+// TestTopologyRailIsLiveOnlyWhenTrafficFlows: the animated rail is the panel's
+// at-a-glance "traffic reaches this far" signal, so it must be absent — not merely
+// restyled — when no exit is carrying. Guards against a rail that always animates
+// and therefore says nothing.
+func TestTopologyRailIsLiveOnlyWhenTrafficFlows(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+	// A status report with no Selected entry: the exit is alive but carries nothing.
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "master-xa-1", State: domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{{Name: "exit-de-1", Alive: true, Delay: 120 * time.Millisecond}},
+	})
+
+	_, body := get(t, h, "/")
+	if strings.Contains(body, "topo-rail is-live") {
+		t.Error("live rail rendered with no carrying exit")
+	}
+	if !strings.Contains(body, "topo-rail") {
+		t.Error("static rail missing")
+	}
+	if !strings.Contains(body, "topo-trunk") {
+		t.Error("master trunk missing")
 	}
 }

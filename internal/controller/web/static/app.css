@@ -159,8 +159,8 @@ body {
 .btn:focus-visible,
 .seg:focus-visible,
 .back:focus-visible,
-.topo-master:focus-visible,
-.topo-exit:focus-visible,
+.topo-trunk:focus-visible,
+.topo-row:focus-visible,
 .backup-summary:focus-visible,
 .spec-toggle:focus-visible,
 .extlink:focus-visible,
@@ -391,6 +391,68 @@ a:focus-visible,
   padding: 22px 24px;
   margin-bottom: 30px;
 }
+
+/* Vertical topology: a master trunk, then one group block per tier. Each group
+   owns its rail; only the carrying group gets the animated overlay, so the live
+   segment is a consequence of the grouping rather than a measured height. */
+.topo-trunk {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: linear-gradient(180deg, rgba(91,141,239,.07), var(--panel-2));
+  border: 1px solid var(--blue-25); border-radius: var(--r-mini);
+  padding: 13px 15px; text-decoration: none; color: inherit;
+}
+.topo-trunk:hover { border-color: var(--blue-35); }
+.topo-trunk-name { font-size: 14px; font-weight: 600; color: var(--text-strong); }
+.topo-trunk-bal { display: flex; align-items: center; gap: 6px; font-size: var(--fs-micro); color: var(--text-muted); }
+.topo-trunk-bal .statusdot { width: 5px; height: 5px; box-shadow: 0 0 6px var(--green); }
+.topo-spacer { flex: 1; }
+
+.topo-grp { display: flex; align-items: center; gap: 10px; margin: 16px 0 9px; }
+.topo-grp-lbl { font-size: var(--fs-tag); letter-spacing: 1.3px; color: var(--text-label); }
+.topo-grp-line { flex: 1; height: 1px; background: var(--border-rule); }
+.topo-grp-n { font-size: var(--fs-tag); color: var(--text-zero); font-variant-numeric: tabular-nums; }
+
+.topo-group { position: relative; padding-left: 34px; }
+.topo-rail {
+  position: absolute; left: 17px; top: 0; bottom: 26px;
+  width: 2px; border-radius: 1px; background: var(--border-badge);
+}
+.topo-rail.is-live {
+  background: repeating-linear-gradient(180deg, var(--green) 0 4px, transparent 4px 11px);
+  filter: drop-shadow(0 0 5px rgba(61,220,132,.55));
+  animation: railflow 1.1s linear infinite;
+}
+@keyframes railflow { to { background-position-y: -15px } }
+
+.topo-row {
+  position: relative; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 14px; margin-bottom: 6px; border-radius: var(--r-mini);
+  background: var(--panel-2); border: 1px solid var(--border-row);
+  text-decoration: none; color: inherit;
+}
+/* the tap joining a row to its rail */
+.topo-row::before {
+  content: ""; position: absolute; left: -18px; top: 50%;
+  width: 18px; height: 1px; background: var(--border-badge);
+}
+.topo-row:hover { border-color: var(--border-badge); }
+.topo-row.is-carrying {
+  border-color: var(--green-22);
+  background: linear-gradient(90deg, var(--green-09), var(--panel-2) 42%);
+}
+.topo-row.is-carrying:hover { border-color: var(--green); }
+.topo-row.is-carrying::before {
+  height: 2px; margin-top: -1px;
+  background: repeating-linear-gradient(90deg, var(--green) 0 4px, transparent 4px 9px);
+  filter: drop-shadow(0 0 5px rgba(61,220,132,.55));
+  animation: tapflow 1.1s linear infinite;
+}
+@keyframes tapflow { to { background-position-x: 13px } }
+.topo-row-name { font-size: var(--fs-body); color: var(--text-bright); min-width: 96px; }
+.topo-row.is-carrying .topo-row-name { color: var(--text-strong); font-weight: 500; }
+.topo-row-lines { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 210px; }
+.topo-trunk-addr { flex: none; }
+
 /* Flexbox 3-column layout — master card · connector column · exits column —
    that stacks to a single column on mobile (see the 819px breakpoint). */
 .topo-stage {
