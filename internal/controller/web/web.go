@@ -717,6 +717,14 @@ type listData struct {
 type topology struct {
 	Master *topoMaster // the load-balancer hub; nil when there is no master node
 	Exits  []topoExit  // balanced exits, in fleet-list order
+
+	// Carrying holds the exits currently carrying traffic, Reserve everything
+	// else; both sorted by lowercased name. Drained/errored/decommissioning nodes
+	// are by definition not carrying, so they land in Reserve — there is no third
+	// group. The split is what makes the rendered bus's live segment fall out of
+	// the grouping instead of needing measurement.
+	Carrying []topoExit
+	Reserve  []topoExit
 }
 
 // topoCard holds the inventory + status fields every node card shares (master and
@@ -1158,6 +1166,20 @@ func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
 		te.LineY = fmt.Sprintf("%d%%", (i*100+50)/n)
 		topo.Exits = append(topo.Exits, te)
 	}
+	for i := range topo.Exits {
+		if topo.Exits[i].Carrying {
+			topo.Carrying = append(topo.Carrying, topo.Exits[i])
+			continue
+		}
+		topo.Reserve = append(topo.Reserve, topo.Exits[i])
+	}
+	byName := func(s []topoExit) {
+		sort.SliceStable(s, func(a, b int) bool {
+			return strings.ToLower(s[a].Name) < strings.ToLower(s[b].Name)
+		})
+	}
+	byName(topo.Carrying)
+	byName(topo.Reserve)
 	return topo
 }
 

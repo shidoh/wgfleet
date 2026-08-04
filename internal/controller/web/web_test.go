@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1060,5 +1061,48 @@ func TestUnauthenticatedRedirectsToLogin(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("unauth static = %d; want 200", rec.Code)
+	}
+}
+
+// TestTopologyOrdersCarryingFirstThenAlphabetical pins the fleet-list order as
+// BEHAVIOUR, not styling: an operator reading this panel during an incident must
+// see what is under load at the top. Store order here deliberately contradicts the
+// target order (a carrying exit seeded last, a reserve exit first, names out of
+// alphabetical order) so a regression to store order fails loudly.
+func TestTopologyOrdersCarryingFirstThenAlphabetical(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+	for _, n := range []string{"zeta", "anz3", "vn1", "vn0"} {
+		seed(t, st, domain.Node{ID: n, Name: n, Role: domain.RoleExit, State: domain.StateReady})
+	}
+	// vn0 and vn1 carry; anz3 and zeta are healthy reserve.
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "master-xa-1", State: domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{
+			{Name: "vn1", Alive: true, Delay: 95 * time.Millisecond, Selected: true},
+			{Name: "vn0", Alive: true, Delay: 96 * time.Millisecond, Selected: true},
+			{Name: "anz3", Alive: true, Delay: 201 * time.Millisecond},
+			{Name: "zeta", Alive: true, Delay: 150 * time.Millisecond},
+		},
+	})
+
+	rows, err := h.nodeRows(context.Background())
+	if err != nil {
+		t.Fatalf("nodeRows: %v", err)
+	}
+	topo := h.buildTopology(context.Background(), rows)
+	got := make([]string, 0, 4)
+	for _, e := range topo.Carrying {
+		got = append(got, e.Name)
+	}
+	for _, e := range topo.Reserve {
+		got = append(got, e.Name)
+	}
+	want := []string{"vn0", "vn1", "anz3", "zeta"}
+	if !slices.Equal(got, want) {
+		t.Errorf("topology order = %v, want %v", got, want)
+	}
+	if len(topo.Carrying) != 2 {
+		t.Errorf("Carrying = %d exits, want 2", len(topo.Carrying))
 	}
 }
