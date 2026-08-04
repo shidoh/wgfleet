@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -800,10 +801,14 @@ func TestMasterDetailShowsExitTunnelHealth(t *testing.T) {
 
 // TestFleetTopology covers the fleet-list topology panel: it derives the carrying
 // exit and per-exit latency from the master's ExitHealth report, formats latency
-// the way the design shows it, and flags a slow path amber.
+// the way the design shows it, and flags a slow path amber. It also pins the
+// master trunk's own field set (Region, MgmtAddr, PublicIP, handshake/seen) —
+// commit 336b3d0 silently dropped the trunk's Region and c0bfc21 had to restore
+// it, with this suite green throughout, because nothing here asserted on the
+// trunk beyond its name and balancing count.
 func TestFleetTopology(t *testing.T) {
 	h, st := newTestHandler(t, nil)
-	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, MgmtAddr: "10.20.3.10", State: domain.StateReady})
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, Region: "fi", MgmtAddr: "10.20.3.10", PublicIP: "203.0.113.10", State: domain.StateReady})
 	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, Region: "de", State: domain.StateReady})
 	seed(t, st, domain.Node{ID: "exit-nl-1", Name: "exit-nl-1", Role: domain.RoleExit, Region: "nl", State: domain.StateReady})
 	// The master's view of the two tunnels: de carries traffic at 107ms; nl is slow.
@@ -817,7 +822,13 @@ func TestFleetTopology(t *testing.T) {
 
 	_, body := get(t, h, "/")
 	for _, want := range []string{
-		"topo-panel", "master-xa-1", "balancing 2 exits", // master card
+		"topo-panel", "master-xa-1", "balancing 2 exits", // master trunk
+		`<span class="topo-tag">fi</span>`, // master trunk Region (fi is unique — "ru" collides with the node ID)
+		"10.20.3.10",                       // master trunk MgmtAddr
+		">MGMT<",                           // master trunk MGMT label
+		"203.0.113.10",                     // master trunk PublicIP
+		"seen ",                            // master trunk handshake/seen footer
+		"topo-rail is-live",                // traffic reaches the carrying group
 		"pill-carrying", "ACTIVE", "107ms", // carrying exit (de)
 		`topo-exit-lat slow`, "1.088s", // slow exit (nl), formatted as seconds
 	} {
@@ -1060,5 +1071,102 @@ func TestUnauthenticatedRedirectsToLogin(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("unauth static = %d; want 200", rec.Code)
+	}
+}
+
+// TestTopologyOrdersCarryingFirstThenAlphabetical pins the fleet-list order as
+// BEHAVIOUR, not styling: an operator reading this panel during an incident must
+// see what is under load at the top. Store order here deliberately contradicts the
+// target order (a carrying exit seeded last, a reserve exit first, names out of
+// alphabetical order) so a regression to store order fails loudly.
+func TestTopologyOrdersCarryingFirstThenAlphabetical(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+	for _, n := range []string{"zeta", "anz3", "vn1", "vn0"} {
+		seed(t, st, domain.Node{ID: n, Name: n, Role: domain.RoleExit, State: domain.StateReady})
+	}
+	// vn0 and vn1 carry; anz3 and zeta are healthy reserve.
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "master-xa-1", State: domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{
+			{Name: "vn1", Alive: true, Delay: 95 * time.Millisecond, Selected: true},
+			{Name: "vn0", Alive: true, Delay: 96 * time.Millisecond, Selected: true},
+			{Name: "anz3", Alive: true, Delay: 201 * time.Millisecond},
+			{Name: "zeta", Alive: true, Delay: 150 * time.Millisecond},
+		},
+	})
+
+	rows, err := h.nodeRows(context.Background())
+	if err != nil {
+		t.Fatalf("nodeRows: %v", err)
+	}
+	topo := h.buildTopology(context.Background(), rows)
+	got := make([]string, 0, 4)
+	for _, e := range topo.Carrying {
+		got = append(got, e.Name)
+	}
+	for _, e := range topo.Reserve {
+		got = append(got, e.Name)
+	}
+	want := []string{"vn0", "vn1", "anz3", "zeta"}
+	if !slices.Equal(got, want) {
+		t.Errorf("topology order = %v, want %v", got, want)
+	}
+	if len(topo.Carrying) != 2 {
+		t.Errorf("Carrying = %d exits, want 2", len(topo.Carrying))
+	}
+
+	// The struct assertions above pin the data; this pins the render. Reading
+	// topo.Carrying/topo.Reserve directly doesn't notice a template edit that
+	// swaps the {{with .Carrying}} and {{with .Reserve}} blocks — the struct
+	// would still be right and the page would still be wrong. Assert on the
+	// actual HTML body: the CARRYING label must come before RESERVE, and the
+	// node names must appear in the same carrying-then-alphabetical order.
+	_, body := get(t, h, "/")
+	carryIdx := strings.Index(body, "CARRYING")
+	reserveIdx := strings.Index(body, "RESERVE")
+	if carryIdx == -1 || reserveIdx == -1 {
+		t.Fatalf("rendered body missing CARRYING/RESERVE group labels")
+	}
+	if carryIdx >= reserveIdx {
+		t.Errorf("rendered body: CARRYING label at %d, RESERVE at %d — want CARRYING first", carryIdx, reserveIdx)
+	}
+
+	lastIdx := -1
+	for _, name := range want {
+		idx := strings.Index(body, name)
+		if idx == -1 {
+			t.Fatalf("rendered body missing exit %q", name)
+		}
+		if idx <= lastIdx {
+			t.Errorf("rendered body: %q at %d, want it after previous entry at %d (order should be %v)", name, idx, lastIdx, want)
+		}
+		lastIdx = idx
+	}
+}
+
+// TestTopologyRailIsLiveOnlyWhenTrafficFlows: the animated rail is the panel's
+// at-a-glance "traffic reaches this far" signal, so it must be absent — not merely
+// restyled — when no exit is carrying. Guards against a rail that always animates
+// and therefore says nothing.
+func TestTopologyRailIsLiveOnlyWhenTrafficFlows(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+	// A status report with no Selected entry: the exit is alive but carries nothing.
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "master-xa-1", State: domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{{Name: "exit-de-1", Alive: true, Delay: 120 * time.Millisecond}},
+	})
+
+	_, body := get(t, h, "/")
+	if strings.Contains(body, "topo-rail is-live") {
+		t.Error("live rail rendered with no carrying exit")
+	}
+	if !strings.Contains(body, "topo-rail") {
+		t.Error("static rail missing")
+	}
+	if !strings.Contains(body, "topo-trunk") {
+		t.Error("master trunk missing")
 	}
 }

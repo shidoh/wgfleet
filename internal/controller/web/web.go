@@ -707,16 +707,24 @@ type listData struct {
 }
 
 // topology is the master↔exit routing picture shown on the fleet list — now the
-// ONLY fleet view (the flat node table was folded into these cards): the master
-// load balancer and the exits it balances, with each card carrying the full
-// per-node inventory + live operational signals the table used to show and linking
-// to its detail page. Latency and the carrying flag come from the master's latest
-// status report (ExitHealth, mihomo's view of the tunnels). nil only when the fleet
-// is empty (the template then shows the empty state). Master is nil for a
-// degenerate no-master fleet — the exits still render so no node is hidden.
+// ONLY fleet view (the flat node table was folded into it): a master trunk with,
+// indented beneath it, the exits it balances grouped into Carrying and Reserve
+// rows joined by a CSS rail. Each row carries the full per-node inventory + live
+// operational signals the table used to show and links to its detail page.
+// Latency and the carrying flag come from the master's latest status report
+// (ExitHealth, mihomo's view of the tunnels). nil only when the fleet is empty
+// (the template then shows the empty state). Master is nil for a degenerate
+// no-master fleet — the exits still render so no node is hidden.
 type topology struct {
 	Master *topoMaster // the load-balancer hub; nil when there is no master node
-	Exits  []topoExit  // balanced exits, in fleet-list order
+
+	// Carrying holds the exits currently carrying traffic, Reserve everything
+	// else; both sorted by lowercased name. Drained/errored/decommissioning nodes
+	// are by definition not carrying, so they land in Reserve — there is no third
+	// group. The split is what makes the rendered bus's live segment fall out of
+	// the grouping instead of needing measurement.
+	Carrying []topoExit
+	Reserve  []topoExit
 }
 
 // topoCard holds the inventory + status fields every node card shares (master and
@@ -756,7 +764,6 @@ type topoExit struct {
 	Carrying      bool   // currently carrying traffic (every live member of the active tier)
 	Latency       string // preformatted url-test delay ("107ms" / "1.088s"); "" if unknown
 	Slow          bool   // latency above the slow threshold → render amber
-	LineY         string // topology connector endpoint Y ("16%"), evenly spaced by index
 }
 
 // cardOf projects a fleet-list row into the inventory + status fields every
@@ -1130,7 +1137,7 @@ func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
 			exits = append(exits, rows[i])
 		}
 	}
-	topo := &topology{Exits: make([]topoExit, 0, len(exits))}
+	topo := &topology{}
 	// The master's view of each tunnel (latency + which one carries traffic) is only
 	// available from a master's status report.
 	var health []domain.ExitTunnelHealth
@@ -1140,8 +1147,7 @@ func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
 		}
 		topo.Master = &topoMaster{topoCard: cardOf(*masterRow), Balancing: len(exits)}
 	}
-	n := len(exits)
-	for i, ex := range exits {
+	for _, ex := range exits {
 		te := topoExit{
 			topoCard:      cardOf(ex),
 			EgressIP:      ex.EgressIP,
@@ -1153,11 +1159,19 @@ func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
 			te.Latency = formatDelay(d)
 			te.Slow = d >= slowExitLatency
 		}
-		// Evenly space the connector endpoints down the column: the i-th of n exits
-		// lands at the centre of its 1/n band (e.g. 3 exits → 16%/50%/83%).
-		te.LineY = fmt.Sprintf("%d%%", (i*100+50)/n)
-		topo.Exits = append(topo.Exits, te)
+		if te.Carrying {
+			topo.Carrying = append(topo.Carrying, te)
+			continue
+		}
+		topo.Reserve = append(topo.Reserve, te)
 	}
+	byName := func(s []topoExit) {
+		sort.SliceStable(s, func(a, b int) bool {
+			return strings.ToLower(s[a].Name) < strings.ToLower(s[b].Name)
+		})
+	}
+	byName(topo.Carrying)
+	byName(topo.Reserve)
 	return topo
 }
 
