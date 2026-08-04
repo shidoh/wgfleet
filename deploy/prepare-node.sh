@@ -1,11 +1,11 @@
 #!/bin/bash
 # wgfleet node OS-prep — run ONCE on a fresh Ubuntu VM before provisioning.
 #
-# It handles only the environmental / kernel-risky bits the wgfleet provisioner
-# deliberately does NOT do: building the AmneziaWG kernel
-# module via DKMS, and joining the ZeroTier management overlay (which needs
-# out-of-band authorization). Everything else — hardening, nftables, apt deps,
-# Docker, wgcf, the agent — is the provisioner's job (`controller --provision`).
+# It handles only the environmental bits the wgfleet provisioner deliberately
+# does NOT do: building the AmneziaWG kernel module via DKMS, capping the systemd
+# journal, and joining the ZeroTier management overlay (which needs out-of-band
+# authorization). Everything else — hardening, nftables, apt deps, Docker, wgcf,
+# the agent — is the provisioner's job (`controller --provision`).
 #
 # Idempotent: safe to re-run. Doubles as cloud-init user-data (it begins with a
 # shebang, which cloud-init executes verbatim).
@@ -67,7 +67,29 @@ modinfo amneziawg >/dev/null 2>&1 || die "AmneziaWG module not built for $(uname
 lsmod | grep -qw amneziawg || die "AmneziaWG module built but not loaded (modprobe failed)"
 log "AmneziaWG module OK (loaded for kernel $(uname -r))"
 
-# --- 2. ZeroTier management overlay -----------------------------------------
+# --- 2. Journal size cap ------------------------------------------------------
+# systemd's default is uncapped (up to 10% of the filesystem), which is the wrong
+# default for an exit: a unit or container stuck in a log-spewing failure loop
+# fills the disk, and a full disk on an exit takes its data plane down with it.
+# The cap matters more than the steady-state size — journals here sit well under
+# it, so this only ever bites during exactly the failure it is meant to contain.
+# Left alone if the operator already dropped in their own tuning.
+if [ ! -f /etc/systemd/journald.conf.d/wgfleet.conf ]; then
+  log "capping systemd journal (200M, keep 1G free, 2 weeks)"
+  mkdir -p /etc/systemd/journald.conf.d
+  cat > /etc/systemd/journald.conf.d/wgfleet.conf <<'EOF'
+# Installed by wgfleet prepare-node.sh. See the rationale in that script.
+[Journal]
+SystemMaxUse=200M
+SystemKeepFree=1G
+MaxRetentionSec=2week
+EOF
+  systemctl restart systemd-journald
+else
+  log "journal cap already configured — leaving /etc/systemd/journald.conf.d/wgfleet.conf alone"
+fi
+
+# --- 3. ZeroTier management overlay -----------------------------------------
 # The controller/agent and all admin/metrics surfaces live on this overlay, never
 # the public interface. Joining needs the network id; AUTHORIZATION is a manual
 # step in ZeroTier Central (and is where you assign the managed IP that becomes

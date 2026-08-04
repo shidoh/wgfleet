@@ -10,9 +10,11 @@ one `exit`); scale the per-node steps for more.
 
 The work splits cleanly in two:
 
-- **OS prep** (`deploy/prepare-node.sh`) — the environmental / kernel-risky bits
-  the provisioner deliberately won't do: build the AmneziaWG kernel module (DKMS)
-  and join the ZeroTier overlay. Run once per VM.
+- **OS prep** (`deploy/prepare-node.sh`) — the environmental bits the provisioner
+  deliberately won't do: build the AmneziaWG kernel module (DKMS), cap the systemd
+  journal, and join the ZeroTier overlay. Run once per VM. Skipping it leaves the
+  journal uncapped, so a unit stuck in a log-spewing loop can fill the disk and
+  take the exit's data plane with it.
 - **Fleet onboarding** (`controller --provision`) — declarative: hardening,
   baseline firewall, apt deps, Docker, wgcf, the mTLS identity and the agent. The
   agent then reconciles the node to its `NodeSpec` over mTLS.
