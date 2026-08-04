@@ -4,11 +4,8 @@
 package main
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -185,44 +182,7 @@ func writeSupportBundle(ctx context.Context, opts supportOpts) error {
 		return fmt.Errorf("close archive: %w", err)
 	}
 
-	return printBundleSummary(opts.Out)
-}
-
-// printBundleSummary shows the tester exactly what they are about to send: the
-// archive path, every file with its real archived byte count (read back from
-// the tar itself, not recomputed), and the commands to inspect or unpack it
-// before sending it anywhere. This is the feature's transparency promise, not
-// decoration.
-func printBundleSummary(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("reopen archive for summary: %w", err)
-	}
-	defer f.Close()
-
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return fmt.Errorf("read archive for summary: %w", err)
-	}
-	defer gz.Close()
-
-	fmt.Printf("support bundle written: %s\n\n", path)
-	tr := tar.NewReader(gz)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("read archive for summary: %w", err)
-		}
-		fmt.Printf("  %-40s %8d bytes\n", hdr.Name, hdr.Size)
-	}
-	fmt.Println()
-	fmt.Println("Read it before sending it to anyone:")
-	fmt.Printf("  tar tzf %s\n", path)
-	fmt.Printf("  tar xzf %s\n", path)
-	return nil
+	return support.PrintBundleSummary(opts.Out)
 }
 
 // runSupportBundle handles --support-bundle end to end. It deliberately never

@@ -7,11 +7,8 @@
 package main
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -30,6 +27,41 @@ import (
 // ever dials real SSH.
 type sshDial func(domain.SSHTarget) (provisioner.Runner, error)
 
+// fleetCommandTimeout and fleetExitTimeout are the two bounds a single wedged
+// exit must not be able to escape.
+//
+// fleetCommandTimeout bounds each individual collector command run over SSH,
+// mirroring cmd/wgfleet-agent/support.go's supportCommandTimeout: a single
+// wedged command (a hung `docker ps`, a session whose TCP connection stays
+// open with nothing on the other end) must not stall the rest of that exit's
+// collectors. SSHRunner.Run DOES respect context cancellation (it selects on
+// <-ctx.Done()), but before this fix nothing upstream of the fleet walk ever
+// attached a deadline to the context it passed down — context.Background()
+// has none — so a command that connected and then never returned hung
+// forever, and because the walk is sequential and nothing is written until
+// the whole loop plus Gate complete, one wedged exit meant no inventory, no
+// other exits, and no archive: just a process that never returned. Found in
+// review, fixed here.
+//
+// fleetExitTimeout bounds ONE exit's ENTIRE collection pass. NodeCollectors
+// runs ~25 commands; the per-command bound alone still lets a host that is
+// merely SLOW (not hung) on every command consume up to
+// (collector count) * fleetCommandTimeout for itself — several minutes per
+// exit, which a fleet of several exits turns into a genuinely long wait. This
+// is deliberately generous relative to fleetCommandTimeout (real hosts finish
+// in well under a second per command) while still bounding a single
+// slow/degraded exit so it cannot eat the whole run's budget. Composes with
+// fleetCommandTimeout automatically: walkExit wraps the WHOLE per-exit pass
+// in a context.WithTimeout(ctx, fleetExitTimeout), and every per-command
+// context.WithTimeout nested inside it inherits whichever deadline is
+// sooner — so once the exit budget is spent, every remaining collector call
+// resolves near-instantly instead of waiting out its own full command
+// timeout.
+const (
+	fleetCommandTimeout = 10 * time.Second
+	fleetExitTimeout    = 90 * time.Second
+)
+
 // supportFleetOpts configures one call to writeFleetSupportBundle.
 type supportFleetOpts struct {
 	Out   string              // archive path to write; must not exist until the gate passes
@@ -37,6 +69,14 @@ type supportFleetOpts struct {
 	Fleet config.FleetSection // the manifest's masters/exits; only Exits are walked over SSH
 	Store store.Store         // nil ⇒ inventory records why (no store reachable)
 	Dial  sshDial             // nil ⇒ provisioner.DialSSH
+
+	// CommandTimeout and ExitTimeout override fleetCommandTimeout/
+	// fleetExitTimeout; zero ⇒ the production default. They exist as fields,
+	// not just the consts, so a test can drive both down to milliseconds and
+	// prove a wedged exit's session gets cut off — without waiting out the
+	// real production bounds to do it.
+	CommandTimeout time.Duration
+	ExitTimeout    time.Duration
 
 	// Secrets are the controller's own secret values Gate refuses to write
 	// verbatim. See gatherControllerSecrets for what this covers and,
@@ -54,10 +94,18 @@ func writeFleetSupportBundle(ctx context.Context, opts supportFleetOpts) error {
 	if dial == nil {
 		dial = func(t domain.SSHTarget) (provisioner.Runner, error) { return provisioner.DialSSH(t, nil) }
 	}
+	commandTimeout := opts.CommandTimeout
+	if commandTimeout <= 0 {
+		commandTimeout = fleetCommandTimeout
+	}
+	exitTimeout := opts.ExitTimeout
+	if exitTimeout <= 0 {
+		exitTimeout = fleetExitTimeout
+	}
 
 	nodes := []support.Node{inventoryNode(ctx, opts.Store)}
 	for _, e := range opts.Fleet.Exits {
-		nodes = append(nodes, walkExit(ctx, e, dial))
+		nodes = append(nodes, walkExit(ctx, e, dial, commandTimeout, exitTimeout))
 	}
 
 	// Defence in depth on the real collector output, exactly as the agent does.
@@ -106,7 +154,7 @@ func writeFleetSupportBundle(ctx context.Context, opts supportFleetOpts) error {
 		return fmt.Errorf("close archive: %w", err)
 	}
 
-	return printBundleSummary(opts.Out)
+	return support.PrintBundleSummary(opts.Out)
 }
 
 // inventoryNode renders the controller's own view of the fleet: per node, its
@@ -164,7 +212,15 @@ func renderInventory(ctx context.Context, st store.Store) (string, error) {
 // Node whose single section records why — the bundle is wanted precisely when
 // something is down, and a walk that aborts on the first unreachable exit
 // collects nothing on the day it matters.
-func walkExit(ctx context.Context, e config.ExitConfig, dial sshDial) support.Node {
+//
+// The collection pass itself is bounded two ways (see the fleetCommandTimeout/
+// fleetExitTimeout doc comment): every command is wrapped by timeoutRunner,
+// and the whole pass runs under a context.WithTimeout(ctx, exitTimeout) so a
+// host that is slow rather than hung still cannot consume the run's whole
+// budget. A pass that hits the exit-level bound is recorded, not silently
+// truncated: whatever was collected before the bound tripped is kept (better
+// than nothing), plus one more entry saying so.
+func walkExit(ctx context.Context, e config.ExitConfig, dial sshDial, commandTimeout, exitTimeout time.Duration) support.Node {
 	if e.SSH.Host == "" || e.SSH.KeyPath == "" {
 		return unreachableExit(e.Name, "no ssh target configured in the fleet manifest")
 	}
@@ -175,11 +231,47 @@ func walkExit(ctx context.Context, e config.ExitConfig, dial sshDial) support.No
 	}
 	defer func() { _ = runner.Close() }()
 
-	node, _ := support.Collect(ctx, runner, support.NodeCollectors(string(domain.RoleExit)), support.Options{
+	exitCtx, cancel := context.WithTimeout(ctx, exitTimeout)
+	defer cancel()
+
+	bounded := timeoutRunner{r: runner, timeout: commandTimeout}
+	node, _ := support.Collect(exitCtx, bounded, support.NodeCollectors(string(domain.RoleExit)), support.Options{
 		Node: e.Name,
 		Role: string(domain.RoleExit),
 	})
+
+	if exitCtx.Err() == context.DeadlineExceeded {
+		reason := fmt.Sprintf("exit exceeded its overall collection budget (%s); some collectors may not have completed", exitTimeout)
+		node.Files["fleet-walk.txt"] += fmt.Sprintf("== fleet walk ==\n%s\n", reason)
+		node.Entries = append(node.Entries, support.ManifestEntry{File: "fleet-walk.txt", Name: "fleet walk", Err: reason})
+	}
+
 	return *node
+}
+
+// timeoutRunner bounds every command a Runner executes to `timeout`,
+// regardless of what the context passed to Collect otherwise carries.
+// SSHRunner.Run does respect context cancellation (it selects on
+// <-ctx.Done()) but has no timeout of its own; without this wrapper the only
+// deadline any command ever got was whatever the caller's ctx already
+// carried, which for the fleet walk was context.Background() — none at all.
+// A session that connects and then never returns (a wedged remote command, a
+// silently partitioned TCP connection) hung forever as a result. This is the
+// SSH-fleet-walk equivalent of cmd/wgfleet-agent/support.go's execRunner
+// timeout.
+type timeoutRunner struct {
+	r       support.Runner
+	timeout time.Duration
+}
+
+func (t timeoutRunner) Run(ctx context.Context, cmd string) (string, error) {
+	cctx, cancel := context.WithTimeout(ctx, t.timeout)
+	defer cancel()
+	out, err := t.r.Run(cctx, cmd)
+	if err != nil && cctx.Err() == context.DeadlineExceeded {
+		return out, fmt.Errorf("command timed out")
+	}
+	return out, err
 }
 
 // unreachableExit is the stanza an unreachable exit becomes: one file, one
@@ -305,42 +397,4 @@ func readTrimmedFileController(path string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
-}
-
-// printBundleSummary shows the operator exactly what they are about to send:
-// the archive path, every file with its real archived byte count (read back
-// from the tar itself, not recomputed), and the commands to inspect or unpack
-// it before sending it anywhere. Mirrors cmd/wgfleet-agent/support.go's
-// printBundleSummary — kept as a separate copy since the two are independent
-// `main` packages and this feature is Go-stdlib-only.
-func printBundleSummary(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("reopen archive for summary: %w", err)
-	}
-	defer f.Close()
-
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return fmt.Errorf("read archive for summary: %w", err)
-	}
-	defer gz.Close()
-
-	fmt.Printf("support bundle written: %s\n\n", path)
-	tr := tar.NewReader(gz)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("read archive for summary: %w", err)
-		}
-		fmt.Printf("  %-40s %8d bytes\n", hdr.Name, hdr.Size)
-	}
-	fmt.Println()
-	fmt.Println("Read it before sending it to anyone:")
-	fmt.Printf("  tar tzf %s\n", path)
-	fmt.Printf("  tar xzf %s\n", path)
-	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/provisioner"
@@ -23,6 +24,24 @@ import (
 func alwaysFailDial(domain.SSHTarget) (provisioner.Runner, error) {
 	return nil, errors.New("dial refused (test)")
 }
+
+// blockingRunner never returns from Run until ctx is done — it stands in for
+// a wedged SSH session: the dial succeeded, a session opened, and then a
+// command just never comes back (a hung remote process, a silently
+// partitioned TCP connection). Like the real SSHRunner, it honors context
+// cancellation; what it does NOT do on its own is give up on its own
+// initiative, which is exactly what made the pre-fix bug possible — a ctx
+// with no deadline meant Done() never fired and this would block forever.
+type blockingRunner struct{}
+
+func (blockingRunner) Run(ctx context.Context, cmd string) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+func (blockingRunner) Upload(_ context.Context, _ string, _ []byte, _ os.FileMode) error { return nil }
+func (blockingRunner) Close() error                                                      { return nil }
+
+var _ provisioner.Runner = blockingRunner{}
 
 // An exit that does not answer must not fail the bundle. The bundle is wanted
 // precisely when something is down; a collector that gives up on the first
@@ -90,6 +109,71 @@ func TestFleetBundleIncludesInventoryWithoutSSH(t *testing.T) {
 	if !strings.Contains(inv, "exit-de-1") || !strings.Contains(inv, "Ready") || !strings.Contains(inv, "v1.2.3") {
 		t.Fatalf("inventory did not carry the store's node state/version:\n%s", inv)
 	}
+}
+
+// A wedged exit — dial succeeds, but every command just hangs — must not stall
+// the run past its bounds. Before the fix, context.Background() flowed
+// unmodified all the way to the Runner, so nothing ever cancelled it and
+// blockingRunner would never return: this test would hang forever without the
+// per-command and per-exit timeouts in walkExit. commandTimeout is set LARGER
+// than exitTimeout so the assertion only passes if the per-exit cap is what
+// actually bounds the run — proving the outer cap is load-bearing, not just
+// the per-command one composing with a context that happens to already have a
+// short deadline.
+func TestFleetBundleTimesOutAWedgedExit(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "bundle.tar.gz")
+	fleet := config.FleetSection{
+		Exits: []config.ExitConfig{
+			{Name: "exit-wedged", SSH: config.SSHConfig{Host: "198.51.100.7", User: "root", KeyPath: "/tmp/does-not-matter"}},
+			{Name: "exit-fine", SSH: config.SSHConfig{Host: "198.51.100.8", User: "root", KeyPath: "/tmp/does-not-matter"}},
+		},
+	}
+	fineMock := provisioner.NewMockRunner()
+	fineMock.DefaultResponse = "ok"
+
+	dial := func(target domain.SSHTarget) (provisioner.Runner, error) {
+		if target.Host == "198.51.100.7" {
+			return blockingRunner{}, nil
+		}
+		return fineMock, nil
+	}
+
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		done <- writeFleetSupportBundle(context.Background(), supportFleetOpts{
+			Out:            out,
+			Fleet:          fleet,
+			Dial:           dial,
+			CommandTimeout: 5 * time.Second,        // deliberately larger than ExitTimeout
+			ExitTimeout:    100 * time.Millisecond, // must be what actually bounds exit-wedged
+		})
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("writeFleetSupportBundle: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("writeFleetSupportBundle did not return — a wedged exit hung the whole run")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("wedged exit was not bounded by ExitTimeout: took %s", elapsed)
+	}
+
+	wedged := readTarEntryController(t, out, "exit-wedged/fleet-walk.txt")
+	if !strings.Contains(wedged, "timed out") && !strings.Contains(wedged, "budget") {
+		t.Fatalf("exit-wedged's section did not record a timeout reason:\n%s", wedged)
+	}
+
+	// The other exit, and the inventory, must still be present — the wedged
+	// exit's timeout must not have taken the rest of the walk down with it.
+	fine := readTarEntryController(t, out, "exit-fine/identity.txt")
+	if !strings.Contains(fine, "ok") {
+		t.Fatalf("exit-fine's section was not collected:\n%s", fine)
+	}
+	_ = readTarEntryController(t, out, "controller/inventory.txt") // fails the test itself if absent
 }
 
 // readTarEntryController decompresses a gzip+tar archive and returns one
