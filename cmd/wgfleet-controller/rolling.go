@@ -4,16 +4,18 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/pki"
+	"github.com/shidoh/wgfleet/internal/controller/provisioner"
 	"github.com/shidoh/wgfleet/internal/controller/provmgr"
 	"github.com/shidoh/wgfleet/internal/controller/rollout"
 	"github.com/shidoh/wgfleet/internal/controller/store"
-	"github.com/shidoh/wgfleet/internal/version"
 )
 
 // rollingUpgrade drives a fleet-wide rolling agent upgrade from the CLI.
@@ -58,12 +60,16 @@ func rollingUpgrade(cfg *config.ControllerConfig, ca *pki.CA, agentBin string, p
 		return fmt.Errorf("list nodes: %w", err)
 	}
 
-	// The selection target is the controller's own build: the Makefile stamps both
-	// binaries from the same tree, so "outdated" means "not the build I am". The
-	// per-node gate does not rely on this — it uses the version probed off each
-	// node after upload — so an operator pushing a binary built elsewhere still
-	// gets a correct gate.
-	rp := rollout.BuildPlan(cfg.Fleet, nodes, version.Short())
+	// The selection target is the version of the binary about to be pushed — NOT
+	// this controller's own build. Those match only when both binaries were
+	// deployed from the same tree; deploy just one and selecting on the
+	// controller's version marks every node outdated forever while each rollout
+	// reinstalls the version the node already had, reporting success every time.
+	want, err := provisioner.ProbeLocalAgentVersion(ctx, agentBin)
+	if err != nil {
+		return fmt.Errorf("identify agent binary %s: %w", agentBin, err)
+	}
+	rp := rollout.BuildPlan(cfg.Fleet, nodes, want)
 	printRollingPlan(rp, agentBin)
 	if plan {
 		return nil
@@ -83,26 +89,73 @@ func rollingUpgrade(cfg *config.ControllerConfig, ca *pki.CA, agentBin string, p
 	return streamRollout(ctx, co)
 }
 
+// agentBinVersion resolves — and caches — the version identity of the agent
+// binary a rollout would push.
+//
+// Cached because the dashboard polls the rollout panel every 2-15s and every
+// open tab polls independently; re-execing a 28 MB binary on each poll is pure
+// waste. The cache key is the file's size and mtime, so redeploying the binary
+// under a running controller invalidates it without a restart.
+type agentBinVersion struct {
+	path string
+
+	mu  sync.Mutex
+	key string // size+mtime of the probed file
+	ver string
+	err error
+}
+
+func (c *agentBinVersion) get(ctx context.Context) (string, error) {
+	if c.path == "" {
+		return "", fmt.Errorf("no agent binary configured (controller.agent_bin)")
+	}
+	fi, err := os.Stat(c.path)
+	if err != nil {
+		return "", fmt.Errorf("stat agent binary: %w", err)
+	}
+	key := fmt.Sprintf("%d/%d", fi.Size(), fi.ModTime().UnixNano())
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.key == key {
+		return c.ver, c.err
+	}
+	ver, err := provisioner.ProbeLocalAgentVersion(ctx, c.path)
+	c.key, c.ver, c.err = key, ver, err
+	return ver, err
+}
+
 // webRoller adapts the coordinator to the dashboard's Roller port: the UI knows
 // only "plan / start / abort / observe", while resolving the plan (store
-// inventory + fleet manifest + this build's version) stays here.
+// inventory + fleet manifest + the pushed binary's version) stays here.
 type webRoller struct {
-	co    *rollout.Coordinator
-	st    store.Store
-	fleet config.FleetSection
-	ctx   context.Context // controller base context; rollouts abort on shutdown
-	log   *slog.Logger
+	co     *rollout.Coordinator
+	st     store.Store
+	fleet  config.FleetSection
+	binVer *agentBinVersion
+	ctx    context.Context // controller base context; rollouts abort on shutdown
+	log    *slog.Logger
 }
 
 func (w *webRoller) Plan() rollout.Plan {
+	// Select against the binary that will actually be pushed, never this
+	// controller's own build. The two are the same tree only when both binaries
+	// were deployed together; deploy just one and selecting on the controller's
+	// version makes every node permanently "outdated" while each rollout
+	// dutifully reinstalls the version the node already had.
+	want, err := w.binVer.get(w.ctx)
+	if err != nil {
+		w.log.Warn("rollout plan: cannot identify the agent binary", "err", err)
+		return rollout.Plan{Unavailable: err.Error()}
+	}
 	nodes, err := w.st.ListNodes(w.ctx)
 	if err != nil {
 		// Surface as an empty plan (the panel then offers nothing to roll) and log —
 		// a dashboard poll must not take the page down over a transient store error.
 		w.log.Warn("rollout plan: list nodes failed", "err", err)
-		return rollout.Plan{Want: version.Short()}
+		return rollout.Plan{Want: want}
 	}
-	return rollout.BuildPlan(w.fleet, nodes, version.Short())
+	return rollout.BuildPlan(w.fleet, nodes, want)
 }
 
 func (w *webRoller) Start() error            { return w.co.Start(w.ctx, w.Plan()) }

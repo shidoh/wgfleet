@@ -86,6 +86,13 @@
       <span class="rollout-hint">Masters are excluded — the master is co-located with this controller.</span>
     </form>
 
+    {{else if .Plan.Unavailable}}
+    {{/* Third state, distinct from "nothing to roll": the agent binary this
+         controller would push could not be identified, so whether any node is
+         outdated is unknowable. Saying "everything is up to date" here would be
+         a false claim, and offering a roll would describe work we cannot name. */}}
+    <p class="error-note" role="alert">⚠ Cannot determine what would be rolled: {{.Plan.Unavailable}}</p>
+
     {{else}}
     <p class="rollout-ok"><span class="statusdot"></span>Every exit is on {{.Plan.Want}}. Nothing to roll.</p>
     {{end}}

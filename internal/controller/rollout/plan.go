@@ -44,11 +44,18 @@ type Skipped struct {
 type Plan struct {
 	Targets []Target
 	Skipped []Skipped
-	// Want is the version the selection treated as current. The per-node gate does
-	// NOT use it — it uses the version probed from the binary that actually landed
-	// on each node (see Coordinator.runNode) — so an operator pushing a binary
-	// built elsewhere still gets a correct gate, just a selection based on this.
+	// Want is the version the selection treated as current: the identity probed
+	// from the agent binary this rollout would push. The per-node gate does NOT
+	// use it — it uses the version probed from the binary that actually landed on
+	// each node (see Coordinator.runNode) — but selecting on the same binary is
+	// what keeps "outdated" meaning something a rollout can actually fix.
 	Want string
+	// Unavailable, when non-empty, is why no plan could be built — the agent
+	// binary could not be identified, so "outdated" is unknowable. Rendering an
+	// empty plan instead would read as "everything is up to date", which is a
+	// different and false claim; callers surface this reason rather than offer a
+	// roll they cannot describe.
+	Unavailable string
 }
 
 // Outdated reports how many nodes the plan would touch.
