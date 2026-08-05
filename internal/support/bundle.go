@@ -22,6 +22,19 @@ const (
 	DefaultMaxTotal   = 8 << 20   // 8 MiB across all sections
 )
 
+// maxManifestErr bounds how much of a failed collector's error text lands in
+// ManifestEntry.Err, and therefore in MANIFEST.txt's one-entry-per-line
+// table. execRunner.Run (cmd/wgfleet-agent/support.go) builds that error as
+// "<err>: <combined command output>" on a non-zero exit — the entire output
+// of the failed command — so without a cap, a single failing collector
+// (`docker logs --tail 100 mihomo` exiting non-zero, say) puts up to 100
+// lines of container log into the manifest: untruncated, uncounted toward
+// the section/total caps that bound everything else, and breaking the
+// manifest's one-line-per-entry format. The full, untruncated error already
+// lives in the node's own file section (built from the same errStr just
+// below); the manifest only needs enough of it to say why at a glance.
+const maxManifestErr = 300
+
 // Runner executes a shell command and returns its combined output. Implemented
 // locally by the agent and over SSH by the controller's fleet walk, so one set
 // of collectors serves both.
@@ -48,7 +61,12 @@ type Options struct {
 	MaxTotal   int // 0 ⇒ DefaultMaxTotal
 }
 
-// ManifestEntry is the manifest's record of one collector's result.
+// ManifestEntry is the manifest's record of one collector's result. Err (when
+// produced by Collect) is already bounded to maxManifestErr and collapsed to
+// a single line — see collapseManifestErr — so it is safe to render as one
+// field in one MANIFEST.txt row. An entry built by hand (tests, the "bundle
+// cap" and "fleet walk" synthetic entries) is not required to go through that
+// helper; those are short, fixed, single-line strings by construction.
 type ManifestEntry struct {
 	File  string
 	Name  string
@@ -128,18 +146,45 @@ func Collect(ctx context.Context, r Runner, cs []Collector, opt Options) (*Node,
 		header := fmt.Sprintf("== %s ==\n$ %s\n", c.Name, c.Cmd)
 		n.Files[c.File] += header + section + "\n"
 
-		total += len(header) + len(section)
+		// The manifest's copy of the error is capped and collapsed to one
+		// line independently of `section` above: `section` (the file body)
+		// already carries the full errStr, truncated by maxSection like any
+		// other section body. ManifestEntry.Err is a SEPARATE field with no
+		// cap of its own before this, and MANIFEST.txt renders it inline in
+		// a "path\tname=...\tcmd=...\tbytes=...\terror=..." table row — a
+		// multi-line value there does not just bloat the manifest, it breaks
+		// the one-row-per-entry shape that makes it readable at all.
+		manifestErr := collapseManifestErr(errStr)
+		total += len(header) + len(section) + len(manifestErr)
 
 		n.Entries = append(n.Entries, ManifestEntry{
 			File:  c.File,
 			Name:  c.Name,
 			Cmd:   c.Cmd,
 			Bytes: len(section),
-			Err:   errStr,
+			Err:   manifestErr,
 		})
 	}
 
 	return n, nil
+}
+
+// collapseManifestErr flattens a (possibly multi-line, possibly huge) error
+// string into something that fits as one field in one MANIFEST.txt row:
+// newlines become " | " so the table stays one entry per line, and the
+// result is capped at maxManifestErr with a note of how much was dropped.
+// The cap is applied AFTER collapsing so it bounds what actually lands in
+// the manifest, not the pre-collapse byte count.
+func collapseManifestErr(errStr string) string {
+	if errStr == "" {
+		return ""
+	}
+	flat := strings.ReplaceAll(strings.TrimSpace(errStr), "\n", " | ")
+	if len(flat) > maxManifestErr {
+		dropped := len(flat) - maxManifestErr
+		flat = flat[:maxManifestErr] + fmt.Sprintf(" ...(truncated, %d bytes dropped)", dropped)
+	}
+	return flat
 }
 
 // runCollector executes a single collector, preferring Fn over Cmd (exactly one
@@ -160,8 +205,14 @@ func runCollector(ctx context.Context, r Runner, c Collector) (body string, errS
 }
 
 // WriteArchive emits a gzip+tar archive to w: MANIFEST.txt first, then each
-// node's files under <node>/<file>. Map keys are iterated in sorted order so
-// the same input produces a byte-identical archive.
+// node's files under <node>/<file>. nodes is walked as a sorted COPY of the
+// slice (see sortedNodesByName), not a map[string]Node keyed on Name: config
+// validation only rejects duplicate *exit* names, so nothing stops an
+// operator naming an exit "controller" — the hardcoded inventory node's own
+// name — and a map would silently collapse one of the two, dropping its
+// files while the tar gained the other's twice under the same path. Sorting
+// (rather than using `nodes` in its original order) is what keeps the
+// archive byte-identical for the same input.
 func WriteArchive(w io.Writer, nodes []Node, meta Meta) error {
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
@@ -171,16 +222,7 @@ func WriteArchive(w io.Writer, nodes []Node, meta Meta) error {
 		return err
 	}
 
-	nodeNames := make([]string, len(nodes))
-	byName := make(map[string]Node, len(nodes))
-	for i, n := range nodes {
-		nodeNames[i] = n.Name
-		byName[n.Name] = n
-	}
-	sort.Strings(nodeNames)
-
-	for _, name := range nodeNames {
-		n := byName[name]
+	for _, n := range sortedNodesByName(nodes) {
 		fileNames := make([]string, 0, len(n.Files))
 		for f := range n.Files {
 			fileNames = append(fileNames, f)
@@ -239,6 +281,17 @@ func PrintBundleSummary(path string) error {
 	return nil
 }
 
+// sortedNodesByName returns a COPY of nodes sorted by Name, for deterministic
+// archive/manifest ordering without collapsing same-named nodes the way a
+// map[string]Node keyed on Name would. It is a copy, not an in-place sort, so
+// neither caller (WriteArchive, renderManifest) ever mutates a slice it was
+// merely handed.
+func sortedNodesByName(nodes []Node) []Node {
+	sorted := append([]Node(nil), nodes...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+	return sorted
+}
+
 func writeTarFile(tw *tar.Writer, name, body string) error {
 	hdr := &tar.Header{
 		Name: name,
@@ -265,16 +318,7 @@ func renderManifest(nodes []Node, meta Meta) string {
 	fmt.Fprintf(&b, "created-at: %s\n", createdAt.Format(time.RFC3339))
 	fmt.Fprintf(&b, "note: %s\n\n", meta.Note)
 
-	nodeNames := make([]string, len(nodes))
-	byName := make(map[string]Node, len(nodes))
-	for i, n := range nodes {
-		nodeNames[i] = n.Name
-		byName[n.Name] = n
-	}
-	sort.Strings(nodeNames)
-
-	for _, name := range nodeNames {
-		n := byName[name]
+	for _, n := range sortedNodesByName(nodes) {
 		entries := append([]ManifestEntry(nil), n.Entries...)
 		sort.Slice(entries, func(i, j int) bool {
 			if entries[i].File != entries[j].File {

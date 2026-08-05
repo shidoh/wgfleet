@@ -20,6 +20,16 @@ func (f fakeRunner) Run(_ context.Context, cmd string) (string, error) {
 	return "", errors.New("command not found: " + cmd)
 }
 
+// erroringRunner always fails with a fixed error string, standing in for
+// execRunner.Run's real shape: `fmt.Errorf("%v: %s", err, output)` on a
+// non-zero exit, where output can be a failed command's entire (possibly
+// large, possibly multi-line) combined stdout+stderr.
+type erroringRunner struct{ err string }
+
+func (e erroringRunner) Run(_ context.Context, _ string) (string, error) {
+	return "", errors.New(e.err)
+}
+
 func readArchive(t *testing.T, raw []byte) map[string]string {
 	t.Helper()
 	zr, err := gzip.NewReader(bytes.NewReader(raw))
@@ -86,6 +96,112 @@ func TestCollectTruncatesAnOversizedSection(t *testing.T) {
 	}
 	if !strings.Contains(n.Files["logs.txt"], "truncated") {
 		t.Error("a truncated section must say so — silent truncation reads as complete data")
+	}
+}
+
+// A failing collector's error can carry the ENTIRE combined output of the
+// command that failed (execRunner.Run's `fmt.Errorf("%v: %s", err, output)`
+// on a non-zero exit — see `docker logs --tail 100 mihomo` in collectors.go).
+// Before this fix, ManifestEntry.Err stored that whole string untouched:
+// MANIFEST.txt's one-row-per-entry table broke on the first embedded
+// newline, and the error escaped every size cap the rest of the archive is
+// bound by. This pins both: the manifest's copy is collapsed to one line and
+// capped, while the full error remains readable in the file's own section
+// (which has its own, separate, much larger cap).
+func TestCollectBoundsAndCollapsesManifestErr(t *testing.T) {
+	huge := strings.Repeat("line-of-container-log\n", 50)
+	r := erroringRunner{err: "exit status 1: " + huge}
+	cs := []Collector{{File: "containers.txt", Name: "mihomo log", Cmd: "docker logs --tail 100 mihomo"}}
+
+	n, err := Collect(context.Background(), r, cs, Options{Node: "master-1", Role: "master"})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(n.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(n.Entries))
+	}
+
+	e := n.Entries[0]
+	if strings.Contains(e.Err, "\n") {
+		t.Errorf("ManifestEntry.Err contains a raw newline — it must be collapsed to fit MANIFEST.txt's one-row-per-entry table: %q", e.Err)
+	}
+	if len(e.Err) > maxManifestErr+64 { // +slack for the "...(truncated, N bytes dropped)" suffix
+		t.Errorf("ManifestEntry.Err is %d bytes, want it capped near maxManifestErr (%d)", len(e.Err), maxManifestErr)
+	}
+	if !strings.Contains(e.Err, "truncated") {
+		t.Error("a truncated manifest error must say so, not truncate silently")
+	}
+
+	if !strings.Contains(n.Files["containers.txt"], "line-of-container-log") {
+		t.Error("the full error must still be readable in the file's own section")
+	}
+}
+
+// The manifest copy of a failing collector's error must count toward the
+// bundle's total-size accounting, same as the file section does — otherwise
+// the total-size cap can be crossed several entries later than it should be,
+// purely because the manifest was never charged for what it carries.
+func TestCollectCountsManifestErrTowardTotal(t *testing.T) {
+	r := erroringRunner{err: "boom"}
+	cs := []Collector{
+		{File: "a.txt", Name: "x", Cmd: "y"},      // header(12) + section(11) + manifestErr(4) = 27
+		{File: "a.txt", Name: "second", Cmd: "z"}, // must be capped if the 27 above is fully counted
+	}
+	// 25 sits strictly between 23 (header+section alone) and 27 (with
+	// manifestErr counted): the second collector runs under the old
+	// accounting and is capped under the fixed accounting.
+	n, err := Collect(context.Background(), r, cs, Options{Node: "n1", Role: "exit", MaxTotal: 25})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(n.Entries) != 2 {
+		t.Fatalf("entries = %d, want 2 (first collector, then the bundle-cap stand-in for the second)", len(n.Entries))
+	}
+	if n.Entries[1].Name != "(bundle cap)" {
+		t.Errorf("second entry = %+v, want the bundle-cap stand-in — ManifestEntry.Err must count toward `total` or the cap fires a collector too late", n.Entries[1])
+	}
+}
+
+// WriteArchive keys nodes by Name only for sort order, never for identity —
+// two nodes CAN share a Name (config validation only rejects duplicate
+// *exit* names; nothing stops an operator naming an exit "controller", which
+// collides with the hardcoded inventory node). A map[string]Node keyed on
+// Name would silently keep only the LAST node assigned to that key, dropping
+// the other's files entirely. Iterating the slice directly must keep both.
+func TestWriteArchiveKeepsBothNodesWhenNamesCollide(t *testing.T) {
+	nodes := []Node{
+		{Name: "controller", Files: map[string]string{"inventory.txt": "controller inventory\n"}},
+		{Name: "controller", Files: map[string]string{"identity.txt": "exit named controller\n"}},
+	}
+	var buf bytes.Buffer
+	if err := WriteArchive(&buf, nodes, Meta{}); err != nil {
+		t.Fatalf("WriteArchive: %v", err)
+	}
+	files := readArchive(t, buf.Bytes())
+	if _, ok := files["controller/inventory.txt"]; !ok {
+		t.Error("first same-named node's file is missing from the archive")
+	}
+	if _, ok := files["controller/identity.txt"]; !ok {
+		t.Error("second same-named node's file is missing from the archive — a map keyed on Name would have collapsed one node into the other")
+	}
+}
+
+// renderManifest must show the same "both nodes kept" behavior as
+// WriteArchive — it has its own independent map-keyed-on-Name construction,
+// so fixing one without the other would leave the manifest's own table
+// silently dropping one same-named node's entries even if the tar were
+// already correct.
+func TestRenderManifestListsBothNodesWhenNamesCollide(t *testing.T) {
+	nodes := []Node{
+		{Name: "controller", Entries: []ManifestEntry{{File: "inventory.txt", Name: "fleet inventory", Bytes: 5}}},
+		{Name: "controller", Entries: []ManifestEntry{{File: "identity.txt", Name: "hostname", Bytes: 7}}},
+	}
+	man := renderManifest(nodes, Meta{})
+	if !strings.Contains(man, "controller/inventory.txt") {
+		t.Error("manifest is missing the first same-named node's entry")
+	}
+	if !strings.Contains(man, "controller/identity.txt") {
+		t.Error("manifest is missing the second same-named node's entry — a map keyed on Name would have collapsed one node into the other")
 	}
 }
 

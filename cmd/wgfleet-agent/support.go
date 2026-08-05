@@ -137,6 +137,20 @@ func writeSupportBundle(ctx context.Context, opts supportOpts) error {
 		node.Entries = append(node.Entries, support.ManifestEntry{File: s.File, Name: s.Name, Bytes: len(s.Body)})
 	}
 
+	// Same defence in depth for MANIFEST.txt as node.Files above: Collect
+	// already bounds and collapses ManifestEntry.Err to one line (see
+	// collapseManifestErr), but a failing collector's error text can still
+	// carry the failed command's raw combined output verbatim — the one
+	// place collected output otherwise reached Gate unmasked. Cmd is a
+	// static string per collector and never secret-shaped today, but
+	// scrubbing it too costs nothing when the input is already known safe,
+	// and means a future collector whose Cmd embeds a value cannot become a
+	// silent exception to this pass. Must run before Gate, same as Files.
+	for i := range node.Entries {
+		node.Entries[i].Cmd = support.Scrub(node.Entries[i].Cmd)
+		node.Entries[i].Err = support.Scrub(node.Entries[i].Err)
+	}
+
 	// --note is free-form text a tester types (or pastes) describing what went
 	// wrong — the single likeliest place someone drops a key or a config
 	// fragment without meaning to. It never lives in node.Files (it is embedded
@@ -162,8 +176,11 @@ func writeSupportBundle(ctx context.Context, opts supportOpts) error {
 		return err
 	}
 
-	// Only now does anything touch disk.
-	f, err := os.Create(opts.Out)
+	// Only now does anything touch disk. 0600, not os.Create's default
+	// (0666 & umask, typically 0644): the archive carries no secrets by
+	// construction, but journal tails and nftables rulesets are not
+	// something to leave world-readable on a shared box.
+	f, err := os.OpenFile(opts.Out, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("create archive: %w", err)
 	}

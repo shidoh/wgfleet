@@ -101,6 +101,88 @@ func TestGateIgnoresEmptySecrets(t *testing.T) {
 
 func asLeakError(err error, target **LeakError) bool { return errors.As(err, target) }
 
+// A genuine multi-line PEM, shaped exactly like what pem.EncodeToMemory
+// produces (64-column-wrapped body, BEGIN/END banners) and exactly what the
+// controller feeds Gate for the fleet CA key and every exit's SSH bootstrap
+// key. Every other secret constant in this file is single-line, which is
+// precisely why the multi-line gap survived six task-scoped reviews: nothing
+// here ever exercised gateContent's old line-by-line strings.Contains, which
+// can never match a needle containing its own "\n".
+const multiLinePEM = `-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIKzWJ8v3fAkeGmWJHqxfvNMTvVvyN2R2Vv1QhqfXvTjmoAoGCCqGSM49
+AwEHoUQDQgAEfakeFakeFakeFakeFakeFakeFakeFakeFakeFakeFakeFakeFake
+Fakefakefakefakefakefakefakefakefakefakefakefakefake==
+-----END EC PRIVATE KEY-----`
+
+// The regression this branch's review found: a multi-line secret is invisible
+// to the primary (exact-match) check because gateContent used to split
+// content on "\n" and test strings.Contains(line, secret) per line — a
+// multi-line needle can never be a substring of one line. Reproduced first
+// against the pre-fix gateContent (confirmed it let this straight through),
+// then fixed by searching the whole content instead of one line at a time.
+func TestGateRefusesAMultiLinePEMSecret(t *testing.T) {
+	nodes := []Node{{
+		Name: "controller",
+		Files: map[string]string{
+			"secrets.txt": "before\n" + multiLinePEM + "\nafter\n",
+		},
+	}}
+	err := Gate(nodes, []string{multiLinePEM})
+	if err == nil {
+		t.Fatal("gate passed a bundle containing a real multi-line PEM private key")
+	}
+	var le *LeakError
+	if !asLeakError(err, &le) {
+		t.Fatalf("error is %T, want *LeakError", err)
+	}
+	if le.Line != 2 {
+		t.Errorf("Line = %d, want 2 (the PEM's first line, after the leading \"before\" line)", le.Line)
+	}
+	if strings.Contains(err.Error(), multiLinePEM) || strings.Contains(err.Error(), "BEGIN EC PRIVATE KEY") {
+		t.Error("the gate printed the secret it was refusing to leak")
+	}
+}
+
+// Scrub is the second layer for uncontrolled text. It must not be relied on to
+// catch what Gate's exact-match check is the real backstop for: the key-name
+// regex requires a `key: value`/`key=value` shape, and a PEM's BEGIN/END
+// banners and base64 body lines have neither — confirming Scrub leaves this
+// untouched is what makes the exact-match fix in gateContent load-bearing
+// rather than redundant.
+func TestScrubLeavesAPEMBodyUntouched(t *testing.T) {
+	got := Scrub(multiLinePEM)
+	if got != multiLinePEM {
+		t.Errorf("Scrub altered a PEM it has no business touching:\ngot:  %q\nwant: %q", got, multiLinePEM)
+	}
+}
+
+// The single-line exact-match path must not regress while fixing the
+// multi-line one: gateContent's new whole-content strings.Index still has to
+// report the correct line for an ordinary one-line secret, and the earliest
+// of several matching secrets when more than one is present.
+func TestGateStillReportsTheCorrectLineForASingleLineSecret(t *testing.T) {
+	other := "anotherFakeButWellFormedSecretValueXYZ9="
+	nodes := []Node{{
+		Name: "exit-de-1",
+		Files: map[string]string{
+			"state.txt": "line one\n" + other + "\nPrivateKey = " + privKey + "\nline four\n",
+		},
+	}}
+	// Both `other` and `privKey` are real secrets this node holds; `other`
+	// occurs first in the content, so it must be the one reported.
+	err := Gate(nodes, []string{privKey, other})
+	if err == nil {
+		t.Fatal("gate passed a bundle containing a real secret")
+	}
+	var le *LeakError
+	if !asLeakError(err, &le) {
+		t.Fatalf("error is %T, want *LeakError", err)
+	}
+	if le.Line != 2 {
+		t.Errorf("Line = %d, want 2 (the earliest match, not just the first secret in the list)", le.Line)
+	}
+}
+
 // Regression for a value capture that stopped at the first whitespace: an
 // "Authorization: Bearer <jwt>" header has the secret in its SECOND word, and
 // a `\S+` value group would mask only "Bearer", leaving the token in the

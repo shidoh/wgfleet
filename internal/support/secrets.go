@@ -79,10 +79,13 @@ func Scrub(s string) string {
 // Gate is the last line: it refuses to write rather than writing something
 // redacted-in-passing. Two checks, in order of strength:
 //
-//  1. Exact — every value in secrets is searched for verbatim. The node holds
-//     its own real keys, so this is precise and has no false positives. It is
-//     the primary check because AmneziaWG public and private keys share a shape
-//     and no regex can tell them apart.
+//  1. Exact — every value in secrets is searched for verbatim, over the whole
+//     of each field's content rather than one line at a time, so a secret
+//     that itself spans multiple lines (a PEM-encoded key, wrapped at 64
+//     columns) is still found. The node holds its own real keys, so this is
+//     precise and has no false positives. It is the primary check because
+//     AmneziaWG public and private keys share a shape and no regex can tell
+//     them apart.
 //  2. By key name — for a secret this process does not know about, arriving in
 //     uncontrolled text.
 //
@@ -138,19 +141,44 @@ func Gate(nodes []Node, secrets []string) error {
 	return nil
 }
 
-// gateContent checks one field's content line by line, returning the first
-// LeakError found or nil. path identifies where the content will land in the
-// archive (a collected file, or the manifest for entry Cmd/Err text).
+// gateContent checks one field's content, returning the first LeakError found
+// or nil. path identifies where the content will land in the archive (a
+// collected file, or the manifest for entry Cmd/Err text).
+//
+// The exact-match check (secrets) runs over the WHOLE content, not line by
+// line: a needle that itself contains a newline — the fleet CA private key
+// and every exit's SSH bootstrap key are both PEM, which pem.EncodeToMemory
+// wraps at 64 columns — can never be a substring of any single line, so a
+// per-line strings.Contains can never find it. strings.Index over the full
+// string finds it regardless of how many lines it spans; the byte offset is
+// then converted back to a 1-based line number (counting newlines before the
+// match start) purely for a useful LeakError, not for detection. When more
+// than one secret matches, the earliest occurrence in the content is
+// reported, matching what a line-by-line scan would have found first.
+//
+// This deliberately does NOT split secrets into line-sized fragments and
+// search for those independently: a short fragment shared with ordinary text
+// (a PEM's "-----BEGIN...-----" banner line, say) would then flag content
+// that never actually contained the secret, trading a false negative for a
+// false positive rather than fixing the real gap.
+//
+// The secret-bearing-key-name regex stays line-by-line: it is a single-line
+// pattern by construction (Go's RE2 "." does not match "\n" without the "s"
+// flag), so a per-line scan already finds every match it can find.
 func gateContent(path, content string, secrets []string) error {
-	lines := strings.Split(content, "\n")
-
-	for i, line := range lines {
-		for _, secret := range secrets {
-			if strings.Contains(line, secret) {
-				return &LeakError{File: path, Line: i + 1, Reason: "line contains a secret this node holds"}
-			}
+	bestIdx := -1
+	for _, secret := range secrets {
+		if idx := strings.Index(content, secret); idx >= 0 && (bestIdx == -1 || idx < bestIdx) {
+			bestIdx = idx
 		}
+	}
+	if bestIdx >= 0 {
+		line := strings.Count(content[:bestIdx], "\n") + 1
+		return &LeakError{File: path, Line: line, Reason: "line contains a secret this node holds"}
+	}
 
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
 		if m := secretKeyRe.FindStringSubmatch(line); m != nil && m[2] != redactedMarker {
 			return &LeakError{File: path, Line: i + 1, Reason: fmt.Sprintf("line names a secret-bearing key (%s)", m[1])}
 		}

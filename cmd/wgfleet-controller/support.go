@@ -115,6 +115,18 @@ func writeFleetSupportBundle(ctx context.Context, opts supportFleetOpts) error {
 		}
 	}
 
+	// Same defence in depth for MANIFEST.txt, exactly as the agent does: Collect
+	// already bounds and collapses ManifestEntry.Err to one line, but a failing
+	// collector's error text (or, here, an SSH dial/timeout reason) can still
+	// carry secret-shaped text verbatim. Cmd and Err are both scrubbed before
+	// Gate sees either.
+	for i := range nodes {
+		for j := range nodes[i].Entries {
+			nodes[i].Entries[j].Cmd = support.Scrub(nodes[i].Entries[j].Cmd)
+			nodes[i].Entries[j].Err = support.Scrub(nodes[i].Entries[j].Err)
+		}
+	}
+
 	// --note is free-form text an operator types describing what a tester
 	// reported — the same risk cmd/wgfleet-agent/support.go's regression test
 	// pins: it never lives in node.Files, so without gating it separately it
@@ -134,8 +146,11 @@ func writeFleetSupportBundle(ctx context.Context, opts supportFleetOpts) error {
 		return err
 	}
 
-	// Only now does anything touch disk.
-	f, err := os.Create(opts.Out)
+	// Only now does anything touch disk. 0600, not os.Create's default
+	// (0666 & umask, typically 0644): the archive carries no secrets by
+	// construction, but journal tails and nftables rulesets are not
+	// something to leave world-readable on a shared box.
+	f, err := os.OpenFile(opts.Out, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("create archive: %w", err)
 	}
@@ -251,14 +266,32 @@ func walkExit(ctx context.Context, e config.ExitConfig, dial sshDial, commandTim
 
 // timeoutRunner bounds every command a Runner executes to `timeout`,
 // regardless of what the context passed to Collect otherwise carries.
-// SSHRunner.Run does respect context cancellation (it selects on
-// <-ctx.Done()) but has no timeout of its own; without this wrapper the only
-// deadline any command ever got was whatever the caller's ctx already
-// carried, which for the fleet walk was context.Background() — none at all.
-// A session that connects and then never returns (a wedged remote command, a
-// silently partitioned TCP connection) hung forever as a result. This is the
-// SSH-fleet-walk equivalent of cmd/wgfleet-agent/support.go's execRunner
-// timeout.
+// Without this wrapper the only deadline any command ever got was whatever
+// the caller's ctx already carried, which for the fleet walk was
+// context.Background() — none at all — so a session that connects and then
+// never returns (a wedged remote command, a silently partitioned TCP
+// connection) hung forever. This is the SSH-fleet-walk equivalent of
+// cmd/wgfleet-agent/support.go's execRunner timeout.
+//
+// It does NOT simply pass cctx down to t.r.Run and trust the wrapped Runner
+// to notice cancellation on its own: SSHRunner.Run (internal/controller/
+// provisioner/ssh_runner.go) calls ssh.Client.NewSession() BEFORE it ever
+// selects on <-ctx.Done() — NewSession blocks on the SSH channel-open reply
+// with no deadline of its own (ssh.ClientConfig.Timeout covers only the
+// initial handshake, and no keepalive is configured), so a silently
+// half-open connection can wedge inside NewSession, past both
+// fleetCommandTimeout and fleetExitTimeout, without ever reaching the code
+// that would have honored cctx. That is precisely the case this wrapper's
+// previous version claimed to have fixed and did not: its own test's fake
+// (blockingRunner) modeled a Runner that DOES watch ctx.Done(), which is a
+// more cooperative subject than SSHRunner actually is.
+//
+// The fix is to race t.r.Run in its own goroutine against cctx directly,
+// rather than call it and wait for it to return: cctx firing unblocks this
+// method's caller even while the goroutine underneath is still stuck inside
+// NewSession. The goroutine is deliberately left running in that case — this
+// process collects one support bundle and exits, so a leaked goroutine has
+// nothing left to cost.
 type timeoutRunner struct {
 	r       support.Runner
 	timeout time.Duration
@@ -267,11 +300,23 @@ type timeoutRunner struct {
 func (t timeoutRunner) Run(ctx context.Context, cmd string) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, t.timeout)
 	defer cancel()
-	out, err := t.r.Run(cctx, cmd)
-	if err != nil && cctx.Err() == context.DeadlineExceeded {
-		return out, fmt.Errorf("command timed out")
+
+	type result struct {
+		out string
+		err error
 	}
-	return out, err
+	ch := make(chan result, 1) // buffered: the goroutine must not block forever trying to send if we give up first
+	go func() {
+		out, err := t.r.Run(cctx, cmd)
+		ch <- result{out, err}
+	}()
+
+	select {
+	case <-cctx.Done():
+		return "", fmt.Errorf("command timed out after %s", t.timeout)
+	case r := <-ch:
+		return r.out, r.err
+	}
 }
 
 // unreachableExit is the stanza an unreachable exit becomes: one file, one

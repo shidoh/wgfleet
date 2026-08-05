@@ -130,16 +130,15 @@ refusing to write the bundle: <node>/<file>:<line> <reason>
 
 This is not the same thing as a masked `--note` above — masking already
 handles the ordinary "pasted a config line by accident" case silently.
-Refusal means something stronger got through unmasked: either the exact
-value of a secret this node actually holds, found verbatim anywhere in the
-assembled output including the note; or, in a failed command's raw error
-text specifically (the one place collected output isn't run through
-masking first), something still shaped like a secret-bearing field. Either
-way, nothing partial is left on disk — the file is only created after this
-check passes. That is a bug in a collector, or in the check itself, not a
-limit to work around: report it, quoting the file and line from the message
-(never the value), rather than editing the note or the output to get past
-it.
+Refusal means something stronger got through unmasked: the exact value of a
+secret this node actually holds, found verbatim anywhere in the assembled
+output — including the note, and including a failed command's error text
+(which goes through the same masking pass as everything else before the
+check runs). Either way, nothing partial is left on disk — the file is only
+created after this check passes. That is a bug in a collector, or in the
+check itself, not a limit to work around: report it, quoting the file and
+line from the message (never the value), rather than editing the note or the
+output to get past it.
 
 ## Fleet mode's secret-check gap
 

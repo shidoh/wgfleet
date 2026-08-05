@@ -25,18 +25,22 @@ func alwaysFailDial(domain.SSHTarget) (provisioner.Runner, error) {
 	return nil, errors.New("dial refused (test)")
 }
 
-// blockingRunner never returns from Run until ctx is done — it stands in for
-// a wedged SSH session: the dial succeeded, a session opened, and then a
-// command just never comes back (a hung remote process, a silently
-// partitioned TCP connection). Like the real SSHRunner, it honors context
-// cancellation; what it does NOT do on its own is give up on its own
-// initiative, which is exactly what made the pre-fix bug possible — a ctx
-// with no deadline meant Done() never fired and this would block forever.
+// blockingRunner never returns from Run AT ALL — not even once ctx is
+// cancelled. It stands in for a wedged SSH session where the wedge is inside
+// ssh.Client.NewSession() (see timeoutRunner's doc comment): the real
+// SSHRunner.Run only starts watching ctx.Done() AFTER NewSession returns, so
+// a connection that wedges there never reaches the code that would honor
+// cancellation. A fake that itself selects on <-ctx.Done() would be modeling
+// a Runner MORE cooperative than SSHRunner actually is, and would pass even
+// against the old, buggy timeoutRunner that simply called through and waited
+// — which is exactly how the bug survived review. timeoutRunner must bound
+// this on its own, by racing the call in a goroutine rather than trusting
+// the Runner underneath to give up.
 type blockingRunner struct{}
 
 func (blockingRunner) Run(ctx context.Context, cmd string) (string, error) {
-	<-ctx.Done()
-	return "", ctx.Err()
+	<-make(chan struct{}) // block forever; deliberately never inspects ctx
+	return "", nil        // unreachable
 }
 func (blockingRunner) Upload(_ context.Context, _ string, _ []byte, _ os.FileMode) error { return nil }
 func (blockingRunner) Close() error                                                      { return nil }
