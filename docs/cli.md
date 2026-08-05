@@ -26,6 +26,9 @@ Every flag on both binaries. For what to *do* with them see
 | `--restore <in>` | | restore controller state from an age-encrypted archive `<in>`, then exit (controller must be stopped) |
 | `--age-recipient <rcpt>` | | with `--backup`: encrypt to this age recipient instead of prompting for a passphrase |
 | `--plan` | | with `--restore`: show what would be laid down, change nothing |
+| `--support-bundle` | | write a read-only diagnostic archive (no secrets, not encrypted) and exit; requires `--fleet` |
+| `--fleet` | | with `--support-bundle`: collect the store inventory and walk every exit over SSH |
+| `--note <text>` | | with `--support-bundle`: describe what went wrong; embedded in the archive and subject to the same secret checks as everything else |
 
 No subcommand flags ⇒ serve the API + UI + metrics until signalled.
 
@@ -42,5 +45,7 @@ No subcommand flags ⇒ serve the API + UI + metrics until signalled.
 | `--mgmt-addr <ip>` | (from `agent.yaml`) | mgmt/ZT address (metrics + admin + DNS bind); overrides `agent.mgmt_addr` |
 | `--state-dir <dir>` | | root managed files under `<dir>` instead of `/etc` (non-root/dev) |
 | `--metrics <addr>` | `<mgmt_addr>:9301` | override the agent `/metrics` bind (mgmt/ZT only); `off` disables |
+| `--support-bundle` | | write a read-only diagnostic archive for THIS node (no secrets, not encrypted) and exit; needs no controller, so it works when the control plane is down |
+| `--note <text>` | | with `--support-bundle`: describe what went wrong; embedded in the archive and subject to the same secret checks as everything else |
 
 No `--once` ⇒ run as a daemon, reconciling on the configured interval (default 30s).

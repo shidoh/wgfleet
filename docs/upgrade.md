@@ -97,6 +97,13 @@ plane refusing service does not break the data plane.
 - **`controller.agent_bin` must be set** for auto-upgrade, `--upgrade-agent`, and
   the UI button. Without it those paths error clearly ("no agent binary
   configured").
+- **"Outdated" is measured against `agent_bin`, not against the controller's own
+  build.** The rolling upgrade probes the version of the binary it is about to
+  push and selects nodes against that. So upgrading only the controller — which
+  `deploy-master.sh --controller` does, and warns about — correctly leaves the
+  panel reading "nothing to roll" rather than offering an upgrade that would
+  reinstall the version every node already has. Push the agent binary to the
+  controller host before rolling the fleet.
 - **SSH reach is required to upgrade.** The upgrade reuses the node's manifest
   SSH target — the same channel bootstrap used. If you decommissioned SSH access
   after bootstrap, restore it before upgrading (or re-provision).

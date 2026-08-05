@@ -53,6 +53,41 @@ There you **issue** per-client credentials and hand each user one of:
 clients route through the tunnel. See `maintainer notes` #29 for the hard-won
 client-side details (strict-route, DNS split, import formats).
 
+## Support bundle
+
+A read-only diagnostic archive, for handing a broken fleet to someone who has no
+access to it. It contains no secrets, is not encrypted, and is plain text
+throughout, so whoever runs it can read exactly what they are about to send.
+
+```bash
+# One node. Depends on nothing — this works when the control plane is down.
+wgfleet-agent --support-bundle --note "clients stopped resolving around 14:00"
+
+# The exits, plus a fleet inventory. Needs a live controller and SSH.
+wgfleet-controller --support-bundle --fleet
+```
+
+Read it before sending it: `tar tzf <archive>` lists, `tar xzf <archive>`
+extracts, and `MANIFEST.txt` names every file, the command behind it, and — just
+as importantly — what was deliberately **not** collected.
+
+Three layers keep the no-secrets promise: no configuration file is ever a
+collector source, secret-bearing values in uncontrolled text (container logs,
+third-party units) are masked, and if a secret the node actually holds survives
+into the assembled bundle the tool **refuses to write the archive at all** and
+names the file and line. A refusal is worth reporting rather than working around.
+
+Two limits worth knowing. `--fleet` walks the exits; it collects nothing about
+the co-located master beyond one inventory line, so run the agent bundle there
+too when the master is the problem. And the fleet-mode secret check can only
+compare against secrets the controller itself holds — it cannot see an exit's own
+on-disk keys, because fetching them would mean collecting exactly what this
+feature refuses to collect. The local agent run does not have that gap.
+
+The full runbook ships to operators as `SUPPORT-BUNDLE.md`. For client-side
+problems — a device that connects but loads nothing — `client-diag.sh` ships
+alongside it and runs from the client, not the server.
+
 ## Backup & restore
 
 One command captures the **irreplaceable** state and one restores it onto a fresh

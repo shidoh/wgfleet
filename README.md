@@ -138,6 +138,9 @@ everywhere else.
   leave it. A compromised controller cannot leak node private keys.
 - **Dry-run everywhere** — plan mode for reconcile, provisioning, upgrades and
   restore.
+- **Support bundle** — one command produces a plain-text archive of diagnostic
+  state for someone who cannot reach your servers. It carries no secrets, is not
+  encrypted, and refuses to be written at all if a secret survives into it.
 - **AmneziaWG obfuscation, done right** — collision-safe S1–S4, per-end decoy
   traffic, real-protocol mimicry, computed MTU. Encoded in the renderer rather
   than left to guesswork ([details](#amneziawg-done-right)).
