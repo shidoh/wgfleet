@@ -3,8 +3,10 @@
 # macOS and Linux. Run it FROM a VPN client while the AmneziaWG tunnel is up to
 # capture a snapshot of everything that historically broke this setup:
 #
-#   - PMTU / MSS black-holes (docs/DESIGN.md an earlier finding)  — the #1 source of
-#     "works but every request lags / empty reply from server / Telegram stuck".
+#   - PMTU / MSS black-holes — nested AmneziaWG + WARP tunnels shrink the usable
+#     packet size, and a path that silently drops anything over that size is the
+#     #1 source of "works but every request lags / empty reply from server /
+#     Telegram stuck".
 #   - Egress path: is traffic actually leaving via Cloudflare WARP?
 #   - DNS resolution + which resolver answers.
 #   - Latency / packet loss to the master and to the open internet.

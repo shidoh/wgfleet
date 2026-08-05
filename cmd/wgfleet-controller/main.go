@@ -72,6 +72,9 @@ func run() error {
 		backupOut    = flag.String("backup", "", "snapshot controller (+co-located master) state to an age-encrypted archive at this path, then exit")
 		restoreIn    = flag.String("restore", "", "restore controller state from an age-encrypted archive at this path, then exit")
 		ageRecipient = flag.String("age-recipient", "", "with --backup: encrypt to this age recipient instead of prompting for a passphrase")
+		supportBnd   = flag.Bool("support-bundle", false, "write a read-only diagnostic archive, then exit (requires --fleet)")
+		fleetMode    = flag.Bool("fleet", false, "with --support-bundle: also render inventory from the store and walk every exit over SSH")
+		supportNote  = flag.String("note", "", "with --support-bundle: free-form description of the problem, embedded in the bundle's manifest")
 		showVersion  = flag.Bool("version", false, "print build version and exit")
 		setAdminPw   = flag.Bool("set-admin-password", false, "set/reset the web panel admin password (run with the controller stopped) and exit")
 		adminUser    = flag.String("admin-user", "admin", "username for --set-admin-password")
@@ -119,6 +122,19 @@ func run() error {
 		}
 		printRestorePlan(p, *plan)
 		return nil
+	}
+
+	// --support-bundle --fleet needs only the store (best-effort) and the fleet
+	// manifest already loaded above — not the mandatory CA load below, because a
+	// broken/missing CA is itself something a bundle should help diagnose, not
+	// something that should block producing one. It attempts the CA best-effort,
+	// purely to widen Gate's secret set; see bestEffortCA and
+	// gatherControllerSecrets.
+	if *supportBnd {
+		if !*fleetMode {
+			return fmt.Errorf("--support-bundle on the controller requires --fleet (a non-fleet, single-node bundle is not implemented here; run wgfleet-agent --support-bundle on the co-located agent for that)")
+		}
+		return runFleetSupportBundle(cfg, bestEffortCA(cfg), *supportNote)
 	}
 
 	if *setAdminPw {
