@@ -30,7 +30,13 @@ const (
 	// port stays closed" convergence hazard as v3, hence the bump. Deploy the
 	// controller FIRST: an agent newer than the controller is refused
 	// entirely (WireAgentTooNew), while an older agent stays compatible.
-	WireContractVersion uint32 = 4
+	// v5: additive FirewallSpec.public_udp_ports (world-facing UDP accepts). A v4
+	// agent silently drops the field and renders a ruleset WITHOUT the accept, so
+	// the operator's configured UDP port stays closed with no error — the same
+	// "configured port stays closed" convergence hazard as v3, hence the bump.
+	// Motivating case: a ZeroTier controller co-located with the node's own member
+	// instance, which must listen on a non-default port.
+	WireContractVersion uint32 = 5
 
 	// MinSupportedWire is the oldest agent wire version the controller will serve
 	// a spec to. Agents below it are refused (fail-safe) and, where possible,

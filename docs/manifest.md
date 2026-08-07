@@ -127,6 +127,10 @@ fleet:
         # public_tcp_ports: [80]           # TCP ports opened to the WORLD (no interface scope),
                                             #   e.g. a decoy web listener on 80 — keep to genuinely
                                             #   public services (bypasses the default drop policy)
+        # public_udp_ports: [9994]         # UDP ports opened to the WORLD — the UDP sibling
+                                            #   of public_tcp_ports, e.g. a ZeroTier controller
+                                            #   on a non-default port (9993 is held by the
+                                            #   node's own member instance)
       ssh:
         host: 198.51.100.7
         port: 22

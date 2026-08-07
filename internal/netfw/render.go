@@ -304,6 +304,14 @@ func RenderRuleset(in RenderInput) (string, error) {
 	for _, port := range normalizePorts(in.Firewall.PublicTCPPorts) {
 		fmt.Fprintf(&b, "\t\ttcp dport %d accept\n", port)
 	}
+	// World-facing UDP services (FirewallSpec.PublicUDPPorts) — the UDP sibling of
+	// the loop above, same rationale: no iifname scope, role-agnostic. Note this
+	// deliberately does NOT cross-check WGPort or zeroTierPort above: a duplicate
+	// accept is harmless in nft, and special-casing would make the render depend on
+	// which knob a port arrived through.
+	for _, port := range normalizePorts(in.Firewall.PublicUDPPorts) {
+		fmt.Fprintf(&b, "\t\tudp dport %d accept\n", port)
+	}
 	// Master only: let client TCP that prerouting DNAT'd to the local mihomo redir
 	// port reach mihomo. After DNAT the destination is the master's own address, so
 	// the packet hits this INPUT chain; without this accept the drop policy swallows

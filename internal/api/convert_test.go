@@ -306,3 +306,34 @@ func TestFirewallPublicTCPPortsEmptyRoundTrip(t *testing.T) {
 		t.Errorf("PublicTCPPorts = %v, want nil", got.Firewall.PublicTCPPorts)
 	}
 }
+
+func TestFirewallProtoRoundTripPublicUDPPorts(t *testing.T) {
+	in := domain.NodeSpec{
+		Role: domain.RoleMaster,
+		Firewall: domain.FirewallSpec{
+			WGPort:         51820,
+			PublicUDPPorts: []int{9994, 500},
+		},
+	}
+	out := SpecFromProto(SpecToProto(in))
+	if len(out.Firewall.PublicUDPPorts) != 2 {
+		t.Fatalf("PublicUDPPorts = %v, want 2 entries", out.Firewall.PublicUDPPorts)
+	}
+	// Order is kept as is: normalising it is the renderer's job, not the wire's.
+	if out.Firewall.PublicUDPPorts[0] != 9994 || out.Firewall.PublicUDPPorts[1] != 500 {
+		t.Fatalf("PublicUDPPorts = %v, want [9994 500]", out.Firewall.PublicUDPPorts)
+	}
+}
+
+// An empty list must not turn into non-nil on the other side: otherwise
+// "field absent" and "field empty" become different specs and cause
+// spurious drift on every pass.
+func TestFirewallProtoRoundTripPublicUDPPortsEmpty(t *testing.T) {
+	got := SpecFromProto(SpecToProto(domain.NodeSpec{
+		Role:     domain.RoleExit,
+		Firewall: domain.FirewallSpec{WGPort: 51820},
+	}))
+	if got.Firewall.PublicUDPPorts != nil {
+		t.Errorf("PublicUDPPorts = %v, want nil", got.Firewall.PublicUDPPorts)
+	}
+}

@@ -286,6 +286,12 @@ type MasterConfig struct {
 	// listed here is reachable from every source the drop policy would otherwise
 	// block, so keep it to genuinely public services.
 	PublicTCPPorts []int `koanf:"public_tcp_ports"`
+	// PublicUDPPorts are UDP ports opened to the WORLD (no interface scope) — the
+	// UDP sibling of PublicTCPPorts. Motivating case: a ZeroTier controller
+	// co-located with this node's own member instance, which must listen on a
+	// non-default port because the member already holds 9993. Same caveat as
+	// above: reachable from every source the drop policy would otherwise block.
+	PublicUDPPorts []int `koanf:"public_udp_ports"`
 	// DNSFilter enables the master-tier blocky resolver (ADR-0024): a client-facing
 	// filtering resolver clients use as their DNS. It blocks + forwards local zones to
 	// internal DNS (DNS.overrides conditional mappings) + forwards everything else to
@@ -730,6 +736,9 @@ type FirewallConfig struct {
 	// masters[].client_admin_ports (client-interface scoped), anything listed here
 	// is reachable from every source, so keep it to genuinely public services.
 	PublicTCPPorts []int `koanf:"public_tcp_ports"`
+	// PublicUDPPorts are UDP ports opened to the WORLD (no interface scope) — the
+	// UDP sibling of PublicTCPPorts. Same caveat: reachable from every source.
+	PublicUDPPorts []int `koanf:"public_udp_ports"`
 }
 
 const (

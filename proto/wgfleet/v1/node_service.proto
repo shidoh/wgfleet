@@ -362,6 +362,10 @@ message FirewallSpec {
   // services, e.g. the decoy web listener. Role-agnostic. Contrast
   // MasterSpec.client_admin_ports, which is scoped to the client WG interface.
   repeated int32 public_tcp_ports = 5;
+  // UDP ports opened to the WORLD (no interface scope) — the UDP sibling of
+  // public_tcp_ports. Motivating case: a second ZeroTier node (a controller)
+  // on a non-default port, because the node's own member instance holds 9993.
+  repeated int32 public_udp_ports = 6;
 }
 
 message RoutingSpec {

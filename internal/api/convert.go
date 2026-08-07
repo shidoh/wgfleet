@@ -523,6 +523,9 @@ func firewallToProto(f domain.FirewallSpec) *pb.FirewallSpec {
 	for _, p := range f.PublicTCPPorts {
 		out.PublicTcpPorts = append(out.PublicTcpPorts, int32(p))
 	}
+	for _, p := range f.PublicUDPPorts {
+		out.PublicUdpPorts = append(out.PublicUdpPorts, int32(p))
+	}
 	return out
 }
 
@@ -538,6 +541,9 @@ func firewallFromProto(f *pb.FirewallSpec) domain.FirewallSpec {
 	}
 	for _, p := range f.GetPublicTcpPorts() {
 		out.PublicTCPPorts = append(out.PublicTCPPorts, int(p))
+	}
+	for _, p := range f.GetPublicUdpPorts() {
+		out.PublicUDPPorts = append(out.PublicUDPPorts, int(p))
 	}
 	return out
 }

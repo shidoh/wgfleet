@@ -225,6 +225,20 @@ type FirewallSpec struct {
 	// so the rendered ruleset is byte-stable across passes regardless of manifest
 	// order — an unstable render would re-apply the firewall on every reconcile.
 	PublicTCPPorts []int
+
+	// PublicUDPPorts are UDP ports opened to the WORLD (no interface scope) — the
+	// UDP sibling of PublicTCPPorts. Its motivating case is a second ZeroTier node
+	// (a network controller) running alongside the node's own member instance,
+	// which must use a non-default port because the member already holds 9993.
+	// Role-agnostic: it applies to masters and exits alike.
+	//
+	// Opening a port here exposes it to every source the drop policy would
+	// otherwise block, so keep the list to services genuinely meant to be public.
+	//
+	// The renderer normalises the list (drops out-of-range entries, dedupes, sorts)
+	// so the rendered ruleset is byte-stable across passes regardless of manifest
+	// order — an unstable render would re-apply the firewall on every reconcile.
+	PublicUDPPorts []int
 }
 
 // RoutingSpec captures policy-routing intent, translated to ip rule/route by

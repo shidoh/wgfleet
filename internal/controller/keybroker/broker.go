@@ -348,6 +348,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 			Whitelist:      mergeUnique(exit.Firewall.Whitelist, mgmtCIDRs),
 			WGPort:         port,
 			PublicTCPPorts: append([]int(nil), exit.Firewall.PublicTCPPorts...),
+			PublicUDPPorts: append([]int(nil), exit.Firewall.PublicUDPPorts...),
 		},
 		Exporters: domain.ExportersSpec{Node: true, WG: true, WARP: egress == domain.EgressWARP},
 	}
@@ -475,6 +476,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			Whitelist: b.fleet.MgmtCIDRs(),
 			// World-facing TCP services on the master (e.g. the decoy web listener).
 			PublicTCPPorts: append([]int(nil), master.PublicTCPPorts...),
+			PublicUDPPorts: append([]int(nil), master.PublicUDPPorts...),
 		},
 		Exporters: domain.ExportersSpec{Node: true, WG: true},
 	}

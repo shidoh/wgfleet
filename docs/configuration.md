@@ -126,6 +126,7 @@ provisioning time, which means **changing them requires re-provisioning the node
 | `fleet.masters[].public_ip` | string | = `ssh.host` | Public IP clients and peers reach this node at |
 | `fleet.masters[].client_admin_ports` | []int | none | Admin ports (Web UI, mihomo dashboard) opened **to the VPN client pool** on the mgmt address. Opt-in; default keeps admin reachable only over the overlay |
 | `fleet.masters[].public_tcp_ports` | []int | none | TCP ports opened **to the whole internet** — e.g. `80` for a decoy web listener. Unlike the previous key this is unscoped, so keep it to genuinely public services |
+| `fleet.masters[].public_udp_ports` | []int | none | UDP ports opened **to the whole internet** — the UDP sibling of the previous key. Its motivating case is a ZeroTier controller co-located with the node's own member instance, which must listen on a non-default port because the member holds 9993 |
 
 ### `client_awg` — the client-facing AmneziaWG listener
 
@@ -261,6 +262,7 @@ run warm and you can switch the live path instantly.
 | `fleet.exits[].firewall.as_blacklist` | bool | `false` | Drop traffic from known scanner ASNs, hiding the AmneziaWG port and SSH from active VPN scanning. Feed URLs are fleet-wide |
 | `fleet.exits[].firewall.whitelist` | []CIDR | mgmt scope | Additional sources always accepted. The management overlay is merged in automatically |
 | `fleet.exits[].firewall.public_tcp_ports` | []int | none | TCP ports opened to the whole internet |
+| `fleet.exits[].firewall.public_udp_ports` | []int | none | UDP ports opened to the whole internet |
 
 ### Migration
 
