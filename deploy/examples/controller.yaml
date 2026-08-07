@@ -164,6 +164,12 @@ fleet:
       # EVERY source the drop policy would otherwise block, so keep it to services
       # genuinely meant to be public. Same knob exists per-exit under firewall:.
       # public_tcp_ports: [80]
+      # World-facing UDP ports (NO interface scope) — the UDP sibling of
+      # public_tcp_ports above, e.g. a second ZeroTier node (a controller) on
+      # 9994 because the host's own member instance holds 9993. Reachable from
+      # every source. NB: the AmneziaWG listen port and ZeroTier 9993 are
+      # opened automatically; they do not belong here.
+      # public_udp_ports: [9994]
       # Master-tier blocky resolver: when dns_filter is on, the master runs
       # a client-facing blocky that becomes the clients' single DNS. It BLOCKS (denylists
       # below), forwards LOCAL zones to internal DNS (conditional mappings), and forwards
@@ -333,6 +339,11 @@ fleet:
         # services. NB: the REALITY inbound port is opened automatically from the
         # transport config; it does not belong here.
         # public_tcp_ports: [80]
+        # World-facing UDP ports (NO interface scope) — e.g. a second ZeroTier
+        # node (a controller) on 9994 because the host's own member instance
+        # holds 9993. Reachable from every source. NB: the AmneziaWG listen port
+        # and ZeroTier 9993 are opened automatically; they do not belong here.
+        # public_udp_ports: [9994]
       ssh:
         host: 198.51.100.7
         # port: 22 # set if SSH is not on 22 or via a forwarded/bastion port
