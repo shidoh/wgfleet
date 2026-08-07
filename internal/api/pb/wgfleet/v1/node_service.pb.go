@@ -2419,6 +2419,10 @@ type FirewallSpec struct {
 	// services, e.g. the decoy web listener. Role-agnostic. Contrast
 	// MasterSpec.client_admin_ports, which is scoped to the client WG interface.
 	PublicTcpPorts []int32 `protobuf:"varint,5,rep,packed,name=public_tcp_ports,json=publicTcpPorts,proto3" json:"public_tcp_ports,omitempty"`
+	// UDP ports opened to the WORLD (no interface scope) — the UDP sibling of
+	// public_tcp_ports. Motivating case: a second ZeroTier node (a controller)
+	// on a non-default port, because the node's own member instance holds 9993.
+	PublicUdpPorts []int32 `protobuf:"varint,6,rep,packed,name=public_udp_ports,json=publicUdpPorts,proto3" json:"public_udp_ports,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -2484,6 +2488,13 @@ func (x *FirewallSpec) GetRealityPort() int32 {
 func (x *FirewallSpec) GetPublicTcpPorts() []int32 {
 	if x != nil {
 		return x.PublicTcpPorts
+	}
+	return nil
+}
+
+func (x *FirewallSpec) GetPublicUdpPorts() []int32 {
+	if x != nil {
+		return x.PublicUdpPorts
 	}
 	return nil
 }
@@ -2846,13 +2857,14 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x04http\x18\x04 \x01(\x05R\x04http\"A\n" +
 	"\x11BootstrapUpstream\x12\x1a\n" +
 	"\bupstream\x18\x01 \x01(\tR\bupstream\x12\x10\n" +
-	"\x03ips\x18\x02 \x03(\tR\x03ips\"\xb5\x01\n" +
+	"\x03ips\x18\x02 \x03(\tR\x03ips\"\xdf\x01\n" +
 	"\fFirewallSpec\x12!\n" +
 	"\fas_blacklist\x18\x01 \x01(\bR\vasBlacklist\x12\x1c\n" +
 	"\twhitelist\x18\x02 \x03(\tR\twhitelist\x12\x17\n" +
 	"\awg_port\x18\x03 \x01(\x05R\x06wgPort\x12!\n" +
 	"\freality_port\x18\x04 \x01(\x05R\vrealityPort\x12(\n" +
-	"\x10public_tcp_ports\x18\x05 \x03(\x05R\x0epublicTcpPorts\"\x90\x01\n" +
+	"\x10public_tcp_ports\x18\x05 \x03(\x05R\x0epublicTcpPorts\x12(\n" +
+	"\x10public_udp_ports\x18\x06 \x03(\x05R\x0epublicUdpPorts\"\x90\x01\n" +
 	"\vRoutingSpec\x12)\n" +
 	"\x10egress_interface\x18\x01 \x01(\tR\x0fegressInterface\x12!\n" +
 	"\fdirect_cidrs\x18\x02 \x03(\tR\vdirectCidrs\x12\x1b\n" +
