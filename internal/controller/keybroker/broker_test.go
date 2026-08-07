@@ -1103,3 +1103,41 @@ func TestRenderMasterSpecOwnPublicIPFallsBackToManifest(t *testing.T) {
 		t.Errorf("manifest public_ip fallback missing from DIRECT cidrs: %v", spec.Master.DirectCIDRs)
 	}
 }
+
+// A value configured on the master's manifest public_udp_ports must reach the
+// rendered master Firewall spec unchanged — the ZTnet-controller migration
+// (co-located ZT controller on a non-default UDP port) depends on this path.
+func TestMasterSpecCarriesPublicUDPPorts(t *testing.T) {
+	ctx := context.Background()
+	fleet := testFleet()
+	fleet.Masters[0].PublicUDPPorts = []int{9994}
+	b, st := newBrokerWithFleet(t, fleet)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := spec.Firewall.PublicUDPPorts; len(got) != 1 || got[0] != 9994 {
+		t.Fatalf("master Firewall.PublicUDPPorts = %v, want [9994]", got)
+	}
+}
+
+// The exit-side equivalent: public_udp_ports on fleet.exits[].firewall must
+// reach that exit's own rendered Firewall spec unchanged.
+func TestExitSpecCarriesPublicUDPPorts(t *testing.T) {
+	ctx := context.Background()
+	fleet := testFleet()
+	fleet.Exits[0].Firewall.PublicUDPPorts = []int{51821}
+	b, st := newBrokerWithFleet(t, fleet)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(ctx, "exit-de-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := spec.Firewall.PublicUDPPorts; len(got) != 1 || got[0] != 51821 {
+		t.Fatalf("exit Firewall.PublicUDPPorts = %v, want [51821]", got)
+	}
+}
