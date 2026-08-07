@@ -1124,6 +1124,57 @@ func TestMasterSpecCarriesPublicUDPPorts(t *testing.T) {
 	}
 }
 
+// An operator whitelist on the master must reach its rendered Firewall spec AND
+// be MERGED with the management CIDRs, never replace them: the mgmt overlay is
+// how the control plane reaches the node, so a manifest typo must not be able to
+// lock the controller out. Mirrors the exit-side merge.
+func TestMasterSpecMergesWhitelistWithMgmtCIDRs(t *testing.T) {
+	ctx := context.Background()
+	fleet := testFleet()
+	fleet.Masters[0].Whitelist = []string{"172.31.255.0/29"}
+	b, st := newBrokerWithFleet(t, fleet)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(spec.Firewall.Whitelist, "172.31.255.0/29") {
+		t.Errorf("operator whitelist entry missing from master Firewall.Whitelist: %v", spec.Firewall.Whitelist)
+	}
+	for _, mgmt := range fleet.MgmtCIDRs() {
+		if !contains(spec.Firewall.Whitelist, mgmt) {
+			t.Errorf("mgmt CIDR %q dropped from master Firewall.Whitelist: %v", mgmt, spec.Firewall.Whitelist)
+		}
+	}
+}
+
+// An absent whitelist must leave the master exactly as before the knob existed:
+// the mgmt CIDRs alone, and no empty-vs-nil difference that would show up as
+// perpetual reconcile drift.
+func TestMasterSpecWhitelistDefaultsToMgmtCIDRs(t *testing.T) {
+	ctx := context.Background()
+	fleet := testFleet()
+	b, st := newBrokerWithFleet(t, fleet)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fleet.MgmtCIDRs()
+	if len(spec.Firewall.Whitelist) != len(want) {
+		t.Fatalf("master Firewall.Whitelist = %v, want exactly the mgmt CIDRs %v", spec.Firewall.Whitelist, want)
+	}
+	for _, mgmt := range want {
+		if !contains(spec.Firewall.Whitelist, mgmt) {
+			t.Errorf("mgmt CIDR %q missing: %v", mgmt, spec.Firewall.Whitelist)
+		}
+	}
+}
+
 // The exit-side equivalent: public_udp_ports on fleet.exits[].firewall must
 // reach that exit's own rendered Firewall spec unchanged.
 func TestExitSpecCarriesPublicUDPPorts(t *testing.T) {

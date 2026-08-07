@@ -292,6 +292,17 @@ type MasterConfig struct {
 	// non-default port because the member already holds 9993. Same caveat as
 	// above: reachable from every source the drop policy would otherwise block.
 	PublicUDPPorts []int `koanf:"public_udp_ports"`
+	// Whitelist are additional source CIDRs the master's input firewall always
+	// accepts, regardless of port — the master-side sibling of
+	// fleet.exits[].firewall.whitelist. The management overlay is merged in
+	// automatically and can never be dropped by what is listed here, so a typo
+	// cannot lock the control plane out of its own node.
+	//
+	// Motivating case: a container on a local docker bridge that must reach a
+	// host-bound service (e.g. ztnet talking to a co-located ZeroTier controller's
+	// TCP control API). Source-scoping it here is the safe alternative to opening
+	// that port to the world via PublicTCPPorts.
+	Whitelist []string `koanf:"whitelist"`
 	// DNSFilter enables the master-tier blocky resolver (ADR-0024): a client-facing
 	// filtering resolver clients use as their DNS. It blocks + forwards local zones to
 	// internal DNS (DNS.overrides conditional mappings) + forwards everything else to

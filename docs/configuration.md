@@ -127,6 +127,7 @@ provisioning time, which means **changing them requires re-provisioning the node
 | `fleet.masters[].client_admin_ports` | []int | none | Admin ports (Web UI, mihomo dashboard) opened **to the VPN client pool** on the mgmt address. Opt-in; default keeps admin reachable only over the overlay |
 | `fleet.masters[].public_tcp_ports` | []int | none | TCP ports opened **to the whole internet** — e.g. `80` for a decoy web listener. Unlike the previous key this is unscoped, so keep it to genuinely public services |
 | `fleet.masters[].public_udp_ports` | []int | none | UDP ports opened **to the whole internet** — the UDP sibling of the previous key. Its motivating case is a ZeroTier controller co-located with the node's own member instance, which must listen on a non-default port because the member holds 9993 |
+| `fleet.masters[].whitelist` | []CIDR | mgmt scope | Additional source CIDRs the input firewall always accepts, regardless of port — the master-side sibling of `fleet.exits[].firewall.whitelist`. The management overlay is merged in automatically and cannot be dropped by this key. Prefer it over `public_tcp_ports` when a service must be reachable from a known source (e.g. a local docker bridge) rather than from the whole internet |
 
 ### `client_awg` — the client-facing AmneziaWG listener
 

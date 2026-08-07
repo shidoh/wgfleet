@@ -170,6 +170,12 @@ fleet:
       # every source. NB: the AmneziaWG listen port and ZeroTier 9993 are
       # opened automatically; they do not belong here.
       # public_udp_ports: [9994]
+      # Additional SOURCE CIDRs the input firewall always accepts, on any port.
+      # Prefer this over public_tcp_ports when the caller is known: it opens the
+      # service to that source only, not to the internet. Typical case: a local
+      # docker bridge whose container must reach a host-bound service. The
+      # management overlay is merged in automatically and cannot be dropped here.
+      # whitelist: [172.31.255.0/29]
       # Master-tier blocky resolver: when dns_filter is on, the master runs
       # a client-facing blocky that becomes the clients' single DNS. It BLOCKS (denylists
       # below), forwards LOCAL zones to internal DNS (conditional mappings), and forwards

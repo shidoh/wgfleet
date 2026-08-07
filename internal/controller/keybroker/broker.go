@@ -472,8 +472,11 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		// covers ZT inbound; this also allows any non-overlay mgmt sources the
 		// operator lists). WGPort opens the client-facing AWG listener.
 		Firewall: domain.FirewallSpec{
-			WGPort:    clientPort,
-			Whitelist: b.fleet.MgmtCIDRs(),
+			WGPort: clientPort,
+			// Operator entries first, mgmt CIDRs merged in and never droppable:
+			// the overlay is how the control plane reaches this node, so a manifest
+			// typo must not be able to lock the controller out. Mirrors the exit.
+			Whitelist: mergeUnique(master.Whitelist, b.fleet.MgmtCIDRs()),
 			// World-facing TCP services on the master (e.g. the decoy web listener).
 			PublicTCPPorts: append([]int(nil), master.PublicTCPPorts...),
 			PublicUDPPorts: append([]int(nil), master.PublicUDPPorts...),
