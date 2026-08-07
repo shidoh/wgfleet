@@ -82,3 +82,55 @@ func TestBBRLoadsModuleButCCAlreadyBBR(t *testing.T) {
 		t.Errorf("should still fix qdisc when only that differs:\n%s", out)
 	}
 }
+
+// A node with MTU probing off must get it enabled: with it at 0 the kernel cannot
+// escape a PMTU black hole and a wedged connection retransmits forever.
+func TestMTUProbingEnabledWhenOff(t *testing.T) {
+	out := planWith(t, map[string]string{
+		ccPath:       "bbr",
+		availPath:    "reno cubic bbr",
+		qdiscPath:    "fq",
+		mtuProbePath: "0",
+	})
+	if !strings.Contains(out, "enable TCP MTU probing") {
+		t.Errorf("MTU probing not enabled when off:\n%s", out)
+	}
+}
+
+func TestMTUProbingNoChangeWhenOn(t *testing.T) {
+	out := planWith(t, map[string]string{
+		ccPath:       "bbr",
+		availPath:    "reno cubic bbr",
+		qdiscPath:    "fq",
+		mtuProbePath: "1",
+	})
+	if strings.Contains(out, "exec") {
+		t.Errorf("expected no exec when everything is already tuned:\n%s", out)
+	}
+	if !strings.Contains(out, "already enabled") {
+		t.Errorf("missing the no-change note for MTU probing:\n%s", out)
+	}
+}
+
+// An operator who chose the more aggressive mode 2 (probe always, not just after a
+// suspected black hole) must not be silently downgraded to 1.
+func TestMTUProbingLeavesOperatorMode2Alone(t *testing.T) {
+	out := planWith(t, map[string]string{
+		ccPath:       "bbr",
+		availPath:    "reno cubic bbr",
+		qdiscPath:    "fq",
+		mtuProbePath: "2",
+	})
+	if strings.Contains(out, "enable TCP MTU probing") {
+		t.Errorf("mode 2 must be left as-is, not forced to 1:\n%s", out)
+	}
+}
+
+// Unreadable /proc (non-Linux dev box) must stay a single NoChange with no exec —
+// the MTU-probing addition must not break that guarantee.
+func TestMTUProbingSkippedWhenNoProcfs(t *testing.T) {
+	out := planWith(t, map[string]string{})
+	if strings.Contains(out, "MTU probing") {
+		t.Errorf("must not plan MTU probing without /proc/sys:\n%s", out)
+	}
+}

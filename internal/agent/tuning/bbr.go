@@ -1,6 +1,7 @@
 // Package tuning holds node-level kernel tuning reconcilers shared by both agent
 // roles. The BBR planner is the first: it switches TCP to the BBR congestion
-// control with fq pacing.
+// control with fq pacing, and enables packetization-layer PMTU discovery so a
+// path that black-holes oversized segments cannot wedge a connection forever.
 //
 // Why this matters for wgfleet specifically: client traffic rides a multi-hop,
 // partly-userspace obfuscated path (client userspace AWG → master → mihomo
@@ -30,12 +31,17 @@ import (
 )
 
 const (
-	ccPath    = "/proc/sys/net/ipv4/tcp_congestion_control"
-	availPath = "/proc/sys/net/ipv4/tcp_available_congestion_control"
-	qdiscPath = "/proc/sys/net/core/default_qdisc"
-	wantCC    = "bbr"
-	wantQdisc = "fq"
-	bbrModule = "tcp_bbr"
+	ccPath       = "/proc/sys/net/ipv4/tcp_congestion_control"
+	availPath    = "/proc/sys/net/ipv4/tcp_available_congestion_control"
+	qdiscPath    = "/proc/sys/net/core/default_qdisc"
+	mtuProbePath = "/proc/sys/net/ipv4/tcp_mtu_probing"
+	wantCC       = "bbr"
+	wantQdisc    = "fq"
+	bbrModule    = "tcp_bbr"
+	// mtuProbeOff is the kernel default: PLPMTUD disabled. Any non-zero value
+	// enables probing (1 = after a suspected black hole, 2 = always), so the
+	// planner only acts on "0" and never downgrades an operator's 2 to 1.
+	mtuProbeOff = "0"
 )
 
 // bbrPlanner ensures BBR congestion control + fq pacing are active. Reads are
@@ -87,6 +93,35 @@ func (p bbrPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]reconcile.Acti
 	} else {
 		actions = append(actions, reconcile.BestEffortExecAction("set default qdisc to fq (bbr pacing)",
 			"sysctl", "-w", "net.core.default_qdisc="+wantQdisc))
+	}
+
+	// Packetization-layer PMTU discovery. With this off (the kernel default) a path
+	// whose real MTU is below the interface MTU, and which filters the ICMP
+	// "fragmentation needed" that would say so, becomes a black hole: the kernel keeps
+	// retransmitting full-size segments that physically cannot pass, collapsing cwnd to
+	// 1 and backing the RTO off to minutes. The connection never recovers — it hangs
+	// rather than fails, which is far worse to diagnose.
+	//
+	// Observed live 2026-08-07 on the master→exit path: an agent binary upload wedged
+	// with 41% of bytes retransmitted, only 2 KB ever acked, and no ACK for 9 minutes,
+	// while small packets flowed fine. Enabling probing lets the kernel shrink the
+	// segment size on its own and the transfer completes.
+	//
+	// Especially apt for this project: every managed node terminates or forwards
+	// traffic over multi-hop obfuscated paths whose MTU we do not control (an earlier finding
+	// and #18 are the same failure mode seen from the tunnel side).
+	//
+	// Only "0" is corrected — a non-zero value means probing is already on, and an
+	// operator who chose the more aggressive mode 2 keeps it.
+	if probe := p.cur(mtuProbePath); probe == "" {
+		// Kernel too old to expose the knob (or no /proc): nothing to do, and it must
+		// not read as a change or the planner would churn every pass.
+		actions = append(actions, reconcile.NoChangeAction("tcp_mtu_probing", "unavailable"))
+	} else if probe != mtuProbeOff {
+		actions = append(actions, reconcile.NoChangeAction("tcp_mtu_probing", "already enabled (mode "+probe+")"))
+	} else {
+		actions = append(actions, reconcile.BestEffortExecAction("enable TCP MTU probing (escape PMTU black holes)",
+			"sysctl", "-w", "net.ipv4.tcp_mtu_probing=1"))
 	}
 
 	return actions, nil
