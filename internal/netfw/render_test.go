@@ -641,3 +641,88 @@ func TestRenderRulesetPublicTCPPortsEmpty(t *testing.T) {
 		t.Errorf("empty public_tcp_ports changed the render:\n--- with ---\n%s\n--- without ---\n%s", with, without)
 	}
 }
+
+func TestRenderRulesetPublicUDPPorts(t *testing.T) {
+	for _, role := range []domain.Role{domain.RoleMaster, domain.RoleExit} {
+		t.Run(string(role), func(t *testing.T) {
+			out, err := RenderRuleset(RenderInput{
+				Role: role,
+				Firewall: domain.FirewallSpec{
+					WGPort: 51820,
+					// Unsorted, with duplicates and out-of-range values on purpose:
+					// the render must normalise them, otherwise the file changes
+					// every pass and the firewall is re-applied forever.
+					PublicUDPPorts: []int{9994, 500, 9994, 0, 70000, -1},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{
+				"udp dport 500 accept\n",
+				"udp dport 9994 accept\n",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("ruleset missing %q:\n%s", want, out)
+				}
+			}
+			if n := strings.Count(out, "udp dport 9994 accept"); n != 1 {
+				t.Errorf("port 9994 rendered %d times, want 1 (dedupe):\n%s", n, out)
+			}
+			for _, bad := range []string{"udp dport 0 accept", "udp dport 70000 accept", "udp dport -1 accept"} {
+				if strings.Contains(out, bad) {
+					t.Errorf("ruleset should not contain out-of-range rule %q:\n%s", bad, out)
+				}
+			}
+			if i, j := strings.Index(out, "udp dport 500 accept"), strings.Index(out, "udp dport 9994 accept"); i > j {
+				t.Errorf("ports not rendered in ascending order:\n%s", out)
+			}
+			if strings.Contains(out, `iifname "wg0" udp dport 9994`) {
+				t.Errorf("public port must not be interface-scoped:\n%s", out)
+			}
+		})
+	}
+}
+
+// An empty or missing list must not change the render at all.
+func TestRenderRulesetPublicUDPPortsEmpty(t *testing.T) {
+	with, err := RenderRuleset(RenderInput{
+		Role:     domain.RoleExit,
+		Firewall: domain.FirewallSpec{WGPort: 51820, PublicUDPPorts: []int{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	without, err := RenderRuleset(RenderInput{
+		Role:     domain.RoleExit,
+		Firewall: domain.FirewallSpec{WGPort: 51820},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if with != without {
+		t.Errorf("empty PublicUDPPorts changed the ruleset:\n--- with ---\n%s\n--- without ---\n%s", with, without)
+	}
+}
+
+// The render must be byte-for-byte stable regardless of manifest order,
+// otherwise FileAction sees a change and re-applies nft on every pass.
+func TestRenderRulesetPublicUDPPortsStable(t *testing.T) {
+	a, err := RenderRuleset(RenderInput{
+		Role:     domain.RoleMaster,
+		Firewall: domain.FirewallSpec{WGPort: 51820, PublicUDPPorts: []int{9994, 500}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := RenderRuleset(RenderInput{
+		Role:     domain.RoleMaster,
+		Firewall: domain.FirewallSpec{WGPort: 51820, PublicUDPPorts: []int{500, 9994}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a != b {
+		t.Errorf("manifest order changed the rendered ruleset:\n--- a ---\n%s\n--- b ---\n%s", a, b)
+	}
+}
