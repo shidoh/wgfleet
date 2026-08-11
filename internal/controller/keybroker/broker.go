@@ -265,13 +265,31 @@ func (b *Broker) RenderNodeSpec(ctx context.Context, nodeID string) (domain.Node
 	if node, err := b.store.GetNode(ctx, nodeID); err == nil && node.Decommission {
 		return domain.NodeSpec{Role: node.Role, Decommission: true}, nil
 	}
+	spec, hardening, err := b.renderRoleSpec(ctx, nodeID)
+	if err != nil {
+		return domain.NodeSpec{}, err
+	}
+	// Host hardening is role-agnostic (it runs on masters and exits alike), so it is
+	// resolved here rather than duplicated into both role renderers. The node's own
+	// section comes back from the dispatch below, since only that step knows which
+	// manifest entry nodeID belongs to.
+	spec.Hardening = b.fleet.HardeningFor(hardening)
+	return spec, nil
+}
+
+// renderRoleSpec dispatches to the role-specific renderer for nodeID, also
+// returning that node's manifest hardening section for the caller to resolve.
+func (b *Broker) renderRoleSpec(ctx context.Context, nodeID string) (domain.NodeSpec, config.HardeningSection, error) {
 	if exit, ok := b.findExit(nodeID); ok {
-		return b.renderExitSpec(ctx, exit)
+		spec, err := b.renderExitSpec(ctx, exit)
+		return spec, exit.Hardening, err
 	}
 	if master, ok := b.findMaster(nodeID); ok {
-		return b.renderMasterSpec(ctx, master)
+		spec, err := b.renderMasterSpec(ctx, master)
+		return spec, master.Hardening, err
 	}
-	return domain.NodeSpec{}, fmt.Errorf("keybroker: node %q not found in fleet manifest", nodeID)
+	return domain.NodeSpec{}, config.HardeningSection{},
+		fmt.Errorf("keybroker: node %q not found in fleet manifest", nodeID)
 }
 
 // renderExitSpec builds the spec for an exit: a WG server with the fronting

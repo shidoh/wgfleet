@@ -68,8 +68,8 @@ func indexOf(s, sub string) int {
 
 // Guard: the wire version must never drift by accident. Changing it is a
 // deliberate act with a rollout consequence, so it takes a deliberate test edit.
-func TestWireContractVersionIs5(t *testing.T) {
-	if WireContractVersion != 5 {
-		t.Fatalf("WireContractVersion = %d, want 5 (bumped for FirewallSpec.public_udp_ports)", WireContractVersion)
+func TestWireContractVersionIs6(t *testing.T) {
+	if WireContractVersion != 6 {
+		t.Fatalf("WireContractVersion = %d, want 6 (bumped for NodeSpec.hardening)", WireContractVersion)
 	}
 }

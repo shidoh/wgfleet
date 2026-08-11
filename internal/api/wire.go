@@ -36,7 +36,15 @@ const (
 	// "configured port stays closed" convergence hazard as v3, hence the bump.
 	// Motivating case: a ZeroTier controller co-located with the node's own member
 	// instance, which must listen on a non-default port.
-	WireContractVersion uint32 = 5
+	// v6: NodeSpec.hardening (fleet.hardening — the operator's opt-out from the
+	// managed sshd drop-in and fail2ban jail). This one bumps for the OPPOSITE
+	// reason to v3/v5: the hazard is not a closed port but an ignored opt-out. A v5
+	// agent drops the field, reads "unset", and goes on hardening the node — the
+	// planner rewrites the drop-in and reloads sshd every pass, silently reverting
+	// an operator who explicitly turned it off. That is a convergence difference the
+	// agent must understand, so the safe default ("unset ⇒ hardened") does NOT make
+	// the change additive. Deploy the controller FIRST.
+	WireContractVersion uint32 = 6
 
 	// MinSupportedWire is the oldest agent wire version the controller will serve
 	// a spec to. Agents below it are refused (fail-safe) and, where possible,

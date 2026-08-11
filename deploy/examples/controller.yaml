@@ -90,6 +90,24 @@ fleet:
   # fleet-wide default is a starting point, ASN-diverse exits should override per-exit.
   # reality_default_sni: "www.python.org"
   # reality_default_dest: "www.python.org:443"
+  #
+  # Host hardening — FLEET-WIDE DEFAULT; each master/exit can override it below.
+  # Both subsystems are ON unless you write these keys, so leaving the block out
+  # gives the hardened defaults: an sshd drop-in (key-only auth, no root password,
+  # no X11) and a fail2ban sshd jail, both reconciled every pass — a hand-edit to
+  # either file is reverted within one reconcile interval.
+  # Set a key to false to take that subsystem back: the agent REMOVES the file it
+  # installed and reloads the service, so your own config applies. (It does not
+  # merely stop watching — a drop-in nobody maintains would override your
+  # sshd_config forever.) The removal appears in `wgfleet-agent --plan` first.
+  # PREFER the per-node override to switching this off fleet-wide: the box you
+  # hand-tune is usually just one (the master), and relaxing the whole fleet to
+  # suit it un-hardens every public-facing exit too.
+  # NB: this rides wire v6; an agent older than that ignores the opt-out and keeps
+  # hardening the node. Upgrade the controller first, then roll the agents.
+  # hardening:
+  #   sshd: true
+  #   fail2ban: true
   masters:
     - name: master-xa-1
       mgmt_addr: 10.20.25.254 # ZT overlay address
@@ -258,6 +276,13 @@ fleet:
         # mihomo_tag: "v1.19.29"
         # client_dns: defaults to the exits' mgmt addresses (blocky)
         client_allowed_ips: "1.0.0.0/8,8.0.0.0/7,..." # inverted RFC1918 list for clients
+      # Per-node override of fleet.hardening above. An omitted key inherits the
+      # fleet default; an explicit true beats a fleet-wide false, so this can
+      # re-harden one node as well as relax one. This is the usual place to use it:
+      # the master is the box you administer by hand.
+      # hardening:
+      #   sshd: false      # I keep my own sshd_config here
+      #   fail2ban: true   # but leave the brute-force jail alone
       ssh: # bootstrap target (Phase 0/1 only; key path on the controller host)
         host: 203.0.113.1
         # port: 22 # SSH port; set it if SSH is not on 22 or reached via a forwarded/bastion port

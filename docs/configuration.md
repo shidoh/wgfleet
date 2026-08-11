@@ -108,6 +108,64 @@ provisioning time, which means **changing them requires re-provisioning the node
 | `fleet.as_blacklist_interval` | duration | `24h` | **baked.** Feed refresh cadence. Valid `1m`–`168h`. A failed refresh keeps the last-good list |
 | `fleet.reality_default_sni` | string | `www.python.org` | Fleet-wide REALITY camouflage SNI. **The target must support X25519MLKEM768** or the handshake fails silently — verify a candidate with `xray tls ping <host>` |
 | `fleet.reality_default_dest` | string | = SNI | Fleet-wide camouflage `host:port` the REALITY inbound borrows its certificate from |
+| `fleet.hardening.sshd` | bool | `true` | **Fleet default.** Manage the sshd drop-in (`/etc/ssh/sshd_config.d/10-wgfleet-hardening.conf`: key-only auth, no root password, no X11 forwarding), reconciled every pass. Set `false` to hand sshd back to you — see below |
+| `fleet.hardening.fail2ban` | bool | `true` | **Fleet default.** Manage the fail2ban sshd jail (`/etc/fail2ban/jail.d/wgfleet.conf`) |
+
+### Turning hardening off
+
+Both subsystems are on unless you write the key. Omitting the block entirely gives
+you the fully hardened fleet earlier versions applied unconditionally.
+
+**It is per-node, with a fleet-wide default.** Hardening is a property of a
+particular machine: the box you hand-tune is usually *one* box — typically the
+master, where the controller runs and where you actually log in — while the exits
+are cattle. So each node may override the fleet:
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `fleet.masters[].hardening.sshd` | bool | inherit fleet | Override the fleet default for this master |
+| `fleet.masters[].hardening.fail2ban` | bool | inherit fleet | Override the fleet default for this master |
+| `fleet.exits[].hardening.sshd` | bool | inherit fleet | Override the fleet default for this exit |
+| `fleet.exits[].hardening.fail2ban` | bool | inherit fleet | Override the fleet default for this exit |
+
+Precedence is node → fleet → `true`. An omitted key on a node means *inherit*, not
+*disable*, and an explicit `true` on a node beats a fleet-wide `false` — so the
+override can re-harden one node as well as relax one.
+
+```yaml
+fleet:
+  # the fleet stays hardened…
+  masters:
+    - name: master-xa-1
+      hardening:
+        sshd: false     # …except sshd on the box I administer by hand
+```
+
+Prefer that to switching it off fleet-wide. A fleet-only opt-out would force you to
+un-harden every public-facing exit just to keep your own `sshd_config` on the
+master — the opposite of what you wanted. Weigh an opt-out on an *exit* more
+carefully still: its SSH port faces the same scanners the AS-blacklist feed exists
+to hide from.
+
+Two things to know before you flip it:
+
+**`false` removes the file, it does not merely stop watching it.** wgfleet deletes
+the drop-in (or jail) it installed and reloads the service, so *your* configuration
+takes effect. Stopping reconciliation without removing the file would leave a
+drop-in that overrides your `sshd_config` forever with nothing maintaining it —
+"off" that turns nothing off. The delete is an ordinary plan action, so
+`wgfleet-agent --plan` shows it before it happens.
+
+**Leaving it on is not passive.** With `sshd: true` the planner rewrites the
+drop-in and reloads sshd whenever its content drifts. If you hand-edit that file,
+it is reverted within one reconcile interval. That is deliberate — a partial
+overwrite once silently re-enabled password auth fleet-wide — but it means the knob,
+not the editor, is how you opt out.
+
+This knob rides the wire contract (**v6**), so agents must be at a build that
+understands it. An older agent drops the field, reads "unset", and keeps hardening
+the node — a fail-safe outcome, but your opt-out is ignored until it is upgraded.
+Deploy the controller first; see [upgrade.md](upgrade.md).
 
 ---
 

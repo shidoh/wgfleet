@@ -40,6 +40,14 @@ fleet:
   zerotier_network: "8056c2e21c000001"      # mgmt overlay nodes join at bootstrap
   reconcile_interval: 30s                    # fleet-wide agent reconcile/self-heal cadence
                                              #   (default 30s; baked into each agent.yaml)
+  hardening:                                 # host hardening — FLEET DEFAULT; each master/exit
+    sshd: true                               #   can override it (see master-xa-1 below).
+    fail2ban: true                           # BOTH DEFAULT TO true — omit the block for the
+                                             #   hardened defaults. false ⇒ the agent REMOVES the
+                                             #   file it installed and reloads the service, handing
+                                             #   the subsystem back to you (leaving it in place
+                                             #   would shadow your own config with nothing
+                                             #   maintaining it). Needs wire v6.
 
   masters:
     - name: master-xa-1
@@ -57,6 +65,11 @@ fleet:
         direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
         direct_geo:   [RU]                  # GEOSITE/GEOIP → DIRECT
         balance:      url-test              # round-robin | consistent-hashing (alias: health) | sticky-sessions | url-test | fallback
+      hardening:                            # per-node override of fleet.hardening above
+        sshd: false                         #   omitted key ⇒ inherit fleet; explicit true beats a
+                                            #   fleet-wide false. Prefer this to switching the fleet
+                                            #   off: relaxing the whole fleet to suit the one box you
+                                            #   hand-tune un-hardens every public-facing exit too.
       mihomo:                               # master data-plane tuning + custom-config hooks
         health_interval: 30s                # how often mihomo health-checks exits to route around dead ones (default 60s)
         sniffer_skip: ["+.themoviedb.org", "+.cloudfront.net"]  # CDNs that break under sniffing

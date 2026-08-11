@@ -105,6 +105,22 @@ message NodeSpec {
   repeated string enabled_transports = 15; // master↔exit transports the exit runs; empty ⇒ ["awg"]
   string active_transport = 16; // the transport placed in the master LB; empty ⇒ "awg"
   RealitySrvSpec reality = 17; // VLESS+REALITY+XHTTP inbound spec (exit only; set when reality-xhttp enabled)
+  // Host-hardening policy (role-agnostic). UNSET ⇒ both subsystems managed, which
+  // is the pre-v6 behaviour and the fail-safe default: a spec that never mentions
+  // hardening leaves the node hardened. Set explicitly by any controller that
+  // understands fleet.hardening. Requires wire v6 — see NodeSpec.hardening in
+  // internal/api/wire.go for why this could not be additive.
+  HardeningSpec hardening = 18;
+}
+
+// HardeningSpec is the per-node host-hardening policy: which of the two managed
+// hardening subsystems the agent reconciles. Message presence carries the
+// operator's intent — a nil spec means "not configured", which the agent reads as
+// both enabled, so the field names stay positive (`sshd: true` enables) instead of
+// the double negative a bare proto3 bool would have forced.
+message HardeningSpec {
+  bool sshd = 1;     // reconcile the managed sshd drop-in (key-only auth, no X11)
+  bool fail2ban = 2; // reconcile the managed fail2ban sshd jail
 }
 
 // RealitySrvSpec is the exit-side VLESS+REALITY+XHTTP inbound desired state
