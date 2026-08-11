@@ -341,8 +341,18 @@ Full rules and their rationale: [`docs/adr/`](docs/adr/) and
   management overlay only**, never the public interface.
 - SSH is used only during bootstrap, key-based; afterwards management is mTLS.
 - A baseline firewall is installed **before** the node accepts traffic.
+- sshd hardening (key-only auth, no root password, no X11) and a fail2ban sshd
+  jail are **continuously reconciled**, not merely installed at bootstrap — a
+  partial overwrite is repaired on the next pass rather than lasting until the
+  node is rebuilt. Each is individually switchable via `fleet.hardening` for
+  operators who manage their own; both default to on.
 - Secrets resolve through a provider (`env://`, a `0600` `file://`, or SOPS/age).
   No keys or real IPs in git.
+
+Known gaps, stated plainly: there is **no certificate revocation list** (revoking
+a node today means reissuing the CA), the gRPC endpoints are **not rate-limited**,
+and the Web UI speaks **plain HTTP**. The last two are mitigated by binding to the
+management overlay only, not by the code.
 
 Reporting a vulnerability: [SECURITY.md](SECURITY.md).
 
@@ -391,6 +401,7 @@ switching transports is a manual, per-exit action today.
 | [docs/upgrade.md](docs/upgrade.md) | Agent upgrades and wire-contract versioning |
 | [docs/secrets-sops.md](docs/secrets-sops.md) | SOPS/age secret provider setup |
 | [docs/adr/](docs/adr/) | Architecture decision records — why each choice was made |
+| [docs/plans/](docs/plans/) | Design and implementation plans, each marked shipped or pending |
 | [docs/DESIGN.md](docs/DESIGN.md) | Full project context and conventions |
 | [maintainer notes](maintainer notes) | Hard-won operational lessons baked into the reconcile logic |
 
