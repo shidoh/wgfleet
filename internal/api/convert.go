@@ -40,7 +40,27 @@ func SpecToProto(s domain.NodeSpec) *pb.NodeSpec {
 	}
 	out.ActiveTransport = string(s.ActiveTransport)
 	out.Reality = realityServerToProto(s.Reality)
+	out.Hardening = hardeningToProto(s.Hardening)
 	return out
+}
+
+// hardeningToProto carries the host-hardening policy onto the wire, preserving the
+// nil ⇒ "not configured" distinction that makes the default enabled (wire v6).
+func hardeningToProto(h *domain.HardeningSpec) *pb.HardeningSpec {
+	if h == nil {
+		return nil
+	}
+	return &pb.HardeningSpec{Sshd: h.SSHD, Fail2Ban: h.Fail2ban}
+}
+
+// hardeningFromProto is hardeningToProto's inverse. An absent message stays nil so
+// the agent falls back to "both enabled" rather than reading proto3's false zero
+// value as an operator opt-out.
+func hardeningFromProto(p *pb.HardeningSpec) *domain.HardeningSpec {
+	if p == nil {
+		return nil
+	}
+	return &domain.HardeningSpec{SSHD: p.GetSshd(), Fail2ban: p.GetFail2Ban()}
 }
 
 // SpecFromProto parses a wire NodeSpec back into the domain type.
@@ -75,6 +95,7 @@ func SpecFromProto(p *pb.NodeSpec) domain.NodeSpec {
 	}
 	s.ActiveTransport = domain.MasterTransport(p.GetActiveTransport())
 	s.Reality = realityServerFromProto(p.GetReality())
+	s.Hardening = hardeningFromProto(p.GetHardening())
 	return s
 }
 

@@ -58,9 +58,40 @@ type NodeSpec struct {
 	// Reality is the VLESS+REALITY+XHTTP inbound server spec (exit only), set when
 	// TransportRealityXHTTP is enabled. nil otherwise.
 	Reality *RealityServerSpec
+	// Hardening is the host-hardening policy: which of the managed hardening
+	// subsystems (sshd drop-in, fail2ban jail) the agent reconciles. nil ⇒ not
+	// configured, which every reader treats as BOTH ENABLED — the fail-safe default
+	// and the pre-wire-v6 behaviour, so a bare NodeSpec{} (tests, a cached spec from
+	// an older controller) never leaves a node un-hardened. Read it through
+	// SSHDHardeningEnabled/Fail2banEnabled, never directly.
+	Hardening *HardeningSpec
 	// Decommission tells the agent to tear the node down (reverse reconcile)
 	// instead of converging it. Rendered when the node is flagged for removal.
 	Decommission bool
+}
+
+// HardeningSpec is the operator's host-hardening policy for one node. It exists as
+// a separate, pointer-held struct precisely so "unset" is distinguishable from
+// "both off": the default must be ON, and a plain pair of bools on NodeSpec would
+// make the zero value mean "disable everything".
+type HardeningSpec struct {
+	// SSHD enables the managed sshd drop-in (key-only auth, no root password, no
+	// X11 forwarding), continuously reconciled.
+	SSHD bool
+	// Fail2ban enables the managed fail2ban sshd jail, continuously reconciled.
+	Fail2ban bool
+}
+
+// SSHDHardeningEnabled reports whether the agent should manage the sshd drop-in.
+// An unset policy means enabled (see NodeSpec.Hardening).
+func (s NodeSpec) SSHDHardeningEnabled() bool {
+	return s.Hardening == nil || s.Hardening.SSHD
+}
+
+// Fail2banEnabled reports whether the agent should manage the fail2ban sshd jail.
+// An unset policy means enabled (see NodeSpec.Hardening).
+func (s NodeSpec) Fail2banEnabled() bool {
+	return s.Hardening == nil || s.Hardening.Fail2ban
 }
 
 // Transports returns the exit's enabled master↔exit transports, falling back to a

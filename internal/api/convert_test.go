@@ -337,3 +337,45 @@ func TestFirewallProtoRoundTripPublicUDPPortsEmpty(t *testing.T) {
 		t.Errorf("PublicUDPPorts = %v, want nil", got.Firewall.PublicUDPPorts)
 	}
 }
+
+// The hardening knob (wire v6). Both fields are false, i.e. the proto3 zero
+// value: if message presence were lost, the spec would read as "nothing set" and
+// the node would stay hardened against the operator's choice. That silent
+// rollback is exactly why the wire version was bumped.
+func TestHardeningProtoRoundTripDisabled(t *testing.T) {
+	in := domain.NodeSpec{
+		Role:      domain.RoleExit,
+		Hardening: &domain.HardeningSpec{SSHD: false, Fail2ban: false},
+	}
+	got := SpecFromProto(SpecToProto(in))
+	if got.Hardening == nil {
+		t.Fatal("Hardening = nil: presence lost, the opt-out would be silently ignored")
+	}
+	if got.SSHDHardeningEnabled() || got.Fail2banEnabled() {
+		t.Errorf("both subsystems must read as disabled, got sshd=%v fail2ban=%v",
+			got.SSHDHardeningEnabled(), got.Fail2banEnabled())
+	}
+}
+
+func TestHardeningProtoRoundTripMixed(t *testing.T) {
+	got := SpecFromProto(SpecToProto(domain.NodeSpec{
+		Role:      domain.RoleMaster,
+		Hardening: &domain.HardeningSpec{SSHD: true, Fail2ban: false},
+	}))
+	if !got.SSHDHardeningEnabled() || got.Fail2banEnabled() {
+		t.Errorf("want sshd on / fail2ban off, got sshd=%v fail2ban=%v",
+			got.SSHDHardeningEnabled(), got.Fail2banEnabled())
+	}
+}
+
+// An absent message must stay absent, so a spec from a pre-v6 controller reads
+// as "hardening on", not as "the operator turned everything off".
+func TestHardeningProtoRoundTripUnset(t *testing.T) {
+	got := SpecFromProto(SpecToProto(domain.NodeSpec{Role: domain.RoleExit}))
+	if got.Hardening != nil {
+		t.Fatalf("Hardening = %+v, want nil", got.Hardening)
+	}
+	if !got.SSHDHardeningEnabled() || !got.Fail2banEnabled() {
+		t.Error("an unset policy must read as enabled")
+	}
+}

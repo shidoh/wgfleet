@@ -26,13 +26,25 @@ func plannersFor(t *testing.T, cidrs []string) (sshd, f2b reconcile.Planner, ssh
 	return ps[0], ps[1], sshdPath, jailPath
 }
 
+// plan renders against a bare spec — no hardening policy, which every planner must
+// read as "both enabled" (the pre-wire-v6 default).
 func plan(t *testing.T, p reconcile.Planner) []reconcile.Action {
 	t.Helper()
-	acts, err := p.Plan(context.Background(), domain.NodeSpec{})
+	return planSpec(t, p, domain.NodeSpec{})
+}
+
+func planSpec(t *testing.T, p reconcile.Planner, spec domain.NodeSpec) []reconcile.Action {
+	t.Helper()
+	acts, err := p.Plan(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
 	return acts
+}
+
+// offSpec is the spec of a fleet that has switched both hardening subsystems off.
+func offSpec() domain.NodeSpec {
+	return domain.NodeSpec{Hardening: &domain.HardeningSpec{SSHD: false, Fail2ban: false}}
 }
 
 func hasExec(acts []reconcile.Action) bool {
@@ -137,5 +149,79 @@ func TestFail2banPlanner_NoopWhenNoCIDRs(t *testing.T) {
 	}
 	if _, err := os.Stat(jailPath); !os.IsNotExist(err) {
 		t.Errorf("no-op planner must not create the jail file")
+	}
+}
+
+// --- fleet.hardening opt-out (wire v6) ---
+
+func TestHardeningDefaultsToEnabledWhenSpecUnset(t *testing.T) {
+	// The whole safety argument for the knob rests on this: a spec that says nothing
+	// about hardening — a bare struct, or one from a controller predating v6 — must
+	// leave the node hardened, never silently un-harden it.
+	var spec domain.NodeSpec
+	if !spec.SSHDHardeningEnabled() || !spec.Fail2banEnabled() {
+		t.Fatalf("an unset hardening policy must read as enabled, got sshd=%v fail2ban=%v",
+			spec.SSHDHardeningEnabled(), spec.Fail2banEnabled())
+	}
+}
+
+func TestSSHDHardeningPlanner_DisabledRemovesDropInAndReloads(t *testing.T) {
+	// Switching the knob off must actually take effect: a drop-in nothing reconciles
+	// would keep overriding the operator's own sshd_config forever.
+	sshd, _, sshdPath, _ := plannersFor(t, nil)
+	if err := os.WriteFile(sshdPath, []byte(hardening.SSHDConfig), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	acts := planSpec(t, sshd, offSpec())
+	if acts[0].Kind != reconcile.ActionDelete {
+		t.Fatalf("disabled: want the drop-in deleted, got %q", acts[0].Kind)
+	}
+	if !hasExec(acts) {
+		t.Errorf("removing the drop-in must reload sshd, else the old config stays live")
+	}
+}
+
+func TestSSHDHardeningPlanner_DisabledIsQuietOnceRemoved(t *testing.T) {
+	// Converged on "unmanaged": no file, so no delete and — critically — no sshd
+	// reload every 30 seconds for the rest of the node's life.
+	sshd, _, _, _ := plannersFor(t, nil)
+	acts := planSpec(t, sshd, offSpec())
+	if len(acts) != 1 || acts[0].Kind != reconcile.ActionNoChange {
+		t.Fatalf("want a single no-change action, got %+v", acts)
+	}
+	if hasExec(acts) {
+		t.Errorf("an already-unmanaged node must not reload sshd")
+	}
+}
+
+func TestFail2banPlanner_DisabledRemovesJailAndReloads(t *testing.T) {
+	_, p, _, jailPath := plannersFor(t, []string{"172.29.0.0/16"})
+	if err := os.WriteFile(jailPath, []byte(hardening.RenderFail2banJail([]string{"172.29.0.0/16"})), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	acts := planSpec(t, p, offSpec())
+	if acts[0].Kind != reconcile.ActionDelete {
+		t.Fatalf("disabled: want the jail deleted, got %q", acts[0].Kind)
+	}
+	if !hasExec(acts) {
+		t.Errorf("removing the jail must reload fail2ban")
+	}
+}
+
+func TestHardeningKnobsAreIndependent(t *testing.T) {
+	// The two subsystems are separate knobs: an operator who only wants their own
+	// sshd_config back must not lose brute-force protection as a side effect.
+	sshd, f2b, sshdPath, jailPath := plannersFor(t, []string{"172.29.0.0/16"})
+	for _, path := range []string{sshdPath, jailPath} {
+		if err := os.WriteFile(path, []byte("seeded"), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", path, err)
+		}
+	}
+	spec := domain.NodeSpec{Hardening: &domain.HardeningSpec{SSHD: false, Fail2ban: true}}
+	if k := planSpec(t, sshd, spec)[0].Kind; k != reconcile.ActionDelete {
+		t.Errorf("sshd off: want delete, got %q", k)
+	}
+	if k := planSpec(t, f2b, spec)[0].Kind; k != reconcile.ActionUpdate {
+		t.Errorf("fail2ban on: want the jail still reconciled (update), got %q", k)
 	}
 }

@@ -173,6 +173,62 @@ type FleetSection struct {
 	// a starting point, but ASN-diverse exits SHOULD set it per-exit.
 	RealityDefaultSNI  string `koanf:"reality_default_sni"`
 	RealityDefaultDest string `koanf:"reality_default_dest"`
+	// Hardening is the FLEET-WIDE default host-hardening policy. Both subsystems
+	// default to ON, and an individual node overrides it with its own
+	// masters[].hardening / exits[].hardening. Resolve with HardeningFor.
+	Hardening HardeningSection `koanf:"hardening"`
+}
+
+// HardeningSection is the opt-out from the managed host hardening: the sshd
+// drop-in (key-only auth, no root password, no X11) and the fail2ban sshd jail.
+// Both are ON unless explicitly set to false — an operator who never writes this
+// block gets exactly the hardened fleet earlier versions gave them.
+//
+// The same type appears at fleet level and on each master/exit, and per-node wins.
+// Hardening is a property of a particular machine, not of the fleet: the box an
+// operator hand-tunes is usually one box — typically the master, which is where
+// the controller sits and where they actually log in — while the exits are cattle.
+// A fleet-only switch would force them to un-harden every public-facing exit to
+// keep their own sshd_config on the master, which inverts the intent.
+//
+// The fields are *bool, not bool, because koanf cannot distinguish an omitted key
+// from an explicit `false` on a value type, and here the two must differ. At fleet
+// level nil means "enabled"; on a node it means "inherit the fleet". That is also
+// why a node cannot merely be compared against a zero value — an explicit
+// `sshd: true` on a node must beat a fleet-wide `sshd: false`.
+//
+// Turning a subsystem off does not merely stop managing it — the agent REMOVES the
+// file wgfleet installed, so the operator's own sshd_config/jail takes effect
+// rather than being shadowed by a leftover drop-in that nothing reconciles any
+// more. The removal shows up in `--plan` before it happens.
+type HardeningSection struct {
+	SSHD     *bool `koanf:"sshd"`
+	Fail2ban *bool `koanf:"fail2ban"`
+}
+
+// HardeningFor resolves one node's effective hardening policy: the node's own
+// setting when it states one, else the fleet default, else enabled. It always
+// returns a non-nil spec — the controller states its intent explicitly on the wire
+// so an agent never has to guess, and "unset" on the wire is reserved for
+// controllers that predate the knob.
+func (f FleetSection) HardeningFor(node HardeningSection) *domain.HardeningSpec {
+	return &domain.HardeningSpec{
+		SSHD:     resolveHardening(node.SSHD, f.Hardening.SSHD),
+		Fail2ban: resolveHardening(node.Fail2ban, f.Hardening.Fail2ban),
+	}
+}
+
+// resolveHardening applies the node-over-fleet-over-default precedence for one
+// subsystem. Default true: the fail-safe direction, so every path that forgets to
+// configure something leaves the node hardened rather than exposed.
+func resolveHardening(node, fleet *bool) bool {
+	if node != nil {
+		return *node
+	}
+	if fleet != nil {
+		return *fleet
+	}
+	return true
 }
 
 // AgentReconcileInterval returns the fleet-wide agent reconcile interval, or the
@@ -275,6 +331,11 @@ type MasterConfig struct {
 	Mihomo      MihomoConfig      `koanf:"mihomo"`  // master data-plane (mihomo) tuning
 	Compose     ComposeConfig     `koanf:"compose"` // master container stack tuning
 	SSH         SSHConfig         `koanf:"ssh"`     // bootstrap target
+	// Hardening overrides fleet.hardening for this master. Unset keys inherit the
+	// fleet default. This is the node the override exists for: the master is where
+	// the controller lives and where the operator actually logs in, so it is the
+	// box most likely to carry a hand-tuned sshd_config.
+	Hardening HardeningSection `koanf:"hardening"`
 	// ClientAdminPorts opens admin UI ports (controller Web UI, mihomo dashboard)
 	// on the master's mgmt address to the VPN client pool. Opt-in: empty keeps the
 	// strict default (admin reachable only over the mgmt overlay). See
@@ -574,6 +635,11 @@ type ExitConfig struct {
 	DNS                       DNSConfig      `koanf:"dns"` // optional rich blocky tuning + custom config
 	Firewall                  FirewallConfig `koanf:"firewall"`
 	SSH                       SSHConfig      `koanf:"ssh"` // bootstrap target
+	// Hardening overrides fleet.hardening for this exit. Unset keys inherit the
+	// fleet default. Weigh an opt-out here more carefully than on a master: an exit
+	// is the fleet's public-facing surface, and its SSH port faces the same scanners
+	// the AS-blacklist feed exists to hide from.
+	Hardening HardeningSection `koanf:"hardening"`
 	// Transports declares which master↔exit transports this exit runs and tunes each
 	// (ADR-0025): two sections — awg and reality — each gated by its `enabled` flag.
 	// Both disabled ⇒ AWG-only (back-compat). Both enabled ⇒ dual-transport (warm).
