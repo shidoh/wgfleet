@@ -281,7 +281,7 @@ agent before the controller restart so the file is written before mihomo reloads
   signal is the agent's `client-wg` health check (the controller marks the master `Ready`
   off that). Don't chase the wg-easy container health flag.
 - **Pin the mihomo version**, not `:latest` — and not `Alpha`, which is a moving tag that
-  defeats the pin. The code default is now `v1.19.29` (AmneziaWG 2.0 shipped in `v1.19.14`).
+  defeats the pin. The code default is now `v1.19.30` (AmneziaWG 2.0 shipped in `v1.19.14`).
   ⚠️ `v1.19.27` and older **crash-loop on AmneziaWG-2.0 master↔exit junk**. The AmneziaWG obfuscation
   params are derived safely by the platform — it floors `Jmin ≥ S4` so no junk packet is short
   enough to trip the unguarded S4-strip in older `amneziawg-go` builds (this was a real

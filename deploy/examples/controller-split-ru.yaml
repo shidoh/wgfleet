@@ -153,7 +153,7 @@ fleet:
 
       compose:
         wg_easy_web_port: 51821         # wg-easy admin UI (client QR codes), mgmt/ZT only
-        # mihomo pinned to a safe default (v1.19.29). Do NOT set :latest or "Alpha".
+        # mihomo pinned to a safe default (v1.19.30). Do NOT set :latest or "Alpha".
 
   exits:
     - name: exit-1

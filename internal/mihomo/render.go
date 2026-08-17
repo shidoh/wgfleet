@@ -50,7 +50,12 @@ const (
 	// pinned release (not "latest") keeps deploys reproducible; bump deliberately.
 	// Operators can override it per master (MasterSpec.DashboardURL) with a mirror
 	// reachable from their network, or a different version/dashboard.
-	DefaultDashboardURL = "https://github.com/MetaCubeX/metacubexd/releases/download/v1.256.0/compressed-dist.tgz"
+	// Bumped v1.256.0 → v1.273.0 (2026-08-17). Most of the intervening work went into
+	// metacubexd's new desktop app, which we do not ship; the web side gained a visual
+	// profile editor, managed rules/proxies CRUD, a last-week traffic range, and a fix for
+	// the memory chart reporting MB/s where it meant MB. compressed-dist.tgz is still the
+	// published asset, so the fetch path is unchanged.
+	DefaultDashboardURL = "https://github.com/MetaCubeX/metacubexd/releases/download/v1.273.0/compressed-dist.tgz"
 )
 
 // GEO database sources. The default mihomo geox URLs point at GitHub raw, which is

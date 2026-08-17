@@ -267,13 +267,13 @@ fleet:
         # there); there is no auto-generated password. Prometheus metrics are auto-enabled in
         # wg-easy's DB by the agent (endpoint /metrics/prometheus on the port below).
         # wg_easy_web_port: 44423 # default
-        mihomo_image: "metacubex/mihomo" # default metacubex/mihomo:v1.19.29 (pinned)
+        mihomo_image: "metacubex/mihomo" # default metacubex/mihomo:v1.19.30 (pinned)
         # Pin a specific version, NOT :latest and NOT "Alpha" (#8) — a moving tag defeats
         # the pin. The fleet used to override this to "Alpha" because AmneziaWG 2.0 (S3/S4
         # transport junk) landed there before any release: v1.19.27's amneziawg-go lacks the
         # S4 length guard and crash-loops on short packets. AWG 2.0 shipped in v1.19.14, so
-        # the default is now v1.19.29 and no override is needed.
-        # mihomo_tag: "v1.19.29"
+        # the default is now v1.19.30 and no override is needed.
+        # mihomo_tag: "v1.19.30"
         # client_dns: defaults to the exits' mgmt addresses (blocky)
         client_allowed_ips: "1.0.0.0/8,8.0.0.0/7,..." # inverted RFC1918 list for clients
       # Per-node override of fleet.hardening above. An omitted key inherits the

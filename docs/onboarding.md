@@ -185,7 +185,7 @@ buttons or store flags.
   access for the first run; the baseline firewall + `Table = off` keep SSH/ZT
   reachable, but verify before depending on the box.
 - **Pin the mihomo version**, not `:latest` — and not `Alpha` either, since a moving tag
-  defeats the pin. The code default is now `v1.19.29`, which carries AmneziaWG 2.0 (it
+  defeats the pin. The code default is now `v1.19.30`, which carries AmneziaWG 2.0 (it
   shipped in `v1.19.14`). ⚠️ Do not fall back to `v1.19.27` or older: those **crash-loop on
   AmneziaWG-2.0 master↔exit junk**. The AmneziaWG-param safety is otherwise handled
   by the platform: it floors `Jmin ≥ S4` so no obfuscation junk packet is short enough to trip

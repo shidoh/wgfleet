@@ -49,10 +49,15 @@ const (
 	// Bumped 1.19.27 → 1.19.29 to retire the fleet's `mihomo_tag: "Alpha"` override. That
 	// override existed because AWG 2.0 landed in Alpha before any release; it shipped in
 	// v1.19.14 (2025-09-24), so the rationale is long obsolete — and `Alpha` is a MOVING
-	// tag, which silently defeats the pin. Verified 2026-07-19 against the GitHub compare
-	// API: v1.19.29...Alpha is `identical`, 0 commits apart, so this bump is a zero-code
-	// delta from what the fleet already runs (live build alpha-8e2aba4).
-	DefaultMihomoImage = "metacubex/mihomo:v1.19.29"
+	// tag, which silently defeats the pin.
+	//
+	// Bumped 1.19.29 → 1.19.30 (2026-08-17): CVE-2026-56862 in crypto/tls, an xhttp fix
+	// that touches our transport (default uplink chunk size), and a batch of sniffer work
+	// we lean on. It also adds AmneziaWG v3.0/v3.1 support behind a new `version:` key —
+	// unset (our case) keeps the legacy device_v1 code path, so this bump does NOT change
+	// how the fleet's AWG 2.0 tunnels are built. Enabling `version: 3` is a separate
+	// decision gated by tools/check-awg3-status.sh.
+	DefaultMihomoImage = "metacubex/mihomo:v1.19.30"
 	// DefaultWGEasyWebPort is the wg-easy admin UI port when the spec leaves it
 	// unset. Exported so the controller UI can build a link to it.
 	DefaultWGEasyWebPort = 44423

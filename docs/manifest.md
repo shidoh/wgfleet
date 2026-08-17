@@ -90,8 +90,8 @@ fleet:
         wg_easy_image: ghcr.io/wg-easy/wg-easy   # repository (default …:15)
         wg_easy_tag:   "15"                 # explicit tag overrides any tag in the image
         mihomo_image:  metacubex/mihomo
-        mihomo_tag:    "v1.19.29"           # pin a version (NOT :latest, NOT Alpha — a moving
-                                            #   tag defeats the pin) (#8). Default is v1.19.29.
+        mihomo_tag:    "v1.19.30"           # pin a version (NOT :latest, NOT Alpha — a moving
+                                            #   tag defeats the pin) (#8). Default is v1.19.30.
       ssh:                                  # bootstrap target (Phase 0/1 only)
         host: 203.0.113.1
         port: 22                            # SSH port (optional; default 22)
