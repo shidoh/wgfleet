@@ -19,6 +19,12 @@ import (
 
 // --- mihomo config + included direct-networks ---
 
+// mihomoConfigMode is the at-rest mode of the rendered mihomo config. Named rather
+// than repeated as a literal because two places write that file — the normal
+// FileAction and the rejection rollback in applyConfigAction — and a rollback that
+// silently widened the mode would expose one WireGuard private key per exit.
+const mihomoConfigMode = 0o600
+
 type mihomoPlanner struct {
 	paths      Paths
 	privateKey string
@@ -77,7 +83,7 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 	// whether the wireguard proxies (AmneziaWG params) changed and a hot reload would
 	// silently no-op (see applyConfigAction / mihomo.ProxiesChanged).
 	oldCfg, _ := os.ReadFile(p.paths.MihomoConfig)
-	configAction, err := reconcile.FileAction(p.paths.MihomoConfig, []byte(cfg), 0o600, mihomo.RedactConfig)
+	configAction, err := reconcile.FileAction(p.paths.MihomoConfig, []byte(cfg), mihomoConfigMode, mihomo.RedactConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +104,7 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 		// device. Routine changes (drain, rules, DNS, direct-networks) hot-reload so
 		// existing client connections survive.
 		forceRestart := mihomo.ProxiesChanged(oldCfg, []byte(cfg))
-		actions = append(actions, p.applyConfigAction(spec, []byte(cfg), forceRestart))
+		actions = append(actions, p.applyConfigAction(spec, []byte(cfg), oldCfg, forceRestart))
 	} else {
 		actions = append(actions, reconcile.NoChangeAction("mihomo", "config already current"))
 	}
@@ -110,8 +116,15 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 // existing client connections survive — draining one exit must not disconnect
 // everyone), and falls back to `docker compose restart mihomo` only when the API is
 // unreachable (mihomo down / mid-start). A config the controller actively REJECTS is
-// surfaced as an error WITHOUT a restart, so the previous good config keeps running.
-func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML []byte, forceRestart bool) reconcile.Action {
+// surfaced as an error WITHOUT a restart, so the previous good config keeps running —
+// and prevCfg (the bytes that were on disk before this pass overwrote them) is put
+// BACK, so disk and the running config agree again. Leaving the rejected bytes on
+// disk would be a delayed-action failure: the pass merely errors, but the next
+// restart for an unrelated reason (host reboot, compose planner, mihomoRedirPlanner's
+// rebind self-heal, mihomoWGDupPlanner) loads the bad file and drops the data plane
+// far from the change that caused it. prevCfg empty (first ever write) ⇒ nothing to
+// roll back to, so the file is left as-is and only the rejection is reported.
+func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML, prevCfg []byte, forceRestart bool) reconcile.Action {
 	reload := p.reload
 	if reload == nil {
 		reload = mihomo.Reload
@@ -149,8 +162,15 @@ func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML []byte, f
 			}
 			return nil
 		default:
-			// Reachable but rejected the config: leave the old config running.
-			return err
+			// Reachable but rejected the config: leave the old config running AND
+			// restore it on disk, so a later restart cannot resurrect the rejection.
+			if len(prevCfg) == 0 {
+				return err
+			}
+			if rerr := reconcile.AtomicWrite(p.paths.MihomoConfig, prevCfg, mihomoConfigMode); rerr != nil {
+				return fmt.Errorf("mihomo rejected the config (%w) and restoring the previous one failed: %v", err, rerr)
+			}
+			return fmt.Errorf("%w (previous config restored on disk)", err)
 		}
 	}
 	return reconcile.CustomAction(reconcile.ActionUpdate, "mihomo",

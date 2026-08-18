@@ -1,6 +1,7 @@
 package master
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -243,6 +244,41 @@ func TestMihomoRejectedConfigNotRestarted(t *testing.T) {
 	_, err := reconcile.NewEngine(nil, pl).Reconcile(context.Background(), spec, reconcile.ModeApply)
 	if err == nil || !strings.Contains(err.Error(), "rejected") {
 		t.Fatalf("expected the rejection to surface as a reconcile error, got %v", err)
+	}
+}
+
+// TestMihomoRejectedConfigRolledBackOnDisk proves that when mihomo rejects a config
+// the FILE is restored to the previous good one, not just the in-memory config left
+// alone. Leaving the rejected bytes on disk is a delayed-action failure: mihomo keeps
+// running the old config, so the pass looks merely errored — but the next restart for
+// any unrelated reason (host reboot, compose planner, mihomoRedirPlanner's rebind
+// self-heal, mihomoWGDupPlanner) loads the bad file and takes the data plane down,
+// far from the change that caused it.
+func TestMihomoRejectedConfigRolledBackOnDisk(t *testing.T) {
+	paths := testPaths(t)
+	spec, priv := masterSpec(t)
+	seedMihomoConfig(t, paths, spec, priv)
+	good, err := os.ReadFile(paths.MihomoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Master.SnifferSkip = append(spec.Master.SnifferSkip, "+.example.com") // non-proxy change ⇒ hot-reload path
+
+	reload := func(context.Context, string, string, []byte) error {
+		return errors.New("controller rejected config (HTTP 400)")
+	}
+	pl := mihomoPlanner{paths: paths, privateKey: priv, reload: reload,
+		restart: func(context.Context) error { t.Error("rejected config must NOT restart"); return nil }}
+	if _, err := reconcile.NewEngine(nil, pl).Reconcile(context.Background(), spec, reconcile.ModeApply); err == nil {
+		t.Fatal("expected the rejection to surface as a reconcile error")
+	}
+
+	onDisk, err := os.ReadFile(paths.MihomoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(onDisk, good) {
+		t.Error("rejected config left on disk: a later restart would load it and drop the data plane")
 	}
 }
 

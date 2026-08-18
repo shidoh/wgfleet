@@ -20,8 +20,8 @@ func plannersFor(t *testing.T, cidrs []string) (sshd, f2b reconcile.Planner, ssh
 	sshdPath = filepath.Join(dir, "10-wgfleet-hardening.conf")
 	jailPath = filepath.Join(dir, "wgfleet.conf")
 	ps := Planners(Input{SSHDConfigPath: sshdPath, Fail2banJailPath: jailPath, MgmtIgnoreCIDRs: cidrs})
-	if len(ps) != 2 {
-		t.Fatalf("want 2 host planners, got %d", len(ps))
+	if len(ps) != 3 {
+		t.Fatalf("want 3 host planners, got %d", len(ps))
 	}
 	return ps[0], ps[1], sshdPath, jailPath
 }

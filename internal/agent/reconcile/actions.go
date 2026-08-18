@@ -95,7 +95,7 @@ func FileAction(target string, content []byte, perm os.FileMode, redact Redactor
 	case kind != ActionNoChange:
 		// Capture content/perm by value for the closure.
 		data := append([]byte(nil), content...)
-		a.apply = func(context.Context) error { return atomicWrite(target, data, perm) }
+		a.apply = func(context.Context) error { return AtomicWrite(target, data, perm) }
 	}
 	return a, nil
 }
@@ -194,9 +194,9 @@ func commandLabel(cmd []string) string {
 	return filepath.Base(cmd[0])
 }
 
-// atomicWrite writes data to a temp file in the same directory and renames it
+// AtomicWrite writes data to a temp file in the same directory and renames it
 // over target, so readers never observe a half-written config.
-func atomicWrite(target string, data []byte, perm os.FileMode) error {
+func AtomicWrite(target string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(target)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("mkdir %q: %w", dir, err)

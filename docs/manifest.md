@@ -48,6 +48,15 @@ fleet:
                                              #   the subsystem back to you (leaving it in place
                                              #   would shadow your own config with nothing
                                              #   maintaining it). Needs wire v6.
+  awg3: false                                # AmneziaWG 3.0 on the master↔exit tunnels — FLEET
+                                             #   DEFAULT; each exit can override it. OPPOSITE
+                                             #   polarity to hardening above: omitted ⇒ OFF, because
+                                             #   enabling it changes a live tunnel's wire format.
+                                             #   Does NOT touch clients — wg-easy has no 3.0 support
+                                             #   at all. Needs wire v7 AND a 3.x kernel module on the
+                                             #   exit; the controller and the agent each refuse when
+                                             #   their half is unmet, so a premature flip degrades to
+                                             #   "that exit stays on 2.0", not to a dead tunnel.
 
   masters:
     - name: master-xa-1

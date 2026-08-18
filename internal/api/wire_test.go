@@ -68,8 +68,8 @@ func indexOf(s, sub string) int {
 
 // Guard: the wire version must never drift by accident. Changing it is a
 // deliberate act with a rollout consequence, so it takes a deliberate test edit.
-func TestWireContractVersionIs6(t *testing.T) {
-	if WireContractVersion != 6 {
-		t.Fatalf("WireContractVersion = %d, want 6 (bumped for NodeSpec.hardening)", WireContractVersion)
+func TestWireContractVersionIs7(t *testing.T) {
+	if WireContractVersion != 7 {
+		t.Fatalf("WireContractVersion = %d, want 7 (bumped for the AmneziaWG 3.0 block on AWGShared)", WireContractVersion)
 	}
 }

@@ -425,6 +425,14 @@ func awgToProto(a *domain.AWGParams) *pb.AWGParams {
 			H1: headerToProto(s.H1), H2: headerToProto(s.H2),
 			H3: headerToProto(s.H3), H4: headerToProto(s.H4),
 			S1: int32(s.S1), S2: int32(s.S2), S3: int32(s.S3), S4: int32(s.S4),
+
+			HeaderProtectionKey:    s.HeaderProtectionKey,
+			ContentPaddingAddition: s.ContentPaddingAddition,
+			RekeyAfterTime:         s.RekeyAfterTime,
+			RekeyTimeout:           s.RekeyTimeout,
+			RejectAfterTime:        s.RejectAfterTime,
+			KeepaliveTimeout:       s.KeepaliveTimeout,
+			MaxHandshakeAttempts:   s.MaxHandshakeAttempts,
 		},
 		Local: awgLocalToProto(&a.Local),
 	}
@@ -440,6 +448,14 @@ func awgFromProto(a *pb.AWGParams) *domain.AWGParams {
 			H1: headerFromProto(s.GetH1()), H2: headerFromProto(s.GetH2()),
 			H3: headerFromProto(s.GetH3()), H4: headerFromProto(s.GetH4()),
 			S1: int(s.GetS1()), S2: int(s.GetS2()), S3: int(s.GetS3()), S4: int(s.GetS4()),
+
+			HeaderProtectionKey:    s.GetHeaderProtectionKey(),
+			ContentPaddingAddition: s.GetContentPaddingAddition(),
+			RekeyAfterTime:         s.GetRekeyAfterTime(),
+			RekeyTimeout:           s.GetRekeyTimeout(),
+			RejectAfterTime:        s.GetRejectAfterTime(),
+			KeepaliveTimeout:       s.GetKeepaliveTimeout(),
+			MaxHandshakeAttempts:   s.GetMaxHandshakeAttempts(),
 		}
 	}
 	if l := awgLocalFromProto(a.GetLocal()); l != nil {

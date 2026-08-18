@@ -275,7 +275,19 @@ func DirectNetworksPath() string { return directNetworksPath }
 // working) but join neither tier, so no new traffic routes to them — a
 // graceful drain.
 func renderProxies(in RenderInput) (proxies []any, primary, reserve []string, err error) {
+	// A proxy name is the join key between `proxies` and every proxy-group's member
+	// list, so two proxies under one name make the tiers ambiguous: mihomo keeps one
+	// of them and wg-best then routes to an exit nobody chose. Node names are cert
+	// CNs and unique, but the REALITY transport derives "<node>-reality", which a
+	// node literally named that way collides with. Refusing to render is the
+	// fail-safe: the planner errors and the previous good config keeps running.
+	seen := make(map[string]bool, len(in.Spec.ExitTunnels))
 	for _, t := range in.Spec.ExitTunnels {
+		if seen[t.Name] {
+			return nil, nil, nil, fmt.Errorf("duplicate mihomo proxy name %q: two exit tunnels render to the same proxy, so proxy-group members would be ambiguous", t.Name)
+		}
+		seen[t.Name] = true
+
 		host, port, perr := splitEndpoint(t.Endpoint)
 		if perr != nil {
 			return nil, nil, nil, fmt.Errorf("exit %q: %w", t.Name, perr)
@@ -483,6 +495,35 @@ func awgOption(p domain.AWGParams) map[string]any {
 	for i, v := range []string{p.Local.I1, p.Local.I2, p.Local.I3, p.Local.I4, p.Local.I5} {
 		if v != "" {
 			opt[fmt.Sprintf("i%d", i+1)] = v
+		}
+	}
+
+	// AmneziaWG 3.0. `version: 3` is not decoration — mihomo picks the device
+	// implementation off it (adapter/outbound/wireguard.go): ONLY the literal 3
+	// selects amneziawg-go's v3 device, and every other value, an absent key
+	// included, falls through to the legacy one. The legacy device ignores the v3
+	// keys entirely, so emitting them without the version would leave the master
+	// speaking 2.0 at an exit already brought up on 3.0 — a tunnel that never
+	// handshakes. Hence: any 3.0 field at all forces version 3.
+	//
+	// Deliberately NOT emitted for a 2.0 param set: an explicit `version: 0` is
+	// harmless to mihomo but would change every existing rendered config, and a
+	// wireguard-proxy change forces a container restart fleet-wide (see
+	// mihomo.ProxiesChanged) for no behaviour difference at all.
+	if p.AWG3Enabled() {
+		opt["version"] = 3
+		for _, kv := range []struct{ key, value string }{
+			{"header-protection-key", p.Shared.HeaderProtectionKey},
+			{"content-padding-addition", p.Shared.ContentPaddingAddition},
+			{"rekey-after-time", p.Shared.RekeyAfterTime},
+			{"rekey-timeout", p.Shared.RekeyTimeout},
+			{"reject-after-time", p.Shared.RejectAfterTime},
+			{"keepalive-timeout", p.Shared.KeepaliveTimeout},
+			{"max-handshake-attempts", p.Shared.MaxHandshakeAttempts},
+		} {
+			if kv.value != "" {
+				opt[kv.key] = kv.value
+			}
 		}
 	}
 	return opt

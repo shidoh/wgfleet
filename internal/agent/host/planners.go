@@ -1,7 +1,9 @@
 // Package host holds the role-agnostic reconcile planners that keep a node's host
-// hardening converged: the sshd drop-in and the fail2ban sshd jail. They run on
-// every node (master and exit) so that, unlike the one-shot bootstrap steps they
-// mirror, a drifted or hand-overwritten file is repaired on the next reconcile pass.
+// hardening converged: the sshd drop-in, the fail2ban sshd jail, and the apt hold
+// on the AmneziaWG packages. They run on every node (master and exit) so that,
+// unlike the one-shot bootstrap steps they mirror, a drifted or hand-overwritten
+// file — or a hold that a later-provisioned node never got — is repaired on the
+// next reconcile pass.
 //
 // Both subsystems are individually switchable from the fleet manifest
 // (fleet.hardening, wire v6). The policy arrives per-pass on the NodeSpec rather
@@ -48,6 +50,10 @@ func Planners(in Input) []reconcile.Planner {
 	return []reconcile.Planner{
 		sshdHardeningPlanner{path: sshdPath},
 		fail2banPlanner{path: jailPath, ignoreCIDRs: in.MgmtIgnoreCIDRs},
+		// Unconditional: unlike the two above it has no fleet.hardening knob, because
+		// holding a package never conflicts with a deliberate operator upgrade. See
+		// awgHoldPlanner's doc comment.
+		awgHoldPlanner{},
 	}
 }
 
