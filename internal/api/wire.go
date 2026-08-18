@@ -57,6 +57,14 @@ const (
 	// Deploy the controller FIRST.
 	WireContractVersion uint32 = 7
 
+	// WireAWG3 is the wire version that introduced the AmneziaWG 3.0 block on
+	// AWGShared. The controller refuses to render 3.0 params for a node below it:
+	// such an agent drops the fields and brings its interface up as 2.0 while the
+	// master's mihomo emits `version: 3`, and the two ends never handshake. Named
+	// rather than compared against WireContractVersion so a later bump for an
+	// unrelated feature does not silently re-close AWG 3.0 to the whole fleet.
+	WireAWG3 uint32 = 7
+
 	// MinSupportedWire is the oldest agent wire version the controller will serve
 	// a spec to. Agents below it are refused (fail-safe) and, where possible,
 	// auto-upgraded.

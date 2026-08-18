@@ -110,6 +110,7 @@ provisioning time, which means **changing them requires re-provisioning the node
 | `fleet.reality_default_dest` | string | = SNI | Fleet-wide camouflage `host:port` the REALITY inbound borrows its certificate from |
 | `fleet.hardening.sshd` | bool | `true` | **Fleet default.** Manage the sshd drop-in (`/etc/ssh/sshd_config.d/10-wgfleet-hardening.conf`: key-only auth, no root password, no X11 forwarding), reconciled every pass. Set `false` to hand sshd back to you — see below |
 | `fleet.hardening.fail2ban` | bool | `true` | **Fleet default.** Manage the fail2ban sshd jail (`/etc/fail2ban/jail.d/wgfleet.conf`) |
+| `fleet.awg3` | bool | `false` | **Fleet default.** Run the master↔exit AmneziaWG tunnels on **AmneziaWG 3.0** (header protection + randomised timers). Opt-in, unlike the hardening keys above — see [AmneziaWG 3.0](#amneziawg-30) |
 
 ### Turning hardening off
 
@@ -127,6 +128,7 @@ are cattle. So each node may override the fleet:
 | `fleet.masters[].hardening.fail2ban` | bool | inherit fleet | Override the fleet default for this master |
 | `fleet.exits[].hardening.sshd` | bool | inherit fleet | Override the fleet default for this exit |
 | `fleet.exits[].hardening.fail2ban` | bool | inherit fleet | Override the fleet default for this exit |
+| `fleet.exits[].awg3` | bool | inherit fleet | Override `fleet.awg3` for this exit. Per-exit because the fleet's exits need not share a kernel-module generation |
 
 Precedence is node → fleet → `true`. An omitted key on a node means *inherit*, not
 *disable*, and an explicit `true` on a node beats a fleet-wide `false` — so the
@@ -460,3 +462,52 @@ Checks worth knowing about:
 
 To check a manifest without touching the fleet, run the controller in plan mode —
 it loads, validates and renders every node's desired state, changing nothing.
+
+## AmneziaWG 3.0
+
+`fleet.awg3` (and its per-exit override) switches the **master↔exit** tunnels to
+AmneziaWG 3.0: chacha20 header protection plus randomised rekey/keepalive timers.
+The timers matter as much as the header protection — a fixed 25-second keepalive
+is a timing signature that survives every payload-level obfuscation, and a censor
+that classifies by traffic shape rather than by packet contents sees straight
+through the rest.
+
+It is **off by default**, and deliberately so. Every other safety default in this
+file fails towards "more protection"; this one fails towards "keep speaking what
+the nodes already speak", because enabling it changes the wire format of a live
+tunnel.
+
+**It does not touch your clients.** Client-facing wg0 is served by wg-easy, which
+has no AmneziaWG 3.0 support at all — its `interfaces_table` carries exactly the
+2.0 parameter set, and the feature request ([wg-easy#2728]) is open with no work
+started. Client configs are therefore unaffected by this key, by construction
+rather than by policy.
+
+### Before you turn it on
+
+The controller refuses to render 3.0 parameters for an exit unless **both** hold,
+so a premature flip degrades to "stays on 2.0" rather than to a dead tunnel:
+
+1. **The exit's agent speaks wire v7 or later.** An older agent drops the 3.0
+   fields and brings its interface up as 2.0, while the master's mihomo — rendered
+   from the same decision — would emit `version: 3`. The two ends would disagree
+   about the wire format and never handshake.
+2. **The exit's kernel module is 3.x.** AmneziaWG 3.0 changed the netlink
+   attribute layout, so the module and `amneziawg-tools` must be on the same
+   generation. A mismatch fails `awg setconf` outright with
+   `attribute type 14 has an invalid length` and the interface never comes up.
+
+Check what a node actually runs before flipping the key:
+
+```sh
+modinfo amneziawg | grep ^version   # kernel module generation
+awg --version                       # userspace tools generation
+```
+
+The agent re-checks (2) locally on every pass and refuses to apply a 3.0 config to
+a 1.x module, leaving the previous good config running.
+
+`tools/check-awg3-status.sh` tracks the upstream readiness gates, including a
+watch-list of open defects in the kernel module itself.
+
+[wg-easy#2728]: https://github.com/wg-easy/wg-easy/issues/2728

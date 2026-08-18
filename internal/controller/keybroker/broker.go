@@ -328,7 +328,15 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	if master, ok := b.primaryMaster(); ok {
 		// Exit is the kernel-module (awg-quick) end of the master↔exit tunnel, so
 		// its I1-I5 signatures may use the full CPS tag set including <c>/<t>.
-		p := wg.DeriveAWGParamsForEnd(wg.TunnelSeed(exit.Name, master.Name, awgSalt), "exit", true)
+		seed := wg.TunnelSeed(exit.Name, master.Name, awgSalt)
+		p := wg.DeriveAWGParamsForEnd(seed, "exit", true)
+		// AmneziaWG 3.0, when the operator opted in AND this exit's agent can render
+		// it. The SAME decision is taken for the master end below from the same
+		// inputs — both ends of one tunnel must agree on the generation or the
+		// handshake never completes, so this must never be decided twice differently.
+		if awg3Enabled(b.fleet.AWG3For(exit), exitNode) {
+			p = wg.WithAWG3(p, seed)
+		}
 		awg = &p
 	}
 
@@ -660,7 +668,13 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			// both ends (ADR-0005); the "master" end label gives this end its own local
 			// I1-I5. mihomo is userspace WireGuard-Go, so kernel=false keeps the
 			// signatures free of the <c>/<t> tags it cannot parse.
-			awg := wg.DeriveAWGParamsForEnd(wg.TunnelSeed(exit.Name, master.Name, awgSalt), "master", false)
+			seed := wg.TunnelSeed(exit.Name, master.Name, awgSalt)
+			awg := wg.DeriveAWGParamsForEnd(seed, "master", false)
+			// Mirror of the exit end in renderExitSpec — same gate, same inputs, so
+			// the two ends of this tunnel cannot disagree about the AWG generation.
+			if awg3Enabled(b.fleet.AWG3For(exit), exitNode) {
+				awg = wg.WithAWG3(awg, seed)
+			}
 			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
 				Name:            exit.Name,
 				Endpoint:        endpoint,

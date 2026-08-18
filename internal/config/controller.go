@@ -177,6 +177,16 @@ type FleetSection struct {
 	// default to ON, and an individual node overrides it with its own
 	// masters[].hardening / exits[].hardening. Resolve with HardeningFor.
 	Hardening HardeningSection `koanf:"hardening"`
+	// AWG3 is the FLEET-WIDE default for AmneziaWG 3.0 on the master↔exit tunnels,
+	// overridable per exit with exits[].awg3. Resolve with AWG3For.
+	//
+	// Note the polarity is the OPPOSITE of Hardening: unset means OFF. Hardening
+	// fails safe by being on, whereas 3.0 fails safe by being off — enabling it
+	// changes the wire format of a live tunnel and requires both a 3.x kernel
+	// module on the exit and a wire-v7 agent to render it. "The operator never
+	// wrote this key" must therefore mean "keep speaking 2.0", never "quietly
+	// switch the protocol".
+	AWG3 *bool `koanf:"awg3"`
 }
 
 // HardeningSection is the opt-out from the managed host hardening: the sshd
@@ -229,6 +239,23 @@ func resolveHardening(node, fleet *bool) bool {
 		return *fleet
 	}
 	return true
+}
+
+// AWG3For resolves whether one exit's master↔exit tunnel runs AmneziaWG 3.0:
+// the exit's own setting when it states one, else the fleet default, else OFF.
+//
+// Off-by-default is the whole point — see FleetSection.AWG3. This resolves the
+// OPERATOR's intent only; the controller applies two further gates before any 3.0
+// parameter reaches a node (keybroker.awg3Enabled): the exit's agent must speak
+// wire v7, and the exit's kernel module must be 3.x.
+func (f FleetSection) AWG3For(exit ExitConfig) bool {
+	if exit.AWG3 != nil {
+		return *exit.AWG3
+	}
+	if f.AWG3 != nil {
+		return *f.AWG3
+	}
+	return false
 }
 
 // AgentReconcileInterval returns the fleet-wide agent reconcile interval, or the
@@ -640,6 +667,16 @@ type ExitConfig struct {
 	// is the fleet's public-facing surface, and its SSH port faces the same scanners
 	// the AS-blacklist feed exists to hide from.
 	Hardening HardeningSection `koanf:"hardening"`
+	// AWG3 opts this exit's master↔exit AmneziaWG tunnel into AmneziaWG 3.0
+	// (header protection + randomised timers). Unset inherits fleet.awg3, which is
+	// itself off by default. *bool for the same reason as Hardening: koanf cannot
+	// tell an omitted key from an explicit false, and here an explicit `awg3: false`
+	// on one exit must beat a fleet-wide `awg3: true`.
+	//
+	// Per-exit rather than fleet-only because the fleet's exits do not share a
+	// kernel-module generation: 3.0 params on a 1.x module are rejected outright by
+	// awg setconf and the interface never comes up.
+	AWG3 *bool `koanf:"awg3"`
 	// Transports declares which master↔exit transports this exit runs and tunes each
 	// (ADR-0025): two sections — awg and reality — each gated by its `enabled` flag.
 	// Both disabled ⇒ AWG-only (back-compat). Both enabled ⇒ dual-transport (warm).

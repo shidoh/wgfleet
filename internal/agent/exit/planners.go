@@ -207,6 +207,10 @@ type wgPlanner struct {
 	path       string
 	privateKey string
 	up         func(name string) bool
+	// awgGen reports this node's AmneziaWG kernel module MAJOR version; nil ⇒ the
+	// real modinfo probe. Only consulted for a spec that asks for AmneziaWG 3.0
+	// (see checkAWG3Supported).
+	awgGen func() (int, error)
 }
 
 func (wgPlanner) Component() string { return "amneziawg interface" }
@@ -246,6 +250,16 @@ func (p wgPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Ac
 		// still derives its interface name from that path.
 		return []reconcile.Action{reconcile.BestEffortExecAction(
 			"awg transport disabled — bring the interface down", "awg-quick", "down", p.path)}, nil
+	}
+
+	// AmneziaWG 3.0 needs a 3.x kernel module: its netlink attribute layout is not
+	// the 1.x one, so awg setconf would reject the config and leave the interface
+	// down. Check BEFORE rendering — writing a config we know cannot be applied and
+	// then running awg-quick would take a live exit's data plane with it.
+	if awg := spec.WGServer.AWG; awg != nil && awg.AWG3Enabled() {
+		if err := checkAWG3Supported(p.awgGen); err != nil {
+			return nil, err
+		}
 	}
 
 	// AmneziaWG obfuscation is interface-level (spec.WGServer.AWG); peers are plain.

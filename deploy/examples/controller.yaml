@@ -108,6 +108,25 @@ fleet:
   # hardening:
   #   sshd: true
   #   fail2ban: true
+
+  # AmneziaWG 3.0 on the master↔exit tunnels (header protection + randomised
+  # rekey/keepalive timers). FLEET-WIDE DEFAULT; each exit can override it.
+  #
+  # Note the polarity is the OPPOSITE of hardening above: omitted means OFF.
+  # Hardening fails safe by being on; this fails safe by being off, because
+  # turning it on changes the wire format of a live tunnel.
+  #
+  # It does NOT affect your clients: client-facing wg0 is served by wg-easy,
+  # which has no AmneziaWG 3.0 support at all (its schema carries only the 2.0
+  # parameters), so client configs are unaffected by construction.
+  #
+  # Two further gates apply per exit, so a premature flip degrades to "that exit
+  # stays on 2.0" rather than to a dead tunnel: the exit's agent must speak wire
+  # v7, and its kernel module must be 3.x (AmneziaWG 3.0 changed the netlink
+  # attribute layout, so a 1.x module rejects the config outright). Check with
+  # `modinfo -F version amneziawg` and `awg --version` before flipping it.
+  # awg3: true
+
   masters:
     - name: master-xa-1
       mgmt_addr: 10.20.25.254 # ZT overlay address
