@@ -112,14 +112,45 @@
 </div>
 {{end}}
 
-<details class="spec">
-  <summary class="spec-toggle">RENDERED NODESPEC (DESIRED STATE)</summary>
-  {{if .SpecErr}}
-  <p class="error-note">{{.SpecErr}}</p>
-  {{else}}
-  <pre class="spec-pre">{{.SpecText}}</pre>
+{{if .SpecErr}}
+<p class="error-note">{{.SpecErr}}</p>
+{{else if .HasSpec}}
+<section class="spec-card" aria-labelledby="spec-heading">
+  <h2 class="spec-heading" id="spec-heading">WHAT THIS NODE CARRIES</h2>
+  <dl class="spec-summary">
+    {{range .Spec.Summary}}
+    <div class="spec-summary-row">
+      <dt class="spec-key">{{.Label}}</dt>
+      <dd class="spec-val">
+        <span class="spec-value">{{.Value}}</span>
+        {{if .Badge}}<span class="spec-badge">{{.Badge}}</span>{{end}}
+        {{if .Hint}}<span class="spec-hint">{{.Hint}}</span>{{end}}
+      </dd>
+    </div>
+    {{end}}
+  </dl>
+
+  {{range .Spec.Sections}}
+  <details class="spec-section">
+    <summary class="spec-section-toggle">{{.Title}}</summary>
+    {{if .Note}}<p class="spec-note">{{.Note}}</p>{{end}}
+    <dl class="spec-rows">
+      {{range .Rows}}
+      <div class="spec-row">
+        <dt class="spec-key">{{.Label}}</dt>
+        <dd class="spec-val">
+          <span class="spec-value">{{.Value}}</span>
+          {{if .Badge}}<span class="spec-badge">{{.Badge}}</span>{{end}}
+          {{if .Hint}}<span class="spec-hint">{{.Hint}}</span>{{end}}
+        </dd>
+      </div>
+      {{end}}
+    </dl>
+  </details>
   {{end}}
-</details>
+  <p class="spec-foot">Desired state as the controller renders it. Keys, preshared keys and client UUIDs are deliberately omitted.</p>
+</section>
+{{end}}
 {{end}}
 
 {{/* Transport panel — exit only, and only when the exit runs at least one

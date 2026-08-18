@@ -174,11 +174,19 @@ func TestNodeDetailWithStatusAndSpec(t *testing.T) {
 		"104.16.0.1", "warp-egress", "cloudflare", // status + checks
 		"check-mark ok", "check-mark bad", // check verdict glyphs (shape, not colour-only)
 		`aria-label="warp-egress: pass"`, `aria-label="dns: fail"`, // accessible verdict
-		"role:    exit", "egress:  warp", "[wg server]", "address pool: 10.81.0.0/24", // rendered spec preview
+		// Desired-state card: the summary must be on the page WITHOUT unfolding
+		// anything, and the detail sections must be present as folds.
+		"WHAT THIS NODE CARRIES", "spec-summary", "spec-section",
+		"Egress", "warp", // summary answers "where does this exit go"
+		"10.81.0.0/24", // detail rows still carry the specifics
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("detail body missing %q", want)
 		}
+	}
+	// The old rendering was one <pre> dump; the page must not regress to it.
+	if strings.Contains(body, "spec-pre") {
+		t.Error("the spec is back to a pre-formatted dump")
 	}
 }
 

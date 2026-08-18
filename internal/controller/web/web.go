@@ -955,7 +955,8 @@ type nodeData struct {
 	Node            domain.Node
 	HasStatus       bool
 	Status          domain.NodeStatus
-	SpecText        string
+	Spec            specView
+	HasSpec         bool
 	SpecErr         string
 	CanProvision    bool
 	CanUpgrade      bool   // node is provisioned + upgradable over SSH
@@ -1010,7 +1011,7 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 	} else if spec, err := h.renderer.RenderNodeSpec(r.Context(), id); err != nil {
 		data.SpecErr = "cannot render spec: " + err.Error()
 	} else {
-		data.SpecText = formatSpec(spec)
+		data.Spec, data.HasSpec = buildSpecView(spec), true
 		data.WGEasyURL = wgEasyURL(node, spec)
 		data.MihomoURL = mihomoURL(node, spec)
 		if spec.Role == domain.RoleExit {
