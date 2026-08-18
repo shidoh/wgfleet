@@ -17,32 +17,39 @@ import (
 // It takes the per-node inflight lock for the whole operation, so it cannot race
 // a UI-triggered upgrade or the version gate's auto-upgrade of the same node.
 func (m *Manager) UpgradeAgentVerified(ctx context.Context, nodeID string) (string, error) {
+	// Everything down to the Dial leaves the node completely untouched, so those
+	// failures are tagged: the coordinator must NOT roll back an attempt that never
+	// reached the node (see untouched.go — a rollback restores a snapshot from some
+	// earlier upgrade, so "undoing" a no-op is really a downgrade).
 	if err := m.acquire(nodeID); err != nil {
-		return "", err
+		return "", untouchedError{err}
 	}
 	defer m.clearInflight(nodeID)
 
 	node, _, ok := m.findNode(nodeID)
 	if !ok {
-		return "", fmt.Errorf("node %q not found in fleet manifest", nodeID)
+		return "", untouchedf("node %q not found in fleet manifest", nodeID)
 	}
 	if node.SSH.Host == "" || node.SSH.KeyPath == "" {
-		return "", fmt.Errorf("node %q has no ssh target", nodeID)
+		return "", untouchedf("node %q has no ssh target", nodeID)
 	}
 	if m.opts.AgentBinPath == "" {
-		return "", fmt.Errorf("no agent binary configured (set controller.agent_bin)")
+		return "", untouchedf("no agent binary configured (set controller.agent_bin)")
 	}
 	bin, err := os.ReadFile(m.opts.AgentBinPath)
 	if err != nil {
-		return "", fmt.Errorf("read agent binary: %w", err)
+		return "", untouchedf("read agent binary: %w", err)
 	}
 
 	runner, err := m.opts.Dial(node.SSH)
 	if err != nil {
-		return "", fmt.Errorf("ssh dial %q: %w", node.Name, err)
+		return "", untouchedf("ssh dial %q: %w", node.Name, err)
 	}
 	defer func() { _ = runner.Close() }()
 
+	// From here on the node may have been modified — the first Upgrade step
+	// snapshots the running binary — so failures are NOT tagged and a rollback is
+	// the correct response.
 	p := provisioner.New(m.log)
 	in := provisioner.BootstrapInput{Node: node, AgentBinary: bin}
 	if _, err := p.Upgrade(ctx, runner, in, provisioner.ModeApply); err != nil {

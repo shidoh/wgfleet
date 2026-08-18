@@ -386,16 +386,40 @@ func (c *Coordinator) gateReason(n domain.Node, want string, restartedAt time.Ti
 	return ""
 }
 
-// fail records the node's failure and rolls it back. The rollback runs on a
-// detached, bounded context: the common failure modes (operator abort, controller
-// shutdown) cancel the rollout's context, and a rollback that skipped itself
-// because of that would leave the node on the binary that just failed.
+// nodeUntouched reports whether err says the upgrade failed BEFORE it modified
+// anything on the node — no upload, no rollback snapshot taken in this attempt,
+// no restart. It is a behavioural check rather than a sentinel comparison so the
+// coordinator keeps depending on nothing but its own interfaces: whoever
+// implements Upgrader decides how to signal it.
+func nodeUntouched(err error) bool {
+	var u interface{ NodeUntouched() bool }
+	return errors.As(err, &u) && u.NodeUntouched()
+}
+
+// fail records the node's failure and, when the upgrade actually displaced
+// something, rolls it back. The rollback runs on a detached, bounded context: the
+// common failure modes (operator abort, controller shutdown) cancel the rollout's
+// context, and a rollback that skipped itself because of that would leave the node
+// on the binary that just failed.
+//
+// It is skipped entirely when the upgrade never reached the node. "It failed, so
+// roll it back" only holds when there was something to roll back — and .prev is
+// not a general-purpose escape hatch, it is whatever some EARLIER upgrade
+// displaced. Restoring it after a dial timeout downgrades a node that was
+// perfectly healthy, which is exactly what happened to pn8 on 2026-08-18: an SSH
+// dial timed out, the rollback restored a week-old snapshot, and a node running
+// wire 6 came back on wire 5. The failure still halts the rollout — only the
+// pointless mutation is dropped.
 func (c *Coordinator) fail(ctx context.Context, i int, cause error) error {
 	id := c.nodeID(i)
 	c.setPhase(i, PhaseFailed, func(n *NodeProgress) {
 		n.Err = cause.Error()
 		n.EndedAt = c.now()
 	})
+	if nodeUntouched(cause) {
+		c.log.Error("node failed before the upgrade touched it; NOT rolling back", "node", id, "err", cause)
+		return cause
+	}
 	c.log.Error("node failed its upgrade gate; rolling back", "node", id, "err", cause)
 
 	rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackGrace)
