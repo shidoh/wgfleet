@@ -49,9 +49,12 @@ type specRow struct {
 	Badge string
 }
 
-// specGroup is a titled set of term/definition pairs about one subject.
+// specGroup is a titled set of term/definition pairs about one subject. Note is a
+// single line for the whole group — a caveat that applies to several of its rows
+// belongs here, not repeated on each of them.
 type specGroup struct {
 	Title string
+	Note  string
 	Rows  []specRow
 }
 
@@ -265,13 +268,15 @@ func awgGroup(s domain.NodeSpec) specGroup {
 	if awg == nil {
 		return specGroup{}
 	}
-	g := specGroup{Title: "AmneziaWG", Rows: []specRow{
-		{Label: "S1-S4", Value: fmt.Sprintf("%d / %d / %d / %d", awg.Shared.S1, awg.Shared.S2, awg.Shared.S3, awg.Shared.S4),
-			Hint: "must be identical on both ends of the tunnel"},
-		{Label: "H1-H4", Value: fmt.Sprintf("%s, %s, %s, %s", awg.Shared.H1, awg.Shared.H2, awg.Shared.H3, awg.Shared.H4),
-			Hint: "must be identical on both ends of the tunnel"},
-		kv("Jc / Jmin / Jmax", fmt.Sprintf("%d / %d / %d", awg.Local.Jc, awg.Local.Jmin, awg.Local.Jmax)),
-	}}
+	g := specGroup{
+		Title: "AmneziaWG",
+		Note:  "S and H must be identical on both ends of a tunnel; J and I are per-end.",
+		Rows: []specRow{
+			kv("S1-S4", fmt.Sprintf("%d / %d / %d / %d", awg.Shared.S1, awg.Shared.S2, awg.Shared.S3, awg.Shared.S4)),
+			kv("H1-H4", fmt.Sprintf("%s, %s, %s, %s", awg.Shared.H1, awg.Shared.H2, awg.Shared.H3, awg.Shared.H4)),
+			kv("Jc / Jmin / Jmax", fmt.Sprintf("%d / %d / %d", awg.Local.Jc, awg.Local.Jmin, awg.Local.Jmax)),
+		},
+	}
 	if sig := joinNonEmptyValues(awg.Local.I1, awg.Local.I2, awg.Local.I3, awg.Local.I4, awg.Local.I5); sig != "" {
 		g.Rows = append(g.Rows, kv("I1-I5", sig))
 	}
@@ -279,14 +284,23 @@ func awgGroup(s domain.NodeSpec) specGroup {
 		g.Rows = append(g.Rows, kv("Client-side junk", fmt.Sprintf("Jc=%d Jmin=%d Jmax=%d", l.Jc, l.Jmin, l.Jmax)))
 	}
 	if awg.AWG3Enabled() {
-		g.Rows = append(g.Rows,
-			specRow{Label: "Header protection", Value: boolWord(awg.Shared.HeaderProtectionKey != "", "on", "off"),
-				Hint: "AWG 3.0; needs S1-S4 ≥ 12 on both ends, and the kernel accepts a violation silently"},
-			kv("Content padding", orDash(awg.Shared.ContentPaddingAddition)),
-			kv("Rekey after", orDash(awg.Shared.RekeyAfterTime)),
-			kv("Reject after", orDash(awg.Shared.RejectAfterTime)),
-			kv("Keepalive", orDash(awg.Shared.KeepaliveTimeout)),
-		)
+		g.Rows = append(g.Rows, specRow{
+			Label: "Header protection", Value: boolWord(awg.Shared.HeaderProtectionKey != "", "on", "off"),
+			Hint: "needs S1-S4 ≥ 12 on both ends; the kernel accepts a violation silently",
+		})
+		// Only the timers that are actually set. Rendering the unset ones produced
+		// four consecutive rows of "—", which is the same non-answer as a truncated
+		// list: it costs the reader four lines to learn nothing.
+		for _, kvp := range []struct{ label, value string }{
+			{"Content padding", awg.Shared.ContentPaddingAddition},
+			{"Rekey after", awg.Shared.RekeyAfterTime},
+			{"Reject after", awg.Shared.RejectAfterTime},
+			{"Keepalive", awg.Shared.KeepaliveTimeout},
+		} {
+			if kvp.value != "" {
+				g.Rows = append(g.Rows, kv(kvp.label, kvp.value))
+			}
+		}
 	}
 	return g
 }
@@ -295,13 +309,18 @@ func realityGroup(r *domain.RealityServerSpec) specGroup {
 	if r == nil {
 		return specGroup{}
 	}
-	g := specGroup{Title: "REALITY inbound", Rows: []specRow{
-		kv("Listen port", fmt.Sprintf("%d/tcp", r.ListenPort)),
-		{Label: "Camouflage", Value: fmt.Sprintf("sni %s → dest %s", orDash(r.ServerName), orDash(r.Dest)),
-			Hint: "dest must support X25519MLKEM768 or the handshake fails with no error"},
-		kv("Short ID", orDash(r.ShortID)),
-		kv("XHTTP", fmt.Sprintf("%s, mode %s", orDash(r.XHTTPPath), orDash(r.XHTTPMode))),
-	}}
+	g := specGroup{
+		Title: "REALITY inbound",
+		Note:  "dest must support X25519MLKEM768, or the handshake fails with no error at all.",
+		Rows: []specRow{
+			kv("Listen port", fmt.Sprintf("%d/tcp", r.ListenPort)),
+			kv("Camouflage", fmt.Sprintf("sni %s → dest %s", orDash(r.ServerName), orDash(r.Dest))),
+			kv("Short ID", orDash(r.ShortID)),
+		},
+	}
+	if r.XHTTPPath != "" || r.XHTTPMode != "" {
+		g.Rows = append(g.Rows, kv("XHTTP", fmt.Sprintf("%s, mode %s", orDash(r.XHTTPPath), orDash(r.XHTTPMode))))
+	}
 	if rel := joinNonEmptyValues(boolWord(r.AllowEmptySNI, "empty SNI", ""), boolWord(r.AllowIPv6, "IPv6", "")); rel != "" {
 		g.Rows = append(g.Rows, kv("Allowed", rel))
 	}
@@ -313,12 +332,17 @@ func clientVLESSGroup(m *domain.MasterSpec) specGroup {
 		return specGroup{}
 	}
 	c := m.ClientVLESS
-	g := specGroup{Title: "Client VLESS inbound", Rows: []specRow{
-		kv("Listen port", fmt.Sprintf("%d/tcp", c.ListenPort)),
-		{Label: "Camouflage", Value: fmt.Sprintf("sni %s → dest %s", orDash(c.ServerName), orDash(c.Dest)),
-			Hint: "dest must support X25519MLKEM768 or the handshake fails with no error"},
-		kv("XHTTP", fmt.Sprintf("%s, mode %s", orDash(c.XHTTPPath), orDash(c.XHTTPMode))),
-	}}
+	g := specGroup{
+		Title: "Client VLESS inbound",
+		Note:  "dest must support X25519MLKEM768, or the handshake fails with no error at all.",
+		Rows: []specRow{
+			kv("Listen port", fmt.Sprintf("%d/tcp", c.ListenPort)),
+			kv("Camouflage", fmt.Sprintf("sni %s → dest %s", orDash(c.ServerName), orDash(c.Dest))),
+		},
+	}
+	if c.XHTTPPath != "" || c.XHTTPMode != "" {
+		g.Rows = append(g.Rows, kv("XHTTP", fmt.Sprintf("%s, mode %s", orDash(c.XHTTPPath), orDash(c.XHTTPMode))))
+	}
 	if names := clientNames(c.Clients); names != "" {
 		g.Rows = append(g.Rows, specRow{Label: "Issued to", Value: names,
 			Hint: "UUIDs are access credentials and are never rendered"})
@@ -391,16 +415,16 @@ func firewallGroup(f domain.FirewallSpec) specGroup {
 	return g
 }
 
+// hardeningGroup is one row, not two. Both values are booleans an operator sets
+// once and then never reads; giving each its own line spent two of the page's
+// scarcest resource — vertical rows — on almost nothing.
 func hardeningGroup(s domain.NodeSpec) specGroup {
-	sshd := specRow{Label: "Managed sshd drop-in", Value: boolWord(s.SSHDHardeningEnabled(), "on", "off")}
-	f2b := specRow{Label: "fail2ban sshd jail", Value: boolWord(s.Fail2banEnabled(), "on", "off")}
-	if !s.SSHDHardeningEnabled() {
-		sshd.Badge = "opted out"
+	r := specRow{Label: "Host hardening", Value: fmt.Sprintf("sshd drop-in %s · fail2ban %s",
+		boolWord(s.SSHDHardeningEnabled(), "on", "off"), boolWord(s.Fail2banEnabled(), "on", "off"))}
+	if !s.SSHDHardeningEnabled() || !s.Fail2banEnabled() {
+		r.Badge = "opted out"
 	}
-	if !s.Fail2banEnabled() {
-		f2b.Badge = "opted out"
-	}
-	return specGroup{Title: "Host hardening", Rows: []specRow{sshd, f2b}}
+	return specGroup{Title: "Host", Rows: []specRow{r}}
 }
 
 func observabilityGroup(s domain.NodeSpec) specGroup {

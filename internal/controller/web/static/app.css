@@ -1095,28 +1095,46 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   border-bottom-color: var(--blue);
 }
 
-/* Details — grouped term/definition pairs.
-   The measure is capped on purpose. The page container is 1340px wide, and a
-   term/definition list stretched across all of it puts half a screen between a
-   label and its value: the eye has to travel, and nothing lines up. Two columns
-   at ~440px each is the readable width, and auto-fit still collapses to one
-   column on a narrow window without a media query. */
+/* Details — one CARD per subject.
+   Capping the width was not enough: eight groups of small, equally-weighted text
+   with nothing but a gap between them read as one undifferentiated wall. Every
+   console this page borrows from (OpenShift, the cloud consoles) gives each detail
+   section its own bordered container, and that border is what lets the eye chunk
+   the page instead of scanning it line by line.
+   align-items:start keeps a short card from stretching to a tall neighbour's
+   height, which is what produced the ragged holes between them. */
 .spec-groups {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
-  gap: 4px 36px;
-  max-width: 900px;
+  align-items: start;
+  gap: 14px;
+  max-width: 940px;
 }
-.spec-group { break-inside: avoid; padding-bottom: 10px; }
+.spec-group {
+  background: var(--panel-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-mini);
+  padding: 12px 16px 8px;
+}
 .spec-group-title {
-  margin: 6px 0 2px;
-  font-size: 11px;
+  margin: 0 0 2px;
+  font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 1.4px;
+  letter-spacing: 1.6px;
   text-transform: uppercase;
-  color: var(--text-bright);
+  color: var(--blue-toggle-fg);
+}
+/* One caveat for the whole card. A note that applied to several rows used to be
+   repeated on each of them, which doubled the line count for no new information. */
+.spec-group-note {
+  margin: 0 0 4px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
 }
 .spec-rows { margin: 0; }
+.spec-group .spec-row { padding: 7px 0; }
+.spec-group .spec-row:first-of-type { padding-top: 4px; }
 
 /* Tables — one per repeating entity. */
 .spec-table-wrap { overflow-x: auto; }

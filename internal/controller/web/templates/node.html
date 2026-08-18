@@ -142,8 +142,9 @@
       <div class="spec-panel">
         <div class="spec-groups">
           {{range .Spec.Details}}
-          <div class="spec-group">
+          <section class="spec-group">
             <h3 class="spec-group-title">{{.Title}}</h3>
+            {{if .Note}}<p class="spec-group-note">{{.Note}}</p>{{end}}
             <dl class="spec-rows">
               {{range .Rows}}
               <div class="spec-row">
@@ -156,7 +157,7 @@
               </div>
               {{end}}
             </dl>
-          </div>
+          </section>
           {{end}}
         </div>
       </div>
