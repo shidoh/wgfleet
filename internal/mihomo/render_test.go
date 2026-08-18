@@ -165,6 +165,31 @@ func TestRenderConfigRejectsOwnRedirAddress(t *testing.T) {
 	}
 }
 
+// TestRenderConfigRejectsDuplicateProxyNames proves the renderer refuses a spec
+// that would emit two proxies under one name, rather than handing mihomo a config
+// whose proxy-group members are ambiguous.
+//
+// Node names are cert CNs and so unique, but the REALITY transport derives its
+// proxy name as "<node>-reality" — so a node literally named "exit-a-reality"
+// collides with the REALITY proxy of node "exit-a". mihomo does not surface this
+// as a clean rejection: it takes one of the two and the tier silently routes to
+// the wrong exit. Failing the render is the fail-safe — the planner errors and the
+// previous good config keeps running (cf. lesson: the engine's own check does not
+// catch structural inconsistencies; validate before handing anything over).
+func TestRenderConfigRejectsDuplicateProxyNames(t *testing.T) {
+	in := sampleInput()
+	in.Spec.ExitTunnels = append(in.Spec.ExitTunnels, domain.ExitTunnel{
+		Name: "exit-a", Endpoint: "exit-a.example.net:36051",
+		ServerPublicKey: "H5MvraCiOLEIP6z+EHobf33Nt9EUdtjTRfO0vftZomg=",
+		TunnelIP:        "10.83.0.2", MTU: 1380, AWG: awgFor(5),
+	})
+	if _, err := RenderConfig(in); err == nil {
+		t.Fatal("expected a duplicate proxy name to fail the render")
+	} else if !strings.Contains(err.Error(), "exit-a") {
+		t.Errorf("error should name the colliding proxy, got: %v", err)
+	}
+}
+
 func TestRenderConfigStructure(t *testing.T) {
 	out, err := RenderConfig(sampleInput())
 	if err != nil {

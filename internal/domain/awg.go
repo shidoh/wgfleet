@@ -86,7 +86,12 @@ type AWGShared struct {
 //   - Jc: number of junk packets sent after I1-I5 (1 ≤ Jc ≤ 128, recommended 4-12).
 //   - Jmin/Jmax: junk packet size bounds (Jmin < Jmax ≤ 1280).
 //   - I1-I5: signature packets imitating other protocols before the handshake;
-//     hex blobs or CPS tag templates (<b ...>, <t>, <r N>, <rc N>, <rd N>).
+//     hex blobs or CPS tag templates. The kernel module's jp_parse_tags knows
+//     exactly six tags — <b 0xHEX>, <c>, <t>, <r N>, <rc N>, <rd N> — and returns
+//     -EINVAL for anything else, so an unknown tag is rejected, not ignored.
+//     Only <b> is static: every other tag carries a jp_modifier func that rewrites
+//     the template in place on each handshake initiation, which is the blast radius
+//     of the upstream defects gate G6 tracks (tools/check-awg3-status.sh).
 //     Optional; empty means none.
 type AWGLocal struct {
 	Jc, Jmin, Jmax     int

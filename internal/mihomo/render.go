@@ -275,7 +275,19 @@ func DirectNetworksPath() string { return directNetworksPath }
 // working) but join neither tier, so no new traffic routes to them — a
 // graceful drain.
 func renderProxies(in RenderInput) (proxies []any, primary, reserve []string, err error) {
+	// A proxy name is the join key between `proxies` and every proxy-group's member
+	// list, so two proxies under one name make the tiers ambiguous: mihomo keeps one
+	// of them and wg-best then routes to an exit nobody chose. Node names are cert
+	// CNs and unique, but the REALITY transport derives "<node>-reality", which a
+	// node literally named that way collides with. Refusing to render is the
+	// fail-safe: the planner errors and the previous good config keeps running.
+	seen := make(map[string]bool, len(in.Spec.ExitTunnels))
 	for _, t := range in.Spec.ExitTunnels {
+		if seen[t.Name] {
+			return nil, nil, nil, fmt.Errorf("duplicate mihomo proxy name %q: two exit tunnels render to the same proxy, so proxy-group members would be ambiguous", t.Name)
+		}
+		seen[t.Name] = true
+
 		host, port, perr := splitEndpoint(t.Endpoint)
 		if perr != nil {
 			return nil, nil, nil, fmt.Errorf("exit %q: %w", t.Name, perr)
