@@ -54,6 +54,29 @@ type Action struct {
 	apply   func(ctx context.Context) error
 }
 
+// OnApplied returns a copy of a whose apply runs hook after the action itself
+// succeeds. A no-change action is returned untouched — it has no apply path, and
+// a hook that fired anyway would count work that never happened.
+//
+// It exists so a caller can observe APPLIED effects without duplicating the
+// action's own logic. Plan mode never runs apply, so a hook here cannot fire on a
+// dry run — which is the whole point for the restart governor: a `--plan` must
+// not consume a service's restart budget.
+func (a Action) OnApplied(hook func()) Action {
+	if a.apply == nil || hook == nil {
+		return a
+	}
+	inner := a.apply
+	a.apply = func(ctx context.Context) error {
+		if err := inner(ctx); err != nil {
+			return err
+		}
+		hook()
+		return nil
+	}
+	return a
+}
+
 // Changes reports whether the action would mutate anything.
 //
 // CAUTION for callers that gate a restart or reload on this: it does NOT tell you

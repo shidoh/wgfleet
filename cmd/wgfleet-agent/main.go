@@ -38,6 +38,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/host"
 	"github.com/shidoh/wgfleet/internal/agent/master"
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
+	"github.com/shidoh/wgfleet/internal/agent/restart"
 	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/pki"
@@ -215,8 +216,10 @@ func run() error {
 		client:   conn,
 		log:      slog.With("node", cfg.Agent.NodeID, "role", role),
 	}
+	// Built ONCE for the process, not per reconcile pass — see agent.tier and
+	// agent.restarts. Role-agnostic: self-heal restarts exist on exits too.
+	a.restarts = restart.New(a.log)
 	if role == domain.RoleMaster {
-		// Built ONCE for the process, not per reconcile pass — see agent.tier.
 		a.tier = master.NewTierSelector(a.log)
 	}
 
@@ -315,6 +318,12 @@ type agent struct {
 	// its hysteresis reset every 30s — streaks never reach their thresholds, so
 	// failover can never fire and the standby is never warmed. Nil for exits.
 	tier *master.TierSelector
+
+	// restarts throttles SELF-HEAL restarts for the PROCESS lifetime, for exactly
+	// the same reason as tier above: planners are rebuilt every pass, so a governor
+	// created per pass would forget every restart it ever recorded and the throttle
+	// would never engage. Non-nil on every role — the exit planners take it too.
+	restarts *restart.Governor
 
 	// lastSpecPrint fingerprints the spec from the previous applied pass. A pass
 	// that changes resources while this is unchanged is config drift (the world
@@ -764,6 +773,7 @@ func (a *agent) planners(privateKey, realityPrivateKey, adminUser, adminPass str
 	if a.role == domain.RoleMaster {
 		base = master.Planners(master.Input{
 			Tier:              a.tier,
+			Restart:           a.restarts,
 			Paths:             a.masterPaths(),
 			PrivateKey:        privateKey,
 			RealityPrivateKey: realityPrivateKey,

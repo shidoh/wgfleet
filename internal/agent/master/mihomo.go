@@ -10,8 +10,10 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
+	"github.com/shidoh/wgfleet/internal/agent/restart"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/mihomo"
 	"github.com/shidoh/wgfleet/internal/wg"
@@ -197,6 +199,31 @@ func orPlaceholder(s, placeholder string) string {
 	return s
 }
 
+// restartKeyMihomo names mihomo's restart budget in the governor. One key for the
+// whole container: both self-heal planners below bounce the SAME process, so they
+// must share a budget or two alternating conditions would each keep their own and
+// together restart twice as often as either is allowed to.
+const restartKeyMihomo = "mihomo"
+
+// gateRestart wraps a self-heal restart action in the governor's budget. When the
+// budget is spent it returns a no-change action that SAYS SO — a suppressed repair
+// must not read as a healthy pass, or an operator looking at the plan sees
+// "nothing to do" while the data plane is broken.
+//
+// The Record hook rides OnApplied, so plan mode cannot spend budget: repeatedly
+// inspecting a broken master would otherwise throttle the very repair the operator
+// is about to authorise.
+func gateRestart(gov *restart.Governor, target string, act reconcile.Action) reconcile.Action {
+	ok, until := gov.Allow(restartKeyMihomo)
+	if !ok {
+		return reconcile.NoChangeAction(target, fmt.Sprintf(
+			"restart throttled until %s — mihomo has needed a self-heal restart too often, "+
+				"so restarting again is not fixing it; investigate rather than wait",
+			until.Format(time.RFC3339)))
+	}
+	return act.OnApplied(func() { gov.Record(restartKeyMihomo) })
+}
+
 // --- mihomo redirect-listener self-heal ---
 
 // mihomoRedirPlanner verifies that mihomo is actually listening on its transparent
@@ -217,6 +244,9 @@ type mihomoRedirPlanner struct {
 	listening func(addr string) bool
 	// localUp reports whether host is assigned to a local interface; nil ⇒ real check.
 	localUp func(host string) bool
+	// gov throttles this SELF-HEAL restart; nil ⇒ unthrottled. Shares mihomo's
+	// budget with mihomoWGDupPlanner — both bounce the same container.
+	gov *restart.Governor
 }
 
 func (mihomoRedirPlanner) Component() string { return "mihomo redirect listener" }
@@ -268,7 +298,7 @@ func (p mihomoRedirPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]rec
 			}
 			return nil
 		})
-	return []reconcile.Action{restart}, nil
+	return []reconcile.Action{gateRestart(p.gov, "mihomo redirect listener", restart)}, nil
 }
 
 // --- mihomo leaked-wireguard-device self-heal ---
@@ -304,6 +334,11 @@ type mihomoWGDupPlanner struct {
 	peerSockets func(addr string) (int, bool)
 	// restart bounces the container (nil ⇒ real `docker compose restart mihomo`).
 	restart func(ctx context.Context) error
+	// gov throttles this SELF-HEAL restart; nil ⇒ unthrottled (tests, and any
+	// caller that has not wired one). Owned by the agent, not built here: planners
+	// are rebuilt every pass, so a governor constructed here would forget every
+	// restart it saw and never throttle anything.
+	gov *restart.Governor
 }
 
 func (mihomoWGDupPlanner) Component() string { return "mihomo wireguard devices" }
@@ -346,9 +381,10 @@ func (p mihomoWGDupPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]rec
 	if restart == nil {
 		restart = composeRestartMihomo(p.compose)
 	}
-	return []reconcile.Action{reconcile.CustomAction(reconcile.ActionUpdate, "mihomo wireguard devices",
-		"leaked AmneziaWG device(s) detected — restart mihomo to clear: "+strings.Join(dupes, ", "),
-		"docker compose restart mihomo", restart)}, nil
+	return []reconcile.Action{gateRestart(p.gov, "mihomo wireguard devices",
+		reconcile.CustomAction(reconcile.ActionUpdate, "mihomo wireguard devices",
+			"leaked AmneziaWG device(s) detected — restart mihomo to clear: "+strings.Join(dupes, ", "),
+			"docker compose restart mihomo", restart))}, nil
 }
 
 // udpPeerSocketCount counts connected UDP sockets whose PEER address is addr, read

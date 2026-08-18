@@ -8,6 +8,7 @@ import (
 
 	"github.com/shidoh/wgfleet/internal/agent/dockerfw"
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
+	"github.com/shidoh/wgfleet/internal/agent/restart"
 	"github.com/shidoh/wgfleet/internal/agent/tuning"
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/dnsfilter"
@@ -50,6 +51,12 @@ type Input struct {
 	// first built, and it was invisible because every individual pass looked correct.
 	// nil ⇒ a throwaway selector, i.e. no failover: safe for tests, wrong in prod.
 	Tier *TierSelector
+	// Restart throttles the SELF-HEAL restarts (mihomo rebind, leaked WG devices)
+	// so a condition that a restart cannot fix does not bounce the container — and
+	// with it every client's connection — twice a minute forever. Like Tier it must
+	// be owned by the caller and reused across passes; a governor built here would
+	// forget every restart it saw. nil ⇒ unthrottled (the pre-governor behaviour).
+	Restart *restart.Governor
 }
 
 const defaultClientInterface = "wg0"
@@ -105,14 +112,14 @@ func Planners(in Input) []reconcile.Planner {
 		// stack is up and wg0 exists, and self-heals the case where mihomo silently
 		// lost its redir bind (the client iface was recreated under it, e.g. a wg-easy
 		// restart flapped the bind address) — DNAT'd client TCP black-holes otherwise.
-		mihomoRedirPlanner{compose: in.Paths.Compose},
+		mihomoRedirPlanner{compose: in.Paths.Compose, gov: in.Restart},
 		// Also last: clear mihomo's leaked userspace AmneziaWG devices. A hot reload
 		// can leave a second device alive per AWG exit, and because every exit tunnel
 		// shares one master WG identity the exit's single peer slot then flaps between
 		// the two sockets — intermittent failures and ~7s REKEY_TIMEOUT stalls on AWG
 		// exits. Gated on an observed duplicate, never on config change, because the
 		// repair is a connection-dropping restart.
-		mihomoWGDupPlanner{compose: in.Paths.Compose},
+		mihomoWGDupPlanner{compose: in.Paths.Compose, gov: in.Restart},
 	}
 }
 
