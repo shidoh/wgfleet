@@ -1003,12 +1003,13 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   color: var(--label-bright);
 }
 
-/* Summary — the answer, always visible, scalars only. */
-.spec-summary { margin: 0 0 4px; }
+/* Summary — the answer, always visible, scalars only. Capped for the same reason
+   as the detail groups: a hint line running the full 1340px is unreadable. */
+.spec-summary { margin: 0 0 4px; max-width: 980px; }
 .spec-summary-row,
 .spec-row {
   display: grid;
-  grid-template-columns: minmax(150px, 210px) 1fr;
+  grid-template-columns: minmax(130px, 180px) 1fr;
   gap: 3px 18px;
   padding: 9px 0;
   border-bottom: 1px solid var(--border-row);
@@ -1094,11 +1095,17 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   border-bottom-color: var(--blue);
 }
 
-/* Details — grouped term/definition pairs in columns. */
+/* Details — grouped term/definition pairs.
+   The measure is capped on purpose. The page container is 1340px wide, and a
+   term/definition list stretched across all of it puts half a screen between a
+   label and its value: the eye has to travel, and nothing lines up. Two columns
+   at ~440px each is the readable width, and auto-fit still collapses to one
+   column on a narrow window without a media query. */
 .spec-groups {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 4px 32px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  gap: 4px 36px;
+  max-width: 900px;
 }
 .spec-group { break-inside: avoid; padding-bottom: 10px; }
 .spec-group-title {
