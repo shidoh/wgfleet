@@ -78,6 +78,23 @@ func (h AWGHeader) String() string {
 type AWGShared struct {
 	H1, H2, H3, H4 AWGHeader
 	S1, S2, S3, S4 int
+
+	// --- AmneziaWG 3.0 (see awg3.go). Empty across the board = a pure AWG 2.0
+	// interface, which is what every node renders until an operator opts in. ---
+
+	// HeaderProtectionKey is the base64 chacha20 key for header protection.
+	// Setting it imposes S1-S4 >= 12; see validateAWG3.
+	HeaderProtectionKey string
+	// ContentPaddingAddition pads transport packets. The receiver strips exactly
+	// this much, so it must match on both ends.
+	ContentPaddingAddition string
+	// The 3.0 tunable timers, each a u16 range ("N" or "min-max") the device
+	// redraws on every timer arm — the anti-fingerprint knob of ADR-0025.
+	RekeyAfterTime       string
+	RekeyTimeout         string
+	RejectAfterTime      string
+	KeepaliveTimeout     string
+	MaxHandshakeAttempts string
 }
 
 // AWGLocal holds the AmneziaWG parameters that MAY differ between the two ends
@@ -166,6 +183,9 @@ func (p AWGParams) Validate() error {
 
 	// Shared: header-type ranges must be well-formed and non-overlapping.
 	errs = append(errs, validateHeaders(p.Shared.headerRanges())...)
+
+	// Shared: the AmneziaWG 3.0 block, if the operator opted into it.
+	errs = append(errs, p.Shared.validateAWG3()...)
 
 	return errors.Join(errs...)
 }

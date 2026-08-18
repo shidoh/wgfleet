@@ -1994,19 +1994,34 @@ func (x *AWGHeader) GetMax() uint32 {
 	return 0
 }
 
-// AWGShared — MUST be identical on both ends of a tunnel: H1-H4 and S1-S4.
+// AWGShared — MUST be identical on both ends of a tunnel: H1-H4 and S1-S4, plus
+// the whole AmneziaWG 3.0 block (wire v7).
+//
+// The 3.0 fields are additive, but a v6 agent DROPS them and renders a 2.0
+// interface while the master's mihomo — rendered from the same controller — would
+// emit `version: 3`. The two ends of the tunnel then disagree about the wire
+// format and no handshake completes. Hence wire v7 AND the controller-side gate
+// that refuses to hand 3.0 params to a node below it (see keybroker).
 type AWGShared struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	H1            *AWGHeader             `protobuf:"bytes,1,opt,name=h1,proto3" json:"h1,omitempty"`
-	H2            *AWGHeader             `protobuf:"bytes,2,opt,name=h2,proto3" json:"h2,omitempty"`
-	H3            *AWGHeader             `protobuf:"bytes,3,opt,name=h3,proto3" json:"h3,omitempty"`
-	H4            *AWGHeader             `protobuf:"bytes,4,opt,name=h4,proto3" json:"h4,omitempty"`
-	S1            int32                  `protobuf:"varint,5,opt,name=s1,proto3" json:"s1,omitempty"`
-	S2            int32                  `protobuf:"varint,6,opt,name=s2,proto3" json:"s2,omitempty"`
-	S3            int32                  `protobuf:"varint,7,opt,name=s3,proto3" json:"s3,omitempty"`
-	S4            int32                  `protobuf:"varint,8,opt,name=s4,proto3" json:"s4,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	H1    *AWGHeader             `protobuf:"bytes,1,opt,name=h1,proto3" json:"h1,omitempty"`
+	H2    *AWGHeader             `protobuf:"bytes,2,opt,name=h2,proto3" json:"h2,omitempty"`
+	H3    *AWGHeader             `protobuf:"bytes,3,opt,name=h3,proto3" json:"h3,omitempty"`
+	H4    *AWGHeader             `protobuf:"bytes,4,opt,name=h4,proto3" json:"h4,omitempty"`
+	S1    int32                  `protobuf:"varint,5,opt,name=s1,proto3" json:"s1,omitempty"`
+	S2    int32                  `protobuf:"varint,6,opt,name=s2,proto3" json:"s2,omitempty"`
+	S3    int32                  `protobuf:"varint,7,opt,name=s3,proto3" json:"s3,omitempty"`
+	S4    int32                  `protobuf:"varint,8,opt,name=s4,proto3" json:"s4,omitempty"`
+	// AmneziaWG 3.0. Empty across the board ⇒ a pure AWG 2.0 interface.
+	HeaderProtectionKey    string `protobuf:"bytes,9,opt,name=header_protection_key,json=headerProtectionKey,proto3" json:"header_protection_key,omitempty"`           // base64 chacha20 key; imposes S1-S4 >= 12
+	ContentPaddingAddition string `protobuf:"bytes,10,opt,name=content_padding_addition,json=contentPaddingAddition,proto3" json:"content_padding_addition,omitempty"` // transport padding; receiver strips exactly this
+	RekeyAfterTime         string `protobuf:"bytes,11,opt,name=rekey_after_time,json=rekeyAfterTime,proto3" json:"rekey_after_time,omitempty"`                         // u16 range "N" or "min-max", redrawn per timer arm
+	RekeyTimeout           string `protobuf:"bytes,12,opt,name=rekey_timeout,json=rekeyTimeout,proto3" json:"rekey_timeout,omitempty"`
+	RejectAfterTime        string `protobuf:"bytes,13,opt,name=reject_after_time,json=rejectAfterTime,proto3" json:"reject_after_time,omitempty"`
+	KeepaliveTimeout       string `protobuf:"bytes,14,opt,name=keepalive_timeout,json=keepaliveTimeout,proto3" json:"keepalive_timeout,omitempty"`
+	MaxHandshakeAttempts   string `protobuf:"bytes,15,opt,name=max_handshake_attempts,json=maxHandshakeAttempts,proto3" json:"max_handshake_attempts,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *AWGShared) Reset() {
@@ -2093,6 +2108,55 @@ func (x *AWGShared) GetS4() int32 {
 		return x.S4
 	}
 	return 0
+}
+
+func (x *AWGShared) GetHeaderProtectionKey() string {
+	if x != nil {
+		return x.HeaderProtectionKey
+	}
+	return ""
+}
+
+func (x *AWGShared) GetContentPaddingAddition() string {
+	if x != nil {
+		return x.ContentPaddingAddition
+	}
+	return ""
+}
+
+func (x *AWGShared) GetRekeyAfterTime() string {
+	if x != nil {
+		return x.RekeyAfterTime
+	}
+	return ""
+}
+
+func (x *AWGShared) GetRekeyTimeout() string {
+	if x != nil {
+		return x.RekeyTimeout
+	}
+	return ""
+}
+
+func (x *AWGShared) GetRejectAfterTime() string {
+	if x != nil {
+		return x.RejectAfterTime
+	}
+	return ""
+}
+
+func (x *AWGShared) GetKeepaliveTimeout() string {
+	if x != nil {
+		return x.KeepaliveTimeout
+	}
+	return ""
+}
+
+func (x *AWGShared) GetMaxHandshakeAttempts() string {
+	if x != nil {
+		return x.MaxHandshakeAttempts
+	}
+	return ""
 }
 
 // AWGLocal — MAY differ between the two ends: Jc/Jmin/Jmax and I1-I5.
@@ -2890,7 +2954,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x03mtu\x18\x06 \x01(\x05R\x03mtu\"/\n" +
 	"\tAWGHeader\x12\x10\n" +
 	"\x03min\x18\x01 \x01(\rR\x03min\x12\x10\n" +
-	"\x03max\x18\x02 \x01(\rR\x03max\"\xe7\x01\n" +
+	"\x03max\x18\x02 \x01(\rR\x03max\"\xb3\x04\n" +
 	"\tAWGShared\x12%\n" +
 	"\x02h1\x18\x01 \x01(\v2\x15.wgfleet.v1.AWGHeaderR\x02h1\x12%\n" +
 	"\x02h2\x18\x02 \x01(\v2\x15.wgfleet.v1.AWGHeaderR\x02h2\x12%\n" +
@@ -2899,7 +2963,15 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x02s1\x18\x05 \x01(\x05R\x02s1\x12\x0e\n" +
 	"\x02s2\x18\x06 \x01(\x05R\x02s2\x12\x0e\n" +
 	"\x02s3\x18\a \x01(\x05R\x02s3\x12\x0e\n" +
-	"\x02s4\x18\b \x01(\x05R\x02s4\"\x92\x01\n" +
+	"\x02s4\x18\b \x01(\x05R\x02s4\x122\n" +
+	"\x15header_protection_key\x18\t \x01(\tR\x13headerProtectionKey\x128\n" +
+	"\x18content_padding_addition\x18\n" +
+	" \x01(\tR\x16contentPaddingAddition\x12(\n" +
+	"\x10rekey_after_time\x18\v \x01(\tR\x0erekeyAfterTime\x12#\n" +
+	"\rrekey_timeout\x18\f \x01(\tR\frekeyTimeout\x12*\n" +
+	"\x11reject_after_time\x18\r \x01(\tR\x0frejectAfterTime\x12+\n" +
+	"\x11keepalive_timeout\x18\x0e \x01(\tR\x10keepaliveTimeout\x124\n" +
+	"\x16max_handshake_attempts\x18\x0f \x01(\tR\x14maxHandshakeAttempts\"\x92\x01\n" +
 	"\bAWGLocal\x12\x0e\n" +
 	"\x02jc\x18\x01 \x01(\x05R\x02jc\x12\x12\n" +
 	"\x04jmin\x18\x02 \x01(\x05R\x04jmin\x12\x12\n" +

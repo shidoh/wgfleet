@@ -118,6 +118,33 @@ func writeAWG(b *strings.Builder, p domain.AWGParams) {
 			fmt.Fprintf(b, "I%d = %s\n", i+1, v)
 		}
 	}
+
+	writeAWG3(b, p.Shared)
+}
+
+// writeAWG3 emits the AmneziaWG 3.0 [Interface] keys, each only when set. An
+// absent key means "not configured" to amneziawg-tools, which is exactly the
+// semantics a partial 3.0 opt-in needs; an empty VALUE, by contrast, is a parse
+// error on the node.
+//
+// The spelling is load-bearing. The tools match keys case-insensitively but
+// silently IGNORE a key they do not recognise — so a typo does not fail the
+// render, it brings the interface up without header protection and says nothing.
+// These names are taken from the tools' own config.c key table.
+func writeAWG3(b *strings.Builder, s domain.AWGShared) {
+	for _, kv := range []struct{ key, value string }{
+		{"HeaderProtectionKey", s.HeaderProtectionKey},
+		{"ContentPaddingAddition", s.ContentPaddingAddition},
+		{"RekeyAfterTime", s.RekeyAfterTime},
+		{"RekeyTimeout", s.RekeyTimeout},
+		{"RejectAfterTime", s.RejectAfterTime},
+		{"KeepaliveTimeout", s.KeepaliveTimeout},
+		{"MaxHandshakeAttempts", s.MaxHandshakeAttempts},
+	} {
+		if kv.value != "" {
+			fmt.Fprintf(b, "%s = %s\n", kv.key, kv.value)
+		}
+	}
 }
 
 // interfaceAddress renders the [Interface] Address as "ip/prefixlen", taking the

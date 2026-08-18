@@ -313,7 +313,14 @@ message AWGHeader {
   uint32 max = 2;
 }
 
-// AWGShared — MUST be identical on both ends of a tunnel: H1-H4 and S1-S4.
+// AWGShared — MUST be identical on both ends of a tunnel: H1-H4 and S1-S4, plus
+// the whole AmneziaWG 3.0 block (wire v7).
+//
+// The 3.0 fields are additive, but a v6 agent DROPS them and renders a 2.0
+// interface while the master's mihomo — rendered from the same controller — would
+// emit `version: 3`. The two ends of the tunnel then disagree about the wire
+// format and no handshake completes. Hence wire v7 AND the controller-side gate
+// that refuses to hand 3.0 params to a node below it (see keybroker).
 message AWGShared {
   AWGHeader h1 = 1;
   AWGHeader h2 = 2;
@@ -323,6 +330,15 @@ message AWGShared {
   int32 s2 = 6;
   int32 s3 = 7;
   int32 s4 = 8;
+
+  // AmneziaWG 3.0. Empty across the board ⇒ a pure AWG 2.0 interface.
+  string header_protection_key = 9;     // base64 chacha20 key; imposes S1-S4 >= 12
+  string content_padding_addition = 10; // transport padding; receiver strips exactly this
+  string rekey_after_time = 11;         // u16 range "N" or "min-max", redrawn per timer arm
+  string rekey_timeout = 12;
+  string reject_after_time = 13;
+  string keepalive_timeout = 14;
+  string max_handshake_attempts = 15;
 }
 
 // AWGLocal — MAY differ between the two ends: Jc/Jmin/Jmax and I1-I5.

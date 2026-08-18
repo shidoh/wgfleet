@@ -44,7 +44,18 @@ const (
 	// an operator who explicitly turned it off. That is a convergence difference the
 	// agent must understand, so the safe default ("unset ⇒ hardened") does NOT make
 	// the change additive. Deploy the controller FIRST.
-	WireContractVersion uint32 = 6
+	// v7: AWGShared gains the AmneziaWG 3.0 block (header_protection_key,
+	// content_padding_addition and the five u16-range timers). The hazard here is a
+	// SPLIT TUNNEL rather than a missing feature: a v6 exit agent drops the fields
+	// and brings awg0 up as a 2.0 interface, while the master's mihomo — rendered by
+	// the same controller from the same decision — emits `version: 3`. The two ends
+	// then disagree about the wire format and no handshake completes, so the exit
+	// drops out of the load balancer. Additive on the proto, decidedly not additive
+	// in behaviour, hence the bump; and because a bump alone would still let a
+	// not-yet-rolled agent hit exactly that split, the controller ALSO refuses to
+	// render 3.0 params for a node reporting less than v7 (keybroker.awg3For).
+	// Deploy the controller FIRST.
+	WireContractVersion uint32 = 7
 
 	// MinSupportedWire is the oldest agent wire version the controller will serve
 	// a spec to. Agents below it are refused (fail-safe) and, where possible,
