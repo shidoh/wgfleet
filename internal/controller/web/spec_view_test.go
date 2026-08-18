@@ -97,10 +97,20 @@ func renderedText(v specView) string {
 		}
 	}
 	write(v.Summary)
-	for _, s := range v.Sections {
-		b.WriteString(s.Title + "\x00" + s.Note + "\n")
-		write(s.Rows)
+	for _, g := range v.Details {
+		b.WriteString(g.Title + "\n")
+		write(g.Rows)
 	}
+	for _, t := range v.Tables {
+		b.WriteString(t.Title + "\x00" + t.Note + "\x00" + strings.Join(t.Head, "\x00") + "\n")
+		for _, row := range t.Rows {
+			b.WriteString(strings.Join(row, "\x00") + "\n")
+		}
+	}
+	// The raw manifest is rendered to the page too, so it is part of the surface a
+	// credential could escape through — arguably the likeliest one.
+	b.WriteString(v.Raw)
+	b.WriteString(v.RawErr)
 	return b.String()
 }
 
@@ -210,7 +220,8 @@ func TestSpecViewDecommissionIsUnmistakable(t *testing.T) {
 	if !strings.Contains(text, "decommission") {
 		t.Error("a decommissioning node must say so")
 	}
-	if len(v.Sections) != 0 {
-		t.Errorf("a decommissioning node has no desired data plane to detail, got %d sections", len(v.Sections))
+	if len(v.Details) != 0 || len(v.Tables) != 0 || v.Raw != "" {
+		t.Errorf("a decommissioning node has no desired data plane to detail, got %d groups / %d tables / raw=%d bytes",
+			len(v.Details), len(v.Tables), len(v.Raw))
 	}
 }

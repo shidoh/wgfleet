@@ -130,25 +130,59 @@
     {{end}}
   </dl>
 
-  {{range .Spec.Sections}}
-  <details class="spec-section">
-    <summary class="spec-section-toggle">{{.Title}}</summary>
-    {{if .Note}}<p class="spec-note">{{.Note}}</p>{{end}}
-    <dl class="spec-rows">
-      {{range .Rows}}
-      <div class="spec-row">
-        <dt class="spec-key">{{.Label}}</dt>
-        <dd class="spec-val">
-          <span class="spec-value">{{.Value}}</span>
-          {{if .Badge}}<span class="spec-badge">{{.Badge}}</span>{{end}}
-          {{if .Hint}}<span class="spec-hint">{{.Hint}}</span>{{end}}
-        </dd>
+  <div class="spec-tabs">
+    <div class="spec-tablist">
+      <label class="spec-tab" for="sp-details">DETAILS</label>
+      {{range $i, $t := .Spec.Tables}}<label class="spec-tab" for="sp-t{{$i}}">{{$t.Title}}</label>{{end}}
+      <label class="spec-tab" for="sp-raw">RAW SPEC</label>
+    </div>
+
+    <div class="spec-panels">
+      <input class="spec-radio" type="radio" name="spec-tab" id="sp-details" checked>
+      <div class="spec-panel">
+        <div class="spec-groups">
+          {{range .Spec.Details}}
+          <div class="spec-group">
+            <h3 class="spec-group-title">{{.Title}}</h3>
+            <dl class="spec-rows">
+              {{range .Rows}}
+              <div class="spec-row">
+                <dt class="spec-key">{{.Label}}</dt>
+                <dd class="spec-val">
+                  <span class="spec-value">{{.Value}}</span>
+                  {{if .Badge}}<span class="spec-badge">{{.Badge}}</span>{{end}}
+                  {{if .Hint}}<span class="spec-hint">{{.Hint}}</span>{{end}}
+                </dd>
+              </div>
+              {{end}}
+            </dl>
+          </div>
+          {{end}}
+        </div>
+      </div>
+
+      {{range $i, $t := .Spec.Tables}}
+      <input class="spec-radio" type="radio" name="spec-tab" id="sp-t{{$i}}">
+      <div class="spec-panel">
+        {{if $t.Note}}<p class="spec-note">{{$t.Note}}</p>{{end}}
+        <div class="spec-table-wrap">
+          <table class="spec-table">
+            <thead><tr>{{range $t.Head}}<th scope="col">{{.}}</th>{{end}}</tr></thead>
+            <tbody>{{range $t.Rows}}<tr>{{range .}}<td>{{.}}</td>{{end}}</tr>{{end}}</tbody>
+          </table>
+        </div>
       </div>
       {{end}}
-    </dl>
-  </details>
-  {{end}}
-  <p class="spec-foot">Desired state as the controller renders it. Keys, preshared keys and client UUIDs are deliberately omitted.</p>
+
+      <input class="spec-radio" type="radio" name="spec-tab" id="sp-raw">
+      <div class="spec-panel">
+        {{if .Spec.RawErr}}<p class="error-note">{{.Spec.RawErr}}</p>
+        {{else}}<pre class="spec-raw">{{.Spec.Raw}}</pre>{{end}}
+      </div>
+    </div>
+  </div>
+
+  <p class="spec-foot">Desired state as the controller renders it. Keys, preshared keys and client UUIDs are replaced with «redacted» everywhere, including the raw spec.</p>
 </section>
 {{end}}
 {{end}}
@@ -242,18 +276,9 @@
   {{end}}
 </ul>
 {{end}}
-{{if .Status.ExitHealth}}
-<div class="panel-sublabel">EXIT TUNNELS</div>
-<ul class="checks">
-  {{range .Status.ExitHealth}}
-  <li aria-label="{{.Name}}: {{if .Alive}}up{{else}}down{{end}}">
-    <span class="check-mark {{if .Alive}}ok{{else}}bad{{end}}" aria-hidden="true">{{if .Alive}}✓{{else}}✗{{end}}</span>
-    <span class="check-name">{{.Name}}</span>
-    <span class="check-meta">{{if .Selected}}<span class="check-carry" aria-hidden="true">●</span> carrying{{end}}{{if .Delay}}{{if .Selected}} · {{end}}{{.Delay}}{{end}}{{if not .LastTest.IsZero}} · tested {{relTime .LastTest}}{{end}}</span>
-  </li>
-  {{end}}
-</ul>
-{{end}}
+{{/* Per-exit liveness deliberately lives on the fleet page, which owns it: name,
+     state, latency and which exit is carrying. Repeating it here produced one
+     near-empty row per exit and a second copy of that page. */}}
 {{else}}
 <p class="kv dim">No status reported yet.</p>
 {{end}}

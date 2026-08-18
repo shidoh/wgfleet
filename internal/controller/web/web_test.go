@@ -176,7 +176,7 @@ func TestNodeDetailWithStatusAndSpec(t *testing.T) {
 		`aria-label="warp-egress: pass"`, `aria-label="dns: fail"`, // accessible verdict
 		// Desired-state card: the summary must be on the page WITHOUT unfolding
 		// anything, and the detail sections must be present as folds.
-		"WHAT THIS NODE CARRIES", "spec-summary", "spec-section",
+		"WHAT THIS NODE CARRIES", "spec-summary", "spec-tablist", "RAW SPEC",
 		"Egress", "warp", // summary answers "where does this exit go"
 		"10.81.0.0/24", // detail rows still carry the specifics
 	} {
@@ -788,8 +788,22 @@ func TestListShowsTransportAndMgmt(t *testing.T) {
 	}
 }
 
-func TestMasterDetailShowsExitTunnelHealth(t *testing.T) {
-	h, st := newTestHandler(t, stubRenderer{spec: domain.NodeSpec{Role: domain.RoleMaster}})
+// TestMasterDetailDoesNotDuplicateExitLiveness is the guard against the page
+// growing a second copy of the fleet list. Per-exit liveness, latency and which
+// exit is carrying traffic are the fleet page's job and are covered by
+// TestFleetTopology; the node page used to repeat them as one row per exit that
+// was frequently just a name and a tick, and read as noise.
+//
+// The node page's contribution is what the fleet page does NOT have: the endpoint
+// with its port, the tunnel address and the per-tunnel MTU.
+func TestMasterDetailDoesNotDuplicateExitLiveness(t *testing.T) {
+	spec := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{
+		ExitTunnels: []domain.ExitTunnel{{
+			Name: "exit-de-1", Endpoint: "198.51.100.7:51820", TunnelIP: "10.81.0.2",
+			MTU: 1380, Transport: domain.TransportAWG,
+		}},
+	}}
+	h, st := newTestHandler(t, stubRenderer{spec: spec})
 	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
 	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
 		NodeID: "master-xa-1", State: domain.StateReady,
@@ -800,9 +814,21 @@ func TestMasterDetailShowsExitTunnelHealth(t *testing.T) {
 	})
 
 	_, body := get(t, h, "/nodes/master-xa-1")
-	for _, want := range []string{"EXIT TUNNELS", "exit-de-1", "exit-nl-1", "carrying", "check-mark ok", "check-mark bad"} {
+	// Match the markup the duplicate list was made of, not prose: "carrying" is a
+	// legitimate word for the table note to use when pointing at the fleet page.
+	for _, gone := range []string{`panel-sublabel">EXIT TUNNELS`, "check-carry"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("the node page is duplicating the fleet page's exit liveness list again (%q)", gone)
+		}
+	}
+	// exit-nl-1 exists only in the live report, not in the spec — it must not appear.
+	if strings.Contains(body, "exit-nl-1") {
+		t.Error("a live-only exit leaked onto the node page")
+	}
+	// What this page uniquely owns must be there.
+	for _, want := range []string{"Exit proxies", "198.51.100.7:51820", "10.81.0.2", "1380"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("master detail missing %q", want)
+			t.Errorf("master detail missing %q — the facts the fleet page does not carry", want)
 		}
 	}
 }
@@ -992,7 +1018,9 @@ func TestMasterRoutingButtonsExitOnly(t *testing.T) {
 	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
 
 	_, master := get(t, h, "/nodes/master-xa-1")
-	for _, s := range []string{"Take out of routing", "/drain", "Decommission", "/delete"} {
+	// Match the form ACTIONS, not label words: the raw spec panel legitimately
+	// contains domain field names, and NodeSpec has a Decommission field.
+	for _, s := range []string{"Take out of routing", "/drain", "/decommission", "/delete"} {
 		if strings.Contains(master, s) {
 			t.Errorf("master detail must not contain routing-lifecycle element %q", s)
 		}

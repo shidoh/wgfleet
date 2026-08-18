@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -10,29 +11,37 @@ import (
 
 // The node page's rendering of the controller's desired state.
 //
-// This replaced a single pre-formatted text blob. The blob dumped every field it
-// knew about in one undifferentiated column, which made the page unreadable AND —
-// less obviously — incomplete: six NodeSpec fields were never rendered at all,
-// including EnabledTransports and ActiveTransport. On a fleet where most exits run
-// reality-xhttp, the page could not tell you which transport a node was on.
+// The shape follows what mature infrastructure consoles converged on (PatternFly /
+// OpenShift, the Kubernetes dashboards, the cloud consoles), because the first two
+// attempts here failed in exactly the way those conventions exist to prevent:
 //
-// Two things drive the shape here:
+//   - A SUMMARY that answers "what does this node carry" in a handful of scalars.
+//     No lists — a list in a summary is a second copy of some other page.
+//   - DETAILS as grouped term/definition pairs, scalars only. Repeating entities
+//     are never inlined here.
+//   - TABLES for repeating entities, one per kind, and only for facts with no other
+//     home. Per-exit liveness, latency and "who is carrying" live on the fleet page;
+//     this page adds what that page lacks — endpoints with ports, tunnel addresses,
+//     per-tunnel MTU.
+//   - RAW, the complete spec as JSON. This is what makes curation-completeness a
+//     non-goal: "I want to see everything" is answered by the manifest, not by an
+//     ever-growing pile of hand-written sections. It is also why nothing here is
+//     truncated to "first three and an ellipsis" — a partial list answers nothing,
+//     and anything genuinely long belongs in the raw view.
 //
-//   - A typed view instead of a string. The template does the layout, so the page
-//     can have structure; and the tests can assert on facts ("the active transport
-//     is present", "no credential is") instead of grepping formatted text.
-//   - ALLOWLIST, never denylist. Every value below is copied in deliberately. A
-//     NodeSpec reaches several credentials — the AWG 3.0 header-protection key on
-//     the interface and on every master↔exit tunnel, the WireGuard preshared key,
-//     REALITY UUIDs on both ends, end-user VLESS ids, and the free-form
-//     Custom.Overrides maps that carry the mihomo Clash API secret. A field added
-//     to the domain later is therefore invisible here until someone opts it in,
-//     which is the only safe default for something rendered into a browser.
-//     TestSpecViewLeaksNoCredentials plants a marker in every one of those fields
-//     and proves none reaches the page.
+// Every value is copied in by an ALLOWLIST. A NodeSpec reaches several credentials
+// — the AWG 3.0 header-protection key on the interface and on every master↔exit
+// tunnel, the WireGuard preshared key, REALITY UUIDs on both ends, end-user VLESS
+// ids, and the free-form Custom overrides and files. The raw view is built from a
+// redacted copy for the same reason. TestSpecViewLeaksNoCredentials plants a marker
+// in every one of those fields and proves none reaches the page.
 
-// specRow is one label/value line. Hint is muted secondary text (why the value
-// matters); Badge is a short emphasis marker (pinned, drained, off).
+// redactedMark replaces a credential's value. Deliberately visible: the operator
+// should learn that a value EXISTS without learning the value.
+const redactedMark = "«redacted»"
+
+// specRow is one term/definition pair. Hint is used sparingly — only where the
+// value carries a consequence that is not obvious from reading it.
 type specRow struct {
 	Label string
 	Value string
@@ -40,18 +49,26 @@ type specRow struct {
 	Badge string
 }
 
-// specSection is a foldable group of detail rows.
-type specSection struct {
+// specGroup is a titled set of term/definition pairs about one subject.
+type specGroup struct {
 	Title string
-	Note  string
 	Rows  []specRow
 }
 
-// specView is what the template renders: an always-visible summary card plus the
-// detail sections beneath it.
+// specTable is one kind of repeating entity.
+type specTable struct {
+	Title string
+	Note  string
+	Head  []string
+	Rows  [][]string
+}
+
 type specView struct {
-	Summary  []specRow
-	Sections []specSection
+	Summary []specRow
+	Details []specGroup
+	Tables  []specTable
+	Raw     string
+	RawErr  string
 }
 
 func buildSpecView(s domain.NodeSpec) specView {
@@ -65,27 +82,36 @@ func buildSpecView(s domain.NodeSpec) specView {
 	}
 
 	v := specView{Summary: summaryRows(s)}
-	v.Sections = appendSection(v.Sections, wgServerSection(s))
-	v.Sections = appendSection(v.Sections, obfuscationSection(s))
-	v.Sections = appendSection(v.Sections, peersSection(s.Peers))
-	v.Sections = appendSection(v.Sections, exitTunnelsSection(s.Master))
-	v.Sections = appendSection(v.Sections, clientVLESSSection(s.Master))
-	v.Sections = appendSection(v.Sections, realitySection(s.Reality))
-	v.Sections = appendSection(v.Sections, routingSection(s.Routing))
-	v.Sections = appendSection(v.Sections, dnsSection(s.DNS))
-	v.Sections = appendSection(v.Sections, firewallSection(s.Firewall))
-	v.Sections = appendSection(v.Sections, hardeningSection(s))
-	v.Sections = appendSection(v.Sections, exportersSection(s))
+	for _, g := range []specGroup{
+		wgServerGroup(s), awgGroup(s), realityGroup(s.Reality), clientVLESSGroup(s.Master),
+		routingGroup(s.Routing), dnsGroup(s.DNS), firewallGroup(s.Firewall),
+		hardeningGroup(s), observabilityGroup(s),
+	} {
+		if len(g.Rows) > 0 {
+			v.Details = append(v.Details, g)
+		}
+	}
+	for _, t := range []specTable{exitProxiesTable(s.Master), peersTable(s.Peers)} {
+		if len(t.Rows) > 0 {
+			v.Tables = append(v.Tables, t)
+		}
+	}
+	// JSON rather than YAML: the domain types carry no serialisation tags, so YAML
+	// would mash the field names into "wgserver" / "listenport", while encoding/json
+	// falls back to the exact Go names. Those names are the point — they are what an
+	// operator greps for in the manifest reference and in the code.
+	if raw, err := json.MarshalIndent(redactSpec(s), "", "  "); err != nil {
+		v.RawErr = "cannot render the raw spec: " + err.Error()
+	} else {
+		v.Raw = string(raw)
+	}
 	return v
 }
 
-// summaryRows is the always-visible card: what this node carries, in the order an
-// operator asks it. Transport first because on a dual-transport fleet it is the
-// question; MTU second because a wrong MTU is this project's most repeated
-// production failure and it used to be buried three levels down.
+// --- summary -----------------------------------------------------------------
+
 func summaryRows(s domain.NodeSpec) []specRow {
 	var rows []specRow
-
 	if r, ok := transportRow(s); ok {
 		rows = append(rows, r)
 	}
@@ -101,31 +127,26 @@ func summaryRows(s domain.NodeSpec) []specRow {
 	return rows
 }
 
-// transportRow answers "what is this node speaking right now". For an exit that is
-// its enabled set plus the ACTIVE one (the knob the operator flips); for a master
-// it is the split of its exit proxies across transports.
 func transportRow(s domain.NodeSpec) (specRow, bool) {
 	if s.Role == domain.RoleMaster {
 		if s.Master == nil || len(s.Master.ExitTunnels) == 0 {
 			return specRow{}, false
 		}
 		byTransport := map[string]int{}
-		drained := 0
+		exits := map[string]bool{}
 		for _, t := range s.Master.ExitTunnels {
 			byTransport[string(t.Transport.OrDefault())]++
-			if t.Drained {
-				drained++
-			}
+			exits[strings.TrimSuffix(t.Name, "-reality")] = true
 		}
-		row := specRow{
-			Label: "Transport",
-			Value: fmt.Sprintf("%d exit proxies (%s)", len(s.Master.ExitTunnels), countsByKey(byTransport)),
-			Hint:  "mihomo dials these; a drained exit stays configured but takes no new traffic",
-		}
-		if drained > 0 {
-			row.Badge = fmt.Sprintf("%d drained", drained)
-		}
-		return row, true
+		// Says nothing about drain on purpose. ExitTunnel.Drained collapses two
+		// different things — an operator draining a node, and the inactive half of a
+		// dual-transport exit — and the spec cannot tell them apart. Reporting the raw
+		// count read as "6 exits are out of service" when the truth was "6 proxies are
+		// the transport nobody selected".
+		return specRow{
+			Label: "Exit proxies",
+			Value: fmt.Sprintf("%d across %d exits — %s", len(s.Master.ExitTunnels), len(exits), countsByKey(byTransport)),
+		}, true
 	}
 
 	enabled := s.Transports()
@@ -140,17 +161,12 @@ func transportRow(s domain.NodeSpec) (specRow, bool) {
 	if active == "" {
 		active = string(enabled[0])
 	}
-	return specRow{
-		Label: "Transport",
-		Value: fmt.Sprintf("%s — ACTIVE: %s", strings.Join(names, ", "), active),
-		Hint:  "the active transport is the one the master routes client traffic through",
-		Badge: active,
-	}, true
+	return specRow{Label: "Transport", Value: strings.Join(names, ", "), Badge: "active: " + active}, true
 }
 
-// mtuRow renders the MTU chain on one line. Every layer subtracts, and getting it
-// wrong black-holes full-size packets while pings and handshakes keep working —
-// which is why it belongs in the summary and not in a fold.
+// mtuRow keeps the MTU chain in the summary because a wrong MTU is this project's
+// most repeated production failure, and it black-holes full-size packets while
+// pings and handshakes keep working — i.e. it looks healthy.
 func mtuRow(s domain.NodeSpec) (specRow, bool) {
 	var parts []string
 	if s.WGServer.MTU > 0 {
@@ -169,41 +185,39 @@ func mtuRow(s domain.NodeSpec) (specRow, bool) {
 				tun = append(tun, fmt.Sprintf("%d", t.MTU))
 			}
 		}
+		sort.Strings(tun)
 		if len(tun) > 0 {
 			parts = append(parts, "exit tunnels "+strings.Join(tun, "/"))
 		}
 	}
-	row := specRow{Label: "MTU chain", Hint: "each tunnel layer subtracts; too high black-holes full-size packets while pings still work"}
+	r := specRow{Label: "MTU chain", Hint: "each tunnel layer subtracts; too high black-holes full-size packets while pings still work"}
 	if s.WARPMTU > 0 {
 		parts = append(parts, fmt.Sprintf("WARP %d", s.WARPMTU))
-		row.Badge = "warp pinned"
+		r.Badge = "warp pinned"
 	}
 	if len(parts) == 0 {
 		return specRow{}, false
 	}
-	row.Value = strings.Join(parts, " · ")
-	return row, true
+	r.Value = strings.Join(parts, " · ")
+	return r, true
 }
 
 func egressRow(s domain.NodeSpec) specRow {
-	row := specRow{Label: "Egress", Value: string(s.Egress),
-		Hint: "how this exit reaches the internet"}
+	r := specRow{Label: "Egress", Value: string(s.Egress)}
 	if chain := s.EgressMethods(); len(chain) > 1 {
 		names := make([]string, 0, len(chain))
 		for _, m := range chain {
 			names = append(names, string(m))
 		}
-		row.Value = strings.Join(names, " → ")
-		row.Hint = "failover chain, tried left to right"
+		r.Value = strings.Join(names, " → ")
+		r.Hint = "failover chain, tried left to right"
 	}
 	if s.EgressThroughputMinBps > 0 {
-		row.Badge = fmt.Sprintf("floor %s", bitsPerSec(s.EgressThroughputMinBps))
+		r.Badge = "floor " + bitsPerSec(s.EgressThroughputMinBps)
 	}
-	return row
+	return r
 }
 
-// obfuscationRow is a one-line fingerprint, not the parameter dump. The full
-// S/H/I values live in their own section for when someone is comparing two ends.
 func obfuscationRow(s domain.NodeSpec) (specRow, bool) {
 	awg := s.WGServer.AWG
 	if awg == nil && s.Master != nil {
@@ -217,280 +231,329 @@ func obfuscationRow(s domain.NodeSpec) (specRow, bool) {
 	if awg == nil {
 		return specRow{}, false
 	}
-	row := specRow{
+	r := specRow{
 		Label: "Obfuscation",
 		Value: fmt.Sprintf("AmneziaWG · Jc=%d Jmin=%d Jmax=%d · S4=%d", awg.Local.Jc, awg.Local.Jmin, awg.Local.Jmax, awg.Shared.S4),
-		Hint:  "S and H must match on both ends of a tunnel; Jc/Jmin/Jmax and I1-I5 are per-end",
 	}
 	if awg.AWG3Enabled() {
-		row.Badge = "AWG 3.0"
-		row.Hint = "AmneziaWG 3.0: header protection and randomised timers are in force"
+		r.Badge = "AWG 3.0"
+		r.Hint = "header protection and randomised timers are in force"
 	}
-	return row, true
+	return r, true
 }
 
-func wgServerSection(s domain.NodeSpec) specSection {
+// --- details (scalars only) ---------------------------------------------------
+
+func wgServerGroup(s domain.NodeSpec) specGroup {
 	w := s.WGServer
 	if w.ListenPort == 0 && w.AddressPool == "" {
-		return specSection{}
+		return specGroup{}
 	}
-	sec := specSection{Title: "WireGuard server"}
-	sec.Rows = append(sec.Rows,
-		row("Listen port", fmt.Sprintf("%d/udp", w.ListenPort), ""),
-		row("Address pool", w.AddressPool, ""),
-	)
+	g := specGroup{Title: "WireGuard server", Rows: []specRow{
+		kv("Listen port", fmt.Sprintf("%d/udp", w.ListenPort)),
+		kv("Address pool", w.AddressPool),
+	}}
 	if w.Address != "" {
-		sec.Rows = append(sec.Rows, row("Own address", w.Address, ""))
+		g.Rows = append(g.Rows, kv("Own address", w.Address))
 	}
-	sec.Rows = append(sec.Rows, row("MTU", fmt.Sprintf("%d", w.MTU), ""))
-	return sec
+	g.Rows = append(g.Rows, kv("MTU", fmt.Sprintf("%d", w.MTU)))
+	return g
 }
 
-// obfuscationSection carries the values an operator compares across a tunnel.
-// The AWG 3.0 header-protection key is deliberately NOT among them: it is a
-// shared chacha20 secret, and its presence is reported as a yes/no instead.
-func obfuscationSection(s domain.NodeSpec) specSection {
+func awgGroup(s domain.NodeSpec) specGroup {
 	awg := s.WGServer.AWG
 	if awg == nil {
-		return specSection{}
+		return specGroup{}
 	}
-	sec := specSection{
-		Title: "AmneziaWG parameters",
-		Note:  "S1-S4 and H1-H4 must be identical on both ends; Jc/Jmin/Jmax and I1-I5 may differ per end.",
-	}
-	sec.Rows = append(sec.Rows,
-		row("S1-S4", fmt.Sprintf("%d / %d / %d / %d", awg.Shared.S1, awg.Shared.S2, awg.Shared.S3, awg.Shared.S4), "junk prefix sizes (shared)"),
-		row("H1-H4", fmt.Sprintf("%s, %s, %s, %s", awg.Shared.H1, awg.Shared.H2, awg.Shared.H3, awg.Shared.H4), "header type ranges (shared)"),
-		row("Jc / Jmin / Jmax", fmt.Sprintf("%d / %d / %d", awg.Local.Jc, awg.Local.Jmin, awg.Local.Jmax), "junk packets (per-end)"),
-	)
+	g := specGroup{Title: "AmneziaWG", Rows: []specRow{
+		{Label: "S1-S4", Value: fmt.Sprintf("%d / %d / %d / %d", awg.Shared.S1, awg.Shared.S2, awg.Shared.S3, awg.Shared.S4),
+			Hint: "must be identical on both ends of the tunnel"},
+		{Label: "H1-H4", Value: fmt.Sprintf("%s, %s, %s, %s", awg.Shared.H1, awg.Shared.H2, awg.Shared.H3, awg.Shared.H4),
+			Hint: "must be identical on both ends of the tunnel"},
+		kv("Jc / Jmin / Jmax", fmt.Sprintf("%d / %d / %d", awg.Local.Jc, awg.Local.Jmin, awg.Local.Jmax)),
+	}}
 	if sig := joinNonEmptyValues(awg.Local.I1, awg.Local.I2, awg.Local.I3, awg.Local.I4, awg.Local.I5); sig != "" {
-		sec.Rows = append(sec.Rows, row("I1-I5", sig, "signature packets (per-end)"))
+		g.Rows = append(g.Rows, kv("I1-I5", sig))
 	}
 	if l := s.WGServer.ClientAWGLocal; l != nil {
-		sec.Rows = append(sec.Rows, row("Client-side junk",
-			fmt.Sprintf("Jc=%d Jmin=%d Jmax=%d", l.Jc, l.Jmin, l.Jmax),
-			"clients emit their own decoy, distinct from this interface's"))
+		g.Rows = append(g.Rows, kv("Client-side junk", fmt.Sprintf("Jc=%d Jmin=%d Jmax=%d", l.Jc, l.Jmin, l.Jmax)))
 	}
 	if awg.AWG3Enabled() {
-		sec.Rows = append(sec.Rows,
-			row("Header protection", boolWord(awg.Shared.HeaderProtectionKey != "", "on (key not shown)", "off"),
-				"AWG 3.0; requires S1-S4 >= 12 on both ends"),
-			row("Content padding", orDash(awg.Shared.ContentPaddingAddition), "AWG 3.0, per data packet"),
-			row("Rekey after", orDash(awg.Shared.RekeyAfterTime), "AWG 3.0 randomised timer"),
-			row("Reject after", orDash(awg.Shared.RejectAfterTime), "AWG 3.0 randomised timer"),
-			row("Keepalive", orDash(awg.Shared.KeepaliveTimeout), "AWG 3.0 randomised timer"),
+		g.Rows = append(g.Rows,
+			specRow{Label: "Header protection", Value: boolWord(awg.Shared.HeaderProtectionKey != "", "on", "off"),
+				Hint: "AWG 3.0; needs S1-S4 ≥ 12 on both ends, and the kernel accepts a violation silently"},
+			kv("Content padding", orDash(awg.Shared.ContentPaddingAddition)),
+			kv("Rekey after", orDash(awg.Shared.RekeyAfterTime)),
+			kv("Reject after", orDash(awg.Shared.RejectAfterTime)),
+			kv("Keepalive", orDash(awg.Shared.KeepaliveTimeout)),
 		)
 	}
-	return sec
+	return g
 }
 
-func peersSection(peers []domain.PeerSpec) specSection {
-	if len(peers) == 0 {
-		return specSection{}
+func realityGroup(r *domain.RealityServerSpec) specGroup {
+	if r == nil {
+		return specGroup{}
 	}
-	sec := specSection{Title: fmt.Sprintf("Peers (%d)", len(peers))}
-	for _, p := range peers {
-		v := strings.Join(p.AllowedIPs, ", ")
-		hint := "dials in (no endpoint)"
-		if p.Endpoint != "" {
-			hint = "endpoint " + p.Endpoint
-		}
-		if p.Keepalive > 0 {
-			hint += fmt.Sprintf(" · keepalive %ds", p.Keepalive)
-		}
-		sec.Rows = append(sec.Rows, row(orDash(p.Name), v, hint))
+	g := specGroup{Title: "REALITY inbound", Rows: []specRow{
+		kv("Listen port", fmt.Sprintf("%d/tcp", r.ListenPort)),
+		{Label: "Camouflage", Value: fmt.Sprintf("sni %s → dest %s", orDash(r.ServerName), orDash(r.Dest)),
+			Hint: "dest must support X25519MLKEM768 or the handshake fails with no error"},
+		kv("Short ID", orDash(r.ShortID)),
+		kv("XHTTP", fmt.Sprintf("%s, mode %s", orDash(r.XHTTPPath), orDash(r.XHTTPMode))),
+	}}
+	if rel := joinNonEmptyValues(boolWord(r.AllowEmptySNI, "empty SNI", ""), boolWord(r.AllowIPv6, "IPv6", "")); rel != "" {
+		g.Rows = append(g.Rows, kv("Allowed", rel))
 	}
-	return sec
+	return g
 }
 
-// exitTunnelsSection lists the master's proxies. Neither the preshared key nor a
-// REALITY tunnel UUID appears — both are credentials.
-func exitTunnelsSection(m *domain.MasterSpec) specSection {
-	if m == nil || len(m.ExitTunnels) == 0 {
-		return specSection{}
-	}
-	sec := specSection{
-		Title: fmt.Sprintf("Exit proxies (%d)", len(m.ExitTunnels)),
-		Note:  "one mihomo proxy per exit; a drained exit stays configured so existing connections survive but takes no new traffic.",
-	}
-	for _, t := range m.ExitTunnels {
-		hint := fmt.Sprintf("%s · tunnel ip %s · mtu %d", t.Transport.OrDefault(), orDash(t.TunnelIP), t.MTU)
-		if t.Reality != nil {
-			hint += " · reality sni " + orDash(t.Reality.ServerName)
-		}
-		r := row(t.Name, orDash(t.Endpoint), hint)
-		switch {
-		case t.Drained:
-			r.Badge = "drained"
-		case t.Reserve:
-			r.Badge = "reserve"
-		}
-		sec.Rows = append(sec.Rows, r)
-	}
-	return sec
-}
-
-// clientVLESSSection shows the client-facing inbound. Client UUIDs are access
-// credentials and are counted, never printed.
-func clientVLESSSection(m *domain.MasterSpec) specSection {
+func clientVLESSGroup(m *domain.MasterSpec) specGroup {
 	if m == nil || m.ClientVLESS == nil {
-		return specSection{}
+		return specGroup{}
 	}
 	c := m.ClientVLESS
-	sec := specSection{Title: "Client VLESS inbound"}
-	sec.Rows = append(sec.Rows,
-		row("Listen port", fmt.Sprintf("%d/tcp", c.ListenPort), ""),
-		row("Camouflage", fmt.Sprintf("sni %s → dest %s", orDash(c.ServerName), orDash(c.Dest)), "REALITY masquerades as this host"),
-		row("XHTTP", fmt.Sprintf("%s mode %s", orDash(c.XHTTPPath), orDash(c.XHTTPMode)), ""),
-		row("Issued clients", fmt.Sprintf("%d", len(c.Clients)), "UUIDs are credentials and are not shown here"),
-	)
+	g := specGroup{Title: "Client VLESS inbound", Rows: []specRow{
+		kv("Listen port", fmt.Sprintf("%d/tcp", c.ListenPort)),
+		{Label: "Camouflage", Value: fmt.Sprintf("sni %s → dest %s", orDash(c.ServerName), orDash(c.Dest)),
+			Hint: "dest must support X25519MLKEM768 or the handshake fails with no error"},
+		kv("XHTTP", fmt.Sprintf("%s, mode %s", orDash(c.XHTTPPath), orDash(c.XHTTPMode))),
+	}}
 	if names := clientNames(c.Clients); names != "" {
-		sec.Rows = append(sec.Rows, row("Client names", names, ""))
+		g.Rows = append(g.Rows, specRow{Label: "Issued to", Value: names,
+			Hint: "UUIDs are access credentials and are never rendered"})
 	}
-	return sec
+	return g
 }
 
-// realitySection is the exit's REALITY server. It was missing from the page
-// entirely, so an operator could not check dest/SNI/short-id against a client.
-// The server UUID is a credential and stays out.
-func realitySection(r *domain.RealityServerSpec) specSection {
-	if r == nil {
-		return specSection{}
-	}
-	sec := specSection{Title: "REALITY inbound"}
-	sec.Rows = append(sec.Rows,
-		row("Listen port", fmt.Sprintf("%d/tcp", r.ListenPort), ""),
-		row("Camouflage", fmt.Sprintf("sni %s → dest %s", orDash(r.ServerName), orDash(r.Dest)), "dest must support X25519MLKEM768 or the handshake fails silently"),
-		row("Short ID", orDash(r.ShortID), ""),
-		row("XHTTP", fmt.Sprintf("%s mode %s", orDash(r.XHTTPPath), orDash(r.XHTTPMode)), ""),
-	)
-	if r.AllowEmptySNI || r.AllowIPv6 {
-		sec.Rows = append(sec.Rows, row("Relaxations",
-			joinNonEmptyValues(boolWord(r.AllowEmptySNI, "empty SNI allowed", ""), boolWord(r.AllowIPv6, "IPv6 allowed", "")), ""))
-	}
-	return sec
-}
-
-func routingSection(r domain.RoutingSpec) specSection {
+func routingGroup(r domain.RoutingSpec) specGroup {
 	if r.EgressInterface == "" && len(r.DirectCIDRs) == 0 && r.ClientCIDR == "" {
-		return specSection{}
+		return specGroup{}
 	}
-	sec := specSection{Title: "Routing"}
-	sec.Rows = append(sec.Rows,
-		row("Egress interface", orDash(r.EgressInterface), ""),
-		row("Client CIDR", orDash(r.ClientCIDR), "the egress rule is scoped to this, never 'from all'"),
-	)
+	g := specGroup{Title: "Routing"}
+	if r.EgressInterface != "" {
+		g.Rows = append(g.Rows, kv("Egress interface", r.EgressInterface))
+	}
+	if r.ClientCIDR != "" {
+		g.Rows = append(g.Rows, specRow{Label: "Client CIDR", Value: r.ClientCIDR,
+			Hint: "the egress rule is scoped to this; unscoped it would send the host's own traffic into WARP"})
+	}
 	if len(r.DirectCIDRs) > 0 {
-		sec.Rows = append(sec.Rows, row("Direct networks", fmt.Sprintf("%d prefixes", len(r.DirectCIDRs)), strings.Join(firstN(r.DirectCIDRs, 4), ", ")))
+		g.Rows = append(g.Rows, kv("Direct networks", strings.Join(r.DirectCIDRs, ", ")))
 	}
 	if r.FwMark > 0 {
-		sec.Rows = append(sec.Rows, row("fwmark", fmt.Sprintf("%d", r.FwMark), ""))
+		g.Rows = append(g.Rows, kv("fwmark", fmt.Sprintf("%d", r.FwMark)))
 	}
-	return sec
+	return g
 }
 
-// dnsSection reports operator overrides as a COUNT. Custom.Overrides is a
-// free-form map, so its values cannot be allowlisted field by field and are not
-// rendered at all.
-func dnsSection(d domain.DNSFilterSpec) specSection {
+func dnsGroup(d domain.DNSFilterSpec) specGroup {
 	if !d.Enabled {
-		return specSection{}
+		return specGroup{}
 	}
-	sec := specSection{Title: "DNS filter"}
-	sec.Rows = append(sec.Rows,
-		row("Bind", orDash(d.MgmtAddr), "management overlay only unless a client bind is set"),
-		row("Upstreams", fmt.Sprintf("%d", len(d.Upstreams)), strings.Join(firstN(d.Upstreams, 3), ", ")),
-	)
+	g := specGroup{Title: "DNS filter", Rows: []specRow{kv("Bind", orDash(d.MgmtAddr))}}
 	if d.ClientBindAddr != "" {
-		sec.Rows = append(sec.Rows, row("Client bind", d.ClientBindAddr, ""))
+		g.Rows = append(g.Rows, kv("Client bind", d.ClientBindAddr))
 	}
-	if n := len(d.Custom.Overrides); n > 0 {
-		sec.Rows = append(sec.Rows, row("Operator overrides", fmt.Sprintf("%d", n), "values not shown — free-form config may carry secrets"))
+	if len(d.Upstreams) > 0 {
+		g.Rows = append(g.Rows, kv("Upstreams", strings.Join(d.Upstreams, ", ")))
 	}
-	return sec
+	if len(d.Allowlist) > 0 {
+		g.Rows = append(g.Rows, kv("Allowlist", strings.Join(d.Allowlist, ", ")))
+	}
+	if len(d.Custom.Overrides) > 0 {
+		g.Rows = append(g.Rows, specRow{Label: "Operator overrides", Value: strings.Join(sortedKeys(d.Custom.Overrides), ", "),
+			Hint: "keys only — override values are free-form and may carry secrets"})
+	}
+	return g
 }
 
-func firewallSection(f domain.FirewallSpec) specSection {
-	sec := specSection{Title: "Firewall"}
-	sec.Rows = append(sec.Rows,
-		row("AS blacklist", boolWord(f.ASBlacklist, "on", "off"), "drops scanner ASNs before they reach the data plane"),
-	)
+func firewallGroup(f domain.FirewallSpec) specGroup {
+	g := specGroup{Title: "Firewall", Rows: []specRow{
+		{Label: "AS blacklist", Value: boolWord(f.ASBlacklist, "on", "off"),
+			Hint: "drops known scanner ASNs before they reach the data plane"},
+	}}
 	if f.WGPort > 0 {
-		sec.Rows = append(sec.Rows, row("WireGuard port", fmt.Sprintf("%d/udp", f.WGPort), ""))
+		g.Rows = append(g.Rows, kv("WireGuard port", fmt.Sprintf("%d/udp", f.WGPort)))
 	}
 	if f.RealityPort > 0 {
-		sec.Rows = append(sec.Rows, row("REALITY port", fmt.Sprintf("%d/tcp", f.RealityPort), ""))
+		g.Rows = append(g.Rows, kv("REALITY port", fmt.Sprintf("%d/tcp", f.RealityPort)))
 	}
 	if len(f.PublicTCPPorts) > 0 {
-		sec.Rows = append(sec.Rows, row("Open TCP", intsCSV(f.PublicTCPPorts), "world-facing"))
+		g.Rows = append(g.Rows, kv("Open TCP", intsCSV(f.PublicTCPPorts)))
 	}
 	if len(f.PublicUDPPorts) > 0 {
-		sec.Rows = append(sec.Rows, row("Open UDP", intsCSV(f.PublicUDPPorts), "world-facing"))
+		g.Rows = append(g.Rows, kv("Open UDP", intsCSV(f.PublicUDPPorts)))
 	}
 	if len(f.Whitelist) > 0 {
-		sec.Rows = append(sec.Rows, row("Whitelist", fmt.Sprintf("%d prefixes", len(f.Whitelist)), strings.Join(firstN(f.Whitelist, 3), ", ")))
+		g.Rows = append(g.Rows, kv("Whitelist", strings.Join(f.Whitelist, ", ")))
 	}
-	return sec
+	return g
 }
 
-// hardeningSection surfaces a policy that was previously invisible: an operator
-// who turned the managed sshd drop-in off had no way to confirm the controller
-// agreed.
-func hardeningSection(s domain.NodeSpec) specSection {
-	sec := specSection{
-		Title: "Host hardening",
-		Note:  "unset means enabled — the fail-safe default for a controller that predates the knob.",
-	}
-	sshd := row("Managed sshd drop-in", boolWord(s.SSHDHardeningEnabled(), "on", "off — handed back to you"), "")
-	f2b := row("fail2ban sshd jail", boolWord(s.Fail2banEnabled(), "on", "off — handed back to you"), "")
+func hardeningGroup(s domain.NodeSpec) specGroup {
+	sshd := specRow{Label: "Managed sshd drop-in", Value: boolWord(s.SSHDHardeningEnabled(), "on", "off")}
+	f2b := specRow{Label: "fail2ban sshd jail", Value: boolWord(s.Fail2banEnabled(), "on", "off")}
 	if !s.SSHDHardeningEnabled() {
 		sshd.Badge = "opted out"
 	}
 	if !s.Fail2banEnabled() {
 		f2b.Badge = "opted out"
 	}
-	sec.Rows = append(sec.Rows, sshd, f2b)
-	return sec
+	return specGroup{Title: "Host hardening", Rows: []specRow{sshd, f2b}}
 }
 
-func exportersSection(s domain.NodeSpec) specSection {
-	sec := specSection{Title: "Observability & thresholds"}
-	sec.Rows = append(sec.Rows, row("Exporters",
-		orNone(joinNonEmptyValues(
-			boolWord(s.Exporters.Node, "node", ""),
-			boolWord(s.Exporters.WG, "wireguard", ""),
-			boolWord(s.Exporters.WARP, "warp", ""))), "scraped over the management overlay"))
+func observabilityGroup(s domain.NodeSpec) specGroup {
+	g := specGroup{Title: "Observability"}
+	if e := joinNonEmptyValues(
+		boolWord(s.Exporters.Node, "node", ""),
+		boolWord(s.Exporters.WG, "wireguard", ""),
+		boolWord(s.Exporters.WARP, "warp", "")); e != "" {
+		g.Rows = append(g.Rows, kv("Exporters", e))
+	}
 	if s.EgressThroughputMinBps > 0 {
-		sec.Rows = append(sec.Rows, row("Egress throughput floor", bitsPerSec(s.EgressThroughputMinBps),
-			"below this the egress is treated as degraded and failover may fire"))
+		g.Rows = append(g.Rows, specRow{Label: "Egress throughput floor", Value: bitsPerSec(s.EgressThroughputMinBps),
+			Hint: "below this the egress reads as degraded and failover may fire"})
 	}
 	if s.EgressThroughputProbeURL != "" {
-		sec.Rows = append(sec.Rows, row("Throughput probe", s.EgressThroughputProbeURL, ""))
+		g.Rows = append(g.Rows, kv("Throughput probe", s.EgressThroughputProbeURL))
 	}
-	return sec
+	return g
 }
 
-// --- small helpers -----------------------------------------------------------
+// --- tables -------------------------------------------------------------------
 
-func row(label, value, hint string) specRow { return specRow{Label: label, Value: value, Hint: hint} }
-
-func appendSection(dst []specSection, s specSection) []specSection {
-	if s.Title == "" || len(s.Rows) == 0 {
-		return dst
+// exitProxiesTable carries the master↔exit facts nothing else shows: the endpoint
+// WITH its port, the tunnel address and the per-tunnel MTU. Liveness, latency and
+// which exit currently carries traffic belong to the fleet page and are not
+// repeated. Neither the preshared key nor a REALITY tunnel UUID appears.
+func exitProxiesTable(m *domain.MasterSpec) specTable {
+	if m == nil || len(m.ExitTunnels) == 0 {
+		return specTable{}
 	}
-	return append(dst, s)
+	t := specTable{
+		Title: "Exit proxies",
+		Note:  "endpoints and MTU per proxy; liveness and the carrying exit are on the fleet page.",
+		Head:  []string{"Proxy", "Transport", "Endpoint", "Tunnel IP", "MTU", "Tier"},
+	}
+	for _, e := range m.ExitTunnels {
+		tier := "primary"
+		if e.Reserve {
+			tier = "reserve"
+		}
+		t.Rows = append(t.Rows, []string{
+			e.Name, string(e.Transport.OrDefault()), orDash(e.Endpoint),
+			orDash(e.TunnelIP), fmt.Sprintf("%d", e.MTU), tier,
+		})
+	}
+	return t
 }
+
+func peersTable(peers []domain.PeerSpec) specTable {
+	if len(peers) == 0 {
+		return specTable{}
+	}
+	t := specTable{Title: "Peers", Head: []string{"Peer", "Allowed IPs", "Endpoint", "Keepalive"}}
+	for _, p := range peers {
+		ep := p.Endpoint
+		if ep == "" {
+			ep = "dials in"
+		}
+		ka := "—"
+		if p.Keepalive > 0 {
+			ka = fmt.Sprintf("%ds", p.Keepalive)
+		}
+		t.Rows = append(t.Rows, []string{orDash(p.Name), strings.Join(p.AllowedIPs, ", "), ep, ka})
+	}
+	return t
+}
+
+// --- raw ----------------------------------------------------------------------
+
+// redactSpec returns a copy of s with every credential replaced. It copies each
+// pointed-to struct and slice it touches, so the caller's spec is never mutated —
+// the same spec object also feeds the wg-easy and mihomo links on this page.
+func redactSpec(s domain.NodeSpec) domain.NodeSpec {
+	if s.WGServer.AWG != nil {
+		awg := *s.WGServer.AWG
+		awg.Shared.HeaderProtectionKey = redactIfSet(awg.Shared.HeaderProtectionKey)
+		s.WGServer.AWG = &awg
+	}
+	if s.Reality != nil {
+		r := *s.Reality
+		r.UUID = redactIfSet(r.UUID)
+		s.Reality = &r
+	}
+	if s.Master != nil {
+		m := *s.Master
+		tunnels := append([]domain.ExitTunnel(nil), m.ExitTunnels...)
+		for i := range tunnels {
+			tunnels[i].PresharedKey = redactIfSet(tunnels[i].PresharedKey)
+			if tunnels[i].AWG != nil {
+				a := *tunnels[i].AWG
+				a.Shared.HeaderProtectionKey = redactIfSet(a.Shared.HeaderProtectionKey)
+				tunnels[i].AWG = &a
+			}
+			if tunnels[i].Reality != nil {
+				rt := *tunnels[i].Reality
+				rt.UUID = redactIfSet(rt.UUID)
+				tunnels[i].Reality = &rt
+			}
+		}
+		m.ExitTunnels = tunnels
+		if m.ClientVLESS != nil {
+			cv := *m.ClientVLESS
+			cs := append([]domain.VLESSClient(nil), cv.Clients...)
+			for i := range cs {
+				cs[i].UUID = redactIfSet(cs[i].UUID)
+			}
+			cv.Clients = cs
+			m.ClientVLESS = &cv
+		}
+		m.Custom = redactCustom(m.Custom)
+		s.Master = &m
+	}
+	s.DNS.Custom = redactCustom(s.DNS.Custom)
+	return s
+}
+
+// redactCustom keeps the KEYS of an operator override map and the PATHS of extra
+// files — those say what was customised, which is the useful part — and replaces
+// every value and file body. Values are free-form (`any`, nested arbitrarily deep)
+// and demonstrably carry secrets: the mihomo Clash API secret lives in exactly this
+// map. Nothing that cannot be allowlisted gets rendered.
+func redactCustom(c domain.CustomConfig) domain.CustomConfig {
+	if len(c.Overrides) > 0 {
+		out := make(map[string]any, len(c.Overrides))
+		for k := range c.Overrides {
+			out[k] = redactedMark
+		}
+		c.Overrides = out
+	}
+	if len(c.Files) > 0 {
+		files := append([]domain.ManagedFile(nil), c.Files...)
+		for i := range files {
+			files[i].Content = redactedMark
+		}
+		c.Files = files
+	}
+	return c
+}
+
+func redactIfSet(v string) string {
+	if v == "" {
+		return ""
+	}
+	return redactedMark
+}
+
+// --- helpers ------------------------------------------------------------------
+
+func kv(label, value string) specRow { return specRow{Label: label, Value: value} }
 
 func orDash(s string) string {
 	if strings.TrimSpace(s) == "" {
 		return "—"
-	}
-	return s
-}
-
-func orNone(s string) string {
-	if s == "" {
-		return "none"
 	}
 	return s
 }
@@ -510,13 +573,6 @@ func joinNonEmptyValues(vals ...string) string {
 		}
 	}
 	return strings.Join(out, ", ")
-}
-
-func firstN(vals []string, n int) []string {
-	if len(vals) <= n {
-		return vals
-	}
-	return append(append([]string{}, vals[:n]...), "…")
 }
 
 func intsCSV(vals []int) string {
@@ -540,8 +596,16 @@ func countsByKey(m map[string]int) string {
 	return strings.Join(out, ", ")
 }
 
-// clientNames lists the operator-facing labels only. UUIDs and short-ids are
-// access credentials and never appear.
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// clientNames lists operator-facing labels only; UUIDs and short-ids stay out.
 func clientNames(cs []domain.VLESSClient) string {
 	names := make([]string, 0, len(cs))
 	for _, c := range cs {
@@ -549,7 +613,7 @@ func clientNames(cs []domain.VLESSClient) string {
 			names = append(names, c.Name)
 		}
 	}
-	return strings.Join(firstN(names, 8), ", ")
+	return strings.Join(names, ", ")
 }
 
 func bitsPerSec(bps int) string {

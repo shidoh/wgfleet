@@ -983,7 +983,10 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
 }
 
 /* ============================================================
-   NODE SPEC — summary card + foldable detail sections
+   NODE SPEC — summary card + tabbed detail
+   Layout follows the convention every mature infra console lands on:
+   a scalar summary, grouped term/definition detail, one table per
+   repeating entity, and the raw manifest as the escape hatch.
    ============================================================ */
 .spec-card {
   margin-top: 22px;
@@ -993,20 +996,20 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   padding: 18px 24px 14px;
 }
 .spec-heading {
-  margin: 0 0 4px;
+  margin: 0 0 2px;
   font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 2px;
   color: var(--label-bright);
 }
 
-/* Summary: always visible, the answer to "what does this node carry". */
-.spec-summary { margin: 0 0 6px; }
+/* Summary — the answer, always visible, scalars only. */
+.spec-summary { margin: 0 0 4px; }
 .spec-summary-row,
 .spec-row {
   display: grid;
   grid-template-columns: minmax(150px, 210px) 1fr;
-  gap: 4px 18px;
+  gap: 3px 18px;
   padding: 9px 0;
   border-bottom: 1px solid var(--border-row);
 }
@@ -1025,7 +1028,7 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 6px 10px;
+  gap: 5px 10px;
   min-width: 0;
 }
 .spec-value {
@@ -1043,8 +1046,8 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   color: var(--blue-toggle-fg);
   background: var(--blue-toggle);
 }
-/* The hint explains why the value matters; it takes the full row so it never
-   competes with the value itself. */
+/* A hint takes the whole row so it never competes with the value. Used only
+   where the consequence is not obvious from reading the value. */
 .spec-hint {
   flex-basis: 100%;
   font-size: 11px;
@@ -1052,42 +1055,110 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   color: var(--text-dim);
 }
 
-/* Detail sections. */
-.spec-section {
-  border-top: 1px solid var(--border-rule);
-  padding: 2px 0;
-}
-.spec-section-toggle {
+/* Tabs — CSS only, no JS: the radios drive their adjacent panel. */
+.spec-tabs { margin-top: 14px; }
+.spec-tablist {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  list-style: none;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+}
+.spec-tab {
+  padding: 9px 14px;
   cursor: pointer;
-  padding: 11px 0;
-  font-size: 11.5px;
+  font-size: 11px;
   letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--text-label);
+  border-bottom: 2px solid transparent;
+  transition: color .12s, border-color .12s;
+}
+.spec-tab:hover { color: var(--text-bright); }
+.spec-radio {
+  position: absolute;
+  width: 1px; height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.spec-panel { display: none; padding-top: 16px; }
+.spec-radio:checked + .spec-panel { display: block; }
+/* Highlight the active tab. A label cannot reach its own input's :checked state,
+   so the rule is written per id on the container; details + three tables + raw is
+   more than this page will ever have. */
+.spec-tabs:has(#sp-details:checked) .spec-tab[for="sp-details"],
+.spec-tabs:has(#sp-t0:checked) .spec-tab[for="sp-t0"],
+.spec-tabs:has(#sp-t1:checked) .spec-tab[for="sp-t1"],
+.spec-tabs:has(#sp-t2:checked) .spec-tab[for="sp-t2"],
+.spec-tabs:has(#sp-raw:checked) .spec-tab[for="sp-raw"] {
+  color: var(--text-strong);
+  border-bottom-color: var(--blue);
+}
+
+/* Details — grouped term/definition pairs in columns. */
+.spec-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 4px 32px;
+}
+.spec-group { break-inside: avoid; padding-bottom: 10px; }
+.spec-group-title {
+  margin: 6px 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
   color: var(--text-bright);
-  transition: color .12s;
 }
-.spec-section-toggle::-webkit-details-marker { display: none; }
-.spec-section-toggle::before { content: "▸"; color: var(--blue); }
-.spec-section[open] .spec-section-toggle::before { content: "▾"; }
-.spec-section-toggle:hover { color: var(--text-strong); }
-.spec-section .spec-rows {
-  margin: 0 0 12px;
-  padding: 12px 16px;
-  background: var(--panel-inset);
-  border: 1px solid var(--border);
-  border-radius: var(--r-mini);
+.spec-rows { margin: 0; }
+
+/* Tables — one per repeating entity. */
+.spec-table-wrap { overflow-x: auto; }
+.spec-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-meta);
 }
+.spec-table th {
+  text-align: left;
+  padding: 6px 14px 8px 0;
+  font-weight: 500;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+  font-size: 10.5px;
+  color: var(--text-label);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.spec-table td {
+  padding: 8px 14px 8px 0;
+  color: var(--text);
+  border-bottom: 1px solid var(--border-row);
+  white-space: nowrap;
+}
+.spec-table tr:last-child td { border-bottom: none; }
+
 .spec-note {
   margin: 0 0 10px;
   font-size: 11px;
   line-height: 1.6;
   color: var(--text-muted);
 }
+.spec-raw {
+  margin: 0;
+  padding: 16px 18px;
+  max-height: 60vh;
+  overflow: auto;
+  background: var(--panel-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-mini);
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--prose);
+  white-space: pre;
+}
 .spec-foot {
-  margin: 12px 0 0;
+  margin: 14px 0 0;
   padding-top: 10px;
   border-top: 1px solid var(--border-rule);
   font-size: 11px;
@@ -1097,6 +1168,7 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
 @media (max-width: 720px) {
   .spec-summary-row,
   .spec-row { grid-template-columns: 1fr; gap: 2px; }
+  .spec-groups { grid-template-columns: 1fr; }
 }
 
 /* ============================================================
