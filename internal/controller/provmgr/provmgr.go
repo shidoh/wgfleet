@@ -208,6 +208,21 @@ func (m *Manager) UpgradeAgent(ctx context.Context, nodeID string, mode provisio
 		}
 		defer m.clearInflight(nodeID)
 	}
+	return m.upgradeAgentLocked(ctx, node, mode)
+}
+
+// upgradeAgentLocked performs the upload+restart assuming the caller ALREADY holds
+// the node's inflight lock (or is in plan mode, which takes none).
+//
+// It exists because TriggerUpgrade must take the lock SYNCHRONOUSLY — its whole
+// contract is to reject a duplicate at the call, before returning to the operator
+// — and then hand the work to a goroutine. Routing that goroutine back through
+// UpgradeAgent made it acquire a lock its own caller was already holding, so every
+// TriggerUpgrade failed instantly with "already has a provisioning/upgrade job in
+// flight" and never reached the node at all. That took out both of its callers:
+// the Web UI's upgrade button and the wire-version gate's self-heal for an agent
+// too old to be served a spec. Found by test, 2026-08-18.
+func (m *Manager) upgradeAgentLocked(ctx context.Context, node domain.Node, mode provisioner.Mode) (provisioner.Report, error) {
 	bin, err := os.ReadFile(m.opts.AgentBinPath)
 	if err != nil {
 		return provisioner.Report{}, fmt.Errorf("read agent binary: %w", err)
@@ -236,20 +251,25 @@ func (m *Manager) TriggerUpgrade(nodeID string) error {
 		return fmt.Errorf("no agent binary configured (set controller.agent_bin)")
 	}
 
-	m.mu.Lock()
-	if m.inflight[nodeID] {
-		m.mu.Unlock()
-		return fmt.Errorf("node %q already has a provisioning/upgrade job in flight", nodeID)
+	node, _, ok := m.findNode(nodeID)
+	if !ok {
+		return fmt.Errorf("node %q not found in fleet manifest", nodeID)
 	}
-	m.inflight[nodeID] = true
-	m.mu.Unlock()
+	// Acquire SYNCHRONOUSLY: rejecting a duplicate is this call's contract, and the
+	// caller (UI button, version gate) must learn about it here rather than from a
+	// goroutine it cannot observe.
+	if err := m.acquire(nodeID); err != nil {
+		return err
+	}
 
 	bg := m.baseCtx
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
 		defer m.clearInflight(nodeID)
-		_, err := m.UpgradeAgent(bg, nodeID, provisioner.ModeApply)
+		// Locked variant on purpose — we hold the lock already. Calling UpgradeAgent
+		// here would have it try to acquire it again and fail every single time.
+		_, err := m.upgradeAgentLocked(bg, node, provisioner.ModeApply)
 		// Record the outcome on the node so a background upgrade failure is visible
 		// in the UI (the detail page surfaces Node.LastError) instead of being
 		// swallowed into a log line the operator never sees. Success clears it.
