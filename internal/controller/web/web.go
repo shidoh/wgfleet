@@ -19,7 +19,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -145,7 +144,8 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	}
 	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, clientsTmpl: clientsTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute), subLimit: auth.NewIPLimiter(10, time.Minute, 4096)}
 
-	h.mux.Handle("GET /static/", staticFileHandler())
+	staticHandler := http.FileServer(http.FS(staticFS))
+	h.mux.Handle("GET /static/", staticHandler)
 	h.mux.HandleFunc("GET /login", h.handleLoginForm)
 	h.mux.HandleFunc("POST /login", h.handleLogin)
 	h.mux.HandleFunc("POST /logout", h.handleLogout)
@@ -910,27 +910,6 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Rollout:   h.rolloutView(),
 	}
 	h.render(w, h.listTmpl, "layout", data)
-}
-
-// staticFileHandler serves the embedded assets, unless WGFLEET_STATIC_DIR points
-// at a directory — then it serves from there instead.
-//
-// The assets are compiled in with go:embed, which is right for production: one
-// binary, nothing to deploy alongside it, nothing to drift. It is miserable for
-// iterating on the CSS, because every one-line change means rebuilding a ~29 MB
-// binary and uploading it over whatever link the operator has. The env var is the
-// escape hatch: unset (the default, and every production deploy) behaves exactly
-// as before, set means `scp` one file and reload.
-func staticFileHandler() http.Handler {
-	if dir := os.Getenv("WGFLEET_STATIC_DIR"); dir != "" {
-		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
-			slog.Warn("serving web assets from disk instead of the embedded copy",
-				"dir", dir, "env", "WGFLEET_STATIC_DIR")
-			return http.StripPrefix("/static/", http.FileServer(http.Dir(dir)))
-		}
-		slog.Error("WGFLEET_STATIC_DIR is set but unusable; falling back to the embedded assets", "dir", dir)
-	}
-	return http.FileServer(http.FS(staticFS))
 }
 
 // handleNodeStatus renders just the Status card body for the per-node detail
