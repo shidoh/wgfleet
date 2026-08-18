@@ -788,6 +788,35 @@ func TestListShowsTransportAndMgmt(t *testing.T) {
 	}
 }
 
+// TestNodeSpecDetailGroupsStartCollapsed pins the page's opening height. The
+// detail groups are the "I need to dig" case — the summary card above already
+// answers the common question — so an operator opening a node should meet a short
+// index of what the node has, not a screenful they scroll past every time.
+//
+// Native <details> also means this survives with no JS and stays keyboard- and
+// screen-reader-navigable.
+func TestNodeSpecDetailGroupsStartCollapsed(t *testing.T) {
+	h, st := newTestHandler(t, stubRenderer{spec: domain.NodeSpec{
+		Role:     domain.RoleExit,
+		WGServer: domain.WGServerSpec{ListenPort: 51820, AddressPool: "10.81.0.0/24", MTU: 1380},
+		Routing:  domain.RoutingSpec{EgressInterface: "wgcf", ClientCIDR: "10.81.0.0/24"},
+	}})
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+
+	_, body := get(t, h, "/nodes/exit-de-1")
+	if !strings.Contains(body, `<details class="spec-group">`) {
+		t.Fatal("detail groups must be collapsible")
+	}
+	if strings.Contains(body, `<details class="spec-group" open`) || strings.Contains(body, `class="spec-group" open`) {
+		t.Error("detail groups must start collapsed so the page opens short")
+	}
+	// The summary is the answer and stays visible — collapsing it would defeat the
+	// point of having it.
+	if !strings.Contains(body, "spec-summary") {
+		t.Error("the summary card must not be behind a fold")
+	}
+}
+
 // TestMasterDetailDoesNotDuplicateExitLiveness is the guard against the page
 // growing a second copy of the fleet list. Per-exit liveness, latency and which
 // exit is carrying traffic are the fleet page's job and are covered by
