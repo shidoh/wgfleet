@@ -73,7 +73,7 @@
  },
  "timepicker": {},
  "timezone": "browser",
- "title": "wgfleet \u2014 Fleet Overview",
+ "title": "wgfleet — Fleet Overview",
  "uid": "wgfleet-fleet",
  "version": 1,
  "panels": [
@@ -966,15 +966,16 @@
    "panels": []
   },
   {
-   "type": "state-timeline",
-   "title": "Health checks (1 ok / 0 failing)",
+   "type": "stat",
+   "title": "Checks failing now",
+   "description": "Health checks currently reporting 0, across every node in scope. Which ones is in the table below.",
    "datasource": {
     "type": "prometheus",
     "uid": "${datasource}"
    },
    "gridPos": {
-    "h": 9,
-    "w": 24,
+    "h": 8,
+    "w": 4,
     "x": 0,
     "y": 19
    },
@@ -984,24 +985,13 @@
      "color": {
       "mode": "thresholds"
      },
-     "custom": {
-      "fillOpacity": 80,
-      "lineWidth": 0,
-      "spanNulls": true
-     },
      "mappings": [
       {
        "type": "value",
        "options": {
         "0": {
-         "text": "fail",
-         "color": "red",
+         "text": "all green",
          "index": 0
-        },
-        "1": {
-         "text": "ok",
-         "color": "green",
-         "index": 1
         }
        }
       }
@@ -1010,15 +1000,108 @@
       "mode": "absolute",
       "steps": [
        {
-        "color": "red",
+        "color": "green",
         "value": null
        },
        {
-        "color": "green",
+        "color": "red",
         "value": 1
        }
       ]
-     }
+     },
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "justifyMode": "auto",
+    "orientation": "auto",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "count(wgfleet_node_health_check{node=~\"$node\"} == 0) OR on() vector(0)",
+     "instant": true,
+     "range": false,
+     "legendFormat": "failing",
+     "refId": "A"
+    }
+   ]
+  },
+  {
+   "type": "state-timeline",
+   "title": "Nodes failing, by check",
+   "description": "How many nodes are failing each check, over time. One row per check kind — that set is fixed by the agent code, so this panel stays readable however large the fleet gets. Green 'ok' = every node in scope passing; a coloured segment shows the number of nodes failing.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 20,
+    "x": 4,
+    "y": 19
+   },
+   "id": 32,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "text"
+     },
+     "custom": {
+      "fillOpacity": 85,
+      "lineWidth": 0,
+      "spanNulls": true
+     },
+     "mappings": [
+      {
+       "type": "value",
+       "options": {
+        "0": {
+         "text": "ok",
+         "color": "green",
+         "index": 0
+        }
+       }
+      },
+      {
+       "type": "range",
+       "options": {
+        "from": 1,
+        "to": 1,
+        "result": {
+         "color": "orange",
+         "index": 1
+        }
+       }
+      },
+      {
+       "type": "range",
+       "options": {
+        "from": 2,
+        "to": 1000000,
+        "result": {
+         "color": "red",
+         "index": 2
+        }
+       }
+      }
+     ],
+     "min": 0
     },
     "overrides": []
    },
@@ -1030,8 +1113,8 @@
      "showLegend": false
     },
     "mergeValues": true,
-    "rowHeight": 0.9,
-    "showValue": "never",
+    "rowHeight": 0.85,
+    "showValue": "auto",
     "tooltip": {
      "mode": "single",
      "sort": "none"
@@ -1043,10 +1126,138 @@
       "type": "prometheus",
       "uid": "${datasource}"
      },
-     "expr": "wgfleet_node_health_check{node=~\"$node\"}",
+     "expr": "sum by (check) (1 - wgfleet_node_health_check{node=~\"$node\"})",
+     "legendFormat": "{{check}}",
      "instant": false,
-     "legendFormat": "{{node}} / {{check}}",
      "refId": "A"
+    }
+   ]
+  },
+  {
+   "type": "table",
+   "title": "Failures in this time range",
+   "description": "Every node/check pair that failed at least once in the selected range, and for how long. Sampled at 1-minute resolution, so a blip shorter than a minute still shows as 1.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 24,
+    "x": 0,
+    "y": 27
+   },
+   "id": 33,
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "✓  no health check failed in this time range",
+     "custom": {
+      "align": "left",
+      "cellOptions": {
+       "type": "auto"
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "node"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 220
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "check"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 260
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "red"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "minutes failing"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 170
+       },
+       {
+        "id": "unit",
+        "value": "m"
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "displayName": "minutes failing",
+      "desc": true
+     }
+    ]
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "count_over_time((wgfleet_node_health_check{node=~\"$node\"} == 0)[$__range:1m])",
+     "instant": true,
+     "range": false,
+     "format": "table",
+     "refId": "A"
+    }
+   ],
+   "transformations": [
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {
+       "Time": true,
+       "__name__": true,
+       "cluster": true,
+       "component": true,
+       "instance": true,
+       "job": true,
+       "prometheus": true
+      },
+      "indexByName": {
+       "node": 0,
+       "check": 1,
+       "Value": 2
+      },
+      "renameByName": {
+       "Value": "minutes failing"
+      }
+     }
     }
    ]
   },
@@ -1058,7 +1269,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 28
+    "y": 33
    },
    "id": 40,
    "panels": []
@@ -1075,7 +1286,7 @@
     "h": 8,
     "w": 16,
     "x": 0,
-    "y": 29
+    "y": 34
    },
    "id": 41,
    "fieldConfig": {
@@ -1163,7 +1374,7 @@
     "h": 8,
     "w": 8,
     "x": 16,
-    "y": 29
+    "y": 34
    },
    "id": 42,
    "fieldConfig": {
@@ -1264,7 +1475,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 37
+    "y": 42
    },
    "id": 50,
    "panels": []
@@ -1280,7 +1491,7 @@
     "h": 8,
     "w": 8,
     "x": 0,
-    "y": 38
+    "y": 43
    },
    "id": 51,
    "fieldConfig": {
@@ -1357,7 +1568,7 @@
     "h": 8,
     "w": 8,
     "x": 8,
-    "y": 38
+    "y": 43
    },
    "id": 52,
    "fieldConfig": {
@@ -1407,7 +1618,7 @@
   {
    "type": "timeseries",
    "title": "Config drift (resources repaired)",
-   "description": "Resources the agent had to repair while the desired spec was unchanged \u2014 i.e. real drift or external tampering (ADR-0015).",
+   "description": "Resources the agent had to repair while the desired spec was unchanged — i.e. real drift or external tampering (ADR-0015).",
    "datasource": {
     "type": "prometheus",
     "uid": "${datasource}"
@@ -1416,7 +1627,7 @@
     "h": 8,
     "w": 8,
     "x": 16,
-    "y": 38
+    "y": 43
    },
    "id": 53,
    "fieldConfig": {
@@ -1469,7 +1680,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 46
+    "y": 51
    },
    "id": 60,
    "panels": []
@@ -1477,7 +1688,7 @@
   {
    "type": "table",
    "title": "Active transport",
-   "description": "Which master\u2194exit transport each exit is currently routed over (awg / reality-xhttp). Switch it per node on its detail page (ADR-0025).",
+   "description": "Which master↔exit transport each exit is currently routed over (awg / reality-xhttp). Switch it per node on its detail page (ADR-0025).",
    "datasource": {
     "type": "prometheus",
     "uid": "${datasource}"
@@ -1486,7 +1697,7 @@
     "h": 8,
     "w": 12,
     "x": 0,
-    "y": 47
+    "y": 52
    },
    "id": 61,
    "fieldConfig": {
@@ -1587,7 +1798,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 55
+    "y": 60
    },
    "id": 70,
    "panels": []
@@ -1604,7 +1815,7 @@
     "h": 8,
     "w": 4,
     "x": 0,
-    "y": 56
+    "y": 61
    },
    "id": 71,
    "fieldConfig": {
@@ -1665,7 +1876,7 @@
     "h": 8,
     "w": 4,
     "x": 4,
-    "y": 56
+    "y": 61
    },
    "id": 72,
    "fieldConfig": {
@@ -1723,7 +1934,7 @@
     "h": 8,
     "w": 16,
     "x": 8,
-    "y": 56
+    "y": 61
    },
    "id": 73,
    "fieldConfig": {
@@ -1802,7 +2013,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 64
+    "y": 69
    },
    "id": 80,
    "panels": []
@@ -1819,7 +2030,7 @@
     "h": 8,
     "w": 5,
     "x": 0,
-    "y": 65
+    "y": 70
    },
    "id": 81,
    "fieldConfig": {
@@ -1880,7 +2091,7 @@
     "h": 8,
     "w": 5,
     "x": 5,
-    "y": 65
+    "y": 70
    },
    "id": 82,
    "fieldConfig": {
@@ -1932,7 +2143,7 @@
   {
    "type": "table",
    "title": "Time since last successful probe run",
-   "description": "Per node and probe: how long ago the probe last SUCCEEDED. A probe that has never succeeded shows an absurd age (measured from epoch) and colors red \u2014 that is the signature to look for. Rows appear only once a probe has actually run on that node.",
+   "description": "Per node and probe: how long ago the probe last SUCCEEDED. A probe that has never succeeded shows an absurd age (measured from epoch) and colors red — that is the signature to look for. Rows appear only once a probe has actually run on that node.",
    "datasource": {
     "type": "prometheus",
     "uid": "${datasource}"
@@ -1941,7 +2152,7 @@
     "h": 8,
     "w": 14,
     "x": 10,
-    "y": 65
+    "y": 70
    },
    "id": 83,
    "fieldConfig": {
