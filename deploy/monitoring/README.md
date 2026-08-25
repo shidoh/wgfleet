@@ -12,9 +12,12 @@ the public interface — the code refuses a public bind).
 | `servicemonitor.yaml` | Prometheus-Operator `ServiceMonitor` + headless `Service`/`Endpoints` for the controller and the agents. Edit the ZT addresses. |
 | `scrapeconfig.yaml` | Prometheus-Operator `ScrapeConfig` CRD (operator ≥ v0.65) — static targets, no Service plumbing. |
 | `vmstaticscrape.yaml` | VictoriaMetrics-Operator `VMStaticScrape` CRD — for a `vmagent`. Edit the ZT addresses. |
+| `vmrule.yaml` | VictoriaMetrics-Operator `VMRule` — 22 alerts over the fleet metrics. No addresses to edit. |
+| `prometheusrule.yaml` | Prometheus-Operator `PrometheusRule` — the same 22 alerts. |
 
-Pick the one that matches your stack: `ServiceMonitor`/`ScrapeConfig` for
-Prometheus-Operator, `VMStaticScrape` for VictoriaMetrics-Operator.
+Pick the one that matches your stack: `ServiceMonitor`/`ScrapeConfig` +
+`PrometheusRule` for Prometheus-Operator, `VMStaticScrape` + `VMRule` for
+VictoriaMetrics-Operator.
 
 ## Metrics ports
 

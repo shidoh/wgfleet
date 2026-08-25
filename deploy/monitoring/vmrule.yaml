@@ -1,0 +1,254 @@
+# wgfleet — alerting rules for VictoriaMetrics Operator (`VMRule`).
+#
+# Companion to `vmstaticscrape.yaml`: those rules assume the scrape jobs defined
+# there (job="wgfleet", with component="controller"|"agent" target labels).
+#
+# Severity is either `warning` or `critical` — no `info`, because a lot of
+# Alertmanager setups blackhole info by default. Retune `for:` to taste; the
+# defaults assume the stock 30s agent report interval.
+#
+# The vmagent/vmalert picks this up only if it selects it: either the VMAlert has
+#   spec.selectAllByDefault: true
+# or label this resource to match its spec.ruleSelector (+ ruleNamespaceSelector).
+#
+# Apply:  kubectl apply -f vmrule.yaml
+---
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: wgfleet
+  labels:
+    app.kubernetes.io/name: wgfleet
+  namespace: monitoring
+spec:
+  groups:
+  - name: wgfleet.scrape
+    interval: 30s
+    rules:
+    - alert: WgfleetControllerDown
+      expr: up{job="wgfleet",component="controller"} == 0
+      for: 3m
+      labels:
+        severity: critical
+        service: wgfleet
+      annotations:
+        summary: wgfleet controller /metrics is unreachable
+        description: The controller at {{ $labels.instance }} has not been scrapeable for 3m. The whole
+          fleet is flying blind and no node can re-register.
+    - alert: WgfleetAgentScrapeDown
+      expr: up{job="wgfleet",component="agent"} == 0
+      for: 10m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: 'wgfleet agent /metrics unreachable: {{ $labels.instance }}'
+        description: Agent metrics at {{ $labels.instance }} have been down for 10m. Either the agent
+          is dead, or the mgmt overlay (ZeroTier) path to it is broken.
+    - alert: WgfleetAgentUnscraped
+      expr: max(wgfleet_nodes{state="Ready"}) - count(up{job="wgfleet",component="agent"} == 1) > 0
+      for: 30m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Fleet has more Ready nodes than scraped agents
+        description: '{{ $value }} node(s) are Ready in the controller store but have no agent target
+          in the wgfleet job. Add their mgmt addresses to the VMStaticScrape.'
+  - name: wgfleet.fleet
+    interval: 30s
+    rules:
+    - alert: WgfleetNodeReportStale
+      expr: wgfleet_node_last_report_age_seconds > 180
+      for: 5m
+      labels:
+        severity: critical
+        service: wgfleet
+      annotations:
+        summary: Node {{ $labels.node }} stopped reporting to the controller
+        description: Last report from {{ $labels.node }} was {{ $value | humanizeDuration }} ago. The
+          control channel is down (gRPC/mTLS, or MTU blackhole on the mgmt overlay).
+    - alert: WgfleetNodeError
+      expr: wgfleet_node_info{state="Error"} == 1
+      for: 5m
+      labels:
+        severity: critical
+        service: wgfleet
+      annotations:
+        summary: Node {{ $labels.node }} is in Error state
+        description: Node {{ $labels.node }} ({{ $labels.role }}) has been in state Error for 5m.
+    - alert: WgfleetNodeNotReady
+      expr: wgfleet_node_info{state=~"Degraded|Pending|Provisioning|Reconciling"} == 1
+      for: 20m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Node {{ $labels.node }} stuck in {{ $labels.state }}
+        description: Node {{ $labels.node }} ({{ $labels.role }}) has not reached Ready for 20m.
+    - alert: WgfleetNodeReconcileFailed
+      expr: wgfleet_node_reconcile_failed == 1
+      for: 15m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Reconcile failing on {{ $labels.node }}
+        description: The controller reports {{ $labels.node }} as reconcile-failed for 15m — the desired
+          manifest is not being applied.
+    - alert: WgfleetNodeDrainedTooLong
+      expr: wgfleet_node_drain == 1
+      for: 24h
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Node {{ $labels.node }} has been drained for 24h
+        description: Drain is meant to be temporary (mihomo hot-reload / maintenance). {{ $labels.node
+          }} has been out of rotation for a day — undrain it or decommission it.
+    - alert: WgfleetNoReadyExit
+      expr: count(wgfleet_node_info{role="exit",state="Ready"} == 1) < 1
+      for: 5m
+      labels:
+        severity: critical
+        service: wgfleet
+      annotations:
+        summary: No Ready exit node left in the fleet
+        description: Every exit is out of rotation. Client traffic has nowhere to egress.
+  - name: wgfleet.health
+    interval: 30s
+    rules:
+    - alert: WgfleetHealthCheckFailing
+      expr: wgfleet_node_health_check == 0
+      for: 10m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Health check {{ $labels.check }} failing on {{ $labels.node }}
+        description: Check '{{ $labels.check }}' on node {{ $labels.node }} has been failing for 10m.
+    - alert: WgfleetClientPathDown
+      expr: wgfleet_node_health_check{check=~"client-wg|client-vless"} == 0
+      for: 5m
+      labels:
+        severity: critical
+        service: wgfleet
+      annotations:
+        summary: 'Client entry point down on {{ $labels.node }}: {{ $labels.check }}'
+        description: The client-facing inbound '{{ $labels.check }}' on master {{ $labels.node }} has
+          been failing for 5m. New clients cannot connect.
+    - alert: WgfleetEgressUnreachable
+      expr: wgfleet_agent_egress_reachability == 0
+      for: 10m
+      labels:
+        severity: critical
+        service: wgfleet
+      annotations:
+        summary: Egress unreachable on exit {{ $labels.node }}
+        description: 'Exit {{ $labels.node }} reports egress reachability ''{{ $labels.state }}''. Traffic
+          routed to this exit is blackholed (see lesson: ''egress rule from all cuts off the exit'').'
+    - alert: WgfleetEgressInactive
+      expr: wgfleet_agent_egress_active == 0
+      for: 10m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Egress method {{ $labels.method }} inactive on {{ $labels.node }}
+        description: Exit {{ $labels.node }} has no active '{{ $labels.method }}' egress for 10m.
+  - name: wgfleet.reconcile
+    interval: 30s
+    rules:
+    - alert: WgfleetReconcileErrors
+      expr: increase(wgfleet_agent_reconcile_total{result!="success"}[15m]) > 0
+      for: 5m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Agent reconcile errors on {{ $labels.node }}
+        description: '{{ $value | printf "%.0f" }} failed reconcile pass(es) in the last 15m on {{ $labels.node
+          }} (result={{ $labels.result }}).'
+    - alert: WgfleetPersistentDrift
+      expr: increase(wgfleet_agent_drift_total[1h]) > 10
+      for: 15m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Config drift keeps recurring on {{ $labels.node }}
+        description: Component '{{ $labels.exported_component }}' on {{ $labels.node }} drifted {{ $value
+          | printf "%.0f" }} times in an hour — something else is fighting the agent for that resource.
+    - alert: WgfleetAgentFlapping
+      expr: changes(wgfleet_agent_start_time_seconds[1h]) > 3
+      for: 5m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: wgfleet-agent restarting repeatedly on {{ $labels.node }}
+        description: The agent on {{ $labels.node }} restarted {{ $value | printf "%.0f" }} times in the
+          last hour.
+  - name: wgfleet.versions
+    interval: 1m
+    rules:
+    - alert: WgfleetWireVersionSkew
+      expr: count(count by (wire_version) (wgfleet_node_agent_info)) > 1
+      for: 30m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Agents disagree on control-plane wire version
+        description: More than one wire_version is live in the fleet for 30m. A rollout is stuck half-applied.
+    - alert: WgfleetAgentVersionSkew
+      expr: count(count by (agent_version) (wgfleet_node_agent_info)) > 1
+      for: 6h
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Fleet is running mixed agent versions
+        description: More than one agent_version has been live for 6h — a rollout was never finished.
+  - name: wgfleet.dataplane
+    interval: 1m
+    rules:
+    - alert: WgfleetWireGuardHandshakeStale
+      expr: wgfleet_wg_handshake_age_seconds > 300
+      for: 5m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Stale WireGuard handshake on {{ $labels.node }}/{{ $labels.iface }}
+        description: Peer {{ $labels.peer }} on {{ $labels.iface }} ({{ $labels.node }}) last handshook
+          {{ $value | humanizeDuration }} ago.
+    - alert: WgfleetASBlacklistEmpty
+      expr: wgfleet_fw_as_blacklist_size{family="v4"} == 0
+      for: 1h
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: AS blacklist is empty on {{ $labels.node }}
+        description: The nftables AS blacklist ({{ $labels.family }}) on {{ $labels.node }} has 0 entries
+          — the feed probe is failing and abuse filtering is off.
+    - alert: WgfleetProbeStale
+      expr: time() - wgfleet_probe_last_success_timestamp_seconds > 7 * 86400
+      for: 1h
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Scheduled probe '{{ $labels.probe }}' stale on {{ $labels.node }}
+        description: Probe '{{ $labels.probe }}' on {{ $labels.node }} has not succeeded in over 7 days.
+    - alert: WgfleetProbeNeverSucceeded
+      expr: wgfleet_probe_last_attempt_timestamp_seconds > 0 unless wgfleet_probe_last_success_timestamp_seconds > 0
+      for: 6h
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Scheduled probe '{{ $labels.probe }}' has never succeeded on {{ $labels.node }}
+        description: Probe '{{ $labels.probe }}' on {{ $labels.node }} has been attempted but never once
+          succeeded.
