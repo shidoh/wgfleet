@@ -119,6 +119,13 @@ func (c *Client) PublishClientVlessKey(ctx context.Context, publicKey string) er
 	return c.publishKey(ctx, publicKey, api.KeyTypeClientVless)
 }
 
+// PublishClientWGKey registers this master's CLIENT-FACING WireGuard public key
+// (the AmneziaWG interface end users dial), stored separately from the node's
+// fleet-internal WireGuard key.
+func (c *Client) PublishClientWGKey(ctx context.Context, publicKey string) error {
+	return c.publishKey(ctx, publicKey, api.KeyTypeClientWG)
+}
+
 // PublishTunnelKey registers the master's per-tunnel WireGuard public key for one
 // master↔exit tunnel (ADR-0030). tunnel is the exit's node name.
 func (c *Client) PublishTunnelKey(ctx context.Context, tunnel, publicKey string) error {

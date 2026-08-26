@@ -134,6 +134,29 @@ func (b *Broker) RegisterClientVlessKey(ctx context.Context, nodeID, publicKey s
 	return nil
 }
 
+// RegisterClientWGKey records the master's CLIENT-FACING WireGuard public key —
+// the identity of the interface end users dial once the agent owns it. Validated
+// as a well-formed WireGuard key before storing: it is rendered verbatim into
+// every client config the controller hands out, so a malformed value from a
+// CA-authenticated-but-rogue node must be refused here (same guard as the
+// REALITY keys above).
+func (b *Broker) RegisterClientWGKey(ctx context.Context, nodeID, publicKey string) error {
+	if publicKey == "" {
+		return fmt.Errorf("keybroker: empty client wg public key for %q", nodeID)
+	}
+	if !wg.ValidKey(publicKey) {
+		return fmt.Errorf("keybroker: malformed client wg public key for %q", nodeID)
+	}
+	if b.keyUnchanged(ctx, nodeID, publicKey, func(n domain.Node) string { return n.ClientWGPublicKey }) {
+		return nil
+	}
+	if err := b.store.SetNodeClientWGKey(ctx, nodeID, publicKey); err != nil {
+		return err
+	}
+	b.log.Info("client WG public key registered", "node", nodeID)
+	return nil
+}
+
 // clientVLESSSpec resolves a master's client-facing VLESS+REALITY+XHTTP inbound
 // desired state, or nil when the transport is disabled. Camouflage falls back
 // per-exit-style (manifest → fleet default → safe built-in); the issued client

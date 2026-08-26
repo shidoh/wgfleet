@@ -28,6 +28,8 @@ type Paths struct {
 	ClientVLESS    string // client-facing xray inbound config.json (holds the REALITY private key, 0600)
 	ClientVLESSYML string // docker-compose.yml for the master client-vless xray container
 	ClientVLESSKey string // master's client-facing REALITY x25519 private key (0600); wiped on teardown
+	ClientWGConf   string // client-facing AmneziaWG interface config (0600); the interface name comes from this filename
+	ClientWGKey    string // master's client-facing WireGuard private key (0600); adopted from wg-easy on handover
 }
 
 // DefaultPaths returns the production-default file locations.
@@ -50,6 +52,11 @@ func DefaultPaths() Paths {
 		// client-facing REALITY key there (main.go ensureClientVlessKey); teardown
 		// wipes the same file so a decommissioned master leaves no key behind.
 		ClientVLESSKey: "/etc/wgfleet/client-vless.key",
+		// The filename IS the interface name: wg0 keeps the name wg-easy used, so the
+		// NAT, MSS-clamp and DOCKER-USER rules that already reference it need no change
+		// when the leg changes hands.
+		ClientWGConf: "/etc/amnezia/amneziawg/wg0.conf",
+		ClientWGKey:  "/etc/wgfleet/client-wg.key",
 	}
 }
 
@@ -70,5 +77,7 @@ func PathsUnder(dir string) Paths {
 		ClientVLESS:    filepath.Join(dir, "client-vless", "config.json"),
 		ClientVLESSYML: filepath.Join(dir, "client-vless", "docker-compose.yml"),
 		ClientVLESSKey: filepath.Join(dir, "client-vless.key"),
+		ClientWGConf:   filepath.Join(dir, "wg0.conf"),
+		ClientWGKey:    filepath.Join(dir, "client-wg.key"),
 	}
 }

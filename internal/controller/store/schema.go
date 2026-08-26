@@ -112,4 +112,9 @@ var migrations = []string{
 		UNIQUE (master_id, name),
 		UNIQUE (master_id, address)
 	)`,
+	// v12: the master's CLIENT-FACING WireGuard public key — the identity of the
+	// interface end users dial once the agent owns it. Published by the agent like
+	// the client-vless REALITY key; the controller needs it to render the [Peer]
+	// block of every client config it hands out.
+	`ALTER TABLE nodes ADD COLUMN client_wg_public_key TEXT NOT NULL DEFAULT ''`,
 }

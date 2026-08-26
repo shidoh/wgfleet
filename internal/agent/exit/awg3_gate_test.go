@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/shidoh/wgfleet/internal/awgmod"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/wg"
 )
@@ -109,7 +110,7 @@ func TestAWG2UnaffectedByModuleGeneration(t *testing.T) {
 // 3.0 config is the one case where refusing is right: applying could take the exit
 // down, refusing only leaves it on its previous config.
 func TestAWG3RefusedWhenGenerationUnknown(t *testing.T) {
-	p := plannerWithGen(t, 0, errAWGGenUnknown)
+	p := plannerWithGen(t, 0, awgmod.ErrGenerationUnknown)
 	if _, err := p.Plan(context.Background(), awg3Spec()); err == nil {
 		t.Fatal("expected a refusal when the module generation cannot be determined")
 	}

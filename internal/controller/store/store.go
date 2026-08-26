@@ -75,6 +75,11 @@ type Store interface {
 	// Returns ErrNotFound if the node is absent.
 	SetNodeClientVlessKey(ctx context.Context, id, publicKey string) error
 
+	// SetNodeClientWGKey records the master's CLIENT-FACING WireGuard public key
+	// (the interface end users dial once the agent owns it), separate from the
+	// node's fleet-internal public key. Returns ErrNotFound if the node is absent.
+	SetNodeClientWGKey(ctx context.Context, id, publicKey string) error
+
 	// ListVLESSClients returns a master's issued VLESS client credentials, ordered
 	// by name. An unknown master yields an empty slice, not ErrNotFound.
 	ListVLESSClients(ctx context.Context, masterID string) ([]domain.VLESSClient, error)

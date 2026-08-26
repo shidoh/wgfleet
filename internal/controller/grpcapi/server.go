@@ -27,6 +27,9 @@ type SpecRenderer interface {
 	RegisterPublicKey(ctx context.Context, nodeID, publicKey string) error
 	RegisterRealityKey(ctx context.Context, nodeID, publicKey string) error
 	RegisterClientVlessKey(ctx context.Context, nodeID, publicKey string) error
+	// RegisterClientWGKey records the master's client-facing WireGuard public key
+	// (the interface end users dial once the agent owns it).
+	RegisterClientWGKey(ctx context.Context, nodeID, publicKey string) error
 	RegisterTunnelKey(ctx context.Context, nodeID, tunnel, publicKey string) error
 }
 
@@ -159,6 +162,8 @@ func (s *Service) PublishPublicKey(ctx context.Context, req *pb.PublishPublicKey
 		register = s.renderer.RegisterRealityKey
 	case keyType == api.KeyTypeClientVless:
 		register = s.renderer.RegisterClientVlessKey
+	case keyType == api.KeyTypeClientWG:
+		register = s.renderer.RegisterClientWGKey
 	default:
 		tunnel, ok := api.ParseTunnelKeyType(keyType)
 		if !ok {

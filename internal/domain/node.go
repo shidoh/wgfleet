@@ -61,6 +61,10 @@ type Node struct {
 	// co-located controller+master carries both. It seeds the vless:// links the UI
 	// hands end users. Like the others, the private key never leaves the master.
 	ClientVLESSPublicKey string
+	// ClientWGPublicKey is the master's CLIENT-FACING WireGuard public key: the
+	// identity of the interface end users dial, published by the agent so the
+	// controller can render client configs. Empty while wg-easy owns that leg.
+	ClientWGPublicKey string
 
 	// Drain, when set, takes the node out of the load balancer: it stays a
 	// configured peer/proxy (existing connections survive) but receives no new

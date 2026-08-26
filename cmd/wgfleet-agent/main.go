@@ -415,7 +415,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	// the reality proxy the moment the operator flips the active transport — no
 	// chicken-and-egg. The key is exit-local (persisted in apply, ephemeral in plan);
 	// only the pubkey crosses the wire. Unused on AWG-only exits.
-	var realityPriv string
+	var realityPriv, clientWGPriv string
 	if a.role == domain.RoleExit {
 		rPriv, rPub, rEph, rerr := a.ensureRealityKey(!plan)
 		if rerr != nil {
@@ -447,6 +447,25 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		if !plan {
 			if err := a.client.PublishClientVlessKey(ctx, cvPub); err != nil {
 				return fmt.Errorf("publish client vless key: %w", err)
+			}
+		}
+
+		// The client-facing WireGuard identity, resolved the same way and for the
+		// same reason: publish it unconditionally so the controller can render client
+		// configs the moment the operator hands the leg over. On a master that still
+		// runs wg-easy this ADOPTS wg-easy's own key, so the public key we publish is
+		// the one clients already pin.
+		cwKP, cwEph, cwErr := a.ensureClientWGKey(!plan)
+		if cwErr != nil {
+			return fmt.Errorf("ensure client wg key: %w", cwErr)
+		}
+		if cwEph && plan {
+			a.log.Info("client WG key absent; using an ephemeral key for the plan (apply would resolve one)")
+		}
+		clientWGPriv = cwKP.PrivateKey
+		if !plan {
+			if err := a.client.PublishClientWGKey(ctx, cwKP.PublicKey); err != nil {
+				return fmt.Errorf("publish client wg key: %w", err)
 			}
 		}
 	}
@@ -507,7 +526,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		"peers", len(spec.Peers), "egress", spec.Egress,
 		"wg_port", spec.WGServer.ListenPort, "mtu", spec.WGServer.MTU)
 
-	engine := reconcile.NewEngine(a.log, a.planners(kp.PrivateKey, realityPriv, adminUser, adminPass)...)
+	engine := reconcile.NewEngine(a.log, a.planners(kp.PrivateKey, realityPriv, clientWGPriv, adminUser, adminPass)...)
 	start := time.Now()
 	report, reconcileErr := engine.Reconcile(ctx, spec, mode)
 	elapsed := time.Since(start)
@@ -768,18 +787,19 @@ func (a *agent) masterPaths() master.Paths {
 // planners returns the role-appropriate reconcile planners. The master's data
 // plane is mihomo + NAT; the exit's is the WG/AWG interface + wgcf + routing +
 // nftables + DNS.
-func (a *agent) planners(privateKey, realityPrivateKey, adminUser, adminPass string) []reconcile.Planner {
+func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, adminUser, adminPass string) []reconcile.Planner {
 	var base []reconcile.Planner
 	if a.role == domain.RoleMaster {
 		base = master.Planners(master.Input{
-			Tier:              a.tier,
-			Restart:           a.restarts,
-			Paths:             a.masterPaths(),
-			PrivateKey:        privateKey,
-			RealityPrivateKey: realityPrivateKey,
-			AdminUsername:     adminUser,
-			AdminPassword:     adminPass,
-			OverlayMSS:        a.cfg.Agent.MgmtOverlayMSS,
+			Tier:               a.tier,
+			Restart:            a.restarts,
+			Paths:              a.masterPaths(),
+			PrivateKey:         privateKey,
+			RealityPrivateKey:  realityPrivateKey,
+			ClientWGPrivateKey: clientWGPrivateKey,
+			AdminUsername:      adminUser,
+			AdminPassword:      adminPass,
+			OverlayMSS:         a.cfg.Agent.MgmtOverlayMSS,
 		})
 	} else {
 		in := exit.Input{
@@ -892,6 +912,90 @@ func (a *agent) ensureClientVlessKey(persist bool) (priv, pub string, ephemeral 
 	}
 	priv, pub, err = xray.GenerateKeypair()
 	return priv, pub, true, err
+}
+
+// ensureClientWGKey resolves the master's CLIENT-FACING WireGuard identity: the
+// key of the interface end users dial.
+//
+// The order matters and is the whole migration story. An existing key file wins.
+// Failing that we ADOPT the key wg-easy generated, if its database still has one:
+// every client config in the field pins that public key, so adopting it makes the
+// handover invisible — the server implementation changes underneath a tunnel that
+// keeps working. Only with neither do we mint a fresh key, which is the right
+// answer for a master that never ran wg-easy at all.
+//
+// Adoption happens once. Afterwards the key lives in our own file and wg-easy's
+// database is never read again.
+func (a *agent) ensureClientWGKey(persist bool) (kp wg.KeyPair, ephemeral bool, err error) {
+	path := a.masterPaths().ClientWGKey
+	if data, rerr := os.ReadFile(path); rerr == nil {
+		priv := strings.TrimSpace(string(data))
+		pub, perr := wg.PublicKeyOf(priv)
+		if perr != nil {
+			return wg.KeyPair{}, false, fmt.Errorf("stored client wg key invalid: %w", perr)
+		}
+		return wg.KeyPair{PrivateKey: priv, PublicKey: pub}, false, nil
+	}
+
+	if adopted, ok := a.adoptWGEasyKey(); ok {
+		if !persist {
+			return adopted, true, nil
+		}
+		if werr := writeKeyFile(path, adopted.PrivateKey); werr != nil {
+			return wg.KeyPair{}, false, werr
+		}
+		a.log.Info("adopted the client interface key from wg-easy; existing client configs stay valid",
+			"public_key", adopted.PublicKey)
+		return adopted, false, nil
+	}
+
+	fresh, gerr := wg.GenerateKeyPair()
+	if gerr != nil {
+		return wg.KeyPair{}, false, gerr
+	}
+	if !persist {
+		return fresh, true, nil
+	}
+	if werr := writeKeyFile(path, fresh.PrivateKey); werr != nil {
+		return wg.KeyPair{}, false, werr
+	}
+	a.log.Info("generated a client interface key (no wg-easy key to adopt)", "public_key", fresh.PublicKey)
+	return fresh, false, nil
+}
+
+// adoptWGEasyKey reads the interface private key out of wg-easy's database. A
+// missing database, row or column simply means there is nothing to adopt.
+func (a *agent) adoptWGEasyKey() (wg.KeyPair, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	priv, found, err := wgeasy.ReadInterfacePrivateKey(ctx, a.masterPaths().WGEasyDB, wgeasy.DefaultInterface)
+	if err != nil {
+		a.log.Warn("could not read wg-easy's interface key; will mint a new one", "err", err)
+		return wg.KeyPair{}, false
+	}
+	if !found {
+		return wg.KeyPair{}, false
+	}
+	pub, err := wg.PublicKeyOf(priv)
+	if err != nil {
+		a.log.Warn("wg-easy's stored interface key is unusable; will mint a new one", "err", err)
+		return wg.KeyPair{}, false
+	}
+	return wg.KeyPair{PrivateKey: priv, PublicKey: pub}, true
+}
+
+// writeKeyFile persists a private key 0600, creating its directory.
+func writeKeyFile(path, key string) error {
+	if dir := filepath.Dir(path); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("mkdir %q: %w", dir, err)
+		}
+	}
+	if err := os.WriteFile(path, []byte(key+"\n"), 0o600); err != nil {
+		return fmt.Errorf("persist key %q: %w", path, err)
+	}
+	return nil
 }
 
 // readWARPProfile reads and parses the wgcf-profile.conf produced on-node by
