@@ -306,3 +306,52 @@ func hostOf(addr string) string {
 
 func now() time.Time                  { return time.Now() }
 func since(t time.Time) time.Duration { return time.Since(t) }
+
+// ClientPeers reads the live peers on the master's client-facing interface with
+// `awg show <iface> dump`, so the controller's client page shows what the kernel
+// actually has rather than what the desired state says it should.
+//
+// Keyed by public key on purpose: the interface knows nothing about the labels
+// the operator gave these credentials, and matching happens in the controller,
+// which does. Collection is best-effort — a missing tool, a down interface or an
+// unparseable line yields no peers rather than failing the status report.
+func ClientPeers(ctx context.Context, iface string) []domain.ClientPeerStatus {
+	out, err := runCmd(ctx, "awg", "show", iface, "dump")
+	if err != nil {
+		return nil
+	}
+	return parseClientPeers(out)
+}
+
+// parseClientPeers parses the canonical dump TSV. The first line describes the
+// interface itself and is skipped; the rest are peers:
+//
+//	public-key  preshared-key  endpoint  allowed-ips  latest-handshake  rx  tx  keepalive
+func parseClientPeers(out string) []domain.ClientPeerStatus {
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) < 2 {
+		return nil
+	}
+	var peers []domain.ClientPeerStatus
+	for _, line := range lines[1:] {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 7 {
+			continue
+		}
+		pub := strings.TrimSpace(fields[0])
+		if pub == "" || pub == "(none)" {
+			continue
+		}
+		p := domain.ClientPeerStatus{PublicKey: pub}
+		if endpoint := strings.TrimSpace(fields[2]); endpoint != "(none)" {
+			p.Endpoint = endpoint
+		}
+		if hs, err := strconv.ParseInt(strings.TrimSpace(fields[4]), 10, 64); err == nil && hs > 0 {
+			p.LastHandshake = time.Unix(hs, 0).UTC()
+		}
+		p.ReceivedBytes, _ = strconv.ParseInt(strings.TrimSpace(fields[5]), 10, 64)
+		p.SentBytes, _ = strconv.ParseInt(strings.TrimSpace(fields[6]), 10, 64)
+		peers = append(peers, p)
+	}
+	return peers
+}

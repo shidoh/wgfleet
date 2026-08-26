@@ -93,6 +93,7 @@
   {{template "inventory-panel" .}}
 </div>
 <div class="section-nav">
+  <a class="section-link" href="/nodes/{{.Node.ID}}/wg-clients">WIREGUARD CLIENTS</a>
   <a class="section-link" href="/nodes/{{.Node.ID}}/clients">VLESS CLIENTS</a>
 </div>
 {{else if .Transports}}

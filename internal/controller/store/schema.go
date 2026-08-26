@@ -117,4 +117,9 @@ var migrations = []string{
 	// the client-vless REALITY key; the controller needs it to render the [Peer]
 	// block of every client config it hands out.
 	`ALTER TABLE nodes ADD COLUMN client_wg_public_key TEXT NOT NULL DEFAULT ''`,
+	// v13: the master's live client peers (public key, endpoint, handshake age,
+	// counters) as the agent last reported them. Stored as JSON beside the other
+	// per-report blobs: the shape is the agent's to change, and the controller only
+	// ever reads it back whole to render a page.
+	`ALTER TABLE node_status ADD COLUMN client_peers_json TEXT NOT NULL DEFAULT '[]'`,
 }

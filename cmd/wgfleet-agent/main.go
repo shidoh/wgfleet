@@ -1021,6 +1021,12 @@ func (a *agent) readWARPProfile() *egress.WARPConfig {
 // (the WARP IP for warp egress, the node's own IP for direct) — surfaced in the UI.
 func (a *agent) reportStatus(ctx context.Context, state domain.NodeState, checks []domain.HealthCheck, reconcileErr error, egressIP string, exitHealth []domain.ExitTunnelHealth) error {
 	st := domain.NodeStatus{State: state, Checks: checks, EgressIP: egressIP, ExitHealth: exitHealth, LastHandshake: a.latestHandshake(ctx)}
+	// A master reports its live client peers so the controller's client page shows
+	// the kernel's view rather than the desired state's. Best-effort by design: an
+	// interface that is not up yet (or still wg-easy's) simply contributes none.
+	if a.role == domain.RoleMaster {
+		st.ClientPeers = health.ClientPeers(ctx, clientIfaceName(a.masterPaths().ClientWGConf))
+	}
 	if reconcileErr != nil {
 		st.ReconcileError = reconcileErr.Error()
 	}
@@ -1243,4 +1249,11 @@ func setupLogging(format string) {
 		handler = slog.NewTextHandler(os.Stdout, opts)
 	}
 	slog.SetDefault(slog.New(handler))
+}
+
+
+// clientIfaceName derives the client interface's name from its config path, the
+// way awg-quick does.
+func clientIfaceName(confPath string) string {
+	return strings.TrimSuffix(filepath.Base(confPath), ".conf")
 }

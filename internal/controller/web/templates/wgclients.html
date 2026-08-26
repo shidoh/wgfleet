@@ -1,0 +1,90 @@
+{{define "content"}}
+<div class="detail-head">
+  <a class="back" href="/nodes/{{.NodeID}}">← {{.NodeName}}</a>
+  <h1 class="detail-title">WireGuard clients</h1>
+</div>
+{{if .Flash}}<p class="error-note" role="alert">⚠ {{.Flash}}</p>{{end}}
+
+{{if .Notice}}
+<div class="panel"><p class="dim">{{.Notice}}</p></div>
+{{end}}
+
+<div class="panel">
+  <div class="panel-label">ISSUE CLIENT</div>
+  {{if .Ready}}
+  <p class="dim">Endpoint <span class="strong">{{.Endpoint}}</span> · pool <span class="mono">{{.Pool}}</span>. A new client gets the next free address, its own keypair and a preshared key; download the config or scan the QR to import it.</p>
+  {{else}}
+  <p class="dim">You can issue credentials now — configs become downloadable once the master is ready.</p>
+  {{end}}
+  <form class="auth-form" method="post" action="/nodes/{{.NodeID}}/wg-clients/issue" onsubmit="return lockAction(this)">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <label class="field"><span class="field-label">Client name</span>
+      <input class="input" type="text" name="name" placeholder="alice-iphone" required
+             pattern="[A-Za-z0-9._-]{1,64}" title="letters, digits, '-', '_' or '.' (max 64)"></label>
+    <button class="btn go" type="submit" data-pending="Issuing…">Issue client</button>
+  </form>
+</div>
+
+<div class="panel">
+  <div class="panel-label">ISSUED CREDENTIALS · {{len .Clients}}</div>
+  {{if not .Clients}}
+  <p class="dim">No clients issued yet.</p>
+  {{else}}
+  <div class="client-list">
+    {{range .Clients}}
+    <div class="client-card">
+      <div class="client-card-head">
+        <div>
+          <div class="client-name">
+            {{.Name}}
+            {{if not .Enabled}}<span class="badge warn">muted</span>
+            {{else if .Online}}<span class="badge ok">online</span>{{end}}
+          </div>
+          <div class="client-uuid mono">{{.Address}}</div>
+        </div>
+        <form method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/revoke"
+              onsubmit="return lockAction(this)"
+              data-confirm="Revoke {{.Name}}? Its config stops working after the master reconciles, and the address returns to the pool.">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+          <button class="btn danger" type="submit" data-pending="Revoking…">Revoke</button>
+        </form>
+      </div>
+
+      <dl class="kv">
+        {{if .Created}}<div class="kv-row"><dt>Issued</dt><dd>{{.Created}}</dd></div>{{end}}
+        <div class="kv-row"><dt>Last handshake</dt><dd>{{if .Handshake}}{{.Handshake}}{{else}}<span class="dim">not reported yet</span>{{end}}</dd></div>
+        {{if .Transfer}}<div class="kv-row"><dt>Transfer</dt><dd class="mono">{{.Transfer}}</dd></div>{{end}}
+      </dl>
+
+      <div class="client-actions">
+        {{if $.Ready}}
+        <a class="btn" href="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/config">Download .conf</a>
+        <a class="btn" href="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/qr" target="_blank" rel="noopener">Show QR</a>
+        {{end}}
+        {{if .Enabled}}
+        <form method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/mute"
+              onsubmit="return lockAction(this)"
+              data-confirm="Mute {{.Name}}? It disconnects on the next reconcile; its config stays valid and unmuting restores it.">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+          <button class="btn" type="submit" data-pending="Muting…">Mute</button>
+        </form>
+        {{else}}
+        <form method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/unmute" onsubmit="return lockAction(this)">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+          <button class="btn go" type="submit" data-pending="Unmuting…">Unmute</button>
+        </form>
+        {{end}}
+        <form class="rename-form" method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/rename" onsubmit="return lockAction(this)">
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+          <input class="input" type="text" name="name" value="{{.Name}}" required
+                 pattern="[A-Za-z0-9._-]{1,64}" title="letters, digits, '-', '_' or '.' (max 64)"
+                 aria-label="rename {{.Name}}">
+          <button class="btn" type="submit" data-pending="Renaming…">Rename</button>
+        </form>
+      </div>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}

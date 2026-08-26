@@ -63,6 +63,15 @@ type SpecRenderer interface {
 	// ClientVLESSRouteThrough returns the CIDRs the master's clients should route
 	// through the tunnel (for the routing object + subscription header).
 	ClientVLESSRouteThrough(masterID string) []string
+	// Client-facing WireGuard credentials (the leg wg-easy used to own). Unlike the
+	// VLESS ones these carry a secret — the client's private key — because the
+	// controller renders the .conf and its QR; treat what ListWGClients returns
+	// accordingly.
+	IssueWGClient(ctx context.Context, masterID, name string) (domain.WGClient, error)
+	ListWGClients(ctx context.Context, masterID string) ([]domain.WGClient, error)
+	SetWGClientEnabled(ctx context.Context, masterID, clientID string, enabled bool) error
+	RenameWGClient(ctx context.Context, masterID, clientID, name string) error
+	RevokeWGClient(ctx context.Context, masterID, clientID string) error
 }
 
 // Provisioner triggers asynchronous node provisioning. *provmgr.Manager satisfies
@@ -80,17 +89,18 @@ type Provisioner interface {
 
 // Handler is the dashboard HTTP handler.
 type Handler struct {
-	store       store.Store
-	renderer    SpecRenderer
-	prov        Provisioner
-	listTmpl    *template.Template // layout + nodes list (also holds "nodes-table")
-	nodeTmpl    *template.Template // layout + node detail
-	authTmpl    *template.Template // auth-layout (login / setup screens)
-	profileTmpl *template.Template // layout + admin profile / change-password
-	clientsTmpl *template.Template // layout + client-VLESS credential management (master)
-	mux         *http.ServeMux
-	csrf        string       // per-process CSRF token, embedded in forms and double-submit cookie
-	log         *slog.Logger // structured logger; surfaces render failures the page swallows
+	store         store.Store
+	renderer      SpecRenderer
+	prov          Provisioner
+	listTmpl      *template.Template // layout + nodes list (also holds "nodes-table")
+	nodeTmpl      *template.Template // layout + node detail
+	authTmpl      *template.Template // auth-layout (login / setup screens)
+	profileTmpl   *template.Template // layout + admin profile / change-password
+	clientsTmpl   *template.Template // layout + client-VLESS credential management (master)
+	wgClientsTmpl *template.Template // layout + client-WireGuard credential management (master)
+	mux           *http.ServeMux
+	csrf          string       // per-process CSRF token, embedded in forms and double-submit cookie
+	log           *slog.Logger // structured logger; surfaces render failures the page swallows
 	// persistTransport durably records an active-transport switch in the manifest
 	// (the platform's source of truth) so the change survives restart / re-provision.
 	// nil ⇒ store-only (the live override still applies, but is not made durable).
@@ -138,11 +148,15 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	if err != nil {
 		return nil, fmt.Errorf("web: parse clients templates: %w", err)
 	}
+	wgClientsTmpl, err := parsePage("templates/layout.html", "templates/wgclients.html")
+	if err != nil {
+		return nil, fmt.Errorf("web: parse wg clients templates: %w", err)
+	}
 	token, err := newCSRFToken()
 	if err != nil {
 		return nil, fmt.Errorf("web: generate csrf token: %w", err)
 	}
-	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, clientsTmpl: clientsTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute), subLimit: auth.NewIPLimiter(10, time.Minute, 4096)}
+	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, clientsTmpl: clientsTmpl, wgClientsTmpl: wgClientsTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute), subLimit: auth.NewIPLimiter(10, time.Minute, 4096)}
 
 	staticHandler := http.FileServer(http.FS(staticFS))
 	h.mux.Handle("GET /static/", staticHandler)
@@ -170,6 +184,15 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	h.mux.HandleFunc("POST /nodes/{id}/clients/issue", h.handleClientIssue)
 	h.mux.HandleFunc("POST /nodes/{id}/clients/{name}/revoke", h.handleClientRevoke)
 	h.mux.HandleFunc("GET /nodes/{id}/clients/{name}/clash", h.handleClientClash)
+	// Client-facing WireGuard credential management (master only).
+	h.mux.HandleFunc("GET /nodes/{id}/wg-clients", h.handleWGClients)
+	h.mux.HandleFunc("POST /nodes/{id}/wg-clients/issue", h.handleWGClientIssue)
+	h.mux.HandleFunc("POST /nodes/{id}/wg-clients/{client}/revoke", h.handleWGClientRevoke)
+	h.mux.HandleFunc("POST /nodes/{id}/wg-clients/{client}/mute", h.handleWGClientToggle(false))
+	h.mux.HandleFunc("POST /nodes/{id}/wg-clients/{client}/unmute", h.handleWGClientToggle(true))
+	h.mux.HandleFunc("POST /nodes/{id}/wg-clients/{client}/rename", h.handleWGClientRename)
+	h.mux.HandleFunc("GET /nodes/{id}/wg-clients/{client}/config", h.handleWGClientConfig)
+	h.mux.HandleFunc("GET /nodes/{id}/wg-clients/{client}/qr", h.handleWGClientQR)
 	// Client subscription (auth-exempt; UUID-token in path). Serves the vless link
 	// with the routing object in the `routing` response header.
 	h.mux.HandleFunc("GET /sub/{master}/{token}", h.handleSubscription)

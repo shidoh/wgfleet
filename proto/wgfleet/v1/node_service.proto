@@ -62,6 +62,22 @@ message StatusReport {
   int64 last_handshake_unix = 4; // freshest WG handshake (unix seconds, 0 = none)
   repeated HealthCheck checks = 5;
   repeated ExitTunnelHealth exit_health = 6; // master only: per-exit tunnel health from mihomo
+  // client_peers is the master's view of the end users on its client-facing
+  // interface, read from the live interface. Additive and observational: an older
+  // controller ignores it, and a master that does not own that interface simply
+  // sends none — no wire bump needed for either direction.
+  repeated ClientPeerStatus client_peers = 7;
+}
+
+// ClientPeerStatus is one end user's live peer on the master's client interface,
+// keyed by public key: the interface knows nothing about labels, so the
+// controller matches these back onto the credentials it issued.
+message ClientPeerStatus {
+  string public_key = 1;
+  string endpoint = 2;            // host:port the client last came from (may be empty)
+  int64 last_handshake_unix = 3;  // unix seconds; 0 = never
+  int64 received_bytes = 4;
+  int64 sent_bytes = 5;
 }
 
 message HealthCheck {

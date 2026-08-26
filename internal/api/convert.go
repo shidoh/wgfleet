@@ -697,6 +697,18 @@ func StatusFromProto(nodeID string, r *pb.StatusReport) domain.NodeStatus {
 		}
 		st.ExitHealth = append(st.ExitHealth, h)
 	}
+	for _, p := range r.GetClientPeers() {
+		cp := domain.ClientPeerStatus{
+			PublicKey:     p.GetPublicKey(),
+			Endpoint:      p.GetEndpoint(),
+			ReceivedBytes: p.GetReceivedBytes(),
+			SentBytes:     p.GetSentBytes(),
+		}
+		if t := p.GetLastHandshakeUnix(); t > 0 {
+			cp.LastHandshake = time.Unix(t, 0).UTC()
+		}
+		st.ClientPeers = append(st.ClientPeers, cp)
+	}
 	return st
 }
 
@@ -729,6 +741,18 @@ func StatusToProto(s domain.NodeStatus) *pb.StatusReport {
 			e.LastTestUnix = h.LastTest.Unix()
 		}
 		r.ExitHealth = append(r.ExitHealth, e)
+	}
+	for _, p := range s.ClientPeers {
+		cp := &pb.ClientPeerStatus{
+			PublicKey:     p.PublicKey,
+			Endpoint:      p.Endpoint,
+			ReceivedBytes: p.ReceivedBytes,
+			SentBytes:     p.SentBytes,
+		}
+		if !p.LastHandshake.IsZero() {
+			cp.LastHandshakeUnix = p.LastHandshake.Unix()
+		}
+		r.ClientPeers = append(r.ClientPeers, cp)
 	}
 	return r
 }

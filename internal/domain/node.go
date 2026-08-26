@@ -107,6 +107,22 @@ type NodeStatus struct {
 	ReconcileError string             // non-empty if the last reconcile failed
 	Checks         []HealthCheck      // individual self-check results
 	ExitHealth     []ExitTunnelHealth // master only: per-exit tunnel health from mihomo
+	// ClientPeers is the master's view of the end users on its client-facing
+	// interface, read from the live interface rather than from desired state. It
+	// only appears once the agent owns that interface; while wg-easy holds it, the
+	// same numbers come from wg-easy's own metrics endpoint.
+	ClientPeers []ClientPeerStatus
+}
+
+// ClientPeerStatus is one end user's live peer on the master's client interface.
+// Keyed by public key rather than by name: the interface knows nothing about
+// labels, and the controller matches these back onto its credentials.
+type ClientPeerStatus struct {
+	PublicKey     string
+	Endpoint      string    // host:port the client last came from (may be empty)
+	LastHandshake time.Time // zero when the peer has never completed one
+	ReceivedBytes int64
+	SentBytes     int64
 }
 
 // HealthCheck is a single named self-check result from an agent.
