@@ -174,9 +174,19 @@ func validateClientPeer(i int, c WGClientPeer, pool netip.Prefix, server netip.A
 	seenName map[string]struct{}, seenAddr map[netip.Addr]struct{}) []error {
 	var errs []error
 
-	switch c.Name {
-	case "":
+	switch {
+	case c.Name == "":
 		errs = append(errs, fmt.Errorf("client[%d]: missing name", i))
+	case !ValidClientName(c.Name):
+		// The name is written verbatim into the interface config as a comment. A
+		// newline in it does not corrupt the file, it EXTENDS it — an imported
+		// credential called "laptop\n[Peer]\nAllowedIPs = 0.0.0.0/0" adds an
+		// attacker's peer to the master's live client interface. Names arrive from
+		// wg-easy's database on import, which is exactly the source we no longer
+		// trust to have a stable shape, so the charset is enforced here rather than
+		// only at the web layer.
+		errs = append(errs, fmt.Errorf("client[%d] (%q): name must be 1-%d chars of letters, digits, '-', '_' or '.'",
+			i, c.Name, MaxClientNameLen))
 	default:
 		if _, dup := seenName[c.Name]; dup {
 			errs = append(errs, fmt.Errorf("duplicate client name %q", c.Name))
@@ -186,6 +196,11 @@ func validateClientPeer(i int, c WGClientPeer, pool netip.Prefix, server netip.A
 
 	if !validWireGuardKey(c.PublicKey) {
 		errs = append(errs, fmt.Errorf("client[%d] (%s): malformed public key", i, c.Name))
+	}
+	// A preshared key is optional, but a present one is rendered verbatim next to
+	// the public key and gets the same scrutiny.
+	if c.PresharedKey != "" && !validWireGuardKey(c.PresharedKey) {
+		errs = append(errs, fmt.Errorf("client[%d] (%s): malformed preshared key", i, c.Name))
 	}
 
 	addr, err := netip.ParsePrefix(c.Address)
@@ -223,6 +238,27 @@ func validateClientAllowedIPs(allowed []string) []error {
 		}
 	}
 	return errs
+}
+
+// MaxClientNameLen bounds the operator-facing label.
+const MaxClientNameLen = 64
+
+// ValidClientName reports whether a label is safe to render into a config file
+// and to display. Deliberately narrow: letters, digits and the three separators
+// people actually use in device names.
+func ValidClientName(name string) bool {
+	if name == "" || len(name) > MaxClientNameLen {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-', r == '_', r == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // validWireGuardKey reports whether s is a base64-encoded 32-byte key. The domain

@@ -57,6 +57,12 @@ func (s *SQLiteStore) AddWGClient(ctx context.Context, masterID string, c domain
 		return errors.New("store: client address is required")
 	case c.PublicKey == "":
 		return errors.New("store: client public key is required")
+	case c.CreatedAt.IsZero():
+		// Refused rather than defaulted to now(). A clock read inside the write is
+		// exactly what the mint-then-store split exists to remove: under a replicated
+		// control plane (ADR-0027) every replica applying this record would stamp a
+		// different time. The caller decides when the credential was issued.
+		return errors.New("store: client CreatedAt is required (the caller stamps it, not the store)")
 	}
 	// The master row must exist: the FK would reject the insert anyway, but only as
 	// an opaque constraint error. Check first so the caller gets ErrNotFound and the
@@ -72,7 +78,7 @@ func (s *SQLiteStore) AddWGClient(ctx context.Context, masterID string, c domain
 			(master_id, id, name, address, public_key, private_key, preshared_key, enabled, created_at)
 		 VALUES (?,?,?,?,?,?,?,?,?)`,
 		masterID, c.ID, c.Name, c.Address, c.PublicKey, c.PrivateKey, c.PresharedKey,
-		boolToInt(c.Enabled), fmtTime(orDefault(c.CreatedAt, s.now().UTC())))
+		boolToInt(c.Enabled), fmtTime(c.CreatedAt.UTC()))
 	if err != nil {
 		return fmt.Errorf("add wg client %q for %q: %w", c.Name, masterID, err)
 	}

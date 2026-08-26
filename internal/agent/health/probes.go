@@ -342,10 +342,9 @@ func parseClientPeers(out string) []domain.ClientPeerStatus {
 		if pub == "" || pub == "(none)" {
 			continue
 		}
+		// Field 2 is the peer's endpoint — the client's real IP. Deliberately not
+		// read: see domain.ClientPeerStatus.
 		p := domain.ClientPeerStatus{PublicKey: pub}
-		if endpoint := strings.TrimSpace(fields[2]); endpoint != "(none)" {
-			p.Endpoint = endpoint
-		}
 		if hs, err := strconv.ParseInt(strings.TrimSpace(fields[4]), 10, 64); err == nil && hs > 0 {
 			p.LastHandshake = time.Unix(hs, 0).UTC()
 		}

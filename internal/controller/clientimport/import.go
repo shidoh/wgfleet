@@ -48,7 +48,11 @@ type Input struct {
 // applied summary both — the operator sees the same list either way, which is the
 // point: what you reviewed is what runs.
 type Report struct {
-	Master   string
+	Master string
+	// Source and Found are the denominator: "3 imported" means nothing without
+	// "out of how many", and a reader approving a migration needs both.
+	Source   string
+	Found    int
 	Imported []domain.WGClient // in the order they would be written
 	Skipped  []Skip            // already present, or refused with a reason
 }
@@ -103,7 +107,7 @@ func Plan(ctx context.Context, st Store, in Input) (Report, error) {
 	}
 	serverAddr, _ := netip.ParseAddr(in.ServerAddress)
 
-	report := Report{Master: in.MasterID}
+	report := Report{Master: in.MasterID, Source: in.DBPath, Found: len(found)}
 	for _, c := range found {
 		client, skip := convert(c, pool, serverAddr, takenName, takenAddr, idFor, now)
 		if skip != nil {
@@ -147,11 +151,24 @@ func convert(c wgeasy.ImportedClient, pool netip.Prefix, serverAddr netip.Addr,
 	if name == "" {
 		return domain.WGClient{}, &Skip{Name: "(unnamed)", Reason: "wg-easy record has no name"}
 	}
+	// The name is rendered verbatim into the master's interface config. A newline
+	// in it would not corrupt that file but EXTEND it — an imported credential
+	// called "laptop\n[Peer]\nAllowedIPs = 0.0.0.0/0" adds a peer of someone
+	// else's choosing to the live client interface. This is the one path fed from a
+	// database we no longer control, so it is the one that has to be strict.
+	if !domain.ValidClientName(name) {
+		return domain.WGClient{}, &Skip{Name: shorten(name),
+			Reason: fmt.Sprintf("NOT MIGRATED: the name is not safe to render into a config "+
+				"(allowed: letters, digits, '-', '_', '.'; max %d). Rename it in wg-easy and re-run — "+
+				"this client's tunnel will stop working at cutover until you do", domain.MaxClientNameLen)}
+	}
 	if _, dup := takenName[name]; dup {
-		return domain.WGClient{}, &Skip{Name: name, Reason: "a credential with this name is already in the store"}
+		return domain.WGClient{}, &Skip{Name: name,
+			Reason: "NOT MIGRATED: a different credential already uses this name in the store. " +
+				"This client's wg-easy tunnel will stop working at cutover — rename or remove one of them"}
 	}
 	if c.PublicKey == "" || c.PrivateKey == "" {
-		return domain.WGClient{}, &Skip{Name: name, Reason: "wg-easy record is missing a key"}
+		return domain.WGClient{}, &Skip{Name: name, Reason: "NOT MIGRATED: wg-easy record is missing a key"}
 	}
 
 	addr, err := parseClientAddr(c.Address)
@@ -168,7 +185,8 @@ func convert(c wgeasy.ImportedClient, pool netip.Prefix, serverAddr netip.Addr,
 	}
 	if _, dup := takenAddr[addr]; dup {
 		return domain.WGClient{}, &Skip{Name: name,
-			Reason: fmt.Sprintf("address %s is already taken in the store", addr)}
+			Reason: fmt.Sprintf("NOT MIGRATED: address %s is already taken by another credential. "+
+				"This client's wg-easy tunnel will stop working at cutover", addr)}
 	}
 
 	created := c.CreatedAt
@@ -209,7 +227,8 @@ func (r Report) Render(applied bool) string {
 	if applied {
 		verb = "imported"
 	}
-	fmt.Fprintf(&b, "client import for master %q: %s %d credential(s)\n", r.Master, verb, len(r.Imported))
+	fmt.Fprintf(&b, "client import for master %q: %d client(s) in %s, %s %d\n",
+		r.Master, r.Found, r.Source, verb, len(r.Imported))
 	for _, c := range r.Imported {
 		state := "enabled"
 		if !c.Enabled {
@@ -223,5 +242,24 @@ func (r Report) Render(applied bool) string {
 			fmt.Fprintf(&b, "  - %-24s %s\n", s.Name, s.Reason)
 		}
 	}
+	if len(r.Imported) == 0 {
+		b.WriteString("nothing left to import: every wg-easy client is already accounted for.\n")
+	}
 	return b.String()
+}
+
+// shorten renders an unusable name in a report without letting its own contents
+// wreck the layout.
+func shorten(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return '~'
+		}
+		return r
+	}, name)
+	const max = 24
+	if len(name) > max {
+		return name[:max] + "…"
+	}
+	return name
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
+	"github.com/shidoh/wgfleet/internal/awgmod"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/wg"
 )
@@ -176,32 +177,116 @@ func TestClientWGPlannerWaitsForItsKey(t *testing.T) {
 
 // The AWG 3.x gate must refuse BEFORE the config is written: writing it and
 // running awg-quick would take the client leg down and fail to bring it back.
+//
+// It refuses by standing still, not by erroring: this planner runs early and the
+// engine stops at the first planner error, so failing here would freeze mihomo,
+// the master NAT, blocky and the VLESS inbound too.
 func TestClientWGPlannerRefusesAWG3OnALegacyModule(t *testing.T) {
 	p := clientPlanner(t, true)
 	p.awgGen = func() (int, error) { return 1, nil }
-	spec := managedSpec(t)
-	spec.Master.ClientWG.AWG.Shared.HeaderProtectionKey = "aGVhZGVyLXByb3RlY3Rpb24ta2V5LTAwMDAwMDAwMDA="
+	spec := awg3Spec(t)
 
-	if _, err := p.Plan(context.Background(), spec); err == nil {
-		t.Fatal("Plan() = nil error, want a refusal on a 1.x module")
+	actions, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Plan() = %v, want a refusal that does not abort the pass", err)
+	}
+	if got := summaries(actions); !strings.Contains(got, "AmneziaWG 3.x refused") {
+		t.Fatalf("plan does not explain the refusal:\n%s", got)
+	}
+	for _, a := range actions {
+		if a.Changes() {
+			t.Errorf("a refused pass still reports work: %s", a.Summary)
+		}
 	}
 	if _, err := os.Stat(p.confPath); !os.IsNotExist(err) {
 		t.Error("the planner wrote a config it had already decided not to apply")
 	}
 }
 
-// The userspace backend carries its own 3.x support, so the module generation
-// must not gate it.
-func TestClientWGPlannerAllowsAWG3OnUserspaceBackend(t *testing.T) {
+// An invalid spec must not abort the master's pass either — the last-good config
+// keeps serving clients while the operator fixes the manifest.
+func TestClientWGPlannerKeepsTheLastGoodConfigOnAnInvalidSpec(t *testing.T) {
+	p := clientPlanner(t, true)
+	spec := managedSpec(t)
+	// The operator moved the pool in the manifest, leaving an issued address
+	// outside it — the realistic way this spec goes invalid in production.
+	spec.Master.ClientWG.AddressPool = "10.81.0.0/24"
+
+	actions, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Plan() = %v, want a refusal that does not abort the pass", err)
+	}
+	if got := summaries(actions); !strings.Contains(got, "spec rejected") {
+		t.Fatalf("plan does not explain the rejection:\n%s", got)
+	}
+	if _, err := os.Stat(p.confPath); !os.IsNotExist(err) {
+		t.Error("the planner wrote a config it had rejected")
+	}
+}
+
+// Choosing the userspace backend is not a way around the module gate. awg-quick
+// only falls back to the daemon when the KERNEL add fails, so on a node with a
+// 1.x module the kernel carries the interface regardless of the manifest — and
+// rejects the 3.x config. Refuse rather than take the client leg down.
+func TestClientWGPlannerRefusesUserspaceAWG3OnALegacyModule(t *testing.T) {
 	p := clientPlanner(t, true)
 	p.awgGen = func() (int, error) { return 1, nil }
-	spec := managedSpec(t)
+	p.lookPath = func(string) (string, error) { return "/usr/bin/amneziawg-go", nil }
+	spec := awg3Spec(t)
 	spec.Master.ClientWG.Backend = domain.ClientWGBackendUserspace
-	spec.Master.ClientWG.AWG.Shared.HeaderProtectionKey = "aGVhZGVyLXByb3RlY3Rpb24ta2V5LTAwMDAwMDAwMDA="
 
-	if _, err := p.Plan(context.Background(), spec); err != nil {
-		t.Fatalf("Plan() on the userspace backend = %v, want no module gate", err)
+	actions, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Plan() = %v, want a refusal", err)
 	}
+	if got := summaries(actions); !strings.Contains(got, "refused") {
+		t.Fatalf("userspace backend skipped the module gate:\n%s", got)
+	}
+}
+
+// …and it must refuse when the daemon it names is not installed at all, which is
+// the state of every node in this fleet today.
+func TestClientWGPlannerRefusesUserspaceWithoutTheDaemon(t *testing.T) {
+	p := clientPlanner(t, true)
+	p.awgGen = func() (int, error) { return 0, awgmod.ErrGenerationUnknown }
+	p.lookPath = func(string) (string, error) { return "", errors.New("not found in $PATH") }
+	spec := awg3Spec(t)
+	spec.Master.ClientWG.Backend = domain.ClientWGBackendUserspace
+
+	actions, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Plan() = %v, want a refusal", err)
+	}
+	got := summaries(actions)
+	if !strings.Contains(got, "not installed") {
+		t.Fatalf("plan does not name the missing daemon:\n%s", got)
+	}
+}
+
+// On a node with no kernel module and a working daemon, userspace is exactly the
+// right answer and must be allowed.
+func TestClientWGPlannerAllowsUserspaceOnAModuleLessNode(t *testing.T) {
+	p := clientPlanner(t, true)
+	p.awgGen = func() (int, error) { return 0, awgmod.ErrGenerationUnknown }
+	p.lookPath = func(string) (string, error) { return "/usr/bin/amneziawg-go", nil }
+	spec := awg3Spec(t)
+	spec.Master.ClientWG.Backend = domain.ClientWGBackendUserspace
+
+	actions, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Plan() = %v", err)
+	}
+	if got := summaries(actions); strings.Contains(got, "refused") {
+		t.Fatalf("userspace on a module-less node was refused:\n%s", got)
+	}
+}
+
+// awg3Spec is a managed spec asking for AmneziaWG 3.x.
+func awg3Spec(t *testing.T) domain.NodeSpec {
+	t.Helper()
+	spec := managedSpec(t)
+	spec.Master.ClientWG.AWG.Shared.HeaderProtectionKey = "aGVhZGVyLXByb3RlY3Rpb24ta2V5LTAwMDAwMDAwMDA="
+	return spec
 }
 
 // --- interface ownership -------------------------------------------------

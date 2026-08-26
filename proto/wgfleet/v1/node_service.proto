@@ -72,9 +72,13 @@ message StatusReport {
 // ClientPeerStatus is one end user's live peer on the master's client interface,
 // keyed by public key: the interface knows nothing about labels, so the
 // controller matches these back onto the credentials it issued.
+// Deliberately carries NO endpoint: that is the end user's real, pre-tunnel IP,
+// and reporting it would persist a connection log fleet-side for a column no
+// page displays. Field 2 stays reserved so nobody re-adds it by accident.
 message ClientPeerStatus {
   string public_key = 1;
-  string endpoint = 2;            // host:port the client last came from (may be empty)
+  reserved 2;
+  reserved "endpoint";
   int64 last_handshake_unix = 3;  // unix seconds; 0 = never
   int64 received_bytes = 4;
   int64 sent_bytes = 5;

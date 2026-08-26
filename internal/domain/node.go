@@ -117,9 +117,13 @@ type NodeStatus struct {
 // ClientPeerStatus is one end user's live peer on the master's client interface.
 // Keyed by public key rather than by name: the interface knows nothing about
 // labels, and the controller matches these back onto its credentials.
+// It deliberately does NOT carry the peer's endpoint. That is the end user's
+// real, pre-tunnel IP — the single piece of data this system exists to keep
+// nobody from having. Reporting it would persist a connection log in the
+// controller's store, put it in every backup, and (under ADR-0027) replicate it
+// to every master, in exchange for a column no page displays.
 type ClientPeerStatus struct {
 	PublicKey     string
-	Endpoint      string    // host:port the client last came from (may be empty)
 	LastHandshake time.Time // zero when the peer has never completed one
 	ReceivedBytes int64
 	SentBytes     int64

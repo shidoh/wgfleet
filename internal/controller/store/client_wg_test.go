@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/domain"
 )
@@ -16,6 +17,20 @@ func wgClient(id, name, addr string) domain.WGClient {
 		PublicKey:  "pub-" + id,
 		PrivateKey: "priv-" + id,
 		Enabled:    true,
+		// Stamped by the caller, never by the store: a clock read inside a
+		// replicated write would give each replica a different answer.
+		CreatedAt: time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC),
+	}
+}
+
+// A record with no issue time is refused rather than silently stamped, so the
+// write stays a deterministic record of a decision already made.
+func TestWGClientAddRequiresACreationTime(t *testing.T) {
+	s, ctx := storeWithMaster(t)
+	c := wgClient("a", "laptop", "10.8.0.2/32")
+	c.CreatedAt = time.Time{}
+	if err := s.AddWGClient(ctx, "master-xa-1", c); err == nil {
+		t.Fatal("AddWGClient() accepted a credential with no CreatedAt")
 	}
 }
 
@@ -75,11 +90,12 @@ func TestWGClientAddRequiresRegisteredMaster(t *testing.T) {
 
 func TestWGClientAddRejectsIncomplete(t *testing.T) {
 	s, ctx := storeWithMaster(t)
+	stamped := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 	tests := map[string]domain.WGClient{
-		"missing id":         {Name: "laptop", Address: "10.8.0.2/32", PublicKey: "pub", PrivateKey: "priv"},
-		"missing name":       {ID: "a", Address: "10.8.0.2/32", PublicKey: "pub", PrivateKey: "priv"},
-		"missing address":    {ID: "a", Name: "laptop", PublicKey: "pub", PrivateKey: "priv"},
-		"missing public key": {ID: "a", Name: "laptop", Address: "10.8.0.2/32", PrivateKey: "priv"},
+		"missing id":         {Name: "laptop", Address: "10.8.0.2/32", PublicKey: "pub", PrivateKey: "priv", CreatedAt: stamped},
+		"missing name":       {ID: "a", Address: "10.8.0.2/32", PublicKey: "pub", PrivateKey: "priv", CreatedAt: stamped},
+		"missing address":    {ID: "a", Name: "laptop", PublicKey: "pub", PrivateKey: "priv", CreatedAt: stamped},
+		"missing public key": {ID: "a", Name: "laptop", Address: "10.8.0.2/32", PrivateKey: "priv", CreatedAt: stamped},
 	}
 	for name, c := range tests {
 		t.Run(name, func(t *testing.T) {

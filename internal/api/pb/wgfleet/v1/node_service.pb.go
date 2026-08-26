@@ -376,10 +376,12 @@ func (x *StatusReport) GetClientPeers() []*ClientPeerStatus {
 // ClientPeerStatus is one end user's live peer on the master's client interface,
 // keyed by public key: the interface knows nothing about labels, so the
 // controller matches these back onto the credentials it issued.
+// Deliberately carries NO endpoint: that is the end user's real, pre-tunnel IP,
+// and reporting it would persist a connection log fleet-side for a column no
+// page displays. Field 2 stays reserved so nobody re-adds it by accident.
 type ClientPeerStatus struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	PublicKey         string                 `protobuf:"bytes,1,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`
-	Endpoint          string                 `protobuf:"bytes,2,opt,name=endpoint,proto3" json:"endpoint,omitempty"`                                               // host:port the client last came from (may be empty)
 	LastHandshakeUnix int64                  `protobuf:"varint,3,opt,name=last_handshake_unix,json=lastHandshakeUnix,proto3" json:"last_handshake_unix,omitempty"` // unix seconds; 0 = never
 	ReceivedBytes     int64                  `protobuf:"varint,4,opt,name=received_bytes,json=receivedBytes,proto3" json:"received_bytes,omitempty"`
 	SentBytes         int64                  `protobuf:"varint,5,opt,name=sent_bytes,json=sentBytes,proto3" json:"sent_bytes,omitempty"`
@@ -420,13 +422,6 @@ func (*ClientPeerStatus) Descriptor() ([]byte, []int) {
 func (x *ClientPeerStatus) GetPublicKey() string {
 	if x != nil {
 		return x.PublicKey
-	}
-	return ""
-}
-
-func (x *ClientPeerStatus) GetEndpoint() string {
-	if x != nil {
-		return x.Endpoint
 	}
 	return ""
 }
@@ -3087,15 +3082,14 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x06checks\x18\x05 \x03(\v2\x17.wgfleet.v1.HealthCheckR\x06checks\x12=\n" +
 	"\vexit_health\x18\x06 \x03(\v2\x1c.wgfleet.v1.ExitTunnelHealthR\n" +
 	"exitHealth\x12?\n" +
-	"\fclient_peers\x18\a \x03(\v2\x1c.wgfleet.v1.ClientPeerStatusR\vclientPeers\"\xc3\x01\n" +
+	"\fclient_peers\x18\a \x03(\v2\x1c.wgfleet.v1.ClientPeerStatusR\vclientPeers\"\xb7\x01\n" +
 	"\x10ClientPeerStatus\x12\x1d\n" +
 	"\n" +
-	"public_key\x18\x01 \x01(\tR\tpublicKey\x12\x1a\n" +
-	"\bendpoint\x18\x02 \x01(\tR\bendpoint\x12.\n" +
+	"public_key\x18\x01 \x01(\tR\tpublicKey\x12.\n" +
 	"\x13last_handshake_unix\x18\x03 \x01(\x03R\x11lastHandshakeUnix\x12%\n" +
 	"\x0ereceived_bytes\x18\x04 \x01(\x03R\rreceivedBytes\x12\x1d\n" +
 	"\n" +
-	"sent_bytes\x18\x05 \x01(\x03R\tsentBytes\"h\n" +
+	"sent_bytes\x18\x05 \x01(\x03R\tsentBytesJ\x04\b\x02\x10\x03R\bendpoint\"h\n" +
 	"\vHealthCheck\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x0e\n" +
 	"\x02ok\x18\x02 \x01(\bR\x02ok\x12\x16\n" +

@@ -150,7 +150,7 @@ func TestApplyIsRepeatable(t *testing.T) {
 	if len(second.Imported) != 0 {
 		t.Fatalf("second run re-imported %d credentials", len(second.Imported))
 	}
-	if len(second.Skipped) != 1 || !strings.Contains(second.Skipped[0].Reason, "already in the store") {
+	if len(second.Skipped) != 1 || !strings.Contains(second.Skipped[0].Reason, "already uses this name") {
 		t.Fatalf("second run skipped = %+v", second.Skipped)
 	}
 	stored, _ := st.ListWGClients(ctx, "master-xa-1")
@@ -286,9 +286,42 @@ func TestReportRender(t *testing.T) {
 }
 
 func ExampleReport_Render() {
-	r := Report{Master: "m1", Imported: []domain.WGClient{{Name: "laptop", Address: "10.8.0.2/32", Enabled: true}}}
+	r := Report{
+		Master: "m1", Source: "/etc/wireguard/wg-easy.db", Found: 2,
+		Imported: []domain.WGClient{{Name: "laptop", Address: "10.8.0.2/32", Enabled: true}},
+		Skipped:  []Skip{{Name: "phone", Reason: "NOT MIGRATED: address 10.8.0.3 is already taken by another credential"}},
+	}
 	fmt.Print(r.Render(false))
 	// Output:
-	// client import for master "m1": would import 1 credential(s)
+	// client import for master "m1": 2 client(s) in /etc/wireguard/wg-easy.db, would import 1
 	//   + laptop                   10.8.0.2/32        enabled
+	// skipped 1:
+	//   - phone                    NOT MIGRATED: address 10.8.0.3 is already taken by another credential
+}
+
+// A wg-easy name that cannot be safely rendered is refused with a reason that
+// names the consequence, not silently carried into the interface config.
+func TestPlanRefusesAnUnsafeName(t *testing.T) {
+	st := testStore(t)
+	path := wgEasyDB(t,
+		`'laptop' || char(10) || '[Peer]' || char(10) || 'AllowedIPs = 0.0.0.0/0','10.8.0.2','pub','priv','',1,''`,
+		`'good','10.8.0.3','pub2','priv2','',1,''`,
+	)
+	report, err := Plan(context.Background(), st, testInput(path))
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(report.Imported) != 1 || report.Imported[0].Name != "good" {
+		t.Fatalf("imported = %+v, want only the safe record", report.Imported)
+	}
+	if len(report.Skipped) != 1 {
+		t.Fatalf("skipped = %+v, want the unsafe name", report.Skipped)
+	}
+	if !strings.Contains(report.Skipped[0].Reason, "not safe to render") {
+		t.Fatalf("skip reason = %q", report.Skipped[0].Reason)
+	}
+	// The refusal itself must not smuggle the newline into the report.
+	if strings.Contains(report.Skipped[0].Name, "\n") {
+		t.Fatalf("the report reproduced the injected newline: %q", report.Skipped[0].Name)
+	}
 }

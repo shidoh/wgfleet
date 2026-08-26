@@ -700,7 +700,6 @@ func StatusFromProto(nodeID string, r *pb.StatusReport) domain.NodeStatus {
 	for _, p := range r.GetClientPeers() {
 		cp := domain.ClientPeerStatus{
 			PublicKey:     p.GetPublicKey(),
-			Endpoint:      p.GetEndpoint(),
 			ReceivedBytes: p.GetReceivedBytes(),
 			SentBytes:     p.GetSentBytes(),
 		}
@@ -745,7 +744,6 @@ func StatusToProto(s domain.NodeStatus) *pb.StatusReport {
 	for _, p := range s.ClientPeers {
 		cp := &pb.ClientPeerStatus{
 			PublicKey:     p.PublicKey,
-			Endpoint:      p.Endpoint,
 			ReceivedBytes: p.ReceivedBytes,
 			SentBytes:     p.SentBytes,
 		}
