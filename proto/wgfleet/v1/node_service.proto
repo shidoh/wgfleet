@@ -180,6 +180,41 @@ message MasterSpec {
   // client listener CLOSED with no error (a convergence difference, like
   // public_tcp_ports at v3), so it rides the wire-version bump to v4.
   ClientVlessSpec client_vless = 16;
+  // Client-facing AmneziaWG interface, owned by the agent instead of wg-easy.
+  // Carries NO client private keys: the controller issues the credentials and
+  // renders the client configs itself, so the node only ever learns the public
+  // half. nil ⇒ this master's client leg is still wg-easy's. A too-old agent that
+  // drops the field leaves the interface unmanaged while the controller believes
+  // it converged, so it rides a wire-version bump like client_vless did at v4.
+  ClientWGSpec client_wg = 17;
+}
+
+// ClientWGSpec is the master-side desired state for the CLIENT-FACING AmneziaWG
+// interface — the leg end users dial. Distinct from WGServerSpec, which describes
+// the fleet-internal master↔exit leg: this one fronts many end users whose
+// credentials are issued and revoked through the controller UI.
+message ClientWGSpec {
+  int32 listen_port = 1;              // UDP port clients dial
+  string address_pool = 2;            // client subnet (CIDR)
+  string server_address = 3;          // the master's own address inside the pool
+  int32 mtu = 4;
+  repeated string dns = 5;            // resolvers written into client configs
+  repeated string allowed_ips = 6;    // what client configs route into the tunnel
+  AWGParams awg = 7;                  // obfuscation for this interface (server end)
+  AWGLocal client_awg_local = 8;      // the per-end decoy the CLIENT must emit
+  string backend = 9;                 // "kernel" (default) | "userspace"
+  repeated WGClientPeer clients = 10; // ENABLED credentials only
+}
+
+// WGClientPeer is the node-facing view of one issued credential: everything the
+// agent needs to render a [Peer] block and nothing else. There is deliberately no
+// private-key field — the controller renders client configs, so a client's
+// private key has no reason to reach a node.
+message WGClientPeer {
+  string name = 1;
+  string public_key = 2;
+  string address = 3;        // with mask, e.g. 10.80.0.2/32
+  string preshared_key = 4;  // optional; empty when unused
 }
 
 // ClientVlessSpec is the master-side, client-facing VLESS+REALITY+XHTTP inbound

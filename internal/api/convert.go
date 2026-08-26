@@ -181,6 +181,63 @@ func clientVlessFromProto(c *pb.ClientVlessSpec) *domain.ClientVLESSServerSpec {
 	return out
 }
 
+// clientWGToProto projects the client-facing interface onto the wire. The peer
+// list is already the enabled-only, private-key-free projection (domain.PeersOf);
+// this function must never learn to carry more than that.
+func clientWGToProto(c *domain.ClientWGSpec) *pb.ClientWGSpec {
+	if c == nil {
+		return nil
+	}
+	out := &pb.ClientWGSpec{
+		ListenPort:    int32(c.ListenPort),
+		AddressPool:   c.AddressPool,
+		ServerAddress: c.ServerAddress,
+		Mtu:           int32(c.MTU),
+		Dns:           c.DNS,
+		AllowedIps:    c.AllowedIPs,
+		Awg:           awgToProto(c.AWG),
+		Backend:       string(c.Backend),
+	}
+	if c.ClientAWGLocal != nil {
+		out.ClientAwgLocal = awgLocalToProto(c.ClientAWGLocal)
+	}
+	for _, p := range c.Clients {
+		out.Clients = append(out.Clients, &pb.WGClientPeer{
+			Name:         p.Name,
+			PublicKey:    p.PublicKey,
+			Address:      p.Address,
+			PresharedKey: p.PresharedKey,
+		})
+	}
+	return out
+}
+
+func clientWGFromProto(c *pb.ClientWGSpec) *domain.ClientWGSpec {
+	if c == nil {
+		return nil
+	}
+	out := &domain.ClientWGSpec{
+		ListenPort:     int(c.GetListenPort()),
+		AddressPool:    c.GetAddressPool(),
+		ServerAddress:  c.GetServerAddress(),
+		MTU:            int(c.GetMtu()),
+		DNS:            c.GetDns(),
+		AllowedIPs:     c.GetAllowedIps(),
+		AWG:            awgFromProto(c.GetAwg()),
+		Backend:        domain.ClientWGBackend(c.GetBackend()),
+		ClientAWGLocal: awgLocalFromProto(c.GetClientAwgLocal()),
+	}
+	for _, p := range c.GetClients() {
+		out.Clients = append(out.Clients, domain.WGClientPeer{
+			Name:         p.GetName(),
+			PublicKey:    p.GetPublicKey(),
+			Address:      p.GetAddress(),
+			PresharedKey: p.GetPresharedKey(),
+		})
+	}
+	return out
+}
+
 func realityTunnelToProto(r *domain.RealityTunnel) *pb.RealityTunnel {
 	if r == nil {
 		return nil
@@ -237,6 +294,7 @@ func masterToProto(m *domain.MasterSpec) *pb.MasterSpec {
 		Custom:              customToProto(m.Custom),
 		Compose:             composeToProto(m.Compose),
 		ClientVless:         clientVlessToProto(m.ClientVLESS),
+		ClientWg:            clientWGToProto(m.ClientWG),
 	}
 	for _, t := range m.ExitTunnels {
 		out.ExitTunnels = append(out.ExitTunnels, &pb.ExitTunnel{
@@ -277,6 +335,7 @@ func masterFromProto(m *pb.MasterSpec) *domain.MasterSpec {
 		Custom:              customFromProto(m.GetCustom()),
 		Compose:             composeFromProto(m.GetCompose()),
 		ClientVLESS:         clientVlessFromProto(m.GetClientVless()),
+		ClientWG:            clientWGFromProto(m.GetClientWg()),
 	}
 	for _, t := range m.GetExitTunnels() {
 		out.ExitTunnels = append(out.ExitTunnels, domain.ExitTunnel{
