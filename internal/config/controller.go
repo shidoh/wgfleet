@@ -456,6 +456,29 @@ const DefaultMasterClientPort = 443
 type ClientAWGConfig struct {
 	ListenPort  int    `koanf:"listen_port"`  // UDP; 0 ⇒ DefaultMasterClientPort. Prefer 443/51820
 	AddressPool string `koanf:"address_pool"` // CIDR for client addresses
+	// Managed hands the interface to the agent instead of wg-easy: the controller
+	// owns the credentials, the agent renders and raises the interface. Pointer so
+	// an unset value is distinguishable from an explicit false — this is the
+	// cutover switch, and "not mentioned in the manifest" must mean "keep wg-easy",
+	// never "silently take the client leg over on upgrade".
+	Managed *bool `koanf:"managed"`
+	// Backend selects what carries a MANAGED interface: "kernel" (default, the
+	// AmneziaWG module as on the exits) or "userspace" (amneziawg-go, independent
+	// of the host's kernel-module generation). Ignored while unmanaged.
+	Backend string `koanf:"backend"`
+	// MTU overrides the client interface MTU. 0 ⇒ the controller derives it from
+	// the hop chain (clientFacingMTU), which is the right answer in almost every
+	// case; set it only to pin a value the derivation cannot know about.
+	MTU int `koanf:"mtu"`
+	// DNS is what generated client configs point at. Empty ⇒ inherit the
+	// compose-era compose.client_dns, so an existing manifest keeps working when
+	// the interface changes hands.
+	DNS []string `koanf:"dns"`
+	// AllowedIPs is what generated client configs route into the tunnel. Empty ⇒
+	// inherit compose.client_allowed_ips (the same inverted-RFC1918 list, split on
+	// commas). An IPv6 default route is rejected: the data plane is IPv4-only and
+	// "::/0" black-holes dual-stack clients.
+	AllowedIPs []string `koanf:"allowed_ips"`
 }
 
 // ClientListenPort returns the configured master client port or the default.
@@ -464,6 +487,50 @@ func (m MasterConfig) ClientListenPort() int {
 		return DefaultMasterClientPort
 	}
 	return m.ClientAWG.ListenPort
+}
+
+// ClientAWGManaged reports whether the agent — rather than wg-easy — owns the
+// master's client-facing interface. Unset means no: taking over the client leg is
+// always an explicit operator decision.
+func (m MasterConfig) ClientAWGManaged() bool {
+	return m.ClientAWG.Managed != nil && *m.ClientAWG.Managed
+}
+
+// ClientAWGBackend resolves the data-plane backend for a managed interface,
+// defaulting an unset value to the kernel module.
+func (m MasterConfig) ClientAWGBackend() domain.ClientWGBackend {
+	if m.ClientAWG.Backend == "" {
+		return domain.ClientWGBackendKernel
+	}
+	return domain.ClientWGBackend(m.ClientAWG.Backend)
+}
+
+// ClientAWGMTU returns the operator's MTU override, or 0 when the controller
+// should derive it.
+func (m MasterConfig) ClientAWGMTU() int { return m.ClientAWG.MTU }
+
+// ClientAWGDNS resolves the client-facing DNS list, falling back to the
+// compose-era key so an un-edited manifest survives the handover.
+func (m MasterConfig) ClientAWGDNS() []string {
+	if len(m.ClientAWG.DNS) > 0 {
+		return append([]string(nil), m.ClientAWG.DNS...)
+	}
+	return append([]string(nil), m.Compose.ClientDNS...)
+}
+
+// ClientAWGAllowedIPs resolves the client-facing AllowedIPs, falling back to the
+// compose-era comma-separated key (split and trimmed) for the same reason.
+func (m MasterConfig) ClientAWGAllowedIPs() []string {
+	if len(m.ClientAWG.AllowedIPs) > 0 {
+		return append([]string(nil), m.ClientAWG.AllowedIPs...)
+	}
+	var out []string
+	for _, ip := range strings.Split(m.Compose.ClientAllowedIPs, ",") {
+		if ip = strings.TrimSpace(ip); ip != "" {
+			out = append(out, ip)
+		}
+	}
+	return out
 }
 
 // ClientVLESSEmptySNIDefault is the empty_sni default for the client-facing VLESS
@@ -986,6 +1053,7 @@ func (c ControllerConfig) Validate() error {
 				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.address_pool %q is not a valid CIDR: %w", i, m.ClientAWG.AddressPool, err))
 			}
 		}
+		errs = append(errs, validateClientAWG(i, m)...)
 		if cv := m.ClientVLESS; cv.Enabled {
 			if p := cv.ListenPort; p != 0 && (p < 1 || p > 65535) {
 				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_vless.listen_port %d out of range", i, p))
@@ -1023,6 +1091,7 @@ func (c ControllerConfig) Validate() error {
 			errs = append(errs, fmt.Errorf("fleet.masters[%d]: %w", i, err))
 		}
 	}
+	errs = append(errs, validateClientPoolsDisjoint(c.Fleet.Masters)...)
 	for i, e := range c.Fleet.Exits {
 		if e.Name == "" {
 			errs = append(errs, fmt.Errorf("fleet.exits[%d]: name is required", i))

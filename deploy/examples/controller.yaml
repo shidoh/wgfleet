@@ -294,7 +294,11 @@ fleet:
         # the default is now v1.19.30 and no override is needed.
         # mihomo_tag: "v1.19.30"
         # client_dns: defaults to the exits' mgmt addresses (blocky)
-        client_allowed_ips: "1.0.0.0/8,8.0.0.0/7,..." # inverted RFC1918 list for clients
+        # Inverted RFC1918 list for clients — everything except the private ranges,
+        # so a client routes the internet through the tunnel but keeps its own LAN.
+        # Abbreviated here; the full list continues to 224.0.0.0/3. Every entry must
+        # be a real CIDR: it is validated and rendered into client configs.
+        client_allowed_ips: "1.0.0.0/8,8.0.0.0/7,11.0.0.0/8,12.0.0.0/6,16.0.0.0/4,32.0.0.0/3,64.0.0.0/2,128.0.0.0/3"
       # Per-node override of fleet.hardening above. An omitted key inherits the
       # fleet default; an explicit true beats a fleet-wide false, so this can
       # re-harden one node as well as relax one. This is the usual place to use it:

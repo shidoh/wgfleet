@@ -194,7 +194,12 @@ Deploy the controller first; see [upgrade.md](upgrade.md).
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `fleet.masters[].client_awg.listen_port` | int | `443` | UDP port real VPN clients connect to. 443 blends with HTTPS traffic |
-| `fleet.masters[].client_awg.address_pool` | CIDR | — | Address pool handed to clients |
+| `fleet.masters[].client_awg.address_pool` | CIDR | — | Address pool handed to clients. Required when `managed` is on; pools of different masters must not overlap |
+| `fleet.masters[].client_awg.managed` | bool | `false` | Hand the interface to the agent instead of wg-easy: the controller owns the client credentials and the agent renders and raises the interface. Unset means "keep wg-easy" — taking over the client leg is always explicit |
+| `fleet.masters[].client_awg.backend` | `kernel` \| `userspace` | `kernel` | What carries a **managed** interface: the AmneziaWG kernel module (as on the exits) or the `amneziawg-go` daemon, which is independent of the host module's generation. Ignored while unmanaged |
+| `fleet.masters[].client_awg.mtu` | int | derived | Override the client interface MTU. Unset lets the controller derive it from the hop chain, which is the right answer in almost every case |
+| `fleet.masters[].client_awg.dns` | list | `compose.client_dns` | Resolvers written into generated client configs |
+| `fleet.masters[].client_awg.allowed_ips` | list | `compose.client_allowed_ips` | What client configs route into the tunnel. An IPv6 default route is rejected: the data plane is IPv4-only and `::/0` black-holes dual-stack clients |
 
 ### `client_vless` — DPI-resistant client transport
 
