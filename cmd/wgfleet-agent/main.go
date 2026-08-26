@@ -17,6 +17,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -463,7 +464,9 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			a.log.Info("client WG key absent; using an ephemeral key for the plan (apply would resolve one)")
 		}
 		clientWGPriv = cwKP.PrivateKey
-		if !plan {
+		// An empty key means "deferred, wg-easy's database would not answer": publish
+		// nothing rather than a key we are not sure we should be using.
+		if !plan && cwKP.PublicKey != "" {
 			if err := a.client.PublishClientWGKey(ctx, cwKP.PublicKey); err != nil {
 				return fmt.Errorf("publish client wg key: %w", err)
 			}
@@ -928,16 +931,26 @@ func (a *agent) ensureClientVlessKey(persist bool) (priv, pub string, ephemeral 
 // database is never read again.
 func (a *agent) ensureClientWGKey(persist bool) (kp wg.KeyPair, ephemeral bool, err error) {
 	path := a.masterPaths().ClientWGKey
-	if data, rerr := os.ReadFile(path); rerr == nil {
+	data, rerr := os.ReadFile(path)
+	switch {
+	case rerr == nil:
 		priv := strings.TrimSpace(string(data))
 		pub, perr := wg.PublicKeyOf(priv)
 		if perr != nil {
 			return wg.KeyPair{}, false, fmt.Errorf("stored client wg key invalid: %w", perr)
 		}
 		return wg.KeyPair{PrivateKey: priv, PublicKey: pub}, false, nil
+	case !errors.Is(rerr, fs.ErrNotExist):
+		// The file exists but cannot be read (EIO, EACCES, a truncated write).
+		// Falling through to mint would ROTATE this master's client-facing identity
+		// and invalidate every config in the field, so refuse instead: the planner
+		// defers, and the next pass tries again.
+		return wg.KeyPair{}, false, fmt.Errorf("read client wg key %q: %w", path, rerr)
 	}
 
-	if adopted, ok := a.adoptWGEasyKey(); ok {
+	adopted, state := a.adoptWGEasyKey()
+	switch state {
+	case adoptOK:
 		if !persist {
 			return adopted, true, nil
 		}
@@ -947,6 +960,13 @@ func (a *agent) ensureClientWGKey(persist bool) (kp wg.KeyPair, ephemeral bool, 
 		a.log.Info("adopted the client interface key from wg-easy; existing client configs stay valid",
 			"public_key", adopted.PublicKey)
 		return adopted, false, nil
+	case adoptUnreadable:
+		// wg-easy IS here and we could not read its key. Minting now would publish a
+		// server identity no client pins — the exact outcome the transparent handover
+		// exists to prevent — so hand back nothing. The client-interface planner
+		// reports "pending" and we retry on the next pass, which is what a locked or
+		// mid-write database needs.
+		return wg.KeyPair{}, false, nil
 	}
 
 	fresh, gerr := wg.GenerateKeyPair()
@@ -963,26 +983,39 @@ func (a *agent) ensureClientWGKey(persist bool) (kp wg.KeyPair, ephemeral bool, 
 	return fresh, false, nil
 }
 
-// adoptWGEasyKey reads the interface private key out of wg-easy's database. A
-// missing database, row or column simply means there is nothing to adopt.
-func (a *agent) adoptWGEasyKey() (wg.KeyPair, bool) {
+// adoptState says what wg-easy's database had to offer.
+type adoptState int
+
+const (
+	// adoptAbsent: wg-easy was never set up here, so minting a fresh key is right.
+	adoptAbsent adoptState = iota
+	// adoptOK: a usable key was found and must be adopted verbatim.
+	adoptOK
+	// adoptUnreadable: the database is here but would not answer. NOT the same as
+	// absent — see ensureClientWGKey.
+	adoptUnreadable
+)
+
+// adoptWGEasyKey reads the interface private key out of wg-easy's database.
+func (a *agent) adoptWGEasyKey() (wg.KeyPair, adoptState) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	priv, found, err := wgeasy.ReadInterfacePrivateKey(ctx, a.masterPaths().WGEasyDB, wgeasy.DefaultInterface)
-	if err != nil {
-		a.log.Warn("could not read wg-easy's interface key; will mint a new one", "err", err)
-		return wg.KeyPair{}, false
-	}
-	if !found {
-		return wg.KeyPair{}, false
+	switch {
+	case err != nil:
+		a.log.Warn("wg-easy's database is present but unreadable; deferring rather than minting a new client key",
+			"db", a.masterPaths().WGEasyDB, "err", err)
+		return wg.KeyPair{}, adoptUnreadable
+	case !found:
+		return wg.KeyPair{}, adoptAbsent
 	}
 	pub, err := wg.PublicKeyOf(priv)
 	if err != nil {
-		a.log.Warn("wg-easy's stored interface key is unusable; will mint a new one", "err", err)
-		return wg.KeyPair{}, false
+		a.log.Warn("wg-easy's stored interface key is unusable; deferring rather than minting a new client key", "err", err)
+		return wg.KeyPair{}, adoptUnreadable
 	}
-	return wg.KeyPair{PrivateKey: priv, PublicKey: pub}, true
+	return wg.KeyPair{PrivateKey: priv, PublicKey: pub}, adoptOK
 }
 
 // writeKeyFile persists a private key 0600, creating its directory.
@@ -1250,7 +1283,6 @@ func setupLogging(format string) {
 	}
 	slog.SetDefault(slog.New(handler))
 }
-
 
 // clientIfaceName derives the client interface's name from its config path, the
 // way awg-quick does.

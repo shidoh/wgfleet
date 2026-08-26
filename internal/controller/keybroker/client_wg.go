@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -127,6 +128,20 @@ func (b *Broker) RevokeWGClient(ctx context.Context, masterID, clientID string) 
 // migration — the server implementation changes underneath, the wire does not.
 func (b *Broker) clientWGSpec(ctx context.Context, master config.MasterConfig, server domain.WGServerSpec) *domain.ClientWGSpec {
 	if !master.ClientAWGManaged() {
+		return nil
+	}
+	// An agent that predates wire v8 drops this block and keeps wg-easy serving the
+	// client leg — while the controller, having decided the leg is handed over,
+	// stops reconciling wg-easy's database and treats its own store as the truth.
+	// Refusing to render is the fail-safe half of that gate: the master keeps
+	// converging exactly as it did before, and the operator sees why.
+	if node, err := b.store.GetNode(ctx, master.Name); err != nil {
+		b.log.Warn("client WG interface not rendered: cannot read the master's registration",
+			"master", master.Name, "err", err)
+		return nil
+	} else if node.WireVersion < api.WireClientWG {
+		b.log.Warn("client WG interface not rendered: agent is too old to own the client leg",
+			"master", master.Name, "agent_wire", node.WireVersion, "need_wire", api.WireClientWG)
 		return nil
 	}
 	serverAddr, err := masterClientAddress(master.ClientAWG.AddressPool)

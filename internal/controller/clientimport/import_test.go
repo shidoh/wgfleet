@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -218,12 +219,18 @@ func TestPlanRequiresAPool(t *testing.T) {
 	}
 }
 
-func TestPlanReportsAnEmptyDatabase(t *testing.T) {
+// An absent wg-easy database is reported as "nothing to import" — and, critically,
+// is not brought into existence by the attempt: a file conjured here would look
+// to the master's wg-easy planners like a set-up-but-empty install.
+func TestPlanReportsAnAbsentDatabase(t *testing.T) {
 	st := testStore(t)
-	in := testInput(filepath.Join(t.TempDir(), "absent.db"))
-	_, err := Plan(context.Background(), st, in)
+	path := filepath.Join(t.TempDir(), "absent.db")
+	_, err := Plan(context.Background(), st, testInput(path))
 	if err == nil || !strings.Contains(err.Error(), "nothing to import") {
-		t.Fatalf("Plan() on an empty database = %v, want a 'nothing to import' error", err)
+		t.Fatalf("Plan() on an absent database = %v, want a 'nothing to import' error", err)
+	}
+	if _, serr := os.Stat(path); !os.IsNotExist(serr) {
+		t.Fatal("planning an import created the wg-easy database")
 	}
 }
 

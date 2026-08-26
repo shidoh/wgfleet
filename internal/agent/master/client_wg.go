@@ -27,6 +27,10 @@ type clientWGPlanner struct {
 	privateKey string                 // the master's client-interface private key (node-local)
 	up         func(name string) bool // nil ⇒ real `ip link` probe
 	awgGen     func() (int, error)    // nil ⇒ real modinfo probe (tests inject)
+	// ifaceKey reads the public key of the LIVE interface. nil ⇒ real `awg show`.
+	// It answers the question the existence probe cannot: an interface named wg0
+	// may be ours or may be wg-easy's, and the two demand opposite actions.
+	ifaceKey func(name string) (string, error)
 }
 
 func (clientWGPlanner) Component() string { return "client AmneziaWG interface" }
@@ -34,16 +38,18 @@ func (clientWGPlanner) Component() string { return "client AmneziaWG interface" 
 func (p clientWGPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
 	cw := clientWGSpec(spec)
 	if cw == nil {
-		// wg-easy still owns this leg (or this is not a master). If we previously
-		// owned it and the operator turned the knob back off, take the interface down
-		// so the two implementations never both hold the port — the config file stays,
-		// so re-enabling needs no special path.
-		if p.isUp() {
+		// wg-easy owns this leg again (the operator cleared the knob), or it always
+		// did. Take the interface down ONLY if it is ours: on a master we never
+		// managed — and on the rollback pass, where the compose planner has already
+		// restored wg-easy and let it recreate wg0 — the live interface belongs to
+		// wg-easy, and tearing it down would break the client leg on every pass
+		// forever, because our config file deliberately stays on disk.
+		if p.ownsInterface() {
 			// The backend is unknown here (the spec is gone), so use the kernel form:
 			// awg-quick down works for either implementation, since taking an
 			// interface down does not need the userspace daemon.
 			return []reconcile.Action{quickAction(domain.ClientWGBackendKernel, "down", p.confPath, true,
-				"client interface unmanaged — bring it down")}, nil
+				"client interface handed back to wg-easy — bring ours down")}, nil
 		}
 		return []reconcile.Action{reconcile.NoChangeAction("client AmneziaWG interface",
 			"not managed by the agent (wg-easy owns the client leg)")}, nil
@@ -89,6 +95,14 @@ func (p clientWGPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	case !p.isUp():
 		actions = append(actions,
 			quickAction(backend, "up", p.confPath, false, "bring the client interface up (it was down)"))
+	case !p.ownsInterface():
+		// Something else is holding wg0 — in practice a wg-easy container that
+		// survived the handover and recreated it after a reboot. The config has not
+		// changed, so without this branch the pass reports "already up" while end
+		// users authenticate against wg-easy's peer list: converged, green and wrong.
+		actions = append(actions,
+			quickAction(backend, "down", p.confPath, true, "reclaim the client interface (another implementation holds it)"),
+			quickAction(backend, "up", p.confPath, false, "bring the client interface up (reclaimed)"))
 	default:
 		actions = append(actions, reconcile.NoChangeAction("client AmneziaWG interface", "interface already up"))
 	}
@@ -123,6 +137,40 @@ func (p clientWGPlanner) isUp() bool {
 		return ipLinkUp(name)
 	}
 	return p.up(name)
+}
+
+// ownsInterface reports whether the LIVE interface is the one we rendered — i.e.
+// whether its public key is derived from our private key.
+//
+// A probe that fails answers false. That asymmetry is deliberate: "false" leads
+// to bringing an interface up or leaving somebody else's alone, while "true"
+// authorises a teardown. When we cannot tell, we must not tear down.
+func (p clientWGPlanner) ownsInterface() bool {
+	if !p.isUp() || p.privateKey == "" {
+		return false
+	}
+	want, err := wg.PublicKeyOf(p.privateKey)
+	if err != nil {
+		return false
+	}
+	read := p.ifaceKey
+	if read == nil {
+		read = interfacePublicKey
+	}
+	got, err := read(clientIfaceName(p.confPath))
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(got) == want
+}
+
+// interfacePublicKey asks the live interface for its own public key.
+func interfacePublicKey(name string) (string, error) {
+	out, err := exec.Command("awg", "show", name, "public-key").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // clientWGSpec extracts the client interface spec from a NodeSpec, or nil when

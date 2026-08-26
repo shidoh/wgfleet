@@ -66,6 +66,16 @@ const (
 	// "wg-easy still owns this leg", which is what every un-migrated master reports.
 	WireContractVersion uint32 = 8
 
+	// WireClientWG is the wire version that introduced MasterSpec.client_wg. The
+	// controller refuses to render the client interface for a master below it: such
+	// an agent drops the field, keeps wg-easy running and keeps serving whatever
+	// that container last knew, while the controller has already stopped reconciling
+	// wg-easy's database and treats its own store as the truth. Two owners of the
+	// one leg end users dial, with no error on either side. Named rather than
+	// compared against WireContractVersion so a later bump for something unrelated
+	// does not silently re-close the client interface to the whole fleet.
+	WireClientWG uint32 = 8
+
 	// WireAWG3 is the wire version that introduced the AmneziaWG 3.0 block on
 	// AWGShared. The controller refuses to render 3.0 params for a node below it:
 	// such an agent drops the fields and brings its interface up as 2.0 while the

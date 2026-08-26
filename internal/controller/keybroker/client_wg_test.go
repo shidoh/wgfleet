@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -23,9 +24,27 @@ func managedFleet() config.FleetSection {
 func brokerWithManagedMaster(t *testing.T) (*Broker, store.Store, context.Context) {
 	t.Helper()
 	b, st := newBrokerWithFleet(t, managedFleet())
+	ctx := context.Background()
 	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1",
 		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
-	return b, st, context.Background()
+	// The client leg is gated on the agent being able to take it (wire v8), so the
+	// fixture must report a version like a real registered master does.
+	setWireVersion(t, st, "master-xa-1", api.WireClientWG)
+	return b, st, ctx
+}
+
+// setWireVersion stamps the wire contract a registered agent reports.
+func setWireVersion(t *testing.T, st store.Store, id string, version uint32) {
+	t.Helper()
+	ctx := context.Background()
+	node, err := st.GetNode(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.WireVersion = version
+	if err := st.UpsertNode(ctx, node); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestIssueWGClientMintsKeysAndAddress(t *testing.T) {
@@ -126,6 +145,7 @@ func TestIssueWGClientPoolExhausted(t *testing.T) {
 	b, st := newBrokerWithFleet(t, fleet)
 	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1",
 		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	setWireVersion(t, st, "master-xa-1", api.WireClientWG)
 	ctx := context.Background()
 
 	for i := range 5 {
@@ -232,5 +252,46 @@ func TestIssueWGClientNameValidation(t *testing.T) {
 	_, err := b.IssueWGClient(ctx, "master-xa-1", strings.Repeat("x", 65))
 	if err == nil {
 		t.Error("an over-long name should be rejected")
+	}
+}
+
+// --- the wire gate -------------------------------------------------------
+//
+// The knob alone is not enough. A v7 agent drops MasterSpec.client_wg and keeps
+// wg-easy serving the client leg, while the controller has already stopped
+// reconciling wg-easy's database and treats its own store as the truth. Two
+// owners of the one interface end users dial, and neither side errors.
+
+func TestClientWGSpecRefusedForATooOldAgent(t *testing.T) {
+	b, st := newBrokerWithFleet(t, managedFleet())
+	ctx := context.Background()
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1",
+		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+
+	// A master that has registered but reports an older wire contract.
+	setWireVersion(t, st, "master-xa-1", api.WireClientWG-1)
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if spec.Master.ClientWG != nil {
+		t.Fatal("controller handed the client leg to an agent that cannot take it")
+	}
+}
+
+func TestClientWGSpecRenderedForACurrentAgent(t *testing.T) {
+	b, st := newBrokerWithFleet(t, managedFleet())
+	ctx := context.Background()
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1",
+		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	setWireVersion(t, st, "master-xa-1", api.WireClientWG)
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if spec.Master.ClientWG == nil {
+		t.Fatal("a current agent was refused the client interface")
 	}
 }

@@ -26,6 +26,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 
 	_ "modernc.org/sqlite" // pure-Go sqlite driver
 
@@ -162,6 +163,30 @@ func UpdateInterface(ctx context.Context, dbPath, name string, c InterfaceColumn
 		return fmt.Errorf("wg-easy interface %q not found (set up wg-easy first)", name)
 	}
 	return nil
+}
+
+// openReadOnly opens wg-easy's database for READING without creating it.
+//
+// The default DSN below opens with CREATE, which is right for the writeback
+// paths and catastrophic for the read ones: a file conjured by a read looks to
+// every wg-easy planner like a set-up-but-empty install, so they query it, hit
+// "no such table", and abort the master's whole reconcile pass — permanently,
+// since the file does not go away. It also makes server-key adoption a one-shot
+// that silently missed, which cuts off every client at cutover.
+//
+// A missing file is reported as os.ErrNotExist so callers can tell "wg-easy was
+// never here" (nothing to read) from "wg-easy is here but unreadable" (defer and
+// try again) — two answers that must never be collapsed.
+func openReadOnly(path string) (*sql.DB, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(5000)", path))
+	if err != nil {
+		return nil, fmt.Errorf("open wg-easy db %q read-only: %w", path, err)
+	}
+	db.SetMaxOpenConns(1)
+	return db, nil
 }
 
 func open(path string) (*sql.DB, error) {

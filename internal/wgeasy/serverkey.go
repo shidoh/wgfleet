@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -26,7 +27,10 @@ import (
 // silently minted a new server key and cut every client off". Discovery turns the
 // same event into found=false, which the caller treats as "nothing to adopt".
 func ReadInterfacePrivateKey(ctx context.Context, dbPath, name string) (key string, found bool, err error) {
-	db, err := open(dbPath)
+	db, err := openReadOnly(dbPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil // wg-easy was never set up here: nothing to adopt
+	}
 	if err != nil {
 		return "", false, err
 	}

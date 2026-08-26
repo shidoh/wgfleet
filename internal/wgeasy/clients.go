@@ -3,7 +3,9 @@ package wgeasy
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -40,7 +42,10 @@ type clientColumns struct {
 // found is false (no error) when the database has no recognizable clients table
 // — an empty or never-set-up wg-easy, which is a legitimate "nothing to import".
 func ReadClients(ctx context.Context, dbPath string) (clients []ImportedClient, found bool, err error) {
-	db, err := open(dbPath)
+	db, err := openReadOnly(dbPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil // wg-easy was never set up here: nothing to import
+	}
 	if err != nil {
 		return nil, false, err
 	}

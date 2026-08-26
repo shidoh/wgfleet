@@ -3,6 +3,7 @@ package wgeasy
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -68,12 +69,54 @@ func TestReadInterfacePrivateKeyFindsRenamedColumn(t *testing.T) {
 	}
 }
 
+// Reading must never CREATE the database. wg-easy's absence is a legitimate
+// state (a master that never ran it), and a file conjured by a read would then
+// look to every wg-easy planner like a set-up-but-empty install — they would
+// query it, hit "no such table", and abort the master's whole reconcile pass.
+// It would also make key adoption a one-shot that silently missed.
+func TestReadInterfacePrivateKeyDoesNotCreateTheDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "absent.db")
+	_, found, err := ReadInterfacePrivateKey(context.Background(), path, "wg0")
+	if err != nil || found {
+		t.Fatalf("ReadInterfacePrivateKey() on an absent database = found %v, err %v; want (false, nil)", found, err)
+	}
+	if _, serr := os.Stat(path); !os.IsNotExist(serr) {
+		t.Fatalf("reading an absent database created %s", path)
+	}
+}
+
+func TestReadClientsDoesNotCreateTheDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "absent.db")
+	_, found, err := ReadClients(context.Background(), path)
+	if err != nil || found {
+		t.Fatalf("ReadClients() on an absent database = found %v, err %v; want (false, nil)", found, err)
+	}
+	if _, serr := os.Stat(path); !os.IsNotExist(serr) {
+		t.Fatalf("reading an absent database created %s", path)
+	}
+}
+
+// A database that EXISTS but cannot be read is a different answer from one that
+// is absent, and the caller must be able to tell them apart: the first means
+// "defer, wg-easy may be mid-write", the second means "there is nothing to
+// adopt". Collapsing them is how a master mints a fresh server key and cuts off
+// every client that pins the old one.
+func TestReadInterfacePrivateKeyReportsAnUnreadableDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "corrupt.db")
+	if err := os.WriteFile(path, []byte("this is not a sqlite database"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, found, err := ReadInterfacePrivateKey(context.Background(), path, "wg0")
+	if err == nil {
+		t.Fatalf("ReadInterfacePrivateKey() on a corrupt database = found %v, nil error; want an error", found)
+	}
+}
+
 func TestReadInterfacePrivateKeyMisses(t *testing.T) {
 	ctx := context.Background()
 	tests := map[string]string{
-		"no such column":    newKeyDB(t, "", ""),
-		"empty value":       newKeyDB(t, "private_key", ""),
-		"database is empty": filepath.Join(t.TempDir(), "absent.db"),
+		"no such column": newKeyDB(t, "", ""),
+		"empty value":    newKeyDB(t, "private_key", ""),
 	}
 	for name, path := range tests {
 		t.Run(name, func(t *testing.T) {

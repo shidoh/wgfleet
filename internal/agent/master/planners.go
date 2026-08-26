@@ -82,18 +82,26 @@ func Planners(in Input) []reconcile.Planner {
 		// Input firewall: bring the drop policy up before the services, the same
 		// ordering the bootstrap uses ("firewall before traffic").
 		firewallPlanner{path: in.Paths.FirewallNFT, overlayMSS: in.OverlayMSS, clientIface: in.ClientInterface},
+		// The client interface goes BEFORE compose, and the order is load-bearing in
+		// the REVERSE direction. On the rollback pass compose restores wg-easy and
+		// lets it recreate wg0; if we ran after it, we would tear down the interface
+		// it had just made — every pass, forever, because our config file stays on
+		// disk. Running first, we release the interface while it is still ours and
+		// compose then hands it to wg-easy cleanly.
+		//
+		// The handover direction is unaffected: claiming wg0 does not require
+		// wg-easy to be stopped first (we take the interface from it either way),
+		// and the compose planner in the same pass retires the container.
+		clientWGPlanner{confPath: in.Paths.ClientWGConf, privateKey: in.ClientWGPrivateKey},
 		composePlanner{path: in.Paths.Compose, adminUser: in.AdminUsername, adminPass: in.AdminPassword},
 		// The client leg has exactly one owner. While wg-easy holds it these three
 		// keep its database converged; once the operator hands the leg to the agent
-		// they all no-op (see wgEasyManaged) and clientWGPlanner takes over. Writing
-		// to a database whose service we just stopped would be harmless but
-		// misleading — the plan would report work on a component that is gone.
+		// they all no-op (see handedOver) and clientWGPlanner takes over. Writing to
+		// a database whose service we just stopped would be harmless but misleading —
+		// the plan would report work on a component that is gone.
 		wgEasyPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface, compose: in.Paths.Compose},
 		wgEasyUserConfigPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface},
 		wgEasyMetricsPlanner{dbPath: in.Paths.WGEasyDB},
-		// Client-facing AmneziaWG interface, when the agent owns it. Runs after the
-		// compose planner so wg-easy is already stopped by the time we claim the port.
-		clientWGPlanner{confPath: in.Paths.ClientWGConf, privateKey: in.ClientWGPrivateKey},
 		// Extra files (operator rule-provider lists like direct-domains.yaml) MUST be
 		// written before mihomo renders + hot-reloads its config, which references them
 		// as `file` rule-providers — otherwise the first reload points at a missing
@@ -185,6 +193,17 @@ func (p composePlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]recon
 		return nil, err
 	}
 	actions := []reconcile.Action{file}
+	// A service dropped from the file is an ORPHAN to compose: it warns and leaves
+	// the container running. wg-easy is `restart: unless-stopped`, so removing it
+	// from the YAML does not retire it — it keeps holding wg0 and UDP 443, and
+	// after a reboot dockerd starts it again and it wins the race for the
+	// interface. Retiring it is therefore an explicit action, and best-effort so a
+	// master that never ran it (or already retired it) stays a clean no-op.
+	if handedOver(spec) {
+		actions = append(actions, reconcile.BestEffortExecAction(
+			"retire the wg-easy container (the agent owns the client interface)",
+			"docker", "rm", "-f", "wg-easy"))
+	}
 	switch {
 	case file.Changes():
 		// Definition changed: `up -d` recreates only the services whose config moved.
@@ -543,7 +562,6 @@ func (p masterNATPlanner) isLoaded() bool {
 
 // Master forwarding (ip_forward + DOCKER-USER accept, an earlier finding) is handled by
 // the shared dockerfw.ForwardPlanner, constructed in Planners() with iface wg0.
-
 
 // wgEasyHandedOver is the reason the wg-easy planners report once the agent owns
 // the client leg. Stated rather than silent: an operator reading a plan should

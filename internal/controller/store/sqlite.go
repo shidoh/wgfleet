@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go sqlite driver, registered as "sqlite"
@@ -45,7 +48,34 @@ func Open(path string) (*SQLiteStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// The store holds every end user's WireGuard private key (schema v11). SQLite
+	// creates its files 0644, so the mode is enforced here rather than documented —
+	// the same reasoning reconcile.FileAction applies to the agent's secret files,
+	// applied to the controller's own state. Repaired on EVERY open, not just at
+	// creation: a restore from a tarball or a hand-edit would otherwise leave the
+	// invariant true exactly once.
+	if err := restrictStoreMode(path); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return s, nil
+}
+
+// restrictStoreMode makes the database and its WAL companions owner-only. A
+// missing companion is not an error: -wal and -shm appear on first write and are
+// removed on a clean close.
+func restrictStoreMode(path string) error {
+	if path == ":memory:" || strings.HasPrefix(path, "file::memory:") {
+		return nil
+	}
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		switch err := os.Chmod(p, 0o600); {
+		case err == nil, errors.Is(err, fs.ErrNotExist):
+		default:
+			return fmt.Errorf("restrict mode on %q: %w", p, err)
+		}
+	}
+	return nil
 }
 
 // migrate applies any migrations newer than the database's recorded schema
