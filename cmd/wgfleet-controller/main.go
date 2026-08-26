@@ -37,6 +37,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/controller/grpcapi"
 	"github.com/shidoh/wgfleet/internal/controller/keybroker"
 	"github.com/shidoh/wgfleet/internal/controller/pki"
+	"github.com/shidoh/wgfleet/internal/controller/portal"
 	"github.com/shidoh/wgfleet/internal/controller/provmgr"
 	"github.com/shidoh/wgfleet/internal/controller/rollout"
 	"github.com/shidoh/wgfleet/internal/controller/store"
@@ -336,6 +337,34 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, configPath string) error {
 		}()
 	}
 
+	// Client self-service portal: a separate listener carrying only "your own
+	// profile" (see internal/controller/portal for why it is not a page in the UI
+	// above). Off unless the operator binds it.
+	var portalSrv *http.Server
+	if cfg.Controller.ClientPortal != "" {
+		masters := func() []string {
+			names := make([]string, 0, len(cfg.Fleet.Masters))
+			for _, m := range cfg.Fleet.Masters {
+				names = append(names, m.Name)
+			}
+			return names
+		}
+		portalHandler, err := portal.New(portalSource{st: st, broker: broker}, masters)
+		if err != nil {
+			return fmt.Errorf("build client portal: %w", err)
+		}
+		portalSrv = &http.Server{
+			Addr:              cfg.Controller.ClientPortal,
+			Handler:           portalHandler,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			if err := portalSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				slog.Error("client portal server error", "err", err)
+			}
+		}()
+	}
+
 	// Prometheus /metrics — a scrape-time projection of the state store plus the
 	// provisioning-duration histogram (registered above on reg). Binds the mgmt/ZT
 	// address only.
@@ -372,6 +401,9 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, configPath string) error {
 		server.GracefulStop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if portalSrv != nil {
+			_ = portalSrv.Shutdown(shutdownCtx)
+		}
 		if webSrv != nil {
 			_ = webSrv.Shutdown(shutdownCtx)
 		}
@@ -536,4 +568,23 @@ func setupLogging(format string) {
 		handler = slog.NewTextHandler(os.Stdout, opts)
 	}
 	slog.SetDefault(slog.New(handler))
+}
+
+// portalSource adapts the controller's store and keybroker to the portal's
+// read-only view of the world.
+type portalSource struct {
+	st     store.Store
+	broker *keybroker.Broker
+}
+
+func (s portalSource) GetNode(ctx context.Context, id string) (domain.Node, error) {
+	return s.st.GetNode(ctx, id)
+}
+
+func (s portalSource) RenderNodeSpec(ctx context.Context, id string) (domain.NodeSpec, error) {
+	return s.broker.RenderNodeSpec(ctx, id)
+}
+
+func (s portalSource) ListWGClients(ctx context.Context, id string) ([]domain.WGClient, error) {
+	return s.broker.ListWGClients(ctx, id)
 }

@@ -80,6 +80,7 @@ SOPS setup is covered in `docs/secrets-sops.md` in the source repository.
 | `controller.store` | string | **required** | Path to the SQLite state database |
 | `controller.webui` | string | disabled | Web UI bind. **Must be a mgmt/overlay address** unless `WGFLEET_ALLOW_PUBLIC_BIND=1` |
 | `controller.metrics` | string | disabled | Prometheus `/metrics` bind (conventionally `<mgmt>:9300`). Same mgmt-only restriction |
+| `controller.client_portal` | string | disabled | Bind for the client self-service portal: a person opens their own link and gets their own profile and QR — nothing else. Deliberately a separate listener from `webui`, which can provision, decommission and drain nodes and export a fleet backup; bind the portal where clients can reach it and keep `webui` on the management overlay |
 | `controller.agent_bin` | string | — | Path to the `wgfleet-agent` binary the controller installs during UI-triggered provisioning. Also the rolling upgrade's target: nodes are selected by comparing against **this binary's** version, not the controller's, so upgrading only the controller does not make the fleet look outdated |
 | `controller.staleness_after` | duration | `3m` | Mark a node Degraded after this long with no status report. Negative disables the sweep |
 | `controller.session_ttl` | duration | `168h` (7d) | Web panel sliding session lifetime |

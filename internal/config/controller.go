@@ -69,6 +69,16 @@ type ControllerSection struct {
 	WebUI     string         `koanf:"webui"`     // Web UI bind (deferred on MVP; reserved)
 	Store     string         `koanf:"store"`     // path to the sqlite state db
 	Metrics   string         `koanf:"metrics"`   // Prometheus /metrics bind (mgmt addr only)
+	// ClientPortal is the bind for the client self-service portal: one person, one
+	// credential, their own config and QR, and nothing else. Empty ⇒ no portal.
+	//
+	// It is a SEPARATE listener from WebUI on purpose. The operator UI can
+	// provision, decommission and drain nodes and export an encrypted backup of the
+	// whole fleet; opening that to the client pool to replace wg-easy's credential
+	// page would be a quiet and large escalation. Bind this where clients can reach
+	// it (typically the master's client-facing address) and keep WebUI on the
+	// management overlay.
+	ClientPortal string `koanf:"client_portal"`
 	AgentBin  string         `koanf:"agent_bin"` // wgfleet-agent binary installed during UI-triggered provisioning
 	PKI       PKISection     `koanf:"pki"`
 	Secrets   SecretsSection `koanf:"secrets"` // backing store for secret:// references

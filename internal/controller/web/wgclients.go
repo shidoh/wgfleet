@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -11,9 +12,9 @@ import (
 
 	qrcode "github.com/skip2/go-qrcode"
 
+	"github.com/shidoh/wgfleet/internal/controller/clientcfg"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
-	"github.com/shidoh/wgfleet/internal/wg"
 )
 
 // The client-facing WireGuard credential page: the operator half of the leg that
@@ -296,7 +297,7 @@ func (h *Handler) handleWGClientConfig(w http.ResponseWriter, r *http.Request) {
 	// A tunnel config is a credential: never let a cache or a proxy keep a copy.
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Disposition",
-		fmt.Sprintf("attachment; filename=%q", client.Name+".conf"))
+		fmt.Sprintf("attachment; filename=%q", clientcfg.ConfigFileName(client)))
 	_, _ = w.Write([]byte(cfg))
 }
 
@@ -317,50 +318,29 @@ func (h *Handler) handleWGClientQR(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(png)
 }
 
-// buildClientConfig resolves everything one client's config needs: the master's
-// interface spec, its published public key, the endpoint, and the credential
-// itself. It is the only place a client private key is read on the request path.
+// buildClientConfig resolves one client's config through the shared builder, so
+// the operator UI and the self-service portal always render the same bytes.
 func (h *Handler) buildClientConfig(r *http.Request) (string, domain.WGClient, error) {
-	id, clientID := r.PathValue("id"), r.PathValue("client")
-	node, err := h.store.GetNode(r.Context(), id)
+	res, err := clientcfg.Build(r.Context(), clientSource{h}, r.PathValue("id"), r.PathValue("client"))
 	if err != nil {
 		return "", domain.WGClient{}, err
 	}
-	spec, err := h.renderer.RenderNodeSpec(r.Context(), id)
-	if err != nil {
-		return "", domain.WGClient{}, err
-	}
-	if spec.Master == nil || spec.Master.ClientWG == nil {
-		return "", domain.WGClient{}, errors.New("this master's client interface is not managed by the agent yet")
-	}
-	if node.ClientWGPublicKey == "" {
-		return "", domain.WGClient{}, errors.New("the master has not published its client interface key yet")
-	}
-	host := endpointHost(node, spec)
-	if host == "" {
-		return "", domain.WGClient{}, errors.New("no public endpoint known for this master")
-	}
+	return res.Config, res.Client, nil
+}
 
-	clients, err := h.renderer.ListWGClients(r.Context(), id)
-	if err != nil {
-		return "", domain.WGClient{}, err
-	}
-	for _, c := range clients {
-		if c.ID != clientID {
-			continue
-		}
-		cfg, rerr := wg.RenderClientConfig(wg.ClientConfigInput{
-			Spec:            *spec.Master.ClientWG,
-			Client:          c,
-			ServerPublicKey: node.ClientWGPublicKey,
-			Endpoint:        net.JoinHostPort(host, strconv.Itoa(spec.Master.ClientWG.ListenPort)),
-		})
-		if rerr != nil {
-			return "", domain.WGClient{}, rerr
-		}
-		return cfg, c, nil
-	}
-	return "", domain.WGClient{}, store.ErrNotFound
+// clientSource adapts the handler's store + renderer to clientcfg.Source.
+type clientSource struct{ h *Handler }
+
+func (s clientSource) GetNode(ctx context.Context, id string) (domain.Node, error) {
+	return s.h.store.GetNode(ctx, id)
+}
+
+func (s clientSource) RenderNodeSpec(ctx context.Context, id string) (domain.NodeSpec, error) {
+	return s.h.renderer.RenderNodeSpec(ctx, id)
+}
+
+func (s clientSource) ListWGClients(ctx context.Context, id string) ([]domain.WGClient, error) {
+	return s.h.renderer.ListWGClients(ctx, id)
 }
 
 // qrPNG encodes a client config as a QR image. The config is a credential, so it
