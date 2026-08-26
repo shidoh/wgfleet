@@ -79,10 +79,15 @@ type ControllerSection struct {
 	// page would be a quiet and large escalation. Bind this where clients can reach
 	// it (typically the master's client-facing address) and keep WebUI on the
 	// management overlay.
-	ClientPortal string         `koanf:"client_portal"`
-	AgentBin     string         `koanf:"agent_bin"` // wgfleet-agent binary installed during UI-triggered provisioning
-	PKI          PKISection     `koanf:"pki"`
-	Secrets      SecretsSection `koanf:"secrets"` // backing store for secret:// references
+	ClientPortal string `koanf:"client_portal"`
+	// ClientPortalURL is the base URL clients reach the portal on, e.g.
+	// "http://10.80.0.1:8080". The controller cannot derive it — it knows the bind,
+	// not the address a phone types — and without it the operator has no link to
+	// hand out, which makes the portal unreachable however well it works.
+	ClientPortalURL string         `koanf:"client_portal_url"`
+	AgentBin        string         `koanf:"agent_bin"` // wgfleet-agent binary installed during UI-triggered provisioning
+	PKI             PKISection     `koanf:"pki"`
+	Secrets         SecretsSection `koanf:"secrets"` // backing store for secret:// references
 	// StalenessAfter marks a Ready/Reconciling node Degraded when it has not
 	// reported status for this long (a silent/dead agent). 0 disables the sweep.
 	StalenessAfter time.Duration `koanf:"staleness_after"`
@@ -1031,6 +1036,17 @@ func (c ControllerConfig) Validate() error {
 		}
 		if err := requireListenAddr("controller.client_portal", c.Controller.ClientPortal); err != nil {
 			errs = append(errs, err)
+		}
+		if u := c.Controller.ClientPortalURL; u != "" {
+			parsed, perr := url.Parse(u)
+			switch {
+			case perr != nil:
+				errs = append(errs, fmt.Errorf("controller.client_portal_url %q is not a URL: %w", u, perr))
+			case parsed.Scheme != "http" && parsed.Scheme != "https":
+				errs = append(errs, fmt.Errorf("controller.client_portal_url %q must start with http:// or https://", u))
+			case parsed.Host == "":
+				errs = append(errs, fmt.Errorf("controller.client_portal_url %q has no host", u))
+			}
 		}
 		if err := requireMgmtBind("controller.metrics", c.Controller.Metrics); err != nil {
 			errs = append(errs, err)

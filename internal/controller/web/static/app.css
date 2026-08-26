@@ -306,6 +306,9 @@ a:focus-visible,
 .subbadge.slow    { color: var(--amber); border-color: rgba(245,177,76,.30); background: rgba(245,177,76,.06); }
 .subbadge.blocked,
 .subbadge.decommission { color: var(--red); border-color: rgba(248,113,113,.30); background: rgba(248,113,113,.06); }
+/* A live client peer. The set above is all warning states; "online" is the one
+   badge that reports something good, so it gets the ready colour. */
+.subbadge.online  { color: var(--green); border-color: rgba(61,220,132,.30); background: var(--green-06); }
 .subbadge .led { width: 6px; height: 6px; }
 
 /* ============================================================

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/config"
@@ -25,7 +26,16 @@ import (
 func runClientImport(ctx context.Context, st store.Store, cfg *config.ControllerConfig, masterID, dbPath string, plan bool) error {
 	master, ok := masterByName(cfg, masterID)
 	if !ok {
-		return fmt.Errorf("import: %q is not a master in this manifest", masterID)
+		names := make([]string, 0, len(cfg.Fleet.Masters))
+		for _, m := range cfg.Fleet.Masters {
+			names = append(names, m.Name)
+		}
+		return fmt.Errorf("import: %q is not a master in this manifest (have: %s)",
+			masterID, strings.Join(names, ", "))
+	}
+	if master.ClientAWG.AddressPool == "" {
+		return fmt.Errorf("import: master %q has no client_awg.address_pool in the manifest — "+
+			"set it to the subnet wg-easy hands out (its INIT_IPV4_CIDR) before importing", masterID)
 	}
 	if dbPath == "" {
 		dbPath = wgeasy.DefaultDBPath

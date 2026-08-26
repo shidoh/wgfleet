@@ -79,7 +79,9 @@ func TestPortalShowsOwnProfile(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", res.StatusCode)
 	}
-	for _, want := range []string{"laptop", "10.80.0.2/32", "203.0.113.1:443", "Show QR", "Download"} {
+	// The app is named, and Download leads: the stated audience is a person on a
+	// phone, which cannot scan its own screen.
+	for _, want := range []string{"laptop", "10.80.0.2/32", "203.0.113.1:443", "AmneziaWG", "Download profile"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing %q:\n%s", want, body)
 		}
@@ -130,7 +132,7 @@ func TestPortalMutedProfile(t *testing.T) {
 	if !strings.Contains(body, "paused") {
 		t.Errorf("muted profile does not explain itself:\n%s", body)
 	}
-	if strings.Contains(body, "Download") {
+	if strings.Contains(body, "Download profile") {
 		t.Error("a paused profile still offers its config")
 	}
 }
@@ -205,5 +207,29 @@ func TestPortalRateLimitsBadTokens(t *testing.T) {
 	res, _ := fetch(t, h, "/c/aaaabbbbccccdddd")
 	if res.StatusCode != http.StatusTooManyRequests {
 		t.Errorf("lock did not apply to the grinding source: %d", res.StatusCode)
+	}
+}
+
+// A person whose credential was revoked reopens the only link they have. They
+// should meet a sentence, not the string "not found" on a white page.
+func TestPortalFailurePageIsHuman(t *testing.T) {
+	h := testPortal(t)
+	res, body := fetch(t, h, "/c/ffffffffffffffff")
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if got := res.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
+		t.Fatalf("Content-Type = %q, want an HTML page", got)
+	}
+	for _, want := range []string{"no longer working", "keeps using the profile it already has"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("failure page missing %q:\n%s", want, body)
+		}
+	}
+	// It still must not say WHICH check failed.
+	for _, leak := range []string{"master", "not managed", "endpoint", "token"} {
+		if strings.Contains(strings.ToLower(body), leak) {
+			t.Errorf("failure page discloses %q", leak)
+		}
 	}
 }

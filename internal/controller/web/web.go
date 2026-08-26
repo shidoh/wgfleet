@@ -117,7 +117,15 @@ type Handler struct {
 	// roller drives the fleet-wide rolling agent upgrade. nil ⇒ the fleet page
 	// omits the action entirely.
 	roller Roller
+	// portalBase is the public base URL of the client self-service portal, used to
+	// show the operator the link they hand to a person. Empty ⇒ no link is shown.
+	portalBase string
 }
+
+// SetPortalBase wires the client portal's public URL. Optional and set after New
+// for the same reason SetRoller is: it is deployment information, not something
+// the handler needs to exist.
+func (h *Handler) SetPortalBase(base string) { h.portalBase = strings.TrimRight(base, "/") }
 
 // SetRoller wires the rolling-upgrade coordinator. Optional and set after New so
 // the controller can build the coordinator over the same store this handler

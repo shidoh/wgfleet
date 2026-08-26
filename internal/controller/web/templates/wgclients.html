@@ -13,8 +13,10 @@
   <div class="panel-label">ISSUE CLIENT</div>
   {{if .Ready}}
   <p class="dim">Endpoint <span class="strong">{{.Endpoint}}</span> · pool <span class="mono">{{.Pool}}</span>. A new client gets the next free address, its own keypair and a preshared key; download the config or scan the QR to import it.</p>
+  {{else if .Managed}}
+  <p class="dim">You can issue credentials now — configs become downloadable once the master publishes its interface key, which takes one reconcile pass.</p>
   {{else}}
-  <p class="dim">You can issue credentials now — configs become downloadable once the master is ready.</p>
+  <p class="dim">Credentials issued now are stored but do nothing yet: wg-easy still owns this interface. They take effect after you set <code>client_awg.managed: true</code> for this master and the agent reconciles.</p>
   {{end}}
   <form class="auth-form" method="post" action="/nodes/{{.NodeID}}/wg-clients/issue" onsubmit="return lockAction(this)">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
@@ -37,26 +39,32 @@
         <div>
           <div class="client-name">
             {{.Name}}
-            {{if not .Enabled}}<span class="badge warn">muted</span>
-            {{else if .Online}}<span class="badge ok">online</span>{{end}}
+            {{if not .Enabled}}<span class="subbadge drain"><span class="led"></span>muted</span>
+            {{else if .Online}}<span class="subbadge online"><span class="led"></span>online</span>{{end}}
           </div>
           <div class="client-uuid mono">{{.Address}}</div>
         </div>
         <form method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/revoke"
               onsubmit="return lockAction(this)"
-              data-confirm="Revoke {{.Name}}? Its config stops working after the master reconciles, and the address returns to the pool.">
+              data-confirm="Revoke {{.Name}}? This deletes the credential and its key permanently — the person will need a new config. Its tunnel stops after the master reconciles and the address returns to the pool.">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-          <button class="btn danger" type="submit" data-pending="Revoking…">Revoke</button>
+          <button class="btn ghost-red" type="submit" data-pending="Revoking…" aria-label="Revoke {{.Name}}">Revoke</button>
         </form>
       </div>
 
       <dl class="kv">
-        {{if .Created}}<div class="kv-row"><dt>Issued</dt><dd>{{.Created}}</dd></div>{{end}}
-        <div class="kv-row"><dt>Last handshake</dt><dd>{{if .Handshake}}{{.Handshake}}{{else}}<span class="dim">not reported yet</span>{{end}}</dd></div>
-        {{if .Transfer}}<div class="kv-row"><dt>Transfer</dt><dd class="mono">{{.Transfer}}</dd></div>{{end}}
+        {{if .Created}}<dt>Issued</dt><dd>{{.Created}}</dd>{{end}}
+        <dt>Last handshake</dt><dd>{{if .Handshake}}{{.Handshake}}{{else}}<span class="dim">not reported yet</span>{{end}}</dd>
+        {{if .Transfer}}<dt>Transfer</dt><dd class="mono">{{.Transfer}}</dd>{{end}}
       </dl>
 
-      <div class="client-actions">
+      {{if $.PortalBase}}
+      <div class="field-label">CLIENT LINK · send this to the person</div>
+      <input class="input mono" type="text" readonly value="{{$.PortalBase}}/c/{{.ID}}"
+             onclick="this.select()" aria-label="self-service link for {{.Name}}">
+      {{end}}
+
+      <div class="cfg-actions">
         {{if $.Ready}}
         <a class="btn" href="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/config">Download .conf</a>
         <a class="btn" href="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/qr" target="_blank" rel="noopener">Show QR</a>
@@ -66,20 +74,20 @@
               onsubmit="return lockAction(this)"
               data-confirm="Mute {{.Name}}? It disconnects on the next reconcile; its config stays valid and unmuting restores it.">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-          <button class="btn" type="submit" data-pending="Muting…">Mute</button>
+          <button class="btn" type="submit" data-pending="Muting…" aria-label="Mute {{.Name}}">Mute</button>
         </form>
         {{else}}
         <form method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/unmute" onsubmit="return lockAction(this)">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-          <button class="btn go" type="submit" data-pending="Unmuting…">Unmute</button>
+          <button class="btn go" type="submit" data-pending="Unmuting…" aria-label="Unmute {{.Name}}">Unmute</button>
         </form>
         {{end}}
-        <form class="rename-form" method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/rename" onsubmit="return lockAction(this)">
+        <form class="cfg-actions" method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/rename" onsubmit="return lockAction(this)">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
           <input class="input" type="text" name="name" value="{{.Name}}" required
                  pattern="[A-Za-z0-9._-]{1,64}" title="letters, digits, '-', '_' or '.' (max 64)"
                  aria-label="rename {{.Name}}">
-          <button class="btn" type="submit" data-pending="Renaming…">Rename</button>
+          <button class="btn" type="submit" data-pending="Renaming…" aria-label="Rename {{.Name}}">Rename</button>
         </form>
       </div>
     </div>

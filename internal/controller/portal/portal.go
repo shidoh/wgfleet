@@ -28,11 +28,12 @@ import (
 
 // Handler serves the portal.
 type Handler struct {
-	src     clientcfg.Source
-	masters func() []string // the masters whose credentials this portal serves
-	mux     *http.ServeMux
-	tmpl    *template.Template
-	log     *slog.Logger
+	src      clientcfg.Source
+	masters  func() []string // the masters whose credentials this portal serves
+	mux      *http.ServeMux
+	tmpl     *template.Template
+	failTmpl *template.Template
+	log      *slog.Logger
 	// limit throttles token lookups per source IP. The token is a credential ID —
 	// unguessable, but a portal reachable from the client pool is still a place
 	// someone can grind, and a per-IP consecutive-failure lock costs a legitimate
@@ -46,13 +47,18 @@ func New(src clientcfg.Source, masters func() []string) (*Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("portal: parse template: %w", err)
 	}
+	failTmpl, err := template.New("portal-fail").Parse(failHTML)
+	if err != nil {
+		return nil, fmt.Errorf("portal: parse failure template: %w", err)
+	}
 	h := &Handler{
-		src:     src,
-		masters: masters,
-		mux:     http.NewServeMux(),
-		tmpl:    tmpl,
-		log:     slog.Default(),
-		limit:   auth.NewIPLimiter(10, time.Minute, 4096),
+		src:      src,
+		masters:  masters,
+		mux:      http.NewServeMux(),
+		tmpl:     tmpl,
+		failTmpl: failTmpl,
+		log:      slog.Default(),
+		limit:    auth.NewIPLimiter(10, time.Minute, 4096),
 	}
 	h.mux.HandleFunc("GET /c/{token}", h.handlePage)
 	h.mux.HandleFunc("GET /c/{token}/config", h.handleConfig)
@@ -162,13 +168,26 @@ func (h *Handler) handleQR(w http.ResponseWriter, r *http.Request) {
 
 // fail answers without telling the caller which part went wrong. A portal open to
 // the client pool should not distinguish "no such credential" from "that one is
-// on a master that is not ready" — both are 404 to anyone holding a bad link.
+// on a master that is not ready" — both look identical to anyone holding a bad
+// link. What it CAN do is say it in a sentence: the most likely reader is not an
+// attacker probing tokens but a person whose VPN just stopped working and who
+// reopened the only link they have.
 func (h *Handler) fail(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, errTooManyAttempts):
-		http.Error(w, "too many attempts; try again in a minute", http.StatusTooManyRequests)
-	default:
-		http.Error(w, "not found", http.StatusNotFound)
+	status, heading, body := http.StatusNotFound,
+		"This link is no longer working",
+		"It may have been replaced or switched off. Your VPN app keeps using the profile it already has. "+
+			"Ask whoever sent you this link for a new one."
+	if errors.Is(err, errTooManyAttempts) {
+		status, heading, body = http.StatusTooManyRequests,
+			"Too many tries",
+			"Wait a minute, then open the link again."
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.WriteHeader(status)
+	if err := h.failTmpl.Execute(w, struct{ Heading, Body string }{heading, body}); err != nil {
+		h.log.Warn("portal: render failed", "err", err)
 	}
 }
 
@@ -215,10 +234,14 @@ body { margin:0; min-height:100vh; display:grid; place-items:center;
   border-radius:14px; padding:28px; }
 h1 { margin:0 0 4px; font-size:20px; }
 .sub { margin:0 0 20px; color:#8b98a9; font-size:14px; }
-dl { margin:0 0 22px; display:grid; grid-template-columns:auto 1fr; gap:8px 16px; font-size:14px; }
+dl { margin:12px 0 0; display:grid; grid-template-columns:auto 1fr; gap:8px 16px; font-size:14px; }
+ol.steps { margin:0 0 22px; padding-left:20px; font-size:15px; }
+ol.steps li { margin-bottom:8px; }
+details { margin-top:18px; font-size:14px; color:#8b98a9; }
+summary { cursor:pointer; }
 dt { color:#8b98a9; } dd { margin:0; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
 .actions { display:flex; gap:10px; flex-wrap:wrap; }
-a.btn { flex:1; text-align:center; padding:11px 16px; border-radius:9px; text-decoration:none;
+a.btn { flex:1; text-align:center; padding:14px 16px; border-radius:9px; text-decoration:none;
   border:1px solid #2b3646; color:#e6edf3; background:#1d2531; }
 a.btn.primary { background:#2f6feb; border-color:#2f6feb; }
 .muted { margin:18px 0 0; padding:12px 14px; border-radius:9px;
@@ -227,18 +250,48 @@ a.btn.primary { background:#2f6feb; border-color:#2f6feb; }
 <body><main class="card">
 <h1>{{.Name}}</h1>
 <p class="sub">Your VPN profile</p>
-<dl>
-  <dt>Address</dt><dd>{{.Address}}</dd>
-  {{if .Endpoint}}<dt>Server</dt><dd>{{.Endpoint}}</dd>{{end}}
-</dl>
 {{if .Enabled}}
+<ol class="steps">
+  <li>Install <b>AmneziaWG</b> on this device. The ordinary WireGuard app will not
+      accept this profile — it needs AmneziaWG.</li>
+  <li>Tap <b>Download profile</b> and open the file with AmneziaWG.</li>
+  <li>Switch the tunnel on.</li>
+</ol>
 <div class="actions">
-  <a class="btn primary" href="/c/{{.Token}}/qr">Show QR</a>
-  <a class="btn" href="/c/{{.Token}}/config">Download</a>
+  <a class="btn primary" href="/c/{{.Token}}/config">Download profile</a>
+  <a class="btn" href="/c/{{.Token}}/qr">QR for another device</a>
 </div>
+<details>
+  <summary>Technical details</summary>
+  <dl>
+    <dt>Address</dt><dd>{{.Address}}</dd>
+    {{if .Endpoint}}<dt>Server</dt><dd>{{.Endpoint}}</dd>{{end}}
+  </dl>
+</details>
 {{else}}
-<p class="muted">This profile is currently paused. Your configuration stays valid — ask your
-administrator to resume it.</p>
+<p class="muted">This profile is paused, so it will not connect right now. Nothing is broken and
+nothing needs deleting — your configuration stays valid. Ask whoever gave you this link to switch
+it back on.</p>
 {{end}}
 </main></body></html>
+`
+
+// failHTML is the portal's error page: the same card, one sentence, no detail
+// about which check failed.
+const failHTML = `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Your VPN profile</title>
+<style>
+:root { color-scheme: dark; }
+body { margin:0; min-height:100vh; display:grid; place-items:center;
+  background:#11151c; color:#e6edf3; font:16px/1.5 system-ui, -apple-system, sans-serif; }
+.card { width:min(420px, 92vw); background:#171d26; border:1px solid #232c39;
+  border-radius:14px; padding:28px; }
+h1 { margin:0 0 8px; font-size:20px; }
+p { margin:0; color:#8b98a9; font-size:15px; }
+</style></head>
+<body><main class="card"><h1>{{.Heading}}</h1><p>{{.Body}}</p></main></body></html>
 `

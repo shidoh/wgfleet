@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -240,6 +242,53 @@ func TestWGClientsPageShowsReportedPeers(t *testing.T) {
 	for _, want := range []string{"30s ago", "online", "5.0 MiB", "2.0 MiB"} {
 		if !strings.Contains(after, want) {
 			t.Errorf("page missing %q after the status report:\n%s", want, after)
+		}
+	}
+}
+
+// The portal is only reachable if the operator can see the link. Without it the
+// whole self-service surface is dead on arrival, however well it works.
+func TestWGClientsPageShowsThePortalLink(t *testing.T) {
+	clients := []domain.WGClient{{ID: "abc123", Name: "laptop", Address: "10.80.0.2/32", PublicKey: "pub-a", Enabled: true}}
+	h, _ := wgClientHandler(t, managedMasterSpec(), &clients)
+	h.SetPortalBase("http://10.80.0.1:8080/")
+
+	_, body := get(t, h, "/nodes/master-xa-1/wg-clients")
+	if !strings.Contains(body, "http://10.80.0.1:8080/c/abc123") {
+		t.Fatalf("page does not show the client's self-service link:\n%s", body)
+	}
+}
+
+// With no portal URL configured the page must show nothing rather than a guessed
+// address the operator would hand out and that would not work.
+func TestWGClientsPageHidesTheLinkWithoutAPortal(t *testing.T) {
+	clients := []domain.WGClient{{ID: "abc123", Name: "laptop", Address: "10.80.0.2/32", PublicKey: "pub-a", Enabled: true}}
+	h, _ := wgClientHandler(t, managedMasterSpec(), &clients)
+
+	_, body := get(t, h, "/nodes/master-xa-1/wg-clients")
+	if strings.Contains(body, "/c/abc123") {
+		t.Fatalf("page invented a portal link with no portal configured:\n%s", body)
+	}
+}
+
+// A duplicate name is the mistake an operator actually makes; it must not
+// surface as a SQLite constraint string.
+func TestWGClientIssueReportsADuplicateNamePlainly(t *testing.T) {
+	err := clientActionError(errors.New(`add wg client "laptop": constraint failed: UNIQUE constraint failed: client_wg_credentials.name (2067)`), "laptop")
+	if !strings.Contains(err.Error(), "already exists on this master") {
+		t.Fatalf("duplicate-name error = %q, want a sentence an operator can act on", err)
+	}
+	if strings.Contains(err.Error(), "constraint") {
+		t.Fatalf("the SQLite constraint text reached the operator: %q", err)
+	}
+}
+
+// A full pool must say what to do about it.
+func TestWGClientIssueReportsAFullPool(t *testing.T) {
+	err := clientActionError(fmt.Errorf("issue: %w", domain.ErrPoolExhausted), "laptop")
+	for _, want := range []string{"pool is full", "revoke", "address_pool"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("pool-exhausted error = %q, want it to mention %q", err, want)
 		}
 	}
 }

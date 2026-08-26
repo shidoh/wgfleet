@@ -40,7 +40,11 @@ type wgClientsData struct {
 	Notice    string // why configs aren't ready yet (empty when Ready)
 	Endpoint  string // host:port clients dial
 	Pool      string
-	Clients   []wgClientRow
+	// PortalBase is the public base URL of the self-service portal, so each card
+	// can show the link the operator actually hands to a person. Empty ⇒ the portal
+	// is off or its URL is unset, and the link column is hidden rather than guessed.
+	PortalBase string
+	Clients    []wgClientRow
 }
 
 // wgClientRow is one issued credential rendered for the page.
@@ -114,6 +118,7 @@ func (h *Handler) handleWGClients(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	data.PortalBase = h.portalBase
 	peers := h.clientPeerStatus(r, id)
 	for _, c := range clients {
 		row := wgClientRow{
@@ -208,11 +213,7 @@ func (h *Handler) handleWGClientIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := h.renderer.IssueWGClient(r.Context(), id, name); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			h.redirectErr(w, r, dest, "issue client", errors.New("master not registered"))
-			return
-		}
-		h.redirectErr(w, r, dest, "issue client", err)
+		h.redirectErr(w, r, dest, "issue client", clientActionError(err, name))
 		return
 	}
 	http.Redirect(w, r, dest, http.StatusSeeOther)
@@ -276,11 +277,7 @@ func (h *Handler) handleWGClientRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.renderer.RenameWGClient(r.Context(), id, clientID, name); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			h.redirectErr(w, r, dest, "rename client", errors.New("client not found"))
-			return
-		}
-		h.redirectErr(w, r, dest, "rename client", err)
+		h.redirectErr(w, r, dest, "rename client", clientActionError(err, name))
 		return
 	}
 	http.Redirect(w, r, dest, http.StatusSeeOther)
@@ -348,4 +345,29 @@ func (s clientSource) ListWGClients(ctx context.Context, id string) ([]domain.WG
 // data: URL — a page the browser may cache should not carry a private key.
 func qrPNG(s string) ([]byte, error) {
 	return qrcode.Encode(s, qrcode.Medium, 320)
+}
+
+// clientActionError turns the failures an operator actually hits into sentences
+// that say what to do. Everything else passes through untouched — inventing a
+// friendly message for an unrecognised error would only hide it.
+func clientActionError(err error, name string) error {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return errors.New("master not registered — provision it first")
+	case errors.Is(err, domain.ErrPoolExhausted):
+		return errors.New("the client address pool is full — revoke an unused client, or widen client_awg.address_pool for this master")
+	case isUniqueViolation(err):
+		// The single most likely mistake, and by default it surfaces as a raw
+		// SQLite constraint string.
+		return fmt.Errorf("a client named %q already exists on this master — pick a different name", name)
+	default:
+		return err
+	}
+}
+
+// isUniqueViolation recognises the store's duplicate-name/address refusal. The
+// driver reports it as a message rather than a typed error, so this matches on
+// the text it is documented to produce.
+func isUniqueViolation(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "unique constraint failed")
 }

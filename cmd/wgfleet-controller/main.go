@@ -67,7 +67,7 @@ func run() error {
 		provision    = flag.String("provision", "", "SSH-bootstrap the named fleet node, then exit")
 		upgradeAgent = flag.String("upgrade-agent", "", "roll the named node's agent binary forward (upload + restart) over SSH, then exit")
 		rollingUp    = flag.Bool("rolling-upgrade", false, "roll every outdated EXIT agent forward one node at a time (reserve tier first), then exit")
-		plan         = flag.Bool("plan", false, "with --provision/--upgrade-agent/--rolling-upgrade: dry-run, show the plan and change nothing")
+		plan         = flag.Bool("plan", false, "with --provision/--upgrade-agent/--rolling-upgrade/--import-wg-easy: dry-run, show the plan and change nothing")
 		agentBin     = flag.String("agent-bin", "", "with --provision/--upgrade-agent/--rolling-upgrade: path to the wgfleet-agent binary to install (default controller.agent_bin)")
 		ctlEndpoint  = flag.String("controller-endpoint", "", "with --provision: controller mTLS endpoint the agent dials (default controller.listen)")
 		backupOut    = flag.String("backup", "", "snapshot controller (+co-located master) state to an age-encrypted archive at this path, then exit")
@@ -78,7 +78,7 @@ func run() error {
 		supportNote  = flag.String("note", "", "with --support-bundle: free-form description of the problem, embedded in the bundle's manifest")
 		showVersion  = flag.Bool("version", false, "print build version and exit")
 		setAdminPw   = flag.Bool("set-admin-password", false, "set/reset the web panel admin password (run with the controller stopped) and exit")
-		importWGEasy = flag.String("import-wg-easy", "", "import the named master's wg-easy client credentials into the controller store, then exit (use --plan first)")
+		importWGEasy = flag.String("import-wg-easy", "", "import the named master's wg-easy client credentials into the controller store, then exit. Safe to run with the controller live; use --plan first")
 		wgEasyDB     = flag.String("wg-easy-db", "", "with --import-wg-easy: path to wg-easy's SQLite database (default /etc/wireguard/wg-easy.db, i.e. run this ON the master)")
 		adminUser    = flag.String("admin-user", "admin", "username for --set-admin-password")
 		passwordFile = flag.String("password-file", "", "with --set-admin-password: read the password from this file instead of prompting")
@@ -321,6 +321,9 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, configPath string) error {
 		// action and any concurrent attempt contend on the same single-rollout lock.
 		// Bound to ctx: a rollout aborts (rolling back the node in flight) on SIGTERM
 		// rather than outliving the store it reads.
+		// The portal's public URL is deployment information the controller cannot
+		// derive from its bind, and without it the client page has no link to show.
+		webHandler.SetPortalBase(cfg.Controller.ClientPortalURL)
 		webHandler.SetRoller(&webRoller{
 			co:     rollout.New(provMgr, st, rollout.Config{}, slog.Default()),
 			st:     st,
