@@ -77,6 +77,8 @@ func run() error {
 		supportNote  = flag.String("note", "", "with --support-bundle: free-form description of the problem, embedded in the bundle's manifest")
 		showVersion  = flag.Bool("version", false, "print build version and exit")
 		setAdminPw   = flag.Bool("set-admin-password", false, "set/reset the web panel admin password (run with the controller stopped) and exit")
+		importWGEasy = flag.String("import-wg-easy", "", "import the named master's wg-easy client credentials into the controller store, then exit (use --plan first)")
+		wgEasyDB     = flag.String("wg-easy-db", "", "with --import-wg-easy: path to wg-easy's SQLite database (default /etc/wireguard/wg-easy.db, i.e. run this ON the master)")
 		adminUser    = flag.String("admin-user", "admin", "username for --set-admin-password")
 		passwordFile = flag.String("password-file", "", "with --set-admin-password: read the password from this file instead of prompting")
 	)
@@ -152,6 +154,15 @@ func run() error {
 		}
 		fmt.Printf("admin password set for %q\n", *adminUser)
 		return nil
+	}
+
+	if *importWGEasy != "" {
+		st, err := store.Open(cfg.Controller.Store)
+		if err != nil {
+			return fmt.Errorf("open store: %w", err)
+		}
+		defer st.Close()
+		return runClientImport(context.Background(), st, cfg, *importWGEasy, *wgEasyDB, *plan)
 	}
 
 	if *initPKI {
