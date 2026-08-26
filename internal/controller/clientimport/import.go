@@ -61,6 +61,11 @@ type Report struct {
 type Skip struct {
 	Name   string
 	Reason string
+	// Benign marks a skip that costs nothing: the credential is already in the
+	// controller, which is what a completed import looks like on a second run.
+	// Every other skip means this person's tunnel stops at cutover, and the two
+	// must never be summarised the same way.
+	Benign bool
 }
 
 // Plan reads wg-easy's clients and works out what the import would do, without
@@ -97,9 +102,11 @@ func Plan(ctx context.Context, st Store, in Input) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
+	byName := make(map[string]domain.WGClient, len(existing))
 	takenName := make(map[string]struct{}, len(existing))
 	takenAddr := make(map[netip.Addr]struct{}, len(existing))
 	for _, c := range existing {
+		byName[c.Name] = c
 		takenName[c.Name] = struct{}{}
 		if p, perr := netip.ParsePrefix(c.Address); perr == nil {
 			takenAddr[p.Addr()] = struct{}{}
@@ -109,7 +116,7 @@ func Plan(ctx context.Context, st Store, in Input) (Report, error) {
 
 	report := Report{Master: in.MasterID, Source: in.DBPath, Found: len(found)}
 	for _, c := range found {
-		client, skip := convert(c, pool, serverAddr, takenName, takenAddr, idFor, now)
+		client, skip := convert(c, pool, serverAddr, byName, takenName, takenAddr, idFor, now)
 		if skip != nil {
 			report.Skipped = append(report.Skipped, *skip)
 			continue
@@ -144,7 +151,7 @@ func Apply(ctx context.Context, st Store, in Input) (Report, error) {
 
 // convert turns one wg-easy record into a credential, or explains why it cannot.
 func convert(c wgeasy.ImportedClient, pool netip.Prefix, serverAddr netip.Addr,
-	takenName map[string]struct{}, takenAddr map[netip.Addr]struct{},
+	byName map[string]domain.WGClient, takenName map[string]struct{}, takenAddr map[netip.Addr]struct{},
 	idFor func(string) string, now func() time.Time) (domain.WGClient, *Skip) {
 
 	name := strings.TrimSpace(c.Name)
@@ -163,6 +170,13 @@ func convert(c wgeasy.ImportedClient, pool netip.Prefix, serverAddr netip.Addr,
 				"this client's tunnel will stop working at cutover until you do", domain.MaxClientNameLen)}
 	}
 	if _, dup := takenName[name]; dup {
+		// Same name AND same public key ⇒ this exact credential is already here,
+		// which is the normal shape of a re-run. A same-name-different-key collision
+		// is the dangerous one and keeps the warning.
+		if prev, ok := byName[name]; ok && prev.PublicKey == c.PublicKey {
+			return domain.WGClient{}, &Skip{Name: name, Benign: true,
+				Reason: "already imported (same key and address) — nothing to do"}
+		}
 		return domain.WGClient{}, &Skip{Name: name,
 			Reason: "NOT MIGRATED: a different credential already uses this name in the store. " +
 				"This client's wg-easy tunnel will stop working at cutover — rename or remove one of them"}
@@ -264,16 +278,29 @@ func (r Report) Render(applied bool) string {
 	}
 	switch {
 	case len(r.Imported) > 0:
-	case len(r.Skipped) > 0:
-		// Everything was refused. This is the verdict line, so it must not read as
-		// completion: the operator's next step after a clean import is to hand the
-		// interface over, and doing that now would cut off every client above.
-		b.WriteString("\nNOTHING WAS MIGRATED — every client was skipped. Do NOT hand the interface " +
-			"over yet: at cutover these clients would stop working. Fix the reasons above and re-run.\n")
-	default:
+	case len(r.Skipped) == 0:
 		b.WriteString("nothing to import: the wg-easy database holds no clients.\n")
+	case r.lostAnyone():
+		// Something was refused for a reason that costs a person their tunnel. This
+		// is the verdict line, and the operator's next step after a clean import is
+		// to hand the interface over — which would now cut those people off.
+		b.WriteString("\nNOTHING WAS MIGRATED — every client was skipped, and at least one for a reason " +
+			"that costs it its tunnel. Do NOT hand the interface over yet: fix the reasons above and re-run.\n")
+	default:
+		// A completed import, run again. The normal state, and it must read like one.
+		b.WriteString("\nnothing to do: every wg-easy client is already in the controller.\n")
 	}
 	return b.String()
+}
+
+// lostAnyone reports whether any skip means a real client stops working.
+func (r Report) lostAnyone() bool {
+	for _, s := range r.Skipped {
+		if !s.Benign {
+			return true
+		}
+	}
+	return false
 }
 
 // shorten renders an unusable name in a report without letting its own contents

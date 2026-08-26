@@ -72,9 +72,11 @@ func runClientImport(ctx context.Context, st store.Store, cfg *config.Controller
 		fmt.Println("\ndry run: nothing was written. Re-run without --plan to import.")
 		return nil
 	}
-	fmt.Printf("\nimported into %s. The credentials are now the controller's; wg-easy still owns the\n"+
-		"interface until you set fleet.masters[].client_awg.managed: true and let the agent reconcile.\n",
-		cfg.Controller.Store)
+	if len(report.Imported) > 0 {
+		fmt.Printf("\nimported into %s. The credentials are now the controller's; wg-easy still owns the\n"+
+			"interface until you set fleet.masters[].client_awg.managed: true and let the agent reconcile.\n",
+			cfg.Controller.Store)
+	}
 	return nil
 }
 

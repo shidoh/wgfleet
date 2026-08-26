@@ -150,8 +150,11 @@ func TestApplyIsRepeatable(t *testing.T) {
 	if len(second.Imported) != 0 {
 		t.Fatalf("second run re-imported %d credentials", len(second.Imported))
 	}
-	if len(second.Skipped) != 1 || !strings.Contains(second.Skipped[0].Reason, "already uses this name") {
-		t.Fatalf("second run skipped = %+v", second.Skipped)
+	if len(second.Skipped) != 1 || !second.Skipped[0].Benign {
+		t.Fatalf("a re-run of a completed import must skip benignly: %+v", second.Skipped)
+	}
+	if !strings.Contains(second.Skipped[0].Reason, "already imported") {
+		t.Fatalf("second run reason = %q", second.Skipped[0].Reason)
 	}
 	stored, _ := st.ListWGClients(ctx, "master-xa-1")
 	if len(stored) != 1 {
@@ -393,5 +396,37 @@ func TestPlanRefusesMalformedKeys(t *testing.T) {
 		if !strings.Contains(s.Reason, "not a valid WireGuard key") {
 			t.Errorf("skip of %q = %q", s.Name, s.Reason)
 		}
+	}
+}
+
+// Found on a live rehearsal: running a COMPLETED import a second time is the
+// normal state, and it must not read as a disaster. The first version of the
+// verdict could not tell "already imported" from "refused for a reason that
+// loses this person at cutover", so a healthy re-run shouted STOP.
+func TestRenderTellsACompletedImportFromAFailedOne(t *testing.T) {
+	done := Report{
+		Master: "m1", Source: "/etc/wireguard/wg-easy.db", Found: 2,
+		Skipped: []Skip{
+			{Name: "alice", Reason: "already imported", Benign: true},
+			{Name: "bob", Reason: "already imported", Benign: true},
+		},
+	}
+	out := done.Render(false)
+	if strings.Contains(out, "NOTHING WAS MIGRATED") {
+		t.Fatalf("a completed import reads as a failure:\n%s", out)
+	}
+	if !strings.Contains(out, "already in the controller") {
+		t.Fatalf("a completed import does not say so:\n%s", out)
+	}
+
+	mixed := Report{
+		Master: "m1", Source: "/etc/wireguard/wg-easy.db", Found: 2,
+		Skipped: []Skip{
+			{Name: "alice", Reason: "already imported", Benign: true},
+			{Name: "bob", Reason: "NOT MIGRATED: address outside the configured pool"},
+		},
+	}
+	if out := mixed.Render(false); !strings.Contains(out, "NOTHING WAS MIGRATED") {
+		t.Fatalf("a run that lost a client does not warn:\n%s", out)
 	}
 }
