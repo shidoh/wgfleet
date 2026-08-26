@@ -563,6 +563,11 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	if ms.ClientVLESS != nil {
 		spec.Firewall.PublicTCPPorts = append(spec.Firewall.PublicTCPPorts, ms.ClientVLESS.ListenPort)
 	}
+	// Client-facing AmneziaWG interface, when the agent owns it instead of wg-easy.
+	// It reuses the client-facing WGServer's obfuscation and MTU verbatim so the
+	// handover is invisible to already-configured clients; the listener's UDP port
+	// is already open via Firewall.WGPort above, which is the same port.
+	ms.ClientWG = b.clientWGSpec(ctx, master, spec.WGServer)
 
 	autoSuspend := b.throughputAutoSuspend(ctx)
 
