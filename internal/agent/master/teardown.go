@@ -22,6 +22,11 @@ func (masterTeardownPlanner) Component() string { return "master teardown" }
 
 func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]reconcile.Action, error) {
 	actions := []reconcile.Action{
+		// The client-facing interface first: it is the one carrying end users, and
+		// on a master that owns it (rather than wg-easy) nothing else takes it down.
+		// Best-effort — an unmanaged master has no such config and this is a no-op.
+		reconcile.BestEffortExecAction("bring the client interface down",
+			"awg-quick", "down", p.paths.ClientWGConf),
 		reconcile.BestEffortExecAction("bring the container stack down",
 			"docker", "compose", "-f", p.paths.Compose, "down"),
 		reconcile.BestEffortExecAction("remove master NAT table",
@@ -60,6 +65,12 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 		{p.paths.ClientVLESS, "client vless config (REALITY key + client UUIDs)"},
 		{p.paths.ClientVLESSYML, "client vless compose file"},
 		{p.paths.ClientVLESSKey, "client vless REALITY private key"},
+		// The client interface config holds the master's client-facing private key
+		// AND every issued client's preshared key; the key file holds that same
+		// identity. Both must die with the node for the same reason the vless key
+		// above does — a decommissioned VPS goes back to its provider.
+		{p.paths.ClientWGConf, "client interface config (interface key + client preshared keys)"},
+		{p.paths.ClientWGKey, "client-facing WireGuard private key"},
 	}
 	for _, w := range wipe {
 		if w.path == "" {

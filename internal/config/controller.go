@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,10 +66,10 @@ type ControllerSection struct {
 	// published load-balancer). When set it (a) becomes the default endpoint baked
 	// into each agent's config and (b) seeds an extra SAN on the server cert so the
 	// agent's TLS handshake validates the dialed host. Empty ⇒ Listen is used.
-	Advertise string         `koanf:"advertise"`
-	WebUI     string         `koanf:"webui"`     // Web UI bind (deferred on MVP; reserved)
-	Store     string         `koanf:"store"`     // path to the sqlite state db
-	Metrics   string         `koanf:"metrics"`   // Prometheus /metrics bind (mgmt addr only)
+	Advertise string `koanf:"advertise"`
+	WebUI     string `koanf:"webui"`   // Web UI bind (deferred on MVP; reserved)
+	Store     string `koanf:"store"`   // path to the sqlite state db
+	Metrics   string `koanf:"metrics"` // Prometheus /metrics bind (mgmt addr only)
 	// ClientPortal is the bind for the client self-service portal: one person, one
 	// credential, their own config and QR, and nothing else. Empty ⇒ no portal.
 	//
@@ -78,10 +79,10 @@ type ControllerSection struct {
 	// page would be a quiet and large escalation. Bind this where clients can reach
 	// it (typically the master's client-facing address) and keep WebUI on the
 	// management overlay.
-	ClientPortal string `koanf:"client_portal"`
-	AgentBin  string         `koanf:"agent_bin"` // wgfleet-agent binary installed during UI-triggered provisioning
-	PKI       PKISection     `koanf:"pki"`
-	Secrets   SecretsSection `koanf:"secrets"` // backing store for secret:// references
+	ClientPortal string         `koanf:"client_portal"`
+	AgentBin     string         `koanf:"agent_bin"` // wgfleet-agent binary installed during UI-triggered provisioning
+	PKI          PKISection     `koanf:"pki"`
+	Secrets      SecretsSection `koanf:"secrets"` // backing store for secret:// references
 	// StalenessAfter marks a Ready/Reconciling node Degraded when it has not
 	// reported status for this long (a silent/dead agent). 0 disables the sweep.
 	StalenessAfter time.Duration `koanf:"staleness_after"`
@@ -1020,6 +1021,17 @@ func (c ControllerConfig) Validate() error {
 		if err := requireMgmtBind("controller.webui", c.Controller.WebUI); err != nil {
 			errs = append(errs, err)
 		}
+		// The portal serves client private keys over plain HTTP. It belongs on the
+		// master's address INSIDE the client pool (or behind a local reverse proxy),
+		// never on a public one — and the documentation telling the operator to bind
+		// it "where clients can reach it" makes the public bind the natural mistake,
+		// so the same guard that protects the admin surfaces protects this one.
+		if err := requireMgmtBind("controller.client_portal", c.Controller.ClientPortal); err != nil {
+			errs = append(errs, err)
+		}
+		if err := requireListenAddr("controller.client_portal", c.Controller.ClientPortal); err != nil {
+			errs = append(errs, err)
+		}
 		if err := requireMgmtBind("controller.metrics", c.Controller.Metrics); err != nil {
 			errs = append(errs, err)
 		}
@@ -1282,6 +1294,31 @@ func RequireMgmtBind(field, listen string) error {
 		return nil
 	}
 	return requireMgmtBind(field, listen)
+}
+
+// requireListenAddr rejects a bind that will only fail later, in a background
+// goroutine, with the controller already serving and no portal. An empty value
+// means "disabled" and is fine.
+func requireListenAddr(field, listen string) error {
+	if listen == "" {
+		return nil
+	}
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return fmt.Errorf("%s %q is not a host:port address: %w", field, listen, err)
+	}
+	if port == "" {
+		return fmt.Errorf("%s %q has no port", field, listen)
+	}
+	if _, err := strconv.Atoi(port); err != nil {
+		return fmt.Errorf("%s %q has a non-numeric port %q", field, listen, port)
+	}
+	if host != "" {
+		if _, err := netip.ParseAddr(host); err != nil {
+			return fmt.Errorf("%s %q: %q is not an IP address", field, listen, host)
+		}
+	}
+	return nil
 }
 
 // requireMgmtBind rejects a listen address that is reachable from the public
