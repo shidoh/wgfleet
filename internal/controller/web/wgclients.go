@@ -35,11 +35,15 @@ type wgClientsData struct {
 	CSRF      string
 	NodeID    string
 	NodeName  string
-	Managed   bool   // the agent owns this master's client interface
-	Ready     bool   // endpoint + published key present, so configs can be built
-	Notice    string // why configs aren't ready yet (empty when Ready)
-	Endpoint  string // host:port clients dial
-	Pool      string
+	Managed   bool // the agent owns this master's client interface
+	Ready     bool // endpoint + published key present, so configs can be built
+	// WaitingForKey narrows Managed-but-not-Ready to the one case where waiting
+	// actually helps. Without it the issue panel tells an operator to wait for a
+	// reconcile pass that will never supply a public_ip.
+	WaitingForKey bool
+	Notice        string // why configs aren't ready yet (empty when Ready)
+	Endpoint      string // host:port clients dial
+	Pool          string
 	// PortalBase is the public base URL of the self-service portal, so each card
 	// can show the link the operator actually hands to a person. Empty ⇒ the portal
 	// is off or its URL is unset, and the link column is hidden rather than guessed.
@@ -111,6 +115,7 @@ func (h *Handler) handleWGClients(w http.ResponseWriter, r *http.Request) {
 		case host == "":
 			data.Notice = "No public endpoint known for this master yet (public_ip). Set it in the manifest or wait for provisioning."
 		case node.ClientWGPublicKey == "":
+			data.WaitingForKey = true
 			data.Notice = "The master has not published its client interface key yet — wait for the agent to reconcile once, then reload."
 		default:
 			data.Ready = true
@@ -356,7 +361,11 @@ func clientActionError(err error, name string) error {
 		return errors.New("master not registered — provision it first")
 	case errors.Is(err, domain.ErrPoolExhausted):
 		return errors.New("the client address pool is full — revoke an unused client, or widen client_awg.address_pool for this master")
-	case isUniqueViolation(err):
+	case isUniqueViolation(err, "address"):
+		// Reachable when an import runs alongside the UI: renaming would not help,
+		// so saying "pick a different name" would send the operator in circles.
+		return errors.New("that address is already taken on this master — another credential (or an import running now) holds it")
+	case isUniqueViolation(err, "name"):
 		// The single most likely mistake, and by default it surfaces as a raw
 		// SQLite constraint string.
 		return fmt.Errorf("a client named %q already exists on this master — pick a different name", name)
@@ -365,9 +374,14 @@ func clientActionError(err error, name string) error {
 	}
 }
 
-// isUniqueViolation recognises the store's duplicate-name/address refusal. The
-// driver reports it as a message rather than a typed error, so this matches on
-// the text it is documented to produce.
-func isUniqueViolation(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "unique constraint failed")
+// isUniqueViolation recognises the store's duplicate refusal for ONE column. The
+// driver reports it as a message rather than a typed error and names the column
+// it tripped, which is what lets a name collision and an address collision get
+// different advice — they need opposite actions.
+func isUniqueViolation(err error, column string) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unique constraint failed") && strings.Contains(msg, column)
 }

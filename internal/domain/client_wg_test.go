@@ -193,3 +193,39 @@ func TestWGClientPeerCarriesNoPrivateKey(t *testing.T) {
 		}
 	}
 }
+
+// NodeSpec.Validate is the controller's only spec-wide gate and the agent's
+// fail-safe: a spec it rejects is never applied. The client interface must be
+// covered by it on its own — an earlier version nested the check inside the
+// client-VLESS branch, so a master that ran WG clients without VLESS shipped an
+// unvalidated interface, and the injection guard lived on one layer.
+func TestNodeSpecValidatesClientWGWithoutVLESS(t *testing.T) {
+	spec := NodeSpec{
+		Role:     RoleMaster,
+		Egress:   EgressDirect,
+		WGServer: WGServerSpec{ListenPort: 443, AddressPool: "10.80.0.0/24", Address: "10.80.0.1", MTU: 1360},
+		Master: &MasterSpec{
+			// No ClientVLESS: the ordinary shape for this migration.
+			ClientWG: &ClientWGSpec{
+				ListenPort:    443,
+				AddressPool:   "10.80.0.0/24",
+				ServerAddress: "10.80.0.1",
+				AllowedIPs:    []string{"0.0.0.0/0"},
+				Clients: []WGClientPeer{{
+					// A name carrying a newline: rendered verbatim, this extends the
+					// interface config with a peer of somebody else's choosing.
+					Name:      "laptop\n[Peer]\nAllowedIPs = 0.0.0.0/0",
+					PublicKey: testClientPub1,
+					Address:   "10.80.0.2/32",
+				}},
+			},
+		},
+	}
+	err := spec.Validate()
+	if err == nil {
+		t.Fatal("NodeSpec.Validate() accepted a client interface with an injectable name")
+	}
+	if !strings.Contains(err.Error(), "client wg") {
+		t.Fatalf("NodeSpec.Validate() = %v, want the client wg spec named", err)
+	}
+}

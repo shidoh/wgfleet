@@ -1034,20 +1034,6 @@ func (c ControllerConfig) Validate() error {
 		if err := requireMgmtBind("controller.client_portal", c.Controller.ClientPortal); err != nil {
 			errs = append(errs, err)
 		}
-		if err := requireListenAddr("controller.client_portal", c.Controller.ClientPortal); err != nil {
-			errs = append(errs, err)
-		}
-		if u := c.Controller.ClientPortalURL; u != "" {
-			parsed, perr := url.Parse(u)
-			switch {
-			case perr != nil:
-				errs = append(errs, fmt.Errorf("controller.client_portal_url %q is not a URL: %w", u, perr))
-			case parsed.Scheme != "http" && parsed.Scheme != "https":
-				errs = append(errs, fmt.Errorf("controller.client_portal_url %q must start with http:// or https://", u))
-			case parsed.Host == "":
-				errs = append(errs, fmt.Errorf("controller.client_portal_url %q has no host", u))
-			}
-		}
 		if err := requireMgmtBind("controller.metrics", c.Controller.Metrics); err != nil {
 			errs = append(errs, err)
 		}
@@ -1129,6 +1115,11 @@ func (c ControllerConfig) Validate() error {
 			errs = append(errs, fmt.Errorf("fleet.masters[%d]: %w", i, err))
 		}
 	}
+	// The portal's own checks live OUTSIDE the public-bind escape hatch: a malformed
+	// bind and a link the operator cannot hand out are wrong however that flag is
+	// set, and WGFLEET_ALLOW_PUBLIC_BIND was introduced for the Web UI, not to
+	// authorise unauthenticated key downloads on 0.0.0.0.
+	errs = append(errs, validateClientPortal(c.Controller.ClientPortal, c.Controller.ClientPortalURL)...)
 	errs = append(errs, validateClientPoolsDisjoint(c.Fleet.Masters)...)
 	for i, e := range c.Fleet.Exits {
 		if e.Name == "" {

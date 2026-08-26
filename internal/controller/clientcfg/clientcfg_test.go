@@ -162,8 +162,10 @@ func TestEndpointHostFallback(t *testing.T) {
 	if got := EndpointHost(node, spec); got != "198.51.100.4" {
 		t.Errorf("EndpointHost() = %q, want the manifest's public IP", got)
 	}
+	// The SSH host is deliberately NOT a fallback: it is often the management
+	// overlay, and a client profile must never point end users there.
 	spec.Master.Compose.PublicIP = ""
-	if got := EndpointHost(node, spec); got != "192.0.2.9" {
-		t.Errorf("EndpointHost() = %q, want the SSH host", got)
+	if got := EndpointHost(node, spec); got != "" {
+		t.Errorf("EndpointHost() = %q, want empty — the SSH host must not reach a client config", got)
 	}
 }

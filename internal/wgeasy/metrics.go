@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 )
 
 // wg-easy stores its runtime settings in a single-row general_table (id=1,
@@ -18,7 +19,12 @@ import (
 // enabled. found is false (no error) when the general row does not exist yet
 // (wg-easy not set up), which callers treat as "pending" rather than a failure.
 func ReadMetricsPrometheus(ctx context.Context, dbPath string) (enabled, found bool, err error) {
-	db, err := open(dbPath)
+	db, err := openReadOnly(dbPath)
+	if errors.Is(err, os.ErrNotExist) {
+		// wg-easy is not set up here. Callers treat this as "pending", the same as an
+		// absent row, rather than as a failure.
+		return false, false, nil
+	}
 	if err != nil {
 		return false, false, err
 	}

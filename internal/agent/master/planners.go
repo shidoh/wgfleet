@@ -193,17 +193,13 @@ func (p composePlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]recon
 		return nil, err
 	}
 	actions := []reconcile.Action{file}
-	// A service dropped from the file is an ORPHAN to compose: it warns and leaves
-	// the container running. wg-easy is `restart: unless-stopped`, so removing it
-	// from the YAML does not retire it — it keeps holding wg0 and UDP 443, and
-	// after a reboot dockerd starts it again and it wins the race for the
-	// interface. Retiring it is therefore an explicit action, and best-effort so a
-	// master that never ran it (or already retired it) stays a clean no-op.
-	if handedOver(spec) {
-		actions = append(actions, reconcile.BestEffortExecAction(
-			"retire the wg-easy container (the agent owns the client interface)",
-			"docker", "rm", "-f", "wg-easy"))
-	}
+	// Dropping the service from the file does NOT retire the container — compose
+	// treats it as an orphan and leaves it running, and `restart: unless-stopped`
+	// brings it back after a reboot. The explicit removal lives in the client
+	// interface planner instead, which is the only component that knows whether the
+	// replacement is actually carrying traffic yet; retiring the fallback from here,
+	// on the strength of the manifest knob alone, would remove it in the very pass
+	// where our own interface failed to come up.
 	switch {
 	case file.Changes():
 		// Definition changed: `up -d` recreates only the services whose config moved.

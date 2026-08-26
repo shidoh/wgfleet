@@ -55,11 +55,11 @@ func clientPlanner(t *testing.T, up bool) clientWGPlanner {
 		t.Fatal(err)
 	}
 	return clientWGPlanner{
-		confPath:   filepath.Join(t.TempDir(), "wg0.conf"),
-		privateKey: kp.PrivateKey,
-		up:         func(string) bool { return up },
-		awgGen:     func() (int, error) { return 3, nil },
-		ifaceKey:   func(string) (string, error) { return wg.PublicKeyOf(kp.PrivateKey) },
+		confPath:         filepath.Join(t.TempDir(), "wg0.conf"),
+		privateKey:       kp.PrivateKey,
+		up:               func(string) bool { return up },
+		awgGen:           func() (int, error) { return 3, nil },
+		containerPresent: func(string) bool { return false },
 	}
 }
 
@@ -90,7 +90,7 @@ func TestClientWGPlannerRendersAndRaises(t *testing.T) {
 		t.Fatalf("Plan() error = %v", err)
 	}
 	got := summaries(actions)
-	if !strings.Contains(got, "up with the new config") {
+	if !strings.Contains(got, "bring the client interface up") {
 		t.Fatalf("plan does not raise the interface:\n%s", got)
 	}
 	// Applying the plan must produce a config the operator could run by hand.
@@ -125,7 +125,7 @@ func TestClientWGPlannerIdempotent(t *testing.T) {
 		t.Fatalf("second plan: %v", err)
 	}
 	got := summaries(second)
-	if strings.Contains(got, "up with the new config") {
+	if strings.Contains(got, "bring the client interface up") {
 		t.Fatalf("second pass re-applied an unchanged config:\n%s", got)
 	}
 	if !strings.Contains(got, "already up") {
@@ -142,7 +142,7 @@ func TestClientWGPlannerRaisesADownInterface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	if got := summaries(second); !strings.Contains(got, "was down") {
+	if got := summaries(second); !strings.Contains(got, "interface was down") {
 		t.Fatalf("a down interface was not raised:\n%s", got)
 	}
 }
@@ -291,22 +291,18 @@ func awg3Spec(t *testing.T) domain.NodeSpec {
 
 // --- interface ownership -------------------------------------------------
 //
-// "Is wg0 up" and "is wg0 OURS" are different questions, and the whole handover
-// turns on the second. wg-easy creates an interface by the same name, so a
-// planner that only checks existence will hand the client leg back to it and
-// report a converged pass.
+// The handover ADOPTS wg-easy's private key so client configs keep working, so
+// our public key and wg-easy's are the same value by design. Ownership therefore
+// cannot be answered by identity, and these tests pin the two mechanisms that
+// replace it: a claim file for "did we raise it", and a peer-set comparison for
+// "does the live interface serve what the spec says".
 
-// notOurs is a live interface carrying somebody else's key — what wg-easy's own
-// wg0 looks like to us.
-const notOurs = "b3RoZXItaW50ZXJmYWNlLWtleS0wMDAwMDAwMDAwMA="
-
-// TestClientWGPlannerReclaimsAForeignInterface: wg-easy came back after a reboot
-// and holds wg0. The config has not changed, so a naive planner sees "up" and
-// does nothing — leaving end users authenticating against wg-easy's peer list
-// while every dashboard reads healthy. We must take it and raise our own.
-func TestClientWGPlannerReclaimsAForeignInterface(t *testing.T) {
+// A wg-easy container that survived a reboot and recreated wg0 carries wg-easy's
+// peer list. The config has not changed and the interface is up, so a naive pass
+// reports converged while end users authenticate against the wrong peer set.
+func TestClientWGPlannerReclaimsAnInterfaceServingOtherPeers(t *testing.T) {
 	p := clientPlanner(t, true)
-	p.ifaceKey = func(string) (string, error) { return notOurs, nil }
+	p.ifacePeers = func(string) ([]string, error) { return []string{"c29tZWJvZHktZWxzZXMtcGVlci0wMDAwMDAwMDAw"}, nil }
 	spec := managedSpec(t)
 	applyPlan(t, p, spec)
 
@@ -316,113 +312,133 @@ func TestClientWGPlannerReclaimsAForeignInterface(t *testing.T) {
 	}
 	got := summaries(actions)
 	if strings.Contains(got, "already up") {
-		t.Fatalf("planner accepted an interface it does not own:\n%s", got)
+		t.Fatalf("planner accepted an interface serving somebody else's peers:\n%s", got)
 	}
-	if !strings.Contains(got, "up") {
-		t.Fatalf("planner did not reclaim the interface:\n%s", got)
+	if !strings.Contains(got, "live peers do not match") {
+		t.Fatalf("planner did not explain the takeover:\n%s", got)
 	}
 }
 
-// TestClientWGPlannerLeavesAForeignInterfaceAlone is the rollback case, and the
-// one that used to break: the operator clears the knob, wg-easy is restored and
-// creates wg0 — and we must NOT tear it down. Doing so leaves the client leg
-// down on every pass forever, because our config file deliberately stays on disk.
-func TestClientWGPlannerLeavesAForeignInterfaceAlone(t *testing.T) {
+// The steady state: the live peers ARE ours, so nothing happens.
+func TestClientWGPlannerConvergedWhenPeersMatch(t *testing.T) {
 	p := clientPlanner(t, true)
-	p.ifaceKey = func(string) (string, error) { return notOurs, nil }
+	spec := managedSpec(t)
+	want := spec.Master.ClientWG.Clients[0].PublicKey
+	p.ifacePeers = func(string) ([]string, error) { return []string{want}, nil }
+	applyPlan(t, p, spec)
 
+	actions, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if got := summaries(actions); !strings.Contains(got, "already up") {
+		t.Fatalf("a converged interface reported work:\n%s", got)
+	}
+}
+
+// Rollback: we raised the interface, so we release it — once. This is the case
+// that used to tear down wg-easy's interface on every pass forever.
+func TestClientWGPlannerReleasesItsClaimOnce(t *testing.T) {
+	p := clientPlanner(t, true)
+	applyPlan(t, p, managedSpec(t)) // claims the interface
+	unmanaged := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}}
+
+	first, err := p.Plan(context.Background(), unmanaged)
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if got := summaries(first); !strings.Contains(got, "bring ours down") {
+		t.Fatalf("planner did not release its own interface:\n%s", got)
+	}
+	// Apply the release, then look again: wg-easy now owns wg0 and we must not
+	// touch it a second time.
+	applyPlan(t, p, unmanaged)
+	second, err := p.Plan(context.Background(), unmanaged)
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	got := summaries(second)
+	if strings.Contains(got, "down") {
+		t.Fatalf("planner tore down wg-easy's interface after releasing its own:\n%s", got)
+	}
+	for _, a := range second {
+		if a.Changes() {
+			t.Fatalf("a released interface still reports drift: %s", a.Summary)
+		}
+	}
+}
+
+// A master that never had the knob on must stay entirely out of it, even though
+// its agent holds wg-easy's adopted key and an interface named wg0 is up.
+func TestClientWGPlannerNeverTouchesAnUnclaimedInterface(t *testing.T) {
+	p := clientPlanner(t, true)
 	actions, err := p.Plan(context.Background(), domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
 	got := summaries(actions)
 	if strings.Contains(got, "down") {
-		t.Fatalf("planner tore down an interface belonging to wg-easy:\n%s", got)
+		t.Fatalf("planner tore down an interface it never raised:\n%s", got)
 	}
 	for _, a := range actions {
 		if a.Changes() {
-			t.Fatalf("unmanaged pass reports drift on somebody else's interface: %s", a.Summary)
+			t.Fatalf("an unmanaged master reports drift every pass: %s", a.Summary)
 		}
 	}
 }
 
-// The unmanaged branch must still clean up OUR interface — that is what makes
-// the handover reversible.
-func TestClientWGPlannerLowersItsOwnInterfaceWhenHandedBack(t *testing.T) {
-	p := clientPlanner(t, true)
-	ours, err := wg.PublicKeyOf(p.privateKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	p.ifaceKey = func(string) (string, error) { return ours, nil }
-
-	actions, perr := p.Plan(context.Background(), domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}})
-	if perr != nil {
-		t.Fatalf("Plan() error = %v", perr)
-	}
-	if got := summaries(actions); !strings.Contains(got, "down") {
-		t.Fatalf("planner left its own interface up after the handover was reversed:\n%s", got)
-	}
-}
-
-// An unreadable interface (no awg tools, no interface) must not be assumed ours:
-// tearing down on a failed probe is the destructive direction.
-func TestClientWGPlannerDoesNotGuessOwnership(t *testing.T) {
-	p := clientPlanner(t, true)
-	p.ifaceKey = func(string) (string, error) { return "", errors.New("awg: no such interface") }
-
-	actions, err := p.Plan(context.Background(), domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}})
+// A failed bring-up must not abort the master's pass: this planner runs before
+// mihomo, the NAT rules and the resolver, and a client leg that will not come up
+// is not a reason to freeze all of them.
+func TestClientWGPlannerBringUpIsBestEffort(t *testing.T) {
+	p := clientPlanner(t, false)
+	actions, err := p.Plan(context.Background(), managedSpec(t))
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
-	if got := summaries(actions); strings.Contains(got, "down") {
-		t.Fatalf("planner tore down an interface it could not identify:\n%s", got)
+	var sawUp bool
+	for _, a := range actions {
+		if strings.Contains(a.Summary, "bring the client interface up") {
+			sawUp = true
+		}
+	}
+	if !sawUp {
+		t.Fatal("no bring-up action was planned")
+	}
+	// Run the whole plan through the engine: awg-quick does not exist here, so the
+	// bring-up fails. A hard action would abort and the report would carry the
+	// error; a best-effort one lets the pass finish, which is the property that
+	// keeps mihomo, the NAT rules and the resolver converging.
+	eng := reconcile.NewEngine(nil, p)
+	if _, err := eng.Reconcile(context.Background(), managedSpec(t), reconcile.ModeApply); err != nil {
+		t.Fatalf("a failing bring-up aborted the master's pass: %v", err)
 	}
 }
 
-// --- handover mechanics --------------------------------------------------
-
-// The compose planner must actively retire the wg-easy container once the agent
-// owns the client leg. Dropping the service from the YAML is not enough: compose
-// treats it as an orphan and leaves it running, `restart: unless-stopped` brings
-// it back after a reboot, and it then holds wg0 and UDP 443 against us.
-func TestComposePlannerRetiresWGEasyOnHandover(t *testing.T) {
-	dir := t.TempDir()
-	p := composePlanner{path: filepath.Join(dir, "docker-compose.yml"), up: func(string) bool { return true }}
-
-	spec := managedSpec(t)
-	spec.Master.Compose = domain.ComposeSpec{}
-	spec.Master.ExternalController = "10.20.0.1:9090"
-	spec.WGServer = domain.WGServerSpec{ListenPort: 443, AddressPool: "10.80.0.0/24"}
-
-	actions, err := p.Plan(context.Background(), spec)
+// The wg-easy container is retired only once we are carrying the leg, and only
+// while it is still there — otherwise every pass forever reports drift.
+func TestClientWGPlannerRetiresWGEasyOnlyWhenPresent(t *testing.T) {
+	p := clientPlanner(t, false)
+	p.containerPresent = func(string) bool { return true }
+	actions, err := p.Plan(context.Background(), managedSpec(t))
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
-	got := summaries(actions)
-	if !strings.Contains(got, "retire the wg-easy container") {
-		t.Fatalf("handed-over master does not retire wg-easy:\n%s", got)
+	if got := summaries(actions); !strings.Contains(got, "retire the wg-easy container") {
+		t.Fatalf("wg-easy is never retired:\n%s", got)
 	}
-}
 
-// While wg-easy still owns the leg, nothing may touch its container.
-func TestComposePlannerLeavesWGEasyAloneWhenUnmanaged(t *testing.T) {
-	dir := t.TempDir()
-	p := composePlanner{path: filepath.Join(dir, "docker-compose.yml"), up: func(string) bool { return true }}
-
-	spec := domain.NodeSpec{
-		Role:     domain.RoleMaster,
-		WGServer: domain.WGServerSpec{ListenPort: 443, AddressPool: "10.80.0.0/24"},
-		Master:   &domain.MasterSpec{ExternalController: "10.20.0.1:9090"},
-	}
-	actions, err := p.Plan(context.Background(), spec)
+	p.containerPresent = func(string) bool { return false }
+	actions, err = p.Plan(context.Background(), managedSpec(t))
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
 	if got := summaries(actions); strings.Contains(got, "retire") {
-		t.Fatalf("unmanaged master retires wg-easy:\n%s", got)
+		t.Fatalf("planner tries to retire a container that is already gone:\n%s", got)
 	}
 }
+
+// --- handover mechanics --------------------------------------------------
 
 // Planner ORDER is part of the contract, not an implementation detail: the
 // client interface must be released before compose restores wg-easy, or the

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/netip"
+	"net/url"
 
 	"github.com/shidoh/wgfleet/internal/domain"
 )
@@ -98,3 +99,57 @@ const (
 	minClientAWGMTU = 1280
 	maxClientAWGMTU = 1500
 )
+
+// validateClientPortal checks the client self-service portal's two knobs. They
+// are one deployment decision: a bind nobody can reach is useless, and a bind
+// with no published URL is a portal the operator has no link for — which is how
+// the whole surface ends up unreachable while looking configured.
+func validateClientPortal(bind, base string) []error {
+	var errs []error
+	if bind == "" {
+		if base != "" {
+			errs = append(errs, fmt.Errorf("controller.client_portal_url is set but controller.client_portal is not — nothing is listening at that URL"))
+		}
+		return errs
+	}
+	if err := requireListenAddr("controller.client_portal", bind); err != nil {
+		errs = append(errs, err)
+	}
+	if base == "" {
+		errs = append(errs, fmt.Errorf("controller.client_portal is bound but controller.client_portal_url is unset — "+
+			"the controller cannot derive the address clients type, so the Web UI has no link to hand out"))
+		return errs
+	}
+	u, err := url.Parse(base)
+	switch {
+	case err != nil:
+		errs = append(errs, fmt.Errorf("controller.client_portal_url %q is not a URL: %w", base, err))
+	case u.Scheme != "http" && u.Scheme != "https":
+		errs = append(errs, fmt.Errorf("controller.client_portal_url %q must start with http:// or https://", base))
+	case u.Host == "":
+		errs = append(errs, fmt.Errorf("controller.client_portal_url %q has no host", base))
+	case u.Scheme == "http" && !localHost(u.Hostname()):
+		// The portal serves WireGuard private keys. Plaintext is acceptable when the
+		// hop rides inside the client tunnel or a local proxy; to a routable host it
+		// is a key handed to whoever is on the path.
+		errs = append(errs, fmt.Errorf("controller.client_portal_url %q serves private keys over plain http to a routable host — "+
+			"use https, or publish the address clients reach through the tunnel", base))
+	}
+	return errs
+}
+
+// localHost reports whether a host is one the portal may serve plaintext to:
+// a loopback, RFC1918/ULA or link-local ADDRESS.
+//
+// A DNS name is deliberately NOT local here, unlike elsewhere in this file where
+// an unresolvable name is left to the operator's judgement. The asymmetry is the
+// point: this URL is handed to end users and returns a WireGuard private key, and
+// a name implies public DNS far more often than it implies a tunnel-local host.
+// An operator terminating TLS locally writes https, or 127.0.0.1.
+func localHost(host string) bool {
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	return addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast()
+}

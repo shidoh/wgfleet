@@ -42,3 +42,40 @@ func TestMasterTeardownRetiresTheClientInterface(t *testing.T) {
 		}
 	}
 }
+
+// The client-VLESS secrets (ADR-0031) must still be wiped: these assertions were
+// guarding that before this branch and were lost when the file was rewritten.
+func TestMasterTeardownWipesEveryNodeSecret(t *testing.T) {
+	paths := PathsUnder(t.TempDir())
+	var targets, summaries []string
+	for _, p := range TeardownPlanners(paths) {
+		actions, err := p.Plan(context.Background(), domain.NodeSpec{Role: domain.RoleMaster})
+		if err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		for _, a := range actions {
+			targets = append(targets, a.Target)
+			summaries = append(summaries, a.Summary)
+		}
+	}
+	joined := strings.Join(targets, "\n")
+	for _, secret := range []string{
+		paths.ClientVLESS,    // REALITY private key + every issued client UUID
+		paths.ClientVLESSKey, // the master's client-facing REALITY key
+		paths.WGEasyDB,       // wg-easy's client database, keys included
+		paths.ClientWGConf,   // interface key + every client preshared key
+		paths.ClientWGKey,
+		ClaimPathFor(paths.ClientWGConf),
+	} {
+		if !strings.Contains(joined, secret) {
+			t.Errorf("teardown leaves %s on a decommissioned host", secret)
+		}
+	}
+	// And the node's tables go with it.
+	all := strings.Join(summaries, "\n")
+	for _, want := range []string{"master NAT table", "input-firewall table", "container stack down"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("teardown no longer removes %q", want)
+		}
+	}
+}

@@ -175,8 +175,9 @@ func (h *Handler) handleQR(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) fail(w http.ResponseWriter, err error) {
 	status, heading, body := http.StatusNotFound,
 		"This link is no longer working",
-		"It may have been replaced or switched off. Your VPN app keeps using the profile it already has. "+
-			"Ask whoever sent you this link for a new one."
+		"Try again in a few minutes — it may just be a temporary problem on the server. "+
+			"If it still does not work, your profile may have been replaced or switched off; your VPN app keeps "+
+			"using the profile it already has, so ask whoever sent you this link for a new one."
 	if errors.Is(err, errTooManyAttempts) {
 		status, heading, body = http.StatusTooManyRequests,
 			"Too many tries",
@@ -241,9 +242,11 @@ details { margin-top:18px; font-size:14px; color:#8b98a9; }
 summary { cursor:pointer; }
 dt { color:#8b98a9; } dd { margin:0; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
 .actions { display:flex; gap:10px; flex-wrap:wrap; }
-a.btn { flex:1; text-align:center; padding:14px 16px; border-radius:9px; text-decoration:none;
+/* The primary action takes the full width so it stays visually dominant on a
+   narrow phone, where flex:1 would otherwise make both buttons equal. */
+a.btn { flex:1 1 140px; text-align:center; padding:14px 16px; border-radius:9px; text-decoration:none;
   border:1px solid #2b3646; color:#e6edf3; background:#1d2531; }
-a.btn.primary { background:#2f6feb; border-color:#2f6feb; }
+a.btn.primary { background:#2f6feb; border-color:#2f6feb; flex:1 1 100%; }
 .muted { margin:18px 0 0; padding:12px 14px; border-radius:9px;
   background:#2a1f14; border:1px solid #4a3a24; color:#e8c48a; font-size:14px; }
 </style></head>
@@ -259,7 +262,7 @@ a.btn.primary { background:#2f6feb; border-color:#2f6feb; }
 </ol>
 <div class="actions">
   <a class="btn primary" href="/c/{{.Token}}/config">Download profile</a>
-  <a class="btn" href="/c/{{.Token}}/qr">QR for another device</a>
+  <a class="btn" href="/c/{{.Token}}/qr" target="_blank" rel="noopener">QR for another device</a>
 </div>
 <details>
   <summary>Technical details</summary>

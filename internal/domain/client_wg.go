@@ -194,12 +194,12 @@ func validateClientPeer(i int, c WGClientPeer, pool netip.Prefix, server netip.A
 		seenName[c.Name] = struct{}{}
 	}
 
-	if !validWireGuardKey(c.PublicKey) {
+	if !ValidWireGuardKey(c.PublicKey) {
 		errs = append(errs, fmt.Errorf("client[%d] (%s): malformed public key", i, c.Name))
 	}
 	// A preshared key is optional, but a present one is rendered verbatim next to
 	// the public key and gets the same scrutiny.
-	if c.PresharedKey != "" && !validWireGuardKey(c.PresharedKey) {
+	if c.PresharedKey != "" && !ValidWireGuardKey(c.PresharedKey) {
 		errs = append(errs, fmt.Errorf("client[%d] (%s): malformed preshared key", i, c.Name))
 	}
 
@@ -261,10 +261,12 @@ func ValidClientName(name string) bool {
 	return true
 }
 
-// validWireGuardKey reports whether s is a base64-encoded 32-byte key. The domain
+// ValidWireGuardKey reports whether s is a base64-encoded 32-byte key. The domain
 // package cannot use internal/wg for this (that package imports domain), and the
 // check is small enough that duplicating it beats inverting the dependency.
-func validWireGuardKey(s string) bool {
+// Exported because the importer must apply the same rule to values it copies out
+// of wg-easy's database before they can reach a rendered config.
+func ValidWireGuardKey(s string) bool {
 	raw, err := base64.StdEncoding.DecodeString(s)
 	return err == nil && len(raw) == 32
 }

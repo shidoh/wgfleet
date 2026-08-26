@@ -170,15 +170,35 @@ func convert(c wgeasy.ImportedClient, pool netip.Prefix, serverAddr netip.Addr,
 	if c.PublicKey == "" || c.PrivateKey == "" {
 		return domain.WGClient{}, &Skip{Name: name, Reason: "NOT MIGRATED: wg-easy record is missing a key"}
 	}
+	// Keys are rendered verbatim into the interface config, exactly like the name,
+	// and a malformed one has a nastier failure mode than a bad name: the spec is
+	// refused on the node, the interface freezes on its last-good config, and every
+	// LATER revocation silently stops taking effect while the UI reports success.
+	// Catch it here, in the report the operator is already reading.
+	for _, k := range []struct{ what, value string }{
+		{"public key", c.PublicKey},
+		{"preshared key", c.PresharedKey},
+	} {
+		if k.value == "" {
+			continue // an absent preshared key is legitimate
+		}
+		if !domain.ValidWireGuardKey(k.value) {
+			return domain.WGClient{}, &Skip{Name: name,
+				Reason: fmt.Sprintf("NOT MIGRATED: the %s in wg-easy is not a valid WireGuard key — "+
+					"importing it would freeze this master's client interface", k.what)}
+		}
+	}
 
 	addr, err := parseClientAddr(c.Address)
 	if err != nil {
-		return domain.WGClient{}, &Skip{Name: name, Reason: fmt.Sprintf("unusable address %q: %v", c.Address, err)}
+		return domain.WGClient{}, &Skip{Name: name,
+			Reason: fmt.Sprintf("NOT MIGRATED: unusable address %q (%v) — this client's tunnel will stop working at cutover", c.Address, err)}
 	}
 	switch {
 	case !pool.Contains(addr):
 		return domain.WGClient{}, &Skip{Name: name,
-			Reason: fmt.Sprintf("address %s is outside the configured pool %s", addr, pool)}
+			Reason: fmt.Sprintf("NOT MIGRATED: address %s is outside the configured pool %s — if this is the whole "+
+				"list, client_awg.address_pool does not match what wg-easy hands out; fix the manifest before cutting over", addr, pool)}
 	case serverAddr.IsValid() && addr == serverAddr:
 		return domain.WGClient{}, &Skip{Name: name,
 			Reason: fmt.Sprintf("address %s is the master's own address", addr)}
@@ -242,8 +262,16 @@ func (r Report) Render(applied bool) string {
 			fmt.Fprintf(&b, "  - %-24s %s\n", s.Name, s.Reason)
 		}
 	}
-	if len(r.Imported) == 0 {
-		b.WriteString("nothing left to import: every wg-easy client is already accounted for.\n")
+	switch {
+	case len(r.Imported) > 0:
+	case len(r.Skipped) > 0:
+		// Everything was refused. This is the verdict line, so it must not read as
+		// completion: the operator's next step after a clean import is to hand the
+		// interface over, and doing that now would cut off every client above.
+		b.WriteString("\nNOTHING WAS MIGRATED — every client was skipped. Do NOT hand the interface " +
+			"over yet: at cutover these clients would stop working. Fix the reasons above and re-run.\n")
+	default:
+		b.WriteString("nothing to import: the wg-easy database holds no clients.\n")
 	}
 	return b.String()
 }

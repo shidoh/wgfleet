@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -61,7 +62,9 @@ func DefaultMasterProbes(spec domain.NodeSpec) MasterProbes {
 		// interface). It is an AmneziaWG device, so `ip link show` sees it even
 		// though vanilla `wg show` would not.
 		WGServerUp: ifaceUpProbe(wgeasy.DefaultInterface),
-		MihomoAPI:  mihomoAPIProbe(controller, secret),
+		// Set by the caller, which knows where the agent records its claim.
+		ClientWGOwned: nil,
+		MihomoAPI:     mihomoAPIProbe(controller, secret),
 		// Master-tier blocky binds the mgmt address too, so the on-host probe queries
 		// it the same way the exit does (ADR-0024). MasterChecks omits the check unless
 		// spec.DNS is enabled, so this is nil-safe for a master without a resolver.
@@ -353,4 +356,24 @@ func parseClientPeers(out string) []domain.ClientPeerStatus {
 		peers = append(peers, p)
 	}
 	return peers
+}
+
+// ClientWGOwnedProbe reports whether the agent is actually carrying the client
+// interface: the interface exists AND the agent recorded raising it.
+//
+// The claim file is what distinguishes us from wg-easy, whose interface has the
+// same name and — after the handover adopts its key — the same public key. It is
+// also absent through every deferral the interface planner can report, which is
+// the point: those are exactly the states that must not read as healthy.
+func ClientWGOwnedProbe(claimPath, iface string) Probe {
+	return func(ctx context.Context) Result {
+		start := now()
+		if _, err := os.Stat(claimPath); err != nil {
+			return fail("the agent has not raised the client interface (no claim at " + claimPath + ")")
+		}
+		if _, err := runCmd(ctx, "ip", "link", "show", iface); err != nil {
+			return fail(iface + " is claimed by this agent but not up")
+		}
+		return ok("client interface carried by the agent", since(start))
+	}
 }

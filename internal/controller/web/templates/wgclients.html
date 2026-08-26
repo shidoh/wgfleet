@@ -13,8 +13,10 @@
   <div class="panel-label">ISSUE CLIENT</div>
   {{if .Ready}}
   <p class="dim">Endpoint <span class="strong">{{.Endpoint}}</span> · pool <span class="mono">{{.Pool}}</span>. A new client gets the next free address, its own keypair and a preshared key; download the config or scan the QR to import it.</p>
-  {{else if .Managed}}
+  {{else if .WaitingForKey}}
   <p class="dim">You can issue credentials now — configs become downloadable once the master publishes its interface key, which takes one reconcile pass.</p>
+  {{else if .Managed}}
+  <p class="dim">You can issue credentials now — configs become downloadable once the master is ready (see above).</p>
   {{else}}
   <p class="dim">Credentials issued now are stored but do nothing yet: wg-easy still owns this interface. They take effect after you set <code>client_awg.managed: true</code> for this master and the agent reconciles.</p>
   {{end}}
@@ -27,8 +29,16 @@
   </form>
 </div>
 
-<div class="panel">
-  <div class="panel-label">ISSUED CREDENTIALS · {{len .Clients}}</div>
+{{/* The handshake ages and the "online" badge below only mean anything as of NOW,
+     so the panel refreshes itself like every other live surface in the UI. It
+     re-fetches this page and swaps in just this panel; visibilityState keeps a
+     backgrounded tab from polling. */}}
+<div class="panel panel-credentials"
+     hx-get="/nodes/{{.NodeID}}/wg-clients" hx-select=".panel-credentials"
+     hx-target="this" hx-swap="outerHTML"
+     hx-trigger="every 10s [document.visibilityState=='visible']">
+  <div class="panel-label">ISSUED CREDENTIALS · {{len .Clients}}
+    <span class="live" title="Auto-refreshing every 10s">LIVE</span></div>
   {{if not .Clients}}
   <p class="dim">No clients issued yet.</p>
   {{else}}
@@ -60,8 +70,11 @@
 
       {{if $.PortalBase}}
       <div class="field-label">CLIENT LINK · send this to the person</div>
-      <input class="input mono" type="text" readonly value="{{$.PortalBase}}/c/{{.ID}}"
-             onclick="this.select()" aria-label="self-service link for {{.Name}}">
+      <div class="cfg-main">
+        <input class="input mono" type="text" readonly value="{{$.PortalBase}}/c/{{.ID}}"
+               onclick="this.select()"
+               aria-label="client link for {{.Name}} — send this to the person">
+      </div>
       {{end}}
 
       <div class="cfg-actions">
@@ -84,9 +97,11 @@
         {{end}}
         <form class="cfg-actions" method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/rename" onsubmit="return lockAction(this)">
           <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-          <input class="input" type="text" name="name" value="{{.Name}}" required
-                 pattern="[A-Za-z0-9._-]{1,64}" title="letters, digits, '-', '_' or '.' (max 64)"
-                 aria-label="rename {{.Name}}">
+          <div class="cfg-main">
+            <input class="input" type="text" name="name" value="{{.Name}}" required
+                   pattern="[A-Za-z0-9._-]{1,64}" title="letters, digits, '-', '_' or '.' (max 64)"
+                   aria-label="new name for {{.Name}}">
+          </div>
           <button class="btn" type="submit" data-pending="Renaming…" aria-label="Rename {{.Name}}">Rename</button>
         </form>
       </div>

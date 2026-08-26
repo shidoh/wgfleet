@@ -292,3 +292,35 @@ func TestWGClientIssueReportsAFullPool(t *testing.T) {
 		}
 	}
 }
+
+// The page shows handshake ages and an "online" badge, which mean nothing on a
+// frozen page: a stale green badge reads as "connected" minutes after the person
+// dropped. It must refresh itself like every other live surface in the UI.
+func TestWGClientsPageRefreshesItself(t *testing.T) {
+	clients := []domain.WGClient{{ID: "a", Name: "laptop", Address: "10.80.0.2/32", PublicKey: "pub-a", Enabled: true}}
+	h, _ := wgClientHandler(t, managedMasterSpec(), &clients)
+
+	_, body := get(t, h, "/nodes/master-xa-1/wg-clients")
+	if !strings.Contains(body, "hx-trigger=") {
+		t.Fatalf("the credentials panel never refreshes:\n%s", body)
+	}
+	if !strings.Contains(body, "visibilityState") {
+		t.Error("a backgrounded tab would keep polling")
+	}
+}
+
+// An address collision needs the opposite advice from a name collision:
+// renaming does not free an address.
+func TestClientActionErrorTellsCollisionsApart(t *testing.T) {
+	nameErr := clientActionError(errors.New("add wg client: constraint failed: UNIQUE constraint failed: client_wg_credentials.name (2067)"), "laptop")
+	if !strings.Contains(nameErr.Error(), "pick a different name") {
+		t.Errorf("name collision = %q", nameErr)
+	}
+	addrErr := clientActionError(errors.New("add wg client: constraint failed: UNIQUE constraint failed: client_wg_credentials.address (2067)"), "laptop")
+	if strings.Contains(addrErr.Error(), "pick a different name") {
+		t.Errorf("an address collision was blamed on the name: %q", addrErr)
+	}
+	if !strings.Contains(addrErr.Error(), "address is already taken") {
+		t.Errorf("address collision = %q", addrErr)
+	}
+}

@@ -71,6 +71,7 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 		// above does — a decommissioned VPS goes back to its provider.
 		{p.paths.ClientWGConf, "client interface config (interface key + client preshared keys)"},
 		{p.paths.ClientWGKey, "client-facing WireGuard private key"},
+		{ClaimPathFor(p.paths.ClientWGConf), "client interface claim"},
 	}
 	for _, w := range wipe {
 		if w.path == "" {

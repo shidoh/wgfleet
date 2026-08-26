@@ -104,7 +104,14 @@ func FindByID(ctx context.Context, src Source, masters []string, clientID string
 }
 
 // EndpointHost resolves the address clients dial: the node's registered public
-// IP, falling back to the SSH host the manifest provisioned it through.
+// IP, else the one the manifest declares.
+//
+// It deliberately does NOT fall back to the SSH host. That address is often the
+// management overlay (the documented workaround when direct SSH is black-holed),
+// and shipping it in a client profile would send end users at an overlay address.
+// It also has to agree with the operator page's own readiness check, which uses
+// the same two sources — a third fallback here meant the page said "no endpoint"
+// while the download quietly produced one.
 func EndpointHost(node domain.Node, spec domain.NodeSpec) string {
 	if node.PublicIP != "" {
 		return node.PublicIP
@@ -112,7 +119,7 @@ func EndpointHost(node domain.Node, spec domain.NodeSpec) string {
 	if spec.Master != nil && spec.Master.Compose.PublicIP != "" {
 		return spec.Master.Compose.PublicIP
 	}
-	return node.SSH.Host
+	return ""
 }
 
 // ConfigFileName is the filename a downloaded config is offered under.

@@ -101,7 +101,12 @@ func RenderUpdateSQL(name string, c InterfaceColumns) string {
 // (with no error) when the interface row does not exist yet; callers treat that
 // as "wg-easy not set up yet" rather than a failure.
 func ReadInterface(ctx context.Context, dbPath, name string) (cols InterfaceColumns, found bool, err error) {
-	db, err := open(dbPath)
+	db, err := openReadOnly(dbPath)
+	if errors.Is(err, os.ErrNotExist) {
+		// wg-easy is not set up here. Callers treat this as "pending", the same as an
+		// absent row, rather than as a failure.
+		return InterfaceColumns{}, false, nil
+	}
 	if err != nil {
 		return InterfaceColumns{}, false, err
 	}

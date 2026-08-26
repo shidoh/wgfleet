@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -54,9 +55,13 @@ func Open(path string) (*SQLiteStore, error) {
 	// applied to the controller's own state. Repaired on EVERY open, not just at
 	// creation: a restore from a tarball or a hand-edit would otherwise leave the
 	// invariant true exactly once.
+	// A repair failure must not stop the controller starting: the store may live on
+	// a filesystem that cannot chmod, or be owned by another uid after a restore.
+	// Refusing to run would turn a mode problem into an outage of the whole control
+	// plane, which is the worse trade — so log loudly and carry on.
 	if err := restrictStoreMode(path); err != nil {
-		_ = db.Close()
-		return nil, err
+		slog.Warn("controller store permissions could not be restricted; it holds client private keys",
+			"path", path, "err", err)
 	}
 	return s, nil
 }

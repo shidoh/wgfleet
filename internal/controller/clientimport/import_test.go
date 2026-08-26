@@ -71,8 +71,8 @@ func TestApplyPreservesKeysAndAddresses(t *testing.T) {
 	ctx := context.Background()
 	st := testStore(t)
 	path := wgEasyDB(t,
-		`'laptop','10.8.0.2','pub-laptop','priv-laptop','psk-laptop',1,'2026-07-01T09:30:00Z'`,
-		`'phone','10.8.0.3','pub-phone','priv-phone','',0,''`,
+		`'laptop','10.8.0.2','g8hWumES6TwTooNhDC6gtyfK8KgYaqyDrd56qBkg598=','xdpwg7BbhRjWuLK7fiLiYoT7hrhEzcxBjpNVquNmK/w=','R9VA+eJqpkXJkoyErO/lhFKJzOuNgDoJMt9JluYojig=',1,'2026-07-01T09:30:00Z'`,
+		`'phone','10.8.0.3','PpGH1Knvq9cYUeXTMu6b+DcE2X+SaIyNAFXJrTLw8x0=','hNIbs3p3aT0Bpi9Hfm7rHQG69ahKlfIXNahvN05AnC0=','',0,''`,
 	)
 
 	report, err := Apply(ctx, st, testInput(path))
@@ -91,13 +91,13 @@ func TestApplyPreservesKeysAndAddresses(t *testing.T) {
 		t.Fatalf("store holds %d credentials, want 2", len(stored))
 	}
 	laptop := stored[0]
-	if laptop.Name != "laptop" || laptop.PublicKey != "pub-laptop" || laptop.PrivateKey != "priv-laptop" {
+	if laptop.Name != "laptop" || laptop.PublicKey != "g8hWumES6TwTooNhDC6gtyfK8KgYaqyDrd56qBkg598=" || laptop.PrivateKey != "xdpwg7BbhRjWuLK7fiLiYoT7hrhEzcxBjpNVquNmK/w=" {
 		t.Fatalf("laptop keys did not survive: %+v", laptop)
 	}
 	if laptop.Address != "10.8.0.2/32" {
 		t.Fatalf("laptop address = %q, want the wg-easy address with a /32", laptop.Address)
 	}
-	if laptop.PresharedKey != "psk-laptop" {
+	if laptop.PresharedKey != "R9VA+eJqpkXJkoyErO/lhFKJzOuNgDoJMt9JluYojig=" {
 		t.Errorf("laptop lost its preshared key")
 	}
 	if laptop.CreatedAt.Year() != 2026 || laptop.CreatedAt.Month() != time.July {
@@ -118,7 +118,7 @@ func TestApplyPreservesKeysAndAddresses(t *testing.T) {
 func TestPlanWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	st := testStore(t)
-	path := wgEasyDB(t, `'laptop','10.8.0.2','pub','priv','',1,''`)
+	path := wgEasyDB(t, `'laptop','10.8.0.2','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`)
 
 	report, err := Plan(ctx, st, testInput(path))
 	if err != nil {
@@ -138,7 +138,7 @@ func TestPlanWritesNothing(t *testing.T) {
 func TestApplyIsRepeatable(t *testing.T) {
 	ctx := context.Background()
 	st := testStore(t)
-	path := wgEasyDB(t, `'laptop','10.8.0.2','pub','priv','',1,''`)
+	path := wgEasyDB(t, `'laptop','10.8.0.2','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`)
 
 	if _, err := Apply(ctx, st, testInput(path)); err != nil {
 		t.Fatalf("first apply: %v", err)
@@ -163,12 +163,12 @@ func TestPlanRefusesUnusableRecords(t *testing.T) {
 	ctx := context.Background()
 	st := testStore(t)
 	path := wgEasyDB(t,
-		`'good','10.8.0.2','pub','priv','',1,''`,
-		`'','10.8.0.4','pub','priv','',1,''`,         // no name
-		`'nokey','10.8.0.5','pub','','',1,''`,        // no private key
-		`'outside','10.9.0.9','pub','priv','',1,''`,  // outside the pool
-		`'gateway','10.8.0.1','pub','priv','',1,''`,  // the master's own address
-		`'garbage','not-an-ip','pub','priv','',1,''`, // unparseable
+		`'good','10.8.0.2','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`,
+		`'','10.8.0.4','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`,         // no name
+		`'nokey','10.8.0.5','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','','',1,''`,                                                // no private key
+		`'outside','10.9.0.9','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`,  // outside the pool
+		`'gateway','10.8.0.1','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`,  // the master's own address
+		`'garbage','not-an-ip','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`, // unparseable
 	)
 
 	report, err := Plan(ctx, st, testInput(path))
@@ -195,8 +195,8 @@ func TestPlanRefusesUnusableRecords(t *testing.T) {
 func TestPlanRefusesDuplicateAddresses(t *testing.T) {
 	st := testStore(t)
 	path := wgEasyDB(t,
-		`'first','10.8.0.2','pub-a','priv-a','',1,''`,
-		`'second','10.8.0.2','pub-b','priv-b','',1,''`,
+		`'first','10.8.0.2','/Qv6EPhS59DGIW3cNs2e5ovW1s2IpvQMyW+ST7b3efA=','TNfU+jfTQVEw7JaBIwRMx7NcrCG98YtbTl8Sml1Y/D4=','',1,''`,
+		`'second','10.8.0.2','oZDqpr+FHk9huaRL69Q3OmTND8ay6nQI/so+KJ05BRM=','/z4abiHaqtFoqRWAIGzW65kAujpP0HtvBDCHFQxnOJ4=','',1,''`,
 	)
 	report, err := Plan(context.Background(), st, testInput(path))
 	if err != nil {
@@ -212,7 +212,7 @@ func TestPlanRefusesDuplicateAddresses(t *testing.T) {
 
 func TestPlanRequiresAPool(t *testing.T) {
 	st := testStore(t)
-	in := testInput(wgEasyDB(t, `'laptop','10.8.0.2','pub','priv','',1,''`))
+	in := testInput(wgEasyDB(t, `'laptop','10.8.0.2','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`))
 	in.Pool = ""
 	if _, err := Plan(context.Background(), st, in); err == nil {
 		t.Fatal("Plan() without a pool = nil error, want a refusal")
@@ -239,9 +239,9 @@ func TestPlanReportsAnAbsentDatabase(t *testing.T) {
 func TestApplyStopsAtTheFirstWriteFailure(t *testing.T) {
 	st := failingStore{Store: testStore(t), failOn: "phone"}
 	path := wgEasyDB(t,
-		`'laptop','10.8.0.2','pub-a','priv-a','',1,''`,
-		`'phone','10.8.0.3','pub-b','priv-b','',1,''`,
-		`'tablet','10.8.0.4','pub-c','priv-c','',1,''`,
+		`'laptop','10.8.0.2','/Qv6EPhS59DGIW3cNs2e5ovW1s2IpvQMyW+ST7b3efA=','TNfU+jfTQVEw7JaBIwRMx7NcrCG98YtbTl8Sml1Y/D4=','',1,''`,
+		`'phone','10.8.0.3','oZDqpr+FHk9huaRL69Q3OmTND8ay6nQI/so+KJ05BRM=','/z4abiHaqtFoqRWAIGzW65kAujpP0HtvBDCHFQxnOJ4=','',1,''`,
+		`'tablet','10.8.0.4','IOwUIWXo8tCzGeQcd3iYEZIFjc7SVq25oPcFhmK7vGI=','o7/dcnzurl7JSM+tr5FOQToDNG3QX8ebOPskUay/zMg=','',1,''`,
 	)
 	_, err := Apply(context.Background(), st, testInput(path))
 	if err == nil {
@@ -304,8 +304,8 @@ func ExampleReport_Render() {
 func TestPlanRefusesAnUnsafeName(t *testing.T) {
 	st := testStore(t)
 	path := wgEasyDB(t,
-		`'laptop' || char(10) || '[Peer]' || char(10) || 'AllowedIPs = 0.0.0.0/0','10.8.0.2','pub','priv','',1,''`,
-		`'good','10.8.0.3','pub2','priv2','',1,''`,
+		`'laptop' || char(10) || '[Peer]' || char(10) || 'AllowedIPs = 0.0.0.0/0','10.8.0.2','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`,
+		`'good','10.8.0.3','4q75rTtxEcqf6l/TEYsh4zBzAKNaszVYMIvex0JzwPo=','dd78jznTaWlTnUp/FoaUzEoCxIL+irFGNiVMzcKfG6E=','',1,''`,
 	)
 	report, err := Plan(context.Background(), st, testInput(path))
 	if err != nil {
@@ -323,5 +323,75 @@ func TestPlanRefusesAnUnsafeName(t *testing.T) {
 	// The refusal itself must not smuggle the newline into the report.
 	if strings.Contains(report.Skipped[0].Name, "\n") {
 		t.Fatalf("the report reproduced the injected newline: %q", report.Skipped[0].Name)
+	}
+}
+
+// The footer is the line an operator reads as the verdict. When everything was
+// skipped — the realistic shape of a pool mismatch, where the manifest's
+// address_pool does not match what wg-easy hands out — the verdict is "STOP,
+// nothing migrated", and saying "everything is accounted for" would send the
+// operator on to cut over and disconnect every one of these people.
+func TestRenderDoesNotCallAFailedImportComplete(t *testing.T) {
+	r := Report{
+		Master: "m1", Source: "/etc/wireguard/wg-easy.db", Found: 3,
+		Skipped: []Skip{
+			{Name: "alice", Reason: "NOT MIGRATED: address 10.9.0.4 is outside the configured pool 10.8.0.0/24"},
+			{Name: "bob", Reason: "NOT MIGRATED: address 10.9.0.5 is outside the configured pool 10.8.0.0/24"},
+			{Name: "carol", Reason: "NOT MIGRATED: address 10.9.0.6 is outside the configured pool 10.8.0.0/24"},
+		},
+	}
+	out := r.Render(false)
+	if strings.Contains(out, "already accounted for") {
+		t.Fatalf("a report where NOTHING migrated reads as complete:\n%s", out)
+	}
+	if !strings.Contains(out, "NOTHING WAS MIGRATED") {
+		t.Fatalf("report does not warn that the import achieved nothing:\n%s", out)
+	}
+}
+
+// A genuine second run — everything already imported, nothing skipped for a bad
+// reason — should say so plainly rather than look like a failure.
+func TestRenderReportsAnAlreadyCompleteImport(t *testing.T) {
+	r := Report{
+		Master: "m1", Source: "/etc/wireguard/wg-easy.db", Found: 1,
+		Skipped: []Skip{{Name: "alice", Reason: "NOT MIGRATED: a different credential already uses this name in the store. This client's wg-easy tunnel will stop working at cutover — rename or remove one of them"}},
+	}
+	if out := r.Render(false); !strings.Contains(out, "NOTHING WAS MIGRATED") {
+		t.Fatalf("a run that migrated nothing must say so:\n%s", out)
+	}
+
+	done := Report{Master: "m1", Source: "/etc/wireguard/wg-easy.db", Found: 0}
+	if out := done.Render(false); !strings.Contains(out, "nothing to import") {
+		t.Fatalf("an empty source should read as done:\n%s", out)
+	}
+}
+
+// A malformed key in wg-easy must be refused at import, where the operator is
+// reading a report. Carried through, it would pass the store, fail validation on
+// the node, and freeze the client interface on its last-good config — at which
+// point every later revocation silently stops taking effect while the UI reports
+// success. That is a security failure, not a cosmetic one.
+func TestPlanRefusesMalformedKeys(t *testing.T) {
+	st := testStore(t)
+	good := "Z29vZC1wdWJsaWMta2V5LTAwMDAwMDAwMDAwMDAwMDA="
+	path := wgEasyDB(t,
+		`'badpub','10.8.0.2','not-a-key','`+good+`','',1,''`,
+		`'badpsk','10.8.0.3','`+good+`','`+good+`','also-not-a-key',1,''`,
+		`'fine','10.8.0.4','`+good+`','`+good+`','',1,''`,
+	)
+	report, err := Plan(context.Background(), st, testInput(path))
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(report.Imported) != 1 || report.Imported[0].Name != "fine" {
+		t.Fatalf("imported = %+v, want only the well-formed record", report.Imported)
+	}
+	if len(report.Skipped) != 2 {
+		t.Fatalf("skipped = %+v, want both malformed records", report.Skipped)
+	}
+	for _, s := range report.Skipped {
+		if !strings.Contains(s.Reason, "not a valid WireGuard key") {
+			t.Errorf("skip of %q = %q", s.Name, s.Reason)
+		}
 	}
 }

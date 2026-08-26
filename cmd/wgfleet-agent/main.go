@@ -683,7 +683,13 @@ func specFingerprint(spec domain.NodeSpec) string {
 // healthChecks builds the role-appropriate self-check set from the spec.
 func (a *agent) healthChecks(spec domain.NodeSpec) []health.Check {
 	if a.role == domain.RoleMaster {
-		return health.MasterChecks(spec, health.DefaultMasterProbes(spec))
+		probes := health.DefaultMasterProbes(spec)
+		// Only the agent knows where it records its claim on the client interface,
+		// so the probe is wired here rather than derived from the spec.
+		mp := a.masterPaths()
+		probes.ClientWGOwned = health.ClientWGOwnedProbe(
+			master.ClaimPathFor(mp.ClientWGConf), clientIfaceName(mp.ClientWGConf))
+		return health.MasterChecks(spec, probes)
 	}
 	return health.ExitChecks(spec, health.DefaultExitProbes(spec))
 }
