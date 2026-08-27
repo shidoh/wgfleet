@@ -404,3 +404,24 @@ func TestClientLegAWG3IsSharedWithTheClientConfig(t *testing.T) {
 		t.Fatal("the client config would carry no header-protection key")
 	}
 }
+
+// The knob is resolved in the controller and travels on the spec, because the
+// config builder the UI and the portal share sees only the spec — it has no
+// access to the manifest. A knob that stops here renders configs with the
+// default and nobody notices until someone reads a generated file.
+func TestClientKeepaliveReachesTheSpec(t *testing.T) {
+	f := managedFleet()
+	f.Masters[0].ClientAWG.Keepalive = "15-25"
+	b, st := newBrokerWithFleet(t, f)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1",
+		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	setWireVersion(t, st, "master-xa-1", api.WireClientWG)
+
+	spec, err := b.RenderNodeSpec(context.Background(), "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if got := spec.Master.ClientWG.Keepalive; got != "15-25" {
+		t.Fatalf("client keepalive on the spec = %q, want %q", got, "15-25")
+	}
+}
