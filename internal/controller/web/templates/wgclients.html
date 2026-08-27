@@ -5,109 +5,210 @@
 </div>
 {{if .Flash}}<p class="error-note" role="alert">⚠ {{.Flash}}</p>{{end}}
 
-{{if .Notice}}
-<div class="panel"><p class="dim">{{.Notice}}</p></div>
-{{end}}
+{{/* Three terminal states, told apart on purpose. Err is a FAILURE (red alert,
+     the treatment this console reserves for real breakage). NotMaster is a dead
+     end — nothing broke, the page just does not apply here — so it gets the
+     empty-state treatment and a way onward. Everything else renders the page. */}}
+{{if .Err}}
+<div class="panel"><p class="error-note" role="alert">⚠ {{.Err}}</p></div>
+{{else if .NotMaster}}
+<div class="empty">
+  <p>{{.NodeName}} is not a master, so it has no client interface.<br>WireGuard clients are issued on the master.</p>
+  <a class="section-link" href="/nodes/{{.NodeID}}">back to {{.NodeName}}</a>
+</div>
+{{else}}
 
-<div class="panel">
-  <div class="panel-label">ISSUE CLIENT</div>
-  {{if .Ready}}
-  <p class="dim">Endpoint <span class="strong">{{.Endpoint}}</span> · pool <span class="mono">{{.Pool}}</span>. A new client gets the next free address, its own keypair and a preshared key; download the config or scan the QR to import it.</p>
-  {{else if .WaitingForKey}}
-  <p class="dim">You can issue credentials now — configs become downloadable once the master publishes its interface key, which takes one reconcile pass.</p>
-  {{else if .Managed}}
-  <p class="dim">You can issue credentials now — configs become downloadable once the master is ready (see above).</p>
-  {{else}}
-  <p class="dim">Credentials issued now are stored but do nothing yet: wg-easy still owns this interface. They take effect after you set <code>client_awg.managed: true</code> for this master and the agent reconciles.</p>
-  {{end}}
-  <form class="auth-form" method="post" action="/nodes/{{.NodeID}}/wg-clients/issue" onsubmit="return lockAction(this)">
-    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-    <label class="field"><span class="field-label">Client name</span>
-      <input class="input" type="text" name="name" placeholder="alice-iphone" required
-             pattern="[A-Za-z0-9._-]{1,64}" title="letters, digits, '-', '_' or '.' (max 64)"></label>
-    <button class="btn go" type="submit" data-pending="Issuing…">Issue client</button>
-  </form>
+<div class="panels cols-2 panels-top">
+  <div class="panel">
+    <h2 class="panel-label">ISSUE CLIENT</h2>
+    {{if .Ready}}
+    <p class="dim">Endpoint <span class="strong">{{.Endpoint}}</span>. A new client gets the next free address, its own keypair and a preshared key.</p>
+    {{else if .Notice}}
+    {{/* Notice carries the specific fix (which manifest key, what to wait for);
+         a generic "not ready yet" here would throw that away. */}}
+    <p class="dim">You can issue clients now. {{.Notice}}</p>
+    {{else}}
+    <p class="dim">You can issue clients now — they start working after the handover.</p>
+    {{end}}
+    <form class="issue-form" method="post" action="/nodes/{{.NodeID}}/wg-clients/issue" onsubmit="return lockAction(this)">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <label class="field"><span class="field-label">Client name</span>
+        <input class="input" type="text" name="name" placeholder="alice-iphone" required
+               pattern="[A-Za-z0-9._-]{1,64}" title="letters, digits, '-', '_' or '.' (max 64)"></label>
+      <button class="btn go" type="submit" data-pending="Issuing…">Issue client</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2 class="panel-label">CLIENT INTERFACE</h2>
+    {{if .Iface}}
+    <p class="dim">What every generated config inherits.</p>
+    <dl class="kv">
+      <dt>Pool</dt><dd class="mono">{{.Iface.Pool}}</dd>
+      <dt>Server address</dt><dd class="mono">{{.Iface.ServerAddr}}</dd>
+      <dt>Listen port</dt><dd class="mono">{{.Iface.ListenPort}}</dd>
+      <dt>MTU</dt><dd class="mono">{{.Iface.MTU}}</dd>
+      {{if .Iface.DNS}}<dt>DNS</dt><dd class="mono">{{.Iface.DNS}}</dd>{{end}}
+      {{if .Iface.AllowedIPs}}<dt>Routes</dt><dd class="mono">{{.Iface.AllowedIPs}}</dd>{{end}}
+      <dt>Obfuscation</dt><dd>{{.Iface.AWG}}</dd>
+      <dt>Backend</dt><dd>{{.Iface.Backend}}</dd>
+    </dl>
+    {{else}}
+    {{/* This panel owns the fact that the interface is not ours yet, so it is
+         stated here once instead of split across both panels. */}}
+    <p class="dim">wg-easy still owns this master's client interface. Set <code>client_awg.managed: true</code> for this master and let the agent reconcile; the pool, port, MTU and obfuscation appear here once it does.</p>
+    {{end}}
+  </div>
 </div>
 
-{{/* The handshake ages and the "online" badge below only mean anything as of NOW,
-     so the panel refreshes itself like every other live surface in the UI. It
-     re-fetches this page and swaps in just this panel; visibilityState keeps a
-     backgrounded tab from polling. */}}
+{{/* The state chips and handshake ages only mean anything as of NOW, so the panel
+     refreshes itself like every other live surface in the UI. It re-fetches this
+     page and swaps in just this panel; visibilityState keeps a backgrounded tab
+     from polling, and the guard on the focused element keeps a swap from yanking
+     a half-typed rename out from under the operator. */}}
 <div class="panel panel-credentials"
+     {{if and .Managed .Clients}}
      hx-get="/nodes/{{.NodeID}}/wg-clients" hx-select=".panel-credentials"
      hx-target="this" hx-swap="outerHTML"
-     hx-trigger="every 10s [document.visibilityState=='visible']">
-  <div class="panel-label">ISSUED CREDENTIALS · {{len .Clients}}
-    <span class="live" title="Auto-refreshing every 10s">LIVE</span></div>
+     {{/* The readonly copy field is EXCLUDED from the guard: clicking the client
+          link to copy it parks focus there (onfocus selects), and guarding on it
+          froze the panel for as long as the tab stayed open — under a pulsing
+          LIVE chip asserting the opposite. There is nothing to protect on a field
+          nobody types into.
+          NB: the filter is compiled with Function(). There is no CSP here today;
+          adding one without 'unsafe-eval' makes htmx drop the filter and poll
+          unconditionally, which silently restores the clobber-while-typing bug. */}}
+     hx-trigger="every 10s [document.visibilityState=='visible' &amp;&amp; !(document.activeElement &amp;&amp; document.activeElement.closest('.panel-credentials input:not([readonly])'))]"
+     {{end}}>
+  <div class="panel-head">
+    <h2 class="panel-label">ISSUED CLIENTS · {{len .Clients}}</h2>
+    {{/* Nothing is being polled for when the agent does not own the leg, or when
+         there is nothing to poll — a pulsing LIVE chip over either is a lie. */}}
+    {{if and .Managed .Clients}}
+    <span class="live" title="Auto-refreshing every 10s"><span class="statusdot pulse"></span>LIVE<span class="visually-hidden">, auto-refreshing every 10 seconds</span></span>
+    {{end}}
+  </div>
+  {{if not .Managed}}
+  <p class="panel-note">Not in force yet — wg-easy still owns this interface. These clients start working after the handover.</p>
+  {{end}}
+
   {{if not .Clients}}
-  <p class="dim">No clients issued yet.</p>
+  <div class="empty">
+    {{if .Managed}}No clients yet. Issue one above, then send the person its client link.
+    {{else}}No clients yet. You can issue them now — they start working after the agent takes over the interface.{{end}}
+  </div>
   {{else}}
   <div class="client-list">
     {{range .Clients}}
-    <div class="client-card">
+    <div class="client-card" id="client-{{.ID}}">
       <div class="client-card-head">
-        <div>
-          <div class="client-name">
+        <div class="client-ident">
+          <h3 class="client-name">
             {{.Name}}
-            {{if not .Enabled}}<span class="subbadge drain"><span class="led"></span>muted</span>
-            {{else if .Online}}<span class="subbadge online"><span class="led"></span>online</span>{{end}}
-          </div>
+            {{if $.Managed}}<span class="subbadge state-{{.StateKind}}"><span class="led"></span>{{.State}}</span>{{end}}
+            {{if not .Enabled}}<span class="subbadge muted">muted</span>{{end}}
+          </h3>
           <div class="client-uuid mono">{{.Address}}</div>
         </div>
-        <form method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/revoke"
-              onsubmit="return lockAction(this)"
-              data-confirm="Revoke {{.Name}}? This deletes the credential and its key permanently — the person will need a new config. Its tunnel stops after the master reconciles and the address returns to the pool.">
-          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-          <button class="btn ghost-red" type="submit" data-pending="Revoking…" aria-label="Revoke {{.Name}}">Revoke</button>
-        </form>
+        <div class="card-actions">
+          {{if .Enabled}}
+          <form method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/mute"
+                onsubmit="return lockAction(this)"
+                data-confirm="Mute {{.Name}}? {{.Name}} disconnects on the next reconcile; its config stays valid and unmuting reconnects it.">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <button class="btn ghost-amber" type="submit" data-pending="Muting…" aria-label="Mute {{.Name}}">Mute</button>
+          </form>
+          {{else}}
+          <form method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/unmute" onsubmit="return lockAction(this)">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <button class="btn go" type="submit" data-pending="Unmuting…" aria-label="Unmute {{.Name}}">Unmute</button>
+          </form>
+          {{end}}
+          {{/* Revoke is the only action here that permanently strands a person,
+               and it sat one mis-aim from the reversible one. Gate it behind Mute
+               the way node.html gates Delete behind Decommission: the operator
+               who means it pays one reversible click. */}}
+          {{/* The title lives on the FORM, not the button: browsers do not show
+               tooltips on disabled controls, so the only explanation of why
+               Revoke is greyed out was unreachable. */}}
+          <form class="revoke-form" {{if .Enabled}}title="Mute it first — check the person is really done with it"{{end}}
+                method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/revoke"
+                onsubmit="return lockAction(this)"
+                data-confirm="Revoke {{.Name}}? The credential and its key are deleted permanently — the person will need a new config.">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <button class="btn ghost-red" type="submit" data-pending="Revoking…" aria-label="Revoke {{.Name}}"
+                    {{if .Enabled}}disabled{{end}}>Revoke</button>
+          </form>
+        </div>
       </div>
 
-      <dl class="kv">
+      <dl class="kv kv-compact">
         {{if .Created}}<dt>Issued</dt><dd>{{.Created}}</dd>{{end}}
-        <dt>Last handshake</dt><dd>{{if .Handshake}}{{.Handshake}}{{else}}<span class="dim">not reported yet</span>{{end}}</dd>
-        {{if .Transfer}}<dt>Transfer</dt><dd class="mono">{{.Transfer}}</dd>{{end}}
+        {{if $.Managed}}
+        <dt>Last handshake</dt>
+        <dd>{{if .Handshake}}{{.Handshake}}{{else}}<span class="dim">the node has not reported this peer yet</span>{{end}}</dd>
+        <dt>Transfer</dt><dd class="mono">{{if .Transfer}}{{.Transfer}}{{else}}—{{end}}</dd>
+        {{end}}
       </dl>
 
-      {{if $.PortalBase}}
-      <div class="field-label">CLIENT LINK · send this to the person</div>
-      <div class="cfg-main">
-        <input class="input mono" type="text" readonly value="{{$.PortalBase}}/c/{{.ID}}"
-               onclick="this.select()"
-               aria-label="client link for {{.Name}} — send this to the person">
-      </div>
-      {{end}}
-
-      <div class="cfg-actions">
-        {{if $.Ready}}
-        <a class="btn" href="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/config">Download .conf</a>
-        <a class="btn" href="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/qr" target="_blank" rel="noopener">Show QR</a>
-        {{end}}
-        {{if .Enabled}}
-        <form method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/mute"
-              onsubmit="return lockAction(this)"
-              data-confirm="Mute {{.Name}}? It disconnects on the next reconcile; its config stays valid and unmuting restores it.">
-          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-          <button class="btn" type="submit" data-pending="Muting…" aria-label="Mute {{.Name}}">Mute</button>
-        </form>
-        {{else}}
-        <form method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/unmute" onsubmit="return lockAction(this)">
-          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-          <button class="btn go" type="submit" data-pending="Unmuting…" aria-label="Unmute {{.Name}}">Unmute</button>
-        </form>
-        {{end}}
-        <form class="cfg-actions" method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/rename" onsubmit="return lockAction(this)">
-          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-          <div class="cfg-main">
-            <input class="input" type="text" name="name" value="{{.Name}}" required
-                   pattern="[A-Za-z0-9._-]{1,64}" title="letters, digits, '-', '_' or '.' (max 64)"
-                   aria-label="new name for {{.Name}}">
+      {{/* Everything below is used ONCE per client, at hand-out. The operator's
+           daily task is scanning this list, so it is collapsed by default — the
+           same call node.html made for its spec groups. */}}
+      {{/* hx-preserve keeps this node across the 10s swap. Without it the panel
+           the operator opened to copy a link or scan a QR snapped shut under
+           them on the next poll — and the focus guard does not help, because
+           reading a QR focuses nothing. */}}
+      <details class="cfg-direct hand-out" id="handout-{{.ID}}" hx-preserve="true">
+        <summary>hand out · link, config, QR, rename</summary>
+        <div class="client-cfg">
+          {{if $.PortalBase}}
+          <div class="cfg-row">
+            <div class="cfg-main">
+              <div class="field-label">CLIENT LINK · send this to the person</div>
+              <input class="input readonly mono" type="text" readonly value="{{$.PortalBase}}/c/{{.ID}}"
+                     onclick="this.select()" onfocus="this.select()"
+                     aria-label="client link for {{.Name}} — send this to the person">
+            </div>
           </div>
-          <button class="btn" type="submit" data-pending="Renaming…" aria-label="Rename {{.Name}}">Rename</button>
-        </form>
-      </div>
+          {{end}}
+
+          {{if $.Ready}}
+          <div class="cfg-row">
+            <div class="cfg-main">
+              <div class="field-label">CONFIG · download the .conf or scan the QR</div>
+              <div class="cfg-actions">
+                <a class="btn go" href="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/config">↓ Download .conf</a>
+                {{if not .Enabled}}<span class="cfg-hint warn">muted — this config will not connect until you unmute</span>{{end}}
+              </div>
+            </div>
+            {{/* Sibling of .cfg-main, not a child: that is how clients.html sits a
+                 QR beside its link, and it keeps the code out of the text column. */}}
+            <img class="cfg-qr" src="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/qr"
+                 alt="configuration QR" width="168" height="168" loading="lazy">
+          </div>
+          {{end}}
+
+          <div class="rule"></div>
+
+          <div class="cfg-row">
+            <div class="cfg-main">
+              <div class="field-label">RENAME</div>
+            <form class="rename-form" method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/rename" onsubmit="return lockAction(this)">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input class="input" type="text" name="name" value="{{.Name}}" required
+                     id="rename-{{.ID}}" pattern="[A-Za-z0-9._-]{1,64}"
+                     aria-label="new name for {{.Name}}"
+                     title="letters, digits, '-', '_' or '.' (max 64)">
+              <button class="btn" type="submit" data-pending="Renaming…" aria-label="Rename {{.Name}}">Rename</button>
+            </form>
+            </div>
+          </div>
+        </div>
+      </details>
     </div>
     {{end}}
   </div>
   {{end}}
 </div>
+{{end}}
 {{end}}

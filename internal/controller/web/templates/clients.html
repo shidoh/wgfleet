@@ -18,7 +18,7 @@
     {{else}}
     <p class="dim">Endpoint not ready yet — you can still issue credentials; configs appear once the master publishes its key.</p>
     {{end}}
-    <form class="auth-form" method="post" action="/nodes/{{.NodeID}}/clients/issue" onsubmit="return lockAction(this)">
+    <form class="issue-form" method="post" action="/nodes/{{.NodeID}}/clients/issue" onsubmit="return lockAction(this)">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <label class="field"><span class="field-label">Client name</span>
         <input class="input" type="text" name="name" placeholder="alice-iphone" required

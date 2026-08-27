@@ -224,9 +224,15 @@ func TestWGClientsPageShowsReportedPeers(t *testing.T) {
 		ClientWGPublicKey: "c2VydmVyLXB1YmxpYy0wMDAwMDAwMDAwMDAwMDAwMDA=",
 	})
 
+	// Before the first report the page must say so in the head chip AND in the
+	// detail row, and must NOT claim the client never connected — that is a
+	// different fault with a different fix (see peerState).
 	_, before := get(t, h, "/nodes/master-xa-1/wg-clients")
-	if !strings.Contains(before, "not reported yet") {
+	if !strings.Contains(before, "not reported") {
 		t.Errorf("page before the first status report:\n%s", before)
+	}
+	if strings.Contains(before, "never connected") {
+		t.Errorf("page conflated an unreported peer with one that never connected:\n%s", before)
 	}
 
 	if err := st.RecordStatus(context.Background(), domain.NodeStatus{
@@ -323,4 +329,92 @@ func TestClientActionErrorTellsCollisionsApart(t *testing.T) {
 	if !strings.Contains(addrErr.Error(), "address is already taken") {
 		t.Errorf("address collision = %q", addrErr)
 	}
+}
+
+// Revoke destroys a person's access permanently and used to sit 10px from the
+// reversible action, guarded only by a confirm() whose default button is OK.
+// It is now gated behind Mute the way node.html gates Delete behind Decommission.
+func TestWGClientRevokeIsGatedBehindMute(t *testing.T) {
+	clients := []domain.WGClient{
+		{ID: "a", Name: "live-one", Address: "10.80.0.2/32", PublicKey: "pub-a", Enabled: true},
+		{ID: "b", Name: "muted-one", Address: "10.80.0.3/32", PublicKey: "pub-b", Enabled: false},
+	}
+	h, _ := wgClientHandler(t, managedMasterSpec(), &clients)
+	_, body := get(t, h, "/nodes/master-xa-1/wg-clients")
+
+	live := section(body, `aria-label="Revoke live-one"`)
+	if !strings.Contains(live, "disabled") {
+		t.Errorf("Revoke is offered on an enabled client without muting it first:\n%s", live)
+	}
+	muted := section(body, `aria-label="Revoke muted-one"`)
+	if strings.Contains(muted, "disabled") {
+		t.Errorf("Revoke is refused on a muted client, so there is no way to revoke at all:\n%s", muted)
+	}
+}
+
+// Every client always carries exactly one state chip. Absence used to carry
+// meaning: an enabled client that was simply offline rendered no badge at all
+// and looked identical to a card nobody had parsed yet.
+func TestWGClientsAlwaysShowAState(t *testing.T) {
+	clients := []domain.WGClient{{ID: "a", Name: "laptop", Address: "10.80.0.2/32", PublicKey: "pub-a", Enabled: true}}
+	h, _ := wgClientHandler(t, managedMasterSpec(), &clients)
+	_, body := get(t, h, "/nodes/master-xa-1/wg-clients")
+	if !strings.Contains(body, "subbadge state-") {
+		t.Errorf("no state chip rendered for a client:\n%s", body)
+	}
+}
+
+// A node that is not a master is a dead end, not a failure. Rendering it in the
+// red alert treatment reserved for real breakage tells the operator something
+// broke when nothing did — and leaves them with no way onward.
+func TestWGClientsPageOnANonMasterIsNotAnError(t *testing.T) {
+	clients := []domain.WGClient{}
+	h, _ := wgClientHandler(t, domain.NodeSpec{Role: domain.RoleExit}, &clients)
+	_, body := get(t, h, "/nodes/master-xa-1/wg-clients")
+
+	if strings.Contains(body, "error-note") {
+		t.Errorf("a non-master node is shown as a failure:\n%s", body)
+	}
+	if !strings.Contains(body, "section-link") {
+		t.Errorf("a non-master node is a dead end with no way back:\n%s", body)
+	}
+	for _, unwanted := range []string{"issue-form", "panel-credentials"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("a non-master node still renders %q:\n%s", unwanted, body)
+		}
+	}
+}
+
+// Nothing is being polled for while wg-easy owns the leg, so a pulsing LIVE chip
+// over the list is a lie — and Mute/handshake rows describe an interface these
+// credentials are not on yet.
+func TestWGClientsPageBeforeHandoverIsNotLive(t *testing.T) {
+	clients := []domain.WGClient{{ID: "a", Name: "laptop", Address: "10.80.0.2/32", PublicKey: "pub-a", Enabled: true}}
+	h, _ := wgClientHandler(t, domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}}, &clients)
+	_, body := get(t, h, "/nodes/master-xa-1/wg-clients")
+
+	if strings.Contains(body, ">LIVE") {
+		t.Errorf("the list claims to be live before the handover:\n%s", body)
+	}
+	if !strings.Contains(body, "Not in force yet") {
+		t.Errorf("the list does not say the credentials are not in force yet:\n%s", body)
+	}
+}
+
+// section returns the fragment of body around the first occurrence of marker,
+// so an assertion about one card's button cannot accidentally pass on another's.
+func section(body, marker string) string {
+	i := strings.Index(body, marker)
+	if i < 0 {
+		return ""
+	}
+	start := i - 400
+	if start < 0 {
+		start = 0
+	}
+	end := i + 200
+	if end > len(body) {
+		end = len(body)
+	}
+	return body[start:end]
 }

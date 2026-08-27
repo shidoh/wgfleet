@@ -41,9 +41,23 @@ type wgClientsData struct {
 	// actually helps. Without it the issue panel tells an operator to wait for a
 	// reconcile pass that will never supply a public_ip.
 	WaitingForKey bool
-	Notice        string // why configs aren't ready yet (empty when Ready)
-	Endpoint      string // host:port clients dial
-	Pool          string
+	// Notice explains a state the operator can act on (configs not ready yet).
+	// Err is a FAILURE: the page could not load what it is meant to show. They are
+	// rendered differently and must not be merged — an error printed as a hint is
+	// how a page ends up calmly announcing "0 clients" when it simply could not
+	// read them.
+	Notice string
+	Err    string
+	// NotMaster is a dead end, not a failure: only a master has a client
+	// interface, and this page is reachable on another node only by a stale
+	// bookmark. Rendering it in the red alert treatment reserved for real errors
+	// tells the operator something broke when nothing did.
+	NotMaster bool
+	// Iface is the interface the credentials on this page attach to. Nil until the
+	// agent owns the leg; shown so the operator does not have to open the manifest
+	// to answer "what pool / port / MTU does a config get".
+	Iface    *wgIfaceView
+	Endpoint string // host:port clients dial
 	// PortalBase is the public base URL of the self-service portal, so each card
 	// can show the link the operator actually hands to a person. Empty ⇒ the portal
 	// is off or its URL is unset, and the link column is hidden rather than guessed.
@@ -51,19 +65,57 @@ type wgClientsData struct {
 	Clients    []wgClientRow
 }
 
+// wgIfaceView describes the interface these credentials attach to. Everything a
+// generated config inherits is here, so the operator can answer "what will this
+// person get" without opening the manifest.
+type wgIfaceView struct {
+	Pool       string
+	ListenPort int
+	ServerAddr string
+	MTU        int
+	DNS        string
+	AllowedIPs string
+	Backend    string
+	AWG        string
+}
+
 // wgClientRow is one issued credential rendered for the page.
 type wgClientRow struct {
-	ID        string
-	Name      string
-	Address   string
-	Enabled   bool
-	Created   string
-	PublicKey string
+	ID      string
+	Name    string
+	Address string
+	Enabled bool
+	Created string
 	// Handshake / Transfer describe the live peer as the agent last reported it.
 	// Empty when the node has not reported this peer yet.
 	Handshake string
 	Transfer  string
-	Online    bool
+	// State is the ONE chip the card head shows. Absence used to carry meaning:
+	// an enabled credential that was simply offline rendered no badge at all and
+	// looked exactly like a card nobody had parsed yet. Four conditions the
+	// operator must act on differently now say so in words.
+	State string
+	// StateKind selects the chip's colour variant: online | idle | never | unreported.
+	StateKind string
+}
+
+// peerState resolves a credential's live state into the head chip. The two
+// "no handshake" cases are deliberately NOT merged: "never connected" means the
+// node reports the peer and it has never completed a handshake (bad config on
+// the person's side, or blocked), while "not reported" means the peer is absent
+// from the node's status entirely (reconcile pending, or the node is silent).
+// They demand opposite next actions.
+func peerState(reported bool, hs time.Time) (label, kind string) {
+	switch {
+	case !reported:
+		return "not reported", "unreported"
+	case hs.IsZero():
+		return "never connected", "never"
+	case time.Since(hs) < clientOnlineWindow:
+		return "online", "online"
+	default:
+		return "idle · " + shortDuration(time.Since(hs)), "idle"
+	}
 }
 
 // handleWGClients renders the master's client-WG credential page.
@@ -81,21 +133,25 @@ func (h *Handler) handleWGClients(w http.ResponseWriter, r *http.Request) {
 		NodeID: id, NodeName: node.Name,
 	}
 
+	// Each of these is a dead end, and the template renders NOTHING else when Err
+	// is set. Rendering the issue form and an empty credential list next to a
+	// failure is how the page ends up asserting "no clients" on a node it could
+	// not read — or offering to issue one on a node that cannot hold any.
 	spec, err := h.renderer.RenderNodeSpec(r.Context(), id)
 	if err != nil {
-		data.Notice = "cannot render node spec: " + err.Error()
+		data.Err = "Cannot render this node's spec: " + err.Error()
 		h.render(w, h.wgClientsTmpl, "layout", data)
 		return
 	}
 	if spec.Master == nil {
-		data.Notice = "This node is not a master, so it has no client interface."
+		data.NotMaster = true
 		h.render(w, h.wgClientsTmpl, "layout", data)
 		return
 	}
 
 	clients, err := h.renderer.ListWGClients(r.Context(), id)
 	if err != nil {
-		data.Notice = "cannot list credentials: " + err.Error()
+		data.Err = "Cannot list credentials: " + err.Error()
 		h.render(w, h.wgClientsTmpl, "layout", data)
 		return
 	}
@@ -104,19 +160,20 @@ func (h *Handler) handleWGClients(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case cw == nil:
 		// Credentials can be issued and imported BEFORE the handover — that is the
-		// migration order — so the page stays usable and says what is missing.
-		data.Notice = "wg-easy still owns this master's client interface. Credentials issued here " +
-			"take effect once you set `client_awg.managed: true` for this master in the fleet manifest."
+		// migration order — so the page stays usable and says what is missing. The
+		// No Notice here: the CLIENT INTERFACE panel owns this fact and can format
+		// the manifest key as markup. Setting it too printed the same sentence twice,
+		// once with raw backticks.
 	default:
 		data.Managed = true
-		data.Pool = cw.AddressPool
+		data.Iface = ifaceView(cw)
 		host := endpointHost(node, spec)
 		switch {
 		case host == "":
 			data.Notice = "No public endpoint known for this master yet (public_ip). Set it in the manifest or wait for provisioning."
 		case node.ClientWGPublicKey == "":
 			data.WaitingForKey = true
-			data.Notice = "The master has not published its client interface key yet — wait for the agent to reconcile once, then reload."
+			data.Notice = "The master has not published its client interface key yet — wait one reconcile pass, then reload."
 		default:
 			data.Ready = true
 			data.Endpoint = net.JoinHostPort(host, strconv.Itoa(cw.ListenPort))
@@ -128,15 +185,16 @@ func (h *Handler) handleWGClients(w http.ResponseWriter, r *http.Request) {
 	for _, c := range clients {
 		row := wgClientRow{
 			ID: c.ID, Name: c.Name, Address: c.Address, Enabled: c.Enabled,
-			PublicKey: c.PublicKey,
 		}
 		if !c.CreatedAt.IsZero() {
 			row.Created = c.CreatedAt.Format("2006-01-02")
 		}
-		if p, ok := peers[c.PublicKey]; ok {
-			row.Handshake, row.Online = describeHandshake(p.LastHandshake)
+		p, reported := peers[c.PublicKey]
+		if reported {
+			row.Handshake, _ = describeHandshake(p.LastHandshake)
 			row.Transfer = describeTransfer(p.ReceivedBytes, p.SentBytes)
 		}
+		row.State, row.StateKind = peerState(reported, p.LastHandshake)
 		data.Clients = append(data.Clients, row)
 	}
 	h.render(w, h.wgClientsTmpl, "layout", data)
@@ -384,4 +442,27 @@ func isUniqueViolation(err error, column string) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "unique constraint failed") && strings.Contains(msg, column)
+}
+
+// ifaceView projects the client interface spec onto the page's INTERFACE panel.
+func ifaceView(cw *domain.ClientWGSpec) *wgIfaceView {
+	v := &wgIfaceView{
+		Pool: cw.AddressPool, ListenPort: cw.ListenPort, ServerAddr: cw.ServerAddress,
+		MTU: cw.MTU, DNS: strings.Join(cw.DNS, ", "),
+		AllowedIPs: strings.Join(cw.AllowedIPs, ", "),
+		Backend:    string(cw.ResolvedBackend()),
+	}
+	switch {
+	case cw.AWG == nil:
+		v.AWG = "off — plain WireGuard"
+	case cw.AWG.Shared.HeaderProtectionKey != "":
+		// Header protection is the one 3.x parameter existing clients cannot
+		// survive, so it is worth naming separately from the timers.
+		v.AWG = "3.x · header protection + timers"
+	case cw.AWG.AWG3Enabled():
+		v.AWG = "3.x · timers only"
+	default:
+		v.AWG = "2.0"
+	}
+	return v
 }
