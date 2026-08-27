@@ -11,7 +11,7 @@ Every flag on both binaries. For what to *do* with them see
 | Flag | Default | Description |
 |---|---|---|
 | `--version` | | print build version (Version, Commit, BuildDate) and exit |
-| `--check-config` | | validate the manifest and exit: 0 if the controller would start, 1 with the reasons if not. Prints the file's sha256, master and exit counts. Changes nothing — not even the startup permission self-heal. Run it before every restart: a manifest this binary refuses makes the controller exit at startup, and the unit's `Restart=on-failure` turns that into a crash loop of the whole control plane |
+| `--check-config` | | validate the manifest and exit: 0 if the controller would start, 1 with the reasons if not. Prints the file's sha256, master and exit counts. Changes nothing — not even the startup permission self-heal. Run it before every restart: a manifest this binary refuses makes the controller exit at startup, and the unit's `Restart=on-failure` turns that into a crash loop of the whole control plane. It also warns when the running controller is on a DIFFERENT manifest — that is, when this file has been edited but never applied |
 | `--config` | `/etc/wgfleet/controller.yaml` | config path |
 | `--log-format` | `text` | `text` \| `json` |
 | `--store` | (from config) | override `controller.store` |

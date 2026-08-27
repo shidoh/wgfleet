@@ -25,6 +25,18 @@ spec:
   - name: wgfleet.scrape
     interval: 30s
     rules:
+    - alert: WgfleetConfigDrift
+      expr: wgfleet_controller_config_drift == 1
+      for: 10m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: the manifest on disk differs from the one the controller is running
+        description: Someone edited controller.yaml and the change has not been applied — or was
+          applied on a different host. The controller keeps serving the configuration it loaded at
+          startup, so the edit has no effect and nothing else will say so. Run
+          `wgfleet-controller --check-config` and then restart the controller.
     - alert: WgfleetControllerDown
       expr: up{job="wgfleet",component="controller"} == 0
       for: 3m

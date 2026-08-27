@@ -253,6 +253,21 @@ func loadCA(cfg *config.ControllerConfig, provider config.SecretProvider) (*pki.
 }
 
 func serve(cfg *config.ControllerConfig, ca *pki.CA, configPath string) error {
+	// The digest of the manifest this process actually loaded. Everything below
+	// compares against it, so "is the controller running the file on disk" stops
+	// being a question answered by trust.
+	effective := &config.Effective{}
+	if d, derr := config.DigestFile(configPath); derr == nil {
+		effective.Set(d)
+		if werr := config.WriteEffective(config.EffectiveFile, d, time.Now()); werr != nil {
+			slog.Warn("could not record the effective manifest digest; a support bundle will not be able to report drift",
+				"path", config.EffectiveFile, "err", werr)
+		}
+	} else {
+		slog.Warn("could not digest the manifest; config drift will not be reported",
+			"path", configPath, "err", derr)
+	}
+
 	host := hostOf(cfg.Controller.Listen)
 	advertiseHost := hostOf(cfg.Controller.Advertise) // "" when advertise unset
 	serverKP, err := ca.IssueServerCert("wgfleet-controller", serverSANs(host, advertiseHost))
@@ -301,6 +316,7 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, configPath string) error {
 		reg = metrics.NewRegistry()
 		metrics.NewStoreCollector(reg, st)
 		metrics.RegisterBuildInfo(reg, "controller", version.Version, version.Commit)
+		metrics.NewConfigCollector(reg, configPath, effective)
 		provMetr = metrics.NewProvisionMetrics(reg)
 	}
 
@@ -321,7 +337,20 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, configPath string) error {
 	var webSrv *http.Server
 	if cfg.Controller.WebUI != "" {
 		persistTransport := func(exitName string, t domain.MasterTransport) error {
-			return config.SetExitActiveTransport(configPath, exitName, t)
+			if err := config.SetExitActiveTransport(configPath, exitName, t); err != nil {
+				return err
+			}
+			// The controller just rewrote the manifest itself. Without re-recording the
+			// digest this legitimate write would read as drift from here on, and a
+			// signal that cries wolf after every transport switch is one nobody heeds.
+			if d, derr := config.DigestFile(configPath); derr == nil {
+				effective.Set(d)
+				_ = config.WriteEffective(config.EffectiveFile, d, time.Now())
+			} else {
+				slog.Warn("manifest rewritten but could not re-digest it; drift may now read high",
+					"path", configPath, "err", derr)
+			}
+			return nil
 		}
 		exportBackup := func(ctx context.Context, recipient string) ([]byte, error) {
 			return backup.Export(ctx, backup.ExportOptions{

@@ -36,6 +36,17 @@ func checkManifest(path string) error {
 	fmt.Printf("  masters  %d\n", len(cfg.Fleet.Masters))
 	fmt.Printf("  exits    %d\n", len(cfg.Fleet.Exits))
 
+	// The question operations insisted be answerable by ONE command: is the running
+	// controller actually on this file? Until now nothing could answer it — you
+	// compared timestamps and hoped. The running controller records what it loaded;
+	// if that record disagrees with the file in front of us, say so here, where the
+	// operator is already looking, rather than leaving it to a metric they may not
+	// have wired up yet.
+	if running := config.ReadEffectiveDigest(config.EffectiveFile); running != "" && running != hex.EncodeToString(sum[:]) {
+		fmt.Printf("\nwarning: the running controller is on a DIFFERENT manifest (%s)\n", running)
+		fmt.Printf("         this file has not been applied — restart the controller to apply it\n")
+	}
+
 	// A warning, never a failure: the file is readable and valid either way, and an
 	// operator running a check should not have a non-zero exit hide behind a
 	// permissions nit. But the manifest carries private keys and the wg-easy admin
