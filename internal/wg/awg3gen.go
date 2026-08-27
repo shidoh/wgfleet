@@ -70,12 +70,40 @@ const (
 // AWGExtraOverhead sizes and black-holes full-size packets. Enabling
 // it means folding it into the MTU chain first; until then, unset.
 func WithAWG3(p domain.AWGParams, tunnelSeed string) domain.AWGParams {
-	p.Shared.HeaderProtectionKey = deriveHeaderProtectionKey(tunnelSeed)
+	return WithAWG3HeaderProtection(WithAWG3Timers(p, tunnelSeed), tunnelSeed)
+}
+
+// WithAWG3Timers adds ONLY the 3.0 timer ranges. It is the half an operator can
+// switch on without touching a single client.
+//
+// The split is not cosmetic. Measured against a real 3.1 kernel module with both
+// ends rendered by the production renderers, a server running these timers keeps
+// an UNMODIFIED AmneziaWG 2.0 peer working — handshake, traffic and repeated
+// rekeys — while a server running header protection cuts that peer off outright.
+// So the two halves have completely different costs: this one is free, the other
+// one is a flag day on which every client must re-import. Bundling them, as this
+// function used to, priced the free half at the expensive half's rate and was the
+// reason the client leg stayed on 2.0.
+//
+// This is also the half that carries the anti-fingerprint value: a fixed
+// 25-second keepalive and a fixed 120-second rekey are a timing signature that
+// survives every payload-level obfuscation we apply.
+func WithAWG3Timers(p domain.AWGParams, tunnelSeed string) domain.AWGParams {
 	p.Shared.RekeyAfterTime = deriveRange(tunnelSeed, "rekey-after", rekeyAfterLo, rekeyAfterHiMin, rekeyAfterHiMax)
 	p.Shared.RekeyTimeout = deriveRange(tunnelSeed, "rekey-timeout", rekeyTimeoutLo, rekeyTimeoutHiMin, rekeyTimeoutHiMax)
 	p.Shared.RejectAfterTime = deriveRange(tunnelSeed, "reject-after", rejectAfterLo, rejectAfterHiMin, rejectAfterHiMax)
 	p.Shared.KeepaliveTimeout = deriveRange(tunnelSeed, "keepalive", keepaliveLo, keepaliveHiMin, keepaliveHiMax)
 	p.Shared.MaxHandshakeAttempts = fmt.Sprintf("%d", maxHandshakeAttempts)
+	return p
+}
+
+// WithAWG3HeaderProtection adds ONLY the header-protection key: chacha20 over the
+// packet header, and the one 3.0 parameter that is NOT backward compatible.
+// Enabling it on a live interface disconnects every peer that does not carry the
+// same key, so it belongs behind a deliberate operator decision rather than
+// behind "turn on 3.x".
+func WithAWG3HeaderProtection(p domain.AWGParams, tunnelSeed string) domain.AWGParams {
+	p.Shared.HeaderProtectionKey = deriveHeaderProtectionKey(tunnelSeed)
 	return p
 }
 
