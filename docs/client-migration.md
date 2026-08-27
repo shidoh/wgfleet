@@ -35,7 +35,7 @@ you may upgrade (Part 1) and stop there for weeks.
 | Client addresses | wg-easy's allocation | imported verbatim |
 | Where you add a client | wg-easy web UI on :51821 | wgfleet Web UI, node → *WireGuard clients* |
 | How a user gets a config | you export and send a file | permanent portal link, or you download it |
-| wg-easy container | in the data path | still running, no longer in the data path |
+| wg-easy container | in the data path | **removed** at cutover; its database and image stay for rollback |
 
 ---
 
@@ -229,8 +229,24 @@ Reload the controller. On the master's next reconcile the agent:
 2. adopts wg-easy's interface private key, so the server public key does not move;
 3. renders the interface with the imported peers and raises it.
 
-The wg-easy container keeps running and is simply no longer in the path. Leave
-it alone for now — it is your rollback.
+The wg-easy container is **removed in that same pass** — not stopped, removed —
+once the interface is up and carrying the imported peers. The retirement is the
+last action in the sequence and the reconcile engine stops at the first failure,
+so a takeover that could not raise the interface leaves the container alone.
+
+Your rollback is therefore not "the container is still running". It is that
+wg-easy's **database is untouched** and its **image is still on the host**, so
+`managed: false` recreates it from local state without reaching a registry.
+Check both BEFORE you cut over:
+
+```bash
+ls -l /etc/wireguard/wg-easy.db     # exists, with your clients in it
+docker images | grep wg-easy        # present locally
+```
+
+The second matters more than it looks: if the image has been pruned and the
+registry is unreachable from where your master sits, rollback stops being a
+one-knob operation.
 
 ### Verify before you tell anyone
 
@@ -275,23 +291,22 @@ redirect and simply times out.
 
 Only if the master's kernel module is 1.x or 2.x (see Pre-flight).
 
-Set `managed: false`, reload, wait a reconcile. The agent drops its claim, takes
-its interface down and leaves wg-easy's own state untouched — the container
-never stopped and picks the leg back up. Imported credentials stay in the
-controller store, inert, ready for a second attempt.
+Set `managed: false`, reload, wait a reconcile. The agent drops its claim and
+takes its interface down; the compose planner puts the wg-easy service back into
+the stack and recreates the container, which reads its untouched database and
+raises the interface again. The order is load-bearing and already handled — the
+client-interface planner runs BEFORE compose, so the leg is released before
+wg-easy is asked to take it. Imported credentials stay in the controller store,
+inert, ready for a second attempt.
 
 If the module is 3.x, there is no going back to wg-easy. Roll forward instead:
 fix the problem and reconcile again.
 
 ### When you are confident
 
-After a week or so, retire the container and stop paying its ~110 MB of RAM:
-
-```bash
-docker rm -f wg-easy
-```
-
-Keep `wg-easy.db` archived — it is the only record of the original allocation.
+There is nothing left to retire — the container went at cutover, and its ~110 MB
+of RAM with it. What to do instead is archive `wg-easy.db` off the box: it is the
+only record of the original allocation, and it is what a rollback reads.
 
 ---
 
