@@ -191,6 +191,7 @@ ssh-copy-id -i /root/.ssh/id_ed25519 root@<EXIT-IP>
 Apply and provision:
 
 ```bash
+wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
 systemctl restart wgfleet-controller
 wgfleet-controller --config /etc/wgfleet/controller.yaml --provision exit-1 --plan  # preview
 wgfleet-controller --config /etc/wgfleet/controller.yaml --provision exit-1         # do it

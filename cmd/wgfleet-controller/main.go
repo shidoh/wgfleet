@@ -51,7 +51,11 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		slog.Error("controller exited with error", "err", err)
+		// --check-config has already printed its report; logging the error again
+		// would bury it under a structured line the operator has to read past.
+		if !errors.Is(err, errCheckFailed) {
+			slog.Error("controller exited with error", "err", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -77,6 +81,7 @@ func run() error {
 		fleetMode    = flag.Bool("fleet", false, "with --support-bundle: also render inventory from the store and walk every exit over SSH")
 		supportNote  = flag.String("note", "", "with --support-bundle: free-form description of the problem, embedded in the bundle's manifest")
 		showVersion  = flag.Bool("version", false, "print build version and exit")
+		checkConfig  = flag.Bool("check-config", false, "validate the manifest and exit: 0 if it would start, 1 with the reasons if not. Changes nothing")
 		setAdminPw   = flag.Bool("set-admin-password", false, "set/reset the web panel admin password (run with the controller stopped) and exit")
 		importWGEasy = flag.String("import-wg-easy", "", "import the named master's wg-easy client credentials into the controller store, then exit. Safe to run with the controller live; use --plan first")
 		wgEasyDB     = flag.String("wg-easy-db", "", "with --import-wg-easy: path to wg-easy's SQLite database (default /etc/wireguard/wg-easy.db, i.e. run this ON the master)")
@@ -93,6 +98,18 @@ func run() error {
 	}
 
 	setupLogging(*logFormat)
+
+	// --check-config answers the question a restart otherwise answers destructively.
+	// A manifest this binary refuses makes the controller exit at startup, and the
+	// unit's Restart=on-failure/RestartSec=5 turns that into a crash loop of the
+	// whole control plane. Validating first costs nothing and is the difference
+	// between "the edit was wrong" and "the fleet has no control plane".
+	//
+	// It runs BEFORE the permission self-heal below and touches nothing: a check
+	// that modifies the thing it checks is not a check.
+	if *checkConfig {
+		return checkManifest(*configPath)
+	}
 
 	cfg, err := config.Load(*configPath, &config.ControllerConfig{})
 	if err != nil {
