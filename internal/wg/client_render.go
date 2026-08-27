@@ -254,5 +254,31 @@ func clientDecoy(spec domain.ClientWGSpec, c domain.WGClient) domain.AWGLocal {
 	}
 	// kernel=false: the far end is an app on WireGuard-Go, which cannot parse the
 	// <c>/<t> CPS tags.
-	return DeriveAWGLocal(clientDecoyPrefix+c.PublicKey, false)
+	local := DeriveAWGLocal(clientDecoyPrefix+c.PublicKey, false)
+	if spec.AWG != nil {
+		local = floorClientJunk(local, spec.AWG.Shared.S4)
+	}
+	return local
+}
+
+// floorClientJunk lifts a client's junk window clear of the shared S4.
+//
+// Deriving the local half directly skipped the floor DeriveAWGParamsForEnd
+// applies to every other end, and the numbers made that a majority case rather
+// than an edge one: DeriveAWGLocal draws Jmin from [8,40] against an S4 of
+// [16,32], so most credentials sent junk short enough to underflow a receiver
+// that strips S4 before length-checking it (domain.AWGJunkS4Margin).
+//
+// It shifts the whole window by a CONSTANT instead of clamping to the floor the
+// way DeriveAWGParamsForEnd does, and the difference matters here: clamping maps
+// every client below the floor onto the same Jmin, which would erase the
+// per-credential junk profile this derivation exists to produce and make two
+// people's traffic correlatable. A constant shift preserves the spread exactly.
+// The other end is one tunnel, where that trade does not arise.
+func floorClientJunk(local domain.AWGLocal, s4 int) domain.AWGLocal {
+	if shift := s4 + domain.AWGJunkS4Margin - jminLow; shift > 0 {
+		local.Jmin += shift
+		local.Jmax += shift
+	}
+	return local
 }

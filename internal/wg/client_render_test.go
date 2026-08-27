@@ -1,6 +1,7 @@
 package wg
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -398,8 +399,9 @@ func TestClientConfigsGetTheirOwnDecoy(t *testing.T) {
 // userspace WireGuard-Go.
 func TestClientDecoyStaysUserspaceSafe(t *testing.T) {
 	for i, pub := range []string{testClientPubA, testClientPubB} {
-		local := DeriveAWGLocal(clientDecoyPrefix+pub, false)
-		p := domain.AWGParams{Shared: clientSpec().AWG.Shared, Local: local}
+		spec := clientSpec()
+		local := clientDecoy(spec, domain.WGClient{PublicKey: pub})
+		p := domain.AWGParams{Shared: spec.AWG.Shared, Local: local}
 		if err := p.ValidateUserspace(); err != nil {
 			t.Errorf("client %d decoy is not userspace-safe: %v", i, err)
 		}
@@ -410,3 +412,34 @@ const (
 	testClientPubA = "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="
 	testClientPubB = "2rDXqPqGSJTGRPSaG9jZQMkNFSpsRDIWTuUvBTIBEB8="
 )
+
+// Every client's junk window must clear the shared S4, and the spread must
+// survive the flooring.
+//
+// clientDecoy derived the local half directly and so skipped the floor
+// DeriveAWGParamsForEnd applies everywhere else. The numbers made that the common
+// case, not an edge one: Jmin is drawn from [8,40] and the floor is S4+8 with S4
+// in [16,32], so most credentials sent junk short enough to underflow a receiver
+// that strips S4 before length-checking — the failure that crash-looped mihomo on
+// the master↔exit tunnel, pointed at end users' apps instead.
+func TestClientDecoyClearsTheSharedS4(t *testing.T) {
+	spec := clientSpec()
+	floor := spec.AWG.Shared.S4 + domain.AWGJunkS4Margin
+	seen := map[int]bool{}
+	for i := range 200 {
+		local := clientDecoy(spec, domain.WGClient{PublicKey: fmt.Sprintf("client-%d", i)})
+		if local.Jmin < floor {
+			t.Fatalf("client %d: Jmin %d is below S4+%d (%d)", i, local.Jmin, domain.AWGJunkS4Margin, floor)
+		}
+		if local.Jmin >= local.Jmax {
+			t.Fatalf("client %d: flooring broke Jmin < Jmax (%d/%d)", i, local.Jmin, local.Jmax)
+		}
+		seen[local.Jmin] = true
+	}
+	// Clamping to the floor would satisfy the check above while collapsing every
+	// client below it onto one value, which is the correlation the per-credential
+	// decoy exists to prevent.
+	if len(seen) < 10 {
+		t.Errorf("only %d distinct Jmin values across 200 clients — flooring collapsed the spread", len(seen))
+	}
+}

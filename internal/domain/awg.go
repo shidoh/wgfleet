@@ -23,6 +23,17 @@ const (
 	awgJcMin     = 1 // junk packet count: 1 ≤ Jc ≤ 128 (recommended 4-12)
 	awgJcMax     = 128
 	awgJMaxLimit = 1280 // Jmin < Jmax ≤ 1280 (kernel: Jmax < MESSAGE_MAX_SIZE)
+
+	// AWGJunkS4Margin is how far Jmin must clear S4.
+	//
+	// A receiver strips S4 bytes from an incoming junk packet before reading the
+	// 4-byte message type. amneziawg-go ≤ 20251104 — which every Amnezia CLIENT
+	// APP is built on — does that WITHOUT a length guard, so a junk packet shorter
+	// than S4+4 panics it in handleTransport. Since S4 is shared and Jmin is local,
+	// the constraint binds the SENDING end for the RECEIVER's benefit, which is
+	// exactly the kind of cross-cutting rule that gets lost when one code path
+	// derives its own local params. It lives in the validator so it cannot.
+	AWGJunkS4Margin = 8
 	// S1-S4 PRACTICAL caps (assuming a 1280 MTU), mirroring the README's S1/S2
 	// reasoning (1280 minus the message size). The KERNEL only rejects when
 	// Sn + MESSAGE_*_SIZE > MESSAGE_MAX_SIZE (65535), i.e. ~65383+, so these caps are
@@ -143,6 +154,10 @@ func (p AWGParams) Validate() error {
 	}
 	if p.Local.Jmin >= p.Local.Jmax {
 		errs = append(errs, fmt.Errorf("Jmin (%d) must be < Jmax (%d)", p.Local.Jmin, p.Local.Jmax))
+	}
+	if floor := p.Shared.S4 + AWGJunkS4Margin; p.Local.Jmin < floor {
+		errs = append(errs, fmt.Errorf("Jmin (%d) must be at least S4+%d (%d): a junk packet shorter than "+
+			"the S4 the receiver strips underflows it", p.Local.Jmin, AWGJunkS4Margin, floor))
 	}
 
 	// Local: signature packets (hex blob or CPS template).

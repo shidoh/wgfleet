@@ -58,7 +58,7 @@ const (
 	// handleTransport). Guaranteeing every junk packet ≥ S4 + margin avoids it on the
 	// buggy version (newer amneziawg-go added the guard). Verified live: with Jmin<S4
 	// the master↔exit tunnel crash-looped mihomo v1.19.27; flooring Jmin fixes it.
-	junkS4Margin = 8
+	junkS4Margin = domain.AWGJunkS4Margin
 
 	// Junk-packet decoy bounds. Jc/Jmin/Jmax MAY differ per end (the receiver
 	// drops the other end's junk by size, so the values need not match), so we

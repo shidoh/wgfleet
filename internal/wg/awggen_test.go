@@ -189,8 +189,8 @@ func TestICoverProtocolMimicry(t *testing.T) {
 	for i := 0; i < 300; i++ {
 		seed := string(rune(i)) + "-tunnel"
 		for _, kernel := range []bool{true, false} {
-			loc := DeriveAWGLocal(seed, kernel)
-			kp := domain.AWGParams{Shared: DeriveAWGShared(seed), Local: loc}
+			kp := DeriveAWGParamsForEnd(seed, "mimicry", kernel)
+			loc := kp.Local
 			// Both profiles must be userspace-safe (mimicry uses no <c>/<t>).
 			if err := kp.ValidateUserspace(); err != nil {
 				t.Fatalf("seed %q kernel=%v: mimicry must validate userspace: %v", seed, kernel, err)
