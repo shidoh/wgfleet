@@ -648,6 +648,8 @@ a:focus-visible,
 .cfg-main .input { width: 100%; min-width: 0; }
 .cfg-actions { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
 .cfg-hint { font-size: var(--fs-meta); color: var(--text-dim); }
+a.cfg-hint { display: inline-block; margin-top: 8px; color: var(--blue); text-decoration: none; }
+a.cfg-hint:hover { text-decoration: underline; }
 .cfg-qr {
   flex: none; width: 168px; height: 168px;
   border-radius: 8px; background: #fff; padding: 6px; object-fit: contain;
@@ -953,7 +955,8 @@ h3.client-name { margin: 0; display: flex; align-items: center; gap: 8px; flex-w
    Give it the console's own affordance for "a control that opens something":
    the bordered pill of .backup-summary / .section-link. */
 details.hand-out { margin-top: 16px; }
-details.hand-out > summary {
+details.hand-out > summary,
+details.qr-reveal > summary {
   display: inline-flex;
   align-items: center;
   gap: 9px;
@@ -968,9 +971,24 @@ details.hand-out > summary {
   padding: 8px 14px;
   transition: border-color .12s, color .12s;
 }
-details.hand-out > summary:hover { border-color: var(--blue); color: var(--blue); }
-details.hand-out > summary::before { content: "▸"; color: var(--blue); font-size: var(--fs-tablehead); }
-details.hand-out[open] > summary::before { content: "▾"; }
+details.hand-out > summary:hover,
+details.qr-reveal > summary:hover { border-color: var(--blue); color: var(--blue); }
+details.hand-out > summary::before,
+details.qr-reveal > summary::before { content: "▸"; color: var(--blue); font-size: var(--fs-tablehead); }
+details.hand-out[open] > summary::before,
+details.qr-reveal[open] > summary::before { content: "▾"; }
+
+/* Generated at 1024, shown at 512: an exact 2:1 downscale, so module edges stay
+   sharp, and pixel-for-pixel on a HiDPI screen. 512 puts 4.4 pixels on each of
+   the 117 modules a real config needs — above the ~4 ordinary cameras want. The
+   quiet zone matters for scanning, hence the generous white padding rather than
+   the 6px the small inline QR uses. */
+.cfg-qr-lg {
+  display: block;
+  margin-top: 14px;
+  width: 512px; height: 512px; max-width: 100%;
+  border-radius: 8px; background: #fff; padding: 14px; object-fit: contain;
+}
 details.hand-out[open] > .client-cfg { margin-top: 16px; }
 
 /* Inside a card these labels carry the instructions, and --text-dim renders them

@@ -156,7 +156,11 @@ func (h *Handler) handleQR(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
-	png, err := qrcode.Encode(res.Config, qrcode.Medium, 320)
+	// Big enough that a phone camera can resolve the modules. Measured on a real
+	// config (867 bytes): 117x117 modules, so 320px put 2.7 pixels on each one.
+	// This is the surface actual people scan, so it matters more here than in the
+	// operator UI.
+	png, err := qrcode.Encode(res.Config, qrcode.Medium, 1024)
 	if err != nil {
 		h.fail(w, err)
 		return

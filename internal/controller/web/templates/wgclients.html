@@ -181,11 +181,21 @@
                 {{if not .Enabled}}<span class="cfg-hint warn">muted — this config will not connect until you unmute</span>{{end}}
               </div>
             </div>
-            {{/* Sibling of .cfg-main, not a child: that is how clients.html sits a
-                 QR beside its link, and it keeps the code out of the text column. */}}
-            <img class="cfg-qr" src="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/qr"
-                 alt="configuration QR" width="168" height="168" loading="lazy">
           </div>
+
+          {{/* Behind its own control, and big. A ~900-byte config packs about
+               137x137 modules, so a thumbnail is unreadable to a phone camera —
+               and most hand-outs use the .conf or the link anyway, so the QR does
+               not need to occupy the card by default. loading="lazy" keeps the
+               request from firing until it is opened. */}}
+          <details class="cfg-direct qr-reveal">
+            <summary>Show QR</summary>
+            <img class="cfg-qr-lg" src="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/qr"
+                 alt="configuration QR" width="512" height="512" loading="lazy">
+            {{/* An escape hatch: the source image is 1024, so a camera that still
+                 struggles at 512 can be pointed at the full-size one. */}}
+            <a class="cfg-hint" href="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/qr" target="_blank" rel="noopener">open full size</a>
+          </details>
           {{end}}
 
           <div class="rule"></div>

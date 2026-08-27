@@ -407,7 +407,13 @@ func (s clientSource) ListWGClients(ctx context.Context, id string) ([]domain.WG
 // is served from its own endpoint as bytes rather than embedded in the page as a
 // data: URL — a page the browser may cache should not carry a private key.
 func qrPNG(s string) ([]byte, error) {
-	return qrcode.Encode(s, qrcode.Medium, 320)
+	// 1024, not 320. Measured on a real client config (867 bytes): 117x117
+	// modules at Medium recovery. At 320px that is 2.7 pixels per module and a
+	// phone camera cannot resolve it — the page used to shrink it further, to 168.
+	// The page now shows it at 512, an exact 2:1 downscale (pixel-for-pixel on a
+	// HiDPI screen), which puts 4.4 pixels on each module — above the ~4 that
+	// ordinary cameras need.
+	return qrcode.Encode(s, qrcode.Medium, 1024)
 }
 
 // clientActionError turns the failures an operator actually hits into sentences
