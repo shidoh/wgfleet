@@ -603,3 +603,27 @@ func TestWGClientsPageNamesADownInterfaceOnce(t *testing.T) {
 		t.Error("the banner shows on a healthy interface")
 	}
 }
+
+// The 10-second poll must not consume the one-shot flashes.
+//
+// They are read-and-clear and the poll shares the page's view builder, so a tick
+// landing between an action's redirect and the render destroyed the message. The
+// cookie path is "/", so a clients tab left open would also eat a failure flash
+// raised on another page in another tab — the operator clicks Provision, it
+// fails, and that page renders as though it had worked.
+func TestPollDoesNotEatTheFlash(t *testing.T) {
+	clients := []domain.WGClient{{ID: "a", Name: "laptop", Address: "10.80.0.2/32", PublicKey: "pub-a", Enabled: true}}
+	h, _ := wgClientHandler(t, managedMasterSpec(), &clients)
+
+	req := httptest.NewRequest(http.MethodGet, "/nodes/master-xa-1/wg-clients/panel", nil)
+	req.AddCookie(&http.Cookie{Name: flashOKCookie, Value: base64.RawURLEncoding.EncodeToString([]byte("Issued laptop"))})
+	req.AddCookie(sessionCookieFor(t, h))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	for _, c := range rec.Result().Cookies() {
+		if (c.Name == flashOKCookie || c.Name == flashCookie) && c.MaxAge < 0 {
+			t.Fatalf("the poll cleared %q, so the page about to render it shows nothing", c.Name)
+		}
+	}
+}

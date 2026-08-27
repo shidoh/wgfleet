@@ -75,7 +75,7 @@
   {{end}}
   {{if .CanDelete}}
   <form method="post" action="/nodes/{{.Node.ID}}/delete" onsubmit="return lockAction(this)"
-        data-confirm="Delete {{.Node.Name}} from inventory? It has been decommissioned; this removes it permanently.{{if .WGClientCount}} This also DELETES {{.WGClientCount}} client credential{{if ne .WGClientCount 1}}s{{end}} — every one of those people loses their tunnel, and the only way back is the encrypted backup or re-issuing to each of them by hand.{{end}}">
+        data-confirm="Delete {{.Node.Name}} from inventory? It has been decommissioned; this removes it permanently.{{if .WGClientCount}} This also DELETES {{.WGClientCount}} client credential{{if ne .WGClientCount 1}}s{{end}} — every one of those people loses their tunnel, and the only way back is the encrypted backup or re-issuing to each of them by hand.{{else if .WGClientCountUnknown}} This ALSO deletes every client credential on this master — the count could not be read just now, so check the AWG clients page before confirming. Recovery is the encrypted backup or re-issuing to each person by hand.{{end}}">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     <button type="submit" class="btn ghost-red" data-pending="Deleting…">Delete</button>
   </form>

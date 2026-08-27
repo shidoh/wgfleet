@@ -487,6 +487,22 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 
 	spec, err := a.client.PullSpec(ctx)
 	if err != nil {
+		// Report before returning. A failed pull freezes EVERY subsystem on this node
+		// — mihomo, the NAT, DOCKER-USER, blocky, the VLESS inbound, the client
+		// interface — and it used to do so in total silence: no status, so no state
+		// change, no health check, and no reconcile metric either. That made the
+		// widest failure mode the least visible one, and less visible than an invalid
+		// spec, which does report. The controller can only see it as staleness, whose
+		// alert says "the control channel is down" — the wrong diagnosis.
+		if !plan {
+			repCtx, repCancel := context.WithTimeout(base, statusReportTimeout)
+			defer repCancel()
+			check := domain.HealthCheck{Name: domain.CheckSpecValid, OK: false,
+				Detail: "could not pull a spec from the controller: " + err.Error()}
+			if rerr := a.reportStatus(repCtx, domain.StateError, []domain.HealthCheck{check}, err, "", nil); rerr != nil {
+				a.log.Error("failed to report the pull failure", "err", rerr)
+			}
+		}
 		return fmt.Errorf("pull spec: %w", err)
 	}
 	if err := spec.Validate(); err != nil {

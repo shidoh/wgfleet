@@ -463,3 +463,51 @@ func TestPlanRefusesAMismatchedKeyPair(t *testing.T) {
 		t.Error("a mismatched pair is somebody losing their tunnel, not a benign skip")
 	}
 }
+
+// A partly-written import must report what was WRITTEN, not what was planned.
+//
+// Report.Imported is the plan. Returning it whole beside the error told the
+// operator every credential had made it across — so they would read a clean
+// report, believe the migration complete, and flip client_awg.managed on people
+// who are not in the store and will lose their tunnel at cutover.
+func TestApplyReportsOnlyWhatItWrote(t *testing.T) {
+	priv := "Z29vZC1wdWJsaWMta2V5LTAwMDAwMDAwMDAwMDAwMDA="
+	pub := "a1+TZegHYJvSl8s82HEx9meAxQgRnabhO+tc2v8+kSA="
+	path := wgEasyDB(t,
+		`'first','10.8.0.2','`+pub+`','`+priv+`','',1,''`,
+		`'second','10.8.0.3','`+pub+`','`+priv+`','',1,''`,
+		`'third','10.8.0.4','`+pub+`','`+priv+`','',1,''`,
+	)
+	st := &failAfterStore{Store: testStore(t), after: 1}
+
+	report, err := Apply(context.Background(), st, testInput(path))
+	if err == nil {
+		t.Fatal("Apply() succeeded despite a store that refuses the second write")
+	}
+	if len(report.Imported) != 1 || report.Imported[0].Name != "first" {
+		t.Fatalf("report claims %d imported (%+v); only 'first' was written", len(report.Imported), report.Imported)
+	}
+	rendered := report.Render(true)
+	if strings.Contains(rendered, "second") && !strings.Contains(rendered, "NOT MIGRATED") {
+		t.Errorf("the credential that failed is listed as imported:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "NOT MIGRATED") {
+		t.Errorf("the failure is not reported as a loss:\n%s", rendered)
+	}
+}
+
+// failAfterStore accepts n writes and then refuses, the way a store does when the
+// disk fills or the database locks part-way through.
+type failAfterStore struct {
+	Store
+	after int
+	n     int
+}
+
+func (f *failAfterStore) AddWGClient(ctx context.Context, masterID string, c domain.WGClient) error {
+	if f.n >= f.after {
+		return errors.New("database is locked")
+	}
+	f.n++
+	return f.Store.AddWGClient(ctx, masterID, c)
+}

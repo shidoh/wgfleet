@@ -368,6 +368,17 @@ func parseClientPeers(out string) []domain.ClientPeerStatus {
 func ClientWGOwnedProbe(claimPath, iface string) Probe {
 	return func(ctx context.Context) Result {
 		start := now()
+		// The planner's own verdict comes FIRST. The two probes below read the world,
+		// and the world cannot show a decision: after a successful handover the claim
+		// and the link are both true forever, so every deferral — no key yet, spec
+		// rejected, 3.x refused — reported green. The worst of those is a malformed
+		// credential freezing the interface, after which every revocation silently
+		// stops taking effect while the UI reports success.
+		if reason, err := os.ReadFile(deferredPathFor(claimPath)); err == nil {
+			if r := strings.TrimSpace(string(reason)); r != "" {
+				return fail("the agent is not applying the client interface spec: " + r)
+			}
+		}
 		if _, err := os.Stat(claimPath); err != nil {
 			return fail("the agent has not raised the client interface (no claim at " + claimPath + ")")
 		}
@@ -376,4 +387,11 @@ func ClientWGOwnedProbe(claimPath, iface string) Probe {
 		}
 		return ok("client interface carried by the agent", since(start))
 	}
+}
+
+// deferredPathFor derives the deferral marker's path from the claim's. Both hang
+// off the interface config, so one argument determines the other and the probe's
+// signature does not have to grow.
+func deferredPathFor(claimPath string) string {
+	return strings.TrimSuffix(claimPath, ".claim") + ".deferred"
 }

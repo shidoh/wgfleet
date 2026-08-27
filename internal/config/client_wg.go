@@ -51,6 +51,19 @@ func validateClientAWG(i int, m MasterConfig) []error {
 	if m.ClientAWGManaged() && m.ClientAWG.AddressPool == "" {
 		errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.address_pool is required when client_awg.managed is true", i))
 	}
+	// The pool must have a host #1 — the master's own address inside it. Without
+	// one the broker's masterClientAddress fails, and that failure now aborts the
+	// WHOLE spec render, so a plausible typo like "10.80.0.5/32" would stop this
+	// master converging mihomo, the NAT, DOCKER-USER, blocky and the VLESS inbound
+	// as well. Catch it here, where it costs a startup error instead.
+	if pool := m.ClientAWG.AddressPool; pool != "" {
+		if p, err := netip.ParsePrefix(pool); err == nil {
+			if first := p.Masked().Addr().Next(); !first.IsValid() || !p.Contains(first) {
+				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.address_pool %s has no host address for the "+
+					"master itself — it needs room for at least a gateway and one client (a /30 or wider)", i, pool))
+			}
+		}
+	}
 
 	if mtu := m.ClientAWG.MTU; mtu != 0 && (mtu < minClientAWGMTU || mtu > maxClientAWGMTU) {
 		errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.mtu %d out of range (0 to derive, else %d..%d)",
@@ -104,9 +117,27 @@ func validateClientAWG(i int, m MasterConfig) []error {
 // anyone holding the source. The 3.x TIMERS need no secret and are unaffected;
 // they are the half that carries most of the benefit.
 func validateAWG3Secret(c ControllerConfig) []error {
-	if c.Fleet.AWG3Key != "" {
+	who := HeaderProtectionEnabledBy(c)
+	if len(who) == 0 || c.Fleet.AWG3Key != "" {
 		return nil
 	}
+	return []error{fmt.Errorf("fleet.awg3_key is required because header protection is enabled by %s — "+
+		"it is the secret the chacha20 header-protection key is derived from, and deriving that key from "+
+		"anything that ships in this repository would defeat it. Set it to a secret:// reference "+
+		"(32+ random bytes). AmneziaWG 3.x TIMERS need no secret: use client_awg.awg3: timers for those",
+		strings.Join(who, ", "))}
+}
+
+// HeaderProtectionEnabledBy lists the manifest keys that switch AmneziaWG 3.x
+// header protection on, or nothing when it is off everywhere.
+//
+// Exported because the answer is needed twice and must not be computed twice
+// differently: config validation refuses a missing secret REFERENCE, and startup
+// refuses a reference that RESOLVES to nothing. The second check is the one that
+// matters — an env var set to the empty string, or an empty secret file, sails
+// through the first and yields HMAC with an empty key, which is exactly the
+// weakness the fleet secret exists to remove.
+func HeaderProtectionEnabledBy(c ControllerConfig) []string {
 	var who []string
 	if c.Fleet.AWG3 != nil && *c.Fleet.AWG3 {
 		who = append(who, "fleet.awg3")
@@ -121,15 +152,13 @@ func validateAWG3Secret(c ControllerConfig) []error {
 			who = append(who, fmt.Sprintf("fleet.masters[%d] (%s).client_awg.awg3: full", i, m.Name))
 		}
 	}
-	if len(who) == 0 {
-		return nil
-	}
-	return []error{fmt.Errorf("fleet.awg3_key is required because header protection is enabled by %s — "+
-		"it is the secret the chacha20 header-protection key is derived from, and deriving that key from "+
-		"anything that ships in this repository would defeat it. Set it to a secret:// reference "+
-		"(32+ random bytes). AmneziaWG 3.x TIMERS need no secret: use client_awg.awg3: timers for those",
-		strings.Join(who, ", "))}
+	return who
 }
+
+// MinAWG3KeyLen is the shortest fleet secret accepted for header protection. It
+// is a chacha20 key's worth of entropy; anything shorter is a placeholder somebody
+// meant to replace.
+const MinAWG3KeyLen = 32
 
 // validateClientPoolsDisjoint rejects masters whose client pools overlap. With
 // one master this is trivially satisfied; it exists for the multi-master fleet

@@ -139,11 +139,22 @@ func Apply(ctx context.Context, st Store, in Input) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
-	for _, c := range report.Imported {
+	for i, c := range report.Imported {
 		if err := st.AddWGClient(ctx, in.MasterID, c); err != nil {
 			// Stop at the first failure rather than pressing on: a half-written import
 			// with an unexplained gap is worse than one the operator re-runs after
 			// fixing the cause. Already-written credentials are simply skipped next time.
+			//
+			// Truncate the report to what was ACTUALLY written first. Report.Imported
+			// is the plan, and returning it whole alongside the error told the operator
+			// every credential had made it across — so they would read a clean report,
+			// believe the migration complete, and flip client_awg.managed on people who
+			// are not in the store.
+			report.Imported = report.Imported[:i]
+			report.Skipped = append(report.Skipped, Skip{
+				Name:   c.Name,
+				Reason: "NOT MIGRATED: the store refused this credential (" + err.Error() + ") — the import stopped here, so everything after it is unwritten too",
+			})
 			return report, fmt.Errorf("client import: writing %q: %w", c.Name, err)
 		}
 	}

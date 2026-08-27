@@ -129,7 +129,17 @@ func ExecAction(summary string, cmd ...string) Action {
 // cleanup, where a step may legitimately no-op (an interface already down, a
 // service already stopped) and one failure must not abort the rest.
 func BestEffortExecAction(summary string, cmd ...string) Action {
-	a := ExecAction(summary, cmd...)
+	return ExecAction(summary, cmd...).BestEffort()
+}
+
+// BestEffort returns a copy of a whose failure is logged and swallowed.
+//
+// Separate from BestEffortExecAction so it can wrap an action that already has an
+// OnApplied hook: the hook then fires only on a real success, and the failure is
+// still non-fatal to the pass. Composing it the other way round — best-effort
+// first, hook second — would fire the hook on failure too, because the wrapper
+// reports success unconditionally.
+func (a Action) BestEffort() Action {
 	inner := a.apply
 	display := a.Display
 	a.apply = func(ctx context.Context) error {

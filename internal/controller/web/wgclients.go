@@ -132,6 +132,14 @@ func (h *Handler) handleWGClients(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "load node", err)
 		return
 	}
+	// Read the one-shot flashes HERE and nowhere else. They are read-and-clear, and
+	// wgClientsView is shared with the 10-second poll — so a tick landing between an
+	// action's redirect and the page render ate the message. Worse, the cookie path
+	// is "/", so a clients tab left open would eat a FAILURE flash raised by an
+	// action on another page in another tab: the operator clicks Provision, it
+	// fails, and the node page renders as though it worked.
+	data.Flash = h.takeFlash(w, r)
+	data.FlashOK = h.takeFlashOK(w, r)
 	h.render(w, h.wgClientsTmpl, "layout", data)
 }
 
@@ -172,7 +180,7 @@ func (h *Handler) wgClientsView(w http.ResponseWriter, r *http.Request) (wgClien
 	user, _ := h.currentUser(r)
 	data := wgClientsData{
 		Title: "AWG clients — " + node.Name, NodeCount: h.fleetCount(r.Context()),
-		User: user, Flash: h.takeFlash(w, r), FlashOK: h.takeFlashOK(w, r), CSRF: h.csrf,
+		User: user, CSRF: h.csrf,
 		NodeID: id, NodeName: node.Name,
 	}
 

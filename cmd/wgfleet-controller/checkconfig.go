@@ -107,6 +107,14 @@ func checkHostReadiness(cfg *config.ControllerConfig) error {
 	if serr := checkStoreOpenable(cfg.Controller.Store); serr != nil {
 		hostErrs = append(hostErrs, "store: "+serr.Error())
 	}
+	// The newest way to crash-loop the control plane, and it was missing: serve()
+	// resolves this and returns a fatal error, so a typo'd reference passed this
+	// check green and then took the controller down five seconds at a time.
+	if perr == nil {
+		if _, kerr := resolveAWG3Key(cfg, provider); kerr != nil {
+			hostErrs = append(hostErrs, "fleet.awg3_key: "+kerr.Error())
+		}
+	}
 	if len(hostErrs) == 0 {
 		return nil
 	}
@@ -154,6 +162,11 @@ func checkStoreOpenable(path string) error {
 }
 
 // errCheckFailed marks the one failure whose message main must NOT log: the
-// operator-facing validation report is already on stderr, and a second rendering
-// of it through the structured logger buries the part they need to read.
-var errCheckFailed = errors.New("manifest is not valid")
+// operator-facing report is already on stderr, and a second rendering of it
+// through the structured logger buries the part they need to read.
+//
+// The text is deliberately about the CHECK, not the manifest: both verdicts
+// return this, and "manifest is not valid" was a lie for the host-readiness half —
+// which is exactly the half that fails when someone validates a perfectly good
+// file from their laptop.
+var errCheckFailed = errors.New("--check-config found a problem (see the report above)")

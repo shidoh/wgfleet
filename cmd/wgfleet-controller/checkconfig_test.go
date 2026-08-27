@@ -11,6 +11,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 )
 
@@ -147,4 +148,51 @@ func TestCheckHostReadinessDoesNotCondemnTheManifest(t *testing.T) {
 	if err := checkHostReadiness(cfg); !errors.Is(err, errCheckFailed) {
 		t.Fatalf("host readiness = %v, want errCheckFailed", err)
 	}
+}
+
+// A reference that resolves to nothing must be refused, not silently accepted.
+//
+// Config validation checks the reference string; this is the value. An env var
+// set to the empty string — a one-character slip in a systemd Environment= line —
+// passes validation and then keys the header-protection HMAC on "", which anyone
+// holding this source can recompute. --check-config must catch it, because the
+// alternative is finding out from `Restart=on-failure`.
+func TestAWG3KeyMustResolveToSomethingUsable(t *testing.T) {
+	on := true
+	cfg := &config.ControllerConfig{}
+	cfg.Fleet.AWG3 = &on
+	cfg.Fleet.AWG3Key = "env://WGFLEET_TEST_AWG3_KEY"
+
+	t.Setenv("WGFLEET_TEST_AWG3_KEY", "")
+	if _, err := resolveAWG3Key(cfg, config.EnvSecretProvider{}); err == nil {
+		t.Error("an empty resolved secret was accepted while header protection is on")
+	}
+
+	t.Setenv("WGFLEET_TEST_AWG3_KEY", "short")
+	err := resolveAWG3Key2(t, cfg)
+	if err == nil {
+		t.Error("a 5-byte secret was accepted")
+	} else if !strings.Contains(err.Error(), "at least") {
+		t.Errorf("the refusal does not say what is needed: %v", err)
+	}
+
+	t.Setenv("WGFLEET_TEST_AWG3_KEY", strings.Repeat("k", config.MinAWG3KeyLen))
+	if _, err := resolveAWG3Key(cfg, config.EnvSecretProvider{}); err != nil {
+		t.Errorf("a usable secret was refused: %v", err)
+	}
+
+	// With header protection off, an empty value is the ordinary state and must
+	// not block startup.
+	off := config.ControllerConfig{}
+	t.Setenv("WGFLEET_TEST_AWG3_KEY", "")
+	off.Fleet.AWG3Key = "env://WGFLEET_TEST_AWG3_KEY"
+	if _, err := resolveAWG3Key(&off, config.EnvSecretProvider{}); err != nil {
+		t.Errorf("an unused secret was refused: %v", err)
+	}
+}
+
+func resolveAWG3Key2(t *testing.T, cfg *config.ControllerConfig) error {
+	t.Helper()
+	_, err := resolveAWG3Key(cfg, config.EnvSecretProvider{})
+	return err
 }
