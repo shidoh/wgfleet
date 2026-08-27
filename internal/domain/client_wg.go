@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -45,6 +47,12 @@ type ClientWGSpec struct {
 	// AWG allows these to differ per end, so where they may differ they MUST.
 	// nil ⇒ fall back to AWG.Local.
 	ClientAWGLocal *AWGLocal
+	// Keepalive is what generated client configs put in PersistentKeepalive.
+	// Empty ⇒ the 25-second default. A bare number pins one value for everybody;
+	// a "min-max" band gives each credential its OWN stable value, which is the
+	// only shape available here — PersistentKeepalive is a static line in a file
+	// the client app cannot redraw, unlike the AmneziaWG 3.x timers.
+	Keepalive string
 	// Backend selects what actually carries the interface: the kernel module (as
 	// on the exits) or the userspace amneziawg-go daemon. Empty ⇒ kernel.
 	Backend ClientWGBackend
@@ -143,6 +151,9 @@ func (s ClientWGSpec) Validate() error {
 		errs = append(errs, fmt.Errorf("unknown backend %q", s.Backend))
 	}
 	errs = append(errs, validateClientAllowedIPs(s.AllowedIPs)...)
+	if err := ValidateClientKeepalive(s.Keepalive); err != nil {
+		errs = append(errs, err)
+	}
 
 	pool, err := netip.ParsePrefix(s.AddressPool)
 	if err != nil {
@@ -269,4 +280,41 @@ func ValidClientName(name string) bool {
 func ValidWireGuardKey(s string) bool {
 	raw, err := base64.StdEncoding.DecodeString(s)
 	return err == nil && len(raw) == 32
+}
+
+// Keepalive bounds for generated client configs. The ceiling is the one that
+// matters: clients sit behind NAT, and a mapping that expires before the next
+// keepalive leaves the master unable to reach the client until the client speaks
+// first. Common NAT UDP timeouts start at 30 seconds, which is why WireGuard's
+// own documented value is 25. The floor only exists to stop a typo turning every
+// phone on the fleet into a one-second beacon.
+const (
+	MinClientKeepalive = 5
+	MaxClientKeepalive = 120
+)
+
+// ValidateClientKeepalive accepts "", a bare number, or "min-max" with both ends in
+// range and min <= max.
+func ValidateClientKeepalive(v string) error {
+	if v == "" {
+		return nil
+	}
+	lo, hi, isRange := strings.Cut(v, "-")
+	loN, err := strconv.Atoi(strings.TrimSpace(lo))
+	if err != nil || loN < MinClientKeepalive || loN > MaxClientKeepalive {
+		return fmt.Errorf("keepalive %q: want a number or \"min-max\" within %d-%d seconds",
+			v, MinClientKeepalive, MaxClientKeepalive)
+	}
+	if !isRange {
+		return nil
+	}
+	hiN, err := strconv.Atoi(strings.TrimSpace(hi))
+	if err != nil || hiN < MinClientKeepalive || hiN > MaxClientKeepalive {
+		return fmt.Errorf("keepalive %q: want a number or \"min-max\" within %d-%d seconds",
+			v, MinClientKeepalive, MaxClientKeepalive)
+	}
+	if hiN < loN {
+		return fmt.Errorf("keepalive range %q is inverted (max < min)", v)
+	}
+	return nil
 }

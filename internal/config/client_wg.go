@@ -57,6 +57,10 @@ func validateClientAWG(i int, m MasterConfig) []error {
 			i, mtu, minClientAWGMTU, maxClientAWGMTU))
 	}
 
+	if err := domain.ValidateClientKeepalive(m.ClientAWG.Keepalive); err != nil {
+		errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.%w", i, err))
+	}
+
 	for _, a := range m.ClientAWGAllowedIPs() {
 		p, err := netip.ParsePrefix(a)
 		if err != nil {

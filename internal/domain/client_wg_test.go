@@ -229,3 +229,21 @@ func TestNodeSpecValidatesClientWGWithoutVLESS(t *testing.T) {
 		t.Fatalf("NodeSpec.Validate() = %v, want the client wg spec named", err)
 	}
 }
+
+func TestClientWGSpecKeepaliveValidation(t *testing.T) {
+	for _, ok := range []string{"", "25", "5", "120", "15-25", "20-20"} {
+		s := validClientWGSpec()
+		s.Keepalive = ok
+		if err := s.Validate(); err != nil {
+			t.Errorf("keepalive %q should be accepted: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"nonsense", "0", "4", "121", "25-15", "-5", "25-", "1e3"} {
+		s := validClientWGSpec()
+		s.Keepalive = bad
+		err := s.Validate()
+		if err == nil || !strings.Contains(err.Error(), "keepalive") {
+			t.Errorf("keepalive %q should fail validation, got %v", bad, err)
+		}
+	}
+}

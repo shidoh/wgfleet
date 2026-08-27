@@ -1,8 +1,11 @@
 package wg
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"net/netip"
+	"strconv"
 	"strings"
 
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -146,7 +149,7 @@ func RenderClientConfig(in ClientConfigInput) (string, error) {
 	}
 	fmt.Fprintf(&b, "AllowedIPs = %s\n", strings.Join(allowed, ", "))
 	fmt.Fprintf(&b, "Endpoint = %s\n", in.Endpoint)
-	fmt.Fprintf(&b, "PersistentKeepalive = %d\n", ClientKeepaliveSeconds)
+	fmt.Fprintf(&b, "PersistentKeepalive = %d\n", ClientKeepaliveFor(in.Spec.Keepalive, in.Client.ID))
 	return b.String(), nil
 }
 
@@ -179,4 +182,38 @@ func validateForBackend(p domain.AWGParams, backend domain.ClientWGBackend) erro
 		return p.ValidateUserspace()
 	}
 	return p.Validate()
+}
+
+// ClientKeepaliveFor resolves one credential's PersistentKeepalive.
+//
+// A band gives each credential its own value instead of one interval for the
+// whole fleet. The gain is narrow and worth stating honestly: any keepalive is a
+// beacon, and 25 seconds is what every WireGuard deployment on earth uses, so
+// moving off it does not hide the beacon. What it removes is the CORRELATION —
+// with one shared interval, an observer who picks out one of our clients has a
+// handle that joins it to all the others.
+//
+// The draw is keyed by the credential ID and therefore stable: the config is
+// re-rendered from scratch on every portal visit, and a value that moved between
+// renders would hand the same person a different config each time they opened
+// their own link. The ID is used rather than the name because renaming a
+// credential must not change what it hands out.
+func ClientKeepaliveFor(spec, clientID string) int {
+	if spec == "" {
+		return ClientKeepaliveSeconds
+	}
+	lo, hi, isRange := strings.Cut(spec, "-")
+	loN, err := strconv.Atoi(strings.TrimSpace(lo))
+	if err != nil {
+		return ClientKeepaliveSeconds // validation rejects this at startup
+	}
+	if !isRange {
+		return loN
+	}
+	hiN, err := strconv.Atoi(strings.TrimSpace(hi))
+	if err != nil || hiN <= loN {
+		return loN
+	}
+	sum := sha256.Sum256([]byte("wgfleet|client-keepalive|" + clientID))
+	return loN + int(binary.BigEndian.Uint32(sum[:4])%uint32(hiN-loN+1))
 }

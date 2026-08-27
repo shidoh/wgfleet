@@ -1,6 +1,7 @@
 package wg
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -247,5 +248,62 @@ func TestRenderClientConfigRejectsKernelOnlySignatures(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "userspace") {
 		t.Fatalf("error should name the userspace restriction, got: %v", err)
+	}
+}
+
+// An unset keepalive keeps the value every WireGuard deployment on earth uses.
+// Changing that default silently would alter the traffic shape of every client
+// on an ordinary upgrade.
+func TestClientKeepaliveDefaults(t *testing.T) {
+	if got := ClientKeepaliveFor("", "any-id"); got != ClientKeepaliveSeconds {
+		t.Fatalf("ClientKeepaliveFor(\"\") = %d, want %d", got, ClientKeepaliveSeconds)
+	}
+}
+
+func TestClientKeepaliveFixedValue(t *testing.T) {
+	if got := ClientKeepaliveFor("18", "any-id"); got != 18 {
+		t.Fatalf("ClientKeepaliveFor(\"18\") = %d, want 18", got)
+	}
+}
+
+// A band gives each credential its OWN interval. The point is to break the
+// fleet-wide lockstep — every client of ours beaconing at the same second is a
+// correlation handle joining them to each other — so the value must depend on the
+// credential and must be stable, because the config is re-rendered on every
+// portal visit and a value that moved would hand the user a different config each
+// time they opened their link.
+func TestClientKeepaliveBandIsPerClientAndStable(t *testing.T) {
+	const band = "15-25"
+	seen := map[int]int{}
+	for i := 0; i < 200; i++ {
+		id := "cred-" + strconv.Itoa(i)
+		got := ClientKeepaliveFor(band, id)
+		if got < 15 || got > 25 {
+			t.Fatalf("id %q: keepalive %d outside the band %s", id, got, band)
+		}
+		if again := ClientKeepaliveFor(band, id); again != got {
+			t.Fatalf("id %q: keepalive moved between renders, %d then %d", id, got, again)
+		}
+		seen[got]++
+	}
+	if len(seen) < 5 {
+		t.Fatalf("a band of 11 values produced only %d distinct intervals across 200 clients: %v", len(seen), seen)
+	}
+}
+
+func TestRenderClientConfigUsesTheDerivedKeepalive(t *testing.T) {
+	s := clientSpec()
+	s.Keepalive = "19"
+	out, err := RenderClientConfig(ClientConfigInput{
+		Spec:   s,
+		Client: domain.WGClient{ID: "cred-1", Name: "laptop", Address: "10.80.0.2/32", PrivateKey: "cHJpdi0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="},
+		ServerPublicKey: "cHViLXNlcnZlci0wMDAwMDAwMDAwMDAwMDAwMDAwMA=",
+		Endpoint:        "203.0.113.1:443",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(out, "PersistentKeepalive = 19") {
+		t.Fatalf("config did not carry the configured keepalive:\n%s", out)
 	}
 }

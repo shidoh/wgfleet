@@ -532,6 +532,14 @@ type ClientAWGConfig struct {
 	// the hop chain (clientFacingMTU), which is the right answer in almost every
 	// case; set it only to pin a value the derivation cannot know about.
 	MTU int `koanf:"mtu"`
+	// Keepalive is what generated client configs put in PersistentKeepalive.
+	// Empty ⇒ 25 seconds, the value every WireGuard deployment uses. A bare number
+	// pins one interval; a "min-max" band gives each credential its own stable
+	// value, which removes the fleet-wide lockstep an observer could use to join
+	// our clients to one another. Raise it with care: it must stay under the
+	// shortest NAT UDP timeout on the path or the master loses reachability to
+	// idle clients.
+	Keepalive string `koanf:"keepalive"`
 	// DNS is what generated client configs point at. Empty ⇒ inherit the
 	// compose-era compose.client_dns, so an existing manifest keeps working when
 	// the interface changes hands.

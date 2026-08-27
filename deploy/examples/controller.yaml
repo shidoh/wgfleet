@@ -142,6 +142,10 @@ fleet:
         # out keeps working. "full" adds header protection and requires EVERY client to
         # re-import, so treat it as a flag day.
         # awg3: timers
+        # keepalive: 15-25  # PersistentKeepalive in generated client configs. A band
+        # gives each client its own stable interval instead of the whole fleet beaconing
+        # in lockstep. Keep it under the shortest NAT UDP timeout on the path (25 is the
+        # WireGuard default for that reason); unset means 25 for everybody.
       # client_vless: a DPI-resistant alternative client transport (VLESS+REALITY+
       # XHTTP via xray) that runs ALONGSIDE the client AWG, for users whose AWG is
       # throttled by DPI (RU TSPU and similar). See CONFIGURATION.md for every key.

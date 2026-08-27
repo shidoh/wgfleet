@@ -209,3 +209,24 @@ func TestClientAWG3Resolves(t *testing.T) {
 		}
 	}
 }
+
+func TestClientAWGKeepaliveValidation(t *testing.T) {
+	base := func(v string) ControllerConfig {
+		return ControllerConfig{Fleet: FleetSection{Masters: []MasterConfig{
+			masterWith("m1", ClientAWGConfig{ListenPort: 443, AddressPool: "10.80.0.0/24", Keepalive: v}),
+		}}}
+	}
+	for _, ok := range []string{"", "25", "15-25", "120"} {
+		if hasClientAWGErr(base(ok)) {
+			t.Errorf("client_awg.keepalive %q should be accepted", ok)
+		}
+	}
+	// A keepalive above the shortest common NAT timeout silently costs the master
+	// its reachability to idle clients, so the bound is enforced rather than
+	// documented.
+	for _, bad := range []string{"0", "600", "25-15", "soon"} {
+		if !hasClientAWGErr(base(bad)) {
+			t.Errorf("client_awg.keepalive %q should fail validation", bad)
+		}
+	}
+}
