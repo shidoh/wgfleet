@@ -27,7 +27,6 @@ func clientSpec() domain.ClientWGSpec {
 			},
 			Local: domain.AWGLocal{Jc: 4, Jmin: 40, Jmax: 70, I1: "<b 0xaa>"},
 		},
-		ClientAWGLocal: &domain.AWGLocal{Jc: 6, Jmin: 45, Jmax: 75, I1: "<b 0xbb>"},
 		Clients: []domain.WGClientPeer{
 			{Name: "laptop", PublicKey: "cHViLWxhcHRvcC0wMDAwMDAwMDAwMDAwMDAwMDAwMA=", Address: "10.80.0.2/32", PresharedKey: "cHNrLWxhcHRvcC0wMDAwMDAwMDAwMDAwMDAwMDAwMA="},
 			{Name: "phone", PublicKey: "cHViLXBob25lLTAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=", Address: "10.80.0.3/32"},
@@ -112,7 +111,7 @@ func TestRenderClientInterfaceWithNoPeers(t *testing.T) {
 func TestRenderClientConfig(t *testing.T) {
 	got, err := RenderClientConfig(ClientConfigInput{
 		Spec:            clientSpec(),
-		Client:          domain.WGClient{Name: "laptop", Address: "10.80.0.2/32", PrivateKey: "Y2xpZW50LXByaXZhdGUtMDAwMDAwMDAwMDAwMDAwMA=", PresharedKey: "cHNrLWxhcHRvcC0wMDAwMDAwMDAwMDAwMDAwMDAwMA="},
+		Client:          domain.WGClient{Name: "laptop", Address: "10.80.0.2/32", PublicKey: testClientPubA, PrivateKey: "Y2xpZW50LXByaXZhdGUtMDAwMDAwMDAwMDAwMDAwMA=", PresharedKey: "cHNrLWxhcHRvcC0wMDAwMDAwMDAwMDAwMDAwMDAwMA="},
 		ServerPublicKey: "c2VydmVyLXB1YmxpYy0wMDAwMDAwMDAwMDAwMDAwMDA=",
 		Endpoint:        "203.0.113.1:443",
 	})
@@ -128,9 +127,7 @@ func TestRenderClientConfig(t *testing.T) {
 		// Shared params must match the server's interface exactly.
 		"S4 = 26",
 		"H3 = 9-12",
-		// The CLIENT's own decoy, not the server's.
-		"Jc = 6",
-		"I1 = <b 0xbb>",
+
 		"[Peer]",
 		"PublicKey = c2VydmVyLXB1YmxpYy0wMDAwMDAwMDAwMDAwMDAwMDA=",
 		"PresharedKey = cHNrLWxhcHRvcC0wMDAwMDAwMDAwMDAwMDAwMDAwMA=",
@@ -142,8 +139,18 @@ func TestRenderClientConfig(t *testing.T) {
 			t.Errorf("client config missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "<b 0xaa>") {
-		t.Error("client config carries the SERVER-end signature packets")
+	// The decoy must be the CLIENT's own, derived from its public key — not the
+	// server's, and not a spec field. These two assertions used to read values
+	// planted in ClientAWGLocal, which meant they exercised a fallback branch the
+	// store makes unreachable rather than the path every real config takes.
+	if strings.Contains(got, "<b 0xaa>") || strings.Contains(got, "Jc = 4") {
+		t.Errorf("client config carries the SERVER-end decoy:\n%s", got)
+	}
+	want := clientDecoy(clientSpec(), domain.WGClient{PublicKey: testClientPubA})
+	if !strings.Contains(got, fmt.Sprintf("Jc = %d", want.Jc)) ||
+		!strings.Contains(got, fmt.Sprintf("Jmin = %d", want.Jmin)) {
+		t.Errorf("client config does not carry this credential's derived decoy (want Jc=%d Jmin=%d):\n%s",
+			want.Jc, want.Jmin, got)
 	}
 	// The IPv4-only data plane: an ::/0 must never appear in a generated config.
 	if strings.Contains(got, "::/0") {
@@ -154,7 +161,7 @@ func TestRenderClientConfig(t *testing.T) {
 func TestRenderClientConfigRejectsIncomplete(t *testing.T) {
 	full := ClientConfigInput{
 		Spec:            clientSpec(),
-		Client:          domain.WGClient{Name: "laptop", Address: "10.80.0.2/32", PrivateKey: "k"},
+		Client:          domain.WGClient{Name: "laptop", Address: "10.80.0.2/32", PublicKey: testClientPubA, PrivateKey: "k"},
 		ServerPublicKey: "pub",
 		Endpoint:        "203.0.113.1:443",
 	}
@@ -187,7 +194,7 @@ func TestRedactConfigCoversClientRenders(t *testing.T) {
 	}
 	cfg, err := RenderClientConfig(ClientConfigInput{
 		Spec:            clientSpec(),
-		Client:          domain.WGClient{Name: "laptop", Address: "10.80.0.2/32", PrivateKey: "CLIENTSECRET"},
+		Client:          domain.WGClient{Name: "laptop", Address: "10.80.0.2/32", PublicKey: testClientPubA, PrivateKey: "CLIENTSECRET"},
 		ServerPublicKey: "pub",
 		Endpoint:        "203.0.113.1:443",
 	})
@@ -223,7 +230,7 @@ func TestRedactConfigMasksHeaderProtectionKey(t *testing.T) {
 
 	cfg, err := RenderClientConfig(ClientConfigInput{
 		Spec:            spec,
-		Client:          domain.WGClient{Name: "laptop", Address: "10.80.0.2/32", PrivateKey: "CLIENTSECRET"},
+		Client:          domain.WGClient{Name: "laptop", Address: "10.80.0.2/32", PublicKey: testClientPubA, PrivateKey: "CLIENTSECRET"},
 		ServerPublicKey: "pub",
 		Endpoint:        "203.0.113.1:443",
 	})
@@ -269,22 +276,36 @@ func TestRenderClientInterfaceAllowsKernelOnlySignaturesOnKernel(t *testing.T) {
 // whatever the SERVER runs on. So a client config is held to the userspace rule
 // unconditionally — a kernel-backed interface may legitimately use <c>/<t> in its
 // own decoy while the config it hands out must not.
-func TestRenderClientConfigRejectsKernelOnlySignatures(t *testing.T) {
+// A kernel-only <c>/<t> tag must never reach a client config — the far end is an
+// app on WireGuard-Go, which cannot parse them.
+//
+// This used to be written as "rendering with such a tag returns an error", with
+// the tag planted in ClientAWGLocal. That field was only ever read by a branch the
+// store makes unreachable, so the test proved nothing about a real config. The
+// property is now stronger and structural: the server's own local profile does not
+// reach the client at all, because the client's half is DERIVED per credential —
+// so plant the tag on the server and assert the config comes out clean anyway.
+func TestClientConfigNeverCarriesKernelOnlySignatures(t *testing.T) {
 	s := clientSpec()
 	s.Backend = domain.ClientWGBackendKernel
-	s.ClientAWGLocal = &domain.AWGLocal{Jc: 6, Jmin: 45, Jmax: 75, I1: "<b 0xbb><t>"}
+	awg := *s.AWG
+	awg.Local.I1 = "<b 0xbb><t>"
+	awg.Local.I2 = "<c>"
+	s.AWG = &awg
 
-	_, err := RenderClientConfig(ClientConfigInput{
+	got, err := RenderClientConfig(ClientConfigInput{
 		Spec:            s,
-		Client:          domain.WGClient{Name: "laptop", Address: "10.80.0.2/32", PrivateKey: "cHJpdi0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="},
+		Client:          domain.WGClient{Name: "laptop", Address: "10.80.0.2/32", PublicKey: testClientPubA, PrivateKey: "cHJpdi0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="},
 		ServerPublicKey: "cHViLXNlcnZlci0wMDAwMDAwMDAwMDAwMDAwMDAwMA=",
 		Endpoint:        "203.0.113.1:443",
 	})
-	if err == nil {
-		t.Fatal("a <t> tag was rendered into a config for a userspace client")
+	if err != nil {
+		t.Fatalf("a kernel-only tag on the SERVER must not stop a client config rendering: %v", err)
 	}
-	if !strings.Contains(err.Error(), "userspace") {
-		t.Fatalf("error should name the userspace restriction, got: %v", err)
+	for _, tag := range []string{"<t>", "<c>"} {
+		if strings.Contains(got, tag) {
+			t.Errorf("client config carries the kernel-only tag %q:\n%s", tag, got)
+		}
 	}
 }
 
@@ -333,7 +354,7 @@ func TestRenderClientConfigUsesTheDerivedKeepalive(t *testing.T) {
 	s.Keepalive = "19"
 	out, err := RenderClientConfig(ClientConfigInput{
 		Spec:            s,
-		Client:          domain.WGClient{ID: "cred-1", Name: "laptop", Address: "10.80.0.2/32", PrivateKey: "cHJpdi0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="},
+		Client:          domain.WGClient{ID: "cred-1", Name: "laptop", Address: "10.80.0.2/32", PublicKey: testClientPubA, PrivateKey: "cHJpdi0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="},
 		ServerPublicKey: "cHViLXNlcnZlci0wMDAwMDAwMDAwMDAwMDAwMDAwMA=",
 		Endpoint:        "203.0.113.1:443",
 	})

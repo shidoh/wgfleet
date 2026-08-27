@@ -331,8 +331,17 @@ func (p clientWGPlanner) checkBackendSupportsAWG3(backend domain.ClientWGBackend
 	return nil
 }
 
-// interfacePublicKey asks the live interface for its own public key.
-func interfacePublicKey(name string) (string, error) {
+// InterfacePublicKey asks the live interface for its own public key.
+//
+// This is the durable half of the client-identity audit. Comparing against
+// wg-easy's database only works while that database is still on disk, which after
+// the handover it need not be; the interface itself is there for as long as
+// clients are being served, so "the key I publish" can always be checked against
+// "the key actually answering handshakes".
+//
+// `public-key`, not `dump`: the dump's first line carries the interface PRIVATE
+// key, and this is called from a path that logs.
+func InterfacePublicKey(name string) (string, error) {
 	out, err := exec.Command("awg", "show", name, "public-key").Output()
 	if err != nil {
 		return "", err

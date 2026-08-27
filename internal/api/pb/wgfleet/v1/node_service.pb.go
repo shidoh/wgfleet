@@ -1212,19 +1212,18 @@ func (x *MasterSpec) GetClientWg() *ClientWGSpec {
 // the fleet-internal master↔exit leg: this one fronts many end users whose
 // credentials are issued and revoked through the controller UI.
 type ClientWGSpec struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	ListenPort     int32                  `protobuf:"varint,1,opt,name=listen_port,json=listenPort,proto3" json:"listen_port,omitempty"`         // UDP port clients dial
-	AddressPool    string                 `protobuf:"bytes,2,opt,name=address_pool,json=addressPool,proto3" json:"address_pool,omitempty"`       // client subnet (CIDR)
-	ServerAddress  string                 `protobuf:"bytes,3,opt,name=server_address,json=serverAddress,proto3" json:"server_address,omitempty"` // the master's own address inside the pool
-	Mtu            int32                  `protobuf:"varint,4,opt,name=mtu,proto3" json:"mtu,omitempty"`
-	Dns            []string               `protobuf:"bytes,5,rep,name=dns,proto3" json:"dns,omitempty"`                                               // resolvers written into client configs
-	AllowedIps     []string               `protobuf:"bytes,6,rep,name=allowed_ips,json=allowedIps,proto3" json:"allowed_ips,omitempty"`               // what client configs route into the tunnel
-	Awg            *AWGParams             `protobuf:"bytes,7,opt,name=awg,proto3" json:"awg,omitempty"`                                               // obfuscation for this interface (server end)
-	ClientAwgLocal *AWGLocal              `protobuf:"bytes,8,opt,name=client_awg_local,json=clientAwgLocal,proto3" json:"client_awg_local,omitempty"` // the per-end decoy the CLIENT must emit
-	Backend        string                 `protobuf:"bytes,9,opt,name=backend,proto3" json:"backend,omitempty"`                                       // "kernel" (default) | "userspace"
-	Clients        []*WGClientPeer        `protobuf:"bytes,10,rep,name=clients,proto3" json:"clients,omitempty"`                                      // ENABLED credentials only
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ListenPort    int32                  `protobuf:"varint,1,opt,name=listen_port,json=listenPort,proto3" json:"listen_port,omitempty"`         // UDP port clients dial
+	AddressPool   string                 `protobuf:"bytes,2,opt,name=address_pool,json=addressPool,proto3" json:"address_pool,omitempty"`       // client subnet (CIDR)
+	ServerAddress string                 `protobuf:"bytes,3,opt,name=server_address,json=serverAddress,proto3" json:"server_address,omitempty"` // the master's own address inside the pool
+	Mtu           int32                  `protobuf:"varint,4,opt,name=mtu,proto3" json:"mtu,omitempty"`
+	Dns           []string               `protobuf:"bytes,5,rep,name=dns,proto3" json:"dns,omitempty"`                                 // resolvers written into client configs
+	AllowedIps    []string               `protobuf:"bytes,6,rep,name=allowed_ips,json=allowedIps,proto3" json:"allowed_ips,omitempty"` // what client configs route into the tunnel
+	Awg           *AWGParams             `protobuf:"bytes,7,opt,name=awg,proto3" json:"awg,omitempty"`                                 // obfuscation for this interface (server end)
+	Backend       string                 `protobuf:"bytes,9,opt,name=backend,proto3" json:"backend,omitempty"`                         // "kernel" (default) | "userspace"
+	Clients       []*WGClientPeer        `protobuf:"bytes,10,rep,name=clients,proto3" json:"clients,omitempty"`                        // ENABLED credentials only
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ClientWGSpec) Reset() {
@@ -1302,13 +1301,6 @@ func (x *ClientWGSpec) GetAllowedIps() []string {
 func (x *ClientWGSpec) GetAwg() *AWGParams {
 	if x != nil {
 		return x.Awg
-	}
-	return nil
-}
-
-func (x *ClientWGSpec) GetClientAwgLocal() *AWGLocal {
-	if x != nil {
-		return x.ClientAwgLocal
 	}
 	return nil
 }
@@ -3166,7 +3158,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x15health_check_interval\x18\x0e \x01(\x05R\x13healthCheckInterval\x12(\n" +
 	"\x10max_failed_times\x18\x0f \x01(\x05R\x0emaxFailedTimes\x12>\n" +
 	"\fclient_vless\x18\x10 \x01(\v2\x1b.wgfleet.v1.ClientVlessSpecR\vclientVless\x125\n" +
-	"\tclient_wg\x18\x11 \x01(\v2\x18.wgfleet.v1.ClientWGSpecR\bclientWg\"\xf5\x02\n" +
+	"\tclient_wg\x18\x11 \x01(\v2\x18.wgfleet.v1.ClientWGSpecR\bclientWg\"\xbb\x02\n" +
 	"\fClientWGSpec\x12\x1f\n" +
 	"\vlisten_port\x18\x01 \x01(\x05R\n" +
 	"listenPort\x12!\n" +
@@ -3176,11 +3168,10 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x03dns\x18\x05 \x03(\tR\x03dns\x12\x1f\n" +
 	"\vallowed_ips\x18\x06 \x03(\tR\n" +
 	"allowedIps\x12'\n" +
-	"\x03awg\x18\a \x01(\v2\x15.wgfleet.v1.AWGParamsR\x03awg\x12>\n" +
-	"\x10client_awg_local\x18\b \x01(\v2\x14.wgfleet.v1.AWGLocalR\x0eclientAwgLocal\x12\x18\n" +
+	"\x03awg\x18\a \x01(\v2\x15.wgfleet.v1.AWGParamsR\x03awg\x12\x18\n" +
 	"\abackend\x18\t \x01(\tR\abackend\x122\n" +
 	"\aclients\x18\n" +
-	" \x03(\v2\x18.wgfleet.v1.WGClientPeerR\aclients\"\x80\x01\n" +
+	" \x03(\v2\x18.wgfleet.v1.WGClientPeerR\aclientsJ\x04\b\b\x10\t\"\x80\x01\n" +
 	"\fWGClientPeer\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
@@ -3416,36 +3407,35 @@ var file_wgfleet_v1_node_service_proto_depIdxs = []int32{
 	16, // 15: wgfleet.v1.MasterSpec.client_vless:type_name -> wgfleet.v1.ClientVlessSpec
 	14, // 16: wgfleet.v1.MasterSpec.client_wg:type_name -> wgfleet.v1.ClientWGSpec
 	28, // 17: wgfleet.v1.ClientWGSpec.awg:type_name -> wgfleet.v1.AWGParams
-	27, // 18: wgfleet.v1.ClientWGSpec.client_awg_local:type_name -> wgfleet.v1.AWGLocal
-	15, // 19: wgfleet.v1.ClientWGSpec.clients:type_name -> wgfleet.v1.WGClientPeer
-	17, // 20: wgfleet.v1.ClientVlessSpec.clients:type_name -> wgfleet.v1.VlessClient
-	28, // 21: wgfleet.v1.ExitTunnel.awg:type_name -> wgfleet.v1.AWGParams
-	20, // 22: wgfleet.v1.ExitTunnel.reality:type_name -> wgfleet.v1.RealityTunnel
-	22, // 23: wgfleet.v1.CustomConfig.files:type_name -> wgfleet.v1.ManagedFile
-	28, // 24: wgfleet.v1.WGServerSpec.awg:type_name -> wgfleet.v1.AWGParams
-	27, // 25: wgfleet.v1.WGServerSpec.client_awg_local:type_name -> wgfleet.v1.AWGLocal
-	25, // 26: wgfleet.v1.AWGShared.h1:type_name -> wgfleet.v1.AWGHeader
-	25, // 27: wgfleet.v1.AWGShared.h2:type_name -> wgfleet.v1.AWGHeader
-	25, // 28: wgfleet.v1.AWGShared.h3:type_name -> wgfleet.v1.AWGHeader
-	25, // 29: wgfleet.v1.AWGShared.h4:type_name -> wgfleet.v1.AWGHeader
-	26, // 30: wgfleet.v1.AWGParams.shared:type_name -> wgfleet.v1.AWGShared
-	27, // 31: wgfleet.v1.AWGParams.local:type_name -> wgfleet.v1.AWGLocal
-	30, // 32: wgfleet.v1.DNSFilterSpec.ports:type_name -> wgfleet.v1.DNSPorts
-	31, // 33: wgfleet.v1.DNSFilterSpec.bootstrap_dns:type_name -> wgfleet.v1.BootstrapUpstream
-	21, // 34: wgfleet.v1.DNSFilterSpec.custom:type_name -> wgfleet.v1.CustomConfig
-	0,  // 35: wgfleet.v1.NodeService.Register:input_type -> wgfleet.v1.RegisterRequest
-	2,  // 36: wgfleet.v1.NodeService.PublishPublicKey:input_type -> wgfleet.v1.PublishPublicKeyRequest
-	4,  // 37: wgfleet.v1.NodeService.PullSpec:input_type -> wgfleet.v1.PullSpecRequest
-	5,  // 38: wgfleet.v1.NodeService.ReportStatus:input_type -> wgfleet.v1.StatusReport
-	1,  // 39: wgfleet.v1.NodeService.Register:output_type -> wgfleet.v1.RegisterResponse
-	3,  // 40: wgfleet.v1.NodeService.PublishPublicKey:output_type -> wgfleet.v1.PublishPublicKeyResponse
-	10, // 41: wgfleet.v1.NodeService.PullSpec:output_type -> wgfleet.v1.NodeSpec
-	9,  // 42: wgfleet.v1.NodeService.ReportStatus:output_type -> wgfleet.v1.ReportStatusAck
-	39, // [39:43] is the sub-list for method output_type
-	35, // [35:39] is the sub-list for method input_type
-	35, // [35:35] is the sub-list for extension type_name
-	35, // [35:35] is the sub-list for extension extendee
-	0,  // [0:35] is the sub-list for field type_name
+	15, // 18: wgfleet.v1.ClientWGSpec.clients:type_name -> wgfleet.v1.WGClientPeer
+	17, // 19: wgfleet.v1.ClientVlessSpec.clients:type_name -> wgfleet.v1.VlessClient
+	28, // 20: wgfleet.v1.ExitTunnel.awg:type_name -> wgfleet.v1.AWGParams
+	20, // 21: wgfleet.v1.ExitTunnel.reality:type_name -> wgfleet.v1.RealityTunnel
+	22, // 22: wgfleet.v1.CustomConfig.files:type_name -> wgfleet.v1.ManagedFile
+	28, // 23: wgfleet.v1.WGServerSpec.awg:type_name -> wgfleet.v1.AWGParams
+	27, // 24: wgfleet.v1.WGServerSpec.client_awg_local:type_name -> wgfleet.v1.AWGLocal
+	25, // 25: wgfleet.v1.AWGShared.h1:type_name -> wgfleet.v1.AWGHeader
+	25, // 26: wgfleet.v1.AWGShared.h2:type_name -> wgfleet.v1.AWGHeader
+	25, // 27: wgfleet.v1.AWGShared.h3:type_name -> wgfleet.v1.AWGHeader
+	25, // 28: wgfleet.v1.AWGShared.h4:type_name -> wgfleet.v1.AWGHeader
+	26, // 29: wgfleet.v1.AWGParams.shared:type_name -> wgfleet.v1.AWGShared
+	27, // 30: wgfleet.v1.AWGParams.local:type_name -> wgfleet.v1.AWGLocal
+	30, // 31: wgfleet.v1.DNSFilterSpec.ports:type_name -> wgfleet.v1.DNSPorts
+	31, // 32: wgfleet.v1.DNSFilterSpec.bootstrap_dns:type_name -> wgfleet.v1.BootstrapUpstream
+	21, // 33: wgfleet.v1.DNSFilterSpec.custom:type_name -> wgfleet.v1.CustomConfig
+	0,  // 34: wgfleet.v1.NodeService.Register:input_type -> wgfleet.v1.RegisterRequest
+	2,  // 35: wgfleet.v1.NodeService.PublishPublicKey:input_type -> wgfleet.v1.PublishPublicKeyRequest
+	4,  // 36: wgfleet.v1.NodeService.PullSpec:input_type -> wgfleet.v1.PullSpecRequest
+	5,  // 37: wgfleet.v1.NodeService.ReportStatus:input_type -> wgfleet.v1.StatusReport
+	1,  // 38: wgfleet.v1.NodeService.Register:output_type -> wgfleet.v1.RegisterResponse
+	3,  // 39: wgfleet.v1.NodeService.PublishPublicKey:output_type -> wgfleet.v1.PublishPublicKeyResponse
+	10, // 40: wgfleet.v1.NodeService.PullSpec:output_type -> wgfleet.v1.NodeSpec
+	9,  // 41: wgfleet.v1.NodeService.ReportStatus:output_type -> wgfleet.v1.ReportStatusAck
+	38, // [38:42] is the sub-list for method output_type
+	34, // [34:38] is the sub-list for method input_type
+	34, // [34:34] is the sub-list for extension type_name
+	34, // [34:34] is the sub-list for extension extendee
+	0,  // [0:34] is the sub-list for field type_name
 }
 
 func init() { file_wgfleet_v1_node_service_proto_init() }

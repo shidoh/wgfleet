@@ -198,9 +198,6 @@ func clientWGToProto(c *domain.ClientWGSpec) *pb.ClientWGSpec {
 		Awg:           awgToProto(c.AWG),
 		Backend:       string(c.Backend),
 	}
-	if c.ClientAWGLocal != nil {
-		out.ClientAwgLocal = awgLocalToProto(c.ClientAWGLocal)
-	}
 	for _, p := range c.Clients {
 		out.Clients = append(out.Clients, &pb.WGClientPeer{
 			Name:         p.Name,
@@ -217,15 +214,14 @@ func clientWGFromProto(c *pb.ClientWGSpec) *domain.ClientWGSpec {
 		return nil
 	}
 	out := &domain.ClientWGSpec{
-		ListenPort:     int(c.GetListenPort()),
-		AddressPool:    c.GetAddressPool(),
-		ServerAddress:  c.GetServerAddress(),
-		MTU:            int(c.GetMtu()),
-		DNS:            c.GetDns(),
-		AllowedIPs:     c.GetAllowedIps(),
-		AWG:            awgFromProto(c.GetAwg()),
-		Backend:        domain.ClientWGBackend(c.GetBackend()),
-		ClientAWGLocal: awgLocalFromProto(c.GetClientAwgLocal()),
+		ListenPort:    int(c.GetListenPort()),
+		AddressPool:   c.GetAddressPool(),
+		ServerAddress: c.GetServerAddress(),
+		MTU:           int(c.GetMtu()),
+		DNS:           c.GetDns(),
+		AllowedIPs:    c.GetAllowedIps(),
+		AWG:           awgFromProto(c.GetAwg()),
+		Backend:       domain.ClientWGBackend(c.GetBackend()),
 	}
 	for _, p := range c.GetClients() {
 		out.Clients = append(out.Clients, domain.WGClientPeer{

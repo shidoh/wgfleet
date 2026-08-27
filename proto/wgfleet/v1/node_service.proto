@@ -221,7 +221,11 @@ message ClientWGSpec {
   repeated string dns = 5;            // resolvers written into client configs
   repeated string allowed_ips = 6;    // what client configs route into the tunnel
   AWGParams awg = 7;                  // obfuscation for this interface (server end)
-  AWGLocal client_awg_local = 8;      // the per-end decoy the CLIENT must emit
+  // 8 was client_awg_local: the per-end decoy is DERIVED per credential from its
+  // public key (see wg.clientDecoy), so it was never something a node needed to be
+  // told. Reserved rather than reused — a number that once meant one thing must
+  // never quietly come to mean another.
+  reserved 8;
   string backend = 9;                 // "kernel" (default) | "userspace"
   repeated WGClientPeer clients = 10; // ENABLED credentials only
 }

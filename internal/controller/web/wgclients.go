@@ -43,10 +43,6 @@ type wgClientsData struct {
 	NodeName  string
 	Managed   bool // the agent owns this master's client interface
 	Ready     bool // endpoint + published key present, so configs can be built
-	// WaitingForKey narrows Managed-but-not-Ready to the one case where waiting
-	// actually helps. Without it the issue panel tells an operator to wait for a
-	// reconcile pass that will never supply a public_ip.
-	WaitingForKey bool
 	// Notice explains a state the operator can act on (configs not ready yet).
 	// Err is a FAILURE: the page could not load what it is meant to show. They are
 	// rendered differently and must not be merged — an error printed as a hint is
@@ -216,7 +212,10 @@ func (h *Handler) wgClientsView(w http.ResponseWriter, r *http.Request) (wgClien
 		case host == "":
 			data.Notice = "No public endpoint known for this master yet (public_ip). Set it in the manifest or wait for provisioning."
 		case node.ClientWGPublicKey == "":
-			data.WaitingForKey = true
+			// The distinction this used to carry in a bool — "waiting helps" versus
+			// "waiting never will" — is already the difference between these two
+			// Notice texts, which is where the operator actually reads it. The field
+			// was set, never rendered, and explained itself in a comment instead.
 			data.Notice = "The master has not published its client interface key yet — wait one reconcile pass, then reload."
 		default:
 			data.Ready = true

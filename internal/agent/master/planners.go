@@ -66,6 +66,10 @@ type Input struct {
 
 const defaultClientInterface = "wg0"
 
+// ClientWGInterface is the same name, exported for the agent's identity audit,
+// which has to ask the LIVE interface what key it is serving.
+const ClientWGInterface = defaultClientInterface
+
 // mssTCPIPOverhead is the IPv4 + TCP header size subtracted from the path MTU to
 // get the MSS to advertise (20 + 20). Matches the exit's ClampMSS derivation.
 const mssTCPIPOverhead = 40

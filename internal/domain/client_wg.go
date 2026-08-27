@@ -43,10 +43,12 @@ type ClientWGSpec struct {
 	AllowedIPs []string
 	// AWG is the obfuscation for this interface (server end); nil ⇒ vanilla WG.
 	AWG *AWGParams
-	// ClientAWGLocal is the per-end junk/signature profile the CLIENT must emit.
-	// AWG allows these to differ per end, so where they may differ they MUST.
-	// nil ⇒ fall back to AWG.Local.
-	ClientAWGLocal *AWGLocal
+	// Keepalive DELIBERATELY does not cross the wire — there is no field for it in
+	// ClientWGSpec's proto message, and there should not be. The node renders the
+	// interface; the CONTROLLER renders client configs, and this value only ever
+	// appears in one of those. A round-trip through the wire therefore drops it,
+	// which is correct and is asserted by TestClientWGSpecKeepaliveStaysOffTheWire.
+	//
 	// Keepalive is what generated client configs put in PersistentKeepalive.
 	// Empty ⇒ the 25-second default. A bare number pins one value for everybody;
 	// a "min-max" band gives each credential its OWN stable value, which is the

@@ -22,7 +22,6 @@ func clientWGSpec() *domain.ClientWGSpec {
 			Shared: domain.AWGShared{S1: 30, S2: 40, S3: 20, S4: 26},
 			Local:  domain.AWGLocal{Jc: 4, Jmin: 40, Jmax: 70, I1: "<b 0x11>"},
 		},
-		ClientAWGLocal: &domain.AWGLocal{Jc: 5, Jmin: 50, Jmax: 80, I1: "<b 0x22>"},
 		Clients: []domain.WGClientPeer{
 			{Name: "laptop", PublicKey: "pub-1", Address: "10.80.0.2/32", PresharedKey: "psk-1"},
 			{Name: "phone", PublicKey: "pub-2", Address: "10.80.0.3/32"},
@@ -64,5 +63,32 @@ func TestWGClientPeerProtoHasNoPrivateKeyField(t *testing.T) {
 		if strings.Contains(name, "private") || name == "key" {
 			t.Fatalf("pb.WGClientPeer has field %q: the peer view must never carry a private key", rt.Field(i).Name)
 		}
+	}
+}
+
+// Keepalive is controller-side and must stay off the wire.
+//
+// It has no field in the proto message, so a round-trip drops it. That is the
+// intended design — the node renders the interface, the controller renders client
+// configs, and PersistentKeepalive only ever appears in the latter — but a lossy
+// round-trip looks exactly like a bug to the next reader, and the existing
+// round-trip test passes only because its fixture leaves the field empty.
+func TestClientWGSpecKeepaliveStaysOffTheWire(t *testing.T) {
+	in := domain.ClientWGSpec{
+		ListenPort: 443, AddressPool: "10.80.0.0/24", ServerAddress: "10.80.0.1",
+		AllowedIPs: []string{"0.0.0.0/0"},
+		Keepalive:  "15-25",
+	}
+	out := clientWGFromProto(clientWGToProto(&in))
+	if out == nil {
+		t.Fatal("round-trip produced nothing")
+	}
+	if out.Keepalive != "" {
+		t.Errorf("Keepalive = %q after a round-trip; it must not cross the wire", out.Keepalive)
+	}
+	// Everything the NODE needs still survives, so this is a deliberate omission
+	// rather than a broken conversion.
+	if out.ListenPort != in.ListenPort || out.AddressPool != in.AddressPool {
+		t.Errorf("the round-trip lost more than the keepalive: %+v", out)
 	}
 }

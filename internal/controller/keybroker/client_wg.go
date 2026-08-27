@@ -172,17 +172,16 @@ func (b *Broker) clientWGSpec(ctx context.Context, master config.MasterConfig, s
 	}
 	awg := clientLegAWG(master, server)
 	return &domain.ClientWGSpec{
-		ListenPort:     master.ClientListenPort(),
-		AddressPool:    master.ClientAWG.AddressPool,
-		ServerAddress:  serverAddr,
-		MTU:            mtu,
-		DNS:            master.ClientAWGDNS(),
-		Keepalive:      master.ClientAWG.Keepalive,
-		AllowedIPs:     master.ClientAWGAllowedIPs(),
-		AWG:            awg,
-		ClientAWGLocal: server.ClientAWGLocal,
-		Backend:        master.ClientAWGBackend(),
-		Clients:        domain.PeersOf(clients),
+		ListenPort:    master.ClientListenPort(),
+		AddressPool:   master.ClientAWG.AddressPool,
+		ServerAddress: serverAddr,
+		MTU:           mtu,
+		DNS:           master.ClientAWGDNS(),
+		Keepalive:     master.ClientAWG.Keepalive,
+		AllowedIPs:    master.ClientAWGAllowedIPs(),
+		AWG:           awg,
+		Backend:       master.ClientAWGBackend(),
+		Clients:       domain.PeersOf(clients),
 	}, nil
 }
 

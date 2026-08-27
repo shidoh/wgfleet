@@ -189,8 +189,8 @@ func TestRenderMasterSpecCarriesClientWG(t *testing.T) {
 	if cw.MTU != spec.WGServer.MTU {
 		t.Errorf("client interface MTU = %d, want the derived %d", cw.MTU, spec.WGServer.MTU)
 	}
-	if cw.AWG == nil || cw.ClientAWGLocal == nil {
-		t.Fatal("client interface must carry both ends of the AWG profile")
+	if cw.AWG == nil {
+		t.Fatal("client interface must carry the AWG profile")
 	}
 	// The obfuscation must be the SAME derivation the client-facing WGServer uses:
 	// clients configured before the handover keep working.
@@ -391,16 +391,13 @@ func TestClientLegAWG3IsSharedWithTheClientConfig(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	cw := spec.Master.ClientWG
-	if cw.ClientAWGLocal == nil {
-		t.Fatal("the client end lost its own local profile")
+	// The local half is DERIVED per credential at render time, not carried on the
+	// spec, so what the interface publishes is the shared half — and that is the
+	// half a client config must match byte for byte.
+	if cw.AWG == nil {
+		t.Fatal("the client interface lost its AWG profile")
 	}
-	// The local half differs per end by design; the shared half must not.
-	rendered := *cw.AWG
-	rendered.Local = *cw.ClientAWGLocal
-	if rendered.Shared != cw.AWG.Shared {
-		t.Fatal("the client config would carry different shared params than the interface")
-	}
-	if rendered.Shared.HeaderProtectionKey == "" {
+	if cw.AWG.Shared.HeaderProtectionKey == "" {
 		t.Fatal("the client config would carry no header-protection key")
 	}
 }

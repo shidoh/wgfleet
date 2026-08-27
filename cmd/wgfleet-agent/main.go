@@ -1012,6 +1012,17 @@ func (a *agent) ensureClientWGKey(persist bool) (kp wg.KeyPair, ephemeral bool, 
 // momentarily unrecognisable is never revisited. Nothing looks wrong until the
 // handover, at which point every config in the field stops handshaking at once.
 func (a *agent) auditClientWGKey(pub string) {
+	// First against the LIVE interface. This is the check that keeps working after
+	// wg-easy is gone, and it catches the case the database cannot see at all: a
+	// key file that no longer matches what is actually answering handshakes,
+	// because something else raised the interface.
+	if live, err := master.InterfacePublicKey(master.ClientWGInterface); err == nil && live != "" && live != pub {
+		a.log.Error("CLIENT INTERFACE IDENTITY MISMATCH — the key this agent publishes is NOT the key the live "+
+			"interface is serving. Clients authenticate against the live one, so the controller is handing out "+
+			"configs pinned to a key nobody answers with.",
+			"published", pub, "live", live, "interface", master.ClientWGInterface)
+	}
+
 	db := a.masterPaths().WGEasyDB
 	if _, err := os.Stat(db); err != nil {
 		// wg-easy is gone: after the handover this is the ordinary state, and there

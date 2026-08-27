@@ -105,6 +105,13 @@ func RenderClientConfig(in ClientConfigInput) (string, error) {
 	switch {
 	case in.Client.PrivateKey == "":
 		return "", fmt.Errorf("wg render: client %q has no private key", in.Client.Name)
+	case in.Client.PublicKey == "":
+		// The per-credential decoy is DERIVED from the public key, so without one
+		// there is nothing stable to key on. The old code fell back to the master's
+		// own profile, which is precisely the value a client must not send — the
+		// whole point of the per-end split. Refuse instead of rendering a config
+		// that looks right and correlates every client with the server.
+		return "", fmt.Errorf("wg render: client %q has no public key", in.Client.Name)
 	case in.Client.Address == "":
 		return "", fmt.Errorf("wg render: client %q has no address", in.Client.Name)
 	case in.ServerPublicKey == "":
@@ -241,17 +248,10 @@ const clientDecoyPrefix = "wgfleet|client-decoy|v1|"
 // configs interoperate with the same interface; a client picks up its own profile
 // whenever it next re-imports.
 func clientDecoy(spec domain.ClientWGSpec, c domain.WGClient) domain.AWGLocal {
-	if c.PublicKey == "" {
-		// Nothing stable to key on: fall back to the master-wide profile rather than
-		// mint something that would differ between two renders of the same config.
-		if spec.ClientAWGLocal != nil {
-			return *spec.ClientAWGLocal
-		}
-		if spec.AWG != nil {
-			return spec.AWG.Local
-		}
-		return domain.AWGLocal{}
-	}
+	// No fallback: RenderClientConfig refuses a credential without a public key, so
+	// the derivation always has its seed. The branch that used to be here read a
+	// spec field nobody could reach and, failing that, handed the client the
+	// SERVER's own decoy.
 	// kernel=false: the far end is an app on WireGuard-Go, which cannot parse the
 	// <c>/<t> CPS tags.
 	local := DeriveAWGLocal(clientDecoyPrefix+c.PublicKey, false)
