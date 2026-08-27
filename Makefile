@@ -92,7 +92,8 @@ release-archive: agent-linux controller-linux
 	cp DISCLAIMER.md                            $(DIST)/$(PKG)/DISCLAIMER.md
 	cp docs/QUICKSTART.md                       $(DIST)/$(PKG)/INSTALL.md
 	cp docs/configuration.md                    $(DIST)/$(PKG)/CONFIGURATION.md
-	cp docs/master-migration.md                 $(DIST)/$(PKG)/MIGRATION.md
+	cp docs/master-migration.md                 $(DIST)/$(PKG)/MASTER-MIGRATION.md
+	cp docs/client-migration.md                 $(DIST)/$(PKG)/CLIENT-MIGRATION.md
 	cp docs/support-bundle.md                   $(DIST)/$(PKG)/SUPPORT-BUNDLE.md
 	cp deploy/prepare-node.sh                   $(DIST)/$(PKG)/prepare-node.sh
 	cp deploy/client-diag.sh                    $(DIST)/$(PKG)/client-diag.sh

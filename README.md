@@ -399,6 +399,7 @@ switching transports is a manual, per-exit action today.
 | [docs/onboarding.md](docs/onboarding.md) | Node prerequisites and the provisioning walkthrough |
 | [docs/colocated-controller-master.md](docs/colocated-controller-master.md) | Running the controller on the master, the small-fleet default |
 | [docs/upgrade.md](docs/upgrade.md) | Agent upgrades and wire-contract versioning |
+| [docs/client-migration.md](docs/client-migration.md) | Moving the client leg from wg-easy into wgfleet, and the AmneziaWG 3.x path |
 | [docs/secrets-sops.md](docs/secrets-sops.md) | SOPS/age secret provider setup |
 | [docs/adr/](docs/adr/) | Architecture decision records — why each choice was made |
 | [docs/plans/](docs/plans/) | Design and implementation plans, each marked shipped or pending |
