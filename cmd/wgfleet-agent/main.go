@@ -284,6 +284,10 @@ func run() error {
 		return a.reconcile(ctx, *plan)
 	}
 
+	// Daemon path only. Installed above the --once return it would also change how
+	// a one-shot run (--support-bundle over a dropping SSH session) behaves.
+	defer ignoreSIGHUP(a.log)()
+
 	ticker := time.NewTicker(cfg.Interval())
 	defer ticker.Stop()
 
