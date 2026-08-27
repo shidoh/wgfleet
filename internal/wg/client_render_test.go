@@ -196,3 +196,56 @@ func TestRedactConfigCoversClientRenders(t *testing.T) {
 		t.Errorf("redacted client config still leaks the private key:\n%s", red)
 	}
 }
+
+// The <c> and <t> CPS tags are kernel-module features that userspace
+// WireGuard-Go cannot parse. domain.ValidateUserspace exists to catch them, but
+// it was only ever wired into the mihomo renderer — so a client leg on the
+// userspace backend would render a config its own data plane chokes on.
+func TestRenderClientInterfaceRejectsKernelOnlySignaturesOnUserspace(t *testing.T) {
+	s := clientSpec()
+	s.Backend = domain.ClientWGBackendUserspace
+	s.AWG.Local.I1 = "<b 0xaa><c>"
+
+	_, err := RenderClientInterface(ClientInterfaceInput{Spec: s, PrivateKey: "cHJpdi0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="})
+	if err == nil {
+		t.Fatal("a <c> tag was rendered into a userspace client interface")
+	}
+	if !strings.Contains(err.Error(), "userspace") {
+		t.Fatalf("error should name the userspace restriction, got: %v", err)
+	}
+}
+
+// The same signature on the kernel backend is legitimate — that is the whole
+// reason the two validators differ.
+func TestRenderClientInterfaceAllowsKernelOnlySignaturesOnKernel(t *testing.T) {
+	s := clientSpec()
+	s.Backend = domain.ClientWGBackendKernel
+	s.AWG.Local.I1 = "<b 0xaa><c>"
+
+	if _, err := RenderClientInterface(ClientInterfaceInput{Spec: s, PrivateKey: "cHJpdi0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="}); err != nil {
+		t.Fatalf("kernel backend rejected a kernel-only signature: %v", err)
+	}
+}
+
+// The far end of this leg is somebody's phone, which is userspace WireGuard-Go
+// whatever the SERVER runs on. So a client config is held to the userspace rule
+// unconditionally — a kernel-backed interface may legitimately use <c>/<t> in its
+// own decoy while the config it hands out must not.
+func TestRenderClientConfigRejectsKernelOnlySignatures(t *testing.T) {
+	s := clientSpec()
+	s.Backend = domain.ClientWGBackendKernel
+	s.ClientAWGLocal = &domain.AWGLocal{Jc: 6, Jmin: 45, Jmax: 75, I1: "<b 0xbb><t>"}
+
+	_, err := RenderClientConfig(ClientConfigInput{
+		Spec:   s,
+		Client: domain.WGClient{Name: "laptop", Address: "10.80.0.2/32", PrivateKey: "cHJpdi0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="},
+		ServerPublicKey: "cHViLXNlcnZlci0wMDAwMDAwMDAwMDAwMDAwMDAwMA=",
+		Endpoint:        "203.0.113.1:443",
+	})
+	if err == nil {
+		t.Fatal("a <t> tag was rendered into a config for a userspace client")
+	}
+	if !strings.Contains(err.Error(), "userspace") {
+		t.Fatalf("error should name the userspace restriction, got: %v", err)
+	}
+}

@@ -59,7 +59,11 @@ func RenderClientInterface(in ClientInterfaceInput) (string, error) {
 		fmt.Fprintf(&b, "MTU = %d\n", in.Spec.MTU)
 	}
 	if in.Spec.AWG != nil {
-		if err := in.Spec.AWG.Validate(); err != nil {
+		// Which validator applies is decided by what will CARRY this interface. The
+		// <c>/<t> CPS tags are kernel-module features userspace WireGuard-Go cannot
+		// parse, so on the userspace backend they are a config the node's own data
+		// plane chokes on.
+		if err := validateForBackend(*in.Spec.AWG, in.Spec.ResolvedBackend()); err != nil {
 			return "", fmt.Errorf("wg render: client interface: %w", err)
 		}
 		writeAWG(&b, *in.Spec.AWG)
@@ -121,7 +125,11 @@ func RenderClientConfig(in ClientConfigInput) (string, error) {
 		if in.Spec.ClientAWGLocal != nil {
 			params.Local = *in.Spec.ClientAWGLocal
 		}
-		if err := params.Validate(); err != nil {
+		// Unconditionally the USERSPACE rule, whatever the server backend is. The far
+		// end of this leg is somebody's phone running WireGuard-Go, so a kernel-backed
+		// interface may legitimately use <c>/<t> in its own decoy while the config it
+		// hands out may not.
+		if err := params.ValidateUserspace(); err != nil {
 			return "", fmt.Errorf("wg render: client config: %w", err)
 		}
 		writeAWG(&b, params)
@@ -163,4 +171,12 @@ func clientInterfaceAddress(s domain.ClientWGSpec) (string, error) {
 		return "", fmt.Errorf("wg render: parse client interface address %q: %w", addrStr, err)
 	}
 	return fmt.Sprintf("%s/%d", addr.String(), prefix.Bits()), nil
+}
+
+// validateForBackend applies the validator the data plane actually needs.
+func validateForBackend(p domain.AWGParams, backend domain.ClientWGBackend) error {
+	if backend == domain.ClientWGBackendUserspace {
+		return p.ValidateUserspace()
+	}
+	return p.Validate()
 }
