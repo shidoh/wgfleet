@@ -32,11 +32,14 @@ type wgClientsData struct {
 	NodeCount int
 	User      string
 	Flash     string
-	CSRF      string
-	NodeID    string
-	NodeName  string
-	Managed   bool // the agent owns this master's client interface
-	Ready     bool // endpoint + published key present, so configs can be built
+	// FlashOK is the counterpart nobody had: a one-shot confirmation that the last
+	// action worked, so the page can close its loop instead of silently reloading.
+	FlashOK  string
+	CSRF     string
+	NodeID   string
+	NodeName string
+	Managed  bool // the agent owns this master's client interface
+	Ready    bool // endpoint + published key present, so configs can be built
 	// WaitingForKey narrows Managed-but-not-Ready to the one case where waiting
 	// actually helps. Without it the issue panel tells an operator to wait for a
 	// reconcile pass that will never supply a public_ip.
@@ -170,7 +173,7 @@ func (h *Handler) wgClientsView(w http.ResponseWriter, r *http.Request) (wgClien
 	user, _ := h.currentUser(r)
 	data := wgClientsData{
 		Title: "AWG clients — " + node.Name, NodeCount: h.fleetCount(r.Context()),
-		User: user, Flash: h.takeFlash(w, r), CSRF: h.csrf,
+		User: user, Flash: h.takeFlash(w, r), FlashOK: h.takeFlashOK(w, r), CSRF: h.csrf,
 		NodeID: id, NodeName: node.Name,
 	}
 
@@ -313,11 +316,17 @@ func (h *Handler) handleWGClientIssue(w http.ResponseWriter, r *http.Request) {
 			errors.New("name must be 1-64 chars of letters, digits, '-', '_' or '.'"))
 		return
 	}
-	if _, err := h.renderer.IssueWGClient(r.Context(), id, name); err != nil {
+	c, err := h.renderer.IssueWGClient(r.Context(), id, name)
+	if err != nil {
 		h.redirectErr(w, r, dest, "issue client", clientActionError(err, name))
 		return
 	}
-	http.Redirect(w, r, dest, http.StatusSeeOther)
+	// Land ON the new credential, and say so. The page's headline action used to
+	// end in a bare redirect: the card is inserted ALPHABETICALLY among all the
+	// others, unhighlighted, with its hand-out collapsed — so the only evidence
+	// anything happened was the counter in the panel heading going up by one.
+	h.setFlashOK(w, "Issued "+name+" — its config and link are below.")
+	http.Redirect(w, r, dest+"#client-"+c.ID, http.StatusSeeOther)
 }
 
 // handleWGClientRevoke removes a credential outright.

@@ -42,6 +42,12 @@ const sessionCookie = "wgfleet_session"
 // bare http.Error text page. It is read-and-cleared on the next render.
 const flashCookie = "wgfleet_flash"
 
+// flashOKCookie is the same mechanism for a SUCCEEDED action. It exists because
+// the console could only ever report failure: every action that worked ended in a
+// bare redirect, so the operator's confirmation that anything happened was to
+// spot the change themselves in a list of forty near-identical rows.
+const flashOKCookie = "wgfleet_flash_ok"
+
 //go:embed templates/*.html
 var templatesFS embed.FS
 
@@ -616,6 +622,31 @@ func (h *Handler) redirectErr(w http.ResponseWriter, r *http.Request, dest, what
 		SameSite: http.SameSiteStrictMode,
 	})
 	http.Redirect(w, r, dest, http.StatusSeeOther)
+}
+
+// setFlashOK stashes a success message for the page being redirected to.
+func (h *Handler) setFlashOK(w http.ResponseWriter, msg string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     flashOKCookie,
+		Value:    base64.RawURLEncoding.EncodeToString([]byte(msg)),
+		Path:     "/",
+		MaxAge:   30,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+// takeFlashOK reads-and-clears the one-shot success flash.
+func (h *Handler) takeFlashOK(w http.ResponseWriter, r *http.Request) string {
+	c, err := r.Cookie(flashOKCookie)
+	if err != nil || c.Value == "" {
+		return ""
+	}
+	http.SetCookie(w, &http.Cookie{Name: flashOKCookie, Value: "", Path: "/", MaxAge: -1})
+	raw, err := base64.RawURLEncoding.DecodeString(c.Value)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
 // takeFlash reads-and-clears the one-shot flash error cookie. It returns "" when

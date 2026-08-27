@@ -278,7 +278,7 @@ func TestReportRender(t *testing.T) {
 		Skipped: []Skip{{Name: "gateway", Reason: "address 10.8.0.1 is the master's own address"}},
 	}
 	out := r.Render(false)
-	for _, want := range []string{"would import 2", "laptop", "muted", "skipped 1", "gateway"} {
+	for _, want := range []string{"would import 2", "laptop", "paused", "skipped 1", "gateway"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered report missing %q:\n%s", want, out)
 		}

@@ -21,3 +21,19 @@ function lockAction(form) {
   }
   return true; // allow native submit
 }
+
+// openTargetCard: when the page is landed on with a #client-<id> anchor — which is
+// where issuing a credential now redirects — open that card's hand-out.
+//
+// The highlight is CSS (:target), but a <details> cannot be opened by a selector,
+// and the whole point of landing on the card is that what you came for is inside
+// it. Without this the operator arrives at the right card and still has to click.
+window.addEventListener('DOMContentLoaded', function () {
+  var id = window.location.hash;
+  if (!id || id.indexOf('#client-') !== 0) return;
+  var card = document.querySelector(id);
+  if (!card) return;
+  var d = card.querySelector('details.hand-out');
+  if (d) d.open = true;
+  card.scrollIntoView({ block: 'center' });
+});

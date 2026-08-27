@@ -52,32 +52,35 @@
           <h3 class="client-name">
             {{.Name}}
             {{if $.Managed}}<span class="subbadge state-{{.StateKind}}"><span class="led"></span>{{.State}}</span>{{end}}
-            {{if not .Enabled}}<span class="subbadge muted">muted</span>{{end}}
+            {{if not .Enabled}}<span class="subbadge muted">paused</span>{{end}}
           </h3>
           <div class="client-uuid mono">{{.Address}}</div>
         </div>
         <div class="card-actions">
           {{if .Enabled}}
+          {{/* "Pause access", not "Mute": mute says nothing about what happens, and
+               the word the PERSON sees on their own portal page is "paused" — so when
+               they write "it says paused", the operator finds a button that matches. */}}
           <form method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/mute"
                 onsubmit="return lockAction(this)"
-                data-confirm="Mute {{.Name}}? {{.Name}} disconnects on the next reconcile; its config stays valid and unmuting reconnects it.">
+                data-confirm="Pause access for {{.Name}}? It disconnects on the next reconcile and cannot reconnect until you resume it. Nothing is deleted — the same config works again afterwards, so there is no need to reissue.">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-            <button class="btn ghost-amber" type="submit" data-pending="Muting…">Mute</button>
+            <button class="btn ghost-amber" type="submit" data-pending="Pausing…">Pause access</button>
           </form>
           {{else}}
           <form method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/unmute" onsubmit="return lockAction(this)">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-            <button class="btn go" type="submit" data-pending="Unmuting…">Unmute</button>
+            <button class="btn go" type="submit" data-pending="Resuming…">Resume access</button>
           </form>
           {{end}}
           {{/* Revoke is the only action here that permanently strands a person,
-               and it sat one mis-aim from the reversible one. Gate it behind Mute
+               and it sat one mis-aim from the reversible one. Gate it behind Pause
                the way node.html gates Delete behind Decommission: the operator
                who means it pays one reversible click. */}}
           {{/* The title lives on the FORM, not the button: browsers do not show
                tooltips on disabled controls, so the only explanation of why
                Revoke is greyed out was unreachable. */}}
-          <form class="revoke-form" {{if .Enabled}}title="Mute it first — check the person is really done with it"{{end}}
+          <form class="revoke-form" {{if .Enabled}}title="Pause access first — check the person is really done with it"{{end}}
                 method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/revoke"
                 onsubmit="return lockAction(this)"
                 data-confirm="Revoke {{.Name}}? The credential and its key are deleted permanently — the person will need a new config.">
@@ -136,7 +139,7 @@
               <div class="field-label">CONFIG · download the .conf or scan the QR</div>
               <div class="cfg-actions">
                 <a class="btn go" href="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/config">↓ Download .conf</a>
-                {{if not .Enabled}}<span class="cfg-hint warn">muted — this config will not connect until you unmute</span>{{end}}
+                {{if not .Enabled}}<span class="cfg-hint warn">paused — this config will not connect until you resume access</span>{{end}}
               </div>
             </div>
           </div>

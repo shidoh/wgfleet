@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -514,4 +515,51 @@ func card(body, id string) string {
 		return rest[:next]
 	}
 	return rest
+}
+
+// Issuing a credential must land the operator ON it and say so.
+//
+// The page's headline action used to end in a bare redirect: the new card is
+// inserted alphabetically among all the others, unhighlighted, with its hand-out
+// collapsed, so the only evidence anything happened was the counter in the panel
+// heading incrementing by one.
+func TestIssueLandsOnTheNewCredential(t *testing.T) {
+	var clients []domain.WGClient
+	h, _ := wgClientHandler(t, managedMasterSpec(), &clients)
+
+	rec := postForm(t, h, "/nodes/master-xa-1/wg-clients/issue", url.Values{
+		"csrf_token": {h.csrf}, "name": {"laptop"},
+	})
+	res := rec.Result()
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", res.StatusCode)
+	}
+	loc := res.Header.Get("Location")
+	if !strings.Contains(loc, "#client-") {
+		t.Errorf("redirect %q does not anchor the new credential", loc)
+	}
+	if len(clients) != 1 {
+		t.Fatalf("issued %d credentials, want 1", len(clients))
+	}
+	if !strings.HasSuffix(loc, "#client-"+clients[0].ID) {
+		t.Errorf("redirect %q does not point at the credential just issued (%s)", loc, clients[0].ID)
+	}
+
+	// And the success is reported, not merely performed.
+	var flash *http.Cookie
+	for _, c := range res.Cookies() {
+		if c.Name == flashOKCookie {
+			flash = c
+		}
+	}
+	if flash == nil || flash.Value == "" {
+		t.Fatal("no success flash was set; the operator gets no confirmation")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(flash.Value)
+	if err != nil {
+		t.Fatalf("flash is not decodable: %v", err)
+	}
+	if !strings.Contains(string(raw), "laptop") {
+		t.Errorf("flash %q does not name what was issued", raw)
+	}
 }

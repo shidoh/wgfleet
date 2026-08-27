@@ -41,11 +41,16 @@
   --header-bg:     rgba(10,13,18,.82);
 
   /* ---- Borders ----------------------------------------------------- */
-  --border:        #1c222c;
-  --border-row:    #141a23;
-  --border-rule:   #161b24;
-  --border-input:  #242b36;
-  --border-badge:  #2a313d;
+  /* THREE, not five. --border-row (#141a23) and --border-rule (#161b24) were two
+     RGB steps apart — no eye separates those, so they were one colour written
+     twice. --border-input (#242b36) and --border-badge (#2a313d) were both "the
+     outline of a control", and having both meant an input and the button beside it
+     carried different border brightness on the same row.
+     The 8-10 step gap between --border and --border-badge is the one that earns
+     its keep: it separates "a container" from "a thing you can press". */
+  --border:        #1c222c;   /* panel and card outlines */
+  --border-rule:   #161b24;   /* separators and row divisions */
+  --border-badge:  #2a313d;   /* every control and every badge */
 
   /* ---- Text -------------------------------------------------------- */
   --text-strong:   #f1f3f7;
@@ -550,7 +555,7 @@ a:focus-visible,
 .topo-row {
   position: relative; display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap;
   padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-2); border-radius: var(--r-mini);
-  background: var(--panel-2); border: 1px solid var(--border-row);
+  background: var(--panel-2); border: 1px solid var(--border-rule);
   text-decoration: none; color: inherit;
 }
 /* the tap joining a row to its rail */
@@ -615,7 +620,7 @@ a:focus-visible,
   align-items: center;
   gap: var(--sp-3);
   padding-top: var(--sp-3);
-  border-top: 1px solid var(--border-row);
+  border-top: 1px solid var(--border-rule);
   font-size: var(--fs-label);
   color: var(--text-dim);
 }
@@ -710,11 +715,18 @@ a:focus-visible,
 .cidr-list { list-style: none; padding: 0; margin: var(--sp-3) 0 0; display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .cidr-list li {
   font-size: var(--fs-meta); color: var(--text-bright);
-  background: var(--panel-inset); border: 1px solid var(--border-input);
+  background: var(--panel-inset); border: 1px solid var(--border-badge);
   border-radius: 6px; padding: var(--sp-1) var(--sp-3);
 }
 
 .client-list { display: flex; flex-direction: column; gap: var(--sp-5); }
+/* The just-issued credential is landed on by anchor, so mark it: the card is
+   inserted alphabetically among forty identical ones, and without this the
+   operator has to find it by reading. */
+.client-card:target {
+  border-color: var(--green-30);
+  background: linear-gradient(180deg, var(--green-06), var(--panel-2));
+}
 .client-card {
   background: var(--panel-2); border: 1px solid var(--border);
   border-radius: var(--r-panel); padding: var(--sp-6) var(--sp-6) var(--sp-6);
@@ -759,7 +771,7 @@ details.cfg-direct[open] .cfg-row { margin-top: var(--sp-4); }
   font-size: var(--fs-meta);
   color: var(--text-bright);
   background: var(--border-rule);
-  border: 1px solid var(--border-input);
+  border: 1px solid var(--border-badge);
   border-radius: 4px;
   padding: var(--sp-1) var(--sp-2);
 }
@@ -806,7 +818,7 @@ details.cfg-direct[open] .cfg-row { margin-top: var(--sp-4); }
   font-size: var(--fs-body);
   color: var(--text-bright);
   background: var(--panel-inset);
-  border: 1px solid var(--border-input);
+  border: 1px solid var(--border-badge);
   border-radius: var(--r-btn);
   /* The SAME padding as .btn. These two sit on one row in four places (rename,
      issue-client on two pages, backup) and differed by exactly 6px vertically,
@@ -1198,7 +1210,7 @@ details.hand-out[open] > .client-cfg { margin-top: var(--sp-5); }
   align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-4) 0;
-  border-bottom: 1px solid var(--border-row);
+  border-bottom: 1px solid var(--border-rule);
   font-size: var(--fs-body);
   color: var(--text-bright);
 }
@@ -1234,7 +1246,7 @@ details.hand-out[open] > .client-cfg { margin-top: var(--sp-5); }
   padding: var(--sp-1);
   margin-bottom: var(--sp-7);
   background: var(--panel-inset);
-  border: 1px solid var(--border-input);
+  border: 1px solid var(--border-badge);
   border-radius: var(--r-mini);
 }
 .seg-toggle form { margin: 0; }
@@ -1297,7 +1309,7 @@ details.hand-out[open] > .client-cfg { margin-top: var(--sp-5); }
   grid-template-columns: minmax(130px, 180px) 1fr;
   gap: var(--sp-1) var(--sp-6);
   padding: var(--sp-3) 0;
-  border-bottom: 1px solid var(--border-row);
+  border-bottom: 1px solid var(--border-rule);
 }
 .spec-summary-row:last-child,
 .spec-row:last-child { border-bottom: none; }
@@ -1478,7 +1490,7 @@ details.hand-out[open] > .client-cfg { margin-top: var(--sp-5); }
 .spec-table td {
   padding: var(--sp-3) var(--sp-5) var(--sp-3) 0;
   color: var(--text);
-  border-bottom: 1px solid var(--border-row);
+  border-bottom: 1px solid var(--border-rule);
   white-space: nowrap;
 }
 .spec-table tr:last-child td { border-bottom: none; }
@@ -1527,14 +1539,20 @@ details.hand-out[open] > .client-cfg { margin-top: var(--sp-5); }
 }
 .extlink:hover { color: #7ba3f5; }
 
-.error-note {
-  color: var(--red);
+/* A failure and a success are the same OBJECT with different colour. .error-note
+   used to be a bare coloured line — the least prominent thing on a page that can
+   be 7000px long, and the console's only channel for either outcome. */
+.error-note,
+.ok-note {
   font-family: inherit;
-  /* Body size, not smaller. This is the console's only channel for failures and it
-     was set one step BELOW ordinary text, so the most urgent line on the page was
-     also the least visible one. */
   font-size: var(--fs-body);
+  line-height: 1.7;
+  margin: var(--sp-5) 0 0;
+  padding: var(--sp-4) var(--sp-5);
+  border-radius: var(--r-mini);
 }
+.error-note { color: var(--red);   background: rgba(248,113,113,.05); border: 1px solid rgba(248,113,113,.22); }
+.ok-note    { color: var(--green); background: var(--green-06);       border: 1px solid var(--green-22); }
 
 .empty {
   padding: 2.5rem;
@@ -1669,7 +1687,7 @@ details.hand-out[open] > .client-cfg { margin-top: var(--sp-5); }
   gap: var(--sp-4);
   padding: var(--sp-3) var(--sp-5);
   font-size: var(--fs-meta);
-  border-bottom: 1px solid var(--border-row);
+  border-bottom: 1px solid var(--border-rule);
   background: var(--panel-inset);
 }
 .roll-row:last-child,

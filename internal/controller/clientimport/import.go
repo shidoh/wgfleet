@@ -283,7 +283,7 @@ func (r Report) Render(applied bool) string {
 	for _, c := range r.Imported {
 		state := "enabled"
 		if !c.Enabled {
-			state = "muted"
+			state = "paused"
 		}
 		fmt.Fprintf(&b, "  + %-24s %-18s %s\n", c.Name, c.Address, state)
 	}

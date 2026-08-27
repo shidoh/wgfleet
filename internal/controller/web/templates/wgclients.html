@@ -4,6 +4,7 @@
   <h1 class="detail-title">AWG clients</h1>
 </div>
 {{if .Flash}}<p class="error-note" role="alert">⚠ {{.Flash}}</p>{{end}}
+{{if .FlashOK}}<p class="ok-note" role="status">✓ {{.FlashOK}}</p>{{end}}
 
 {{/* Three terminal states, told apart on purpose. Err is a FAILURE (red alert,
      the treatment this console reserves for real breakage). NotMaster is a dead
