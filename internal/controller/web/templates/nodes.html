@@ -24,7 +24,7 @@
     <form class="backup-form" method="post" action="/backup">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <div class="field-label">AGE RECIPIENT</div>
-      <div class="field">
+      <div class="control-row">
         <input class="input" type="text" name="recipient" placeholder="age1q…" spellcheck="false" autocapitalize="off" autocomplete="off" required>
         <button class="btn go" type="submit">↓ Download backup</button>
       </div>
@@ -63,7 +63,7 @@
 <div class="topo-panel">
   {{with .Master}}
   <a class="topo-trunk" href="/nodes/{{.ID}}">
-    <span class="badge-master">MASTER</span>
+    <span class="role master">master</span>
     <span class="topo-trunk-name">{{.Name}}</span>
     <span class="state-pill {{lower .State}}"><span class="led"></span>{{.State}}</span>
     {{if .Region}}<span class="topo-tag">{{.Region}}</span>{{end}}
@@ -112,8 +112,7 @@
 {{define "topo-row"}}
 <a class="topo-row{{if .Carrying}} is-carrying{{end}}" href="/nodes/{{.ID}}">
   <span class="topo-row-name">{{.Name}}</span>
-  {{if .Carrying}}<span class="pill-carrying">ACTIVE</span>{{end}}
-  <span class="topo-row-lines">
+    <span class="topo-row-lines">
     <span class="addr">
       {{if .MgmtAddr}}<span class="addr-tag">MGMT</span><span class="addr-val" title="Mgmt (ZeroTier) address">{{.MgmtAddr}}</span>{{end}}
       <span class="addr-tag">PUBLIC</span><span class="addr-val" title="Node public IP">{{or .PublicIP "—"}}</span>

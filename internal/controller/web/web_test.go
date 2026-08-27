@@ -955,7 +955,11 @@ func TestFleetTopology(t *testing.T) {
 		"203.0.113.10",                     // master trunk PublicIP
 		"seen ",                            // master trunk handshake/seen footer
 		"topo-rail is-live",                // traffic reaches the carrying group
-		"pill-carrying", "ACTIVE", "107ms", // carrying exit (de)
+		// The CARRYING group header is what says a row is carrying. The per-row
+		// "ACTIVE" badge that used to repeat it is gone: every row inside the group
+		// is carrying by definition, and it said so at 8.5px — the smallest text in
+		// the console for one of its most important facts.
+		"CARRYING", "107ms", // carrying exit (de)
 		`topo-exit-lat slow`, "1.088s", // slow exit (nl), formatted as seconds
 	} {
 		if !strings.Contains(body, want) {
@@ -1129,7 +1133,9 @@ func TestChangePassword(t *testing.T) {
 	h, st := newTestHandler(t, nil) // admin "admin"/"test-password-123"
 
 	// Profile page renders for an authenticated user.
-	if _, body := get(t, h, "/profile"); !strings.Contains(body, "admin") || !strings.Contains(body, "Change password") {
+	// The panel is titled CHANGE PASSWORD; its only button now says "Save" rather
+	// than repeating the title back at the operator.
+	if _, body := get(t, h, "/profile"); !strings.Contains(body, "admin") || !strings.Contains(body, "CHANGE PASSWORD") {
 		t.Error("profile page missing username or change-password form")
 	}
 

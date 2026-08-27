@@ -31,7 +31,7 @@
     {{/* Nothing is being polled for when the agent does not own the leg, or when
          there is nothing to poll — a pulsing LIVE chip over either is a lie. */}}
     {{if and .Managed .Clients}}
-    <span class="live" title="Auto-refreshing every 10s"><span class="statusdot pulse"></span>LIVE<span class="visually-hidden">, auto-refreshing every 10 seconds</span></span>
+    <span class="live" title="Auto-refreshing every 10s"><span class="statusdot pulse"></span>LIVE</span>
     {{end}}
   </div>
   {{if not .Managed}}
@@ -62,12 +62,12 @@
                 onsubmit="return lockAction(this)"
                 data-confirm="Mute {{.Name}}? {{.Name}} disconnects on the next reconcile; its config stays valid and unmuting reconnects it.">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-            <button class="btn ghost-amber" type="submit" data-pending="Muting…" aria-label="Mute {{.Name}}">Mute</button>
+            <button class="btn ghost-amber" type="submit" data-pending="Muting…">Mute</button>
           </form>
           {{else}}
           <form method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/unmute" onsubmit="return lockAction(this)">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-            <button class="btn go" type="submit" data-pending="Unmuting…" aria-label="Unmute {{.Name}}">Unmute</button>
+            <button class="btn go" type="submit" data-pending="Unmuting…">Unmute</button>
           </form>
           {{end}}
           {{/* Revoke is the only action here that permanently strands a person,
@@ -82,8 +82,12 @@
                 onsubmit="return lockAction(this)"
                 data-confirm="Revoke {{.Name}}? The credential and its key are deleted permanently — the person will need a new config.">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-            <button class="btn ghost-red" type="submit" data-pending="Revoking…" aria-label="Revoke {{.Name}}"
-                    {{if .Enabled}}disabled{{end}}>Revoke</button>
+            {{/* The only button here that names its client, because it is the only
+                 irreversible one — and as a visually-hidden SUFFIX, so the
+                 accessible name stays a superset of the visible text rather than
+                 replacing it. */}}
+            <button class="btn ghost-red" type="submit" data-pending="Revoking…"
+                    {{if .Enabled}}disabled{{end}}>Revoke<span class="visually-hidden"> {{.Name}}</span></button>
           </form>
         </div>
       </div>
@@ -105,7 +109,7 @@
            them on the next poll — and the focus guard does not help, because
            reading a QR focuses nothing. */}}
       <details class="cfg-direct hand-out" id="handout-{{.ID}}" hx-preserve="true">
-        <summary>Config, QR &amp; client link</summary>
+        <summary>Hand-out</summary>
         <div class="client-cfg">
           {{/* Gated on Ready as well as on the portal existing. The portal renders a
                config on demand from the live spec, so before the handover — or
@@ -117,10 +121,9 @@
           {{if and $.PortalBase $.Ready}}
           <div class="cfg-row">
             <div class="cfg-main">
-              <div class="field-label">CLIENT LINK · send this to the person</div>
+              <label class="field-label" for="link-{{.ID}}">CLIENT LINK · send this to the person</label>
               <input class="input readonly mono" type="text" readonly value="{{$.PortalBase}}/c/{{.ID}}"
-                     onclick="this.select()" onfocus="this.select()"
-                     aria-label="client link for {{.Name}} — send this to the person">
+                     id="link-{{.ID}}" onclick="this.select()" onfocus="this.select()">
             </div>
           </div>
           {{else if $.PortalBase}}
@@ -157,15 +160,21 @@
 
           <div class="cfg-row">
             <div class="cfg-main">
-              <div class="field-label">RENAME</div>
+              {{/* One label, and it is a real one: the id it points at was already
+                   in the markup and referenced by nothing. The rules used to live
+                   in a title= — unreachable on touch, and invisible until the
+                   browser rejects the input — so they are shown instead. The
+                   button's aria-label restated its own visible text; the card is
+                   named by its h3, which is what disambiguates ten of these. */}}
+              <label class="field-label" for="rename-{{.ID}}">RENAME</label>
             <form class="rename-form" method="post" action="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/rename" onsubmit="return lockAction(this)">
               <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
               <input class="input" type="text" name="name" value="{{.Name}}" required
                      id="rename-{{.ID}}" pattern="[A-Za-z0-9._-]{1,64}"
-                     aria-label="new name for {{.Name}}"
-                     title="letters, digits, '-', '_' or '.' (max 64)">
-              <button class="btn" type="submit" data-pending="Renaming…" aria-label="Rename {{.Name}}">Rename</button>
+                     aria-describedby="rename-hint-{{.ID}}">
+              <button class="btn" type="submit" data-pending="Renaming…">Rename</button>
             </form>
+            <p class="cfg-hint" id="rename-hint-{{.ID}}">letters, digits, dash, underscore or dot — up to 64</p>
             </div>
           </div>
         </div>

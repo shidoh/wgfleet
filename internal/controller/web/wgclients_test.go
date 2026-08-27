@@ -342,11 +342,13 @@ func TestWGClientRevokeIsGatedBehindMute(t *testing.T) {
 	h, _ := wgClientHandler(t, managedMasterSpec(), &clients)
 	_, body := get(t, h, "/nodes/master-xa-1/wg-clients")
 
-	live := section(body, `aria-label="Revoke live-one"`)
+	// Sliced per card rather than anchored on an aria-label: that label duplicated
+	// the button's own visible text and has been removed.
+	live := card(body, "a")
 	if !strings.Contains(live, "disabled") {
 		t.Errorf("Revoke is offered on an enabled client without muting it first:\n%s", live)
 	}
-	muted := section(body, `aria-label="Revoke muted-one"`)
+	muted := card(body, "b")
 	if strings.Contains(muted, "disabled") {
 		t.Errorf("Revoke is refused on a muted client, so there is no way to revoke at all:\n%s", muted)
 	}
@@ -497,4 +499,19 @@ func TestWGClientLinkIsWithheldUntilItWorks(t *testing.T) {
 	if !strings.Contains(body, "/c/a") {
 		t.Errorf("a working client link was withheld:\n%s", body)
 	}
+}
+
+// card returns the markup of one client card, from its anchor to the start of the
+// next one. The generic section() helper reads BACKWARDS from its marker, which is
+// wrong here: a card's controls come after its id, not before it.
+func card(body, id string) string {
+	start := strings.Index(body, `id="client-`+id+`"`)
+	if start < 0 {
+		return ""
+	}
+	rest := body[start+1:]
+	if next := strings.Index(rest, `id="client-`); next >= 0 {
+		return rest[:next]
+	}
+	return rest
 }

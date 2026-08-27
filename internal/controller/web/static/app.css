@@ -154,20 +154,27 @@ body {
   }
 }
 
-/* Consistent keyboard focus ring for all interactive surfaces. */
+/* Consistent keyboard focus ring for all interactive surfaces.
+   No border-radius here: an outline already follows the element's own corners in
+   every current engine, so setting one only forced 8px and 9px controls to square
+   off to 5px the moment they took focus — the control visibly changed shape.
+   .spec-toggle was renamed away and is kept out; the disclosure pills that
+   replaced the old ones are listed instead. */
 .btn:focus-visible,
 .seg:focus-visible,
 .back:focus-visible,
 .topo-trunk:focus-visible,
 .topo-row:focus-visible,
 .backup-summary:focus-visible,
-.spec-toggle:focus-visible,
+.rollout-summary:focus-visible,
+.section-link:focus-visible,
+.spec-group-title:focus-visible,
+details.cfg-direct > summary:focus-visible,
 .extlink:focus-visible,
 a:focus-visible,
 .input:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 2px;
-  border-radius: var(--r-badge);
 }
 
 /* ============================================================
@@ -193,10 +200,18 @@ a:focus-visible,
    an inert <span> for long enough that the node and client pages had no way home
    but the browser's back button. */
 .wordmark {
-  display: flex;
-  align-items: baseline;
-  gap: 15px;
-  color: inherit;
+  /* Styled text, not a layout box. It was display:flex with gap:15px, which makes
+     each run of text its own anonymous flex item — so "wg", "·" and "fleet" were
+     pushed 15px apart. The gap only ever made sense for the two-element markup the
+     dead selector below was written for. */
+  display: inline-block;
+  /* These four used to sit on `.wordmark > b, .wordmark .brand` — neither of which
+     the markup has ever contained — so the product's own name rendered at the
+     inherited 13px in a normal weight instead of the 20px bold it was designed as. */
+  font-size: var(--fs-logo);
+  font-weight: 700;
+  letter-spacing: -.5px;
+  color: var(--text-strong);
   text-decoration: none;
   border-radius: var(--r-pill-sm);
 }
@@ -205,13 +220,7 @@ a:focus-visible,
   outline: 2px solid var(--blue);
   outline-offset: 4px;
 }
-.wordmark > b,
-.wordmark .brand {
-  font-size: var(--fs-logo);
-  font-weight: 700;
-  letter-spacing: -.5px;
-  color: var(--text-strong);
-}
+
 .wordmark .dot { color: var(--green); }
 .tagline {
   font-size: var(--fs-table);
@@ -259,14 +268,21 @@ a:focus-visible,
 }
 
 /* role badge */
+/* --- QUALIFIER BADGE: what a thing IS. -----------------------------------
+   One geometry for every badge that classifies rather than reports: role,
+   transport, tier, tag, spec value. They differed in font-size, padding and
+   radius, so a single topology row showed FIVE badge heights side by side. The
+   surviving numbers are .xport's, which were already the most repeated in the
+   file. Variants differ by colour only, never by size. */
 .role {
   display: inline-block;
-  font-size: var(--fs-tablehead);
-  letter-spacing: 1px;
+  font-size: var(--fs-label);
+  letter-spacing: .5px;
   padding: 3px 9px;
   border-radius: var(--r-badge);
-  border: 1px solid transparent;
   white-space: nowrap;
+  text-transform: uppercase;
+  border: 1px solid transparent;
 }
 .role.exit   { color: var(--text-muted); border-color: var(--border-badge); }
 .role.master { color: var(--blue); border-color: var(--blue-35); background: var(--blue-10); }
@@ -296,8 +312,8 @@ a:focus-visible,
   letter-spacing: .5px;
   padding: 3px 9px;
   border-radius: var(--r-badge);
-  border: 1px solid transparent;
   white-space: nowrap;
+  border: 1px solid transparent;
 }
 .xport.reality { color: var(--blue); background: var(--blue-10); border-color: var(--blue-25); }
 .xport.amnezia { color: var(--text-muted); border-color: var(--border-badge); }
@@ -305,9 +321,20 @@ a:focus-visible,
 /* extra status sub-badges under a state pill (out-of-routing/blocked/failover) */
 .subbadges { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .subbadge {
-  font-size: var(--fs-tag);
+  /* Without a display the badge blockifies as a flex item and its .led child stays
+     inline, where width/height do not apply — so the dot was a 0×0 box with a glow,
+     a smudge over the first letter. On idle/never/unreported, where the glow is
+     switched off, it was invisible entirely. */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* A sub-badge REPORTS (online, idle, blocked, skew), so it belongs to the state
+     family, one step below the main pill rather than four. At --fs-tag it was
+     9.5px next to 13px amber and red buttons — the console rendered "how to break
+     this" larger than "is this working". */
+  font-size: var(--fs-label);
   letter-spacing: .5px;
-  padding: 2px 7px;
+  padding: 3px 9px;
   border-radius: var(--r-badge);
   border: 1px solid var(--border-badge);
   color: var(--text-muted);
@@ -501,33 +528,23 @@ a:focus-visible,
 .topo-row-lines { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 210px; }
 .topo-trunk-addr { flex: none; }
 
-.badge-master {
-  display: inline-block;
-  font-size: var(--fs-tablehead);
-  letter-spacing: 1px;
-  color: var(--blue);
-  border: 1px solid var(--blue-35);
-  background: var(--blue-10);
-  border-radius: var(--r-badge);
-  padding: 3px 9px;
-}
-.pill-carrying {
-  font-size: 8.5px;
-  letter-spacing: 1px;
-  color: var(--green);
-  background: var(--green-12);
-  border-radius: 4px;
-  padding: 2px 6px;
-}
+/* .badge-master was a pixel-identical copy of .role.master under another name;
+   the template now uses `role master`. .pill-carrying is gone too: every row
+   inside the CARRYING group is by definition carrying, so the group header
+   already said it — the badge repeated it once per row, at 8.5px, the smallest
+   text in the product for one of the most important facts in it. */
+
 
 .topo-tag {
+  display: inline-block;
   font-size: var(--fs-label);
   letter-spacing: .5px;
+  padding: 3px 9px;
+  border-radius: var(--r-badge);
+  white-space: nowrap;
   text-transform: uppercase;
   color: var(--text-muted);
   border: 1px solid var(--border-badge);
-  border-radius: var(--r-badge);
-  padding: 2px 7px;
 }
 .topo-exit-lat {
   margin-left: auto;
@@ -699,22 +716,45 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   letter-spacing: 1.5px;
   color: var(--text-dim);
 }
+/* A labelled field is a COLUMN. As a wrapping row it stacked or did not depending
+   on arithmetic: the login card is narrow enough to force a wrap, so the label
+   landed above; the wider profile panel fit on one line, so the same markup put
+   the label beside the input. Label placement was being decided by container
+   width. .field-label's own margin-bottom supplies the rhythm. */
 .field {
   display: flex;
-  gap: 12px;
+  flex-direction: column;
   align-items: stretch;
+}
+
+/* The other job .field was doing: a row of controls. Separate because it needs
+   the opposite alignment — `stretch` is what inflated the backup download button
+   to the input's height, making it the one 45px button among 39px ones. */
+.control-row {
+  display: flex;
   flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
 }
 .input {
-  flex: 1;
-  min-width: 260px;
+  /* A basis, not a floor. min-width was the flex item's automatic minimum, so no
+     ancestor could make an input narrower — it defeated .issue-form's 240px basis
+     outright and needed an explicit antidote in .cfg-main. It also overflowed a
+     360px phone on the login page. */
+  flex: 1 1 260px;
+  min-width: 0;
   font-family: inherit;
   font-size: var(--fs-body);
   color: var(--text-bright);
   background: var(--panel-inset);
   border: 1px solid var(--border-input);
   border-radius: var(--r-btn);
-  padding: 13px 15px;
+  /* The SAME padding as .btn. These two sit on one row in four places (rename,
+     issue-client on two pages, backup) and differed by exactly 6px vertically,
+     which is what "the button is not aligned with the field" was. Taking the
+     button's value rather than the input's: 10px 16px is already on every button
+     on every page, so nothing else moves. */
+  padding: 10px 16px;
   outline: none;
   transition: border-color .12s;
 }
@@ -784,18 +824,19 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
 }
 .back:hover { color: var(--blue); }
 .detail-title {
+  /* Every other heading in the file got this reset; this one did not, so the UA's
+     0.67em at 26px added ~17px above and below inside a header row that already
+     sets its own spacing. */
+  margin: 0;
   font-size: var(--fs-detail-title);
   font-weight: 700;
   letter-spacing: -.5px;
   color: var(--text-strong);
 }
 /* larger badges in the detail header */
-.detail-head .role { padding: 4px 10px; }
-.detail-head .state-pill {
-  font-size: var(--fs-table);
-  border-radius: var(--r-pill);
-  padding: 5px 12px;
-}
+/* No per-page badge sizes. These two rules enlarged the role and the state pill
+   in the detail header and left the sub-badges alone, so the header — the first
+   thing read on the page — carried three different badge heights. */
 
 .action-bar {
   display: flex;
@@ -949,14 +990,14 @@ h3.client-name { margin: 0; display: flex; align-items: center; gap: 8px; flex-w
 /* Lifecycle actions live in the card head. Revoke is set apart from the
    reversible pair by more than the 10px gap — it is the one action that
    permanently strands a person. */
-.card-actions { display: flex; gap: 10px; flex: none; align-items: flex-start; }
+.card-actions { display: flex; gap: 10px; flex: none; align-items: center; }
 .card-actions form { margin: 0; }
 .card-actions .revoke-form { margin-left: 14px; }
 
 /* The issue form is a ROW, not the login card's stacked column. .auth-form is
    built for .auth-card (max-width 380px); reused in a grid panel it stretched the
    submit button across the full width of the page. */
-.issue-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-top: 16px; }
+.issue-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 16px; }
 .issue-form .field { flex: 1 1 240px; }
 .issue-form .btn { flex: none; }
 
@@ -1025,10 +1066,10 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 .input.readonly { background: var(--panel-inset); border-style: dashed; cursor: text; }
 
 /* Rename: a name is at most 64 characters and never needs the full card width,
-   and the button sits flush with the input's bottom edge (.input is 13px-padded
-   and .btn is 10px, so a centre-aligned row leaves it floating). */
-.rename-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
-.rename-form .input { flex: 1 1 240px; max-width: 320px; }
+   and the button lines up with the input (they now share a padding, so `center`
+   is correct and stays correct if a control ever wraps to a second line). */
+.rename-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.rename-form .input { max-width: 320px; }
 .rename-form .btn { flex: none; }
 
 /* A card's kv sits in a full-width panel, where the 1fr value column runs a
@@ -1213,14 +1254,17 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   overflow-wrap: anywhere;
 }
 .spec-badge {
-  flex: none;
-  padding: 1px 7px;
-  border: 1px solid var(--border-badge);
-  border-radius: 999px;
-  font-size: 10.5px;
+  display: inline-block;
+  font-size: var(--fs-label);
   letter-spacing: .5px;
-  color: var(--blue-toggle-fg);
-  background: var(--blue-toggle);
+  padding: 3px 9px;
+  border-radius: var(--r-badge);
+  white-space: nowrap;
+  flex: none;
+  border: 1px solid var(--border-badge);
+  /* Neutral, not the selected-control blue it used to borrow: this is a static
+     value, and dressing it as a toggle invited clicks that do nothing. */
+  color: var(--text-muted);
 }
 /* A hint takes the whole row so it never competes with the value. Used only
    where the consequence is not obvious from reading the value. */
@@ -1565,11 +1609,13 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 .roll-planrow:last-child { border-bottom: none; }
 
 .roll-tier {
+  display: inline-block;
   font-size: var(--fs-label);
-  letter-spacing: 1px;
+  letter-spacing: .5px;
+  padding: 3px 9px;
+  border-radius: var(--r-badge);
+  white-space: nowrap;
   text-align: center;
-  padding: 2px 0;
-  border-radius: 4px;
   border: 1px solid var(--border-badge);
   color: var(--text-dim);
 }
