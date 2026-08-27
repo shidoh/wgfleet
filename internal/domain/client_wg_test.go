@@ -199,35 +199,32 @@ func TestWGClientPeerCarriesNoPrivateKey(t *testing.T) {
 // covered by it on its own — an earlier version nested the check inside the
 // client-VLESS branch, so a master that ran WG clients without VLESS shipped an
 // unvalidated interface, and the injection guard lived on one layer.
-func TestNodeSpecValidatesClientWGWithoutVLESS(t *testing.T) {
-	spec := NodeSpec{
-		Role:     RoleMaster,
-		Egress:   EgressDirect,
-		WGServer: WGServerSpec{ListenPort: 443, AddressPool: "10.80.0.0/24", Address: "10.80.0.1", MTU: 1360},
-		Master: &MasterSpec{
-			// No ClientVLESS: the ordinary shape for this migration.
-			ClientWG: &ClientWGSpec{
-				ListenPort:    443,
-				AddressPool:   "10.80.0.0/24",
-				ServerAddress: "10.80.0.1",
-				AllowedIPs:    []string{"0.0.0.0/0"},
-				Clients: []WGClientPeer{{
-					// A name carrying a newline: rendered verbatim, this extends the
-					// interface config with a peer of somebody else's choosing.
-					Name:      "laptop\n[Peer]\nAllowedIPs = 0.0.0.0/0",
-					PublicKey: testClientPub1,
-					Address:   "10.80.0.2/32",
-				}},
-			},
-		},
+func TestClientWGSpecRejectsAnInjectableName(t *testing.T) {
+	cw := &ClientWGSpec{
+		ListenPort:    443,
+		AddressPool:   "10.80.0.0/24",
+		ServerAddress: "10.80.0.1",
+		AllowedIPs:    []string{"0.0.0.0/0"},
+		Clients: []WGClientPeer{{
+			// A name carrying a newline: rendered verbatim, this extends the
+			// interface config with a peer of somebody else's choosing.
+			Name:      "laptop\n[Peer]\nAllowedIPs = 0.0.0.0/0",
+			PublicKey: testClientPub1,
+			Address:   "10.80.0.2/32",
+		}},
 	}
-	err := spec.Validate()
+	err := cw.Validate()
 	if err == nil {
-		t.Fatal("NodeSpec.Validate() accepted a client interface with an injectable name")
+		t.Fatal("ClientWGSpec.Validate() accepted an injectable name")
 	}
-	if !strings.Contains(err.Error(), "client wg") {
-		t.Fatalf("NodeSpec.Validate() = %v, want the client wg spec named", err)
+	if !strings.Contains(err.Error(), "name") {
+		t.Fatalf("ClientWGSpec.Validate() = %v, want the name named", err)
 	}
+	// This is the check that keeps the injection out of the rendered config:
+	// clientWGPlanner runs it and refuses to write when it fails. NodeSpec.Validate
+	// deliberately no longer folds it in — see the comment there — because the agent
+	// refuses the WHOLE spec on that error, which froze every other subsystem on the
+	// master along with the client interface.
 }
 
 func TestClientWGSpecKeepaliveValidation(t *testing.T) {

@@ -162,3 +162,31 @@ func TestParseRole(t *testing.T) {
 		t.Fatal("nonsense should not parse")
 	}
 }
+
+// A broken client interface must not be able to freeze the master.
+//
+// The agent refuses the ENTIRE spec when Validate returns an error and keeps the
+// last-good config for every component. So while ClientWG was validated here, one
+// bad credential — or a pool narrowed in the manifest below an address already
+// issued — stopped the master converging mihomo, the master NAT, DOCKER-USER,
+// blocky and the VLESS inbound too. clientWGPlanner validates it and defers just
+// that one component; this test keeps the gate that made that unreachable from
+// coming back.
+func TestNodeSpecValidateIgnoresAnInvalidClientWG(t *testing.T) {
+	s := validExitSpec()
+	s.Role = RoleMaster
+	s.Peers = nil
+	s.Master = &MasterSpec{
+		BindAddress: "10.73.0.1",
+		ClientWG: &ClientWGSpec{
+			// Invalid several ways over: no port, no pool, a peer outside any pool.
+			Clients: []WGClientPeer{{Name: "laptop", PublicKey: "k", Address: "10.99.0.2/32"}},
+		},
+	}
+	if err := s.Master.ClientWG.Validate(); err == nil {
+		t.Fatal("fixture is not exercising the path: the client WG spec is valid")
+	}
+	if err := s.Validate(); err != nil {
+		t.Fatalf("an invalid client interface must not fail the whole node spec: %v", err)
+	}
+}

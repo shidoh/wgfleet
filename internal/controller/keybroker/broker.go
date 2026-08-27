@@ -590,7 +590,11 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	// It reuses the client-facing WGServer's obfuscation and MTU verbatim so the
 	// handover is invisible to already-configured clients; the listener's UDP port
 	// is already open via Firewall.WGPort above, which is the same port.
-	ms.ClientWG = b.clientWGSpec(ctx, master, spec.WGServer)
+	cwSpec, err := b.clientWGSpec(ctx, master, spec.WGServer)
+	if err != nil {
+		return domain.NodeSpec{}, err
+	}
+	ms.ClientWG = cwSpec
 
 	autoSuspend := b.throughputAutoSuspend(ctx)
 

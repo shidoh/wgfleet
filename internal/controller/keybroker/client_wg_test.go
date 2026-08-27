@@ -425,3 +425,85 @@ func TestClientKeepaliveReachesTheSpec(t *testing.T) {
 		t.Fatalf("client keepalive on the spec = %q, want %q", got, "15-25")
 	}
 }
+
+// flakyClientStore fails exactly one call: listing client credentials.
+type flakyClientStore struct {
+	store.Store
+	err error
+}
+
+func (f flakyClientStore) ListWGClients(context.Context, string) ([]domain.WGClient, error) {
+	return nil, f.err
+}
+
+// A transient store failure must never render a client interface with no peers.
+//
+// That spec is VALID — an interface with zero credentials is a legitimate state —
+// so nothing downstream would reject it, and the agent would apply it and drop
+// every user at once. Failing the render instead leaves the node on its last-good
+// config with all its peers, which is what "we could not find out" should mean.
+func TestClientWGSpecFailsRatherThanEmptyingTheInterface(t *testing.T) {
+	b, st, ctx := brokerWithManagedMaster(t)
+	if _, err := b.IssueWGClient(ctx, "master-xa-1", "laptop"); err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	// Sanity: the peer is there before the store starts failing.
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if spec.Master.ClientWG == nil || len(spec.Master.ClientWG.Clients) != 1 {
+		t.Fatalf("fixture is not exercising the path: %+v", spec.Master.ClientWG)
+	}
+
+	boom := errors.New("database is locked")
+	b.store = flakyClientStore{Store: st, err: boom}
+	spec, err = b.RenderNodeSpec(ctx, "master-xa-1")
+	if err == nil {
+		t.Fatalf("render succeeded despite an unreadable store; ClientWG = %+v", spec.Master.ClientWG)
+	}
+	if !errors.Is(err, boom) {
+		t.Errorf("render error = %v, want it to wrap the store failure", err)
+	}
+}
+
+// The other half of the same rule: nil is a COMMAND to hand the interface back to
+// wg-easy, so it may only ever come from a decision the operator made — never from
+// a failure. An agent too old to own the leg is such a decision.
+func TestClientWGSpecNilOnlyOnDeliberateRelease(t *testing.T) {
+	b, st, ctx := brokerWithManagedMaster(t)
+	setWireVersion(t, st, "master-xa-1", api.WireClientWG-1)
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("an agent below wire v8 is a supported state, not an error: %v", err)
+	}
+	if spec.Master.ClientWG != nil {
+		t.Error("a pre-v8 agent must not be handed a client interface block")
+	}
+}
+
+// The name is written verbatim into the live interface config, so the broker —
+// the one write path every caller goes through — must apply the charset rule, not
+// just a length bound. It checked only the length while its comment claimed
+// otherwise, and the outer NodeSpec gate that used to catch this was removed
+// because it froze the whole master.
+func TestIssueWGClientRejectsAnInjectableName(t *testing.T) {
+	b, _, ctx := brokerWithManagedMaster(t)
+	for _, name := range []string{
+		"laptop\n[Peer]\nAllowedIPs = 0.0.0.0/0",
+		"laptop phone",
+		"",
+		strings.Repeat("a", domain.MaxClientNameLen+1),
+	} {
+		if _, err := b.IssueWGClient(ctx, "master-xa-1", name); err == nil {
+			t.Errorf("IssueWGClient(%q) was accepted", name)
+		}
+	}
+	c, err := b.IssueWGClient(ctx, "master-xa-1", "laptop-1.home_2")
+	if err != nil {
+		t.Fatalf("a legitimate name was rejected: %v", err)
+	}
+	if err := b.RenameWGClient(ctx, "master-xa-1", c.ID, "phone\nInjected = yes"); err == nil {
+		t.Error("RenameWGClient accepted an injectable name")
+	}
+}

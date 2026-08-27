@@ -16,9 +16,13 @@ import (
 // used to belong to wg-easy. The broker mints them (keys + address), the store
 // keeps them, and clientWGSpec projects them onto the node's desired state.
 
-// maxClientNameLen bounds the operator-facing label. Mirrors the web layer's
-// validClientName so a credential minted through any path stays displayable.
-const maxClientNameLen = 64
+// errBadClientName is the single rule for every path that names a credential.
+// The name is written verbatim as a comment into the live interface config, so a
+// newline in it appends a peer of somebody else's choosing — and until this call
+// existed, the broker checked only the LENGTH while its comment claimed it
+// mirrored the charset rule. domain.ValidClientName is that rule; there is now
+// one copy of it on the write path.
+var errBadClientName = fmt.Errorf("keybroker: client name must be 1-%d characters of letters, digits, dot, dash or underscore", domain.MaxClientNameLen)
 
 // IssueWGClient mints a client-facing WireGuard credential for a master and
 // persists it.
@@ -31,8 +35,8 @@ const maxClientNameLen = 64
 // been "generate a key and take a free address", each replica would have arrived
 // at a different answer and the fleet's view of its own clients would diverge.
 func (b *Broker) IssueWGClient(ctx context.Context, masterID, name string) (domain.WGClient, error) {
-	if name == "" || len(name) > maxClientNameLen {
-		return domain.WGClient{}, fmt.Errorf("keybroker: client name must be 1-%d characters", maxClientNameLen)
+	if !domain.ValidClientName(name) {
+		return domain.WGClient{}, errBadClientName
 	}
 	master, ok := b.masterConfig(masterID)
 	if !ok {
@@ -107,8 +111,8 @@ func (b *Broker) SetWGClientEnabled(ctx context.Context, masterID, clientID stri
 
 // RenameWGClient changes the operator-facing label only.
 func (b *Broker) RenameWGClient(ctx context.Context, masterID, clientID, name string) error {
-	if name == "" || len(name) > maxClientNameLen {
-		return fmt.Errorf("keybroker: client name must be 1-%d characters", maxClientNameLen)
+	if !domain.ValidClientName(name) {
+		return errBadClientName
 	}
 	return b.store.RenameWGClient(ctx, masterID, clientID, name)
 }
@@ -126,38 +130,41 @@ func (b *Broker) RevokeWGClient(ctx context.Context, masterID, clientID string) 
 // the client-facing WGServerSpec already carries, so a client configured before
 // the handover keeps working after it. That is the whole point of the transparent
 // migration — the server implementation changes underneath, the wire does not.
-func (b *Broker) clientWGSpec(ctx context.Context, master config.MasterConfig, server domain.WGServerSpec) *domain.ClientWGSpec {
+// An ABSENT block is a command, not a shrug: the agent reads it as "the leg was
+// handed back", brings our interface down and lets compose restore wg-easy. So
+// nil may only ever express a DECISION the operator made — the knob is off, or the
+// agent is too old to own the leg. Every failure to find out returns an error
+// instead, which fails this master's spec render, fails PullSpec, and leaves the
+// node on its last-good config: unknown means leave it alone.
+func (b *Broker) clientWGSpec(ctx context.Context, master config.MasterConfig, server domain.WGServerSpec) (*domain.ClientWGSpec, error) {
 	if !master.ClientAWGManaged() {
-		return nil
+		return nil, nil
 	}
-	// An agent that predates wire v8 drops this block and keeps wg-easy serving the
-	// client leg — while the controller, having decided the leg is handed over,
-	// stops reconciling wg-easy's database and treats its own store as the truth.
-	// Refusing to render is the fail-safe half of that gate: the master keeps
-	// converging exactly as it did before, and the operator sees why.
-	if node, err := b.store.GetNode(ctx, master.Name); err != nil {
-		b.log.Warn("client WG interface not rendered: cannot read the master's registration",
-			"master", master.Name, "err", err)
-		return nil
-	} else if node.WireVersion < api.WireClientWG {
+	node, err := b.store.GetNode(ctx, master.Name)
+	if err != nil {
+		return nil, fmt.Errorf("client WG interface: cannot read the master's registration: %w", err)
+	}
+	if node.WireVersion < api.WireClientWG {
+		// A DECISION, not a failure: the agent predates wire v8, so it drops this
+		// block anyway and keeps wg-easy serving the client leg. Rendering nothing is
+		// the fail-safe half of that gate — the master converges exactly as before,
+		// and the operator sees why.
 		b.log.Warn("client WG interface not rendered: agent is too old to own the client leg",
 			"master", master.Name, "agent_wire", node.WireVersion, "need_wire", api.WireClientWG)
-		return nil
+		return nil, nil
 	}
 	serverAddr, err := masterClientAddress(master.ClientAWG.AddressPool)
 	if err != nil {
-		b.log.Warn("client WG interface not rendered: bad client pool",
-			"master", master.Name, "pool", master.ClientAWG.AddressPool, "err", err)
-		return nil
+		return nil, fmt.Errorf("client WG interface: bad client pool %q: %w", master.ClientAWG.AddressPool, err)
 	}
 	clients, err := b.store.ListWGClients(ctx, master.Name)
 	if err != nil {
-		// Render the interface with no peers rather than failing the whole master
-		// spec — the listener still comes up and issuance re-renders it. Mirrors how
-		// clientVLESSSpec treats the same failure.
-		b.log.Warn("listing client WG credentials failed; rendering the interface with none",
-			"master", master.Name, "err", err)
-		clients = nil
+		// NOT parity with clientVLESSSpec, deliberately: an empty VLESS inbound
+		// authenticates nobody on a transport most people are not using, while an
+		// empty client interface drops EVERY user at once. A transient store error
+		// must not be able to do that, so it fails the render and the node keeps its
+		// last-good interface with all its peers.
+		return nil, fmt.Errorf("client WG interface: listing credentials: %w", err)
 	}
 	mtu := master.ClientAWGMTU()
 	if mtu == 0 {
@@ -176,7 +183,7 @@ func (b *Broker) clientWGSpec(ctx context.Context, master config.MasterConfig, s
 		ClientAWGLocal: server.ClientAWGLocal,
 		Backend:        master.ClientAWGBackend(),
 		Clients:        domain.PeersOf(clients),
-	}
+	}, nil
 }
 
 // masterClientAddress returns the master's own address inside its client pool:

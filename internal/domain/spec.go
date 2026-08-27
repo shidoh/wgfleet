@@ -355,11 +355,14 @@ func (s NodeSpec) Validate() error {
 	if s.HasTransport(TransportRealityXHTTP) && s.Reality == nil {
 		errs = append(errs, errors.New("reality-xhttp transport enabled but Reality server spec is missing"))
 	}
-	if s.Master != nil && s.Master.ClientWG != nil {
-		if err := s.Master.ClientWG.Validate(); err != nil {
-			errs = append(errs, fmt.Errorf("master client wg: %w", err))
-		}
-	}
+	// ClientWG is DELIBERATELY not validated here. The agent refuses the whole spec
+	// when this returns an error, so folding the client interface in gave one bad
+	// credential — or a pool narrowed in the manifest below an address already
+	// issued — the power to stop the master converging ANYTHING: mihomo, the master
+	// NAT, DOCKER-USER, blocky and the VLESS inbound with it. clientWGPlanner
+	// already validates it and defers just that one component, keeping the
+	// last-good interface config serving; that soft-fail is the intended behaviour
+	// and it could never run while this gate stood in front of it.
 	if s.Master != nil && s.Master.ClientVLESS != nil {
 		if err := s.Master.ClientVLESS.Validate(); err != nil {
 			errs = append(errs, fmt.Errorf("client vless: %w", err))
