@@ -112,3 +112,27 @@ func TestClientPortalRejectsPlainHTTPToARoutableHost(t *testing.T) {
 		}
 	}
 }
+
+// WGFLEET_ALLOW_PUBLIC_BIND must not authorise a public portal.
+//
+// The escape hatch exists for one reason — putting the Web UI behind the
+// operator's own reverse proxy — but it is a single process-wide switch, so while
+// the portal's bind check sat inside it, setting it for that reason silently also
+// allowed unauthenticated WireGuard private-key downloads on 0.0.0.0. The
+// original test could not see this because it never set the variable.
+func TestClientPortalPublicBindSurvivesTheEscapeHatch(t *testing.T) {
+	t.Setenv("WGFLEET_ALLOW_PUBLIC_BIND", "1")
+	if got := portalErr("0.0.0.0:8080"); got == "" {
+		t.Fatal("a public client_portal was accepted because the Web UI's escape hatch was set")
+	}
+	// The hatch still does its job for the surface it was introduced for.
+	c := ControllerConfig{Fleet: FleetSection{Masters: []MasterConfig{
+		{Name: "m1", MgmtAddr: "10.20.0.1", ClientAWG: ClientAWGConfig{ListenPort: 443, AddressPool: "10.80.0.0/24"}},
+	}}}
+	c.Controller.WebUI = "0.0.0.0:8080"
+	// Other required keys are missing here, so check for the WEBUI complaint
+	// specifically rather than for overall validity.
+	if err := c.Validate(); err != nil && strings.Contains(err.Error(), "controller.webui") {
+		t.Fatalf("the escape hatch no longer exempts the Web UI: %v", err)
+	}
+}

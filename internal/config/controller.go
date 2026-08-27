@@ -1107,17 +1107,22 @@ func (c ControllerConfig) Validate() error {
 		if err := requireMgmtBind("controller.webui", c.Controller.WebUI); err != nil {
 			errs = append(errs, err)
 		}
-		// The portal serves client private keys over plain HTTP. It belongs on the
-		// master's address INSIDE the client pool (or behind a local reverse proxy),
-		// never on a public one — and the documentation telling the operator to bind
-		// it "where clients can reach it" makes the public bind the natural mistake,
-		// so the same guard that protects the admin surfaces protects this one.
-		if err := requireMgmtBind("controller.client_portal", c.Controller.ClientPortal); err != nil {
-			errs = append(errs, err)
-		}
 		if err := requireMgmtBind("controller.metrics", c.Controller.Metrics); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	// The portal's bind is checked OUTSIDE the escape hatch, unlike the admin
+	// surfaces above.
+	//
+	// WGFLEET_ALLOW_PUBLIC_BIND exists so the Web UI can sit behind the operator's
+	// own reverse proxy — a documented, reasonable thing to want. But it is one
+	// process-wide switch, and while this check sat inside it, setting it for that
+	// reason also authorised `client_portal: 0.0.0.0:8080`: unauthenticated
+	// WireGuard private-key downloads on the public internet, gated by a token in a
+	// URL. The two surfaces need different answers, so the portal does not get to
+	// ride on the Web UI's exemption.
+	if err := requireMgmtBind("controller.client_portal", c.Controller.ClientPortal); err != nil {
+		errs = append(errs, err)
 	}
 	seen := make(map[string]struct{})
 	for i, m := range c.Fleet.Masters {
