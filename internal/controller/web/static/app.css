@@ -189,14 +189,12 @@ body {
   }
 }
 
-/* Around twenty elements in this console carry a title= and NOTHING marked them,
-   so the explanations were discoverable only by accident. The portal solved this
-   in one rule; this is that rule. Excluded where the element is already obviously
-   interactive (a button, a link) or where the underline would fight a border. */
-[title]:not(button):not(a):not(form):not(.state-pill):not(.subbadge):not(.xport):not(.role):not(.live) {
-  border-bottom: 1px dotted var(--text-dim);
-  cursor: help;
-}
+/* No blanket affordance for title=. It works in the portal, which has two of
+   them on a page a stranger reads once. This console has around twenty, most of
+   them on VALUES, and marking every one put a dotted rule under every IP address
+   in every row — three per row on the fleet page. The noise cost more than the
+   discoverability bought: an operator who lives here learns the tooltips, and the
+   things that genuinely must be read are visible text now (see .cfg-hint). */
 
 /* Consistent keyboard focus ring for all interactive surfaces.
    No border-radius here: an outline already follows the element's own corners in

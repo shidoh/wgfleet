@@ -72,8 +72,8 @@
     {{template "node-subbadges" .}}
     <span class="topo-spacer"></span>
     <span class="addr topo-trunk-addr">
-      {{if .MgmtAddr}}<span class="addr-tag">MGMT</span><span class="addr-val" title="Mgmt (ZeroTier) address">{{.MgmtAddr}}</span>{{end}}
-      <span class="addr-tag">PUBLIC</span><span class="addr-val" title="Node public IP">{{or .PublicIP "—"}}</span>
+      {{if .MgmtAddr}}<span class="addr-tag" title="Mgmt (ZeroTier) address">MGMT</span><span class="addr-val">{{.MgmtAddr}}</span>{{end}}
+      <span class="addr-tag" title="Node public IP">PUBLIC</span><span class="addr-val">{{or .PublicIP "—"}}</span>
     </span>
     <span class="topo-trunk-bal"><span class="statusdot"></span>balancing {{.Balancing}} exit{{if ne .Balancing 1}}s{{end}}</span>
     <span class="topo-card-foot">
@@ -116,9 +116,9 @@
   <span class="topo-row-name">{{.Name}}</span>
     <span class="topo-row-lines">
     <span class="addr">
-      {{if .MgmtAddr}}<span class="addr-tag">MGMT</span><span class="addr-val" title="Mgmt (ZeroTier) address">{{.MgmtAddr}}</span>{{end}}
-      <span class="addr-tag">PUBLIC</span><span class="addr-val" title="Node public IP">{{or .PublicIP "—"}}</span>
-      {{if and .EgressIP (ne .EgressIP .PublicIP)}}<span class="addr-tag">WARP</span><span class="addr-val warp" title="Actual egress IP (Cloudflare WARP)">{{.EgressIP}}</span>{{end}}
+      {{if .MgmtAddr}}<span class="addr-tag" title="Mgmt (ZeroTier) address">MGMT</span><span class="addr-val">{{.MgmtAddr}}</span>{{end}}
+      <span class="addr-tag" title="Node public IP">PUBLIC</span><span class="addr-val">{{or .PublicIP "—"}}</span>
+      {{if and .EgressIP (ne .EgressIP .PublicIP)}}<span class="addr-tag" title="Actual egress IP (Cloudflare WARP)">WARP</span><span class="addr-val warp">{{.EgressIP}}</span>{{end}}
     </span>
     <span class="topo-card-foot">
       <span>handshake {{if and .HasStatus (not .LastHandshake.IsZero)}}{{relTime .LastHandshake}}{{else}}—{{end}}</span>
