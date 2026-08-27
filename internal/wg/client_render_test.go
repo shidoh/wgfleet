@@ -238,8 +238,8 @@ func TestRenderClientConfigRejectsKernelOnlySignatures(t *testing.T) {
 	s.ClientAWGLocal = &domain.AWGLocal{Jc: 6, Jmin: 45, Jmax: 75, I1: "<b 0xbb><t>"}
 
 	_, err := RenderClientConfig(ClientConfigInput{
-		Spec:   s,
-		Client: domain.WGClient{Name: "laptop", Address: "10.80.0.2/32", PrivateKey: "cHJpdi0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="},
+		Spec:            s,
+		Client:          domain.WGClient{Name: "laptop", Address: "10.80.0.2/32", PrivateKey: "cHJpdi0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="},
 		ServerPublicKey: "cHViLXNlcnZlci0wMDAwMDAwMDAwMDAwMDAwMDAwMA=",
 		Endpoint:        "203.0.113.1:443",
 	})
@@ -295,8 +295,8 @@ func TestRenderClientConfigUsesTheDerivedKeepalive(t *testing.T) {
 	s := clientSpec()
 	s.Keepalive = "19"
 	out, err := RenderClientConfig(ClientConfigInput{
-		Spec:   s,
-		Client: domain.WGClient{ID: "cred-1", Name: "laptop", Address: "10.80.0.2/32", PrivateKey: "cHJpdi0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="},
+		Spec:            s,
+		Client:          domain.WGClient{ID: "cred-1", Name: "laptop", Address: "10.80.0.2/32", PrivateKey: "cHJpdi0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="},
 		ServerPublicKey: "cHViLXNlcnZlci0wMDAwMDAwMDAwMDAwMDAwMDAwMA=",
 		Endpoint:        "203.0.113.1:443",
 	})
