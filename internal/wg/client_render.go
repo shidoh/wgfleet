@@ -125,9 +125,7 @@ func RenderClientConfig(in ClientConfigInput) (string, error) {
 	}
 	if in.Spec.AWG != nil {
 		params := *in.Spec.AWG
-		if in.Spec.ClientAWGLocal != nil {
-			params.Local = *in.Spec.ClientAWGLocal
-		}
+		params.Local = clientDecoy(in.Spec, in.Client)
 		// Unconditionally the USERSPACE rule, whatever the server backend is. The far
 		// end of this leg is somebody's phone running WireGuard-Go, so a kernel-backed
 		// interface may legitimately use <c>/<t> in its own decoy while the config it
@@ -216,4 +214,45 @@ func ClientKeepaliveFor(spec, clientID string) int {
 	}
 	sum := sha256.Sum256([]byte("wgfleet|client-keepalive|" + clientID))
 	return loN + int(binary.BigEndian.Uint32(sum[:4])%uint32(hiN-loN+1))
+}
+
+// clientDecoyPrefix separates this derivation from every other seeded stream in
+// the fleet, so a client's decoy can never collide with a tunnel's parameters.
+// Versioned: bumping it re-rolls every client's decoy on their next download.
+const clientDecoyPrefix = "wgfleet|client-decoy|v1|"
+
+// clientDecoy derives ONE client's own junk and signature profile.
+//
+// The local half of an AmneziaWG parameter set — Jc/Jmin/Jmax and I1-I5 — is what
+// each end emits on its own; the peer ignores it. It therefore MAY differ per
+// client, and where it may, it should: with one shared profile all of a master's
+// clients emit identical junk and identical signature packets, so an observer who
+// picks out one of them has a handle that joins it to the rest. Since the cover
+// protocol (QUIC / STUN / DTLS) is itself drawn from this seed, clients of one
+// master now imitate DIFFERENT protocols.
+//
+// Keyed on the credential's public key: unique per client, stable across renders
+// (the config is re-rendered on every portal visit and must not change under the
+// person holding the link), and already known to everyone who can see the
+// interface — there is nothing secret here to protect.
+//
+// This changes nothing for a config already installed. The shared half is
+// untouched, and a peer never validates the other end's decoy, so old and new
+// configs interoperate with the same interface; a client picks up its own profile
+// whenever it next re-imports.
+func clientDecoy(spec domain.ClientWGSpec, c domain.WGClient) domain.AWGLocal {
+	if c.PublicKey == "" {
+		// Nothing stable to key on: fall back to the master-wide profile rather than
+		// mint something that would differ between two renders of the same config.
+		if spec.ClientAWGLocal != nil {
+			return *spec.ClientAWGLocal
+		}
+		if spec.AWG != nil {
+			return spec.AWG.Local
+		}
+		return domain.AWGLocal{}
+	}
+	// kernel=false: the far end is an app on WireGuard-Go, which cannot parse the
+	// <c>/<t> CPS tags.
+	return DeriveAWGLocal(clientDecoyPrefix+c.PublicKey, false)
 }

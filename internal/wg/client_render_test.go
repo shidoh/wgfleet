@@ -307,3 +307,70 @@ func TestRenderClientConfigUsesTheDerivedKeepalive(t *testing.T) {
 		t.Fatalf("config did not carry the configured keepalive:\n%s", out)
 	}
 }
+
+// Each client emits its OWN junk and signature profile. With one shared profile
+// every client of a master looked identical on the wire, so an observer who
+// picked out one of them had a handle that joined it to the rest.
+func TestClientConfigsGetTheirOwnDecoy(t *testing.T) {
+	s := clientSpec()
+	render := func(id, pub string) string {
+		out, err := RenderClientConfig(ClientConfigInput{
+			Spec: s,
+			Client: domain.WGClient{
+				ID: id, Name: id, Address: "10.80.0.2/32",
+				PrivateKey: "cHJpdi0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=", PublicKey: pub,
+			},
+			ServerPublicKey: "cHViLXNlcnZlci0wMDAwMDAwMDAwMDAwMDAwMDAwMA=",
+			Endpoint:        "203.0.113.1:443",
+		})
+		if err != nil {
+			t.Fatalf("render %s: %v", id, err)
+		}
+		return out
+	}
+	line := func(cfg, key string) string {
+		for _, l := range strings.Split(cfg, "\n") {
+			if strings.HasPrefix(l, key+" = ") {
+				return l
+			}
+		}
+		return ""
+	}
+
+	a := render("a", testClientPubA)
+	b := render("b", testClientPubB)
+
+	for _, key := range []string{"Jc", "Jmin", "Jmax", "I1"} {
+		if line(a, key) == line(b, key) {
+			t.Errorf("two clients share %s (%q) — their traffic is correlatable", key, line(a, key))
+		}
+	}
+	// The shared half MUST still match, or neither config completes a handshake.
+	for _, key := range []string{"S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4"} {
+		if line(a, key) != line(b, key) {
+			t.Errorf("clients disagree on the shared parameter %s: %q vs %q", key, line(a, key), line(b, key))
+		}
+	}
+	// Stability: the config is re-rendered on every portal visit, and a value that
+	// moved would hand the same person a different config each time.
+	if again := render("a", testClientPubA); again != a {
+		t.Error("re-rendering the same client produced a different config")
+	}
+}
+
+// The decoy must never carry the kernel-only CPS tags: the far end is an app on
+// userspace WireGuard-Go.
+func TestClientDecoyStaysUserspaceSafe(t *testing.T) {
+	for i, pub := range []string{testClientPubA, testClientPubB} {
+		local := DeriveAWGLocal(clientDecoyPrefix+pub, false)
+		p := domain.AWGParams{Shared: clientSpec().AWG.Shared, Local: local}
+		if err := p.ValidateUserspace(); err != nil {
+			t.Errorf("client %d decoy is not userspace-safe: %v", i, err)
+		}
+	}
+}
+
+const (
+	testClientPubA = "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="
+	testClientPubB = "2rDXqPqGSJTGRPSaG9jZQMkNFSpsRDIWTuUvBTIBEB8="
+)
