@@ -119,7 +119,10 @@ spec:
         description: Drain is meant to be temporary (mihomo hot-reload / maintenance). {{ $labels.node
           }} has been out of rotation for a day — undrain it or decommission it.
     - alert: WgfleetNoReadyExit
-      expr: count(wgfleet_node_info{role="exit",state="Ready"} == 1) < 1
+      # `or vector(0)` is load-bearing: with no Ready exit the inner selector is
+      # empty, count() returns no series at all, and the comparison it feeds can
+      # never be true — the alert was silent in the exact condition it names.
+      expr: (count(wgfleet_node_info{role="exit",state="Ready"} == 1) or vector(0)) < 1
       for: 5m
       labels:
         severity: critical
@@ -140,7 +143,12 @@ spec:
         summary: Health check {{ $labels.check }} failing on {{ $labels.node }}
         description: Check '{{ $labels.check }}' on node {{ $labels.node }} has been failing for 10m.
     - alert: WgfleetClientPathDown
-      expr: wgfleet_node_health_check{check=~"client-wg|client-vless"} == 0
+      # client-wg.* rather than client-wg: the check that reports whether the AGENT
+      # is carrying the client interface is named client-wg-owned, and a Prometheus
+      # regexp is fully anchored, so the narrower pattern excluded it — leaving the
+      # one signal for "the client leg is not ours" to fall through to the generic
+      # 10-minute warning below.
+      expr: wgfleet_node_health_check{check=~"client-wg.*|client-vless"} == 0
       for: 5m
       labels:
         severity: critical
@@ -149,25 +157,30 @@ spec:
         summary: 'Client entry point down on {{ $labels.node }}: {{ $labels.check }}'
         description: The client-facing inbound '{{ $labels.check }}' on master {{ $labels.node }} has
           been failing for 5m. New clients cannot connect.
-    - alert: WgfleetEgressUnreachable
-      expr: wgfleet_agent_egress_reachability == 0
+    # wgfleet_agent_egress_reachability and _egress_active are INFO gauges: the
+    # agent calls Reset() then Set(1) on the label that is currently true, so the
+    # value is always 1 and never 0. Both of these alerted on `== 0` and therefore
+    # could not fire — one of them at severity: critical. The state lives in the
+    # LABEL, so that is what these match on now.
+    - alert: WgfleetEgressBlocked
+      expr: wgfleet_agent_egress_reachability{state="blocked"} == 1
       for: 10m
       labels:
         severity: critical
         service: wgfleet
       annotations:
-        summary: Egress unreachable on exit {{ $labels.node }}
-        description: 'Exit {{ $labels.node }} reports egress reachability ''{{ $labels.state }}''. Traffic
-          routed to this exit is blackholed (see lesson: ''egress rule from all cuts off the exit'').'
-    - alert: WgfleetEgressInactive
-      expr: wgfleet_agent_egress_active == 0
-      for: 10m
+        summary: Egress blocked on exit {{ $labels.node }}
+        description: 'Exit {{ $labels.node }} classifies its egress as blocked. Traffic routed to this
+          exit is blackholed (see lesson: ''egress rule from all cuts off the exit'').'
+    - alert: WgfleetEgressDegraded
+      expr: wgfleet_agent_egress_reachability{state="degraded"} == 1
+      for: 30m
       labels:
         severity: warning
         service: wgfleet
       annotations:
-        summary: Egress method {{ $labels.method }} inactive on {{ $labels.node }}
-        description: Exit {{ $labels.node }} has no active '{{ $labels.method }}' egress for 10m.
+        summary: Egress degraded on exit {{ $labels.node }}
+        description: Exit {{ $labels.node }} has been running on a degraded egress path for 30m.
   - name: wgfleet.reconcile
     interval: 30s
     rules:
@@ -226,7 +239,11 @@ spec:
     interval: 1m
     rules:
     - alert: WgfleetWireGuardHandshakeStale
-      expr: wgfleet_wg_handshake_age_seconds > 300
+      # wg0 is EXCLUDED: it is the client-facing interface, where a stale handshake
+      # is a phone in a pocket, not a fault. Left in, this fired once per sleeping
+      # device and buried the tunnel peers it exists to watch. Mass client loss is
+      # covered by WgfleetNoClientPeers below, which looks at the count instead.
+      expr: wgfleet_wg_handshake_age_seconds{iface!="wg0"} > 300
       for: 5m
       labels:
         severity: warning
@@ -235,6 +252,34 @@ spec:
         summary: Stale WireGuard handshake on {{ $labels.node }}/{{ $labels.iface }}
         description: Peer {{ $labels.peer }} on {{ $labels.iface }} ({{ $labels.node }}) last handshook
           {{ $value | humanizeDuration }} ago.
+    - alert: WgfleetNoClientPeers
+      # The single best signal that end users have lost the fleet: the client
+      # interface is up and authenticating nobody. Nothing watched this, so a
+      # handover that raised an empty interface — or a client leg that came back
+      # without its peers — was visible only as people complaining.
+      expr: wgfleet_wg_peers_active{iface="wg0"} == 0
+      for: 10m
+      labels:
+        severity: critical
+        service: wgfleet
+      annotations:
+        summary: No client has a live handshake on {{ $labels.node }}
+        description: The client-facing interface on {{ $labels.node }} has had zero active peers for
+          10m. Either every client is offline at once, or the interface is serving an empty peer set.
+    - alert: WgfleetConfigUnreadable
+      # The drift collector emits NOTHING when it cannot read the manifest, on
+      # purpose — reporting 0 would assert "in sync" about a file nobody could
+      # open. That silence needs its own alert, or a deleted or chmod-broken
+      # controller.yaml looks exactly like a healthy one.
+      expr: absent(wgfleet_controller_config_info)
+      for: 15m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: The controller is not reporting which manifest it is running
+        description: wgfleet_controller_config_info has been absent for 15m — either the controller is
+          down, or it cannot read its own manifest and drift detection is blind.
     - alert: WgfleetASBlacklistEmpty
       expr: wgfleet_fw_as_blacklist_size{family="v4"} == 0
       for: 1h

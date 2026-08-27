@@ -20,6 +20,11 @@ spec:
     - targets:
         - 10.20.0.1:9300 # <-- EDIT: controller ZT address : metrics port
       labels:
+        # `job` MUST be set here. A ScrapeConfig's default job label is
+        # "scrapeConfig/<namespace>/<name>", so without this the alerts that select
+        # up{job="wgfleet",...} — including the critical WgfleetControllerDown —
+        # match nothing at all.
+        job: wgfleet
         component: controller
 ---
 apiVersion: monitoring.coreos.com/v1alpha1
@@ -40,4 +45,5 @@ spec:
         - 10.20.0.3:9301 # exit-2
         - 10.20.0.4:9301 # exit-3
       labels:
+        job: wgfleet # see the note above: the default job label is not "wgfleet"
         component: agent

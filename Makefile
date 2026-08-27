@@ -103,6 +103,7 @@ release-archive: agent-linux controller-linux
 	cp deploy/systemd/*.service                 $(DIST)/$(PKG)/systemd/
 	cp deploy/monitoring/grafana-dashboard.json deploy/monitoring/README.md $(DIST)/$(PKG)/monitoring/
 	cp deploy/monitoring/servicemonitor.yaml deploy/monitoring/scrapeconfig.yaml deploy/monitoring/vmstaticscrape.yaml $(DIST)/$(PKG)/monitoring/
+	cp deploy/monitoring/vmrule.yaml deploy/monitoring/prometheusrule.yaml $(DIST)/$(PKG)/monitoring/
 	@echo "$(VERSION) $(COMMIT) $(DATE) linux/$(ARCH)" > $(DIST)/$(PKG)/VERSION
 	chmod 0755 $(DIST)/$(PKG)/wgfleet-controller $(DIST)/$(PKG)/wgfleet-agent $(DIST)/$(PKG)/*.sh
 	tar -C $(DIST) -czf $(DIST)/$(ARCHIVE).tar.gz $(PKG)

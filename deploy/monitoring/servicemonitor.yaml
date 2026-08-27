@@ -72,6 +72,17 @@ spec:
       path: /metrics
       interval: 30s
       scheme: http
+      # These two target labels are what the shipped alert rules select on. A
+      # ServiceMonitor names its job after the Service, and the
+      # app.kubernetes.io/component label above is a SELECTOR on the Service, not
+      # a label on the metrics — so without these relabelings every rule matching
+      # up{job="wgfleet",component="..."} matches nothing, including the critical
+      # WgfleetControllerDown / WgfleetAgentDown.
+      relabelings:
+        - targetLabel: job
+          replacement: wgfleet
+        - targetLabel: component
+          replacement: controller
 ---
 ########################################################################
 # Agents (one target per node: each node's ZT address, port 9301)
@@ -132,3 +143,14 @@ spec:
       path: /metrics
       interval: 30s
       scheme: http
+      # These two target labels are what the shipped alert rules select on. A
+      # ServiceMonitor names its job after the Service, and the
+      # app.kubernetes.io/component label above is a SELECTOR on the Service, not
+      # a label on the metrics — so without these relabelings every rule matching
+      # up{job="wgfleet",component="..."} matches nothing, including the critical
+      # WgfleetControllerDown / WgfleetAgentDown.
+      relabelings:
+        - targetLabel: job
+          replacement: wgfleet
+        - targetLabel: component
+          replacement: agent

@@ -12,8 +12,8 @@ the public interface — the code refuses a public bind).
 | `servicemonitor.yaml` | Prometheus-Operator `ServiceMonitor` + headless `Service`/`Endpoints` for the controller and the agents. Edit the ZT addresses. |
 | `scrapeconfig.yaml` | Prometheus-Operator `ScrapeConfig` CRD (operator ≥ v0.65) — static targets, no Service plumbing. |
 | `vmstaticscrape.yaml` | VictoriaMetrics-Operator `VMStaticScrape` CRD — for a `vmagent`. Edit the ZT addresses. |
-| `vmrule.yaml` | VictoriaMetrics-Operator `VMRule` — 22 alerts over the fleet metrics. No addresses to edit. |
-| `prometheusrule.yaml` | Prometheus-Operator `PrometheusRule` — the same 22 alerts. |
+| `vmrule.yaml` | VictoriaMetrics-Operator `VMRule` — alerts over the fleet metrics. No addresses to edit. |
+| `prometheusrule.yaml` | Prometheus-Operator `PrometheusRule` — the same alerts. |
 
 Pick the one that matches your stack: `ServiceMonitor`/`ScrapeConfig` +
 `PrometheusRule` for Prometheus-Operator, `VMStaticScrape` + `VMRule` for
@@ -52,6 +52,16 @@ to the ZeroTier network, or route the ZT subnet to the Prometheus pods. Then:
 kubectl apply -f servicemonitor.yaml     # Prometheus-Operator (Service/Endpoints)
 kubectl apply -f scrapeconfig.yaml       # Prometheus-Operator (ScrapeConfig CRD)
 kubectl apply -f vmstaticscrape.yaml     # VictoriaMetrics-Operator (vmagent)
+```
+
+Then the alert rules — the same pick, and **do not skip this step**: scraping
+metrics nobody alerts on tells you what went wrong only after somebody has already
+told you that something did.
+
+```bash
+kubectl apply -f prometheusrule.yaml     # Prometheus-Operator
+# or
+kubectl apply -f vmrule.yaml             # VictoriaMetrics-Operator
 ```
 
 Edit before applying:
