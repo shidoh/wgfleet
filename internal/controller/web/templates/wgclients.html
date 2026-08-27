@@ -49,10 +49,25 @@
       <dt>Listen port</dt><dd class="mono">{{.Iface.ListenPort}}</dd>
       <dt>MTU</dt><dd class="mono">{{.Iface.MTU}}</dd>
       {{if .Iface.DNS}}<dt>DNS</dt><dd class="mono">{{.Iface.DNS}}</dd>{{end}}
-      {{if .Iface.AllowedIPs}}<dt>Routes</dt><dd class="mono">{{.Iface.AllowedIPs}}</dd>{{end}}
+      <dt>Routes</dt>
+      <dd>{{if .Iface.FullTunnel}}<span class="mono">0.0.0.0/0</span> · full tunnel
+        {{else}}{{.Iface.RouteCount}} networks{{end}}</dd>
       <dt>Obfuscation</dt><dd>{{.Iface.AWG}}</dd>
       <dt>Backend</dt><dd>{{.Iface.Backend}}</dd>
     </dl>
+    {{if .Iface.FullTunnel}}
+    {{/* Not a fault, but the one default that quietly costs a client access to
+         its own network — say so where the operator is already looking. */}}
+    <p class="cfg-hint warn">Clients cannot reach other subnets of their own local network while connected. Set <code>client_awg.exclude_from_tunnel</code> to change that.</p>
+    {{else}}
+    <details class="cfg-direct routes-reveal">
+      <summary>Show the {{.Iface.RouteCount}} routes</summary>
+      <textarea class="input readonly mono routes-box" readonly rows="7"
+                onclick="this.select()" onfocus="this.select()"
+                aria-label="networks clients send into the tunnel">{{.Iface.AllowedIPs}}</textarea>
+      <span class="cfg-hint">click to select all</span>
+    </details>
+    {{end}}
     {{else}}
     {{/* This panel owns the fact that the interface is not ours yet, so it is
          stated here once instead of split across both panels. */}}

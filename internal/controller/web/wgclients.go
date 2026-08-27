@@ -75,6 +75,11 @@ type wgIfaceView struct {
 	MTU        int
 	DNS        string
 	AllowedIPs string
+	// RouteCount and FullTunnel describe the routing table without making the
+	// operator read it: an expanded list runs to dozens of entries, and printed
+	// raw in a table cell it is a wall nobody checks.
+	RouteCount int
+	FullTunnel bool
 	Backend    string
 	AWG        string
 }
@@ -456,6 +461,10 @@ func ifaceView(cw *domain.ClientWGSpec) *wgIfaceView {
 		Pool: cw.AddressPool, ListenPort: cw.ListenPort, ServerAddr: cw.ServerAddress,
 		MTU: cw.MTU, DNS: strings.Join(cw.DNS, ", "),
 		AllowedIPs: strings.Join(cw.AllowedIPs, ", "),
+		RouteCount: len(cw.AllowedIPs),
+		// The default route is worth calling out rather than printing: it is the one
+		// value that silently costs a client access to its own local network.
+		FullTunnel: len(cw.AllowedIPs) == 0 || (len(cw.AllowedIPs) == 1 && cw.AllowedIPs[0] == "0.0.0.0/0"),
 		Backend:    string(cw.ResolvedBackend()),
 	}
 	switch {

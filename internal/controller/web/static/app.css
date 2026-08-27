@@ -954,9 +954,11 @@ h3.client-name { margin: 0; display: flex; align-items: center; gap: 8px; flex-w
    --fs-meta grey caption it read as a label rather than the only route to them.
    Give it the console's own affordance for "a control that opens something":
    the bordered pill of .backup-summary / .section-link. */
-details.hand-out { margin-top: 16px; }
+details.hand-out,
+details.routes-reveal { margin-top: 16px; }
 details.hand-out > summary,
-details.qr-reveal > summary {
+details.qr-reveal > summary,
+details.routes-reveal > summary {
   display: inline-flex;
   align-items: center;
   gap: 9px;
@@ -972,11 +974,14 @@ details.qr-reveal > summary {
   transition: border-color .12s, color .12s;
 }
 details.hand-out > summary:hover,
-details.qr-reveal > summary:hover { border-color: var(--blue); color: var(--blue); }
+details.qr-reveal > summary:hover,
+details.routes-reveal > summary:hover { border-color: var(--blue); color: var(--blue); }
 details.hand-out > summary::before,
-details.qr-reveal > summary::before { content: "▸"; color: var(--blue); font-size: var(--fs-tablehead); }
+details.qr-reveal > summary::before,
+details.routes-reveal > summary::before { content: "▸"; color: var(--blue); font-size: var(--fs-tablehead); }
 details.hand-out[open] > summary::before,
-details.qr-reveal[open] > summary::before { content: "▾"; }
+details.qr-reveal[open] > summary::before,
+details.routes-reveal[open] > summary::before { content: "▾"; }
 
 /* Generated at 1024, shown at 512: an exact 2:1 downscale, so module edges stay
    sharp, and pixel-for-pixel on a HiDPI screen. 512 puts 4.4 pixels on each of
@@ -1018,6 +1023,13 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
    thousand pixels past a ten-character date. Everywhere else .kv lives in a
    cols-2/cols-3 panel and is naturally bounded. */
 .kv-compact { max-width: 520px; }
+
+/* An expanded routing table is dozens of entries: readable as a block, copyable
+   in one click, and never a wall in a table cell. */
+.routes-box {
+  display: block; width: 100%; margin-top: 14px;
+  resize: vertical; line-height: 1.6; white-space: pre-wrap; word-break: break-all;
+}
 
 /* .client-cfg already spaces its rows by 18px and the open-details rule adds 12
    more; .rule's own 24px margins stacked on top left ~96px of void around a 1px

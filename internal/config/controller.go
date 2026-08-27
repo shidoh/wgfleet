@@ -544,11 +544,31 @@ type ClientAWGConfig struct {
 	// compose-era compose.client_dns, so an existing manifest keeps working when
 	// the interface changes hands.
 	DNS []string `koanf:"dns"`
-	// AllowedIPs is what generated client configs route into the tunnel. Empty ⇒
-	// inherit compose.client_allowed_ips (the same inverted-RFC1918 list, split on
-	// commas). An IPv6 default route is rejected: the data plane is IPv4-only and
-	// "::/0" black-holes dual-stack clients.
+	// AllowedIPs is what generated client configs route into the tunnel, written
+	// verbatim. The escape hatch: set it and nothing below is computed. Empty ⇒
+	// inherit compose.client_allowed_ips (split on commas). An IPv6 default route
+	// is rejected: the data plane is IPv4-only and "::/0" black-holes dual-stack
+	// clients.
 	AllowedIPs []string `koanf:"allowed_ips"`
+	// ExcludeFromTunnel are networks a client must NOT send into the tunnel, so
+	// they stay on its own local network. The default 0.0.0.0/0 swallows every
+	// private range, which is why a client at home cannot reach a service on
+	// another subnet of its own LAN while connected.
+	//
+	// The controller expands "everything except these" into the explicit list
+	// AllowedIPs requires — the protocol has no way to say "except". This is
+	// expansion, not policy: which ranges are worth excluding is the operator's
+	// judgement about the networks their users sit on, nothing is assumed, and the
+	// expanded result is shown in the plan and in the Web UI so it can be checked.
+	//
+	// Empty ⇒ no expansion at all and the default route stands, which is what
+	// every WireGuard config means by "everything".
+	ExcludeFromTunnel []string `koanf:"exclude_from_tunnel"`
+	// RouteThroughCIDRs are networks put BACK into the tunnel after the exclusion
+	// above — an operator work subnet that sits inside an excluded range, or the
+	// management overlay. Same name and meaning as the client_vless knob.
+	// Meaningless without exclude_from_tunnel, since nothing has been taken out.
+	RouteThroughCIDRs []string `koanf:"route_through_cidrs"`
 }
 
 // ClientListenPort returns the configured master client port or the default.
@@ -593,6 +613,13 @@ func (m MasterConfig) ClientAWGDNS() []string {
 func (m MasterConfig) ClientAWGAllowedIPs() []string {
 	if len(m.ClientAWG.AllowedIPs) > 0 {
 		return append([]string(nil), m.ClientAWG.AllowedIPs...)
+	}
+	if len(m.ClientAWG.ExcludeFromTunnel) > 0 {
+		// The error cannot fire here: validateClientAWG parses the same entries at
+		// startup and refuses to run with a malformed one.
+		if out, err := domain.ExpandAllowedIPs(m.ClientAWG.ExcludeFromTunnel, m.ClientAWG.RouteThroughCIDRs); err == nil {
+			return out
+		}
 	}
 	var out []string
 	for _, ip := range strings.Split(m.Compose.ClientAllowedIPs, ",") {

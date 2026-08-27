@@ -230,3 +230,50 @@ func TestClientAWGKeepaliveValidation(t *testing.T) {
 		}
 	}
 }
+
+// The expansion is the product's answer to "a client at home cannot reach its own
+// LAN". A typo in it must fail at startup, not quietly produce a routing table
+// nobody intended.
+func TestClientAWGExcludeFromTunnelValidation(t *testing.T) {
+	base := func(exclude, through []string) ControllerConfig {
+		return ControllerConfig{Fleet: FleetSection{Masters: []MasterConfig{
+			masterWith("m1", ClientAWGConfig{
+				ListenPort: 443, AddressPool: "10.80.0.0/24",
+				ExcludeFromTunnel: exclude, RouteThroughCIDRs: through,
+			}),
+		}}}
+	}
+	if hasClientAWGErr(base([]string{"172.16.0.0/12"}, []string{"172.19.57.0/24"})) {
+		t.Error("a valid exclusion pair should be accepted")
+	}
+	if !hasClientAWGErr(base([]string{"nonsense"}, nil)) {
+		t.Error("a malformed exclusion should fail validation")
+	}
+	// Putting a network back when nothing was taken out does nothing at all, and a
+	// setting that silently does nothing is the failure this project refuses.
+	if !hasClientAWGErr(base(nil, []string{"10.0.0.0/8"})) {
+		t.Error("route_through_cidrs without exclude_from_tunnel should fail validation")
+	}
+}
+
+// The resolved list is what a client actually gets, so assert membership rather
+// than the shape of the expansion.
+func TestClientAWGAllowedIPsResolution(t *testing.T) {
+	m := masterWith("m1", ClientAWGConfig{
+		ExcludeFromTunnel: []string{"172.16.0.0/12", "192.168.0.0/16"},
+		RouteThroughCIDRs: []string{"10.0.0.0/8", "172.19.57.0/24"},
+	})
+	got := strings.Join(m.ClientAWGAllowedIPs(), ",")
+	if strings.Contains(got, "0.0.0.0/0") {
+		t.Errorf("the default route survived the exclusion: %s", got)
+	}
+	if !strings.Contains(got, "172.19.57.0/24") {
+		t.Errorf("the re-added work subnet is missing: %s", got)
+	}
+
+	// allowed_ips is the escape hatch and wins outright.
+	m.ClientAWG.AllowedIPs = []string{"0.0.0.0/0"}
+	if v := m.ClientAWGAllowedIPs(); len(v) != 1 || v[0] != "0.0.0.0/0" {
+		t.Errorf("allowed_ips did not override the expansion: %v", v)
+	}
+}

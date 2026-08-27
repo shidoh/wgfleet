@@ -61,6 +61,17 @@ func validateClientAWG(i int, m MasterConfig) []error {
 		errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.%w", i, err))
 	}
 
+	// The expansion is arithmetic on operator input, so a typo must fail at startup
+	// rather than silently produce a routing table nobody intended.
+	if _, err := domain.ExpandAllowedIPs(m.ClientAWG.ExcludeFromTunnel, m.ClientAWG.RouteThroughCIDRs); err != nil {
+		errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.%w", i, err))
+	}
+	if len(m.ClientAWG.RouteThroughCIDRs) > 0 && len(m.ClientAWG.ExcludeFromTunnel) == 0 {
+		errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.route_through_cidrs is set but "+
+			"client_awg.exclude_from_tunnel is not — nothing has been taken out of the tunnel, so there is "+
+			"nothing to put back and the setting does nothing", i))
+	}
+
 	for _, a := range m.ClientAWGAllowedIPs() {
 		p, err := netip.ParsePrefix(a)
 		if err != nil {
