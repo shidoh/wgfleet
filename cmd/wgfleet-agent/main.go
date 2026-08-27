@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -329,6 +330,13 @@ type agent struct {
 	// created per pass would forget every restart it ever recorded and the throttle
 	// would never engage. Non-nil on every role — the exit planners take it too.
 	restarts *restart.Governor
+
+	// clientKeyAudited runs the client-identity audit once per process. Per PASS
+	// would reopen wg-easy's database every reconcile forever; per RESTART is the
+	// right cadence for a fact that can only change when someone intervenes, and it
+	// puts a fresh line in the journal after every restart so the check survives
+	// log rotation.
+	clientKeyAudited sync.Once
 
 	// lastSpecPrint fingerprints the spec from the previous applied pass. A pass
 	// that changes resources while this is unchanged is config drift (the world
@@ -949,6 +957,7 @@ func (a *agent) ensureClientWGKey(persist bool) (kp wg.KeyPair, ephemeral bool, 
 		if perr != nil {
 			return wg.KeyPair{}, false, fmt.Errorf("stored client wg key invalid: %w", perr)
 		}
+		a.clientKeyAudited.Do(func() { a.auditClientWGKey(pub) })
 		return wg.KeyPair{PrivateKey: priv, PublicKey: pub}, false, nil
 	case !errors.Is(rerr, fs.ErrNotExist):
 		// The file exists but cannot be read (EIO, EACCES, a truncated write).
@@ -993,6 +1002,47 @@ func (a *agent) ensureClientWGKey(persist bool) (kp wg.KeyPair, ephemeral bool, 
 	return fresh, false, nil
 }
 
+// auditClientWGKey reports the client-facing identity this master serves, and
+// screams when it does not match the one wg-easy is still handing out.
+//
+// This is the pre-flight check the migration guide asks the operator to run by
+// hand — and asks too late, after the cutover, when everyone is already down. The
+// divergence it catches is silent by construction: an existing key file wins on
+// every subsequent pass, so a key minted once because wg-easy's database was
+// momentarily unrecognisable is never revisited. Nothing looks wrong until the
+// handover, at which point every config in the field stops handshaking at once.
+func (a *agent) auditClientWGKey(pub string) {
+	db := a.masterPaths().WGEasyDB
+	if _, err := os.Stat(db); err != nil {
+		// wg-easy is gone: after the handover this is the ordinary state, and there
+		// is nothing left to compare against. Still say what we serve.
+		a.log.Info("client interface identity", "public_key", pub)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	priv, found, err := wgeasy.ReadInterfacePrivateKey(ctx, db, wgeasy.DefaultInterface)
+	if err != nil || !found {
+		a.log.Info("client interface identity (wg-easy's key could not be read for comparison)",
+			"public_key", pub, "db", db)
+		return
+	}
+	theirs, err := wg.PublicKeyOf(priv)
+	if err != nil {
+		a.log.Info("client interface identity (wg-easy's key is unusable)", "public_key", pub)
+		return
+	}
+	if theirs == pub {
+		a.log.Info("client interface identity matches wg-easy's; existing client configs stay valid",
+			"public_key", pub)
+		return
+	}
+	a.log.Error("CLIENT INTERFACE IDENTITY DIVERGED FROM wg-easy — every client config in the field would stop "+
+		"working at the handover. Do not set client_awg.managed until this is resolved: remove the agent's key "+
+		"file so it re-adopts wg-easy's, or confirm the clients have already been reissued.",
+		"agent_public_key", pub, "wg_easy_public_key", theirs, "key_file", a.masterPaths().ClientWGKey)
+}
+
 // adoptState says what wg-easy's database had to offer.
 type adoptState int
 
@@ -1011,13 +1061,28 @@ func (a *agent) adoptWGEasyKey() (wg.KeyPair, adoptState) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	priv, found, err := wgeasy.ReadInterfacePrivateKey(ctx, a.masterPaths().WGEasyDB, wgeasy.DefaultInterface)
+	db := a.masterPaths().WGEasyDB
+	priv, found, err := wgeasy.ReadInterfacePrivateKey(ctx, db, wgeasy.DefaultInterface)
 	switch {
 	case err != nil:
 		a.log.Warn("wg-easy's database is present but unreadable; deferring rather than minting a new client key",
-			"db", a.masterPaths().WGEasyDB, "err", err)
+			"db", db, "err", err)
 		return wg.KeyPair{}, adoptUnreadable
 	case !found:
+		// "Nothing to adopt" is TWO different facts and only one of them justifies
+		// minting. ReadInterfacePrivateKey reports found=false with no error for a
+		// missing database file AND for a database whose interfaces table or
+		// private-key column it could not recognise — the very rename its column
+		// discovery exists to survive. Treating the second as "wg-easy was never set
+		// up here" mints a fresh identity on a host that HAS one, and because an
+		// existing key file wins from then on, nothing ever re-adopts. The divergence
+		// stays invisible until the handover, when every config in the field stops
+		// handshaking at once.
+		if _, statErr := os.Stat(db); statErr == nil {
+			a.log.Warn("wg-easy's database is present but yielded no interface key; deferring rather than minting a new client key",
+				"db", db, "interface", wgeasy.DefaultInterface)
+			return wg.KeyPair{}, adoptUnreadable
+		}
 		return wg.KeyPair{}, adoptAbsent
 	}
 	pub, err := wg.PublicKeyOf(priv)
