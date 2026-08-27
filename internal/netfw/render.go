@@ -470,9 +470,25 @@ func RenderRuleset(in RenderInput) (string, error) {
 		// packet path that bypasses forward). The two mirror each other exactly — same
 		// pool, same `oifname != <wg>` scope as the masquerade — so a leak has to defeat
 		// both to reach the wire.
+		//
+		// Two exclusions keep the counter meaningful. Without them it counted the
+		// node talking to itself and read as half a million caught leaks on a
+		// healthy exit — measured 2026-08-27, every single event was a locally
+		// generated ICMP unreachable on `lo` carrying the node's own ZeroTier path
+		// probes. A number that alarming, and wrong, is worse than no number: it
+		// sends the next reader chasing a leak that is not happening.
+		//
+		//   oifname != "lo"  — a packet on loopback is not leaving the box, so it
+		//                      cannot be an egress leak by definition.
+		//   ip saddr != <gw> — the node's own address sits inside the pool. Traffic
+		//                      from it is the node's, not a client's.
+		guardSrc := ""
+		if gw, err := gatewayAddr(pool); err == nil {
+			guardSrc = fmt.Sprintf(" ip saddr != %s", gw)
+		}
 		b.WriteString("\n\tchain egress_leak_guard {\n")
 		b.WriteString("\t\ttype filter hook postrouting priority srcnat + 10; policy accept;\n")
-		fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q counter drop\n", pool, wg)
+		fmt.Fprintf(&b, "\t\tip saddr %s%s oifname != %q oifname != \"lo\" counter drop\n", pool, guardSrc, wg)
 		b.WriteString("\t}\n")
 	}
 

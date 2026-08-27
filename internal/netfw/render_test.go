@@ -261,8 +261,11 @@ func TestRenderExitEgressLeakGuard(t *testing.T) {
 	for _, want := range []string{
 		// After srcnat: a packet still carrying the pool here is one NAT never saw.
 		"type filter hook postrouting priority srcnat + 10",
-		// Same pool and same interface scope as the masquerade it backs up.
-		`ip saddr 10.71.0.0/24 oifname != "awg0" counter drop`,
+		// Same pool and same interface scope as the masquerade it backs up, minus
+		// the two cases that are the node itself rather than a client: loopback is
+		// not egress at all, and the gateway address inside the pool belongs to the
+		// node. Counting those made a healthy exit report half a million leaks.
+		`ip saddr 10.71.0.0/24 ip saddr != 10.71.0.1 oifname != "awg0" oifname != "lo" counter drop`,
 	} {
 		if !strings.Contains(guard, want) {
 			t.Errorf("egress leak guard missing %q:\n%s", want, guard)

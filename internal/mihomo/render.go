@@ -641,6 +641,22 @@ func renderRules(spec domain.MasterSpec) []any {
 			fmt.Sprintf("GEOIP,%s,DIRECT,no-resolve", strings.ToUpper(geo)),
 		)
 	}
+	// Ad/telemetry domains are blocked upstream by blocky, which answers NXDOMAIN.
+	// Without a rule here they still fall through to MATCH: mihomo tries to resolve
+	// the name, fails, and charges the failure to the GROUP —
+	//   dial wg-best ... error: dns resolve failed: couldn't find ip
+	//   because wg-best failed multiple times, activate health check
+	// Measured live 2026-08-27: 37-69 health-check activations per hour on a fleet
+	// whose exits were all healthy, driven entirely by telemetry hosts
+	// (sessions.bugsnag.com, analytics.google.com, ...). Rejecting them here
+	// attributes the failure to the rule instead, so a browser asking for ads can
+	// no longer degrade the health of the group that carries every client.
+	//
+	// Emitted only alongside the other geo rules: GEOSITE needs the geosite
+	// database, which is configured under the same condition.
+	if len(spec.DirectGeo) > 0 {
+		rules = append(rules, "GEOSITE,category-ads-all,REJECT")
+	}
 	rules = append(rules, "MATCH,wg-best")
 	return rules
 }

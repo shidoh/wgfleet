@@ -95,6 +95,7 @@ rules:
   - RULE-SET,direct-networks,DIRECT
   - GEOSITE,category-ru,DIRECT
   - GEOIP,RU,DIRECT,no-resolve
+  - GEOSITE,category-ads-all,REJECT
   - MATCH,wg-best
 sniffer:
   enable: true
