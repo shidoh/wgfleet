@@ -1,415 +1,201 @@
-# Moving the client leg from wg-easy into wgfleet
+# Moving the client leg off wg-easy
 
-Until now the interface your end users dial was owned by **wg-easy**: it held the
-credentials, generated the configs, and raised the interface. wgfleet wrote into
-its database from the outside.
+For a master whose clients are still served by wg-easy.
 
-This document walks the handover: wgfleet's controller takes ownership of the
-credentials, and the master's agent renders and raises the interface itself.
-wg-easy stops being part of the data path.
+Four parts, each a separate decision. Stopping after any of them is fine.
 
-**The handover is transparent.** Nobody re-imports a tunnel, no config you have
-already handed out stops working. That is a design constraint, not a hope — the
-agent *adopts* wg-easy's own interface private key, so the server public key
-every client pins keeps matching, and the obfuscation parameters come from the
-same fleet config that fed wg-easy in the first place.
+1. Upgrade the binaries — required, does not touch the client leg
+2. Import the credentials — reversible, changes nothing live
+3. Hand the interface over — the cutover
+4. AmneziaWG 3.x — optional, later
 
-Read this end to end before starting. The three parts are independent decisions:
-you may upgrade (Part 1) and stop there for weeks.
-
-- [Part 1 — Upgrade the binaries](#part-1--upgrade-the-binaries) — required, low risk
-- [Part 2 — Import the credentials](#part-2--import-the-credentials) — reversible, changes nothing live
-- [Part 3 — Hand the interface over](#part-3--hand-the-interface-over) — the cutover
-- [Part 4 — AmneziaWG 3.x afterwards](#part-4--amneziawg-3x-afterwards) — optional, later
-
----
-
-## What changes and what does not
-
-| | Before | After |
-|---|---|---|
-| Who stores client keys | wg-easy's SQLite | controller store (`client_wg_credentials`) |
-| Who raises the interface | wg-easy container | master's agent (`awg-quick`) |
-| Server public key | wg-easy's | **the same one**, adopted |
-| Obfuscation parameters | from your fleet config | **the same ones**, same source |
-| Client addresses | wg-easy's allocation | imported verbatim |
-| Where you add a client | wg-easy web UI on :51821 | wgfleet Web UI, node → *WireGuard clients* |
-| How a user gets a config | you export and send a file | permanent portal link, or you download it |
-| wg-easy container | in the data path | **removed** at cutover; its database and image stay for rollback |
+The handover is transparent: the agent adopts wg-easy's own interface key, so
+**no config already handed out stops working.**
 
 ---
 
 ## Pre-flight
 
-Answer these before you touch anything.
-
-**1. What AmneziaWG kernel module does the master run?**
-
 ```bash
-cat /sys/module/amneziawg/version
-```
+cat /sys/module/amneziawg/version    # kernel module generation
+docker images | grep wg-easy         # must be present locally — rollback needs it
+ls -l /etc/wireguard/wg-easy.db      # must exist, holds your clients
 
-If this reports **3.x**, note it: your wg-easy is already living on borrowed
-time. Its container ships AmneziaWG tools of generation 1, which cannot drive a
-3.x module. It works only because the interface is already up — the next
-container restart will fail to raise it. For you this means **the rollback in
-Part 3 is not available**, and the migration is the fix rather than a risk.
-
-If this reports 1.x or 2.x, rollback is available and the whole exercise is
-reversible.
-
-**2. Do all your client names survive?**
-
-Client names are rendered into the interface config. wgfleet accepts letters,
-digits, `-`, `_` and `.`, up to 64 characters — nothing else. A client called
-`Ivan's iPhone` will **not** migrate. Part 2's dry run tells you exactly which
-ones, and you rename them in wg-easy before continuing.
-
-**3. Do you have console access to the master?**
-
-You will not need it if nothing goes wrong. Have it anyway: the client interface
-is the one thing whose outage every user notices at once.
-
-**4. Back up.**
-
-```bash
 wgfleet-controller --config /etc/wgfleet/controller.yaml --backup /root/pre-migration.age
 cp /etc/wireguard/wg-easy.db /root/wg-easy.db.bak
+cp /var/lib/wgfleet/state.db  /root/state.db.bak
 ```
 
-The first needs the `age` binary present (see `MASTER-MIGRATION.md`). The
-second is the source of truth you are migrating away from — copy it even though
-the import only ever reads it.
+**Module 3.x** ⇒ your wg-easy is already broken and will fail to raise the
+interface on its next container restart (its bundled tools are generation 1).
+Rollback in part 3 is unavailable; the migration is the fix.
+
+**Client names** must be letters, digits, `-`, `_`, `.`, max 64. Anything else
+does not migrate. Part 2's dry run names them.
+
+`--backup` needs the `age` binary on PATH.
 
 ---
 
-## Part 1 — Upgrade the binaries
+## 1. Upgrade the binaries
 
-This release bumps the wire contract from 7 to **8**. Nothing about the client
-leg changes here; the new spec block simply becomes available.
-
-### Order: controller first, then agents
+Wire contract 7 → 8. **Controller first.** The reverse order makes the master's
+reconcile fail on every pass until the controller catches up.
 
 ```bash
-# on the controller host
 systemctl stop wgfleet-controller
 cp wgfleet-controller /usr/local/bin/wgfleet-controller
 systemctl start wgfleet-controller
 ```
 
-The controller migrates its store on first start (schema v11–v13: the credential
-table, the master's published client public key, and the per-peer status
-column). This happens silently and takes milliseconds.
+Store migrations run on first start. Rolling the binary back afterwards is safe —
+they only add columns with defaults.
 
-Then the agents. If `controller.agent_bin` is set in your config, **you do not
-have to do anything** — an agent that is behind on the wire contract is upgraded
-automatically the next time it registers. Otherwise, per node:
+Then the exit agents:
 
 ```bash
-systemctl stop wgfleet-agent
-cp wgfleet-agent /usr/local/bin/wgfleet-agent
-systemctl start wgfleet-agent
+wgfleet-controller --config /etc/wgfleet/controller.yaml --rolling-upgrade --plan
+wgfleet-controller --config /etc/wgfleet/controller.yaml --rolling-upgrade
 ```
 
-### Why this order
+**Agents are NOT upgraded automatically.** Auto-upgrade fires only for an agent
+the controller cannot serve; wire 7 is still supported, so nothing happens on its
+own and the exits stay on the old build until you run the command above.
 
-The controller still serves agents all the way back to wire 1, so an old agent
-against a new controller is fine — it simply does not receive the new spec
-block, which is exactly the safe state. The reverse (new agent, old controller)
-gives you a node asking for a contract the controller does not know.
+On a co-located master upgrade its agent too — `deploy/deploy-master.sh --both`
+detects the wire bump and orders the two correctly.
 
-### What does not happen
+Verify:
 
-**The wg-easy container is not recreated.** The rendered `docker-compose.yml` is
-byte-for-byte identical to the previous release for a master that has not opted
-in, so nothing triggers a `docker compose up`. This matters more than it sounds:
-recreating that container makes it re-read its database and, on a 3.x-module
-host, fail to raise the interface.
+```bash
+wgfleet-controller --version                           # wire-contract version 8
+docker ps --filter name=wg-easy --format '{{.Status}}'  # uptime unchanged
+```
 
-### Rolling the binary back
-
-Safe. The store migrations only add columns, all with defaults, and the previous
-release's controller opens a migrated store, reads it, registers nodes and
-writes status without complaint. Issued client credentials survive in the
-database, ignored, until you roll forward again.
-
-### Stop here if you want
-
-At this point you have upgraded and nothing about your client leg has changed.
-wg-easy still owns it. `client_awg.managed` defaults to **off**, and an unset
-value means "keep wg-easy" — never "take over on upgrade".
-
-The one new behaviour: the agent reads wg-easy's interface private key and
-publishes the matching public key to the controller. You will see this in the
-log as `adopted the client interface key from wg-easy`. It changes nothing; it
-is preparation for Part 3.
+**Nothing about the client leg changed.** `client_awg.managed` defaults off and
+the rendered compose file is byte-identical, so the wg-easy container is not
+recreated. You may stop here indefinitely.
 
 ---
 
-## Part 2 — Import the credentials
+## 2. Import the credentials
 
-This copies clients out of wg-easy's database into the controller store. It
-**only reads** wg-easy's database, never writes to it, and never creates it.
-Run it on the master, with the controller live.
+Reads wg-easy's database, never writes to it. Run on the master, controller live.
 
-### Dry run first
+The pool must match what wg-easy handed out:
+
+```yaml
+fleet:
+  masters:
+    - name: master-xa-1
+      client_awg:
+        address_pool: 10.73.0.0/24
+```
 
 ```bash
 wgfleet-controller --config /etc/wgfleet/controller.yaml \
   --import-wg-easy master-xa-1 --plan
 ```
 
-Add `--wg-easy-db /path/to/wg-easy.db` if it is not at the default
-`/etc/wireguard/wg-easy.db`.
+Add `--wg-easy-db PATH` if it is not at `/etc/wireguard/wg-easy.db`.
 
-Read the report. Every line beginning `NOT MIGRATED` is a client that **will
-lose its tunnel at cutover** unless you fix it first. The common causes:
+Every `NOT MIGRATED` line is a client that **loses its tunnel at cutover**:
 
 | Report says | Fix |
 |---|---|
-| name is not safe to render into a config | rename in wg-easy to letters/digits/`-`/`_`/`.` |
-| the public key / preshared key in wg-easy is not a valid WireGuard key | re-create that client in wg-easy |
-| address is outside the configured pool | your `client_awg.address_pool` does not match what wg-easy handed out — fix the pool |
-| address is already taken by another credential | duplicate in wg-easy; delete one |
-| a different credential already uses this name | you already imported a different client under that name |
+| name is not safe to render into a config | rename it in wg-easy |
+| key is not a valid WireGuard key | re-create that client in wg-easy |
+| address is outside the configured pool | fix `address_pool` above |
+| address is already taken | duplicate in wg-easy, delete one |
 
-If the report ends with `NOTHING WAS MIGRATED`, every client was skipped for a
-real reason. Do not proceed.
-
-Fix, re-run the dry run, repeat until it is clean.
-
-### Set the pool to match reality
-
-The single most common failure is an address-pool mismatch. wgfleet allocates
-from `client_awg.address_pool`; wg-easy allocated from whatever it was
-configured with. They must be the same subnet, or every imported address falls
-outside the pool.
-
-```yaml
-fleet:
-  masters:
-    - name: master-xa-1
-      client_awg:
-        address_pool: 10.8.0.0/24   # the subnet wg-easy actually used
-```
-
-### Apply
+Re-run until clean, then:
 
 ```bash
-wgfleet-controller --config /etc/wgfleet/controller.yaml \
-  --import-wg-easy master-xa-1
+wgfleet-controller --config /etc/wgfleet/controller.yaml --import-wg-easy master-xa-1
 ```
 
-Credentials now exist in the controller store. **Nothing has happened to the
-data path yet** — wg-easy still owns the interface, and the imported credentials
-are inert. You can see them in the Web UI (node → *WireGuard clients*), where
-the page tells you they do nothing yet.
-
-The import is idempotent. Re-running it reports already-imported clients as
-"already imported (same key and address) — nothing to do" and changes nothing,
-so it is safe to run again after fixing a few names.
+Idempotent. Nothing has happened to the data path — wg-easy still owns the
+interface and the imported credentials are inert.
 
 ---
 
-## Part 3 — Hand the interface over
-
-One knob:
+## 3. Hand the interface over
 
 ```yaml
-fleet:
-  masters:
-    - name: master-xa-1
-      client_awg:
         managed: true
 ```
 
-Reload the controller. On the master's next reconcile the agent:
-
-1. writes a claim file next to the interface config, marking the leg as ours;
-2. adopts wg-easy's interface private key, so the server public key does not move;
-3. renders the interface with the imported peers and raises it.
-
-The wg-easy container is **removed in that same pass** — not stopped, removed —
-once the interface is up and carrying the imported peers. The retirement is the
-last action in the sequence and the reconcile engine stops at the first failure,
-so a takeover that could not raise the interface leaves the container alone.
-
-Your rollback is therefore not "the container is still running". It is that
-wg-easy's **database is untouched** and its **image is still on the host**, so
-`managed: false` recreates it from local state without reaching a registry.
-Check both BEFORE you cut over:
+Reload the controller. On the master's next reconcile the agent claims the
+interface, adopts wg-easy's key and raises it with the imported peers.
 
 ```bash
-ls -l /etc/wireguard/wg-easy.db     # exists, with your clients in it
-docker images | grep wg-easy        # present locally
+awg show wg0 public-key     # SAME key as before the cutover
+awg show wg0 peers | wc -l  # your client count
+ls /etc/amnezia/amneziawg/wg0.conf.claim
 ```
 
-The second matters more than it looks: if the image has been pruned and the
-registry is unreachable from where your master sits, rollback stops being a
-one-knob operation.
+Then connect from a device whose config you did **not** touch. That is the test
+that matters.
 
-### Verify before you tell anyone
+**The wg-easy container is removed in this same pass** — after the interface is
+up, never before. Your rollback is not the container; it is wg-easy's database
+plus its image, both checked in pre-flight.
 
-```bash
-awg show wg0
-```
+### Rollback
 
-Expect: your peers listed, handshakes appearing as clients reconnect. Then from
-a client that has **not** been touched — an existing config on somebody's phone
-— confirm traffic flows. That is the real test: it proves an old config works
-against the new interface.
-
-Then in the Web UI: mute a client, confirm its tunnel stops; unmute it, confirm
-it returns. Issue a new client and import its config. Reboot the master and
-confirm the interface comes back.
-
-### Handing out configs from now on
-
-Each credential has a **permanent portal link** shown on the client page, of the
-form `<client_portal_url>/c/<id>`. Send that link to the person; they open it
-and get their config and QR. The link does not change when you rename the
-client, and the config is rendered fresh on every visit — so if the interface
-parameters ever change, the same link serves the new config.
-
-The portal has two knobs and both are required together:
+Only if the module is 1.x or 2.x.
 
 ```yaml
-controller:
-  client_portal: 10.8.0.1:8080          # MUST be the master's mgmt address
-  client_portal_url: http://10.8.0.1:8080
-fleet:
-  masters:
-    - name: master-xa-1
-      client_admin_ports: [8080]         # opens the port to clients
+        managed: false
 ```
 
-Bind the portal on the **management address**, not `0.0.0.0` and not the client
-pool gateway. A portal bound elsewhere is swallowed by the master's own client
-redirect and simply times out.
+Reload, wait one reconcile. The agent releases the interface, compose puts
+wg-easy back and recreates it from the local image; it reads its untouched
+database and takes the leg again. Imported credentials stay in the store.
 
-### Rolling back
-
-Only if the master's kernel module is 1.x or 2.x (see Pre-flight).
-
-Set `managed: false`, reload, wait a reconcile. The agent drops its claim and
-takes its interface down; the compose planner puts the wg-easy service back into
-the stack and recreates the container, which reads its untouched database and
-raises the interface again. The order is load-bearing and already handled — the
-client-interface planner runs BEFORE compose, so the leg is released before
-wg-easy is asked to take it. Imported credentials stay in the controller store,
-inert, ready for a second attempt.
-
-If the module is 3.x, there is no going back to wg-easy. Roll forward instead:
-fix the problem and reconcile again.
-
-### When you are confident
-
-There is nothing left to retire — the container went at cutover, and its ~110 MB
-of RAM with it. What to do instead is archive `wg-easy.db` off the box: it is the
-only record of the original allocation, and it is what a rollback reads.
+Archive `wg-easy.db` off the box — it is what a rollback reads.
 
 ---
 
-## Part 4 — AmneziaWG 3.x afterwards
+## 4. AmneziaWG 3.x
 
-Owning the client leg is what makes AmneziaWG 3.x reachable at all: we never
-wrote 3.x parameters into wg-easy's database, so a wg-easy-owned leg is
-permanently 2.0.
+**The order is forced.** The wg-easy image carries generation-1 tools, so
+upgrading the master's kernel module while that image is still in use breaks it:
 
-### What 3.x adds
-
-On top of the 2.0 set your clients already carry (`Jc/Jmin/Jmax`, `S1–S4`,
-`H1–H4`, `I1–I5`):
-
-| Parameter | What it does |
-|---|---|
-| `HeaderProtectionKey` | chacha20 over the packet header. Requires `S1–S4 >= 12` — the nonce is read from those bytes, and a shorter pad makes the two ends derive different nonces while the interface stays UP. |
-| `ContentPaddingAddition` | pads transport packets, breaking the packet-size profile. |
-| `RekeyAfterTime`, `RekeyTimeout`, `RejectAfterTime`, `KeepaliveTimeout`, `MaxHandshakeAttempts` | ranges instead of constants, redrawn on every timer arm. This is the anti-fingerprint knob: a fixed 25-second keepalive is a timing signature that survives every payload-level obfuscation. |
-
-### Only one of them breaks old clients
-
-Measured against a real AmneziaWG 3.1.20260812 kernel module, both ends rendered
-by the production renderers, two network namespaces:
-
-| Server runs | Unmodified 2.0 client |
-|---|---|
-| full 3.x | **dead** — no handshake, 100% loss |
-| the five timers only | works, 0% loss over 240 s across repeated rekeys |
-| `ContentPaddingAddition` only | works, 0% loss including 1200-byte payloads |
-| `HeaderProtectionKey` only | **dead** — no handshake |
-| 2.0 (control) | works |
-
-**`HeaderProtectionKey` is the only parameter that requires every client to be
-reissued.** The timers can be enabled server-side with no client action at all,
-and they carry the anti-fingerprint value.
-
-### The staged path
-
-**Stage 1 — no redistribution.**
+1. finish part 3 and confirm it
+2. drop the wg-easy image once you no longer want the rollback
+3. upgrade the master's kernel module to 3.x
+4. only then set `awg3`
 
 ```yaml
-fleet:
-  masters:
-    - name: master-xa-1
-      client_awg:
-        managed: true
-        awg3: timers
+        awg3: timers   # off | timers | full
 ```
 
-Nobody re-imports anything. Requires a 3.x kernel module on the master; if it is
-older, the agent keeps the last-good config rather than taking the client leg
-down, and says so in its log.
+**`timers`** — randomises the 3.x timers. Measured against a real 3.1 module: an
+untouched 2.0 client keeps handshaking and passing traffic across rekeys. **No
+client re-imports anything.**
 
-**Stage 2 — flag day, whenever you want it.**
+**`full`** — adds header protection. **Every client must re-import before it works
+again.** Do not set it until you can reach every user. Portal links are permanent
+and render on demand, so this is one announcement, not a redistribution.
 
-```yaml
-        awg3: full
-```
-
-Header protection goes on and every client must re-import before it works again.
-Because portal links are permanent and render the config on demand, this is one
-announcement rather than a distribution: everyone reopens the link they already
-have and imports the config it now serves.
-
-Do not go to `full` until you are sure every user can reach you to be told, and
-that their app speaks AmneziaWG 3.1.
-
-> `awg3` is per-master and applies to the client leg only. The fleet-wide `awg3`
-> knob is a different setting governing master↔exit tunnels, where both ends are
-> yours and upgrade together.
+Requires `managed: true` and a 3.x module. With an older module the agent refuses
+the config and keeps the last-good one rather than taking the leg down.
 
 ---
 
 ## Troubleshooting
 
-**Clients stopped working right after cutover, all of them.**
-The adopted key did not match. Check the agent log for `adopted the client
-interface key from wg-easy`; if it is absent, wg-easy's schema moved and the
-agent minted a fresh key instead. Roll back (`managed: false`) if the module
-allows it, and report the wg-easy version.
-
-**One client stopped working.**
-It was in the `NOT MIGRATED` list. Re-check the dry-run report, fix the cause in
-wg-easy, re-run the import, and reconcile.
-
-**The interface will not come up and the log says AmneziaWG 3.x refused.**
-The fleet asks for 3.x parameters the master's kernel module cannot carry. The
-agent deliberately keeps the last-good config rather than writing one it knows
-`awg setconf` rejects. Upgrade the module or drop the 3.x parameters.
-
-**The portal times out.**
-It is bound somewhere other than the master's mgmt address, or its port is
-missing from `client_admin_ports`. See Part 3.
-
-**The Web UI shows clients but no *Download .conf* button.**
-The master has not published its client interface public key yet. It appears
-after one reconcile pass.
-
----
+| Symptom | Cause |
+|---|---|
+| every client dies at cutover | the key was not adopted — check the agent log for `adopted the client interface key from wg-easy`, then roll back |
+| one client dies | it was in the `NOT MIGRATED` list |
+| interface will not come up, log says 3.x refused | module is older than the config asks for |
+| portal times out | bound somewhere other than the master's mgmt address, or its port is missing from `client_admin_ports` |
+| no *Download .conf* button | the master has not published its interface key yet — one reconcile pass |
 
 ## See also
 
-- `MASTER-MIGRATION.md` — moving a master to another VM, a different operation entirely
-- `CONFIGURATION.md` — every knob mentioned here
-- `SUPPORT-BUNDLE.md` — what to collect if you need help with any of the above
+- `MASTER-MIGRATION.md` — moving a master to another VM, a different operation
+- `CONFIGURATION.md` — every knob named here
+- `SUPPORT-BUNDLE.md` — what to collect if you need help
