@@ -729,6 +729,11 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   flex-direction: column;
   align-items: stretch;
 }
+/* .input's flex-basis is a WIDTH, written for the rows it also lives in. Inside a
+   column field the main axis is vertical, so that basis silently became a height
+   and the name box rendered 260px tall. align-items: stretch already gives the
+   input the field's full width, so it needs no flex here at all. */
+.field .input { flex: none; }
 
 /* The other job .field was doing: a row of controls. Separate because it needs
    the opposite alignment — `stretch` is what inflated the backup download button
@@ -998,7 +1003,10 @@ h3.client-name { margin: 0; display: flex; align-items: center; gap: 8px; flex-w
 /* The issue form is a ROW, not the login card's stacked column. .auth-form is
    built for .auth-card (max-width 380px); reused in a grid panel it stretched the
    submit button across the full width of the page. */
-.issue-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 16px; }
+/* flex-end, unlike its sibling below: this form's field carries its own label, so
+   the column is taller than the button and centring it lines the button up with
+   the middle of "label + input" instead of with the input. */
+.issue-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-top: 16px; }
 /* Capped, and capped at the SAME width as the rename field: both name one client,
    and a name field that grows to fill a 700px panel reads as a paragraph box.
    Without the cap flex-grow ate the whole panel. */

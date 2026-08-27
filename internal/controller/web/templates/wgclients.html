@@ -1,7 +1,7 @@
 {{define "content"}}
 <div class="detail-head">
   <a class="back" href="/nodes/{{.NodeID}}">← {{.NodeName}}</a>
-  <h1 class="detail-title">WireGuard clients</h1>
+  <h1 class="detail-title">AWG clients</h1>
 </div>
 {{if .Flash}}<p class="error-note" role="alert">⚠ {{.Flash}}</p>{{end}}
 
@@ -13,7 +13,7 @@
 <div class="panel"><p class="error-note" role="alert">⚠ {{.Err}}</p></div>
 {{else if .NotMaster}}
 <div class="empty">
-  <p>{{.NodeName}} is not a master, so it has no client interface.<br>WireGuard clients are issued on the master.</p>
+  <p>{{.NodeName}} is not a master, so it has no client interface.<br>AWG clients are issued on the master.</p>
   <a class="section-link" href="/nodes/{{.NodeID}}">back to {{.NodeName}}</a>
 </div>
 {{else}}

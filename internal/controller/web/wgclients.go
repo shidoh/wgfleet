@@ -169,7 +169,7 @@ func (h *Handler) wgClientsView(w http.ResponseWriter, r *http.Request) (wgClien
 	}
 	user, _ := h.currentUser(r)
 	data := wgClientsData{
-		Title: "WireGuard clients — " + node.Name, NodeCount: h.fleetCount(r.Context()),
+		Title: "AWG clients — " + node.Name, NodeCount: h.fleetCount(r.Context()),
 		User: user, Flash: h.takeFlash(w, r), CSRF: h.csrf,
 		NodeID: id, NodeName: node.Name,
 	}
@@ -502,7 +502,10 @@ func ifaceView(cw *domain.ClientWGSpec) *wgIfaceView {
 	}
 	switch {
 	case cw.AWG == nil:
-		v.AWG = "off — plain WireGuard"
+		// Named by what it is rather than by the protocol: the console says AWG
+		// throughout, and "plain WireGuard" here made the one place the operator
+		// looks to check obfuscation the one place that used the other word.
+		v.AWG = "off — no obfuscation"
 	case cw.AWG.Shared.HeaderProtectionKey != "":
 		// Header protection is the one 3.x parameter existing clients cannot
 		// survive, so it is worth naming separately from the timers.

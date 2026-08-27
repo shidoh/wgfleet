@@ -252,7 +252,7 @@ func wgServerGroup(s domain.NodeSpec) specGroup {
 	if w.ListenPort == 0 && w.AddressPool == "" {
 		return specGroup{}
 	}
-	g := specGroup{Title: "WireGuard server", Rows: []specRow{
+	g := specGroup{Title: "AWG server", Rows: []specRow{
 		kv("Listen port", fmt.Sprintf("%d/udp", w.ListenPort)),
 		kv("Address pool", w.AddressPool),
 	}}
@@ -398,7 +398,7 @@ func firewallGroup(f domain.FirewallSpec) specGroup {
 			Hint: "drops known scanner ASNs before they reach the data plane"},
 	}}
 	if f.WGPort > 0 {
-		g.Rows = append(g.Rows, kv("WireGuard port", fmt.Sprintf("%d/udp", f.WGPort)))
+		g.Rows = append(g.Rows, kv("AWG port", fmt.Sprintf("%d/udp", f.WGPort)))
 	}
 	if f.RealityPort > 0 {
 		g.Rows = append(g.Rows, kv("REALITY port", fmt.Sprintf("%d/tcp", f.RealityPort)))
