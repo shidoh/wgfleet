@@ -277,3 +277,53 @@ func TestClientAWGAllowedIPsResolution(t *testing.T) {
 		t.Errorf("allowed_ips did not override the expansion: %v", v)
 	}
 }
+
+// The exclusion an operator will actually write, copied from routing.direct_cidrs
+// in the same manifest, takes the client pool and the client DNS server out of
+// the tunnel. Nothing downstream can catch it: the expansion is arithmetic, the
+// list is well-formed and the rendered config is valid. It surfaces only as a
+// person saying nothing works.
+func TestExcludeFromTunnelMustNotCutOffTheGatewayOrDNS(t *testing.T) {
+	base := func() MasterConfig {
+		return MasterConfig{
+			Name: "m1", MgmtAddr: "10.20.0.1",
+			ClientAWG: ClientAWGConfig{
+				ListenPort:  443,
+				AddressPool: "10.80.0.0/24",
+				DNS:         []string{"10.20.25.254"},
+			},
+		}
+	}
+
+	m := base()
+	m.ClientAWG.ExcludeFromTunnel = []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+	errs := validateClientAWG(0, m)
+	var gotPool, gotDNS bool
+	for _, err := range errs {
+		if strings.Contains(err.Error(), "10.80.0.0/24") {
+			gotPool = true
+		}
+		if strings.Contains(err.Error(), "10.20.25.254") {
+			gotDNS = true
+		}
+	}
+	if !gotPool {
+		t.Errorf("excluding the client pool was accepted; errors: %v", errs)
+	}
+	if !gotDNS {
+		t.Errorf("excluding the client DNS server was accepted; errors: %v", errs)
+	}
+
+	// Putting them back is the documented fix, and it must clear both.
+	m.ClientAWG.RouteThroughCIDRs = []string{"10.80.0.0/24", "10.20.0.0/16"}
+	if errs := validateClientAWG(0, m); len(errs) != 0 {
+		t.Errorf("route_through_cidrs did not resolve the exclusion: %v", errs)
+	}
+
+	// An exclusion that touches neither is fine as it stands.
+	ok := base()
+	ok.ClientAWG.ExcludeFromTunnel = []string{"192.168.0.0/16"}
+	if errs := validateClientAWG(0, ok); len(errs) != 0 {
+		t.Errorf("a harmless exclusion was refused: %v", errs)
+	}
+}

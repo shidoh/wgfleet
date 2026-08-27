@@ -71,6 +71,7 @@ func validateClientAWG(i int, m MasterConfig) []error {
 			"client_awg.exclude_from_tunnel is not — nothing has been taken out of the tunnel, so there is "+
 			"nothing to put back and the setting does nothing", i))
 	}
+	errs = append(errs, validateTunnelReachesItself(i, m)...)
 
 	for _, a := range m.ClientAWGAllowedIPs() {
 		p, err := netip.ParsePrefix(a)
@@ -188,4 +189,59 @@ func localHost(host string) bool {
 		return false
 	}
 	return addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast()
+}
+
+// validateTunnelReachesItself refuses an exclusion list that cuts clients off
+// from their own gateway or resolver.
+//
+// The natural thing to write here is the list already sitting in the same
+// manifest under routing.direct_cidrs — 10/8, 172.16/12, 192.168/16 — and on this
+// fleet the client pool and the exits' mgmt addresses (where client DNS lives)
+// are both inside 10/8. Subtracting it hands every client a config with no route
+// to its own gateway and no route to its resolver: the tunnel connects, nothing
+// resolves, and the self-service portal — which lives on a mgmt address — goes
+// with it. Nothing downstream can catch this. The expansion is arithmetic and
+// produces a perfectly well-formed list; the rendered config is valid; the Web UI
+// reports "N networks". It only shows up as a person saying nothing works.
+func validateTunnelReachesItself(i int, m MasterConfig) []error {
+	if len(m.ClientAWG.ExcludeFromTunnel) == 0 {
+		return nil
+	}
+	routes := make([]netip.Prefix, 0, len(m.ClientAWGAllowedIPs()))
+	for _, a := range m.ClientAWGAllowedIPs() {
+		p, err := netip.ParsePrefix(a)
+		if err != nil {
+			return nil // reported by the caller's own parse loop
+		}
+		routes = append(routes, p)
+	}
+	covered := func(addr netip.Addr) bool {
+		for _, r := range routes {
+			if r.Contains(addr) {
+				return true
+			}
+		}
+		return false
+	}
+
+	var errs []error
+	if pool, err := netip.ParsePrefix(m.ClientAWG.AddressPool); err == nil {
+		if gw := pool.Masked().Addr().Next(); gw.IsValid() && !covered(gw) {
+			errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.exclude_from_tunnel removes %s "+
+				"(the client pool, and %s is the gateway clients talk to) from the tunnel — add it to "+
+				"client_awg.route_through_cidrs", i, m.ClientAWG.AddressPool, gw))
+		}
+	}
+	for _, d := range m.ClientAWGDNS() {
+		addr, err := netip.ParseAddr(d)
+		if err != nil {
+			continue // reported by the caller's own parse loop
+		}
+		if !covered(addr) {
+			errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.exclude_from_tunnel removes the "+
+				"client DNS server %s from the tunnel — clients would resolve nothing; add its network to "+
+				"client_awg.route_through_cidrs", i, d))
+		}
+	}
+	return errs
 }

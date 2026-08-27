@@ -146,6 +146,20 @@ fleet:
         # gives each client its own stable interval instead of the whole fleet beaconing
         # in lockstep. Keep it under the shortest NAT UDP timeout on the path (25 is the
         # WireGuard default for that reason); unset means 25 for everybody.
+        #
+        # Keep local networks OUT of the tunnel, so a client at home still reaches its
+        # own NAS and printer. WireGuard has no "everything except", so wgfleet expands
+        # this into the explicit AllowedIPs list a client config needs; the result is
+        # shown in the Web UI and in --plan. Unset means the plain 0.0.0.0/0.
+        # exclude_from_tunnel: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+        #
+        # ...and put back what clients still need to reach THROUGH the tunnel. This is
+        # not optional decoration: the client pool and the exits' mgmt addresses (where
+        # client DNS and the self-service portal live) sit inside 10/8, so excluding it
+        # without these two lines leaves every client connected, unable to resolve
+        # anything, and unable to open its own portal link. Startup validation refuses
+        # that combination rather than let you find out from a person.
+        # route_through_cidrs: [10.80.0.0/24, 10.20.0.0/16]
       # client_vless: a DPI-resistant alternative client transport (VLESS+REALITY+
       # XHTTP via xray) that runs ALONGSIDE the client AWG, for users whose AWG is
       # throttled by DPI (RU TSPU and similar). See CONFIGURATION.md for every key.
