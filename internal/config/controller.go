@@ -76,12 +76,17 @@ type ControllerSection struct {
 	// It is a SEPARATE listener from WebUI on purpose. The operator UI can
 	// provision, decommission and drain nodes and export an encrypted backup of the
 	// whole fleet; opening that to the client pool to replace wg-easy's credential
-	// page would be a quiet and large escalation. Bind this where clients can reach
-	// it (typically the master's client-facing address) and keep WebUI on the
-	// management overlay.
+	// page would be a quiet and large escalation.
+	//
+	// Bind it on the MGMT address — NOT on the master's address inside the client
+	// pool, which reads as the obvious choice and does not work. Two reasons, both
+	// found live: the master DNATs client TCP into mihomo, and
+	// masters[].client_admin_ports opens ports on the mgmt address (which is why
+	// wg-easy's admin page was reachable there). Clients get to it as long as the
+	// mgmt subnet is in their AllowedIPs.
 	ClientPortal string `koanf:"client_portal"`
 	// ClientPortalURL is the base URL clients reach the portal on, e.g.
-	// "http://10.80.0.1:8080". The controller cannot derive it — it knows the bind,
+	// "http://10.20.0.1:8080" (the mgmt address — see ClientPortal above). The controller cannot derive it — it knows the bind,
 	// not the address a phone types — and without it the operator has no link to
 	// hand out, which makes the portal unreachable however well it works.
 	ClientPortalURL string         `koanf:"client_portal_url"`

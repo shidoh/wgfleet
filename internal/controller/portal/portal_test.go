@@ -233,3 +233,24 @@ func TestPortalFailurePageIsHuman(t *testing.T) {
 		}
 	}
 }
+
+// The page's only heading must describe the PAGE, not the credential.
+//
+// It used to be the credential's name, so a screen reader announced the page as
+// "alice-iphone" and the purpose was demoted to a sub-line — on the one page in
+// this system written for somebody who does not know what any of this is.
+func TestPortalHeadingNamesThePageNotTheCredential(t *testing.T) {
+	h := testPortal(t)
+	res, body := fetch(t, h, "/c/aaaabbbbccccdddd")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if !strings.Contains(body, "<h1>Your VPN profile</h1>") {
+		t.Errorf("the heading does not name the page:\n%s", body)
+	}
+	// The name still has to be on the page — it is how a person tells two of their
+	// own devices apart.
+	if !strings.Contains(body, "laptop") {
+		t.Error("the credential name is not shown anywhere")
+	}
+}

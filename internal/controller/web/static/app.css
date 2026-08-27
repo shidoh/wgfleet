@@ -188,10 +188,22 @@ a:focus-visible,
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
+/* The wordmark is the way back to the fleet overview from anywhere — the
+   convention every console follows and the first thing an operator tries. It was
+   an inert <span> for long enough that the node and client pages had no way home
+   but the browser's back button. */
 .wordmark {
   display: flex;
   align-items: baseline;
   gap: 15px;
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--r-pill-sm);
+}
+.wordmark:hover .dot { color: var(--text-strong); }
+.wordmark:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 4px;
 }
 .wordmark > b,
 .wordmark .brand {

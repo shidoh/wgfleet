@@ -243,7 +243,10 @@ dl { margin:12px 0 0; display:grid; grid-template-columns:auto 1fr; gap:8px 16px
 ol.steps { margin:0 0 22px; padding-left:20px; font-size:15px; }
 ol.steps li { margin-bottom:8px; }
 details { margin-top:18px; font-size:14px; color:#8b98a9; }
-summary { cursor:pointer; }
+summary { cursor:pointer; padding:10px 0; }
+/* Anything carrying an explanation is marked, or nobody discovers the tooltip —
+   and on a phone, where there is no hover, the mark is all there is. */
+[title] { border-bottom:1px dotted #55606f; cursor:help; }
 dt { color:#8b98a9; } dd { margin:0; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
 .actions { display:flex; gap:10px; flex-wrap:wrap; }
 /* The primary action takes the full width so it stays visually dominant on a
@@ -255,13 +258,12 @@ a.btn.primary { background:#2f6feb; border-color:#2f6feb; flex:1 1 100%; }
   background:#2a1f14; border:1px solid #4a3a24; color:#e8c48a; font-size:14px; }
 </style></head>
 <body><main class="card">
-<h1>{{.Name}}</h1>
-<p class="sub">Your VPN profile</p>
+<h1>Your VPN profile</h1>
+<p class="sub">{{.Name}}</p>
 {{if .Enabled}}
 <ol class="steps">
-  <li>Install <b>AmneziaWG</b> on this device. The ordinary WireGuard app will not
-      accept this profile — it needs AmneziaWG.</li>
-  <li>Tap <b>Download profile</b> and open the file with AmneziaWG.</li>
+  <li>Install <b title="This profile uses AmneziaWG obfuscation. The ordinary WireGuard app cannot read it.">AmneziaWG</b> — not the ordinary WireGuard app.</li>
+  <li>Tap <b>Download profile</b>, then open the file with AmneziaWG.</li>
   <li>Switch the tunnel on.</li>
 </ol>
 <div class="actions">
@@ -276,9 +278,9 @@ a.btn.primary { background:#2f6feb; border-color:#2f6feb; flex:1 1 100%; }
   </dl>
 </details>
 {{else}}
-<p class="muted">This profile is paused, so it will not connect right now. Nothing is broken and
-nothing needs deleting — your configuration stays valid. Ask whoever gave you this link to switch
-it back on.</p>
+<p class="muted">This profile is paused, so it will not connect right now.
+<span title="Pausing is reversible and changes nothing on your device. Do not delete the tunnel — the same profile works again once it is switched back on.">Nothing is broken</span>
+— ask whoever gave you this link to switch it back on.</p>
 {{end}}
 </main></body></html>
 `

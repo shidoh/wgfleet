@@ -22,10 +22,15 @@ controller:
   #
   # It serves WireGuard PRIVATE KEYS over a token in a URL, so unlike the Web UI it
   # may never bind a public address — WGFLEET_ALLOW_PUBLIC_BIND does not exempt it.
-  # Bind it where CLIENTS can reach it: the master's own address inside the client
-  # pool, and open that port to clients via masters[].client_admin_ports below.
-  # client_portal: "10.73.0.1:8080"
-  # client_portal_url: "http://10.73.0.1:8080" # exactly what the person types
+  #
+  # Bind it on the MGMT address, not on the master's address inside the client
+  # pool. That is counter-intuitive and was verified the hard way: the pool
+  # gateway address does not work, and masters[].client_admin_ports opens ports on
+  # the mgmt address — which is exactly why wg-easy's own admin page was reachable.
+  # Clients reach it as long as the mgmt subnet is inside their AllowedIPs (see
+  # client_awg.route_through_cidrs below).
+  # client_portal: "10.20.0.1:8080"
+  # client_portal_url: "http://10.20.0.1:8080" # exactly what the person types
   staleness_after: 3m # demote silent Ready/Reconciling nodes to Degraded after this (0=default, <0 disables)
   # session_ttl: sliding lifetime of a Web UI login session. 0/unset ⇒ 7 days.
   # session_ttl: 168h
