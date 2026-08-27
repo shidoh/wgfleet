@@ -71,8 +71,8 @@ func TestApplyPreservesKeysAndAddresses(t *testing.T) {
 	ctx := context.Background()
 	st := testStore(t)
 	path := wgEasyDB(t,
-		`'laptop','10.8.0.2','g8hWumES6TwTooNhDC6gtyfK8KgYaqyDrd56qBkg598=','xdpwg7BbhRjWuLK7fiLiYoT7hrhEzcxBjpNVquNmK/w=','R9VA+eJqpkXJkoyErO/lhFKJzOuNgDoJMt9JluYojig=',1,'2026-07-01T09:30:00Z'`,
-		`'phone','10.8.0.3','PpGH1Knvq9cYUeXTMu6b+DcE2X+SaIyNAFXJrTLw8x0=','hNIbs3p3aT0Bpi9Hfm7rHQG69ahKlfIXNahvN05AnC0=','',0,''`,
+		`'laptop','10.8.0.2','ggEJR+fcM71VV8PGJ6CVFY4o6CV0f5KJZua5HSofvjw=','xdpwg7BbhRjWuLK7fiLiYoT7hrhEzcxBjpNVquNmK/w=','R9VA+eJqpkXJkoyErO/lhFKJzOuNgDoJMt9JluYojig=',1,'2026-07-01T09:30:00Z'`,
+		`'phone','10.8.0.3','v5fV9RaLuPTs8dBhgXURPllAZdLhgJr7rMaF6ZMH5G0=','hNIbs3p3aT0Bpi9Hfm7rHQG69ahKlfIXNahvN05AnC0=','',0,''`,
 	)
 
 	report, err := Apply(ctx, st, testInput(path))
@@ -91,7 +91,7 @@ func TestApplyPreservesKeysAndAddresses(t *testing.T) {
 		t.Fatalf("store holds %d credentials, want 2", len(stored))
 	}
 	laptop := stored[0]
-	if laptop.Name != "laptop" || laptop.PublicKey != "g8hWumES6TwTooNhDC6gtyfK8KgYaqyDrd56qBkg598=" || laptop.PrivateKey != "xdpwg7BbhRjWuLK7fiLiYoT7hrhEzcxBjpNVquNmK/w=" {
+	if laptop.Name != "laptop" || laptop.PublicKey != "ggEJR+fcM71VV8PGJ6CVFY4o6CV0f5KJZua5HSofvjw=" || laptop.PrivateKey != "xdpwg7BbhRjWuLK7fiLiYoT7hrhEzcxBjpNVquNmK/w=" {
 		t.Fatalf("laptop keys did not survive: %+v", laptop)
 	}
 	if laptop.Address != "10.8.0.2/32" {
@@ -118,7 +118,7 @@ func TestApplyPreservesKeysAndAddresses(t *testing.T) {
 func TestPlanWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	st := testStore(t)
-	path := wgEasyDB(t, `'laptop','10.8.0.2','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`)
+	path := wgEasyDB(t, `'laptop','10.8.0.2','YGkR5zeVKYoAJ0+DUu6RuwfcxTBhdRewcvwNCm+kwks=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`)
 
 	report, err := Plan(ctx, st, testInput(path))
 	if err != nil {
@@ -138,7 +138,7 @@ func TestPlanWritesNothing(t *testing.T) {
 func TestApplyIsRepeatable(t *testing.T) {
 	ctx := context.Background()
 	st := testStore(t)
-	path := wgEasyDB(t, `'laptop','10.8.0.2','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`)
+	path := wgEasyDB(t, `'laptop','10.8.0.2','YGkR5zeVKYoAJ0+DUu6RuwfcxTBhdRewcvwNCm+kwks=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`)
 
 	if _, err := Apply(ctx, st, testInput(path)); err != nil {
 		t.Fatalf("first apply: %v", err)
@@ -166,12 +166,12 @@ func TestPlanRefusesUnusableRecords(t *testing.T) {
 	ctx := context.Background()
 	st := testStore(t)
 	path := wgEasyDB(t,
-		`'good','10.8.0.2','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`,
-		`'','10.8.0.4','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`,         // no name
-		`'nokey','10.8.0.5','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','','',1,''`,                                                // no private key
-		`'outside','10.9.0.9','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`,  // outside the pool
-		`'gateway','10.8.0.1','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`,  // the master's own address
-		`'garbage','not-an-ip','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`, // unparseable
+		`'good','10.8.0.2','YGkR5zeVKYoAJ0+DUu6RuwfcxTBhdRewcvwNCm+kwks=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`,
+		`'','10.8.0.4','YGkR5zeVKYoAJ0+DUu6RuwfcxTBhdRewcvwNCm+kwks=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`,         // no name
+		`'nokey','10.8.0.5','YGkR5zeVKYoAJ0+DUu6RuwfcxTBhdRewcvwNCm+kwks=','','',1,''`,                                                // no private key
+		`'outside','10.9.0.9','YGkR5zeVKYoAJ0+DUu6RuwfcxTBhdRewcvwNCm+kwks=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`,  // outside the pool
+		`'gateway','10.8.0.1','YGkR5zeVKYoAJ0+DUu6RuwfcxTBhdRewcvwNCm+kwks=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`,  // the master's own address
+		`'garbage','not-an-ip','YGkR5zeVKYoAJ0+DUu6RuwfcxTBhdRewcvwNCm+kwks=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`, // unparseable
 	)
 
 	report, err := Plan(ctx, st, testInput(path))
@@ -198,8 +198,8 @@ func TestPlanRefusesUnusableRecords(t *testing.T) {
 func TestPlanRefusesDuplicateAddresses(t *testing.T) {
 	st := testStore(t)
 	path := wgEasyDB(t,
-		`'first','10.8.0.2','/Qv6EPhS59DGIW3cNs2e5ovW1s2IpvQMyW+ST7b3efA=','TNfU+jfTQVEw7JaBIwRMx7NcrCG98YtbTl8Sml1Y/D4=','',1,''`,
-		`'second','10.8.0.2','oZDqpr+FHk9huaRL69Q3OmTND8ay6nQI/so+KJ05BRM=','/z4abiHaqtFoqRWAIGzW65kAujpP0HtvBDCHFQxnOJ4=','',1,''`,
+		`'first','10.8.0.2','j1hhcerZuwON9uVR2mEeyT0LUP4U2SeC07PyxjS81Q0=','TNfU+jfTQVEw7JaBIwRMx7NcrCG98YtbTl8Sml1Y/D4=','',1,''`,
+		`'second','10.8.0.2','camGsIndJyO27/Ok0hAojM3P+JRZHGFZkb/qzHw1vgI=','/z4abiHaqtFoqRWAIGzW65kAujpP0HtvBDCHFQxnOJ4=','',1,''`,
 	)
 	report, err := Plan(context.Background(), st, testInput(path))
 	if err != nil {
@@ -215,7 +215,7 @@ func TestPlanRefusesDuplicateAddresses(t *testing.T) {
 
 func TestPlanRequiresAPool(t *testing.T) {
 	st := testStore(t)
-	in := testInput(wgEasyDB(t, `'laptop','10.8.0.2','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`))
+	in := testInput(wgEasyDB(t, `'laptop','10.8.0.2','YGkR5zeVKYoAJ0+DUu6RuwfcxTBhdRewcvwNCm+kwks=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`))
 	in.Pool = ""
 	if _, err := Plan(context.Background(), st, in); err == nil {
 		t.Fatal("Plan() without a pool = nil error, want a refusal")
@@ -242,8 +242,8 @@ func TestPlanReportsAnAbsentDatabase(t *testing.T) {
 func TestApplyStopsAtTheFirstWriteFailure(t *testing.T) {
 	st := failingStore{Store: testStore(t), failOn: "phone"}
 	path := wgEasyDB(t,
-		`'laptop','10.8.0.2','/Qv6EPhS59DGIW3cNs2e5ovW1s2IpvQMyW+ST7b3efA=','TNfU+jfTQVEw7JaBIwRMx7NcrCG98YtbTl8Sml1Y/D4=','',1,''`,
-		`'phone','10.8.0.3','oZDqpr+FHk9huaRL69Q3OmTND8ay6nQI/so+KJ05BRM=','/z4abiHaqtFoqRWAIGzW65kAujpP0HtvBDCHFQxnOJ4=','',1,''`,
+		`'laptop','10.8.0.2','j1hhcerZuwON9uVR2mEeyT0LUP4U2SeC07PyxjS81Q0=','TNfU+jfTQVEw7JaBIwRMx7NcrCG98YtbTl8Sml1Y/D4=','',1,''`,
+		`'phone','10.8.0.3','camGsIndJyO27/Ok0hAojM3P+JRZHGFZkb/qzHw1vgI=','/z4abiHaqtFoqRWAIGzW65kAujpP0HtvBDCHFQxnOJ4=','',1,''`,
 		`'tablet','10.8.0.4','IOwUIWXo8tCzGeQcd3iYEZIFjc7SVq25oPcFhmK7vGI=','o7/dcnzurl7JSM+tr5FOQToDNG3QX8ebOPskUay/zMg=','',1,''`,
 	)
 	_, err := Apply(context.Background(), st, testInput(path))
@@ -307,8 +307,8 @@ func ExampleReport_Render() {
 func TestPlanRefusesAnUnsafeName(t *testing.T) {
 	st := testStore(t)
 	path := wgEasyDB(t,
-		`'laptop' || char(10) || '[Peer]' || char(10) || 'AllowedIPs = 0.0.0.0/0','10.8.0.2','ABfep3cPfs/3qzwgUGVGEp6Wveui9US7jlQU63l4YSI=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`,
-		`'good','10.8.0.3','4q75rTtxEcqf6l/TEYsh4zBzAKNaszVYMIvex0JzwPo=','dd78jznTaWlTnUp/FoaUzEoCxIL+irFGNiVMzcKfG6E=','',1,''`,
+		`'laptop' || char(10) || '[Peer]' || char(10) || 'AllowedIPs = 0.0.0.0/0','10.8.0.2','YGkR5zeVKYoAJ0+DUu6RuwfcxTBhdRewcvwNCm+kwks=','O5qhQv76RKq4OrHAkJ9pKf1TZWuJXsL8DkfUEupiulQ=','',1,''`,
+		`'good','10.8.0.3','uI7PmzERkU1oDOyIUcSHwGu7RvmyIh7RLqC+pGuC5T0=','dd78jznTaWlTnUp/FoaUzEoCxIL+irFGNiVMzcKfG6E=','',1,''`,
 	)
 	report, err := Plan(context.Background(), st, testInput(path))
 	if err != nil {
@@ -376,11 +376,15 @@ func TestRenderReportsAnAlreadyCompleteImport(t *testing.T) {
 // success. That is a security failure, not a cosmetic one.
 func TestPlanRefusesMalformedKeys(t *testing.T) {
 	st := testStore(t)
-	good := "Z29vZC1wdWJsaWMta2V5LTAwMDAwMDAwMDAwMDAwMDA="
+	// A REAL pair: the importer derives the public half from the private one and
+	// compares, so a fixture that reuses one value for both no longer models a
+	// well-formed record.
+	priv := "Z29vZC1wdWJsaWMta2V5LTAwMDAwMDAwMDAwMDAwMDA="
+	pub := "a1+TZegHYJvSl8s82HEx9meAxQgRnabhO+tc2v8+kSA="
 	path := wgEasyDB(t,
-		`'badpub','10.8.0.2','not-a-key','`+good+`','',1,''`,
-		`'badpsk','10.8.0.3','`+good+`','`+good+`','also-not-a-key',1,''`,
-		`'fine','10.8.0.4','`+good+`','`+good+`','',1,''`,
+		`'badpub','10.8.0.2','not-a-key','`+priv+`','',1,''`,
+		`'badpsk','10.8.0.3','`+pub+`','`+priv+`','also-not-a-key',1,''`,
+		`'fine','10.8.0.4','`+pub+`','`+priv+`','',1,''`,
 	)
 	report, err := Plan(context.Background(), st, testInput(path))
 	if err != nil {
@@ -428,5 +432,34 @@ func TestRenderTellsACompletedImportFromAFailedOne(t *testing.T) {
 	}
 	if out := mixed.Render(false); !strings.Contains(out, "NOTHING WAS MIGRATED") {
 		t.Fatalf("a run that lost a client does not warn:\n%s", out)
+	}
+}
+
+// A private key that parses but is not the other half of its stored public key
+// imports cleanly, renders into that person's .conf and never completes a
+// handshake — and every check that came before this one passes, so nothing in the
+// report would say so. The pair is the only thing in a wg-easy row that can be
+// verified rather than merely inspected.
+func TestPlanRefusesAMismatchedKeyPair(t *testing.T) {
+	st := testStore(t)
+	priv := "Z29vZC1wdWJsaWMta2V5LTAwMDAwMDAwMDAwMDAwMDA="
+	pub := "a1+TZegHYJvSl8s82HEx9meAxQgRnabhO+tc2v8+kSA="
+	somebodyElse := "YGkR5zeVKYoAJ0+DUu6RuwfcxTBhdRewcvwNCm+kwks="
+	path := wgEasyDB(t,
+		`'mismatched','10.8.0.2','`+somebodyElse+`','`+priv+`','',1,''`,
+		`'fine','10.8.0.3','`+pub+`','`+priv+`','',1,''`,
+	)
+	report, err := Plan(context.Background(), st, testInput(path))
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(report.Imported) != 1 || report.Imported[0].Name != "fine" {
+		t.Fatalf("imported = %+v, want only the matching pair", report.Imported)
+	}
+	if len(report.Skipped) != 1 || !strings.Contains(report.Skipped[0].Reason, "do not match") {
+		t.Fatalf("skipped = %+v, want the mismatch named", report.Skipped)
+	}
+	if report.Skipped[0].Benign {
+		t.Error("a mismatched pair is somebody losing their tunnel, not a benign skip")
 	}
 }

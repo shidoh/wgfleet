@@ -220,6 +220,16 @@ func validateClientPeer(i int, c WGClientPeer, pool netip.Prefix, server netip.A
 		return errs
 	}
 	ip := addr.Addr()
+	// A host route, not a subnet. The address is written verbatim as this peer's
+	// AllowedIPs on the interface, so a wider mask routes traffic that belongs to
+	// other people at this one credential: "10.80.0.5/24" hands it the whole pool,
+	// and "10.80.0.0/24" hands it everybody. Both producers emit /32 today; this is
+	// the last check before the render, and the dedup below cannot catch it because
+	// it keys on the base address alone.
+	if addr.Bits() != ip.BitLen() {
+		errs = append(errs, fmt.Errorf("client[%d] (%s): address %s must be a single host (/%d), not a subnet",
+			i, c.Name, c.Address, ip.BitLen()))
+	}
 	switch {
 	case !pool.Contains(ip):
 		errs = append(errs, fmt.Errorf("client[%d] (%s): address %s is outside the pool %s", i, c.Name, ip, pool))

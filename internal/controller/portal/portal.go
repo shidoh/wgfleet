@@ -96,7 +96,13 @@ func (h *Handler) resolve(r *http.Request) (clientcfg.Result, error) {
 	}
 	master, err := clientcfg.FindByID(r.Context(), h.src, h.masters(), token)
 	if err != nil {
-		h.limit.Fail(ip)
+		// Only a token that does not exist counts against the caller. A store
+		// failure is ours, and charging it to them means a hiccup tells every
+		// legitimate user their profile was revoked — and locks out the ones who
+		// respond by reloading.
+		if errors.Is(err, store.ErrNotFound) {
+			h.limit.Fail(ip)
+		}
 		return clientcfg.Result{}, err
 	}
 	res, err := clientcfg.Build(r.Context(), h.src, master, token)
@@ -179,13 +185,23 @@ func (h *Handler) handleQR(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) fail(w http.ResponseWriter, err error) {
 	status, heading, body := http.StatusNotFound,
 		"This link is no longer working",
-		"Try again in a few minutes — it may just be a temporary problem on the server. "+
-			"If it still does not work, your profile may have been replaced or switched off; your VPN app keeps "+
-			"using the profile it already has, so ask whoever sent you this link for a new one."
-	if errors.Is(err, errTooManyAttempts) {
+		"Your profile may have been replaced or switched off. Your VPN app keeps using the profile it "+
+			"already has, so nothing on your device needs deleting — ask whoever sent you this link for a new one."
+	switch {
+	case errors.Is(err, errTooManyAttempts):
 		status, heading, body = http.StatusTooManyRequests,
 			"Too many tries",
 			"Wait a minute, then open the link again."
+	case !errors.Is(err, store.ErrNotFound):
+		// A server-side failure. The old page folded this into the message above,
+		// which opened by telling the person to wait and then explained that their
+		// profile was probably revoked — advice for the wrong problem, and the one
+		// case where waiting IS the right answer got it as a hedge.
+		status, heading, body = http.StatusServiceUnavailable,
+			"Something is wrong on our side",
+			"This is not a problem with your profile — it is still valid and your VPN app is unaffected. "+
+				"Try the link again in a few minutes."
+		h.log.Error("portal: could not resolve a credential", "err", err)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")

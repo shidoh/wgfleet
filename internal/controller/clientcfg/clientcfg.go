@@ -88,11 +88,16 @@ func Build(ctx context.Context, src Source, masterID, clientID string) (Result, 
 // belongs to. The portal needs it because a client's link carries only the
 // credential token — asking someone to also know which gateway issued it would
 // defeat the point of a self-service link.
+// A store failure is reported, not swallowed. Skipping the master that failed
+// and carrying on ends in ErrNotFound — which the portal renders as "this link is
+// no longer working, your profile may have been replaced or switched off" AND
+// charges the caller a rate-limit failure. During a store hiccup that tells every
+// legitimate user their access was revoked, and locks out the ones who reload.
 func FindByID(ctx context.Context, src Source, masters []string, clientID string) (string, error) {
 	for _, m := range masters {
 		clients, err := src.ListWGClients(ctx, m)
 		if err != nil {
-			continue
+			return "", fmt.Errorf("clientcfg: list credentials of %q: %w", m, err)
 		}
 		for _, c := range clients {
 			if c.ID == clientID {

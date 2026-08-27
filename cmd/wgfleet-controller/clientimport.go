@@ -65,6 +65,14 @@ func runClientImport(ctx context.Context, st store.Store, cfg *config.Controller
 	}
 	report, err := run(ctx, st, in)
 	if err != nil {
+		// Apply returns its report ALONGSIDE the error precisely because a failure
+		// part-way through has already written credentials. Dropping it left the
+		// operator with one error line and no way to know which people made it
+		// across — so the natural next move, re-running, is taken blind.
+		if rendered := report.Render(!plan); rendered != "" {
+			fmt.Print(rendered)
+			fmt.Println()
+		}
 		return err
 	}
 	fmt.Print(report.Render(!plan))

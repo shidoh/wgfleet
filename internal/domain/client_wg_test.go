@@ -244,3 +244,29 @@ func TestClientWGSpecKeepaliveValidation(t *testing.T) {
 		}
 	}
 }
+
+// A credential's address is written verbatim as that peer's AllowedIPs, so the
+// mask decides how much of the pool it can claim. Anything wider than a host
+// route hands one person somebody else's traffic.
+func TestClientAddressMustBeAHostRoute(t *testing.T) {
+	spec := func(addr string) *ClientWGSpec {
+		return &ClientWGSpec{
+			ListenPort: 443, AddressPool: "10.80.0.0/24", ServerAddress: "10.80.0.1",
+			AllowedIPs: []string{"0.0.0.0/0"},
+			Clients:    []WGClientPeer{{Name: "laptop", PublicKey: testClientPub1, Address: addr}},
+		}
+	}
+	for _, bad := range []string{"10.80.0.5/24", "10.80.0.0/24", "10.80.0.4/30"} {
+		err := spec(bad).Validate()
+		if err == nil {
+			t.Errorf("address %q was accepted", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), "single host") {
+			t.Errorf("address %q: %v — want the reason named", bad, err)
+		}
+	}
+	if err := spec("10.80.0.5/32").Validate(); err != nil {
+		t.Errorf("a host route was rejected: %v", err)
+	}
+}

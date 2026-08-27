@@ -963,6 +963,11 @@ func (h *Handler) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 		data.HasStatus = true
 		data.Status = st
 	}
+	if data.CanDelete && h.renderer != nil && node.Role == domain.RoleMaster {
+		if clients, err := h.renderer.ListWGClients(r.Context(), id); err == nil {
+			data.WGClientCount = len(clients)
+		}
+	}
 	h.render(w, h.nodeTmpl, "node-status", data)
 }
 
@@ -991,15 +996,20 @@ type nodeData struct {
 	HasSpec         bool
 	SpecErr         string
 	CanProvision    bool
-	CanUpgrade      bool   // node is provisioned + upgradable over SSH
-	CanDecommission bool   // node is drained — safe to tear its data plane down
-	CanDelete       bool   // node has been decommissioned — safe to remove from inventory
-	Flash           string // one-shot error surfaced from a failed action redirect
-	WGEasyURL       string // master only: link to its wg-easy admin UI (mgmt overlay)
-	MihomoURL       string // master only: link to its mihomo (Clash) web dashboard (mgmt overlay)
-	MetricsURL      string // link to the node's agent Prometheus /metrics on the mgmt overlay
-	WireSkew        string // non-empty (reason) when the agent's wire version is incompatible
-	CSRF            string // CSRF token embedded in the action forms
+	CanUpgrade      bool // node is provisioned + upgradable over SSH
+	CanDecommission bool // node is drained — safe to tear its data plane down
+	CanDelete       bool // node has been decommissioned — safe to remove from inventory
+	// WGClientCount is how many end-user credentials the delete would take with it.
+	// The store cascades them (schema v11 ON DELETE CASCADE), so the confirm has to
+	// say so: the only recovery is the age backup or re-issuing to every person by
+	// hand, and "removes it permanently" reads as being about the node alone.
+	WGClientCount int
+	Flash         string // one-shot error surfaced from a failed action redirect
+	WGEasyURL     string // master only: link to its wg-easy admin UI (mgmt overlay)
+	MihomoURL     string // master only: link to its mihomo (Clash) web dashboard (mgmt overlay)
+	MetricsURL    string // link to the node's agent Prometheus /metrics on the mgmt overlay
+	WireSkew      string // non-empty (reason) when the agent's wire version is incompatible
+	CSRF          string // CSRF token embedded in the action forms
 	// Transport switch (ADR-0025): populated from the rendered spec. A dual-transport
 	// exit (len(Transports) > 1) renders a switch; ActiveTransport is highlighted.
 	Transports      []domain.MasterTransport
@@ -1035,6 +1045,11 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 	if st, err := h.store.GetStatus(r.Context(), id); err == nil {
 		data.HasStatus = true
 		data.Status = st
+	}
+	if data.CanDelete && h.renderer != nil && node.Role == domain.RoleMaster {
+		if clients, err := h.renderer.ListWGClients(r.Context(), id); err == nil {
+			data.WGClientCount = len(clients)
+		}
 	}
 	// Render the desired spec once: for the preview text and, for a master, the
 	// wg-easy admin UI link.

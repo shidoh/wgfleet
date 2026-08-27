@@ -123,3 +123,8 @@ var migrations = []string{
 	// ever reads it back whole to render a page.
 	`ALTER TABLE node_status ADD COLUMN client_peers_json TEXT NOT NULL DEFAULT '[]'`,
 }
+
+// MigrationCount is how many schema migrations this build knows. Exported so a
+// caller can answer "is this database newer than me?" without opening it — the
+// check --check-config needs, since opening would create and migrate.
+func MigrationCount() int { return len(migrations) }

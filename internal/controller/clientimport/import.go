@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/wg"
 	"github.com/shidoh/wgfleet/internal/wgeasy"
 )
 
@@ -201,6 +202,22 @@ func convert(c wgeasy.ImportedClient, pool netip.Prefix, serverAddr netip.Addr,
 				Reason: fmt.Sprintf("NOT MIGRATED: the %s in wg-easy is not a valid WireGuard key — "+
 					"importing it would freeze this master's client interface", k.what)}
 		}
+	}
+	// The private key gets more than a well-formedness check: derive its public
+	// half and compare. A key that parses but does not match its stored public key
+	// imports cleanly, renders into that person's .conf, and never completes a
+	// handshake — with nothing in the report to say so, because every check above
+	// passed. The pair is the only thing here that can be verified rather than
+	// merely inspected, and this is a database we have already decided not to trust.
+	derived, err := wg.PublicKeyOf(c.PrivateKey)
+	switch {
+	case err != nil:
+		return domain.WGClient{}, &Skip{Name: name,
+			Reason: "NOT MIGRATED: the private key in wg-easy is unusable — this client's tunnel will stop working at cutover"}
+	case derived != c.PublicKey:
+		return domain.WGClient{}, &Skip{Name: name,
+			Reason: "NOT MIGRATED: wg-easy's private and public keys for this client do not match — " +
+				"the imported config would look correct and never connect"}
 	}
 
 	addr, err := parseClientAddr(c.Address)

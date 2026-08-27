@@ -2,6 +2,7 @@ package portal
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -252,5 +253,50 @@ func TestPortalHeadingNamesThePageNotTheCredential(t *testing.T) {
 	// own devices apart.
 	if !strings.Contains(body, "laptop") {
 		t.Error("the credential name is not shown anywhere")
+	}
+}
+
+// failingSource makes ListWGClients fail the way a busy SQLite store does.
+type failingSource struct {
+	stubSource
+	err error
+}
+
+func (f failingSource) ListWGClients(context.Context, string) ([]domain.WGClient, error) {
+	return nil, f.err
+}
+
+// A store hiccup must not be reported to the person as "your profile was
+// revoked", and must not count against their rate limit.
+//
+// Both halves were wrong together: FindByID skipped a master it could not read
+// and fell through to ErrNotFound, and resolve charged a failure for any error at
+// all. The result during a hiccup was every legitimate user being told their
+// access was gone, and the ones who reloaded locking themselves out.
+func TestPortalDistinguishesAStoreFailureFromABadToken(t *testing.T) {
+	h := testPortal(t)
+	h.src = failingSource{stubSource: h.src.(stubSource), err: errors.New("database is locked")}
+
+	res, body := fetch(t, h, "/c/aaaabbbbccccdddd")
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body:\n%s", res.StatusCode, body)
+	}
+	if strings.Contains(body, "no longer working") || strings.Contains(body, "switched off") {
+		t.Errorf("a server failure was reported as a revoked profile:\n%s", body)
+	}
+	if !strings.Contains(body, "not a problem with your profile") {
+		t.Errorf("the page does not reassure the person their profile is fine:\n%s", body)
+	}
+
+	// And it must not have burned the rate limit: repeated reloads during an
+	// outage must keep working once the store recovers.
+	for range 10 {
+		if _, _ = fetch(t, h, "/c/aaaabbbbccccdddd"); false {
+			return
+		}
+	}
+	h.src = stubSource{node: h.src.(failingSource).node, spec: h.src.(failingSource).spec, clients: h.src.(failingSource).clients}
+	if res, _ := fetch(t, h, "/c/aaaabbbbccccdddd"); res.StatusCode != http.StatusOK {
+		t.Errorf("after the store recovered the caller was still locked out: status = %d", res.StatusCode)
 	}
 }
