@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -94,10 +95,32 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
+	// A database from a NEWER build must be refused, not quietly adopted. Running
+	// an older controller against it would work — the columns it knows are all
+	// there — right up until it stamped the version back down; the next upgrade
+	// would then replay an ALTER TABLE that has already run, fail to open, and turn
+	// `Restart=on-failure` into a crash loop of the whole control plane. Refusing
+	// here costs one restart and says what to do; the alternative destroys the
+	// rollback path itself, which is the one thing that must survive a bad upgrade.
+	if version > len(migrations) {
+		return fmt.Errorf("store: database schema is version %d but this build only knows %d — "+
+			"it was written by a newer wgfleet-controller; run that version, or restore a backup taken before the upgrade",
+			version, len(migrations))
+	}
 	for i := version; i < len(migrations); i++ {
+		applied, err := s.alreadyApplied(ctx, migrations[i])
+		if err != nil {
+			return fmt.Errorf("migration %d: %w", i, err)
+		}
+		if applied {
+			continue
+		}
 		if _, err := s.db.ExecContext(ctx, migrations[i]); err != nil {
 			return fmt.Errorf("migration %d: %w", i, err)
 		}
+	}
+	if version == len(migrations) {
+		return nil
 	}
 	// PRAGMA user_version does not accept bound parameters; len(migrations) is a
 	// trusted in-code constant, so the format is safe.
@@ -105,6 +128,48 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		return fmt.Errorf("set schema version: %w", err)
 	}
 	return nil
+}
+
+// addColumnStmt matches the one migration shape SQLite cannot express with an
+// IF NOT EXISTS. Everything else in the list is already idempotent by keyword.
+var addColumnStmt = regexp.MustCompile(`(?i)^\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)\b`)
+
+// alreadyApplied reports whether a migration's effect is already present, which
+// makes the whole list safe to replay.
+//
+// This is what actually survives a rollback. An OLDER controller — one that will
+// never carry the guard above — stamps the version down to its own count when it
+// opens a newer database. On the way forward the stamp then says migrations are
+// due that have already run, and an ADD COLUMN that cannot repeat used to fail
+// the open for good. Checking the schema instead of trusting the stamp lets that
+// database heal itself.
+func (s *SQLiteStore) alreadyApplied(ctx context.Context, stmt string) (bool, error) {
+	m := addColumnStmt.FindStringSubmatch(stmt)
+	if m == nil {
+		return false, nil
+	}
+	table, column := m[1], m[2]
+	// PRAGMA does not accept bound parameters; both names come from the in-code
+	// migration list, and the regexp admits only [A-Za-z0-9_].
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, fmt.Errorf("inspect %s: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid, notnull, pk int
+			name, ctype      string
+			dflt             sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false, fmt.Errorf("inspect %s: %w", table, err)
+		}
+		if strings.EqualFold(name, column) {
+			return true, rows.Err()
+		}
+	}
+	return false, rows.Err()
 }
 
 // Close implements Store.

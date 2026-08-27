@@ -2,7 +2,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -436,5 +440,102 @@ func TestStatusExitHealthPersists(t *testing.T) {
 	if len(got.ExitHealth) != 1 || got.ExitHealth[0].Name != "exit-de-1" || !got.ExitHealth[0].Alive ||
 		got.ExitHealth[0].Delay != 42*time.Millisecond || !got.ExitHealth[0].Selected {
 		t.Fatalf("exit health not persisted: %+v", got.ExitHealth)
+	}
+}
+
+// Rolling the controller back must not destroy the way forward.
+//
+// The stamp used to be written unconditionally, so an older binary opening a
+// newer database lowered user_version to its own count. Rolling forward then
+// replayed migrations that had already run — `duplicate column name` — and
+// store.Open failed for good, which with Restart=on-failure is a crash loop of
+// the whole control plane. Refusing the newer database keeps the rollback path
+// intact: one clear error, and the operator's data untouched.
+func TestOpenRefusesADatabaseFromANewerBuild(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "store.db")
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// Pretend a newer build wrote this database.
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", len(migrations)+1)); err != nil {
+		t.Fatalf("bump version: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	if _, err := Open(path); err == nil {
+		t.Fatal("Open() accepted a database written by a newer build")
+	} else if !strings.Contains(err.Error(), "newer wgfleet-controller") {
+		t.Errorf("Open() = %v, want an error naming the cause and the way out", err)
+	}
+
+	// And the refusal must not have rewritten the stamp on its way out — otherwise
+	// it would have done the very damage it exists to prevent.
+	s2, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("reopen raw: %v", err)
+	}
+	defer s2.Close()
+	var v int
+	if err := s2.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&v); err != nil {
+		t.Fatalf("read version: %v", err)
+	}
+	if want := len(migrations) + 1; v != want {
+		t.Errorf("user_version = %d after a refused open, want it left at %d", v, want)
+	}
+}
+
+// The real rollback, end to end: an OLD binary stamps the version down (it has no
+// guard and never will), and the way FORWARD must still work. Before the
+// migrations were made replayable this failed with `duplicate column name` and
+// the store never opened again.
+func TestRollForwardAfterAnOldBinaryLoweredTheStamp(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "store.db")
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := s.UpsertNode(ctx, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// What an older controller does on open: run the migrations it knows, then
+	// stamp its own count — unconditionally, downwards.
+	old, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	if _, err := old.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", len(migrations)-3)); err != nil {
+		t.Fatalf("lower stamp: %v", err)
+	}
+	if err := old.Close(); err != nil {
+		t.Fatalf("close raw: %v", err)
+	}
+
+	forward, err := Open(path)
+	if err != nil {
+		t.Fatalf("rolling forward after a lowered stamp failed: %v", err)
+	}
+	defer forward.Close()
+
+	// The stamp is repaired and the data is intact.
+	var v int
+	if err := forward.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&v); err != nil {
+		t.Fatalf("read version: %v", err)
+	}
+	if v != len(migrations) {
+		t.Errorf("user_version = %d after rolling forward, want %d", v, len(migrations))
+	}
+	if _, err := forward.GetNode(ctx, "master-xa-1"); err != nil {
+		t.Errorf("the node did not survive the rollback: %v", err)
 	}
 }
