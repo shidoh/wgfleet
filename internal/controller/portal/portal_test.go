@@ -300,3 +300,41 @@ func TestPortalDistinguishesAStoreFailureFromABadToken(t *testing.T) {
 		t.Errorf("after the store recovered the caller was still locked out: status = %d", res.StatusCode)
 	}
 }
+
+// The warning that prevents this product's most common support failure must not
+// be a list item behind a tooltip.
+//
+// Installing the ordinary WireGuard app is the way this goes wrong for a person,
+// and a title= attribute is unopenable on the phone they are holding.
+func TestPortalWarnsAboutTheWrongAppInTheOpen(t *testing.T) {
+	h := testPortal(t)
+	_, body := fetch(t, h, "/c/aaaabbbbccccdddd")
+
+	notice := body[strings.Index(body, `class="notice"`):]
+	notice = notice[:strings.Index(notice, "</p>")]
+	if !strings.Contains(notice, "not the ordinary WireGuard app") {
+		t.Errorf("the wrong-app warning is not in the notice block:\n%s", notice)
+	}
+	if strings.Contains(body, "title=\"This profile uses") {
+		t.Error("the explanation is still hidden in a tooltip")
+	}
+	// The QR belongs on the page, not in a tab showing a bare image of a key.
+	if !strings.Contains(body, `<img class="qr-img"`) {
+		t.Error("the QR is not rendered in the page")
+	}
+	if strings.Contains(body, `href="/c/aaaabbbbccccdddd/qr" target="_blank"`) {
+		t.Error("the QR still opens as a bare image in a new tab")
+	}
+}
+
+// Both portal pages are the same card and must not drift apart again.
+func TestPortalPagesShareOneStylesheet(t *testing.T) {
+	h := testPortal(t)
+	_, ok := fetch(t, h, "/c/aaaabbbbccccdddd")
+	_, bad := fetch(t, h, "/c/ffffffffffffffff")
+	for _, marker := range []string{"align-items:start", ".card { width:min(420px, 92vw)"} {
+		if !strings.Contains(ok, marker) || !strings.Contains(bad, marker) {
+			t.Errorf("the two portal pages do not share %q", marker)
+		}
+	}
+}

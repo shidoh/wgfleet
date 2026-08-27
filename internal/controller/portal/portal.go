@@ -241,51 +241,78 @@ func clientIP(r *http.Request) string {
 // portalHTML is the whole portal: one page, two buttons, no navigation. Inline
 // styles keep it a single self-contained response — the portal serves no static
 // assets, so there is nothing else on this listener to reach for.
-const portalHTML = `<!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow">
-<title>Your VPN profile</title>
-<style>
+// portalCSS is shared by BOTH portal pages. They used to carry their own copies
+// and had already drifted — the heading's bottom margin and the body font size
+// differed between a page and its own error state, which are meant to be the same
+// card.
+const portalCSS = `
 :root { color-scheme: dark; }
-body { margin:0; min-height:100vh; display:grid; place-items:center;
+/* align-items:start, not place-items:center. A card taller than the viewport —
+   a long name plus the paused notice, or a phone held sideways — clips at the TOP
+   when centred, and the part that goes off-screen is the part that says what to
+   do. The console's own auth screen rejected centring for the same reason. */
+body { margin:0; min-height:100vh; display:grid; justify-items:center; align-items:start;
+  padding:32px 16px 48px; box-sizing:border-box;
   background:#11151c; color:#e6edf3; font:16px/1.5 system-ui, -apple-system, sans-serif; }
 .card { width:min(420px, 92vw); background:#171d26; border:1px solid #232c39;
   border-radius:14px; padding:28px; }
 h1 { margin:0 0 4px; font-size:20px; }
-.sub { margin:0 0 20px; color:#8b98a9; font-size:14px; }
-dl { margin:12px 0 0; display:grid; grid-template-columns:auto 1fr; gap:8px 16px; font-size:14px; }
+.sub { margin:0 0 20px; color:#8b98a9; font-size:15px; }
+p { font-size:15px; }
+dl { margin:12px 0 0; display:grid; grid-template-columns:auto 1fr; gap:8px 16px; font-size:15px; }
 ol.steps { margin:0 0 22px; padding-left:20px; font-size:15px; }
 ol.steps li { margin-bottom:8px; }
-details { margin-top:18px; font-size:14px; color:#8b98a9; }
+details { margin-top:18px; font-size:15px; color:#8b98a9; }
 summary { cursor:pointer; padding:10px 0; }
-/* Anything carrying an explanation is marked, or nobody discovers the tooltip —
-   and on a phone, where there is no hover, the mark is all there is. */
-[title] { border-bottom:1px dotted #55606f; cursor:help; }
 dt { color:#8b98a9; } dd { margin:0; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
 .actions { display:flex; gap:10px; flex-wrap:wrap; }
 /* The primary action takes the full width so it stays visually dominant on a
    narrow phone, where flex:1 would otherwise make both buttons equal. */
 a.btn { flex:1 1 140px; text-align:center; padding:14px 16px; border-radius:9px; text-decoration:none;
   border:1px solid #2b3646; color:#e6edf3; background:#1d2531; }
-a.btn.primary { background:#2f6feb; border-color:#2f6feb; flex:1 1 100%; }
-.muted { margin:18px 0 0; padding:12px 14px; border-radius:9px;
-  background:#2a1f14; border:1px solid #4a3a24; color:#e8c48a; font-size:14px; }
-</style></head>
+/* #2559c4, not #2f6feb: the brighter blue put white text at 3.87:1, below AA. */
+a.btn.primary { background:#2559c4; border-color:#2559c4; flex:1 1 100%; }
+a.btn:active { transform:scale(.98); filter:brightness(1.15); }
+a.btn:focus-visible { outline:2px solid #e6edf3; outline-offset:2px; }
+.notice { margin:0 0 20px; padding:14px 16px; border-radius:9px;
+  background:#2a1f14; border:1px solid #4a3a24; color:#e8c48a; font-size:15px; }
+.notice b { color:#f5cf9a; }
+.qr-img { display:block; width:100%; height:auto; margin-top:14px; border-radius:9px; background:#fff; padding:8px; box-sizing:border-box; }
+`
+
+const portalHTML = `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Your VPN profile</title>
+<style>` + portalCSS + `</style></head>
 <body><main class="card">
 <h1>Your VPN profile</h1>
 <p class="sub">{{.Name}}</p>
 {{if .Enabled}}
+{{/* Promoted out of the step list. Installing the ordinary WireGuard app is the
+     single most common way this fails for a person, and as list item 1 — with the
+     reason hidden behind a tooltip a phone cannot open — it was the easiest line
+     on the page to skim past. */}}
+<p class="notice">Install <b>AmneziaWG</b>, not the ordinary WireGuard app. This profile is
+obfuscated so it can get through the block, and the plain WireGuard app cannot read it.</p>
 <ol class="steps">
-  <li>Install <b title="This profile uses AmneziaWG obfuscation. The ordinary WireGuard app cannot read it.">AmneziaWG</b> — not the ordinary WireGuard app.</li>
+  <li>Install <b>AmneziaWG</b> on this device.</li>
   <li>Tap <b>Download profile</b>, then open the file with AmneziaWG.</li>
   <li>Switch the tunnel on.</li>
 </ol>
 <div class="actions">
   <a class="btn primary" href="/c/{{.Token}}/config">Download profile</a>
-  <a class="btn" href="/c/{{.Token}}/qr" target="_blank" rel="noopener">QR for another device</a>
 </div>
+{{/* In the page, not a new tab. It used to open the raw PNG on its own, which
+     left the person on an unstyled full-screen image of their own key with no
+     caption, no instruction and no way back but a browser gesture. */}}
+<details>
+  <summary>Set up a second device</summary>
+  <p>On the other device, open AmneziaWG, choose <b>Add tunnel → Scan QR code</b>, and point it here.</p>
+  <img class="qr-img" src="/c/{{.Token}}/qr" alt="QR code for this profile" loading="lazy">
+</details>
 <details>
   <summary>Technical details</summary>
   <dl>
@@ -294,9 +321,9 @@ a.btn.primary { background:#2f6feb; border-color:#2f6feb; flex:1 1 100%; }
   </dl>
 </details>
 {{else}}
-<p class="muted">This profile is paused, so it will not connect right now.
-<span title="Pausing is reversible and changes nothing on your device. Do not delete the tunnel — the same profile works again once it is switched back on.">Nothing is broken</span>
-— ask whoever gave you this link to switch it back on.</p>
+<p class="notice">This profile is paused, so it will not connect right now. Nothing is broken
+and nothing on your device needs deleting — the same profile works again the moment it is
+resumed. Ask whoever gave you this link to resume it.</p>
 {{end}}
 </main></body></html>
 `
@@ -309,14 +336,6 @@ const failHTML = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>Your VPN profile</title>
-<style>
-:root { color-scheme: dark; }
-body { margin:0; min-height:100vh; display:grid; place-items:center;
-  background:#11151c; color:#e6edf3; font:16px/1.5 system-ui, -apple-system, sans-serif; }
-.card { width:min(420px, 92vw); background:#171d26; border:1px solid #232c39;
-  border-radius:14px; padding:28px; }
-h1 { margin:0 0 8px; font-size:20px; }
-p { margin:0; color:#8b98a9; font-size:15px; }
-</style></head>
-<body><main class="card"><h1>{{.Heading}}</h1><p>{{.Body}}</p></main></body></html>
+<style>` + portalCSS + `</style></head>
+<body><main class="card"><h1>{{.Heading}}</h1><p class="sub">{{.Body}}</p></main></body></html>
 `
