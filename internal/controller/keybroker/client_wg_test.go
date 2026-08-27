@@ -295,3 +295,112 @@ func TestClientWGSpecRenderedForACurrentAgent(t *testing.T) {
 		t.Fatal("a current agent was refused the client interface")
 	}
 }
+
+// managedFleetAWG3 is a handed-over master whose CLIENT leg opts into a 3.x mode.
+func managedFleetAWG3(mode config.ClientAWG3Mode) config.FleetSection {
+	f := managedFleet()
+	f.Masters[0].ClientAWG.AWG3 = string(mode)
+	return f
+}
+
+// renderedClientAWG renders the master spec and returns the client leg's params.
+func renderedClientAWG(t *testing.T, f config.FleetSection) (client domain.AWGParams, wgEasy domain.AWGParams) {
+	t.Helper()
+	b, st := newBrokerWithFleet(t, f)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1",
+		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	setWireVersion(t, st, "master-xa-1", api.WireClientWG)
+	spec, err := b.RenderNodeSpec(context.Background(), "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if spec.Master.ClientWG == nil || spec.Master.ClientWG.AWG == nil {
+		t.Fatal("no client interface params rendered")
+	}
+	if spec.WGServer.AWG == nil {
+		t.Fatal("no wg-easy params rendered")
+	}
+	return *spec.Master.ClientWG.AWG, *spec.WGServer.AWG
+}
+
+// The default is AmneziaWG 2.0. An operator who never touched the knob must not
+// find header protection on the leg their users dial.
+func TestClientLegDefaultsToAWG2(t *testing.T) {
+	got, _ := renderedClientAWG(t, managedFleet())
+	if got.AWG3Enabled() {
+		t.Fatalf("client leg opted itself into 3.x: %+v", got.Shared)
+	}
+}
+
+// "timers" is the mode that costs nothing: the client leg randomises its timers
+// and every config already in a user's hands keeps working, which was measured
+// against a real 3.1 module. The absence of a header-protection key is what makes
+// that true, so it is what this asserts.
+func TestClientLegTimersModeKeepsOldConfigsWorking(t *testing.T) {
+	got, _ := renderedClientAWG(t, managedFleetAWG3(config.ClientAWG3Timers))
+	if got.Shared.HeaderProtectionKey != "" {
+		t.Fatal("timers mode set a header-protection key, which disconnects every existing client")
+	}
+	if got.Shared.RekeyAfterTime == "" || got.Shared.KeepaliveTimeout == "" {
+		t.Fatalf("timers mode left the timers unset: %+v", got.Shared)
+	}
+	if err := got.Validate(); err != nil {
+		t.Fatalf("timers mode produced invalid params: %v", err)
+	}
+}
+
+// "full" is the flag day: header protection on top of the timers.
+func TestClientLegFullModeAddsHeaderProtection(t *testing.T) {
+	got, _ := renderedClientAWG(t, managedFleetAWG3(config.ClientAWG3Full))
+	if got.Shared.HeaderProtectionKey == "" {
+		t.Fatal("full mode set no header-protection key")
+	}
+	if got.Shared.RekeyAfterTime == "" {
+		t.Fatal("full mode dropped the timers")
+	}
+	if err := got.Validate(); err != nil {
+		t.Fatalf("full mode produced invalid params: %v", err)
+	}
+}
+
+// WGServerSpec.AWG is consumed on the master by the wg-easy planners alone, and
+// wg-easy has no columns for any 3.0 parameter. Leaking the client leg's 3.x
+// params into that struct would have the planner write a partial set into
+// wg-easy's database on every pass — so the two must stay separate even when the
+// client leg is fully on 3.x.
+func TestClientLegAWG3DoesNotReachWGEasyParams(t *testing.T) {
+	client, wgEasy := renderedClientAWG(t, managedFleetAWG3(config.ClientAWG3Full))
+	if !client.AWG3Enabled() {
+		t.Fatal("precondition: the client leg was meant to be on 3.x")
+	}
+	if wgEasy.AWG3Enabled() {
+		t.Fatalf("3.x parameters reached the wg-easy params struct: %+v", wgEasy.Shared)
+	}
+}
+
+// Both ends of the client tunnel derive from the same seed, so the server
+// interface and the config a user imports must carry byte-identical shared
+// params — that is what a handshake requires.
+func TestClientLegAWG3IsSharedWithTheClientConfig(t *testing.T) {
+	b, st := newBrokerWithFleet(t, managedFleetAWG3(config.ClientAWG3Full))
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1",
+		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	setWireVersion(t, st, "master-xa-1", api.WireClientWG)
+	spec, err := b.RenderNodeSpec(context.Background(), "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	cw := spec.Master.ClientWG
+	if cw.ClientAWGLocal == nil {
+		t.Fatal("the client end lost its own local profile")
+	}
+	// The local half differs per end by design; the shared half must not.
+	rendered := *cw.AWG
+	rendered.Local = *cw.ClientAWGLocal
+	if rendered.Shared != cw.AWG.Shared {
+		t.Fatal("the client config would carry different shared params than the interface")
+	}
+	if rendered.Shared.HeaderProtectionKey == "" {
+		t.Fatal("the client config would carry no header-protection key")
+	}
+}

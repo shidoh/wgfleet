@@ -331,21 +331,38 @@ and they carry the anti-fingerprint value.
 
 ### The staged path
 
-**Stage 1 — no redistribution.** Enable the five timers. Requires a 3.x kernel
-module on the master (the agent refuses a 3.x config the backend cannot carry,
-keeping the last-good config rather than taking the leg down). Nobody
-re-imports anything.
+**Stage 1 — no redistribution.**
 
-**Stage 2 — flag day, whenever you want it.** Add `HeaderProtectionKey`. Every
-client must re-import. Because portal links are permanent and render on demand,
-this is one announcement rather than a distribution: everyone reopens the link
-they already have.
+```yaml
+fleet:
+  masters:
+    - name: master-xa-1
+      client_awg:
+        managed: true
+        awg3: timers
+```
 
-> **Stage 1 is not yet available in this release.** The client leg has no code
-> path that applies 3.x parameters at all, and the generator emits header
-> protection and the timers as one indivisible block. Both are tracked; until
-> they land, the client leg is AmneziaWG 2.0 regardless of the fleet's `awg3`
-> setting, which today governs only master↔exit tunnels.
+Nobody re-imports anything. Requires a 3.x kernel module on the master; if it is
+older, the agent keeps the last-good config rather than taking the client leg
+down, and says so in its log.
+
+**Stage 2 — flag day, whenever you want it.**
+
+```yaml
+        awg3: full
+```
+
+Header protection goes on and every client must re-import before it works again.
+Because portal links are permanent and render the config on demand, this is one
+announcement rather than a distribution: everyone reopens the link they already
+have and imports the config it now serves.
+
+Do not go to `full` until you are sure every user can reach you to be told, and
+that their app speaks AmneziaWG 3.1.
+
+> `awg3` is per-master and applies to the client leg only. The fleet-wide `awg3`
+> knob is a different setting governing master↔exit tunnels, where both ends are
+> yours and upgrade together.
 
 ---
 

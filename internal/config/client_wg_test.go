@@ -161,3 +161,51 @@ func TestClientAWGRejectsIPv6DefaultRoute(t *testing.T) {
 		t.Error("client_awg.allowed_ips with ::/0 should fail validation")
 	}
 }
+
+// awg3Config builds a master whose client leg asks for a 3.x mode.
+func awg3Config(mode string, managed bool) ControllerConfig {
+	c := ClientAWGConfig{ListenPort: 443, AddressPool: "10.80.0.0/24", AWG3: mode}
+	if managed {
+		c.Managed = &managed
+	}
+	return ControllerConfig{Fleet: FleetSection{Masters: []MasterConfig{masterWith("m1", c)}}}
+}
+
+func TestClientAWG3ModeValidation(t *testing.T) {
+	for _, ok := range []string{"", "off", "timers", "full", "TIMERS", " full "} {
+		if hasClientAWGErr(awg3Config(ok, true)) {
+			t.Errorf("client_awg.awg3 %q should be accepted", ok)
+		}
+	}
+	for _, bad := range []string{"true", "3", "yes", "headers", "3.1"} {
+		if !hasClientAWGErr(awg3Config(bad, true)) {
+			t.Errorf("client_awg.awg3 %q should fail validation", bad)
+		}
+	}
+}
+
+// While wg-easy owns the leg there is nowhere to put a 3.x parameter — its schema
+// has no column for one — so the knob would silently do nothing. Silently doing
+// nothing is the failure this project refuses: the operator would believe their
+// clients were on 3.x while every packet stayed 2.0.
+func TestClientAWG3RequiresAManagedInterface(t *testing.T) {
+	if !hasClientAWGErr(awg3Config("timers", false)) {
+		t.Error("client_awg.awg3 without managed:true should fail validation")
+	}
+	if hasClientAWGErr(awg3Config("off", false)) {
+		t.Error("an unmanaged leg explicitly on 2.0 is the normal shape and must be accepted")
+	}
+}
+
+func TestClientAWG3Resolves(t *testing.T) {
+	for in, want := range map[string]ClientAWG3Mode{
+		"": ClientAWG3Off, "off": ClientAWG3Off, "nonsense": ClientAWG3Off,
+		"timers": ClientAWG3Timers, " Timers ": ClientAWG3Timers,
+		"full": ClientAWG3Full, "FULL": ClientAWG3Full,
+	} {
+		got := MasterConfig{ClientAWG: ClientAWGConfig{AWG3: in}}.ClientAWG3()
+		if got != want {
+			t.Errorf("ClientAWG3(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

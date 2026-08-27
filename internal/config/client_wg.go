@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"net/url"
+	"strings"
 
 	"github.com/shidoh/wgfleet/internal/domain"
 )
@@ -22,6 +23,26 @@ func validateClientAWG(i int, m MasterConfig) []error {
 	default:
 		errs = append(errs, fmt.Errorf("fleet.masters[%d]: unknown client_awg.backend %q (want kernel or userspace)",
 			i, m.ClientAWG.Backend))
+	}
+
+	// The 3.x mode. Rejecting an unknown value matters more here than for most
+	// knobs: the neighbouring fleet.awg3 is a BOOL, so "awg3: true" is exactly what
+	// an operator writes from memory — and silently resolving it to off would leave
+	// them believing their clients run 3.x while every packet stays 2.0.
+	switch mode := strings.ToLower(strings.TrimSpace(m.ClientAWG.AWG3)); mode {
+	case "", string(ClientAWG3Off), string(ClientAWG3Timers), string(ClientAWG3Full):
+	default:
+		errs = append(errs, fmt.Errorf("fleet.masters[%d]: unknown client_awg.awg3 %q "+
+			"(want off, timers or full; \"timers\" keeps every existing client config working, "+
+			"\"full\" adds header protection and requires all of them to be re-imported)", i, m.ClientAWG.AWG3))
+	}
+	// wg-easy's schema has no column for any 3.0 parameter, so while it owns the
+	// leg the knob has nowhere to land. Refusing beats writing 2.0 to the wire
+	// under a manifest that says 3.x.
+	if m.ClientAWG3() != ClientAWG3Off && !m.ClientAWGManaged() {
+		errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.awg3 is %q but client_awg.managed is not true — "+
+			"while wg-easy owns the client leg it cannot carry AmneziaWG 3.x, and the setting would silently do nothing",
+			i, m.ClientAWG.AWG3))
 	}
 
 	// The pool is optional while wg-easy owns the interface (it keeps its own

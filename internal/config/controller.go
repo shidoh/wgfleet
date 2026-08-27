@@ -283,6 +283,34 @@ func (f FleetSection) AgentReconcileInterval() time.Duration {
 	return f.ReconcileInterval
 }
 
+// ClientAWG3Mode is what the client-facing interface asks of AmneziaWG 3.x.
+type ClientAWG3Mode string
+
+const (
+	// ClientAWG3Off keeps the leg on AmneziaWG 2.0.
+	ClientAWG3Off ClientAWG3Mode = "off"
+	// ClientAWG3Timers randomises the 3.x timers and nothing else: backward
+	// compatible with every config already handed out.
+	ClientAWG3Timers ClientAWG3Mode = "timers"
+	// ClientAWG3Full adds header protection, which disconnects every client that
+	// has not re-imported.
+	ClientAWG3Full ClientAWG3Mode = "full"
+)
+
+// ClientAWG3 resolves the master's client-leg AmneziaWG generation, defaulting an
+// unset value to off. An unrecognised value also resolves to off — validation
+// rejects it at startup, and "off" is the safe reading if it ever gets past.
+func (m MasterConfig) ClientAWG3() ClientAWG3Mode {
+	switch ClientAWG3Mode(strings.ToLower(strings.TrimSpace(m.ClientAWG.AWG3))) {
+	case ClientAWG3Timers:
+		return ClientAWG3Timers
+	case ClientAWG3Full:
+		return ClientAWG3Full
+	default:
+		return ClientAWG3Off
+	}
+}
+
 // DefaultMinEgressThroughputKBytes is the egress throughput floor applied when the
 // fleet leaves min_egress_throughput_kbytes unset (0). Set the fleet key to a
 // NEGATIVE value to disable the watchdog entirely.
@@ -482,6 +510,24 @@ type ClientAWGConfig struct {
 	// AmneziaWG module as on the exits) or "userspace" (amneziawg-go, independent
 	// of the host's kernel-module generation). Ignored while unmanaged.
 	Backend string `koanf:"backend"`
+	// AWG3 opts the CLIENT-facing interface into AmneziaWG 3.x. Unlike the
+	// master↔exit knob (fleet.awg3) this is NOT a bool, because the two halves of
+	// 3.x cost wildly different things on a leg whose peers are other people's
+	// phones:
+	//
+	//   ""/"off"  AmneziaWG 2.0. The default.
+	//   "timers"  Timer randomisation only. Every config already in a user's hands
+	//             keeps working — measured against a 3.1 kernel module, an
+	//             untouched 2.0 peer handshakes and passes traffic across rekeys.
+	//             This is the half that carries the anti-fingerprint value.
+	//   "full"    Timers plus header protection. Header protection is the one 3.x
+	//             parameter a 2.0 peer cannot survive, so this is a flag day: every
+	//             client must re-import before it works again.
+	//
+	// Requires managed: true. While wg-easy owns the leg there is nowhere to put
+	// these parameters — its schema has no column for any of them — so a value here
+	// would silently do nothing, which config validation refuses.
+	AWG3 string `koanf:"awg3"`
 	// MTU overrides the client interface MTU. 0 ⇒ the controller derives it from
 	// the hop chain (clientFacingMTU), which is the right answer in almost every
 	// case; set it only to pin a value the derivation cannot know about.

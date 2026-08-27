@@ -163,6 +163,7 @@ func (b *Broker) clientWGSpec(ctx context.Context, master config.MasterConfig, s
 	if mtu == 0 {
 		mtu = server.MTU
 	}
+	awg := clientLegAWG(master, server)
 	return &domain.ClientWGSpec{
 		ListenPort:     master.ClientListenPort(),
 		AddressPool:    master.ClientAWG.AddressPool,
@@ -170,7 +171,7 @@ func (b *Broker) clientWGSpec(ctx context.Context, master config.MasterConfig, s
 		MTU:            mtu,
 		DNS:            master.ClientAWGDNS(),
 		AllowedIPs:     master.ClientAWGAllowedIPs(),
-		AWG:            server.AWG,
+		AWG:            awg,
 		ClientAWGLocal: server.ClientAWGLocal,
 		Backend:        master.ClientAWGBackend(),
 		Clients:        domain.PeersOf(clients),
@@ -196,4 +197,35 @@ func (b *Broker) masterConfig(name string) (config.MasterConfig, bool) {
 		}
 	}
 	return config.MasterConfig{}, false
+}
+
+// clientLegAWG resolves the obfuscation for the MANAGED client interface: the
+// same 2.0 params wg-easy served, plus whatever half of AmneziaWG 3.x the
+// operator asked for.
+//
+// The 3.x half is applied to a COPY, never to server.AWG. On a master that struct
+// is read by the wg-easy planners and by nothing else, and wg-easy's schema has no
+// column for a single 3.0 parameter — so leaking them there would have the planner
+// write a partial set into its database on every reconcile pass. The client leg's
+// generation and wg-easy's are simply different questions.
+//
+// Both ends of this tunnel derive from the same seed, so the shared half the
+// client's .conf carries is byte-identical to the interface's by construction;
+// only the local decoy differs per end, which AmneziaWG allows and we want.
+func clientLegAWG(master config.MasterConfig, server domain.WGServerSpec) *domain.AWGParams {
+	if server.AWG == nil {
+		return nil
+	}
+	mode := master.ClientAWG3()
+	if mode == config.ClientAWG3Off {
+		return server.AWG
+	}
+	// The seed must be the one this leg's 2.0 params were derived from, or the two
+	// halves of one interface would disagree.
+	seed := wg.TunnelSeed(master.Name, "clients", awgSalt)
+	p := wg.WithAWG3Timers(*server.AWG, seed)
+	if mode == config.ClientAWG3Full {
+		p = wg.WithAWG3HeaderProtection(p, seed)
+	}
+	return &p
 }

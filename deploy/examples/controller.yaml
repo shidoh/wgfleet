@@ -133,6 +133,15 @@ fleet:
       client_awg:
         listen_port: 443 # standard UDP port is less conspicuous
         address_pool: 10.80.0.0/24
+        # managed: true  # take the client leg from wg-easy into wgfleet. Transparent —
+        # existing client configs keep working — but do the credential import FIRST.
+        # See CLIENT-MIGRATION.md for the whole procedure.
+        # awg3: off | timers | full  — AmneziaWG 3.x on the leg users dial. Needs
+        # managed: true and a 3.x kernel module. "timers" costs nothing: it removes the
+        # timing fingerprint a fixed keepalive leaves, and every config already handed
+        # out keeps working. "full" adds header protection and requires EVERY client to
+        # re-import, so treat it as a flag day.
+        # awg3: timers
       # client_vless: a DPI-resistant alternative client transport (VLESS+REALITY+
       # XHTTP via xray) that runs ALONGSIDE the client AWG, for users whose AWG is
       # throttled by DPI (RU TSPU and similar). See CONFIGURATION.md for every key.
