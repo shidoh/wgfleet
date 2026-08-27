@@ -87,20 +87,21 @@
   /* ---- Typography -------------------------------------------------- */
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  --fs-logo:        20px;
-  --fs-detail-title:26px;
-  --fs-bignum:      32px;
-  --fs-body:        13px;
-  --fs-table:       12.5px;
-  --fs-meta:        12px;
-  --fs-micro:       11px;
-  --fs-label:       10.5px;
-  --fs-tablehead:   10px;
-  --fs-tag:         9.5px;
+  /* SIX steps, each with one job. It was sixteen — twelve of them packed between
+     8.5px and 14px, half written as literals that bypassed the tokens — which is
+     why the console read as assembled rather than designed: the eye cannot resolve
+     twelve sizes in a 5.5px band as a system, so it resolves them as accident. */
+  --fs-detail-title:26px;   /* page title, one per page */
+  --fs-logo:        20px;   /* wordmark, auth heading, the big fleet numerals */
+  --fs-subject:     14px;   /* the NAME of a thing: node, client */
+  --fs-body:        13px;   /* prose, values, every control */
+  --fs-meta:        12px;   /* secondary facts, and ALL status text */
+  --fs-label:       10.5px; /* uppercase tracked labels and badges — and nothing
+                               that carries state: a label may never be the only
+                               place a fact appears */
 
   /* ---- Radii ------------------------------------------------------- */
   --r-card:   13px;
-  --r-chip:   11px;
   --r-panel:  12px;
   --r-mini:    9px;
   --r-btn:     8px;
@@ -223,7 +224,7 @@ a:focus-visible,
 
 .wordmark .dot { color: var(--green); }
 .tagline {
-  font-size: var(--fs-table);
+  font-size: var(--fs-meta);
   color: var(--text-dim);
   letter-spacing: 1.5px;
 }
@@ -231,7 +232,7 @@ a:focus-visible,
   display: flex;
   align-items: center;
   gap: 9px;
-  font-size: var(--fs-table);
+  font-size: var(--fs-meta);
   color: var(--text-muted);
   letter-spacing: .5px;
 }
@@ -348,7 +349,6 @@ a:focus-visible,
 .subbadge.decommission { color: var(--red); border-color: rgba(248,113,113,.30); background: rgba(248,113,113,.06); }
 /* A live client peer. The set above is all warning states; "online" is the one
    badge that reports something good, so it gets the ready colour. */
-.subbadge.online  { color: var(--green); border-color: rgba(61,220,132,.30); background: var(--green-06); }
 /* Live state of one client credential. Exactly one is always rendered, because
    absence used to carry meaning: an enabled-but-offline client showed no badge
    at all and looked identical to a card nobody had parsed. "online" reuses the
@@ -386,14 +386,14 @@ a:focus-visible,
   padding: 9px 15px;
 }
 .chip-stat .num {
-  font-size: 19px;
+  font-size: var(--fs-logo);
   font-weight: 700;
   line-height: 1;
   letter-spacing: -.5px;
   color: var(--text-strong);
 }
 .chip-stat .lbl {
-  font-size: 10px;
+  font-size: var(--fs-label);
   letter-spacing: 1.6px;
   color: var(--label-bright);
 }
@@ -418,12 +418,12 @@ a:focus-visible,
   margin: 0 0 13px;
 }
 .section-label {
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
   letter-spacing: 2.5px;
   color: var(--label-bright);
 }
 .section-sub {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-label);
   color: var(--text-dim);
   letter-spacing: .5px;
 }
@@ -458,15 +458,18 @@ a:focus-visible,
   padding: 13px 15px; text-decoration: none; color: inherit;
 }
 .topo-trunk:hover { border-color: var(--blue-35); }
-.topo-trunk-name { font-size: 14px; font-weight: 600; color: var(--text-strong); }
-.topo-trunk-bal { display: flex; align-items: center; gap: 6px; font-size: var(--fs-micro); color: var(--text-muted); }
+.topo-trunk-name { font-size: var(--fs-subject); font-weight: 600; color: var(--text-strong); }
+.topo-trunk-bal { display: flex; align-items: center; gap: 6px; font-size: var(--fs-label); color: var(--text-muted); }
 .topo-trunk-bal .statusdot { width: 5px; height: 5px; box-shadow: 0 0 6px var(--green); }
-.topo-spacer { flex: 1; }
-
+/* One spacer, one name. There were three: .topo-spacer, .action-spacer, and a
+   bare `spacer` used in two templates with no rule at all — inert, and only
+   invisible because both its parents happened to distribute with
+   justify-content. */
+.spacer, .topo-spacer, 
 .topo-grp { display: flex; align-items: center; gap: 10px; margin: 16px 0 9px; }
-.topo-grp-lbl { font-size: var(--fs-tag); letter-spacing: 1.3px; color: var(--text-label); }
+.topo-grp-lbl { font-size: var(--fs-label); letter-spacing: 1.3px; color: var(--text-label); }
 .topo-grp-line { flex: 1; height: 1px; background: var(--border-rule); }
-.topo-grp-n { font-size: var(--fs-tag); color: var(--text-zero); font-variant-numeric: tabular-nums; }
+.topo-grp-n { font-size: var(--fs-label); color: var(--text-zero); font-variant-numeric: tabular-nums; }
 
 .topo-group { position: relative; padding-left: 34px; }
 .topo-rail {
@@ -562,7 +565,7 @@ a:focus-visible,
   gap: 8px;
   padding-top: 11px;
   border-top: 1px solid var(--border-row);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-label);
   color: var(--text-dim);
 }
 .topo-card-foot .foot-sep { color: var(--text-zero); }
@@ -580,7 +583,7 @@ a:focus-visible,
   font-size: var(--fs-meta);
 }
 .addr-tag {
-  font-size: var(--fs-tag);
+  font-size: var(--fs-label);
   letter-spacing: .5px;
   color: var(--text-dim);
 }
@@ -613,7 +616,7 @@ a:focus-visible,
 .backup-summary::before {
   content: "▸";
   color: var(--blue);
-  font-size: var(--fs-tablehead);
+  font-size: var(--fs-label);
 }
 .backup-section[open] .backup-summary::before { content: "▾"; }
 
@@ -640,7 +643,7 @@ a:focus-visible,
 .section-link::before {
   content: "▸";
   color: var(--blue);
-  font-size: var(--fs-tablehead);
+  font-size: var(--fs-label);
 }
 .section-link:hover { border-color: var(--blue); color: var(--blue); }
 
@@ -668,7 +671,7 @@ a:focus-visible,
   gap: 14px; margin-bottom: 16px; padding-bottom: 14px;
   border-bottom: 1px solid var(--border-rule);
 }
-.client-name { font-size: 14px; color: var(--text-strong); font-weight: 600; }
+.client-name { font-size: var(--fs-subject); color: var(--text-strong); font-weight: 600; }
 .client-uuid { margin-top: 5px; font-size: var(--fs-meta); color: var(--text-dim); }
 
 .client-cfg { display: flex; flex-direction: column; gap: 18px; }
@@ -698,7 +701,7 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
 .backup-lead {
   margin: 0 0 20px;
   max-width: 760px;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   line-height: 1.75;
   color: var(--prose);
 }
@@ -773,18 +776,18 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
 .backup-warn .warn-ico {
   flex: none;
   color: var(--amber);
-  font-size: 14px;
+  font-size: var(--fs-subject);
   line-height: 1.5;
 }
 .backup-warn p {
   margin: 0;
-  font-size: var(--fs-table);
+  font-size: var(--fs-meta);
   line-height: 1.7;
   color: var(--amber-text);
 }
 .backup-warn strong { color: var(--amber); font-weight: 600; }
 .backup-warn code {
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
   color: var(--text-bright);
   background: #1c1810;
   border: 1px solid #34301f;
@@ -848,8 +851,6 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   margin-bottom: 26px;
   border-bottom: 1px solid var(--border-rule);
 }
-.action-bar .action-group { display: flex; gap: 11px; }
-.action-spacer { flex: 1 1 auto; }
 .action-bar form { margin: 0; }
 
 /* ============================================================
@@ -934,10 +935,10 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   gap: 9px;
   margin-bottom: 22px;
 }
-.panel-head .live { margin-left: 0; font-size: var(--fs-tablehead); letter-spacing: 1.5px; }
+.panel-head .live { margin-left: 0; font-size: var(--fs-label); letter-spacing: 1.5px; }
 .panel-head .live .statusdot { width: 5px; height: 5px; box-shadow: 0 0 6px var(--green); }
 .panel-label {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-label);
   letter-spacing: 2px;
   color: var(--label-bright);
   margin-bottom: 22px;
@@ -1018,7 +1019,7 @@ details.routes-reveal > summary {
   width: max-content;
   cursor: pointer;
   list-style: none;
-  font-size: var(--fs-table);
+  font-size: var(--fs-meta);
   color: var(--text-bright);
   background: var(--panel-2);
   border: 1px solid var(--border-badge);
@@ -1031,7 +1032,7 @@ details.qr-reveal > summary:hover,
 details.routes-reveal > summary:hover { border-color: var(--blue); color: var(--blue); }
 details.hand-out > summary::before,
 details.qr-reveal > summary::before,
-details.routes-reveal > summary::before { content: "▸"; color: var(--blue); font-size: var(--fs-tablehead); }
+details.routes-reveal > summary::before { content: "▸"; color: var(--blue); font-size: var(--fs-label); }
 details.hand-out[open] > summary::before,
 details.qr-reveal[open] > summary::before,
 details.routes-reveal[open] > summary::before { content: "▾"; }
@@ -1106,7 +1107,6 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 }
 .kv dd.strong { color: var(--text-strong); font-weight: 600; }
 .kv dd.dim    { color: var(--text-dim); }
-.kv dd.accent { color: var(--blue); }
 
 .rule {
   height: 1px;
@@ -1141,7 +1141,6 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 }
 .check-mark.ok  { color: var(--green); }
 .check-mark.bad { color: var(--red); }
-.check-name { }
 .check-meta {
   margin-left: auto;
   text-align: right;
@@ -1156,7 +1155,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
    ============================================================ */
 .panel-note {
   margin: 0 0 20px;
-  font-size: var(--fs-table);
+  font-size: var(--fs-meta);
   line-height: 1.7;
   color: var(--prose);
 }
@@ -1175,7 +1174,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   align-items: center;
   gap: 7px;
   font-family: inherit;
-  font-size: var(--fs-table);
+  font-size: var(--fs-meta);
   padding: 8px 16px;
   border: none;
   border-radius: var(--r-pill-sm);
@@ -1213,7 +1212,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 }
 .spec-heading {
   margin: 0 0 2px;
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
   font-weight: 600;
   letter-spacing: 2px;
   color: var(--label-bright);
@@ -1270,7 +1269,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
    where the consequence is not obvious from reading the value. */
 .spec-hint {
   flex-basis: 100%;
-  font-size: 11px;
+  font-size: var(--fs-label);
   line-height: 1.5;
   color: var(--text-dim);
 }
@@ -1286,7 +1285,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 .spec-tab {
   padding: 9px 14px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--fs-label);
   letter-spacing: 1.4px;
   text-transform: uppercase;
   color: var(--text-label);
@@ -1348,7 +1347,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   list-style: none;
   cursor: pointer;
   padding: 11px 0;
-  font-size: 10.5px;
+  font-size: var(--fs-label);
   font-weight: 600;
   letter-spacing: 1.6px;
   text-transform: uppercase;
@@ -1358,7 +1357,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 .spec-group-title::-webkit-details-marker { display: none; }
 .spec-group-title::before {
   content: "▸";
-  font-size: 9px;
+  font-size: var(--fs-label);
   color: var(--blue);
   transition: transform .12s;
 }
@@ -1370,7 +1369,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   margin-left: auto;
   padding: 0 6px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: var(--fs-label);
   font-weight: 400;
   letter-spacing: 0;
   color: var(--text-dim);
@@ -1380,7 +1379,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
    repeated on each of them, which doubled the line count for no new information. */
 .spec-group-note {
   margin: 0 0 4px;
-  font-size: 10.5px;
+  font-size: var(--fs-label);
   line-height: 1.5;
   color: var(--text-dim);
 }
@@ -1401,7 +1400,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   font-weight: 500;
   letter-spacing: .8px;
   text-transform: uppercase;
-  font-size: 10.5px;
+  font-size: var(--fs-label);
   color: var(--text-label);
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
@@ -1416,7 +1415,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 
 .spec-note {
   margin: 0 0 10px;
-  font-size: 11px;
+  font-size: var(--fs-label);
   line-height: 1.6;
   color: var(--text-muted);
 }
@@ -1429,7 +1428,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   border: 1px solid var(--border);
   border-radius: var(--r-mini);
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
   line-height: 1.7;
   color: var(--prose);
   white-space: pre;
@@ -1438,7 +1437,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   margin: 14px 0 0;
   padding-top: 10px;
   border-top: 1px solid var(--border-rule);
-  font-size: 11px;
+  font-size: var(--fs-label);
   color: var(--text-dim);
 }
 
@@ -1461,7 +1460,10 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 .error-note {
   color: var(--red);
   font-family: inherit;
-  font-size: var(--fs-table);
+  /* Body size, not smaller. This is the console's only channel for failures and it
+     was set one step BELOW ordinary text, so the most urgent line on the page was
+     also the least visible one. */
+  font-size: var(--fs-body);
 }
 
 .empty {
@@ -1515,14 +1517,14 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 }
 .auth-brand { font-size: var(--fs-logo); font-weight: 700; letter-spacing: -.5px; color: var(--text-strong); margin-bottom: 18px; }
 .auth-brand .dot { color: var(--green); }
-.auth-title { font-size: 18px; font-weight: 600; color: var(--text-strong); margin: 0 0 6px; }
+.auth-title { font-size: var(--fs-logo); font-weight: 600; color: var(--text-strong); margin: 0 0 6px; }
 .auth-lead { font-size: var(--fs-body); color: var(--text-muted); margin: 0 0 18px; line-height: 1.5; }
 .auth-form { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
 .auth-form .btn { margin-top: 6px; justify-content: center; }
 
 /* ── Topbar account cluster (profile link + logout) ───────────────────── */
 .topbar-account { display: inline-flex; align-items: center; gap: 12px; }
-.account-link { font-size: var(--fs-table); color: var(--text-muted); background: none; border: none; cursor: pointer; font-family: var(--font-mono); padding: 0; }
+.account-link { font-size: var(--fs-meta); color: var(--text-muted); background: none; border: none; cursor: pointer; font-family: var(--font-mono); padding: 0; }
 .account-link:hover { color: var(--blue); }
 .logout-form { margin: 0; display: inline; }
 
@@ -1551,7 +1553,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 .rollout-summary::before {
   content: "▸";
   color: var(--amber);
-  font-size: var(--fs-tablehead);
+  font-size: var(--fs-label);
 }
 .rollout-section[open] .rollout-summary::before { content: "▾"; }
 .rollout-section[open] .rollout-card { margin-top: 14px; }
@@ -1580,7 +1582,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 .rollout-lead {
   margin: 0 0 20px;
   max-width: 760px;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   line-height: 1.75;
   color: var(--prose);
 }
