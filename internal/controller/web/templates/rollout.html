@@ -8,7 +8,7 @@
 <details class="rollout-section"{{if .State.Active}} open{{end}}>
   <summary class="rollout-summary">
     ROLLING AGENT UPDATE
-    {{if .State.Active}}<span class="roll-live"><span class="statusdot pulse"></span>RUNNING {{.State.Done}}/{{.State.Total}}</span>
+    {{if .State.Active}}<span class="live"><span class="statusdot pulse"></span>RUNNING {{.State.Done}}/{{.State.Total}}</span>
     {{else if .Plan.Outdated}}<span class="roll-count">{{.Plan.Outdated}} outdated</span>{{end}}
   </summary>
 

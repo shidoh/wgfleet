@@ -100,6 +100,27 @@
                                that carries state: a label may never be the only
                                place a fact appears */
 
+  /* ONE height for everything that can be pressed. Padding alone cannot deliver
+     it — these controls carry three font sizes and some have no border — so it is
+     stated once as a floor and centred, instead of being re-derived per rule.
+     Measured before: 30 / 32 / 34 / 37, which is why no two rows in the console
+     shared an edge. */
+  --control-h:      38px;
+
+  /* A 3px spacing grid. There were TWENTY-FOUR distinct gap values, and the top
+     six of them (14, 9, 6, 16, 12, 10) are all "a small gap" — indistinguishable
+     to the eye, so the page read as unspaced rather than as deliberately spaced.
+     Every peak in the old histogram is already on or within 1px of a multiple of
+     three, so the grid costs at most 2px of drift anywhere. */
+  --sp-1:  3px;
+  --sp-2:  6px;
+  --sp-3:  9px;
+  --sp-4: 12px;
+  --sp-5: 15px;
+  --sp-6: 18px;
+  --sp-7: 24px;
+  --sp-8: 30px;
+
   /* ---- Radii ------------------------------------------------------- */
   --r-card:   13px;
   --r-panel:  12px;
@@ -188,9 +209,9 @@ a:focus-visible,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-4);
   flex-wrap: wrap;
-  padding: 20px 34px;
+  padding: var(--sp-6) var(--sp-8);
   border-bottom: 1px solid var(--border-rule);
   background: var(--header-bg);
   backdrop-filter: blur(10px);
@@ -201,9 +222,9 @@ a:focus-visible,
    an inert <span> for long enough that the node and client pages had no way home
    but the browser's back button. */
 .wordmark {
-  /* Styled text, not a layout box. It was display:flex with gap:15px, which makes
+  /* Styled text, not a layout box. It was display:flex with a gap, which makes
      each run of text its own anonymous flex item — so "wg", "·" and "fleet" were
-     pushed 15px apart. The gap only ever made sense for the two-element markup the
+     pushed apart. The gap only ever made sense for the two-element markup the
      dead selector below was written for. */
   display: inline-block;
   /* These four used to sit on `.wordmark > b, .wordmark .brand` — neither of which
@@ -231,7 +252,7 @@ a:focus-visible,
 .nodecount {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--sp-3);
   font-size: var(--fs-meta);
   color: var(--text-muted);
   letter-spacing: .5px;
@@ -252,7 +273,11 @@ a:focus-visible,
 .shell {
   max-width: 1340px;
   margin: 0 auto;
-  padding: 30px 34px 72px;
+  /* The trailing 72 is page chrome, not component spacing: it keeps the last panel
+     clear of the viewport bottom. Same for the auth screen's 64/48 below. Both sit
+     outside the 3px grid on purpose — the grid governs relationships between
+     elements, not the empty space around the whole page. */
+  padding: var(--sp-8) var(--sp-8) 72px;
 }
 
 /* ============================================================
@@ -279,7 +304,7 @@ a:focus-visible,
   display: inline-block;
   font-size: var(--fs-label);
   letter-spacing: .5px;
-  padding: 3px 9px;
+  padding: var(--sp-1) var(--sp-3);
   border-radius: var(--r-badge);
   white-space: nowrap;
   text-transform: uppercase;
@@ -292,9 +317,13 @@ a:focus-visible,
 .state-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   font-size: var(--fs-meta);
-  padding: 4px 10px;
+  /* A full step taller than the qualifier badges, not two pixels. This is the one
+     field an operator scans a page for, and it shares a row with badges that only
+     say what a thing IS — the size difference is what makes that readable at a
+     glance instead of by reading. */
+  padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r-pill-sm);
   border: 1px solid transparent;
   white-space: nowrap;
@@ -311,7 +340,7 @@ a:focus-visible,
   display: inline-block;
   font-size: var(--fs-label);
   letter-spacing: .5px;
-  padding: 3px 9px;
+  padding: var(--sp-1) var(--sp-3);
   border-radius: var(--r-badge);
   white-space: nowrap;
   border: 1px solid transparent;
@@ -320,7 +349,7 @@ a:focus-visible,
 .xport.amnezia { color: var(--text-muted); border-color: var(--border-badge); }
 
 /* extra status sub-badges under a state pill (out-of-routing/blocked/failover) */
-.subbadges { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.subbadges { display: inline-flex; gap: var(--sp-2); flex-wrap: wrap; align-items: center; }
 .subbadge {
   /* Without a display the badge blockifies as a flex item and its .led child stays
      inline, where width/height do not apply — so the dot was a 0×0 box with a glow,
@@ -328,14 +357,14 @@ a:focus-visible,
      switched off, it was invisible entirely. */
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   /* A sub-badge REPORTS (online, idle, blocked, skew), so it belongs to the state
      family, one step below the main pill rather than four. At --fs-tag it was
      9.5px next to 13px amber and red buttons — the console rendered "how to break
      this" larger than "is this working". */
   font-size: var(--fs-label);
   letter-spacing: .5px;
-  padding: 3px 9px;
+  padding: var(--sp-1) var(--sp-3);
   border-radius: var(--r-badge);
   border: 1px solid var(--border-badge);
   color: var(--text-muted);
@@ -373,17 +402,17 @@ a:focus-visible,
 .summary {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 22px;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-7);
 }
 .chip-stat {
   display: flex;
   align-items: baseline;
-  gap: 9px;
+  gap: var(--sp-3);
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 9px;
-  padding: 9px 15px;
+  padding: var(--sp-3) var(--sp-5);
 }
 .chip-stat .num {
   font-size: var(--fs-logo);
@@ -414,8 +443,8 @@ a:focus-visible,
 .section-head {
   display: flex;
   align-items: baseline;
-  gap: 11px;
-  margin: 0 0 13px;
+  gap: var(--sp-3);
+  margin: 0 0 var(--sp-4);
 }
 .section-label {
   font-size: var(--fs-meta);
@@ -430,7 +459,7 @@ a:focus-visible,
 .live {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-2);
   margin-left: auto;
   font-size: var(--fs-label);
   letter-spacing: 2px;
@@ -444,34 +473,34 @@ a:focus-visible,
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--r-card);
-  padding: 22px 24px;
-  margin-bottom: 30px;
+  padding: var(--sp-7) var(--sp-7);
+  margin-bottom: var(--sp-8);
 }
 
 /* Vertical topology: a master trunk, then one group block per tier. Each group
    owns its rail; only the carrying group gets the animated overlay, so the live
    segment is a consequence of the grouping rather than a measured height. */
 .topo-trunk {
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap;
   background: linear-gradient(180deg, rgba(91,141,239,.07), var(--panel-2));
   border: 1px solid var(--blue-25); border-radius: var(--r-mini);
-  padding: 13px 15px; text-decoration: none; color: inherit;
+  padding: var(--sp-4) var(--sp-5); text-decoration: none; color: inherit;
 }
 .topo-trunk:hover { border-color: var(--blue-35); }
 .topo-trunk-name { font-size: var(--fs-subject); font-weight: 600; color: var(--text-strong); }
-.topo-trunk-bal { display: flex; align-items: center; gap: 6px; font-size: var(--fs-label); color: var(--text-muted); }
+.topo-trunk-bal { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-label); color: var(--text-muted); }
 .topo-trunk-bal .statusdot { width: 5px; height: 5px; box-shadow: 0 0 6px var(--green); }
 /* One spacer, one name. There were three: .topo-spacer, .action-spacer, and a
    bare `spacer` used in two templates with no rule at all — inert, and only
    invisible because both its parents happened to distribute with
    justify-content. */
 .spacer, .topo-spacer, 
-.topo-grp { display: flex; align-items: center; gap: 10px; margin: 16px 0 9px; }
+.topo-grp { display: flex; align-items: center; gap: var(--sp-3); margin: var(--sp-5) 0 var(--sp-3); }
 .topo-grp-lbl { font-size: var(--fs-label); letter-spacing: 1.3px; color: var(--text-label); }
 .topo-grp-line { flex: 1; height: 1px; background: var(--border-rule); }
 .topo-grp-n { font-size: var(--fs-label); color: var(--text-zero); font-variant-numeric: tabular-nums; }
 
-.topo-group { position: relative; padding-left: 34px; }
+.topo-group { position: relative; padding-left: var(--sp-8); }
 .topo-rail {
   position: absolute; left: 17px; top: 0;
   /* bottom: 26px terminates the rail at the last row's tap (.topo-row::before is
@@ -497,8 +526,8 @@ a:focus-visible,
 @keyframes railflow { to { background-position-y: -11px } }
 
 .topo-row {
-  position: relative; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  padding: 12px 14px; margin-bottom: 6px; border-radius: var(--r-mini);
+  position: relative; display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap;
+  padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-2); border-radius: var(--r-mini);
   background: var(--panel-2); border: 1px solid var(--border-row);
   text-decoration: none; color: inherit;
 }
@@ -528,7 +557,7 @@ a:focus-visible,
 @keyframes tapflow { to { background-position-x: 9px } }
 .topo-row-name { font-size: var(--fs-body); color: var(--text-bright); min-width: 96px; }
 .topo-row.is-carrying .topo-row-name { color: var(--text-strong); font-weight: 500; }
-.topo-row-lines { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 210px; }
+.topo-row-lines { display: flex; flex-direction: column; gap: var(--sp-2); flex: 1; min-width: 210px; }
 .topo-trunk-addr { flex: none; }
 
 /* .badge-master was a pixel-identical copy of .role.master under another name;
@@ -542,7 +571,7 @@ a:focus-visible,
   display: inline-block;
   font-size: var(--fs-label);
   letter-spacing: .5px;
-  padding: 3px 9px;
+  padding: var(--sp-1) var(--sp-3);
   border-radius: var(--r-badge);
   white-space: nowrap;
   text-transform: uppercase;
@@ -562,8 +591,8 @@ a:focus-visible,
 .topo-card-foot {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding-top: 11px;
+  gap: var(--sp-3);
+  padding-top: var(--sp-3);
   border-top: 1px solid var(--border-row);
   font-size: var(--fs-label);
   color: var(--text-dim);
@@ -578,7 +607,7 @@ a:focus-visible,
 .addr {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 3px 9px;
+  gap: var(--sp-1) var(--sp-3);
   align-items: baseline;
   font-size: var(--fs-meta);
 }
@@ -596,11 +625,12 @@ a:focus-visible,
 /* ============================================================
    BACKUP & MIGRATE (native <details>)
    ============================================================ */
-.backup-section { margin-top: 30px; }
+.backup-section { margin-top: var(--sp-8); }
 .backup-summary {
+  min-height: var(--control-h);
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--sp-3);
   width: max-content;
   list-style: none;
   cursor: pointer;
@@ -610,7 +640,7 @@ a:focus-visible,
   background: var(--panel-2);
   border: 1px solid var(--border-badge);
   border-radius: var(--r-btn);
-  padding: 9px 15px;
+  padding: var(--sp-3) var(--sp-5);
 }
 .backup-summary::-webkit-details-marker { display: none; }
 .backup-summary::before {
@@ -620,15 +650,16 @@ a:focus-visible,
 }
 .backup-section[open] .backup-summary::before { content: "▾"; }
 
-.backup-section[open] .backup-card { margin-top: 14px; }
+.backup-section[open] .backup-card { margin-top: var(--sp-5); }
 
 /* section-link: a navigation entry point styled like the backup-summary pill
    (bordered, uppercase-spaced, blue ▸ marker), for links to a sub-page. */
-.section-nav { margin-top: 30px; }
+.section-nav { margin-top: var(--sp-8); }
 .section-link {
+  min-height: var(--control-h);
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--sp-3);
   width: max-content;
   font-size: var(--fs-meta);
   letter-spacing: 2px;
@@ -636,7 +667,7 @@ a:focus-visible,
   background: var(--panel-2);
   border: 1px solid var(--border-badge);
   border-radius: var(--r-btn);
-  padding: 9px 15px;
+  padding: var(--sp-3) var(--sp-5);
   text-decoration: none;
   transition: border-color .12s, color .12s;
 }
@@ -654,52 +685,49 @@ a:focus-visible,
 .strong { color: var(--text-strong); font-weight: 600; }
 .dim    { color: var(--text-dim); }
 
-.cidr-list { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.cidr-list { list-style: none; padding: 0; margin: var(--sp-3) 0 0; display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .cidr-list li {
   font-size: var(--fs-meta); color: var(--text-bright);
   background: var(--panel-inset); border: 1px solid var(--border-input);
-  border-radius: 6px; padding: 3px 9px;
+  border-radius: 6px; padding: var(--sp-1) var(--sp-3);
 }
 
-.client-list { display: flex; flex-direction: column; gap: 14px; }
+.client-list { display: flex; flex-direction: column; gap: var(--sp-5); }
 .client-card {
   background: var(--panel-2); border: 1px solid var(--border);
-  border-radius: var(--r-panel); padding: 18px 20px 20px;
+  border-radius: var(--r-panel); padding: var(--sp-6) var(--sp-6) var(--sp-6);
 }
 .client-card-head {
   display: flex; align-items: flex-start; justify-content: space-between;
-  gap: 14px; margin-bottom: 16px; padding-bottom: 14px;
+  gap: var(--sp-5); margin-bottom: var(--sp-5); padding-bottom: var(--sp-5);
   border-bottom: 1px solid var(--border-rule);
 }
 .client-name { font-size: var(--fs-subject); color: var(--text-strong); font-weight: 600; }
-.client-uuid { margin-top: 5px; font-size: var(--fs-meta); color: var(--text-dim); }
+.client-uuid { margin-top: var(--sp-2); font-size: var(--fs-meta); color: var(--text-dim); }
 
-.client-cfg { display: flex; flex-direction: column; gap: 18px; }
-.cfg-row  { display: flex; gap: 18px; align-items: flex-start; }
+.client-cfg { display: flex; flex-direction: column; gap: var(--sp-6); }
+.cfg-row  { display: flex; gap: var(--sp-6); align-items: flex-start; }
 .cfg-main { flex: 1; min-width: 0; }              /* KEY: lets .input (min-width 260) shrink in the card */
 .cfg-main .input { width: 100%; min-width: 0; }
-.cfg-actions { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+.cfg-actions { display: flex; gap: var(--sp-3); margin-top: var(--sp-3); flex-wrap: wrap; align-items: center; }
 .cfg-hint { font-size: var(--fs-meta); color: var(--text-dim); }
-a.cfg-hint { display: inline-block; margin-top: 8px; color: var(--blue); text-decoration: none; }
+a.cfg-hint { display: inline-block; margin-top: var(--sp-3); color: var(--blue); text-decoration: none; }
 a.cfg-hint:hover { text-decoration: underline; }
 .cfg-qr {
   flex: none; width: 168px; height: 168px;
-  border-radius: 8px; background: #fff; padding: 6px; object-fit: contain;
+  border-radius: 8px; background: #fff; padding: var(--sp-2); object-fit: contain;
 }
-details.cfg-direct summary { cursor: pointer; color: var(--text-dim); font-size: var(--fs-meta); list-style: none; }
-details.cfg-direct summary::-webkit-details-marker { display: none; }
-details.cfg-direct summary::before { content: "\25B8 "; color: var(--blue); }
-details.cfg-direct[open] summary::before { content: "\25BE "; }
-details.cfg-direct[open] .cfg-row { margin-top: 12px; }
+details.cfg-direct > summary::-webkit-details-marker { display: none; }
+details.cfg-direct[open] .cfg-row { margin-top: var(--sp-4); }
 .backup-card {
   background: var(--panel);
   border: 1px solid var(--border);
   border-left: 2px solid var(--blue);
   border-radius: var(--r-panel);
-  padding: 26px 28px;
+  padding: var(--sp-7) var(--sp-8);
 }
 .backup-lead {
-  margin: 0 0 20px;
+  margin: 0 0 var(--sp-6);
   max-width: 760px;
   font-size: var(--fs-body);
   line-height: 1.75;
@@ -711,10 +739,10 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   background: var(--border-rule);
   border: 1px solid var(--border-input);
   border-radius: 4px;
-  padding: 1px 6px;
+  padding: var(--sp-1) var(--sp-2);
 }
 .field-label {
-  margin-bottom: 9px;
+  margin-bottom: var(--sp-3);
   font-size: var(--fs-label);
   letter-spacing: 1.5px;
   color: var(--text-dim);
@@ -741,10 +769,11 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
 .control-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--sp-4);
   align-items: center;
 }
 .input {
+  min-height: var(--control-h);
   /* A basis, not a floor. min-width was the flex item's automatic minimum, so no
      ancestor could make an input narrower — it defeated .issue-form's 240px basis
      outright and needed an explicit antidote in .cfg-main. It also overflowed a
@@ -762,7 +791,7 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
      which is what "the button is not aligned with the field" was. Taking the
      button's value rather than the input's: 10px 16px is already on every button
      on every page, so nothing else moves. */
-  padding: 10px 16px;
+  padding: var(--sp-3) var(--sp-5);
   outline: none;
   transition: border-color .12s;
 }
@@ -771,9 +800,9 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
 
 .backup-warn {
   display: flex;
-  gap: 12px;
-  margin-top: 18px;
-  padding: 15px 17px;
+  gap: var(--sp-4);
+  margin-top: var(--sp-6);
+  padding: var(--sp-5) var(--sp-5);
   background: rgba(245,177,76,.05);
   border: 1px solid rgba(245,177,76,.22);
   border-radius: var(--r-mini);
@@ -797,10 +826,10 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   background: #1c1810;
   border: 1px solid #34301f;
   border-radius: 4px;
-  padding: 1px 6px;
+  padding: var(--sp-1) var(--sp-2);
 }
 .backup-restore {
-  margin: 16px 0 0;
+  margin: var(--sp-5) 0 0;
   font-size: var(--fs-meta);
   line-height: 1.7;
   color: #6b7280;
@@ -813,14 +842,14 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
 .detail-head {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--sp-5);
   flex-wrap: wrap;
-  margin-bottom: 22px;
+  margin-bottom: var(--sp-7);
 }
 .back {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   font-family: inherit;
   font-size: var(--fs-body);
   color: var(--text-muted);
@@ -851,9 +880,9 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 12px;
-  padding-bottom: 22px;
-  margin-bottom: 26px;
+  gap: var(--sp-4);
+  padding-bottom: var(--sp-7);
+  margin-bottom: var(--sp-7);
   border-bottom: 1px solid var(--border-rule);
 }
 .action-bar form { margin: 0; }
@@ -862,6 +891,7 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
    BUTTONS
    ============================================================ */
 .btn {
+  min-height: var(--control-h);
   font-family: inherit;
   font-size: var(--fs-body);
   cursor: pointer;
@@ -869,7 +899,7 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
      the anchors kept the browser's underline and read as underlined text inside
      a button — .section-link already resets it for the same reason. */
   text-decoration: none;
-  padding: 10px 16px;
+  padding: var(--sp-3) var(--sp-5);
   border-radius: var(--r-btn);
   color: var(--text-bright);
   background: var(--panel-2);
@@ -881,7 +911,7 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
 .btn.go {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--sp-3);
   white-space: nowrap;
   color: var(--green);
   background: rgba(61,220,132,.08);
@@ -911,7 +941,11 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
 .btn.ghost-red:hover { border-color: var(--red); color: var(--red); background: none; }
 
 .btn:disabled {
-  opacity: .45;
+  /* .45 composited to 2.35:1 against the card — below the 3:1 floor for
+     non-text UI, and unreadable on a laptop screen at an angle. A disabled
+     control still has to be legible; that is how the operator learns the
+     action exists and why it is not available yet. */
+  opacity: .7;
   cursor: not-allowed;
 }
 .btn:disabled:hover { border-color: var(--border-badge); color: var(--text-bright); background: var(--panel-2); }
@@ -921,7 +955,7 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
    ============================================================ */
 .panels {
   display: grid;
-  gap: 18px;
+  gap: var(--sp-6);
 }
 /* auto-fit reflow: 2-up/3-up on desktop, collapsing toward one column as width
    drops — no media query needed (min() keeps a panel from overflowing a phone). */
@@ -932,28 +966,33 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--r-card);
-  padding: 24px 26px;
+  padding: var(--sp-7) var(--sp-7);
 }
 .panel-head {
   display: flex;
   align-items: center;
-  gap: 9px;
-  margin-bottom: 22px;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-7);
 }
-.panel-head .live { margin-left: 0; font-size: var(--fs-label); letter-spacing: 1.5px; }
+/* Position only. The size and tracking used to be overridden here as well, so the
+   same LIVE chip was a different object in the fleet header, the node page and the
+   client panel. margin-left stays: in a panel head the chip belongs to the list it
+   sits above, and pushing it to the far edge of a 1200px panel would separate it
+   from the thing it describes. */
+.panel-head .live { margin-left: 0; }
 .panel-head .live .statusdot { width: 5px; height: 5px; box-shadow: 0 0 6px var(--green); }
 .panel-label {
   font-size: var(--fs-label);
   letter-spacing: 2px;
   color: var(--label-bright);
-  margin-bottom: 22px;
+  margin-bottom: var(--sp-7);
 }
 .panel-head .panel-label { margin-bottom: 0; }
 .panel-sublabel {
   font-size: var(--fs-label);
   letter-spacing: 1.5px;
   color: var(--text-dim);
-  margin: 26px 0 14px;
+  margin: var(--sp-7) 0 var(--sp-5);
 }
 
 /* ── Client credential cards ──────────────────────────────────────────────
@@ -961,7 +1000,7 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
    a screen reader gets card boundaries. Neutralise the UA heading margins and
    bold WITHOUT touching the many places these classes are still plain divs. */
 h2.panel-label, h3.panel-label { margin-top: 0; font-weight: inherit; }
-h3.client-name { margin: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+h3.client-name { margin: 0; display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
 
 .visually-hidden {
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
@@ -977,7 +1016,7 @@ h3.client-name { margin: 0; display: flex; align-items: center; gap: 8px; flex-w
   /* .shell is a plain block and .panels carries no outer margin, so the grid's
      18px gap applied only BETWEEN its columns — the row sat flush against the
      credentials panel below it. Match the internal rhythm. */
-  margin-bottom: 18px;
+  margin-bottom: var(--sp-6);
 }
 
 /* The identity column MUST be allowed to shrink. A client name may legally be 64
@@ -996,9 +1035,9 @@ h3.client-name { margin: 0; display: flex; align-items: center; gap: 8px; flex-w
 /* Lifecycle actions live in the card head. Revoke is set apart from the
    reversible pair by more than the 10px gap — it is the one action that
    permanently strands a person. */
-.card-actions { display: flex; gap: 10px; flex: none; align-items: center; }
+.card-actions { display: flex; gap: var(--sp-3); flex: none; align-items: center; }
 .card-actions form { margin: 0; }
-.card-actions .revoke-form { margin-left: 14px; }
+.card-actions .revoke-form { margin-left: var(--sp-5); }
 
 /* The issue form is a ROW, not the login card's stacked column. .auth-form is
    built for .auth-card (max-width 380px); reused in a grid panel it stretched the
@@ -1006,7 +1045,7 @@ h3.client-name { margin: 0; display: flex; align-items: center; gap: 8px; flex-w
 /* flex-end, unlike its sibling below: this form's field carries its own label, so
    the column is taller than the button and centring it lines the button up with
    the middle of "label + input" instead of with the input. */
-.issue-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-top: 16px; }
+.issue-form { display: flex; flex-wrap: wrap; gap: var(--sp-4); align-items: flex-end; margin-top: var(--sp-5); }
 /* Capped, and capped at the SAME width as the rename field: both name one client,
    and a name field that grows to fill a 700px panel reads as a paragraph box.
    Without the cap flex-grow ate the whole panel. */
@@ -1020,13 +1059,16 @@ h3.client-name { margin: 0; display: flex; align-items: center; gap: 8px; flex-w
    Give it the console's own affordance for "a control that opens something":
    the bordered pill of .backup-summary / .section-link. */
 details.hand-out,
-details.routes-reveal { margin-top: 16px; }
-details.hand-out > summary,
-details.qr-reveal > summary,
-details.routes-reveal > summary {
+details.routes-reveal { margin-top: var(--sp-5); }
+/* ONE selector for every disclosure in the console. There were three lists that
+   had to be kept in sync by hand plus a fourth, bare-text rule — and clients.html
+   used only the shared class, so its "subscription link" disclosure was the single
+   grey-caption disclosure in the product while every sibling was a pill. */
+details.cfg-direct > summary {
+  min-height: var(--control-h);
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--sp-3);
   width: max-content;
   cursor: pointer;
   list-style: none;
@@ -1035,18 +1077,12 @@ details.routes-reveal > summary {
   background: var(--panel-2);
   border: 1px solid var(--border-badge);
   border-radius: var(--r-btn);
-  padding: 8px 14px;
+  padding: var(--sp-3) var(--sp-5);
   transition: border-color .12s, color .12s;
 }
-details.hand-out > summary:hover,
-details.qr-reveal > summary:hover,
-details.routes-reveal > summary:hover { border-color: var(--blue); color: var(--blue); }
-details.hand-out > summary::before,
-details.qr-reveal > summary::before,
-details.routes-reveal > summary::before { content: "▸"; color: var(--blue); font-size: var(--fs-label); }
-details.hand-out[open] > summary::before,
-details.qr-reveal[open] > summary::before,
-details.routes-reveal[open] > summary::before { content: "▾"; }
+details.cfg-direct > summary:hover { border-color: var(--blue); color: var(--blue); }
+details.cfg-direct > summary::before { content: "▸"; color: var(--blue); font-size: var(--fs-label); }
+details.cfg-direct[open] > summary::before { content: "▾"; }
 
 /* Generated at 1024, shown at 512: an exact 2:1 downscale, so module edges stay
    sharp, and pixel-for-pixel on a HiDPI screen. 512 puts 4.4 pixels on each of
@@ -1055,11 +1091,11 @@ details.routes-reveal[open] > summary::before { content: "▾"; }
    the 6px the small inline QR uses. */
 .cfg-qr-lg {
   display: block;
-  margin-top: 14px;
+  margin-top: var(--sp-5);
   width: 512px; height: 512px; max-width: 100%;
-  border-radius: 8px; background: #fff; padding: 14px; object-fit: contain;
+  border-radius: 8px; background: #fff; padding: var(--sp-5); object-fit: contain;
 }
-details.hand-out[open] > .client-cfg { margin-top: 16px; }
+details.hand-out[open] > .client-cfg { margin-top: var(--sp-5); }
 
 /* Inside a card these labels carry the instructions, and --text-dim renders them
    at ~3.1:1 — the faintest text on the page. Lift them to the token .panel-label
@@ -1080,7 +1116,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 /* Rename: a name is at most 64 characters and never needs the full card width,
    and the button lines up with the input (they now share a padding, so `center`
    is correct and stays correct if a control ever wraps to a second line). */
-.rename-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.rename-form { display: flex; gap: var(--sp-3); align-items: center; flex-wrap: wrap; }
 .rename-form .input { max-width: 320px; }
 .rename-form .btn { flex: none; }
 
@@ -1092,7 +1128,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 /* An expanded routing table is dozens of entries: readable as a block, copyable
    in one click, and never a wall in a table cell. */
 .routes-box {
-  display: block; width: 100%; margin-top: 14px;
+  display: block; width: 100%; margin-top: var(--sp-5);
   resize: vertical; line-height: 1.6; white-space: pre-wrap; word-break: break-all;
 }
 
@@ -1105,7 +1141,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 .kv {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 14px 24px;
+  gap: var(--sp-5) var(--sp-7);
   align-items: start;
   margin: 0;
   font-size: var(--fs-body);
@@ -1122,7 +1158,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 .rule {
   height: 1px;
   background: var(--border-rule);
-  margin: 24px 0;
+  margin: var(--sp-7) 0;
 }
 
 /* ============================================================
@@ -1138,8 +1174,8 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 .checks li {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 12px 0;
+  gap: var(--sp-3);
+  padding: var(--sp-4) 0;
   border-bottom: 1px solid var(--border-row);
   font-size: var(--fs-body);
   color: var(--text-bright);
@@ -1165,28 +1201,29 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
    TRANSPORT TOGGLE
    ============================================================ */
 .panel-note {
-  margin: 0 0 20px;
+  margin: 0 0 var(--sp-6);
   font-size: var(--fs-meta);
   line-height: 1.7;
   color: var(--prose);
 }
 .seg-toggle {
   display: inline-flex;
-  gap: 4px;
-  padding: 4px;
-  margin-bottom: 24px;
+  gap: var(--sp-1);
+  padding: var(--sp-1);
+  margin-bottom: var(--sp-7);
   background: var(--panel-inset);
   border: 1px solid var(--border-input);
   border-radius: var(--r-mini);
 }
 .seg-toggle form { margin: 0; }
 .seg {
+  min-height: var(--control-h);
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-2);
   font-family: inherit;
   font-size: var(--fs-meta);
-  padding: 8px 16px;
+  padding: var(--sp-3) var(--sp-5);
   border: none;
   border-radius: var(--r-pill-sm);
   cursor: pointer;
@@ -1215,14 +1252,14 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
    repeating entity, and the raw manifest as the escape hatch.
    ============================================================ */
 .spec-card {
-  margin-top: 22px;
+  margin-top: var(--sp-7);
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--r-panel);
-  padding: 18px 24px 14px;
+  padding: var(--sp-6) var(--sp-7) var(--sp-5);
 }
 .spec-heading {
-  margin: 0 0 2px;
+  margin: 0 0 var(--sp-1);
   font-size: var(--fs-meta);
   font-weight: 600;
   letter-spacing: 2px;
@@ -1231,13 +1268,13 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 
 /* Summary — the answer, always visible, scalars only. Capped for the same reason
    as the detail groups: a hint line running the full 1340px is unreadable. */
-.spec-summary { margin: 0 0 4px; max-width: 980px; }
+.spec-summary { margin: 0 0 var(--sp-1); max-width: 980px; }
 .spec-summary-row,
 .spec-row {
   display: grid;
   grid-template-columns: minmax(130px, 180px) 1fr;
-  gap: 3px 18px;
-  padding: 9px 0;
+  gap: var(--sp-1) var(--sp-6);
+  padding: var(--sp-3) 0;
   border-bottom: 1px solid var(--border-row);
 }
 .spec-summary-row:last-child,
@@ -1255,7 +1292,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 5px 10px;
+  gap: var(--sp-2) var(--sp-3);
   min-width: 0;
 }
 .spec-value {
@@ -1267,7 +1304,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   display: inline-block;
   font-size: var(--fs-label);
   letter-spacing: .5px;
-  padding: 3px 9px;
+  padding: var(--sp-1) var(--sp-3);
   border-radius: var(--r-badge);
   white-space: nowrap;
   flex: none;
@@ -1286,15 +1323,15 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 }
 
 /* Tabs — CSS only, no JS: the radios drive their adjacent panel. */
-.spec-tabs { margin-top: 14px; }
+.spec-tabs { margin-top: var(--sp-5); }
 .spec-tablist {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px;
+  gap: var(--sp-1);
   border-bottom: 1px solid var(--border);
 }
 .spec-tab {
-  padding: 9px 14px;
+  padding: var(--sp-3) var(--sp-5);
   cursor: pointer;
   font-size: var(--fs-label);
   letter-spacing: 1.4px;
@@ -1310,7 +1347,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   opacity: 0;
   pointer-events: none;
 }
-.spec-panel { display: none; padding-top: 16px; }
+.spec-panel { display: none; padding-top: var(--sp-5); }
 .spec-radio:checked + .spec-panel { display: block; }
 /* Highlight the active tab. A label cannot reach its own input's :checked state,
    so the rule is written per id on the container; details + three tables + raw is
@@ -1336,16 +1373,16 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
   align-items: start;
-  gap: 14px;
+  gap: var(--sp-5);
   max-width: 940px;
 }
 .spec-group {
   background: var(--panel-inset);
   border: 1px solid var(--border);
   border-radius: var(--r-mini);
-  padding: 0 16px;
+  padding: 0 var(--sp-5);
 }
-.spec-group[open] { padding-bottom: 8px; }
+.spec-group[open] { padding-bottom: var(--sp-3); }
 /* Collapsed by default: the summary card above already answers the common
    question, so the detail groups are the "I need to dig" case. Closed, they form
    a compact index of what this node has — eight short lines instead of a page you
@@ -1354,10 +1391,10 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 .spec-group-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-3);
   list-style: none;
   cursor: pointer;
-  padding: 11px 0;
+  padding: var(--sp-3) 0;
   font-size: var(--fs-label);
   font-weight: 600;
   letter-spacing: 1.6px;
@@ -1378,7 +1415,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
    is an informed click rather than a guess. */
 .spec-group-count {
   margin-left: auto;
-  padding: 0 6px;
+  padding: 0 var(--sp-2);
   border-radius: 999px;
   font-size: var(--fs-label);
   font-weight: 400;
@@ -1389,14 +1426,14 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 /* One caveat for the whole card. A note that applied to several rows used to be
    repeated on each of them, which doubled the line count for no new information. */
 .spec-group-note {
-  margin: 0 0 4px;
+  margin: 0 0 var(--sp-1);
   font-size: var(--fs-label);
   line-height: 1.5;
   color: var(--text-dim);
 }
 .spec-rows { margin: 0; }
-.spec-group .spec-row { padding: 7px 0; }
-.spec-group .spec-row:first-of-type { padding-top: 4px; }
+.spec-group .spec-row { padding: var(--sp-2) 0; }
+.spec-group .spec-row:first-of-type { padding-top: var(--sp-1); }
 
 /* Tables — one per repeating entity. */
 .spec-table-wrap { overflow-x: auto; }
@@ -1407,7 +1444,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 }
 .spec-table th {
   text-align: left;
-  padding: 6px 14px 8px 0;
+  padding: var(--sp-2) var(--sp-5) var(--sp-3) 0;
   font-weight: 500;
   letter-spacing: .8px;
   text-transform: uppercase;
@@ -1417,7 +1454,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   white-space: nowrap;
 }
 .spec-table td {
-  padding: 8px 14px 8px 0;
+  padding: var(--sp-3) var(--sp-5) var(--sp-3) 0;
   color: var(--text);
   border-bottom: 1px solid var(--border-row);
   white-space: nowrap;
@@ -1425,14 +1462,14 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 .spec-table tr:last-child td { border-bottom: none; }
 
 .spec-note {
-  margin: 0 0 10px;
+  margin: 0 0 var(--sp-3);
   font-size: var(--fs-label);
   line-height: 1.6;
   color: var(--text-muted);
 }
 .spec-raw {
   margin: 0;
-  padding: 16px 18px;
+  padding: var(--sp-5) var(--sp-6);
   max-height: 60vh;
   overflow: auto;
   background: var(--panel-inset);
@@ -1445,8 +1482,8 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   white-space: pre;
 }
 .spec-foot {
-  margin: 14px 0 0;
-  padding-top: 10px;
+  margin: var(--sp-5) 0 0;
+  padding-top: var(--sp-3);
   border-top: 1px solid var(--border-rule);
   font-size: var(--fs-label);
   color: var(--text-dim);
@@ -1454,7 +1491,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 
 @media (max-width: 720px) {
   .spec-summary-row,
-  .spec-row { grid-template-columns: 1fr; gap: 2px; }
+  .spec-row { grid-template-columns: 1fr; gap: var(--sp-1); }
   .spec-groups { grid-template-columns: 1fr; }
 }
 
@@ -1491,11 +1528,11 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
    trunk + rows wrap their fields and tighten their indent).
    ============================================================ */
 @media (max-width: 819px) {
-  .topbar { padding: 15px 16px; }
-  .shell { padding: 20px 16px 56px; }
+  .topbar { padding: var(--sp-5) var(--sp-5); }
+  .shell { padding: var(--sp-6) var(--sp-5) 56px; }
   /* The bus stays below the breakpoint — unlike the old horizontal fan-out it is
      still meaningful when rows stack; only the indent tightens. */
-  .topo-group { padding-left: 16px; }
+  .topo-group { padding-left: var(--sp-5); }
   .topo-rail { left: 8px; }
   .topo-row::before { left: -9px; width: 9px; }
   .topo-row-name { min-width: auto; }
@@ -1520,21 +1557,21 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   justify-content: flex-start;
   /* fixed top offset (NOT vh-based) so the card stays put even if the keyboard
      resizes the layout viewport — a vh/% offset would still shift it. */
-  padding: 64px 24px 48px;
+  padding: 64px var(--sp-7) 48px;
 }
 .auth-card {
   width: 100%; max-width: 380px; background: var(--panel); border: 1px solid var(--border);
-  border-radius: var(--r-card); padding: 30px 30px 34px; box-shadow: var(--card-shadow);
+  border-radius: var(--r-card); padding: var(--sp-8) var(--sp-8) var(--sp-8); box-shadow: var(--card-shadow);
 }
-.auth-brand { font-size: var(--fs-logo); font-weight: 700; letter-spacing: -.5px; color: var(--text-strong); margin-bottom: 18px; }
+.auth-brand { font-size: var(--fs-logo); font-weight: 700; letter-spacing: -.5px; color: var(--text-strong); margin-bottom: var(--sp-6); }
 .auth-brand .dot { color: var(--green); }
-.auth-title { font-size: var(--fs-logo); font-weight: 600; color: var(--text-strong); margin: 0 0 6px; }
-.auth-lead { font-size: var(--fs-body); color: var(--text-muted); margin: 0 0 18px; line-height: 1.5; }
-.auth-form { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
-.auth-form .btn { margin-top: 6px; justify-content: center; }
+.auth-title { font-size: var(--fs-logo); font-weight: 600; color: var(--text-strong); margin: 0 0 var(--sp-2); }
+.auth-lead { font-size: var(--fs-body); color: var(--text-muted); margin: 0 0 var(--sp-6); line-height: 1.5; }
+.auth-form { display: flex; flex-direction: column; gap: var(--sp-5); margin-top: var(--sp-5); }
+.auth-form .btn { margin-top: var(--sp-2); justify-content: center; }
 
 /* ── Topbar account cluster (profile link + logout) ───────────────────── */
-.topbar-account { display: inline-flex; align-items: center; gap: 12px; }
+.topbar-account { display: inline-flex; align-items: center; gap: var(--sp-4); }
 .account-link { font-size: var(--fs-meta); color: var(--text-muted); background: none; border: none; cursor: pointer; font-family: var(--font-mono); padding: 0; }
 .account-link:hover { color: var(--blue); }
 .logout-form { margin: 0; display: inline; }
@@ -1544,11 +1581,12 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
    Same <details> card shell as BACKUP & MIGRATE, accented amber
    (an operation in flight) instead of blue.
    ============================================================ */
-.rollout-section { margin-top: 30px; }
+.rollout-section { margin-top: var(--sp-8); }
 .rollout-summary {
+  min-height: var(--control-h);
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--sp-3);
   width: max-content;
   list-style: none;
   cursor: pointer;
@@ -1558,7 +1596,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   background: var(--panel-2);
   border: 1px solid var(--border-badge);
   border-radius: var(--r-btn);
-  padding: 9px 15px;
+  padding: var(--sp-3) var(--sp-5);
 }
 .rollout-summary::-webkit-details-marker { display: none; }
 .rollout-summary::before {
@@ -1567,31 +1605,25 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   font-size: var(--fs-label);
 }
 .rollout-section[open] .rollout-summary::before { content: "▾"; }
-.rollout-section[open] .rollout-card { margin-top: 14px; }
+.rollout-section[open] .rollout-card { margin-top: var(--sp-5); }
 
 .roll-count {
   color: var(--amber);
   letter-spacing: 1px;
   font-size: var(--fs-label);
 }
-.roll-live {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--green);
-  letter-spacing: 1px;
-  font-size: var(--fs-label);
-}
+/* .roll-live was a fourth spelling of the LIVE chip. The template now uses .live,
+   which already carries the dot, the colour and the tracking. */
 
 .rollout-card {
   background: var(--panel);
   border: 1px solid var(--border);
   border-left: 2px solid var(--amber);
   border-radius: var(--r-panel);
-  padding: 26px 28px;
+  padding: var(--sp-7) var(--sp-8);
 }
 .rollout-lead {
-  margin: 0 0 20px;
+  margin: 0 0 var(--sp-6);
   max-width: 760px;
   font-size: var(--fs-body);
   line-height: 1.75;
@@ -1602,7 +1634,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 
 /* ---- live per-node progress ---- */
 .roll-progress {
-  margin-bottom: 20px;
+  margin-bottom: var(--sp-6);
   border: 1px solid var(--border-rule);
   border-radius: var(--r-panel);
   overflow: hidden;
@@ -1612,8 +1644,8 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   display: grid;
   grid-template-columns: 78px 1fr 132px auto;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
+  gap: var(--sp-4);
+  padding: var(--sp-3) var(--sp-5);
   font-size: var(--fs-meta);
   border-bottom: 1px solid var(--border-row);
   background: var(--panel-inset);
@@ -1625,7 +1657,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
   display: inline-block;
   font-size: var(--fs-label);
   letter-spacing: .5px;
-  padding: 3px 9px;
+  padding: var(--sp-1) var(--sp-3);
   border-radius: var(--r-badge);
   white-space: nowrap;
   text-align: center;
@@ -1642,7 +1674,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 .roll-phase {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-2);
   color: var(--text-muted);
   letter-spacing: 1px;
 }
@@ -1674,15 +1706,15 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 }
 
 /* ---- planned order (pre-flight) ---- */
-.roll-plan { margin-bottom: 20px; }
-.roll-plan .field-label { margin-bottom: 9px; }
+.roll-plan { margin-bottom: var(--sp-6); }
+.roll-plan .field-label { margin-bottom: var(--sp-3); }
 .roll-planrow { grid-template-columns: 28px 78px 1fr auto; }
 .roll-planrow.skipped { grid-template-columns: 28px 1fr auto; opacity: .55; }
 
 .rollout-form {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--sp-5);
   flex-wrap: wrap;
 }
 .rollout-hint {
@@ -1693,7 +1725,7 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
 .rollout-ok {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--sp-3);
   margin: 0;
   font-size: var(--fs-meta);
   color: var(--text-muted);
