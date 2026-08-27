@@ -130,24 +130,31 @@ func (p clientWGPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	default:
 		if claim.Changes() {
 			// Converged, but we had not recorded the claim (an upgrade from a build
-			// that predates it). Record it without touching the interface.
+			// that predates it). Record it without touching the interface — and do NOT
+			// retire wg-easy on this pass: an interface that is up and serving the
+			// right peers is exactly as consistent with wg-easy still carrying it,
+			// because the handover adopts wg-easy's own key and peer set.
 			return append(actions, claim,
 				reconcile.NoChangeAction("client AmneziaWG interface", "interface already up")), nil
 		}
+		// Converged, and the claim was recorded on an EARLIER pass: we raised this
+		// interface and it is up now, so the fallback is genuinely spare.
+		//
+		// This is a whole pass later than it used to be, deliberately. Retiring in the
+		// same pass as the bring-up meant retiring after the ATTEMPT: every awg-quick
+		// step is best-effort so the pass is not aborted (an interface that will not
+		// come up must not freeze mihomo, the NAT, DOCKER-USER, blocky and the VLESS
+		// inbound), which left a failed `up` deleting the only thing still serving
+		// clients — with nothing but a warning to say so. Waiting for the next pass to
+		// OBSERVE the interface up costs one reconcile interval and cannot do that.
+		if p.wgEasyPresent() {
+			actions = append(actions, reconcile.BestEffortExecAction(
+				"retire the wg-easy container (the agent is carrying the client interface)",
+				"docker", "rm", "-f", wgEasyContainer))
+		}
 		return append(actions, reconcile.NoChangeAction("client AmneziaWG interface", "interface already up")), nil
 	}
-	actions = append(actions, claim)
-
-	// Retire wg-easy only once we are actually carrying the leg, and only when the
-	// container is still there. Doing it on the knob alone would remove the fallback
-	// in the same pass where our own interface failed to come up, and doing it
-	// unconditionally would report drift on every pass forever.
-	if p.wgEasyPresent() {
-		actions = append(actions, reconcile.BestEffortExecAction(
-			"retire the wg-easy container (the agent now carries the client interface)",
-			"docker", "rm", "-f", "wg-easy"))
-	}
-	return actions, nil
+	return append(actions, claim), nil
 }
 
 // applyActions brings the interface to the rendered config. Both steps are

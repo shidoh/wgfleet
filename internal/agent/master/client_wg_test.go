@@ -417,24 +417,72 @@ func TestClientWGPlannerBringUpIsBestEffort(t *testing.T) {
 
 // The wg-easy container is retired only once we are carrying the leg, and only
 // while it is still there — otherwise every pass forever reports drift.
-func TestClientWGPlannerRetiresWGEasyOnlyWhenPresent(t *testing.T) {
-	p := clientPlanner(t, false)
+// wg-easy is retired a whole pass AFTER the interface is observed up — never in
+// the pass that raised it.
+//
+// Every awg-quick step is best-effort so a client interface that will not come up
+// cannot freeze mihomo, the NAT, DOCKER-USER, blocky and the VLESS inbound with
+// it. That made "retire after the bring-up" mean "retire after the ATTEMPT": a
+// failed `up` deleted the only thing still serving clients and reported a warning.
+func TestClientWGPlannerRetiresWGEasyOnlyAfterObservingTheInterfaceUp(t *testing.T) {
+	p := clientPlanner(t, false) // interface not up yet
 	p.containerPresent = func(string) bool { return true }
-	actions, err := p.Plan(context.Background(), managedSpec(t))
+	spec := managedSpec(t)
+
+	// Pass 1: raise it. The fallback must still be standing when this pass ends.
+	actions, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	got := summaries(actions)
+	if !strings.Contains(got, "bring the client interface up") {
+		t.Fatalf("first pass did not raise the interface:\n%s", got)
+	}
+	if strings.Contains(got, "retire") {
+		t.Fatalf("wg-easy retired in the same pass that raised our interface:\n%s", got)
+	}
+	applyPlan(t, p, spec)
+
+	// Pass 2: it is up and serving our peers, and we hold the claim from pass 1.
+	p.up = func(string) bool { return true }
+	p.ifacePeers = func(string) ([]string, error) {
+		return []string{spec.Master.ClientWG.Clients[0].PublicKey}, nil
+	}
+	actions, err = p.Plan(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
 	if got := summaries(actions); !strings.Contains(got, "retire the wg-easy container") {
-		t.Fatalf("wg-easy is never retired:\n%s", got)
+		t.Fatalf("wg-easy is never retired once we are demonstrably carrying the leg:\n%s", got)
 	}
 
+	// And never for a container that is already gone.
 	p.containerPresent = func(string) bool { return false }
-	actions, err = p.Plan(context.Background(), managedSpec(t))
+	actions, err = p.Plan(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
 	if got := summaries(actions); strings.Contains(got, "retire") {
 		t.Fatalf("planner tries to retire a container that is already gone:\n%s", got)
+	}
+}
+
+// The failure this ordering exists to prevent: awg-quick is missing, so the
+// bring-up cannot work. wg-easy must still be there afterwards.
+func TestClientWGPlannerKeepsWGEasyWhenTheInterfaceNeverComesUp(t *testing.T) {
+	p := clientPlanner(t, false)
+	p.containerPresent = func(string) bool { return true }
+	spec := managedSpec(t)
+
+	for pass := 1; pass <= 3; pass++ {
+		actions, err := p.Plan(context.Background(), spec)
+		if err != nil {
+			t.Fatalf("pass %d: Plan() error = %v", pass, err)
+		}
+		if got := summaries(actions); strings.Contains(got, "retire") {
+			t.Fatalf("pass %d retired the fallback while our interface is still down:\n%s", pass, got)
+		}
+		applyPlan(t, p, spec) // the exec actions no-op here, exactly as a failed up does
 	}
 }
 
