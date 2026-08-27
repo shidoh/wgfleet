@@ -95,6 +95,42 @@ func validateClientAWG(i int, m MasterConfig) []error {
 	return errs
 }
 
+// validateAWG3Secret refuses header protection without a fleet secret to key it on.
+//
+// Fail closed, and loudly. The alternative — deriving the chacha20 key from the
+// public salt when the operator has not set a secret — is exactly the weakness
+// this key exists to remove, and it would be invisible: the tunnel comes up, the
+// obfuscation looks enabled, and its one secret-bearing parameter is computable by
+// anyone holding the source. The 3.x TIMERS need no secret and are unaffected;
+// they are the half that carries most of the benefit.
+func validateAWG3Secret(c ControllerConfig) []error {
+	if c.Fleet.AWG3Key != "" {
+		return nil
+	}
+	var who []string
+	if c.Fleet.AWG3 != nil && *c.Fleet.AWG3 {
+		who = append(who, "fleet.awg3")
+	}
+	for i, e := range c.Fleet.Exits {
+		if e.AWG3 != nil && *e.AWG3 {
+			who = append(who, fmt.Sprintf("fleet.exits[%d] (%s).awg3", i, e.Name))
+		}
+	}
+	for i, m := range c.Fleet.Masters {
+		if m.ClientAWG3() == ClientAWG3Full {
+			who = append(who, fmt.Sprintf("fleet.masters[%d] (%s).client_awg.awg3: full", i, m.Name))
+		}
+	}
+	if len(who) == 0 {
+		return nil
+	}
+	return []error{fmt.Errorf("fleet.awg3_key is required because header protection is enabled by %s — "+
+		"it is the secret the chacha20 header-protection key is derived from, and deriving that key from "+
+		"anything that ships in this repository would defeat it. Set it to a secret:// reference "+
+		"(32+ random bytes). AmneziaWG 3.x TIMERS need no secret: use client_awg.awg3: timers for those",
+		strings.Join(who, ", "))}
+}
+
 // validateClientPoolsDisjoint rejects masters whose client pools overlap. With
 // one master this is trivially satisfied; it exists for the multi-master fleet
 // (ADR-0027), where an address that belongs to two gateways is ambiguous the

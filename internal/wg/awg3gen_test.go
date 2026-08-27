@@ -7,6 +7,11 @@ import (
 	"testing"
 )
 
+// testAWG3Key stands in for fleet.awg3_key. Its value is irrelevant to these
+// tests; what matters is that deriving header protection now REQUIRES a secret,
+// which is the change they were updated for.
+const testAWG3Key = "test-fleet-awg3-secret"
+
 // splitRange parses "N" or "min-max" into its bounds, failing the test on junk.
 func splitRange(t *testing.T, v string) (lo, hi int) {
 	t.Helper()
@@ -30,12 +35,12 @@ func splitRange(t *testing.T, v string) (lo, hi int) {
 // stopped being a pure function of the seed the two ends would disagree on the
 // header-protection key and the tunnel would silently never handshake.
 func TestWithAWG3Deterministic(t *testing.T) {
-	a := WithAWG3(DeriveAWGParamsForEnd("seed-a", "master", false), "seed-a")
-	b := WithAWG3(DeriveAWGParamsForEnd("seed-a", "exit", true), "seed-a")
+	a := WithAWG3(DeriveAWGParamsForEnd("seed-a", "master", false), "seed-a", testAWG3Key)
+	b := WithAWG3(DeriveAWGParamsForEnd("seed-a", "exit", true), "seed-a", testAWG3Key)
 	if a.Shared != b.Shared {
 		t.Errorf("shared block must be identical across ends:\n%+v\n%+v", a.Shared, b.Shared)
 	}
-	c := WithAWG3(DeriveAWGParamsForEnd("seed-b", "master", false), "seed-b")
+	c := WithAWG3(DeriveAWGParamsForEnd("seed-b", "master", false), "seed-b", testAWG3Key)
 	if c.Shared.HeaderProtectionKey == a.Shared.HeaderProtectionKey {
 		t.Error("different tunnel seeds must yield different header-protection keys")
 	}
@@ -44,7 +49,7 @@ func TestWithAWG3Deterministic(t *testing.T) {
 // TestWithAWG3KeyIs32Bytes — the module's key is a chacha20 key; anything else is
 // rejected by setconf on the node.
 func TestWithAWG3KeyIs32Bytes(t *testing.T) {
-	p := WithAWG3(DeriveAWGParamsForEnd("seed", "master", false), "seed")
+	p := WithAWG3(DeriveAWGParamsForEnd("seed", "master", false), "seed", testAWG3Key)
 	raw, err := base64.StdEncoding.DecodeString(p.Shared.HeaderProtectionKey)
 	if err != nil {
 		t.Fatalf("key must be base64: %v", err)
@@ -61,7 +66,7 @@ func TestWithAWG3KeyIs32Bytes(t *testing.T) {
 func TestWithAWG3AlwaysValidates(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		seed := "tunnel-" + strconv.Itoa(i)
-		p := WithAWG3(DeriveAWGParamsForEnd(seed, "master", false), seed)
+		p := WithAWG3(DeriveAWGParamsForEnd(seed, "master", false), seed, testAWG3Key)
 		if err := p.Validate(); err != nil {
 			t.Fatalf("seed %q derived an invalid AWG 3.0 param set: %v\n%+v", seed, err, p.Shared)
 		}
@@ -82,7 +87,7 @@ func TestWithAWG3AlwaysValidates(t *testing.T) {
 func TestWithAWG3TimerOrdering(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		seed := "tunnel-" + strconv.Itoa(i)
-		s := WithAWG3(DeriveAWGParamsForEnd(seed, "master", false), seed).Shared
+		s := WithAWG3(DeriveAWGParamsForEnd(seed, "master", false), seed, testAWG3Key).Shared
 		_, rekeyHi := splitRange(t, s.RekeyAfterTime)
 		rejectLo, _ := splitRange(t, s.RejectAfterTime)
 		if rekeyHi >= rejectLo {
@@ -97,7 +102,7 @@ func TestWithAWG3TimerOrdering(t *testing.T) {
 // reason the 3.0 timers exist at all. A derivation that collapsed them to single
 // values would look fine and buy nothing.
 func TestWithAWG3TimersAreRanges(t *testing.T) {
-	s := WithAWG3(DeriveAWGParamsForEnd("seed", "master", false), "seed").Shared
+	s := WithAWG3(DeriveAWGParamsForEnd("seed", "master", false), "seed", testAWG3Key).Shared
 	for _, f := range []struct{ name, value string }{
 		{"RekeyAfterTime", s.RekeyAfterTime},
 		{"RekeyTimeout", s.RekeyTimeout},
@@ -117,7 +122,7 @@ func TestWithAWG3TimersAreRanges(t *testing.T) {
 // and black-hole full-size packets. Enabling it means folding it into
 // the MTU chain first.
 func TestWithAWG3LeavesContentPaddingUnset(t *testing.T) {
-	s := WithAWG3(DeriveAWGParamsForEnd("seed", "master", false), "seed").Shared
+	s := WithAWG3(DeriveAWGParamsForEnd("seed", "master", false), "seed", testAWG3Key).Shared
 	if s.ContentPaddingAddition != "" {
 		t.Errorf("ContentPaddingAddition must stay unset until it is part of the MTU computation, got %q", s.ContentPaddingAddition)
 	}
@@ -127,7 +132,7 @@ func TestWithAWG3LeavesContentPaddingUnset(t *testing.T) {
 // params may shift, or an in-place upgrade would rewrite every interface.
 func TestWithAWG3PreservesAWG2(t *testing.T) {
 	base := DeriveAWGParamsForEnd("seed", "master", false)
-	got := WithAWG3(base, "seed")
+	got := WithAWG3(base, "seed", testAWG3Key)
 	if got.Local != base.Local {
 		t.Errorf("local params must be untouched:\n%+v\n%+v", got.Local, base.Local)
 	}
@@ -161,7 +166,7 @@ func TestWithAWG3TimersLeavesHeaderProtectionUnset(t *testing.T) {
 // The other half on its own, so the two compose rather than overlap.
 func TestWithAWG3HeaderProtectionLeavesTimersUnset(t *testing.T) {
 	seed := "tunnel-hp"
-	s := WithAWG3HeaderProtection(DeriveAWGParamsForEnd(seed, "client", false), seed).Shared
+	s := WithAWG3HeaderProtection(DeriveAWGParamsForEnd(seed, "client", false), seed, testAWG3Key).Shared
 	if s.HeaderProtectionKey == "" {
 		t.Fatal("header-protection half set no key")
 	}
@@ -179,8 +184,8 @@ func TestWithAWG3IsBothHalvesComposed(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		seed := "tunnel-" + strconv.Itoa(i)
 		base := DeriveAWGParamsForEnd(seed, "exit", true)
-		whole := WithAWG3(base, seed)
-		composed := WithAWG3HeaderProtection(WithAWG3Timers(base, seed), seed)
+		whole := WithAWG3(base, seed, testAWG3Key)
+		composed := WithAWG3HeaderProtection(WithAWG3Timers(base, seed), seed, testAWG3Key)
 		if whole.Shared != composed.Shared {
 			t.Fatalf("seed %q: WithAWG3 diverged from its halves\n whole:    %+v\n composed: %+v",
 				seed, whole.Shared, composed.Shared)
@@ -196,5 +201,29 @@ func TestWithAWG3TimersValidateWithSmallPadding(t *testing.T) {
 	p.Shared.S1, p.Shared.S2, p.Shared.S3, p.Shared.S4 = 1, 2, 3, 4
 	if err := p.Validate(); err != nil {
 		t.Fatalf("timers-only params rejected for small S values: %v", err)
+	}
+}
+
+// The header-protection key must depend on the fleet secret, and depend on it
+// strongly: the same tunnel under two secrets must yield two unrelated keys.
+func TestHeaderProtectionKeyIsKeyedOnTheFleetSecret(t *testing.T) {
+	const seed = "master-xa-1|vn0|wgfleet-awg-v1"
+	a := deriveHeaderProtectionKey(seed, "secret-one")
+	if b := deriveHeaderProtectionKey(seed, "secret-two"); a == b {
+		t.Fatal("the key does not depend on the fleet secret at all")
+	}
+	if again := deriveHeaderProtectionKey(seed, "secret-one"); again != a {
+		t.Fatal("the key is not reproducible from the same inputs")
+	}
+	// It must still vary per tunnel under one secret, or the whole fleet would
+	// share a single header-protection key.
+	if other := deriveHeaderProtectionKey("master-xa-1|anz3|wgfleet-awg-v1", "secret-one"); other == a {
+		t.Fatal("two different tunnels derive the same key")
+	}
+	// And an empty secret must not be indistinguishable from a real one — that is
+	// the state the config gate exists to prevent, and if it is ever reached it
+	// should be visible here rather than in the field.
+	if deriveHeaderProtectionKey(seed, "") == deriveHeaderProtectionKey(seed, "x") {
+		t.Fatal("the empty secret behaves like a configured one")
 	}
 }

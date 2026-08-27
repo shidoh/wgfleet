@@ -1,6 +1,7 @@
 package wg
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -69,8 +70,8 @@ const (
 // packet exactly as S4 does, so a non-zero value eats the MTU cushion that
 // AWGExtraOverhead sizes and black-holes full-size packets. Enabling
 // it means folding it into the MTU chain first; until then, unset.
-func WithAWG3(p domain.AWGParams, tunnelSeed string) domain.AWGParams {
-	return WithAWG3HeaderProtection(WithAWG3Timers(p, tunnelSeed), tunnelSeed)
+func WithAWG3(p domain.AWGParams, tunnelSeed, fleetSecret string) domain.AWGParams {
+	return WithAWG3HeaderProtection(WithAWG3Timers(p, tunnelSeed), tunnelSeed, fleetSecret)
 }
 
 // WithAWG3Timers adds ONLY the 3.0 timer ranges. It is the half an operator can
@@ -102,17 +103,32 @@ func WithAWG3Timers(p domain.AWGParams, tunnelSeed string) domain.AWGParams {
 // Enabling it on a live interface disconnects every peer that does not carry the
 // same key, so it belongs behind a deliberate operator decision rather than
 // behind "turn on 3.x".
-func WithAWG3HeaderProtection(p domain.AWGParams, tunnelSeed string) domain.AWGParams {
-	p.Shared.HeaderProtectionKey = deriveHeaderProtectionKey(tunnelSeed)
+func WithAWG3HeaderProtection(p domain.AWGParams, tunnelSeed, fleetSecret string) domain.AWGParams {
+	p.Shared.HeaderProtectionKey = deriveHeaderProtectionKey(tunnelSeed, fleetSecret)
 	return p
 }
 
 // deriveHeaderProtectionKey derives the 32-byte chacha20 key from the tunnel seed
 // and returns it base64-encoded, which is the encoding both amneziawg-tools and
 // mihomo accept (mihomo re-encodes it to hex for its own IPC).
-func deriveHeaderProtectionKey(seed string) string {
-	sum := sha256.Sum256([]byte(seed + "|awg3|header-protection-key"))
-	return base64.StdEncoding.EncodeToString(sum[:headerProtectionKeyLen])
+// deriveHeaderProtectionKey derives the chacha20 key from a FLEET SECRET keyed by
+// the tunnel seed.
+//
+// Every other derived AmneziaWG parameter — S1-S4, H1-H4, the junk window, the
+// signature packets — is safe to derive from a public salt: they resist DPI
+// through being non-default and per-tunnel, not through being unknown. Header
+// protection is the one parameter where that reasoning does not hold. It is a
+// chacha20 key whose entire purpose is that a passive observer cannot recognise
+// or parse the header, and deriving it from a compiled-in constant plus a
+// guessable node name reduced its strength to the entropy of the node name — in a
+// repository intended to be published.
+//
+// HMAC rather than a plain hash of secret+seed: the secret is a key here, not
+// another input, and HMAC is the construction that says so.
+func deriveHeaderProtectionKey(seed, fleetSecret string) string {
+	mac := hmac.New(sha256.New, []byte(fleetSecret))
+	mac.Write([]byte(seed + "|awg3|header-protection-key"))
+	return base64.StdEncoding.EncodeToString(mac.Sum(nil)[:headerProtectionKeyLen])
 }
 
 // deriveRange renders a u16 range "lo-hi" where lo is fixed at the protocol

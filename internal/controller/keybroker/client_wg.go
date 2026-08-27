@@ -170,7 +170,7 @@ func (b *Broker) clientWGSpec(ctx context.Context, master config.MasterConfig, s
 	if mtu == 0 {
 		mtu = server.MTU
 	}
-	awg := clientLegAWG(master, server)
+	awg := clientLegAWG(master, server, b.awg3Key)
 	return &domain.ClientWGSpec{
 		ListenPort:    master.ClientListenPort(),
 		AddressPool:   master.ClientAWG.AddressPool,
@@ -219,7 +219,7 @@ func (b *Broker) masterConfig(name string) (config.MasterConfig, bool) {
 // Both ends of this tunnel derive from the same seed, so the shared half the
 // client's .conf carries is byte-identical to the interface's by construction;
 // only the local decoy differs per end, which AmneziaWG allows and we want.
-func clientLegAWG(master config.MasterConfig, server domain.WGServerSpec) *domain.AWGParams {
+func clientLegAWG(master config.MasterConfig, server domain.WGServerSpec, awg3Key string) *domain.AWGParams {
 	if server.AWG == nil {
 		return nil
 	}
@@ -232,7 +232,7 @@ func clientLegAWG(master config.MasterConfig, server domain.WGServerSpec) *domai
 	seed := wg.TunnelSeed(master.Name, "clients", awgSalt)
 	p := wg.WithAWG3Timers(*server.AWG, seed)
 	if mode == config.ClientAWG3Full {
-		p = wg.WithAWG3HeaderProtection(p, seed)
+		p = wg.WithAWG3HeaderProtection(p, seed, awg3Key)
 	}
 	return &p
 }

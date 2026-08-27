@@ -208,6 +208,17 @@ type FleetSection struct {
 	// wrote this key" must therefore mean "keep speaking 2.0", never "quietly
 	// switch the protocol".
 	AWG3 *bool `koanf:"awg3"`
+
+	// AWG3Key is the fleet secret the 3.x HEADER-PROTECTION key is derived from.
+	// Every other AmneziaWG parameter is derived from a public, versioned salt —
+	// they work by being non-default, not by being unknown. This one is a chacha20
+	// key whose whole purpose is that an observer does not have it, so it may not
+	// come from anything that ships in the repository.
+	//
+	// Required whenever header protection is actually switched on: fleet.awg3,
+	// exits[].awg3, or masters[].client_awg.awg3 set to "full". The 3.x TIMERS need
+	// no secret and stay available without it.
+	AWG3Key Secret `koanf:"awg3_key"`
 }
 
 // HardeningSection is the opt-out from the managed host hardening: the sshd
@@ -1212,6 +1223,7 @@ func (c ControllerConfig) Validate() error {
 	// authorise unauthenticated key downloads on 0.0.0.0.
 	errs = append(errs, validateClientPortal(c.Controller.ClientPortal, c.Controller.ClientPortalURL)...)
 	errs = append(errs, validateClientPoolsDisjoint(c.Fleet.Masters)...)
+	errs = append(errs, validateAWG3Secret(c)...)
 	for i, e := range c.Fleet.Exits {
 		if e.Name == "" {
 			errs = append(errs, fmt.Errorf("fleet.exits[%d]: name is required", i))

@@ -221,7 +221,7 @@ func run() error {
 		return rollingUpgrade(cfg, ca, *agentBin, *plan)
 	}
 
-	return serve(cfg, ca, *configPath)
+	return serve(cfg, ca, provider, *configPath)
 }
 
 // loadCA builds the fleet CA, resolving the private key through the secret
@@ -252,7 +252,7 @@ func loadCA(cfg *config.ControllerConfig, provider config.SecretProvider) (*pki.
 	return ca, nil
 }
 
-func serve(cfg *config.ControllerConfig, ca *pki.CA, configPath string) error {
+func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvider, configPath string) error {
 	// The digest of the manifest this process actually loaded. Everything below
 	// compares against it, so "is the controller running the file on disk" stops
 	// being a question answered by trust.
@@ -285,7 +285,15 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, configPath string) error {
 	}
 	defer func() { _ = st.Close() }()
 
-	broker := keybroker.New(st, cfg.Fleet, slog.Default())
+	// The 3.x header-protection secret, resolved once here rather than per render.
+	// Config validation has already refused the combination "header protection on,
+	// no secret", so an empty value at this point means header protection is off
+	// everywhere and nothing will ask for it.
+	awg3Key, err := cfg.Fleet.AWG3Key.Resolve(provider)
+	if err != nil {
+		return fmt.Errorf("resolve fleet.awg3_key: %w", err)
+	}
+	broker := keybroker.New(st, cfg.Fleet, slog.Default(), keybroker.WithAWG3Key(awg3Key))
 	svc := grpcapi.NewService(st, broker, slog.Default())
 	server := grpcapi.NewServer(tlsCfg, svc)
 

@@ -29,7 +29,10 @@ import (
 // awgSalt seeds the deterministic AmneziaWG parameter derivation. It need not be
 // secret — AWG obfuscation resists DPI fingerprinting through non-default,
 // per-tunnel parameters, not through secrecy. Versioned so params can be rotated
-// fleet-wide by bumping it. (Phase 2: source from a fleet secret.)
+// fleet-wide by bumping it.
+//
+// The ONE parameter this reasoning does not cover is the 3.x header-protection
+// key, which is keyed on fleet.awg3_key instead — see wg.deriveHeaderProtectionKey.
 const awgSalt = "wgfleet-awg-v1"
 
 // Broker renders NodeSpecs from fleet config plus the inventory/pubkey registry.
@@ -37,14 +40,33 @@ type Broker struct {
 	store store.Store
 	fleet config.FleetSection
 	log   *slog.Logger
+	// awg3Key is the resolved fleet.awg3_key. Empty when the operator has not set
+	// one, which config validation permits only while header protection is off
+	// everywhere.
+	awg3Key string
 }
 
 // New constructs a Broker over the given store and fleet manifest.
-func New(st store.Store, fleet config.FleetSection, log *slog.Logger) *Broker {
+func New(st store.Store, fleet config.FleetSection, log *slog.Logger, opts ...Option) *Broker {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Broker{store: st, fleet: fleet, log: log}
+	b := &Broker{store: st, fleet: fleet, log: log}
+	for _, o := range opts {
+		o(b)
+	}
+	return b
+}
+
+// Option configures a Broker. Variadic so every existing three-argument caller —
+// including all the tests — keeps compiling.
+type Option func(*Broker)
+
+// WithAWG3Key supplies the resolved fleet secret the 3.x header-protection key is
+// derived from. Without it the broker still renders 3.x TIMERS, which need no
+// secret; header protection is refused at config validation instead.
+func WithAWG3Key(key string) Option {
+	return func(b *Broker) { b.awg3Key = key }
 }
 
 // RegisterPublicKey records a node's WireGuard public key in the registry. This
@@ -358,7 +380,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		// inputs — both ends of one tunnel must agree on the generation or the
 		// handshake never completes, so this must never be decided twice differently.
 		if awg3Enabled(b.fleet.AWG3For(exit), exitNode) {
-			p = wg.WithAWG3(p, seed)
+			p = wg.WithAWG3(p, seed, b.awg3Key)
 		}
 		awg = &p
 	}
@@ -705,7 +727,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			// Mirror of the exit end in renderExitSpec — same gate, same inputs, so
 			// the two ends of this tunnel cannot disagree about the AWG generation.
 			if awg3Enabled(b.fleet.AWG3For(exit), exitNode) {
-				awg = wg.WithAWG3(awg, seed)
+				awg = wg.WithAWG3(awg, seed, b.awg3Key)
 			}
 			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
 				Name:            exit.Name,

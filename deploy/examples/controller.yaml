@@ -143,6 +143,21 @@ fleet:
   # `modinfo -F version amneziawg` and `awg --version` before flipping it.
   # awg3: true
 
+  # The secret the 3.x HEADER-PROTECTION key is derived from. Required the moment
+  # header protection is switched on anywhere — fleet.awg3, exits[].awg3, or a
+  # master's client_awg.awg3: full — and the controller refuses to start without it
+  # rather than fall back to something derivable.
+  #
+  # Why only this one parameter needs a secret: S1-S4, H1-H4, the junk window and
+  # the signature packets all resist DPI by being non-default and per-tunnel, so a
+  # public salt is fine for them. Header protection is a chacha20 key whose entire
+  # purpose is that a passive observer cannot recognise the header — deriving it
+  # from a constant that ships in the source would hand it to everyone.
+  #
+  # Generate: openssl rand -base64 48
+  # The 3.x TIMERS need no secret, so `client_awg.awg3: timers` works without this.
+  # awg3_key: secret://awg3-key
+
   masters:
     - name: master-xa-1
       mgmt_addr: 10.20.25.254 # ZT overlay address

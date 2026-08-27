@@ -113,6 +113,7 @@ provisioning time, which means **changing them requires re-provisioning the node
 | `fleet.hardening.sshd` | bool | `true` | **Fleet default.** Manage the sshd drop-in (`/etc/ssh/sshd_config.d/10-wgfleet-hardening.conf`: key-only auth, no root password, no X11 forwarding), reconciled every pass. Set `false` to hand sshd back to you — see below |
 | `fleet.hardening.fail2ban` | bool | `true` | **Fleet default.** Manage the fail2ban sshd jail (`/etc/fail2ban/jail.d/wgfleet.conf`) |
 | `fleet.awg3` | bool | `false` | **Fleet default.** Run the master↔exit AmneziaWG tunnels on **AmneziaWG 3.0** (header protection + randomised timers). Opt-in, unlike the hardening keys above — see [AmneziaWG 3.0](#amneziawg-30) |
+| `fleet.awg3_key` | secret ref | — | **Required whenever header protection is on** (`fleet.awg3`, `fleet.exits[].awg3`, or `client_awg.awg3: full`). The fleet secret the 3.x chacha20 header-protection key is derived from. Every other AmneziaWG parameter comes from a public, versioned salt — they resist DPI by being non-default, not by being unknown — but this one is a key whose whole purpose is that an observer does not have it, so it may not come from anything in this repository. Write it as a `secret://` reference to 32+ random bytes; the controller refuses to start if header protection is enabled without it. The 3.x **timers** need no secret |
 
 ### Turning hardening off
 

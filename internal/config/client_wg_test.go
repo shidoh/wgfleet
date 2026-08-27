@@ -162,13 +162,18 @@ func TestClientAWGRejectsIPv6DefaultRoute(t *testing.T) {
 	}
 }
 
-// awg3Config builds a master whose client leg asks for a 3.x mode.
+// awg3Config builds a master whose client leg asks for a 3.x mode. The fleet
+// secret is set because "full" now requires one — this helper is about the MODE
+// parsing, and a missing secret is a separate refusal with its own test.
 func awg3Config(mode string, managed bool) ControllerConfig {
 	c := ClientAWGConfig{ListenPort: 443, AddressPool: "10.80.0.0/24", AWG3: mode}
 	if managed {
 		c.Managed = &managed
 	}
-	return ControllerConfig{Fleet: FleetSection{Masters: []MasterConfig{masterWith("m1", c)}}}
+	return ControllerConfig{Fleet: FleetSection{
+		AWG3Key: "secret://awg3-key",
+		Masters: []MasterConfig{masterWith("m1", c)},
+	}}
 }
 
 func TestClientAWG3ModeValidation(t *testing.T) {
@@ -325,5 +330,57 @@ func TestExcludeFromTunnelMustNotCutOffTheGatewayOrDNS(t *testing.T) {
 	ok.ClientAWG.ExcludeFromTunnel = []string{"192.168.0.0/16"}
 	if errs := validateClientAWG(0, ok); len(errs) != 0 {
 		t.Errorf("a harmless exclusion was refused: %v", errs)
+	}
+}
+
+// Header protection without a fleet secret must be refused, not silently derived
+// from the public salt.
+//
+// Every other AmneziaWG parameter is safe to derive from a compiled-in salt —
+// they work by being non-default, not by being unknown. The header-protection key
+// is a chacha20 key whose whole purpose is that an observer does not have it, and
+// this repository is meant to be published.
+func TestAWG3HeaderProtectionRequiresAFleetSecret(t *testing.T) {
+	on := true
+	base := func() ControllerConfig {
+		return ControllerConfig{Fleet: FleetSection{Masters: []MasterConfig{
+			{Name: "m1", MgmtAddr: "10.20.0.1", ClientAWG: ClientAWGConfig{ListenPort: 443, AddressPool: "10.80.0.0/24"}},
+		}}}
+	}
+
+	// Fleet-wide 3.x on an exit tunnel.
+	c := base()
+	c.Fleet.AWG3 = &on
+	if errs := validateAWG3Secret(c); len(errs) == 0 {
+		t.Error("fleet.awg3 was accepted with no fleet.awg3_key")
+	}
+
+	// The client interface's "full" mode.
+	c = base()
+	c.Fleet.Masters[0].ClientAWG.Managed = &on
+	c.Fleet.Masters[0].ClientAWG.AWG3 = "full"
+	errs := validateAWG3Secret(c)
+	if len(errs) == 0 {
+		t.Fatal("client_awg.awg3: full was accepted with no fleet.awg3_key")
+	}
+	if !strings.Contains(errs[0].Error(), "timers") {
+		t.Errorf("the refusal does not point at the mode that needs no secret: %v", errs[0])
+	}
+
+	// Timers need no secret — they are the half that keeps every existing config
+	// working, and refusing them here would be refusing the whole feature.
+	c = base()
+	c.Fleet.Masters[0].ClientAWG.Managed = &on
+	c.Fleet.Masters[0].ClientAWG.AWG3 = "timers"
+	if errs := validateAWG3Secret(c); len(errs) != 0 {
+		t.Errorf("timers were refused for want of a secret they do not use: %v", errs)
+	}
+
+	// And with the secret set, everything is allowed.
+	c = base()
+	c.Fleet.AWG3 = &on
+	c.Fleet.AWG3Key = "secret://awg3-key"
+	if errs := validateAWG3Secret(c); len(errs) != 0 {
+		t.Errorf("3.x was refused despite a configured secret: %v", errs)
 	}
 }
