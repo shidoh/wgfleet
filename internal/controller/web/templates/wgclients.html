@@ -32,11 +32,14 @@
     {{end}}
     <form class="issue-form" method="post" action="/nodes/{{.NodeID}}/wg-clients/issue" onsubmit="return lockAction(this)">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <label class="field"><span class="field-label">Client name</span>
+      {{/* Same shape as the rename field below: the input rules are shown, not
+           hidden in a title= that a touch device can never open. */}}
+      <label class="field"><span class="field-label">CLIENT NAME</span>
         <input class="input" type="text" name="name" placeholder="alice-iphone" required
-               pattern="[A-Za-z0-9._-]{1,64}" title="letters, digits, '-', '_' or '.' (max 64)"></label>
+               pattern="[A-Za-z0-9._-]{1,64}" aria-describedby="issue-hint"></label>
       <button class="btn go" type="submit" data-pending="Issuing…">Issue client</button>
     </form>
+    <p class="cfg-hint" id="issue-hint">letters, digits, dash, underscore or dot — up to 64</p>
   </div>
 
   <div class="panel">

@@ -999,7 +999,10 @@ h3.client-name { margin: 0; display: flex; align-items: center; gap: 8px; flex-w
    built for .auth-card (max-width 380px); reused in a grid panel it stretched the
    submit button across the full width of the page. */
 .issue-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 16px; }
-.issue-form .field { flex: 1 1 240px; }
+/* Capped, and capped at the SAME width as the rename field: both name one client,
+   and a name field that grows to fill a 700px panel reads as a paragraph box.
+   Without the cap flex-grow ate the whole panel. */
+.issue-form .field { flex: 1 1 240px; max-width: 320px; }
 .issue-form .btn { flex: none; }
 
 /* Everything needed only at hand-out is collapsed by default, so ten clients can
