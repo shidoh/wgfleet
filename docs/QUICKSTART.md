@@ -202,17 +202,28 @@ Repeat this step for every additional exit (new name, new `address_pool`).
 
 ## Step 8 — Connect your devices
 
-Client configs are managed by **wg-easy**, which runs on the master. Tunnel to
-it the same way:
+wgfleet issues client credentials itself. Add one line to the master's
+`client_awg` block:
 
-```bash
-ssh -L 51821:127.0.0.1:51821 root@<MASTER-IP>
-cat /etc/wgfleet/wg-easy-admin-password    # username: admin
+```yaml
+        managed: true   # the agent carries the client interface
 ```
 
-Open <http://127.0.0.1:51821>, log in, **+ New Client**, then scan the QR code
-with the **AmneziaWG** app (iOS / Android / desktop — *not* the plain WireGuard
-app; the obfuscation is AmneziaWG-specific).
+Restart the controller (`--check-config` first — see [CLI.md](cli.md)), then open
+the Web UI, click **AWG CLIENTS** on the master, and issue one. You get a `.conf`
+to download and a QR to scan.
+
+Import it with the **AmneziaWG** app — iOS, Android or desktop, *not* the plain
+WireGuard app: the obfuscation is AmneziaWG-specific and the ordinary app cannot
+read the profile.
+
+Optionally set `controller.client_portal` (see CONFIGURATION.md) and each
+credential gets a permanent self-service link you can send instead of a file.
+
+> **Upgrading from a wgfleet that used wg-easy?** Do not set `managed: true`
+> straight away — import the existing credentials first, or everyone's tunnel
+> stops at the cutover. The whole procedure is in
+> [CLIENT-MIGRATION.md](client-migration.md).
 
 Done. Your traffic now goes device → master → exit → internet.
 

@@ -391,9 +391,9 @@ func (h *Handler) handleWGClientToggle(enable bool) http.HandlerFunc {
 		}
 		id, clientID := r.PathValue("id"), r.PathValue("client")
 		dest := "/nodes/" + id + "/wg-clients"
-		action := "mute client"
+		action := "pause client access"
 		if enable {
-			action = "unmute client"
+			action = "resume client access"
 		}
 		if err := h.renderer.SetWGClientEnabled(r.Context(), id, clientID, enable); err != nil {
 			if errors.Is(err, store.ErrNotFound) {

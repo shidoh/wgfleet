@@ -26,10 +26,10 @@ Plan output shows files (with secrets redacted), commands, and DB updates.
   - **Provision** — SSH-bootstrap a `Pending` node asynchronously (Pending → Provisioning → Ready).
   - **Upgrade** — roll the agent binary forward over SSH without tearing down the data plane.
   - **Drain** — keep the node as a configured proxy but remove it from load-balance;
-    existing connections survive, no new traffic (ADR-0010).
+    existing connections survive, no new traffic.
   - **Undrain** — rejoin the load-balance group.
   - **Decommission** — tell the agent to tear down the data plane on next reconcile
-    (stop services, clear routing/firewall, best-effort reverse reconcile; ADR-0012).
+    (stop services, clear routing/firewall, best-effort reverse reconcile).
   - **Delete** — remove the node from inventory.
   - **Download backup** — export an age-encrypted archive of the controller (and co-located master) state.
 
@@ -50,7 +50,7 @@ There you **issue** per-client credentials and hand each user one of:
   `routing` response header (reachable over the mgmt/ZT overlay).
 
 `client_vless.route_through_cidrs` in the manifest controls which internal networks
-clients route through the tunnel. See `maintainer notes` #29 for the hard-won
+clients route through the tunnel. See below for the hard-won
 client-side details (strict-route, DNS split, import formats).
 
 ## Break-glass: reaching a node you just cut off
@@ -167,7 +167,7 @@ wgfleet_node_health_check{node,check}                      # 1 ok / 0 failing
 wgfleet_node_egress_info{node,egress_ip}                   # observed egress IP (=1)
 wgfleet_node_drain{node}                                   # 1 if administratively drained (out of LB)
 wgfleet_node_decommission{node}                            # 1 if flagged for decommission (data plane torn down)
-wgfleet_node_client_vless_clients{node}                    # VLESS/REALITY clients issued on a master (ADR-0031)
+wgfleet_node_client_vless_clients{node}                    # VLESS/REALITY clients issued on a master
 ```
 
 **Agent** (its own reconcile/health counters):
@@ -188,7 +188,9 @@ wgfleet_agent_start_time_seconds                   # for uptime
 After each apply reconcile the agent runs role-specific self-checks and reports
 the derived state:
 
-- **Exit checks:** `wg-handshake` (freshest handshake under 3m — an earlier finding),
+- **Exit checks:** `wg-handshake` (freshest handshake under 3m: a tunnel whose
+  handshake is older than that has stopped carrying traffic, even though the
+  interface still looks up),
   `egress-reachability` (censorship signal: ok | degraded | blocked),
   `warp-egress` (egress via Cloudflare WARP, when `egress=warp`), `dns-filter`.
 - **Master checks:** `client-wg` (interface up), `mihomo-api` (Clash API

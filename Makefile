@@ -95,6 +95,10 @@ release-archive: agent-linux controller-linux
 	cp docs/master-migration.md                 $(DIST)/$(PKG)/MASTER-MIGRATION.md
 	cp docs/client-migration.md                 $(DIST)/$(PKG)/CLIENT-MIGRATION.md
 	cp docs/support-bundle.md                   $(DIST)/$(PKG)/SUPPORT-BUNDLE.md
+	cp docs/upgrade.md                          $(DIST)/$(PKG)/UPGRADE.md
+	cp docs/operations.md                       $(DIST)/$(PKG)/OPERATIONS.md
+	cp docs/cli.md                              $(DIST)/$(PKG)/CLI.md
+	cp deploy/deploy-master.sh                  $(DIST)/$(PKG)/deploy-master.sh
 	cp deploy/prepare-node.sh                   $(DIST)/$(PKG)/prepare-node.sh
 	cp deploy/client-diag.sh                    $(DIST)/$(PKG)/client-diag.sh
 	cp deploy/examples/controller.yaml deploy/examples/agent.yaml $(DIST)/$(PKG)/examples/

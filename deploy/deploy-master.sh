@@ -2,9 +2,10 @@
 # deploy-master.sh — build wgfleet binaries and install them on the co-located
 # master node (controller + agent on one box), then restart the services.
 #
-# The master is onboarded MANUALLY (co-located control plane, docs/DESIGN.md open
-# Q#4), so unlike exit nodes it has no SSH-provision / Web-UI "upgrade" path —
-# this script is its equivalent. Exit agents update via the controller (Web UI
+# The master is onboarded MANUALLY — it hosts the control plane that would other-
+# wise do the onboarding — so unlike exit nodes it has no SSH-provision or Web-UI
+# "upgrade" path;
+# this script is that equivalent. Exit agents update via the controller (Web UI
 # upgrade button / `controller --upgrade-agent`).
 #
 # Cross-compiles on THIS machine (no Go toolchain needed on the master), copies

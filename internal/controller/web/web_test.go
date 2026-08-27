@@ -1306,3 +1306,23 @@ func TestTopologyRailIsLiveOnlyWhenTrafficFlows(t *testing.T) {
 		t.Error("master trunk missing")
 	}
 }
+
+// A migrated master must not advertise a wg-easy admin UI that no longer exists.
+//
+// The handover removes the container; the link kept rendering and hung, three
+// rows above the AWG CLIENTS link that replaced it.
+func TestNodePageDropsTheWGEasyLinkOnceMigrated(t *testing.T) {
+	node := domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, MgmtAddr: "10.20.0.1"}
+
+	before := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}}
+	if got := wgEasyURL(node, before); got == "" {
+		t.Error("the link is missing while wg-easy still owns the client interface")
+	}
+
+	after := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{
+		ClientWG: &domain.ClientWGSpec{ListenPort: 443, AddressPool: "10.80.0.0/24"},
+	}}
+	if got := wgEasyURL(node, after); got != "" {
+		t.Errorf("a migrated master still links to wg-easy: %q", got)
+	}
+}

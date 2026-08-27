@@ -1,7 +1,9 @@
 # Upgrading a wgfleet deployment
 
 This is the operator runbook for rolling a new build of wgfleet across a running
-fleet. See ADR-0019 for the design and rationale.
+fleet. The controller never pushes: an agent asks for its spec when it is ready
+for one, which is what lets a node that cannot be reached keep serving its last
+good configuration instead of stalling on a delivery it never got.
 
 ## Two versions, one of which matters for compatibility
 
@@ -14,7 +16,7 @@ A new release that only changes behaviour the agent already understands keeps th
 same wire version. **Bump `WireContractVersion` whenever an agent must understand
 something new to converge correctly** (a new `NodeSpec` field's semantics, a
 changed field meaning). Forgetting to bump it reintroduces the silent-skew hazard
-ADR-0019 exists to prevent.
+the pull-based design exists to prevent.
 
 Check what a binary speaks:
 
@@ -123,6 +125,16 @@ plane refusing service does not break the data plane.
 - **Bumping `MinSupportedWire`** strands any agent older than the new minimum on
   its last-good spec until it is rolled. Do it deliberately and only after the
   fleet is known to be past that version.
+- **This release adds a key that is REQUIRED once AmneziaWG 3.x is on.** If
+  `fleet.awg3` or any `exits[].awg3` is true, the controller now refuses to start
+  without `fleet.awg3_key` — and the header-protection key it derives is a
+  DIFFERENT value from the one your tunnels use today, because it is now keyed on
+  that secret instead of a salt compiled into the binary. Setting it flips both
+  ends of every 3.x master↔exit tunnel, each on its own pull, so expect up to one
+  `reconcile_interval` of downtime per exit. Run `--check-config` BEFORE the
+  restart, not after: a missing or unresolvable key is a startup failure, and
+  `Restart=on-failure` turns that into a crash loop that swapping the binary back
+  does not fix.
 - **Store schema** evolves via `PRAGMA user_version`-tracked migrations
   (append-only). A controller upgrade that adds columns migrates the existing DB
   in place on first open; no manual step.

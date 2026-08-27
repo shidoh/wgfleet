@@ -129,6 +129,8 @@ Every `NOT MIGRATED` line is a client that **loses its tunnel at cutover**:
 | key is not a valid WireGuard key | re-create that client in wg-easy |
 | address is outside the configured pool | fix `address_pool` above |
 | address is already taken | duplicate in wg-easy, delete one |
+| the private key in wg-easy is unusable | re-create that client in wg-easy, then re-run |
+| private and public keys do not match | wg-easy's row is corrupt: delete and re-create that client, then re-run |
 
 Re-run until clean, then:
 
@@ -204,7 +206,12 @@ upgrading the master's kernel module while that image is still in use breaks it:
 1. finish part 3 and confirm it
 2. drop the wg-easy image once you no longer want the rollback
 3. upgrade the master's kernel module to 3.x
-4. only then set `awg3`
+4. only then set `awg3` — and validate before restarting, exactly as in part 3:
+
+```bash
+wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
+systemctl restart wgfleet-controller
+```
 
 ```yaml
         awg3: timers   # off | timers | full
@@ -213,6 +220,22 @@ upgrading the master's kernel module while that image is still in use breaks it:
 **`timers`** — randomises the 3.x timers. Measured against a real 3.1 module: an
 untouched 2.0 client keeps handshaking and passing traffic across rekeys. **No
 client re-imports anything.**
+
+**`full` also needs a fleet secret.** Header protection is keyed on
+`fleet.awg3_key`, and the controller REFUSES TO START without it — so on a night
+when you have already dropped the wg-easy image and handed out every config, a
+missing key takes the control plane down rather than the tunnel up:
+
+```yaml
+fleet:
+  awg3_key: secret://awg3-key   # openssl rand -base64 48
+```
+
+Set it once and never change it. Rotating it re-derives the key on every 3.x
+tunnel: the master↔exit tunnels go dark for up to one reconcile interval each
+(both ends are rendered by one controller but applied by seven agents on their own
+schedules), and every client config in the field becomes invalid at once, exactly
+as if you were flipping `full` again. `timers` needs no secret.
 
 **`full`** — adds header protection. **Every client must re-import before it works
 again.** Do not set it until you can reach every user.

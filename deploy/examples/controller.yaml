@@ -29,8 +29,8 @@ controller:
   # the mgmt address — which is exactly why wg-easy's own admin page was reachable.
   # Clients reach it as long as the mgmt subnet is inside their AllowedIPs (see
   # client_awg.route_through_cidrs below).
-  # client_portal: "10.20.0.1:8080"
-  # client_portal_url: "http://10.20.0.1:8080" # exactly what the person types
+  # client_portal: "10.20.25.254:8080"
+  # client_portal_url: "http://10.20.25.254:8080" # exactly what the person types
   staleness_after: 3m # demote silent Ready/Reconciling nodes to Degraded after this (0=default, <0 disables)
   # session_ttl: sliding lifetime of a Web UI login session. 0/unset ⇒ 7 days.
   # session_ttl: 168h

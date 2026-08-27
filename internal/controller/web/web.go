@@ -1140,6 +1140,13 @@ func wgEasyURL(node domain.Node, spec domain.NodeSpec) string {
 	if node.Role != domain.RoleMaster || node.MgmtAddr == "" {
 		return ""
 	}
+	// Not once the agent owns the client interface. The handover removes the
+	// wg-easy container, so on a migrated master this link pointed at nothing and
+	// hung — three rows above the AWG CLIENTS link that replaced it. It was the
+	// most visible surviving artefact of the old world.
+	if spec.Master != nil && spec.Master.ClientWG != nil {
+		return ""
+	}
 	host := node.MgmtAddr
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h

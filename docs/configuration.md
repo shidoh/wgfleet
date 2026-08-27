@@ -489,11 +489,11 @@ file fails towards "more protection"; this one fails towards "keep speaking what
 the nodes already speak", because enabling it changes the wire format of a live
 tunnel.
 
-**It does not touch your clients.** Client-facing wg0 is served by wg-easy, which
-has no AmneziaWG 3.0 support at all — its `interfaces_table` carries exactly the
-2.0 parameter set, and the feature request ([wg-easy#2728]) is open with no work
-started. Client configs are therefore unaffected by this key, by construction
-rather than by policy.
+**It governs the master↔exit tunnels only.** The client leg has its own switch —
+`masters[].client_awg.awg3` — with three settings rather than a bool, because its
+two halves cost different things: `timers` keeps every config already in a user's
+hands working, `full` adds header protection and requires every client to
+re-import. See that key, and `fleet.awg3_key`, which both of them need.
 
 ### Before you turn it on
 
