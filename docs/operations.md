@@ -53,6 +53,35 @@ There you **issue** per-client credentials and hand each user one of:
 clients route through the tunnel. See `maintainer notes` #29 for the hard-won
 client-side details (strict-route, DNS split, import formats).
 
+## Break-glass: reaching a node you just cut off
+
+Every dangerous change in this system lands on the master — the firewall, the
+client interface, the NAT — and the master is usually the box you are connected
+*through*. So know the way in that your changes cannot close, before you need it.
+
+**SSH over the ZeroTier mgmt overlay survives every knob in the manifest.** The
+rendered input chain accepts `iifname "zt*"` unconditionally, and that rule sits
+ahead of everything `masters[].whitelist`, `public_udp_ports`, `public_tcp_ports`
+or the AS blacklist can express. The egress leak guard is gated on the exit role
+and cannot touch a master at all.
+
+The SSH port is opened unconditionally too, but **after** the AS-blacklist drop —
+so direct SSH from an address the scanner feed has flagged can be refused while
+the overlay path still works. That asymmetry is the reason the overlay, not the
+public IP, is the escape hatch.
+
+In practice:
+
+- **Keep a second SSH session open** on the master for the whole of any firewall,
+  routing or client-interface change. If the new state locks you out, the old
+  session is still there and `wgfleet-agent --plan` will show you why.
+- **Reach an exit through the master** when its own public path wedges:
+  `ssh <master>` then `ssh root@<exit-mgmt-addr>`.
+- **Have provider console access ready** (VNC/serial) before touching the master's
+  firewall. It is the only path that does not depend on anything in this repo.
+- The agent holds its **last-good spec**: a controller that is down, or refusing a
+  bad manifest, does not take the data plane with it. You have time.
+
 ## Support bundle
 
 A read-only diagnostic archive, for handing a broken fleet to someone who has no

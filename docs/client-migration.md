@@ -18,13 +18,19 @@ The handover is transparent: the agent adopts wg-easy's own interface key, so
 
 ```bash
 cat /sys/module/amneziawg/version    # kernel module generation
+command -v awg awg-quick             # BOTH must be on the HOST — see below
 docker images | grep wg-easy         # must be present locally — rollback needs it
 ls -l /etc/wireguard/wg-easy.db      # must exist, holds your clients
+docker restart wg-easy && sleep 3 && docker logs --tail 20 wg-easy   # rollback must actually work
 
 wgfleet-controller --config /etc/wgfleet/controller.yaml --backup /root/pre-migration.age
 cp /etc/wireguard/wg-easy.db /root/wg-easy.db.bak
 cp /var/lib/wgfleet/state.db  /root/state.db.bak
 ```
+
+**`awg` / `awg-quick` on the HOST.** wg-easy shipped its own copies inside the
+container, so a master that only ever ran wg-easy may never have needed them
+outside it. Without them the handover in part 3 cannot raise the interface at all.
 
 **Module 3.x** ⇒ your wg-easy is already broken and will fail to raise the
 interface on its next container restart (its bundled tools are generation 1).
@@ -70,11 +76,27 @@ Verify:
 ```bash
 wgfleet-controller --version                           # wire-contract version 8
 docker ps --filter name=wg-easy --format '{{.Status}}'  # uptime unchanged
+
+# THE CHECK THAT DECIDES WHETHER PART 3 WORKS. Run it here, not later.
+awg show wg0 public-key                    # what wg-easy is serving right now
+awg pubkey < /etc/wgfleet/client-wg.key    # what the agent will serve
 ```
 
-**Nothing about the client leg changed.** `client_awg.managed` defaults off and
-the rendered compose file is byte-identical, so the wg-easy container is not
-recreated. You may stop here indefinitely.
+**These two MUST match.** Every client config in the field pins the first value;
+the handover works precisely because the agent adopts it instead of minting its
+own. If they differ, the agent generated a fresh identity — and since an existing
+key file wins on every later pass, nothing will ever re-adopt. Nothing looks wrong
+until part 3, at which point every client stops handshaking at once.
+
+If they differ: stop. Check that `/etc/wireguard/wg-easy.db` is where the agent
+looks, `rm /etc/wgfleet/client-wg.key`, restart the agent, and re-run the check.
+The agent also logs its identity once per start and reports a mismatch as an
+ERROR — `journalctl -u wgfleet-agent | grep -i "client interface identity"`.
+
+**Nothing else about the client interface changed.** `client_awg.managed` defaults
+off and the rendered compose file is byte-identical, so the wg-easy container is
+not recreated. You may stop here indefinitely — but do not skip the key check,
+because the decision it verifies has already been made by the time you read this.
 
 ---
 
@@ -125,8 +147,16 @@ interface and the imported credentials are inert.
         managed: true
 ```
 
-Reload the controller. On the master's next reconcile the agent claims the
-interface, adopts wg-easy's key and raises it with the imported peers.
+Validate and restart the controller (there is no reload signal — `systemctl
+reload` does not apply, and `kill -HUP` terminates it):
+
+```bash
+wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
+systemctl restart wgfleet-controller
+```
+
+On the master's next reconcile the agent claims the interface, adopts wg-easy's
+key and raises it with the imported peers.
 
 ```bash
 awg show wg0 public-key     # SAME key as before the cutover
@@ -137,9 +167,12 @@ ls /etc/amnezia/amneziawg/wg0.conf.claim
 Then connect from a device whose config you did **not** touch. That is the test
 that matters.
 
-**The wg-easy container is removed in this same pass** — after the interface is
-up, never before. Your rollback is not the container; it is wg-easy's database
-plus its image, both checked in pre-flight.
+**wg-easy is removed one pass LATER**, not in the pass that raises our interface.
+The agent retires it only after a subsequent pass has OBSERVED the interface up
+and serving the right peers — so a bring-up that fails leaves the fallback exactly
+where it was. Expect the container to linger for one reconcile interval; that is
+the design, not a stuck teardown. Your rollback is not the container anyway; it is
+wg-easy's database plus its image, both checked in pre-flight.
 
 ### Rollback
 
@@ -149,9 +182,15 @@ Only if the module is 1.x or 2.x.
         managed: false
 ```
 
-Reload, wait one reconcile. The agent releases the interface, compose puts
-wg-easy back and recreates it from the local image; it reads its untouched
-database and takes the leg again. Imported credentials stay in the store.
+Validate, restart, wait one reconcile. The agent releases the interface, compose
+puts wg-easy back and recreates it from the local image; it reads its untouched
+database and takes the client interface again. Imported credentials stay in the
+store.
+
+**Anyone you issued AFTER the cutover exists only in the controller's store.**
+wg-easy has never heard of them, so a rollback strands exactly those people — they
+are not in the database it reads. Rollback is free only until you issue the first
+new client; after that, plan to re-hand-out those configs by hand.
 
 Archive `wg-easy.db` off the box — it is what a rollback reads.
 
@@ -176,8 +215,20 @@ untouched 2.0 client keeps handshaking and passing traffic across rekeys. **No
 client re-imports anything.**
 
 **`full`** — adds header protection. **Every client must re-import before it works
-again.** Do not set it until you can reach every user. Portal links are permanent
-and render on demand, so this is one announcement, not a redistribution.
+again.** Do not set it until you can reach every user.
+
+**The portal cannot carry this one.** It binds a mgmt/client-pool address, so it
+is reachable only from inside the tunnel — and after the flip nobody is inside the
+tunnel. Fetching a link *before* the flip is no better: the portal renders from the
+live spec, so it hands out the pre-3.x config. The order that works is:
+
+1. download every client's `.conf` from the Web UI and send them out, telling
+   people to import **after** you say so;
+2. wait for confirmation from each person;
+3. only then set `full` and announce it.
+
+It is not reversible for them either — going back to `timers` breaks the config
+they just imported.
 
 Requires `managed: true` and a 3.x module. With an older module the agent refuses
 the config and keeps the last-good one rather than taking the leg down.

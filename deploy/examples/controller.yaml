@@ -15,6 +15,17 @@ controller:
   webui: "10.20.25.254:9000" # read-only dashboard; bind mgmt/ZT only (empty disables)
   store: "/var/lib/wgfleet/state.db"
   metrics: "10.20.25.254:9300" # Prometheus /metrics; bind mgmt/ZT only (empty disables)
+  # The client self-service portal: a per-credential link a person can open to
+  # re-download their own config or QR, so a lost profile is not a message to you.
+  # Both keys or neither — a bound portal with no published URL is startup-fatal,
+  # because the Web UI would have no link to hand out.
+  #
+  # It serves WireGuard PRIVATE KEYS over a token in a URL, so unlike the Web UI it
+  # may never bind a public address — WGFLEET_ALLOW_PUBLIC_BIND does not exempt it.
+  # Bind it where CLIENTS can reach it: the master's own address inside the client
+  # pool, and open that port to clients via masters[].client_admin_ports below.
+  # client_portal: "10.73.0.1:8080"
+  # client_portal_url: "http://10.73.0.1:8080" # exactly what the person types
   staleness_after: 3m # demote silent Ready/Reconciling nodes to Degraded after this (0=default, <0 disables)
   # session_ttl: sliding lifetime of a Web UI login session. 0/unset ⇒ 7 days.
   # session_ttl: 168h

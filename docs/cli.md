@@ -19,10 +19,13 @@ Every flag on both binaries. For what to *do* with them see
 | `--issue-node <id>` | | issue an mTLS bundle (`node.crt`/`node.key`/`ca.crt`) for a node, then exit |
 | `--issue-out <dir>` | `pki/<id>` | output dir for `--issue-node` |
 | `--provision <node>` | | SSH-bootstrap the named fleet node, then exit |
-| `--plan` | | with `--provision` or `--upgrade-agent`: dry-run, change nothing |
+| `--plan` | | with `--provision`, `--upgrade-agent`, `--rolling-upgrade` or `--import-wg-easy`: dry-run, change nothing |
 | `--agent-bin <path>` | (from config) | with `--provision` or `--upgrade-agent`: agent binary to install |
 | `--controller-endpoint <addr>` | (from config) | with `--provision`: endpoint the agent will dial |
 | `--upgrade-agent <node>` | | roll the agent binary forward over SSH on the named node, then exit |
+| `--rolling-upgrade` | | roll every outdated EXIT agent forward one node at a time, reserve tier first, then exit. A node whose SSH will not open is left alone rather than downgraded |
+| `--import-wg-easy <master>` | | copy the named master's wg-easy client credentials into the controller store, then exit. Run it ON the master (it reads a local SQLite file). Safe with the controller live; use `--plan` first, and read [client-migration.md](client-migration.md) before either |
+| `--wg-easy-db <path>` | `/etc/wireguard/wg-easy.db` | with `--import-wg-easy`: where wg-easy's database lives |
 | `--backup <out>` | | snapshot controller (+co-located master) state to an age-encrypted archive at `<out>`, then exit |
 | `--restore <in>` | | restore controller state from an age-encrypted archive `<in>`, then exit (controller must be stopped) |
 | `--age-recipient <rcpt>` | | with `--backup`: encrypt to this age recipient instead of prompting for a passphrase |

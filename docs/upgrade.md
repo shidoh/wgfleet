@@ -61,16 +61,29 @@ plane refusing service does not break the data plane.
 
 2. **Upgrade the controller.** Replace its binary and restart it. While it is
    down, agents keep reconciling their last spec (and keep failover working).
+   Validate the manifest first — a typo makes the controller exit at startup, and
+   `Restart=on-failure` turns that into a crash loop of the whole control plane
+   that swapping the binary back does **not** fix:
+
+   ```
+   wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
+   ```
+
    - If the wire version did **not** change, agents keep talking to it as normal.
-   - If the wire version **did** change, agents now report an older wire version;
-     the controller refuses them and (since they are "too old") **auto-upgrades
-     each one** as it checks in. You can also drive upgrades explicitly (next
-     step) instead of waiting.
+   - If the wire version **did** change, what happens depends on whether the OLD
+     version is still supported. Agents are auto-upgraded only when the controller
+     considers them INCOMPATIBLE — i.e. below `MinSupportedWire`. A bump that keeps
+     the previous version supported upgrades nothing on its own; those agents keep
+     running happily on the old contract until you roll them (next step).
 
 3. **Roll the agents.** Three equivalent ways — pick one:
 
-   - **Automatic:** do nothing; the gate auto-upgrades each too-old agent on its
-     next `Register` (every `reconcile_interval`, default 30s).
+   - **Automatic — only below `MinSupportedWire`:** an agent the controller
+     considers incompatible is upgraded on its next `Register` (every
+     `reconcile_interval`, default 30s). A merely *older but still supported*
+     agent is never touched this way, so do not wait for something that will not
+     happen — check `wgfleet_node_agent_info` or the fleet page, and if the
+     versions are not moving, roll them explicitly.
    - **Per node, explicitly:**
 
      ```
@@ -113,6 +126,20 @@ plane refusing service does not break the data plane.
 - **Store schema** evolves via `PRAGMA user_version`-tracked migrations
   (append-only). A controller upgrade that adds columns migrates the existing DB
   in place on first open; no manual step.
+  **Rolling the controller BACK is only safe from a build that carries this
+  paragraph.** An older controller stamps the schema version down to its own
+  count, and until the migrations were made replayable, rolling forward again
+  then failed permanently on an `ALTER TABLE` that had already run — a crash loop
+  with no way out but hand-editing `user_version`. Current builds detect a
+  database written by a newer controller and refuse it with a clear message
+  instead, and heal a stamp an older one lowered. If you are rolling back to a
+  release older than that, take a backup first (`--backup`) and expect to restore
+  it rather than to roll forward.
 - **Masters** upgrade exactly like exits — restarting the master agent does not
-  restart its mihomo/wg-easy containers (those only restart on a config change),
-  so client sessions are unaffected.
+  restart its mihomo container (containers only restart on a config change), so
+  client sessions are unaffected.
+  **One exception:** on a master where `client_awg.managed` has just been turned
+  on, the first pass after the upgrade takes the client interface over from
+  wg-easy and, a pass later, removes the wg-easy container. That is a migration,
+  not an upgrade, and it has its own procedure and its own rollback — read
+  [client-migration.md](client-migration.md) BEFORE upgrading such a master.
