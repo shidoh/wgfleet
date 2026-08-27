@@ -418,3 +418,83 @@ func section(body, marker string) string {
 	}
 	return body[start:end]
 }
+
+// The 10-second poll must never be able to delete the thing it is refreshing.
+//
+// It used to re-fetch the whole page with hx-select=".panel-credentials". Two of
+// this page's three branches — the failure one and the not-a-master one — render
+// no such element, so a transient store error made the selector match nothing;
+// htmx swapped in the empty string and outerHTML removed the panel, the LIVE chip
+// and the poll itself. HTTP 200, no error on screen (its text was in the body
+// hx-select discarded), and the client list simply gone until a manual reload.
+func TestWGClientsPanelAnswers204RatherThanAnEmptyBody(t *testing.T) {
+	clients := []domain.WGClient{
+		{ID: "a", Name: "laptop", Address: "10.80.0.2/32", PublicKey: "pub-a", Enabled: true},
+	}
+	// The healthy poll returns the panel, and only the panel.
+	h, _ := wgClientHandler(t, managedMasterSpec(), &clients)
+	res, body := get(t, h, "/nodes/master-xa-1/wg-clients/panel")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if !strings.Contains(body, "panel-credentials") || !strings.Contains(body, "laptop") {
+		t.Fatalf("the fragment is not the credentials panel:\n%s", body)
+	}
+	if strings.Contains(body, "<html") || strings.Contains(body, "ISSUE CLIENT") {
+		t.Errorf("the fragment endpoint rendered the whole page:\n%s", body)
+	}
+
+	// Every branch that has no panel to give must answer 204, never a 200 with
+	// nothing in it.
+	for name, broken := range map[string]stubRenderer{
+		"spec render fails": {spec: managedMasterSpec(), err: errors.New("database is locked")},
+		"not a master":      {spec: domain.NodeSpec{Role: domain.RoleExit}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			hb, st := newTestHandler(t, broken)
+			seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+			res, body := get(t, hb, "/nodes/master-xa-1/wg-clients/panel")
+			if res.StatusCode != http.StatusNoContent {
+				t.Fatalf("status = %d, want 204 (htmx leaves the panel alone); body:\n%s", res.StatusCode, body)
+			}
+			if strings.TrimSpace(body) != "" {
+				t.Errorf("204 carried a body:\n%s", body)
+			}
+		})
+	}
+}
+
+// A client link that cannot work yet must not be offered.
+//
+// The portal renders a config on demand from the live spec, so before the
+// handover the link resolves to its "this link is no longer working — ask whoever
+// sent it for a new one" page. Offering it under the label "send this to the
+// person" hands somebody advice that is wrong in a way that makes things worse:
+// the natural response is to reissue, which changes nothing.
+func TestWGClientLinkIsWithheldUntilItWorks(t *testing.T) {
+	clients := []domain.WGClient{{ID: "a", Name: "laptop", Address: "10.80.0.2/32", PublicKey: "pub-a", Enabled: true}}
+
+	// Before the handover: no portal link anywhere on the page.
+	h, st := newTestHandler(t, stubRenderer{
+		spec:      domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}},
+		wgClients: &clients,
+	})
+	h.portalBase = "http://10.80.0.1:8080"
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster,
+		PublicIP: "203.0.113.1", State: domain.StateReady})
+	_, body := get(t, h, "/nodes/master-xa-1/wg-clients")
+	if strings.Contains(body, "/c/a") {
+		t.Error("a client link was offered before the agent owns the interface")
+	}
+	if !strings.Contains(body, "goes live once") {
+		t.Errorf("nothing explains why there is no link yet:\n%s", body)
+	}
+
+	// After it: the link is there.
+	h2, _ := wgClientHandler(t, managedMasterSpec(), &clients)
+	h2.portalBase = "http://10.80.0.1:8080"
+	_, body = get(t, h2, "/nodes/master-xa-1/wg-clients")
+	if !strings.Contains(body, "/c/a") {
+		t.Errorf("a working client link was withheld:\n%s", body)
+	}
+}

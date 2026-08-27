@@ -125,11 +125,47 @@ func peerState(reported bool, hs time.Time) (label, kind string) {
 
 // handleWGClients renders the master's client-WG credential page.
 func (h *Handler) handleWGClients(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	node, err := h.store.GetNode(r.Context(), id)
+	data, err := h.wgClientsView(w, r)
 	if err != nil {
 		httpError(w, "load node", err)
 		return
+	}
+	h.render(w, h.wgClientsTmpl, "layout", data)
+}
+
+// handleWGClientsPanel answers the 10-second poll with the credentials panel and
+// nothing else.
+//
+// It exists because the poll used to re-fetch the WHOLE page and pick the panel
+// out of it with hx-select. The three-way split this page is built on — failure,
+// not-a-master, normal — means two of those responses contain no panel at all, so
+// one transient store error made the selector match nothing; htmx swapped in the
+// empty string and outerHTML removed the panel, its LIVE chip and the poll itself.
+// The operator saw a page that had silently lost its client list, with no error
+// anywhere, until they reloaded.
+//
+// So this endpoint never renders a partial answer. It either has the panel or it
+// answers 204, which htmx treats as "nothing to do" — the poll stays alive and
+// the next tick tries again. Rendering the whole page and discarding 80% of it
+// was also the bulk of the cost of leaving this tab open all day.
+func (h *Handler) handleWGClientsPanel(w http.ResponseWriter, r *http.Request) {
+	data, err := h.wgClientsView(w, r)
+	if err != nil || data.Err != "" || data.NotMaster {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	h.render(w, h.wgClientsTmpl, "credentials-panel", data)
+}
+
+// wgClientsView builds the page's view model. The error return is reserved for
+// "cannot even identify the node"; everything else is reported inside the model,
+// because the page has a designed treatment for each case and the fragment
+// endpoint needs to tell them apart.
+func (h *Handler) wgClientsView(w http.ResponseWriter, r *http.Request) (wgClientsData, error) {
+	id := r.PathValue("id")
+	node, err := h.store.GetNode(r.Context(), id)
+	if err != nil {
+		return wgClientsData{}, err
 	}
 	user, _ := h.currentUser(r)
 	data := wgClientsData{
@@ -145,20 +181,17 @@ func (h *Handler) handleWGClients(w http.ResponseWriter, r *http.Request) {
 	spec, err := h.renderer.RenderNodeSpec(r.Context(), id)
 	if err != nil {
 		data.Err = "Cannot render this node's spec: " + err.Error()
-		h.render(w, h.wgClientsTmpl, "layout", data)
-		return
+		return data, nil
 	}
 	if spec.Master == nil {
 		data.NotMaster = true
-		h.render(w, h.wgClientsTmpl, "layout", data)
-		return
+		return data, nil
 	}
 
 	clients, err := h.renderer.ListWGClients(r.Context(), id)
 	if err != nil {
 		data.Err = "Cannot list credentials: " + err.Error()
-		h.render(w, h.wgClientsTmpl, "layout", data)
-		return
+		return data, nil
 	}
 
 	cw := spec.Master.ClientWG
@@ -202,7 +235,7 @@ func (h *Handler) handleWGClients(w http.ResponseWriter, r *http.Request) {
 		row.State, row.StateKind = peerState(reported, p.LastHandshake)
 		data.Clients = append(data.Clients, row)
 	}
-	h.render(w, h.wgClientsTmpl, "layout", data)
+	return data, nil
 }
 
 // clientPeerStatus returns the last reported per-peer status keyed by public key.

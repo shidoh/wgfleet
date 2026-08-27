@@ -156,7 +156,7 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	if err != nil {
 		return nil, fmt.Errorf("web: parse clients templates: %w", err)
 	}
-	wgClientsTmpl, err := parsePage("templates/layout.html", "templates/wgclients.html")
+	wgClientsTmpl, err := parsePage("templates/layout.html", "templates/wgclients.html", "templates/wgclients_panel.html")
 	if err != nil {
 		return nil, fmt.Errorf("web: parse wg clients templates: %w", err)
 	}
@@ -194,6 +194,7 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	h.mux.HandleFunc("GET /nodes/{id}/clients/{name}/clash", h.handleClientClash)
 	// Client-facing WireGuard credential management (master only).
 	h.mux.HandleFunc("GET /nodes/{id}/wg-clients", h.handleWGClients)
+	h.mux.HandleFunc("GET /nodes/{id}/wg-clients/panel", h.handleWGClientsPanel)
 	h.mux.HandleFunc("POST /nodes/{id}/wg-clients/issue", h.handleWGClientIssue)
 	h.mux.HandleFunc("POST /nodes/{id}/wg-clients/{client}/revoke", h.handleWGClientRevoke)
 	h.mux.HandleFunc("POST /nodes/{id}/wg-clients/{client}/mute", h.handleWGClientToggle(false))
