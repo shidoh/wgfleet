@@ -50,7 +50,9 @@
 
 <div class="section-head">
   <span class="section-label">FLEET</span>
-  <span class="section-sub">{{len .Nodes}} node{{if ne (len .Nodes) 1}}s{{end}} · master ↔ exit routing · mihomo load balancer</span>
+  {{/* No node count here: the topbar carries it on every page, and the summary
+       chips below add up to it a third time. */}}
+  <span class="section-sub">master ↔ exit routing · mihomo load balancer</span>
   <span class="spacer"></span>
   <span class="live"><span class="statusdot pulse"></span>LIVE</span>
 </div>

@@ -11,7 +11,7 @@
     {{if and .HasStatus .Status.EgressBlocked}}<span class="subbadge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
     {{if and .HasStatus .Status.EgressThroughputDegraded}}<span class="subbadge slow" title="Egress throughput below the floor — auto-suspended from the load balancer (ADR-0021)"><span class="led"></span>low egress throughput</span>{{end}}
     {{if .HasStatus}}{{$e := .Status.ActiveEgress}}{{if and $e (ne $e "warp")}}<span class="subbadge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{$e}}</span>{{end}}{{end}}
-    {{if .WireSkew}}<span class="subbadge blocked" title="{{.WireSkew}}"><span class="led"></span>version skew</span>{{end}}
+    {{if .WireSkew}}<span class="subbadge skew" title="{{.WireSkew}}"><span class="led"></span>version skew</span>{{end}}
   </span>
   {{end}}
 </div>
@@ -238,7 +238,6 @@
     {{if .Node.RealityPublicKey}}<dt>REALITY key</dt><dd class="dim">{{.Node.RealityPublicKey}}</dd>{{end}}
     <dt>Agent</dt><dd class="dim">{{if .Node.AgentVersion}}{{.Node.AgentVersion}} (wire v{{.Node.WireVersion}}){{else}}— (not reported){{end}}</dd>
     <dt>Created</dt><dd class="dim">{{absTime .Node.CreatedAt}}</dd>
-    <dt>Last seen</dt><dd class="dim">{{relTime .Node.LastSeen}}</dd>
   </dl>
   {{if or .MetricsURL .WGEasyURL .MihomoURL}}
   <div class="rule"></div>
@@ -259,8 +258,10 @@
   <span class="live" title="Auto-refreshing every 5s"><span class="statusdot pulse"></span>LIVE</span>
 </div>
 {{if .HasStatus}}
+{{/* No State row: the pill in the page header above says it, larger and in colour,
+     and both were visible at once. No "Last seen" in INVENTORY either — "Reported"
+     below is the same fact from the same report. */}}
 <dl class="kv">
-  <dt>State</dt><dd class="strong">{{.Status.State}}</dd>
   {{if eq (lower .Node.Role) "exit"}}<dt>Egress IP</dt><dd>{{or .Status.EgressIP "—"}}</dd>{{end}}
   <dt>Last handshake</dt><dd class="dim">{{relTime .Status.LastHandshake}}</dd>
   <dt>Reported</dt><dd class="dim">{{relTime .Status.ReportedAt}}</dd>

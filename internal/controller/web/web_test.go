@@ -797,7 +797,9 @@ func TestTransportSwitchAction(t *testing.T) {
 
 	_, body := get(t, h, "/nodes/exit-de-1")
 	for _, want := range []string{
-		"TRANSPORT", "AmneziaWG", "REALITY", "www.microsoft.com",
+		// "AWG", not "AmneziaWG": the label was shortened so the primary transport
+		// is not twice the width of its fallback in a 10.5px badge.
+		"TRANSPORT", "AWG", "REALITY", "www.microsoft.com",
 		"/nodes/exit-de-1/transport/reality-xhttp",
 	} {
 		if !strings.Contains(body, want) {

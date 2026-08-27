@@ -1324,7 +1324,10 @@ func funcMap() template.FuncMap {
 			case domain.TransportRealityXHTTP:
 				return "REALITY"
 			case domain.TransportAWG:
-				return "AmneziaWG"
+				// "AWG", not "AmneziaWG": it sits in a 10.5px badge beside REALITY, and
+				// the long form made the fleet's primary transport twice the width of
+				// its fallback while saying the same thing.
+				return "AWG"
 			default:
 				return string(t)
 			}
