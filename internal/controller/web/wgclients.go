@@ -34,12 +34,15 @@ type wgClientsData struct {
 	Flash     string
 	// FlashOK is the counterpart nobody had: a one-shot confirmation that the last
 	// action worked, so the page can close its loop instead of silently reloading.
-	FlashOK  string
-	CSRF     string
-	NodeID   string
-	NodeName string
-	Managed  bool // the agent owns this master's client interface
-	Ready    bool // endpoint + published key present, so configs can be built
+	FlashOK string
+	// IfaceDown is non-empty when the master's own client-interface health check is
+	// failing: every client below is offline for THAT reason, not their own.
+	IfaceDown string
+	CSRF      string
+	NodeID    string
+	NodeName  string
+	Managed   bool // the agent owns this master's client interface
+	Ready     bool // endpoint + published key present, so configs can be built
 	// WaitingForKey narrows Managed-but-not-Ready to the one case where waiting
 	// actually helps. Without it the issue panel tells an operator to wait for a
 	// reconcile pass that will never supply a public_ip.
@@ -222,6 +225,9 @@ func (h *Handler) wgClientsView(w http.ResponseWriter, r *http.Request) (wgClien
 	}
 
 	data.PortalBase = h.portalBase
+	if data.Managed {
+		data.IfaceDown = h.clientInterfaceDown(r, id)
+	}
 	peers := h.clientPeerStatus(r, id)
 	for _, c := range clients {
 		row := wgClientRow{
@@ -244,6 +250,27 @@ func (h *Handler) wgClientsView(w http.ResponseWriter, r *http.Request) (wgClien
 // clientPeerStatus returns the last reported per-peer status keyed by public key.
 // A node that has not reported yet simply yields an empty map — the page then
 // shows credentials without live columns rather than failing.
+// clientInterfaceDown reports the master's own client-interface health check when
+// it is failing. It is the difference between "these forty people are offline" and
+// "this one interface is down", which the per-client chips cannot express: each of
+// them is individually a fact, not a fault, and forty calm grey chips under a
+// pulsing green LIVE badge is the page's most misleading possible state.
+func (h *Handler) clientInterfaceDown(r *http.Request, nodeID string) string {
+	st, err := h.store.GetStatus(r.Context(), nodeID)
+	if err != nil {
+		return ""
+	}
+	for _, c := range st.Checks {
+		if strings.HasPrefix(c.Name, "client-wg") && !c.OK {
+			if c.Detail != "" {
+				return c.Detail
+			}
+			return "the agent reports its client interface is not up"
+		}
+	}
+	return ""
+}
+
 func (h *Handler) clientPeerStatus(r *http.Request, nodeID string) map[string]domain.ClientPeerStatus {
 	st, err := h.store.GetStatus(r.Context(), nodeID)
 	if err != nil {

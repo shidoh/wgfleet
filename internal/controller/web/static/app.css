@@ -189,6 +189,15 @@ body {
   }
 }
 
+/* Around twenty elements in this console carry a title= and NOTHING marked them,
+   so the explanations were discoverable only by accident. The portal solved this
+   in one rule; this is that rule. Excluded where the element is already obviously
+   interactive (a button, a link) or where the underline would fight a border. */
+[title]:not(button):not(a):not(form):not(.state-pill):not(.subbadge):not(.xport):not(.role):not(.live) {
+  border-bottom: 1px dotted var(--text-dim);
+  cursor: help;
+}
+
 /* Consistent keyboard focus ring for all interactive surfaces.
    No border-radius here: an outline already follows the element's own corners in
    every current engine, so setting one only forced 8px and 9px controls to square
@@ -1071,7 +1080,16 @@ h3.client-name { margin: 0; display: flex; align-items: center; gap: var(--sp-3)
    permanently strands a person. */
 .card-actions { display: flex; gap: var(--sp-3); flex: none; align-items: center; }
 .card-actions form { margin: 0; }
-.card-actions .revoke-form { margin-left: var(--sp-5); }
+/* Separated by a rule, not by distance. Resume access is GREEN — the console's
+   affirmative colour — and Revoke sat 24px from it: two thumb-sized targets of the
+   same weight, one reversible and one not. A visible divider says "different kind
+   of thing" in a way that a slightly larger gap cannot, and it survives the row
+   wrapping on a narrow screen, which a margin does not. */
+.card-actions .revoke-form {
+  margin-left: var(--sp-6);
+  padding-left: var(--sp-6);
+  border-left: 1px solid var(--border-rule);
+}
 
 /* The issue form is a ROW, not the login card's stacked column. .auth-form is
    built for .auth-card (max-width 380px); reused in a grid panel it stretched the
@@ -1395,6 +1413,20 @@ details.hand-out[open] > .client-cfg { margin-top: var(--sp-5); }
   border-bottom-color: var(--blue);
 }
 
+/* The keyboard equivalent, written the same way and for the same reason. The
+   radios are 1px and opacity:0 but still focusable, so tabbing into this group
+   used to land on an invisible control: the operator's focus was somewhere on the
+   page with nothing on screen to say where. */
+.spec-tabs:has(#sp-details:focus-visible) .spec-tab[for="sp-details"],
+.spec-tabs:has(#sp-t0:focus-visible) .spec-tab[for="sp-t0"],
+.spec-tabs:has(#sp-t1:focus-visible) .spec-tab[for="sp-t1"],
+.spec-tabs:has(#sp-t2:focus-visible) .spec-tab[for="sp-t2"],
+.spec-tabs:has(#sp-raw:focus-visible) .spec-tab[for="sp-raw"] {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+  border-radius: var(--r-badge);
+}
+
 /* Details — one CARD per subject.
    Capping the width was not enough: eight groups of small, equally-weighted text
    with nothing but a gap between them read as one undifferentiated wall. Every
@@ -1527,6 +1559,19 @@ details.hand-out[open] > .client-cfg { margin-top: var(--sp-5); }
   .spec-summary-row,
   .spec-row { grid-template-columns: 1fr; gap: var(--sp-1); }
   .spec-groups { grid-template-columns: 1fr; }
+  /* .kv collapses for the same reason .spec-row already did, and it was left out.
+     At 375px the term column took 110px of the width and left 123px for the value,
+     so "1.2 GB ↓ / 88 MB ↑" broke in the middle of the number. */
+  .kv { grid-template-columns: 1fr; gap: var(--sp-1); }
+  .kv dt { margin-top: var(--sp-2); }
+}
+
+/* A finger is not a mouse pointer: on a touch device every control gets the 44px
+   the platform guidelines ask for, without inflating the dense desktop layout the
+   console is actually designed around. */
+@media (pointer: coarse) {
+  .btn, .seg, .input, .section-link, .backup-summary, .rollout-summary,
+  details.cfg-direct > summary { min-height: 44px; }
 }
 
 /* ============================================================

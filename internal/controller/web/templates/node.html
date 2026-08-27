@@ -65,8 +65,13 @@
   </form>
   {{else}}
   {{/* Gated on Drain: tearing down a node still in the load balancer drops live
-       client traffic. Drain first (the button above), then this enables. */}}
-  <button type="button" class="btn ghost-amber" disabled title="Take the node out of routing first (Drain), then decommission">Decommission</button>
+       client traffic. Drain first (the button above), then this enables.
+       The reason sits on the WRAPPER, not on the button: browsers do not show a
+       title on a disabled control, so the explanation for why it is disabled was
+       the one explanation nobody could read. */}}
+  <span title="Take the node out of routing first (Drain), then decommission">
+    <button type="button" class="btn ghost-amber" disabled>Decommission</button>
+  </span>
   {{end}}
   {{if .CanDelete}}
   <form method="post" action="/nodes/{{.Node.ID}}/delete" onsubmit="return lockAction(this)"
@@ -76,8 +81,11 @@
   </form>
   {{else}}
   {{/* Delete is gated on Decommission: enforce the drain→decommission→delete order
-       the copy implies, not just a confirm() the operator can blow past. */}}
-  <button type="button" class="btn ghost-red" disabled title="Decommission and tear down first">Delete</button>
+       the copy implies, not just a confirm() the operator can blow past. Reason on
+       the wrapper, for the same reason as Decommission above. */}}
+  <span title="Decommission and tear down first">
+    <button type="button" class="btn ghost-red" disabled>Delete</button>
+  </span>
   {{end}}
   {{end}}
 </div>

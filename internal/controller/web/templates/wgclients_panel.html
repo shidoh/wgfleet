@@ -34,6 +34,13 @@
     <span class="live" title="Auto-refreshing every 10s"><span class="statusdot pulse"></span>LIVE</span>
     {{end}}
   </div>
+  {{/* One fault, stated once — not forty calm grey chips under a pulsing LIVE
+       badge. Each "not reported" chip is individually a fact rather than a fault,
+       which is right per client and exactly wrong in aggregate. */}}
+  {{if .IfaceDown}}
+  <p class="error-note" role="alert">⚠ This master's client interface is not up, so every client below is
+  offline for that reason rather than their own — {{.IfaceDown}}. Check the node's status.</p>
+  {{end}}
   {{if not .Managed}}
   <p class="panel-note">Not in force yet — wg-easy still owns this interface. These clients start working after the handover.</p>
   {{end}}

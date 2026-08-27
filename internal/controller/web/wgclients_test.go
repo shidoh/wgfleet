@@ -563,3 +563,43 @@ func TestIssueLandsOnTheNewCredential(t *testing.T) {
 		t.Errorf("flash %q does not name what was issued", raw)
 	}
 }
+
+// Forty "not reported" chips under a pulsing LIVE badge is the page's most
+// misleading state: each chip is individually a fact rather than a fault, and in
+// aggregate they are one fault nobody names.
+func TestWGClientsPageNamesADownInterfaceOnce(t *testing.T) {
+	clients := []domain.WGClient{
+		{ID: "a", Name: "laptop", Address: "10.80.0.2/32", PublicKey: "pub-a", Enabled: true},
+		{ID: "b", Name: "phone", Address: "10.80.0.3/32", PublicKey: "pub-b", Enabled: true},
+	}
+	h, node := wgClientHandler(t, managedMasterSpec(), &clients)
+	if err := h.store.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: node.ID,
+		State:  domain.StateDegraded,
+		Checks: []domain.HealthCheck{
+			{Name: "client-wg-owned", OK: false, Detail: "wg0 is not up"},
+		},
+	}); err != nil {
+		t.Fatalf("put status: %v", err)
+	}
+
+	_, body := get(t, h, "/nodes/master-xa-1/wg-clients")
+	if !strings.Contains(body, "client interface is not up") {
+		t.Errorf("a down interface is not named anywhere:\n%s", body)
+	}
+	if !strings.Contains(body, "wg0 is not up") {
+		t.Error("the agent's own detail is not passed through")
+	}
+
+	// And a healthy interface must not raise it.
+	if err := h.store.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: node.ID,
+		State:  domain.StateReady,
+		Checks: []domain.HealthCheck{{Name: "client-wg-owned", OK: true}},
+	}); err != nil {
+		t.Fatalf("put status: %v", err)
+	}
+	if _, body := get(t, h, "/nodes/master-xa-1/wg-clients"); strings.Contains(body, "client interface is not up") {
+		t.Error("the banner shows on a healthy interface")
+	}
+}
