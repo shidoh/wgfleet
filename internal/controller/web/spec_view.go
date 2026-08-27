@@ -534,6 +534,23 @@ func redactSpec(s domain.NodeSpec) domain.NodeSpec {
 			cv.Clients = cs
 			m.ClientVLESS = &cv
 		}
+		if m.ClientWG != nil {
+			cw := *m.ClientWG
+			// Both halves are secret and both were reaching the page: every end
+			// user's preshared key, and the client interface's own header-protection
+			// key — the one value redacted for WGServer and every exit tunnel above.
+			if cw.AWG != nil {
+				a := *cw.AWG
+				a.Shared.HeaderProtectionKey = redactIfSet(a.Shared.HeaderProtectionKey)
+				cw.AWG = &a
+			}
+			peers := append([]domain.WGClientPeer(nil), cw.Clients...)
+			for i := range peers {
+				peers[i].PresharedKey = redactIfSet(peers[i].PresharedKey)
+			}
+			cw.Clients = peers
+			m.ClientWG = &cw
+		}
 		m.Custom = redactCustom(m.Custom)
 		s.Master = &m
 	}

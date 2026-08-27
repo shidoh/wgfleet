@@ -19,6 +19,8 @@ var secretMarkers = map[string]string{
 	"end-user VLESS client UUID":          "LEAK-uuid-client",
 	"mihomo Clash API secret (overrides)": "LEAK-clash-secret",
 	"blocky custom overrides":             "LEAK-dns-override",
+	"client interface AWG 3.0 key":        "LEAK-hpk-client",
+	"end-user WireGuard preshared key":    "LEAK-client-psk",
 }
 
 // loadedSpec is a NodeSpec with every credential field populated with a marker,
@@ -71,6 +73,15 @@ func loadedSpec() domain.NodeSpec {
 				Clients: []domain.VLESSClient{{
 					Name: "phone", ShortID: "ef56",
 					UUID: secretMarkers["end-user VLESS client UUID"],
+				}},
+			},
+			ClientWG: &domain.ClientWGSpec{
+				ListenPort: 443, AddressPool: "10.80.0.0/24", ServerAddress: "10.80.0.1",
+				MTU: 1360, DNS: []string{"10.20.25.254"}, AllowedIPs: []string{"0.0.0.0/0"},
+				AWG: awg(secretMarkers["client interface AWG 3.0 key"]),
+				Clients: []domain.WGClientPeer{{
+					Name: "laptop", PublicKey: "client-pub-not-a-secret", Address: "10.80.0.2/32",
+					PresharedKey: secretMarkers["end-user WireGuard preshared key"],
 				}},
 			},
 		},

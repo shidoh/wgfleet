@@ -198,6 +198,42 @@ func TestRedactConfigCoversClientRenders(t *testing.T) {
 	}
 }
 
+// The 3.x header-protection key is the parameter whose whole point is that an
+// observer does not have it, and it is written into the same files as the other
+// two secrets. The fixture above carries no 3.x block, so it could never have
+// caught this — hence a spec that does.
+func TestRedactConfigMasksHeaderProtectionKey(t *testing.T) {
+	const marker = "SFBLLVNFQ1JFVC1NQVJLRVIAAAAAAAAAAAAAAAAAAAA=" // "HPK-SECRET-MARKER", padded to 32 bytes
+	spec := clientSpec()
+	awg := *spec.AWG
+	awg.Shared.HeaderProtectionKey = marker
+	spec.AWG = &awg
+
+	iface, err := RenderClientInterface(ClientInterfaceInput{Spec: spec, PrivateKey: "SERVERSECRET"})
+	if err != nil {
+		t.Fatalf("render interface: %v", err)
+	}
+	if !strings.Contains(iface, marker) {
+		t.Fatalf("fixture is not exercising the 3.x path — the key never reached the config:\n%s", iface)
+	}
+	if red := RedactConfig(iface); strings.Contains(red, marker) {
+		t.Errorf("redacted interface still leaks the header-protection key:\n%s", red)
+	}
+
+	cfg, err := RenderClientConfig(ClientConfigInput{
+		Spec:            spec,
+		Client:          domain.WGClient{Name: "laptop", Address: "10.80.0.2/32", PrivateKey: "CLIENTSECRET"},
+		ServerPublicKey: "pub",
+		Endpoint:        "203.0.113.1:443",
+	})
+	if err != nil {
+		t.Fatalf("render config: %v", err)
+	}
+	if red := RedactConfig(cfg); strings.Contains(red, marker) {
+		t.Errorf("redacted client config still leaks the header-protection key:\n%s", red)
+	}
+}
+
 // The <c> and <t> CPS tags are kernel-module features that userspace
 // WireGuard-Go cannot parse. domain.ValidateUserspace exists to catch them, but
 // it was only ever wired into the mihomo renderer — so a client leg on the

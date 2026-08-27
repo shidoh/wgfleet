@@ -436,6 +436,28 @@ func TestRedactConfigMasksKeys(t *testing.T) {
 	}
 }
 
+// header-protection-key is the third secret this renderer can emit, and until it
+// was added to the list the plan printed a chacha20 key whose whole purpose is
+// that an observer does not have it.
+func TestRedactConfigMasksHeaderProtectionKey(t *testing.T) {
+	const marker = "SFBLLVNFQ1JFVC1NQVJLRVIAAAAAAAAAAAAAAAAAAAA=" // "HPK-SECRET-MARKER", padded to 32 bytes
+	in := sampleInput()
+	awg := *in.Spec.ExitTunnels[0].AWG
+	awg.Shared.HeaderProtectionKey = marker
+	in.Spec.ExitTunnels[0].AWG = &awg
+
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatalf("RenderConfig() error = %v", err)
+	}
+	if !strings.Contains(out, marker) {
+		t.Fatalf("fixture is not exercising the 3.x path — the key never reached the config:\n%s", out)
+	}
+	if red := RedactConfig(out); strings.Contains(red, marker) {
+		t.Errorf("redaction leaked the header-protection key:\n%s", red)
+	}
+}
+
 func TestRenderRequiresExitsAndKey(t *testing.T) {
 	in := sampleInput()
 	in.PrivateKey = ""

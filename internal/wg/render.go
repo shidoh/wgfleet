@@ -170,7 +170,11 @@ func interfaceAddress(s domain.WGServerSpec) (string, error) {
 	return fmt.Sprintf("%s/%d", addr.String(), prefix.Bits()), nil
 }
 
-var secretLine = regexp.MustCompile(`(?m)^(PrivateKey|PresharedKey)\s*=\s*.*$`)
+// HeaderProtectionKey belongs here as much as the other two: it is a chacha20 key
+// whose entire purpose is that an observer does not have it, and writeAWG3 emits
+// it into the same file. Plan output goes to terminals, CI logs and pasted bug
+// reports.
+var secretLine = regexp.MustCompile(`(?m)^(PrivateKey|PresharedKey|HeaderProtectionKey)\s*=\s*.*$`)
 
 // RedactConfig masks secret key lines for safe display in dry-run output.
 func RedactConfig(cfg string) string {

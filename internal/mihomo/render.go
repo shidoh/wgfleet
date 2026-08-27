@@ -696,12 +696,17 @@ func marshalYAML(v any) (string, error) {
 	return b.String(), nil
 }
 
-// RedactConfig masks secret key lines (private-key, pre-shared-key) for plan output.
+// secretKeys are the config keys whose VALUE must never reach plan output.
+// header-protection-key is one of them for the same reason as the other two: it
+// is a chacha20 key whose whole purpose is that an observer does not have it.
+var secretKeys = []string{"private-key:", "pre-shared-key:", "header-protection-key:"}
+
+// RedactConfig masks secret key lines for plan output.
 func RedactConfig(cfg string) string {
 	var b strings.Builder
 	for _, line := range strings.Split(cfg, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "private-key:") || strings.HasPrefix(trimmed, "pre-shared-key:") {
+		if hasAnyPrefix(trimmed, secretKeys) {
 			indent := line[:len(line)-len(strings.TrimLeft(line, " "))]
 			key := strings.SplitN(trimmed, ":", 2)[0]
 			b.WriteString(indent + key + ": <redacted>\n")
@@ -710,4 +715,13 @@ func RedactConfig(cfg string) string {
 		b.WriteString(line + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n"
+}
+
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
 }
