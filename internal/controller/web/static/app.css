@@ -804,6 +804,10 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   font-family: inherit;
   font-size: var(--fs-body);
   cursor: pointer;
+  /* .btn is used on both <button> and <a> (the config downloads). Without this
+     the anchors kept the browser's underline and read as underlined text inside
+     a button — .section-link already resets it for the same reason. */
+  text-decoration: none;
   padding: 10px 16px;
   border-radius: var(--r-btn);
   color: var(--text-bright);
@@ -907,7 +911,13 @@ h3.client-name { margin: 0; display: flex; align-items: center; gap: 8px; flex-w
    INTERFACE is a nine-row table, so the default grid `stretch` left ~170px of
    dead ground under the form. Scoped — node.html's equal-height pairs rely on
    the global behaviour. */
-.panels-top { align-items: start; }
+.panels-top {
+  align-items: start;
+  /* .shell is a plain block and .panels carries no outer margin, so the grid's
+     18px gap applied only BETWEEN its columns — the row sat flush against the
+     credentials panel below it. Match the internal rhythm. */
+  margin-bottom: 18px;
+}
 
 /* The identity column MUST be allowed to shrink. A client name may legally be 64
    characters with no break opportunity (the input pattern permits it), and
@@ -938,7 +948,29 @@ h3.client-name { margin: 0; display: flex; align-items: center; gap: 8px; flex-w
 
 /* Everything needed only at hand-out is collapsed by default, so ten clients can
    be scanned without scrolling past ten forms. */
+/* This disclosure replaced two visible buttons (Download / Show QR), and as a
+   --fs-meta grey caption it read as a label rather than the only route to them.
+   Give it the console's own affordance for "a control that opens something":
+   the bordered pill of .backup-summary / .section-link. */
 details.hand-out { margin-top: 16px; }
+details.hand-out > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  width: max-content;
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--fs-table);
+  color: var(--text-bright);
+  background: var(--panel-2);
+  border: 1px solid var(--border-badge);
+  border-radius: var(--r-btn);
+  padding: 8px 14px;
+  transition: border-color .12s, color .12s;
+}
+details.hand-out > summary:hover { border-color: var(--blue); color: var(--blue); }
+details.hand-out > summary::before { content: "▸"; color: var(--blue); font-size: var(--fs-tablehead); }
+details.hand-out[open] > summary::before { content: "▾"; }
 details.hand-out[open] > .client-cfg { margin-top: 16px; }
 
 /* Inside a card these labels carry the instructions, and --text-dim renders them
@@ -948,7 +980,6 @@ details.hand-out[open] > .client-cfg { margin-top: 16px; }
    link, the config, the QR and rename. The address gets it for the same reason —
    it is the second-most identifying thing on the card. */
 .client-cfg .field-label { color: var(--text-label); }
-details.hand-out > summary { color: var(--text-label); }
 .client-card .client-uuid { color: var(--text-label); }
 
 /* A warning rendered in the same grey as a hint is not a warning. */
