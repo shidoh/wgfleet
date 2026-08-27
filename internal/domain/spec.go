@@ -355,6 +355,11 @@ func (s NodeSpec) Validate() error {
 	if s.HasTransport(TransportRealityXHTTP) && s.Reality == nil {
 		errs = append(errs, errors.New("reality-xhttp transport enabled but Reality server spec is missing"))
 	}
+	if s.Master != nil && s.Master.ClientWG != nil {
+		if err := s.Master.ClientWG.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("master client wg: %w", err))
+		}
+	}
 	if s.Master != nil && s.Master.ClientVLESS != nil {
 		if err := s.Master.ClientVLESS.Validate(); err != nil {
 			errs = append(errs, fmt.Errorf("client vless: %w", err))

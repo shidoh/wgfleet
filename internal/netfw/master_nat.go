@@ -2,6 +2,7 @@ package netfw
 
 import (
 	"fmt"
+	"net/netip"
 	"strings"
 )
 
@@ -55,12 +56,23 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	fmt.Fprintf(&b, "delete table ip %s\n", MasterNATTable)
 	fmt.Fprintf(&b, "table ip %s {\n", MasterNATTable)
 
+	// The gateway's OWN address in the client pool is never a proxy destination:
+	// traffic a client sends there is a request to a service the master runs FOR
+	// its clients (the self-service portal, the local resolver), not internet
+	// traffic to be routed through an exit. Without this guard the redirect below
+	// swallows it and the service simply never answers — found on a rehearsal,
+	// where it made the client portal unreachable by construction.
+	gatewayGuard := ""
+	if gw, err := gatewayAddr(in.ClientCIDR); err == nil {
+		gatewayGuard = fmt.Sprintf(" ip daddr != %s", gw)
+	}
+
 	b.WriteString("\tchain prerouting {\n")
 	b.WriteString("\t\ttype nat hook prerouting priority dstnat; policy accept;\n")
 	// Drop client QUIC so browsers fall back to TCP through mihomo.
 	fmt.Fprintf(&b, "\t\tiifname %q%s udp dport 443 drop\n", in.ClientInterface, guards)
 	// DNAT non-private client TCP to mihomo's redir-port.
-	fmt.Fprintf(&b, "\t\tiifname %q%s ip protocol tcp dnat to %s\n", in.ClientInterface, guards, in.RedirAddr)
+	fmt.Fprintf(&b, "\t\tiifname %q%s%s ip protocol tcp dnat to %s\n", in.ClientInterface, guards, gatewayGuard, in.RedirAddr)
 	b.WriteString("\t}\n\n")
 
 	b.WriteString("\tchain postrouting {\n")
@@ -120,4 +132,18 @@ func privateGuards(cidrs []string) (string, error) {
 		fmt.Fprintf(&b, " ip daddr != %s", canon)
 	}
 	return b.String(), nil
+}
+
+// gatewayAddr returns the master's own address inside the client pool: the first
+// host, which is what the client interface is configured with.
+func gatewayAddr(clientCIDR string) (string, error) {
+	prefix, err := netip.ParsePrefix(clientCIDR)
+	if err != nil {
+		return "", err
+	}
+	addr := prefix.Masked().Addr().Next()
+	if !addr.IsValid() || !prefix.Contains(addr) {
+		return "", fmt.Errorf("client pool %q has no host address", clientCIDR)
+	}
+	return addr.String(), nil
 }

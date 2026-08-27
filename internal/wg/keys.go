@@ -27,6 +27,18 @@ func GenerateKeyPair() (KeyPair, error) {
 	return KeyPair{PrivateKey: k.String(), PublicKey: k.PublicKey().String()}, nil
 }
 
+// GeneratePresharedKey creates a fresh 32-byte symmetric key for a peer's
+// PresharedKey. It is an additional shared secret layered on top of the
+// Curve25519 handshake — distinct from a keypair, so it gets its own helper
+// rather than the private half of a discarded pair.
+func GeneratePresharedKey() (string, error) {
+	k, err := wgtypes.GenerateKey()
+	if err != nil {
+		return "", fmt.Errorf("generate preshared key: %w", err)
+	}
+	return k.String(), nil
+}
+
 // PublicKeyOf derives the public key from a base64 private key.
 func PublicKeyOf(privateKey string) (string, error) {
 	k, err := wgtypes.ParseKey(privateKey)

@@ -81,6 +81,10 @@ type RenderInput struct {
 	// admin is seeded and wg-easy falls back to its interactive setup wizard.
 	AdminUsername string
 	AdminPassword string
+	// ClientWGManaged drops wg-easy from the stack: the agent owns the client-facing
+	// interface and raises it directly, so the container would only fight it for the
+	// same UDP port and the same /etc/wireguard directory.
+	ClientWGManaged bool
 }
 
 // RenderMasterCompose renders docker-compose.yml for the master stack. The
@@ -149,32 +153,44 @@ func RenderMasterCompose(in RenderInput) (string, error) {
 		wgEasyEnv = append(wgEasyEnv, "INIT_ALLOWED_IPS="+c.ClientAllowedIPs)
 	}
 
-	doc := map[string]any{
-		"services": map[string]any{
-			"wg-easy": map[string]any{
-				"image":          wgEasyImage,
-				"container_name": "wg-easy",
-				"restart":        "unless-stopped",
-				"network_mode":   "host",
-				"cap_add":        []any{"NET_ADMIN", "SYS_MODULE"},
-				"volumes": []any{
-					wgEasyDir + ":/etc/wireguard",
-					"/lib/modules:/lib/modules:ro",
-				},
-				"environment": wgEasyEnv,
-			},
-			"mihomo": map[string]any{
-				"image":          mihomoImage,
-				"container_name": "mihomo",
-				"restart":        "always",
-				"network_mode":   "host",
-				"cap_add":        []any{"NET_ADMIN", "SYS_PTRACE"},
-				"volumes":        []any{mihomoDir + ":/etc/mihomo"},
-				"command":        "-d /etc/mihomo",
-				"depends_on":     []any{"wg-easy"},
-			},
-		},
+	mihomo := map[string]any{
+		"image":          mihomoImage,
+		"container_name": "mihomo",
+		"restart":        "always",
+		"network_mode":   "host",
+		"cap_add":        []any{"NET_ADMIN", "SYS_PTRACE"},
+		"volumes":        []any{mihomoDir + ":/etc/mihomo"},
+		"command":        "-d /etc/mihomo",
 	}
+	services := map[string]any{"mihomo": mihomo}
+
+	// wg-easy is in the stack only while it still owns the client leg. Once the
+	// agent does, the container is dropped entirely rather than merely stopped: a
+	// `docker compose up -d` on a file that still lists it would bring it straight
+	// back, and it would then race the agent's interface for the same UDP port and
+	// the same /etc/wireguard directory. Removing the service makes `up -d` itself
+	// the thing that retires it.
+	//
+	// mihomo's depends_on goes with it — a dependency on a service the file no
+	// longer defines is a compose error, and the ordering it bought (wg0 exists
+	// before mihomo binds) is now the interface planner's job.
+	if !in.ClientWGManaged {
+		services["wg-easy"] = map[string]any{
+			"image":          wgEasyImage,
+			"container_name": "wg-easy",
+			"restart":        "unless-stopped",
+			"network_mode":   "host",
+			"cap_add":        []any{"NET_ADMIN", "SYS_MODULE"},
+			"volumes": []any{
+				wgEasyDir + ":/etc/wireguard",
+				"/lib/modules:/lib/modules:ro",
+			},
+			"environment": wgEasyEnv,
+		}
+		mihomo["depends_on"] = []any{"wg-easy"}
+	}
+
+	doc := map[string]any{"services": services}
 
 	out, err := marshalYAML(doc)
 	if err != nil {

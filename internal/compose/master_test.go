@@ -169,3 +169,35 @@ func toStrings(s []any) []string {
 	}
 	return out
 }
+
+// Once the agent owns the client leg, wg-easy must be GONE from the file, not
+// merely stopped: `docker compose up -d` on a file that still lists it would
+// bring it straight back to race the agent for the client port.
+func TestRenderMasterComposeDropsWGEasyWhenManaged(t *testing.T) {
+	out, err := RenderMasterCompose(RenderInput{
+		Compose:          domain.ComposeSpec{},
+		ClientListenPort: 443,
+		ClientPool:       "10.80.0.0/24",
+		MgmtAddr:         "10.20.0.1",
+		AdminPassword:    "secret",
+		ClientWGManaged:  true,
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(out, "wg-easy") {
+		t.Fatalf("managed master still ships wg-easy:\n%s", out)
+	}
+	// mihomo must survive, and must not depend on a service that no longer exists.
+	if !strings.Contains(out, "mihomo") {
+		t.Fatalf("mihomo missing from the managed stack:\n%s", out)
+	}
+	if strings.Contains(out, "depends_on") {
+		t.Fatalf("mihomo still depends on the removed service:\n%s", out)
+	}
+	// The admin password only ever existed to seed wg-easy; it must not leak into a
+	// file that no longer runs it.
+	if strings.Contains(out, "secret") {
+		t.Fatalf("wg-easy admin password rendered without wg-easy:\n%s", out)
+	}
+}

@@ -303,9 +303,27 @@ a:focus-visible,
 }
 .subbadge.drain,
 .subbadge.failover,
+.subbadge.muted,
 .subbadge.slow    { color: var(--amber); border-color: rgba(245,177,76,.30); background: rgba(245,177,76,.06); }
 .subbadge.blocked,
 .subbadge.decommission { color: var(--red); border-color: rgba(248,113,113,.30); background: rgba(248,113,113,.06); }
+/* A live client peer. The set above is all warning states; "online" is the one
+   badge that reports something good, so it gets the ready colour. */
+.subbadge.online  { color: var(--green); border-color: rgba(61,220,132,.30); background: var(--green-06); }
+/* Live state of one client credential. Exactly one is always rendered, because
+   absence used to carry meaning: an enabled-but-offline client showed no badge
+   at all and looked identical to a card nobody had parsed. "online" reuses the
+   green above; the rest are neutral — they are facts, not faults. Muted stays a
+   separate amber badge: it is orthogonal, and a muted client can also have never
+   connected. */
+.subbadge.state-online { color: var(--green); border-color: rgba(61,220,132,.30); background: var(--green-06); }
+.subbadge.state-online .led { background: var(--green); box-shadow: var(--dot-glow-green); }
+.subbadge.state-idle,
+.subbadge.state-never,
+.subbadge.state-unreported { color: var(--text-label); }
+.subbadge.state-idle .led,
+.subbadge.state-never .led,
+.subbadge.state-unreported .led { background: var(--border-badge); box-shadow: none; }
 .subbadge .led { width: 6px; height: 6px; }
 
 /* ============================================================
@@ -630,6 +648,8 @@ a:focus-visible,
 .cfg-main .input { width: 100%; min-width: 0; }
 .cfg-actions { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
 .cfg-hint { font-size: var(--fs-meta); color: var(--text-dim); }
+a.cfg-hint { display: inline-block; margin-top: 8px; color: var(--blue); text-decoration: none; }
+a.cfg-hint:hover { text-decoration: underline; }
 .cfg-qr {
   flex: none; width: 168px; height: 168px;
   border-radius: 8px; background: #fff; padding: 6px; object-fit: contain;
@@ -786,6 +806,10 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   font-family: inherit;
   font-size: var(--fs-body);
   cursor: pointer;
+  /* .btn is used on both <button> and <a> (the config downloads). Without this
+     the anchors kept the browser's underline and read as underlined text inside
+     a button — .section-link already resets it for the same reason. */
+  text-decoration: none;
   padding: 10px 16px;
   border-radius: var(--r-btn);
   color: var(--text-bright);
@@ -872,6 +896,133 @@ details.cfg-direct[open] .cfg-row { margin-top: 12px; }
   color: var(--text-dim);
   margin: 26px 0 14px;
 }
+
+/* ── Client credential cards ──────────────────────────────────────────────
+   The WG clients page promotes .panel-label / .client-name to real headings so
+   a screen reader gets card boundaries. Neutralise the UA heading margins and
+   bold WITHOUT touching the many places these classes are still plain divs. */
+h2.panel-label, h3.panel-label { margin-top: 0; font-weight: inherit; }
+h3.client-name { margin: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  border: 0; clip-path: inset(50%); overflow: hidden; white-space: nowrap;
+}
+
+/* The top pair must not stretch: ISSUE CLIENT is a short form and CLIENT
+   INTERFACE is a nine-row table, so the default grid `stretch` left ~170px of
+   dead ground under the form. Scoped — node.html's equal-height pairs rely on
+   the global behaviour. */
+.panels-top {
+  align-items: start;
+  /* .shell is a plain block and .panels carries no outer margin, so the grid's
+     18px gap applied only BETWEEN its columns — the row sat flush against the
+     credentials panel below it. Match the internal rhythm. */
+  margin-bottom: 18px;
+}
+
+/* The identity column MUST be allowed to shrink. A client name may legally be 64
+   characters with no break opportunity (the input pattern permits it), and
+   without min-width:0 the flex item's min-content width wins: the actions get
+   pushed off the right edge and the card overflows. */
+/* Below ~430px the fixed-width action group ate the whole row and the identity
+   column shrank to nothing: the name and the ADDRESS — the load-bearing
+   identifier — rendered as a 53px column of stacked characters under the
+   buttons, and the document scrolled sideways. Let the head wrap instead. */
+.client-card-head { flex-wrap: wrap; }
+.client-ident { min-width: 0; flex: 1 1 200px; }
+.client-name { overflow-wrap: anywhere; }
+.client-uuid { overflow-wrap: anywhere; }
+
+/* Lifecycle actions live in the card head. Revoke is set apart from the
+   reversible pair by more than the 10px gap — it is the one action that
+   permanently strands a person. */
+.card-actions { display: flex; gap: 10px; flex: none; align-items: flex-start; }
+.card-actions form { margin: 0; }
+.card-actions .revoke-form { margin-left: 14px; }
+
+/* The issue form is a ROW, not the login card's stacked column. .auth-form is
+   built for .auth-card (max-width 380px); reused in a grid panel it stretched the
+   submit button across the full width of the page. */
+.issue-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-top: 16px; }
+.issue-form .field { flex: 1 1 240px; }
+.issue-form .btn { flex: none; }
+
+/* Everything needed only at hand-out is collapsed by default, so ten clients can
+   be scanned without scrolling past ten forms. */
+/* This disclosure replaced two visible buttons (Download / Show QR), and as a
+   --fs-meta grey caption it read as a label rather than the only route to them.
+   Give it the console's own affordance for "a control that opens something":
+   the bordered pill of .backup-summary / .section-link. */
+details.hand-out { margin-top: 16px; }
+details.hand-out > summary,
+details.qr-reveal > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  width: max-content;
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--fs-table);
+  color: var(--text-bright);
+  background: var(--panel-2);
+  border: 1px solid var(--border-badge);
+  border-radius: var(--r-btn);
+  padding: 8px 14px;
+  transition: border-color .12s, color .12s;
+}
+details.hand-out > summary:hover,
+details.qr-reveal > summary:hover { border-color: var(--blue); color: var(--blue); }
+details.hand-out > summary::before,
+details.qr-reveal > summary::before { content: "▸"; color: var(--blue); font-size: var(--fs-tablehead); }
+details.hand-out[open] > summary::before,
+details.qr-reveal[open] > summary::before { content: "▾"; }
+
+/* Generated at 1024, shown at 512: an exact 2:1 downscale, so module edges stay
+   sharp, and pixel-for-pixel on a HiDPI screen. 512 puts 4.4 pixels on each of
+   the 117 modules a real config needs — above the ~4 ordinary cameras want. The
+   quiet zone matters for scanning, hence the generous white padding rather than
+   the 6px the small inline QR uses. */
+.cfg-qr-lg {
+  display: block;
+  margin-top: 14px;
+  width: 512px; height: 512px; max-width: 100%;
+  border-radius: 8px; background: #fff; padding: 14px; object-fit: contain;
+}
+details.hand-out[open] > .client-cfg { margin-top: 16px; }
+
+/* Inside a card these labels carry the instructions, and --text-dim renders them
+   at ~3.1:1 — the faintest text on the page. Lift them to the token .panel-label
+   already uses (4.9:1). The hand-out summary needs it most: on clients.html the
+   same disclosure hides an optional extra, but here it is the ONLY route to the
+   link, the config, the QR and rename. The address gets it for the same reason —
+   it is the second-most identifying thing on the card. */
+.client-cfg .field-label { color: var(--text-label); }
+.client-card .client-uuid { color: var(--text-label); }
+
+/* A warning rendered in the same grey as a hint is not a warning. */
+.cfg-hint.warn { color: var(--amber-text); }
+
+/* A read-only field the operator is meant to COPY must not impersonate one they
+   are meant to type in — same class, opposite affordance. */
+.input.readonly { background: var(--panel-inset); border-style: dashed; cursor: text; }
+
+/* Rename: a name is at most 64 characters and never needs the full card width,
+   and the button sits flush with the input's bottom edge (.input is 13px-padded
+   and .btn is 10px, so a centre-aligned row leaves it floating). */
+.rename-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.rename-form .input { flex: 1 1 240px; max-width: 320px; }
+.rename-form .btn { flex: none; }
+
+/* A card's kv sits in a full-width panel, where the 1fr value column runs a
+   thousand pixels past a ten-character date. Everywhere else .kv lives in a
+   cols-2/cols-3 panel and is naturally bounded. */
+.kv-compact { max-width: 520px; }
+
+/* .client-cfg already spaces its rows by 18px and the open-details rule adds 12
+   more; .rule's own 24px margins stacked on top left ~96px of void around a 1px
+   line. */
+.client-cfg > .rule { margin: 0; }
 
 /* key/value grid */
 .kv {

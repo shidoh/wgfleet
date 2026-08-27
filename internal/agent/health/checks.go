@@ -25,6 +25,10 @@ type MasterProbes struct {
 	WGServerUp    Probe // client-facing WG/AWG interface is up
 	DNSResolves   Probe // master-tier blocky resolves (ADR-0024); nil when no resolver
 	ClientVLESSUp Probe // client-facing VLESS/REALITY inbound is listening (ADR-0031); nil when not run
+	// ClientWGOwned reports that the AGENT is carrying the client interface, not
+	// merely that an interface of that name exists (wg-easy's does too). nil when
+	// the agent does not manage the leg.
+	ClientWGOwned Probe
 }
 
 // ExitChecks builds an exit node's check set from spec + probes. Checks that are
@@ -77,6 +81,15 @@ func MasterChecks(spec domain.NodeSpec, p MasterProbes) []Check {
 	// rely on it. Only checked when the master spec actually carries the inbound.
 	if spec.Master != nil && spec.Master.ClientVLESS != nil && p.ClientVLESSUp != nil {
 		checks = append(checks, Check{Name: "client-vless", Probe: p.ClientVLESSUp})
+	}
+	// When the agent owns the client leg, "an interface named wg0 exists" is not
+	// enough: it is also true while wg-easy holds it, and it stays true through
+	// every deferral the interface planner can report (no key yet, spec rejected,
+	// AmneziaWG 3.x refused). Without this check those states leave the node Ready
+	// and green with the client leg unmanaged — the operator's only signal would be
+	// a line in a plan nobody is reading at 3am.
+	if spec.Master != nil && spec.Master.ClientWG != nil && p.ClientWGOwned != nil {
+		checks = append(checks, Check{Name: "client-wg-owned", Probe: p.ClientWGOwned})
 	}
 	return checks
 }

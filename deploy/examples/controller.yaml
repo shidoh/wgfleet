@@ -133,6 +133,19 @@ fleet:
       client_awg:
         listen_port: 443 # standard UDP port is less conspicuous
         address_pool: 10.80.0.0/24
+        # managed: true  # take the client leg from wg-easy into wgfleet. Transparent —
+        # existing client configs keep working — but do the credential import FIRST.
+        # See CLIENT-MIGRATION.md for the whole procedure.
+        # awg3: off | timers | full  — AmneziaWG 3.x on the leg users dial. Needs
+        # managed: true and a 3.x kernel module. "timers" costs nothing: it removes the
+        # timing fingerprint a fixed keepalive leaves, and every config already handed
+        # out keeps working. "full" adds header protection and requires EVERY client to
+        # re-import, so treat it as a flag day.
+        # awg3: timers
+        # keepalive: 15-25  # PersistentKeepalive in generated client configs. A band
+        # gives each client its own stable interval instead of the whole fleet beaconing
+        # in lockstep. Keep it under the shortest NAT UDP timeout on the path (25 is the
+        # WireGuard default for that reason); unset means 25 for everybody.
       # client_vless: a DPI-resistant alternative client transport (VLESS+REALITY+
       # XHTTP via xray) that runs ALONGSIDE the client AWG, for users whose AWG is
       # throttled by DPI (RU TSPU and similar). See CONFIGURATION.md for every key.
@@ -294,7 +307,11 @@ fleet:
         # the default is now v1.19.30 and no override is needed.
         # mihomo_tag: "v1.19.30"
         # client_dns: defaults to the exits' mgmt addresses (blocky)
-        client_allowed_ips: "1.0.0.0/8,8.0.0.0/7,..." # inverted RFC1918 list for clients
+        # Inverted RFC1918 list for clients — everything except the private ranges,
+        # so a client routes the internet through the tunnel but keeps its own LAN.
+        # Abbreviated here; the full list continues to 224.0.0.0/3. Every entry must
+        # be a real CIDR: it is validated and rendered into client configs.
+        client_allowed_ips: "1.0.0.0/8,8.0.0.0/7,11.0.0.0/8,12.0.0.0/6,16.0.0.0/4,32.0.0.0/3,64.0.0.0/2,128.0.0.0/3"
       # Per-node override of fleet.hardening above. An omitted key inherits the
       # fleet default; an explicit true beats a fleet-wide false, so this can
       # re-harden one node as well as relax one. This is the usual place to use it:

@@ -11,6 +11,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/dockerfw"
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/agent/tuning"
+	"github.com/shidoh/wgfleet/internal/awgmod"
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/dnsfilter"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -209,7 +210,7 @@ type wgPlanner struct {
 	up         func(name string) bool
 	// awgGen reports this node's AmneziaWG kernel module MAJOR version; nil ⇒ the
 	// real modinfo probe. Only consulted for a spec that asks for AmneziaWG 3.0
-	// (see checkAWG3Supported).
+	// (see awgmod.CheckAWG3Supported).
 	awgGen func() (int, error)
 }
 
@@ -257,7 +258,7 @@ func (p wgPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Ac
 	// down. Check BEFORE rendering — writing a config we know cannot be applied and
 	// then running awg-quick would take a live exit's data plane with it.
 	if awg := spec.WGServer.AWG; awg != nil && awg.AWG3Enabled() {
-		if err := checkAWG3Supported(p.awgGen); err != nil {
+		if err := awgmod.CheckAWG3Supported(p.awgGen); err != nil {
 			return nil, err
 		}
 	}

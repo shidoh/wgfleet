@@ -29,6 +29,11 @@ type Input struct {
 	// client-vless planner no-ops until the key is available (same gate as the exit
 	// reality inbound). Only used when spec.Master.ClientVLESS is set.
 	RealityPrivateKey string
+	// ClientWGPrivateKey is the master's CLIENT-FACING WireGuard private key — the
+	// identity of the interface end users dial once the agent owns it. Agent-local
+	// (adopted from wg-easy's database on handover, else generated), never on the
+	// wire. Empty ⇒ the client-interface planner defers, like the vless one.
+	ClientWGPrivateKey string
 	// ClientInterface is the client WG interface the NAT/forward rules reference.
 	// Default is applied when empty. (The master masquerades on every egress except
 	// this interface, so a separate egress iface no longer needs detecting.)
@@ -77,7 +82,23 @@ func Planners(in Input) []reconcile.Planner {
 		// Input firewall: bring the drop policy up before the services, the same
 		// ordering the bootstrap uses ("firewall before traffic").
 		firewallPlanner{path: in.Paths.FirewallNFT, overlayMSS: in.OverlayMSS, clientIface: in.ClientInterface},
+		// The client interface goes BEFORE compose, and the order is load-bearing in
+		// the REVERSE direction. On the rollback pass compose restores wg-easy and
+		// lets it recreate wg0; if we ran after it, we would tear down the interface
+		// it had just made — every pass, forever, because our config file stays on
+		// disk. Running first, we release the interface while it is still ours and
+		// compose then hands it to wg-easy cleanly.
+		//
+		// The handover direction is unaffected: claiming wg0 does not require
+		// wg-easy to be stopped first (we take the interface from it either way),
+		// and the compose planner in the same pass retires the container.
+		clientWGPlanner{confPath: in.Paths.ClientWGConf, privateKey: in.ClientWGPrivateKey},
 		composePlanner{path: in.Paths.Compose, adminUser: in.AdminUsername, adminPass: in.AdminPassword},
+		// The client leg has exactly one owner. While wg-easy holds it these three
+		// keep its database converged; once the operator hands the leg to the agent
+		// they all no-op (see handedOver) and clientWGPlanner takes over. Writing to
+		// a database whose service we just stopped would be harmless but misleading —
+		// the plan would report work on a component that is gone.
 		wgEasyPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface, compose: in.Paths.Compose},
 		wgEasyUserConfigPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface},
 		wgEasyMetricsPlanner{dbPath: in.Paths.WGEasyDB},
@@ -157,6 +178,7 @@ func (p composePlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]recon
 		MgmtAddr:         masterMgmtAddr(spec),
 		AdminUsername:    p.adminUser,
 		AdminPassword:    p.adminPass,
+		ClientWGManaged:  handedOver(spec),
 	})
 	if err != nil {
 		return nil, err
@@ -171,6 +193,13 @@ func (p composePlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]recon
 		return nil, err
 	}
 	actions := []reconcile.Action{file}
+	// Dropping the service from the file does NOT retire the container — compose
+	// treats it as an orphan and leaves it running, and `restart: unless-stopped`
+	// brings it back after a reboot. The explicit removal lives in the client
+	// interface planner instead, which is the only component that knows whether the
+	// replacement is actually carrying traffic yet; retiring the fallback from here,
+	// on the strength of the manifest knob alone, would remove it in the very pass
+	// where our own interface failed to come up.
 	switch {
 	case file.Changes():
 		// Definition changed: `up -d` recreates only the services whose config moved.
@@ -226,6 +255,9 @@ type wgEasyPlanner struct {
 func (wgEasyPlanner) Component() string { return "wg-easy client AWG" }
 
 func (p wgEasyPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
+	if handedOver(spec) {
+		return []reconcile.Action{reconcile.NoChangeAction("wg-easy AWG", wgEasyHandedOver)}, nil
+	}
 	if spec.WGServer.AWG == nil {
 		return []reconcile.Action{reconcile.NoChangeAction("wg-easy AWG", "no client AWG params")}, nil
 	}
@@ -282,6 +314,9 @@ func (p wgEasyUserConfigPlanner) Plan(ctx context.Context, spec domain.NodeSpec)
 	if spec.Master == nil {
 		return nil, fmt.Errorf("wg-easy user config: node has no master spec")
 	}
+	if handedOver(spec) {
+		return []reconcile.Action{reconcile.NoChangeAction("wg-easy client defaults", wgEasyHandedOver)}, nil
+	}
 	if _, err := os.Stat(p.dbPath); os.IsNotExist(err) {
 		return []reconcile.Action{reconcile.NoChangeAction("wg-easy client defaults",
 			"pending: wg-easy DB not found at "+p.dbPath)}, nil
@@ -324,7 +359,10 @@ type wgEasyMetricsPlanner struct {
 
 func (wgEasyMetricsPlanner) Component() string { return "wg-easy metrics" }
 
-func (p wgEasyMetricsPlanner) Plan(ctx context.Context, _ domain.NodeSpec) ([]reconcile.Action, error) {
+func (p wgEasyMetricsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
+	if handedOver(spec) {
+		return []reconcile.Action{reconcile.NoChangeAction("wg-easy metrics", wgEasyHandedOver)}, nil
+	}
 	// wg-easy must be set up first; if its DB is absent, defer (it appears once
 	// wg-easy runs) rather than failing the whole pass — same as the AWG planner.
 	if _, err := os.Stat(p.dbPath); os.IsNotExist(err) {
@@ -520,3 +558,13 @@ func (p masterNATPlanner) isLoaded() bool {
 
 // Master forwarding (ip_forward + DOCKER-USER accept, an earlier finding) is handled by
 // the shared dockerfw.ForwardPlanner, constructed in Planners() with iface wg0.
+
+// wgEasyHandedOver is the reason the wg-easy planners report once the agent owns
+// the client leg. Stated rather than silent: an operator reading a plan should
+// see that these components stood down deliberately, not that they vanished.
+const wgEasyHandedOver = "the agent owns the client interface; wg-easy is no longer managed"
+
+// handedOver reports whether this master's client leg belongs to the agent.
+func handedOver(spec domain.NodeSpec) bool {
+	return spec.Master != nil && spec.Master.ClientWG != nil
+}

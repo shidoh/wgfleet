@@ -139,3 +139,62 @@ func TestWithAWG3PreservesAWG2(t *testing.T) {
 		t.Error("the base derivation must stay pure AWG 2.0")
 	}
 }
+
+// The timers-only half is the one an operator can switch on WITHOUT reissuing a
+// single client config: measured against a real 3.1 kernel module, an untouched
+// AmneziaWG 2.0 peer keeps handshaking and passing traffic across rekeys when the
+// server randomises its timers. HeaderProtectionKey is what breaks that peer, so
+// this half must never set it — that absence IS the compatibility guarantee.
+func TestWithAWG3TimersLeavesHeaderProtectionUnset(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		seed := "tunnel-" + strconv.Itoa(i)
+		s := WithAWG3Timers(DeriveAWGParamsForEnd(seed, "client", false), seed).Shared
+		if s.HeaderProtectionKey != "" {
+			t.Fatalf("seed %q: timers-only set a HeaderProtectionKey, which cuts off every 2.0 client", seed)
+		}
+		if s.RekeyAfterTime == "" || s.KeepaliveTimeout == "" {
+			t.Fatalf("seed %q: timers-only left the timers unset: %+v", seed, s)
+		}
+	}
+}
+
+// The other half on its own, so the two compose rather than overlap.
+func TestWithAWG3HeaderProtectionLeavesTimersUnset(t *testing.T) {
+	seed := "tunnel-hp"
+	s := WithAWG3HeaderProtection(DeriveAWGParamsForEnd(seed, "client", false), seed).Shared
+	if s.HeaderProtectionKey == "" {
+		t.Fatal("header-protection half set no key")
+	}
+	if s.RekeyAfterTime != "" || s.RejectAfterTime != "" || s.KeepaliveTimeout != "" ||
+		s.RekeyTimeout != "" || s.MaxHandshakeAttempts != "" {
+		t.Fatalf("header-protection half also set timers: %+v", s)
+	}
+}
+
+// WithAWG3 must stay exactly the sum of its halves. The master↔exit leg still
+// calls it and both ends of that tunnel derive independently — a change in what
+// it produces is a change both ends must make in the same release or the
+// handshake stops completing.
+func TestWithAWG3IsBothHalvesComposed(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		seed := "tunnel-" + strconv.Itoa(i)
+		base := DeriveAWGParamsForEnd(seed, "exit", true)
+		whole := WithAWG3(base, seed)
+		composed := WithAWG3HeaderProtection(WithAWG3Timers(base, seed), seed)
+		if whole.Shared != composed.Shared {
+			t.Fatalf("seed %q: WithAWG3 diverged from its halves\n whole:    %+v\n composed: %+v",
+				seed, whole.Shared, composed.Shared)
+		}
+	}
+}
+
+// A timers-only set carries no header protection, so it must NOT inherit the
+// S1-S4 >= 12 floor that header protection imposes. Enforcing it anyway would
+// refuse perfectly good configs on the one path that exists to avoid a flag day.
+func TestWithAWG3TimersValidateWithSmallPadding(t *testing.T) {
+	p := WithAWG3Timers(DeriveAWGParamsForEnd("small-s", "client", false), "small-s")
+	p.Shared.S1, p.Shared.S2, p.Shared.S3, p.Shared.S4 = 1, 2, 3, 4
+	if err := p.Validate(); err != nil {
+		t.Fatalf("timers-only params rejected for small S values: %v", err)
+	}
+}

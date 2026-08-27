@@ -67,6 +67,11 @@ type MasterSpec struct {
 	// client VLESS inbound. Its decrypted traffic converges into mihomo over a
 	// loopback SOCKS hop, so VLESS clients share the AWG clients' routing.
 	ClientVLESS *ClientVLESSServerSpec
+	// ClientWG is the client-facing AmneziaWG interface when the agent — rather
+	// than wg-easy — owns it. nil ⇒ this master's client leg is still wg-easy's,
+	// which is what an un-migrated fleet reports and what the cutover knob
+	// (fleet.masters[].client_awg.managed) leaves in place until it is flipped.
+	ClientWG *ClientWGSpec
 }
 
 // ComposeSpec is the master's container-stack desired state, rendered by the

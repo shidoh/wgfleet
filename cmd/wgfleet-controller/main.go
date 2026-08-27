@@ -37,6 +37,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/controller/grpcapi"
 	"github.com/shidoh/wgfleet/internal/controller/keybroker"
 	"github.com/shidoh/wgfleet/internal/controller/pki"
+	"github.com/shidoh/wgfleet/internal/controller/portal"
 	"github.com/shidoh/wgfleet/internal/controller/provmgr"
 	"github.com/shidoh/wgfleet/internal/controller/rollout"
 	"github.com/shidoh/wgfleet/internal/controller/store"
@@ -66,7 +67,7 @@ func run() error {
 		provision    = flag.String("provision", "", "SSH-bootstrap the named fleet node, then exit")
 		upgradeAgent = flag.String("upgrade-agent", "", "roll the named node's agent binary forward (upload + restart) over SSH, then exit")
 		rollingUp    = flag.Bool("rolling-upgrade", false, "roll every outdated EXIT agent forward one node at a time (reserve tier first), then exit")
-		plan         = flag.Bool("plan", false, "with --provision/--upgrade-agent/--rolling-upgrade: dry-run, show the plan and change nothing")
+		plan         = flag.Bool("plan", false, "with --provision/--upgrade-agent/--rolling-upgrade/--import-wg-easy: dry-run, show the plan and change nothing")
 		agentBin     = flag.String("agent-bin", "", "with --provision/--upgrade-agent/--rolling-upgrade: path to the wgfleet-agent binary to install (default controller.agent_bin)")
 		ctlEndpoint  = flag.String("controller-endpoint", "", "with --provision: controller mTLS endpoint the agent dials (default controller.listen)")
 		backupOut    = flag.String("backup", "", "snapshot controller (+co-located master) state to an age-encrypted archive at this path, then exit")
@@ -77,6 +78,8 @@ func run() error {
 		supportNote  = flag.String("note", "", "with --support-bundle: free-form description of the problem, embedded in the bundle's manifest")
 		showVersion  = flag.Bool("version", false, "print build version and exit")
 		setAdminPw   = flag.Bool("set-admin-password", false, "set/reset the web panel admin password (run with the controller stopped) and exit")
+		importWGEasy = flag.String("import-wg-easy", "", "import the named master's wg-easy client credentials into the controller store, then exit. Safe to run with the controller live; use --plan first")
+		wgEasyDB     = flag.String("wg-easy-db", "", "with --import-wg-easy: path to wg-easy's SQLite database (default /etc/wireguard/wg-easy.db, i.e. run this ON the master)")
 		adminUser    = flag.String("admin-user", "admin", "username for --set-admin-password")
 		passwordFile = flag.String("password-file", "", "with --set-admin-password: read the password from this file instead of prompting")
 	)
@@ -152,6 +155,15 @@ func run() error {
 		}
 		fmt.Printf("admin password set for %q\n", *adminUser)
 		return nil
+	}
+
+	if *importWGEasy != "" {
+		st, err := store.Open(cfg.Controller.Store)
+		if err != nil {
+			return fmt.Errorf("open store: %w", err)
+		}
+		defer st.Close()
+		return runClientImport(context.Background(), st, cfg, *importWGEasy, *wgEasyDB, *plan)
 	}
 
 	if *initPKI {
@@ -309,6 +321,9 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, configPath string) error {
 		// action and any concurrent attempt contend on the same single-rollout lock.
 		// Bound to ctx: a rollout aborts (rolling back the node in flight) on SIGTERM
 		// rather than outliving the store it reads.
+		// The portal's public URL is deployment information the controller cannot
+		// derive from its bind, and without it the client page has no link to show.
+		webHandler.SetPortalBase(cfg.Controller.ClientPortalURL)
 		webHandler.SetRoller(&webRoller{
 			co:     rollout.New(provMgr, st, rollout.Config{}, slog.Default()),
 			st:     st,
@@ -321,6 +336,34 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, configPath string) error {
 		go func() {
 			if err := webSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				slog.Error("web ui server error", "err", err)
+			}
+		}()
+	}
+
+	// Client self-service portal: a separate listener carrying only "your own
+	// profile" (see internal/controller/portal for why it is not a page in the UI
+	// above). Off unless the operator binds it.
+	var portalSrv *http.Server
+	if cfg.Controller.ClientPortal != "" {
+		masters := func() []string {
+			names := make([]string, 0, len(cfg.Fleet.Masters))
+			for _, m := range cfg.Fleet.Masters {
+				names = append(names, m.Name)
+			}
+			return names
+		}
+		portalHandler, err := portal.New(portalSource{st: st, broker: broker}, masters)
+		if err != nil {
+			return fmt.Errorf("build client portal: %w", err)
+		}
+		portalSrv = &http.Server{
+			Addr:              cfg.Controller.ClientPortal,
+			Handler:           portalHandler,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			if err := portalSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				slog.Error("client portal server error", "err", err)
 			}
 		}()
 	}
@@ -361,6 +404,9 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, configPath string) error {
 		server.GracefulStop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if portalSrv != nil {
+			_ = portalSrv.Shutdown(shutdownCtx)
+		}
 		if webSrv != nil {
 			_ = webSrv.Shutdown(shutdownCtx)
 		}
@@ -525,4 +571,23 @@ func setupLogging(format string) {
 		handler = slog.NewTextHandler(os.Stdout, opts)
 	}
 	slog.SetDefault(slog.New(handler))
+}
+
+// portalSource adapts the controller's store and keybroker to the portal's
+// read-only view of the world.
+type portalSource struct {
+	st     store.Store
+	broker *keybroker.Broker
+}
+
+func (s portalSource) GetNode(ctx context.Context, id string) (domain.Node, error) {
+	return s.st.GetNode(ctx, id)
+}
+
+func (s portalSource) RenderNodeSpec(ctx context.Context, id string) (domain.NodeSpec, error) {
+	return s.broker.RenderNodeSpec(ctx, id)
+}
+
+func (s portalSource) ListWGClients(ctx context.Context, id string) ([]domain.WGClient, error) {
+	return s.broker.ListWGClients(ctx, id)
 }

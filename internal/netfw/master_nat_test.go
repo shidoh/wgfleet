@@ -127,3 +127,28 @@ func TestRenderMasterNATRequiresFields(t *testing.T) {
 		t.Fatalf("unexpected error with the required fields present: %v", err)
 	}
 }
+
+// Traffic a client addresses to the GATEWAY ITSELF must never be proxied: it is
+// not internet-bound traffic, it is a request to a service the master runs for
+// its clients — the self-service portal, a local resolver. Found on a live
+// rehearsal, where the portal bound on 10.80.0.1 was silently swallowed by this
+// redirect and simply never answered.
+func TestMasterNATLeavesTrafficToTheGatewayAlone(t *testing.T) {
+	out, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+		PrivateCIDRs:    []string{"192.168.0.0/16"},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "dnat to") {
+			continue
+		}
+		if !strings.Contains(line, "ip daddr != 10.80.0.1") {
+			t.Fatalf("the redirect swallows traffic addressed to the gateway itself:\n%s", line)
+		}
+	}
+}

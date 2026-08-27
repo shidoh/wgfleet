@@ -1,4 +1,8 @@
-package exit
+// Package awgmod probes the AmneziaWG kernel module installed on a node and
+// gates configs that the module could not apply. It is shared by the exit's
+// tunnel interface and the master's client-facing interface: both would take a
+// live data plane down if they wrote a 3.x config for a 1.x module.
+package awgmod
 
 import (
 	"errors"
@@ -9,13 +13,13 @@ import (
 	"strings"
 )
 
-// errAWGGenUnknown is returned by awgModuleGeneration when the node's AmneziaWG
+// ErrGenerationUnknown is returned by awgModuleGeneration when the node's AmneziaWG
 // kernel module generation cannot be read at all.
-var errAWGGenUnknown = errors.New("amneziawg kernel module generation unknown")
+var ErrGenerationUnknown = errors.New("amneziawg kernel module generation unknown")
 
-// awgVersionRe pulls the leading major component out of a modinfo version string
+// versionRe pulls the leading major component out of a modinfo version string
 // such as "1.0.20260611" or "3.0.20260805".
-var awgVersionRe = regexp.MustCompile(`^\s*(\d+)\.`)
+var versionRe = regexp.MustCompile(`^\s*(\d+)\.`)
 
 // awgModuleGeneration reports the MAJOR version of the AmneziaWG kernel module
 // installed on this node — 1 for the 1.x line, 3 for 3.x.
@@ -24,18 +28,18 @@ var awgVersionRe = regexp.MustCompile(`^\s*(\d+)\.`)
 // the netlink attribute layout between the userspace tools and the module, so a
 // 3.0 config handed to a 1.x module fails `awg setconf` outright with "attribute
 // type 14 has an invalid length" and the interface never comes up.
-func awgModuleGeneration() (int, error) {
+func ModuleGeneration() (int, error) {
 	out, err := exec.Command("modinfo", "-F", "version", "amneziawg").Output()
 	if err != nil {
-		return 0, fmt.Errorf("%w: modinfo: %v", errAWGGenUnknown, err)
+		return 0, fmt.Errorf("%w: modinfo: %v", ErrGenerationUnknown, err)
 	}
-	m := awgVersionRe.FindStringSubmatch(strings.TrimSpace(string(out)))
+	m := versionRe.FindStringSubmatch(strings.TrimSpace(string(out)))
 	if m == nil {
-		return 0, fmt.Errorf("%w: unparseable modinfo version %q", errAWGGenUnknown, strings.TrimSpace(string(out)))
+		return 0, fmt.Errorf("%w: unparseable modinfo version %q", ErrGenerationUnknown, strings.TrimSpace(string(out)))
 	}
 	gen, err := strconv.Atoi(m[1])
 	if err != nil {
-		return 0, fmt.Errorf("%w: %v", errAWGGenUnknown, err)
+		return 0, fmt.Errorf("%w: %v", ErrGenerationUnknown, err)
 	}
 	return gen, nil
 }
@@ -44,7 +48,7 @@ func awgModuleGeneration() (int, error) {
 // AmneziaWG 3.0 netlink attributes.
 const awg3MinGeneration = 3
 
-// checkAWG3Supported is the node-local half of the AmneziaWG 3.0 gate. The
+// CheckAWG3Supported is the node-local half of the AmneziaWG 3.0 gate. The
 // controller gates on what IT can see — the operator's opt-in and the agent's wire
 // version — but only the node knows which kernel module it actually has, and the
 // fleet does not run one generation everywhere.
@@ -58,9 +62,9 @@ const awg3MinGeneration = 3
 // It gates ONLY 3.0 configs. A 2.0 config runs on either generation, so a node
 // whose generation cannot be read must keep converging exactly as it did before
 // this gate existed.
-func checkAWG3Supported(gen func() (int, error)) error {
+func CheckAWG3Supported(gen func() (int, error)) error {
 	if gen == nil {
-		gen = awgModuleGeneration
+		gen = ModuleGeneration
 	}
 	g, err := gen()
 	if err != nil {

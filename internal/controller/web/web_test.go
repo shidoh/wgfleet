@@ -27,6 +27,9 @@ type stubRenderer struct {
 	spec         domain.NodeSpec
 	err          error
 	routeThrough []string
+	// wgClients is a pointer so handlers that mutate through the stub are visible
+	// to the test that owns the slice.
+	wgClients *[]domain.WGClient
 }
 
 func (s stubRenderer) RenderNodeSpec(context.Context, string) (domain.NodeSpec, error) {
@@ -49,6 +52,66 @@ func (s stubRenderer) ListVLESSClients(context.Context, string) ([]domain.VLESSC
 }
 
 func (s stubRenderer) RevokeVLESSClient(context.Context, string, string) error { return nil }
+
+// Client-facing WireGuard credentials. The stub keeps them in a shared map so a
+// test can issue through the handler and then see what the page renders.
+func (s stubRenderer) IssueWGClient(_ context.Context, masterID, name string) (domain.WGClient, error) {
+	if s.wgClients == nil {
+		return domain.WGClient{}, errors.New("stub: no client store wired")
+	}
+	c := domain.WGClient{
+		ID: "id-" + name, Name: name, Address: "10.80.0.2/32",
+		PublicKey: "pub-" + name, PrivateKey: "priv-" + name, Enabled: true,
+	}
+	*s.wgClients = append(*s.wgClients, c)
+	return c, nil
+}
+
+func (s stubRenderer) ListWGClients(context.Context, string) ([]domain.WGClient, error) {
+	if s.wgClients == nil {
+		return nil, nil
+	}
+	return *s.wgClients, nil
+}
+
+func (s stubRenderer) SetWGClientEnabled(_ context.Context, _, clientID string, enabled bool) error {
+	if s.wgClients == nil {
+		return store.ErrNotFound
+	}
+	for i := range *s.wgClients {
+		if (*s.wgClients)[i].ID == clientID {
+			(*s.wgClients)[i].Enabled = enabled
+			return nil
+		}
+	}
+	return store.ErrNotFound
+}
+
+func (s stubRenderer) RenameWGClient(_ context.Context, _, clientID, name string) error {
+	if s.wgClients == nil {
+		return store.ErrNotFound
+	}
+	for i := range *s.wgClients {
+		if (*s.wgClients)[i].ID == clientID {
+			(*s.wgClients)[i].Name = name
+			return nil
+		}
+	}
+	return store.ErrNotFound
+}
+
+func (s stubRenderer) RevokeWGClient(_ context.Context, _, clientID string) error {
+	if s.wgClients == nil {
+		return store.ErrNotFound
+	}
+	for i := range *s.wgClients {
+		if (*s.wgClients)[i].ID == clientID {
+			*s.wgClients = append((*s.wgClients)[:i], (*s.wgClients)[i+1:]...)
+			return nil
+		}
+	}
+	return store.ErrNotFound
+}
 
 func (s stubRenderer) ClientVLESSRouteThrough(string) []string { return s.routeThrough }
 

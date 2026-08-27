@@ -75,6 +75,11 @@ type Store interface {
 	// Returns ErrNotFound if the node is absent.
 	SetNodeClientVlessKey(ctx context.Context, id, publicKey string) error
 
+	// SetNodeClientWGKey records the master's CLIENT-FACING WireGuard public key
+	// (the interface end users dial once the agent owns it), separate from the
+	// node's fleet-internal public key. Returns ErrNotFound if the node is absent.
+	SetNodeClientWGKey(ctx context.Context, id, publicKey string) error
+
 	// ListVLESSClients returns a master's issued VLESS client credentials, ordered
 	// by name. An unknown master yields an empty slice, not ErrNotFound.
 	ListVLESSClients(ctx context.Context, masterID string) ([]domain.VLESSClient, error)
@@ -87,6 +92,35 @@ type Store interface {
 	// RevokeVLESSClient removes a master's VLESS client credential by name. Returns
 	// ErrNotFound if the (master, name) pair is absent.
 	RevokeVLESSClient(ctx context.Context, masterID, name string) error
+
+	// ListWGClients returns a master's issued client-facing WireGuard credentials,
+	// ordered by name. An unknown master yields an empty slice, not ErrNotFound.
+	// The returned records carry the clients' PRIVATE keys — the controller renders
+	// their configs — so callers must not pass them anywhere node-bound; project
+	// them through domain.PeersOf first.
+	ListWGClients(ctx context.Context, masterID string) ([]domain.WGClient, error)
+
+	// AddWGClient stores one already-minted client-facing WireGuard credential.
+	// It is deliberately NOT a mint: the caller generates the keypair and allocates
+	// the address before calling, so the write is a deterministic record of a
+	// decision already made (ADR-0027's FSM replays this write on every replica).
+	// Returns ErrNotFound if the master is absent, and an error when the name or
+	// the address is already taken on that master.
+	AddWGClient(ctx context.Context, masterID string, c domain.WGClient) error
+
+	// SetWGClientEnabled mutes or unmutes a credential: a muted client leaves the
+	// interface while its config stays valid. Returns ErrNotFound if the
+	// (master, client) pair is absent.
+	SetWGClientEnabled(ctx context.Context, masterID, clientID string, enabled bool) error
+
+	// RenameWGClient changes a credential's operator-facing label, leaving its
+	// identity, keys and address untouched. Returns ErrNotFound if the
+	// (master, client) pair is absent.
+	RenameWGClient(ctx context.Context, masterID, clientID, name string) error
+
+	// RemoveWGClient revokes a credential outright. Returns ErrNotFound if the
+	// (master, client) pair is absent.
+	RemoveWGClient(ctx context.Context, masterID, clientID string) error
 
 	// RecordStatus stores the latest status report for a node, overwriting any
 	// previous report, and stamps the node's LastSeen.

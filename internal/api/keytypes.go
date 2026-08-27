@@ -15,6 +15,13 @@ const (
 	// wire bump to v4 is for the ClientVlessSpec on MasterSpec, not this key type).
 	KeyTypeClientVless = "client-vless"
 
+	// KeyTypeClientWG is the master's CLIENT-FACING WireGuard public key — the
+	// identity of the AmneziaWG interface end users dial once the agent owns it
+	// instead of wg-easy. Distinct from KeyTypeWireGuard, which is the node's
+	// fleet-internal identity: these are two different interfaces on one host, and
+	// the controller needs this one to render the .conf it hands a client.
+	KeyTypeClientWG = "client-wg"
+
 	// KeyTypeWireGuardTunnelPrefix marks a PER-TUNNEL WireGuard public key
 	// (ADR-0030): "wireguard:<exit-name>" is the master's dedicated identity for the
 	// tunnel to that one exit, as opposed to the unsuffixed KeyTypeWireGuard, which

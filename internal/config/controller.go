@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,13 +66,28 @@ type ControllerSection struct {
 	// published load-balancer). When set it (a) becomes the default endpoint baked
 	// into each agent's config and (b) seeds an extra SAN on the server cert so the
 	// agent's TLS handshake validates the dialed host. Empty ⇒ Listen is used.
-	Advertise string         `koanf:"advertise"`
-	WebUI     string         `koanf:"webui"`     // Web UI bind (deferred on MVP; reserved)
-	Store     string         `koanf:"store"`     // path to the sqlite state db
-	Metrics   string         `koanf:"metrics"`   // Prometheus /metrics bind (mgmt addr only)
-	AgentBin  string         `koanf:"agent_bin"` // wgfleet-agent binary installed during UI-triggered provisioning
-	PKI       PKISection     `koanf:"pki"`
-	Secrets   SecretsSection `koanf:"secrets"` // backing store for secret:// references
+	Advertise string `koanf:"advertise"`
+	WebUI     string `koanf:"webui"`   // Web UI bind (deferred on MVP; reserved)
+	Store     string `koanf:"store"`   // path to the sqlite state db
+	Metrics   string `koanf:"metrics"` // Prometheus /metrics bind (mgmt addr only)
+	// ClientPortal is the bind for the client self-service portal: one person, one
+	// credential, their own config and QR, and nothing else. Empty ⇒ no portal.
+	//
+	// It is a SEPARATE listener from WebUI on purpose. The operator UI can
+	// provision, decommission and drain nodes and export an encrypted backup of the
+	// whole fleet; opening that to the client pool to replace wg-easy's credential
+	// page would be a quiet and large escalation. Bind this where clients can reach
+	// it (typically the master's client-facing address) and keep WebUI on the
+	// management overlay.
+	ClientPortal string `koanf:"client_portal"`
+	// ClientPortalURL is the base URL clients reach the portal on, e.g.
+	// "http://10.80.0.1:8080". The controller cannot derive it — it knows the bind,
+	// not the address a phone types — and without it the operator has no link to
+	// hand out, which makes the portal unreachable however well it works.
+	ClientPortalURL string         `koanf:"client_portal_url"`
+	AgentBin        string         `koanf:"agent_bin"` // wgfleet-agent binary installed during UI-triggered provisioning
+	PKI             PKISection     `koanf:"pki"`
+	Secrets         SecretsSection `koanf:"secrets"` // backing store for secret:// references
 	// StalenessAfter marks a Ready/Reconciling node Degraded when it has not
 	// reported status for this long (a silent/dead agent). 0 disables the sweep.
 	StalenessAfter time.Duration `koanf:"staleness_after"`
@@ -267,6 +283,34 @@ func (f FleetSection) AgentReconcileInterval() time.Duration {
 	return f.ReconcileInterval
 }
 
+// ClientAWG3Mode is what the client-facing interface asks of AmneziaWG 3.x.
+type ClientAWG3Mode string
+
+const (
+	// ClientAWG3Off keeps the leg on AmneziaWG 2.0.
+	ClientAWG3Off ClientAWG3Mode = "off"
+	// ClientAWG3Timers randomises the 3.x timers and nothing else: backward
+	// compatible with every config already handed out.
+	ClientAWG3Timers ClientAWG3Mode = "timers"
+	// ClientAWG3Full adds header protection, which disconnects every client that
+	// has not re-imported.
+	ClientAWG3Full ClientAWG3Mode = "full"
+)
+
+// ClientAWG3 resolves the master's client-leg AmneziaWG generation, defaulting an
+// unset value to off. An unrecognised value also resolves to off — validation
+// rejects it at startup, and "off" is the safe reading if it ever gets past.
+func (m MasterConfig) ClientAWG3() ClientAWG3Mode {
+	switch ClientAWG3Mode(strings.ToLower(strings.TrimSpace(m.ClientAWG.AWG3))) {
+	case ClientAWG3Timers:
+		return ClientAWG3Timers
+	case ClientAWG3Full:
+		return ClientAWG3Full
+	default:
+		return ClientAWG3Off
+	}
+}
+
 // DefaultMinEgressThroughputKBytes is the egress throughput floor applied when the
 // fleet leaves min_egress_throughput_kbytes unset (0). Set the fleet key to a
 // NEGATIVE value to disable the watchdog entirely.
@@ -456,6 +500,55 @@ const DefaultMasterClientPort = 443
 type ClientAWGConfig struct {
 	ListenPort  int    `koanf:"listen_port"`  // UDP; 0 ⇒ DefaultMasterClientPort. Prefer 443/51820
 	AddressPool string `koanf:"address_pool"` // CIDR for client addresses
+	// Managed hands the interface to the agent instead of wg-easy: the controller
+	// owns the credentials, the agent renders and raises the interface. Pointer so
+	// an unset value is distinguishable from an explicit false — this is the
+	// cutover switch, and "not mentioned in the manifest" must mean "keep wg-easy",
+	// never "silently take the client leg over on upgrade".
+	Managed *bool `koanf:"managed"`
+	// Backend selects what carries a MANAGED interface: "kernel" (default, the
+	// AmneziaWG module as on the exits) or "userspace" (amneziawg-go, independent
+	// of the host's kernel-module generation). Ignored while unmanaged.
+	Backend string `koanf:"backend"`
+	// AWG3 opts the CLIENT-facing interface into AmneziaWG 3.x. Unlike the
+	// master↔exit knob (fleet.awg3) this is NOT a bool, because the two halves of
+	// 3.x cost wildly different things on a leg whose peers are other people's
+	// phones:
+	//
+	//   ""/"off"  AmneziaWG 2.0. The default.
+	//   "timers"  Timer randomisation only. Every config already in a user's hands
+	//             keeps working — measured against a 3.1 kernel module, an
+	//             untouched 2.0 peer handshakes and passes traffic across rekeys.
+	//             This is the half that carries the anti-fingerprint value.
+	//   "full"    Timers plus header protection. Header protection is the one 3.x
+	//             parameter a 2.0 peer cannot survive, so this is a flag day: every
+	//             client must re-import before it works again.
+	//
+	// Requires managed: true. While wg-easy owns the leg there is nowhere to put
+	// these parameters — its schema has no column for any of them — so a value here
+	// would silently do nothing, which config validation refuses.
+	AWG3 string `koanf:"awg3"`
+	// MTU overrides the client interface MTU. 0 ⇒ the controller derives it from
+	// the hop chain (clientFacingMTU), which is the right answer in almost every
+	// case; set it only to pin a value the derivation cannot know about.
+	MTU int `koanf:"mtu"`
+	// Keepalive is what generated client configs put in PersistentKeepalive.
+	// Empty ⇒ 25 seconds, the value every WireGuard deployment uses. A bare number
+	// pins one interval; a "min-max" band gives each credential its own stable
+	// value, which removes the fleet-wide lockstep an observer could use to join
+	// our clients to one another. Raise it with care: it must stay under the
+	// shortest NAT UDP timeout on the path or the master loses reachability to
+	// idle clients.
+	Keepalive string `koanf:"keepalive"`
+	// DNS is what generated client configs point at. Empty ⇒ inherit the
+	// compose-era compose.client_dns, so an existing manifest keeps working when
+	// the interface changes hands.
+	DNS []string `koanf:"dns"`
+	// AllowedIPs is what generated client configs route into the tunnel. Empty ⇒
+	// inherit compose.client_allowed_ips (the same inverted-RFC1918 list, split on
+	// commas). An IPv6 default route is rejected: the data plane is IPv4-only and
+	// "::/0" black-holes dual-stack clients.
+	AllowedIPs []string `koanf:"allowed_ips"`
 }
 
 // ClientListenPort returns the configured master client port or the default.
@@ -464,6 +557,50 @@ func (m MasterConfig) ClientListenPort() int {
 		return DefaultMasterClientPort
 	}
 	return m.ClientAWG.ListenPort
+}
+
+// ClientAWGManaged reports whether the agent — rather than wg-easy — owns the
+// master's client-facing interface. Unset means no: taking over the client leg is
+// always an explicit operator decision.
+func (m MasterConfig) ClientAWGManaged() bool {
+	return m.ClientAWG.Managed != nil && *m.ClientAWG.Managed
+}
+
+// ClientAWGBackend resolves the data-plane backend for a managed interface,
+// defaulting an unset value to the kernel module.
+func (m MasterConfig) ClientAWGBackend() domain.ClientWGBackend {
+	if m.ClientAWG.Backend == "" {
+		return domain.ClientWGBackendKernel
+	}
+	return domain.ClientWGBackend(m.ClientAWG.Backend)
+}
+
+// ClientAWGMTU returns the operator's MTU override, or 0 when the controller
+// should derive it.
+func (m MasterConfig) ClientAWGMTU() int { return m.ClientAWG.MTU }
+
+// ClientAWGDNS resolves the client-facing DNS list, falling back to the
+// compose-era key so an un-edited manifest survives the handover.
+func (m MasterConfig) ClientAWGDNS() []string {
+	if len(m.ClientAWG.DNS) > 0 {
+		return append([]string(nil), m.ClientAWG.DNS...)
+	}
+	return append([]string(nil), m.Compose.ClientDNS...)
+}
+
+// ClientAWGAllowedIPs resolves the client-facing AllowedIPs, falling back to the
+// compose-era comma-separated key (split and trimmed) for the same reason.
+func (m MasterConfig) ClientAWGAllowedIPs() []string {
+	if len(m.ClientAWG.AllowedIPs) > 0 {
+		return append([]string(nil), m.ClientAWG.AllowedIPs...)
+	}
+	var out []string
+	for _, ip := range strings.Split(m.Compose.ClientAllowedIPs, ",") {
+		if ip = strings.TrimSpace(ip); ip != "" {
+			out = append(out, ip)
+		}
+	}
+	return out
 }
 
 // ClientVLESSEmptySNIDefault is the empty_sni default for the client-facing VLESS
@@ -943,6 +1080,14 @@ func (c ControllerConfig) Validate() error {
 		if err := requireMgmtBind("controller.webui", c.Controller.WebUI); err != nil {
 			errs = append(errs, err)
 		}
+		// The portal serves client private keys over plain HTTP. It belongs on the
+		// master's address INSIDE the client pool (or behind a local reverse proxy),
+		// never on a public one — and the documentation telling the operator to bind
+		// it "where clients can reach it" makes the public bind the natural mistake,
+		// so the same guard that protects the admin surfaces protects this one.
+		if err := requireMgmtBind("controller.client_portal", c.Controller.ClientPortal); err != nil {
+			errs = append(errs, err)
+		}
 		if err := requireMgmtBind("controller.metrics", c.Controller.Metrics); err != nil {
 			errs = append(errs, err)
 		}
@@ -986,6 +1131,7 @@ func (c ControllerConfig) Validate() error {
 				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.address_pool %q is not a valid CIDR: %w", i, m.ClientAWG.AddressPool, err))
 			}
 		}
+		errs = append(errs, validateClientAWG(i, m)...)
 		if cv := m.ClientVLESS; cv.Enabled {
 			if p := cv.ListenPort; p != 0 && (p < 1 || p > 65535) {
 				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_vless.listen_port %d out of range", i, p))
@@ -1023,6 +1169,12 @@ func (c ControllerConfig) Validate() error {
 			errs = append(errs, fmt.Errorf("fleet.masters[%d]: %w", i, err))
 		}
 	}
+	// The portal's own checks live OUTSIDE the public-bind escape hatch: a malformed
+	// bind and a link the operator cannot hand out are wrong however that flag is
+	// set, and WGFLEET_ALLOW_PUBLIC_BIND was introduced for the Web UI, not to
+	// authorise unauthenticated key downloads on 0.0.0.0.
+	errs = append(errs, validateClientPortal(c.Controller.ClientPortal, c.Controller.ClientPortalURL)...)
+	errs = append(errs, validateClientPoolsDisjoint(c.Fleet.Masters)...)
 	for i, e := range c.Fleet.Exits {
 		if e.Name == "" {
 			errs = append(errs, fmt.Errorf("fleet.exits[%d]: name is required", i))
@@ -1203,6 +1355,31 @@ func RequireMgmtBind(field, listen string) error {
 		return nil
 	}
 	return requireMgmtBind(field, listen)
+}
+
+// requireListenAddr rejects a bind that will only fail later, in a background
+// goroutine, with the controller already serving and no portal. An empty value
+// means "disabled" and is fine.
+func requireListenAddr(field, listen string) error {
+	if listen == "" {
+		return nil
+	}
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return fmt.Errorf("%s %q is not a host:port address: %w", field, listen, err)
+	}
+	if port == "" {
+		return fmt.Errorf("%s %q has no port", field, listen)
+	}
+	if _, err := strconv.Atoi(port); err != nil {
+		return fmt.Errorf("%s %q has a non-numeric port %q", field, listen, port)
+	}
+	if host != "" {
+		if _, err := netip.ParseAddr(host); err != nil {
+			return fmt.Errorf("%s %q: %q is not an IP address", field, listen, host)
+		}
+	}
+	return nil
 }
 
 // requireMgmtBind rejects a listen address that is reachable from the public

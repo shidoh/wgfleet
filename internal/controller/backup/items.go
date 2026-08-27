@@ -17,6 +17,7 @@ const (
 	destNodeKey     = "/etc/wgfleet/node.key"
 	destAgentYAML   = "/etc/wgfleet/agent.yaml"
 	destWGKey       = "/etc/wgfleet/wg.key"
+	destClientWGKey = "/etc/wgfleet/client-wg.key"
 )
 
 // Sources are the on-disk locations the export reads from.
@@ -44,6 +45,12 @@ type Sources struct {
 	// rather than possibly none. Capturing 45 bytes turns that reconvergence into a
 	// no-op.
 	WGKey string
+	// ClientWGKey is the master's CLIENT-FACING WireGuard private key — the
+	// identity every client config in the field pins. Unlike WGKey it is NOT
+	// regenerable: minting a new one silently invalidates every profile at once.
+	// It self-heals today by re-adopting from wg-easy's database, but the migration
+	// ends with that database deleted, at which point this file is the only copy.
+	ClientWGKey string
 }
 
 // DefaultSources fills Sources from config plus the fixed master paths.
@@ -68,6 +75,7 @@ func DefaultSources(cfg *config.ControllerConfig, configPath string) Sources {
 		WGEasyDB:       mp.WGEasyDB,
 		WGEasyAdmin:    mp.WGEasyAdmin,
 		WGKey:          destWGKey,
+		ClientWGKey:    destClientWGKey,
 		NodeCert:       destNodeCert,
 		NodeKey:        destNodeKey,
 		AgentYAML:      destAgentYAML,
@@ -117,6 +125,7 @@ func GatherItems(src Sources, dbSnapshot string, exists func(string) (os.FileInf
 		{src.WGEasyDB, "master/wg-easy.db", src.WGEasyDB},
 		{src.WGEasyAdmin, "master/wg-easy-admin-password", destWGEasyAdmin},
 		{src.WGKey, "master/wg.key", destWGKey},
+		{src.ClientWGKey, "master/client-wg.key", destClientWGKey},
 		{src.NodeCert, "master/node.crt", destNodeCert},
 		{src.NodeKey, "master/node.key", destNodeKey},
 		{src.AgentYAML, "master/agent.yaml", destAgentYAML},

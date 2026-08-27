@@ -6,6 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"log/slog"
+	"os"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go sqlite driver, registered as "sqlite"
@@ -45,7 +49,38 @@ func Open(path string) (*SQLiteStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// The store holds every end user's WireGuard private key (schema v11). SQLite
+	// creates its files 0644, so the mode is enforced here rather than documented —
+	// the same reasoning reconcile.FileAction applies to the agent's secret files,
+	// applied to the controller's own state. Repaired on EVERY open, not just at
+	// creation: a restore from a tarball or a hand-edit would otherwise leave the
+	// invariant true exactly once.
+	// A repair failure must not stop the controller starting: the store may live on
+	// a filesystem that cannot chmod, or be owned by another uid after a restore.
+	// Refusing to run would turn a mode problem into an outage of the whole control
+	// plane, which is the worse trade — so log loudly and carry on.
+	if err := restrictStoreMode(path); err != nil {
+		slog.Warn("controller store permissions could not be restricted; it holds client private keys",
+			"path", path, "err", err)
+	}
 	return s, nil
+}
+
+// restrictStoreMode makes the database and its WAL companions owner-only. A
+// missing companion is not an error: -wal and -shm appear on first write and are
+// removed on a clean close.
+func restrictStoreMode(path string) error {
+	if path == ":memory:" || strings.HasPrefix(path, "file::memory:") {
+		return nil
+	}
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		switch err := os.Chmod(p, 0o600); {
+		case err == nil, errors.Is(err, fs.ErrNotExist):
+		default:
+			return fmt.Errorf("restrict mode on %q: %w", p, err)
+		}
+	}
+	return nil
 }
 
 // migrate applies any migrations newer than the database's recorded schema
@@ -87,16 +122,17 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 	const q = `
 		INSERT INTO nodes (
 			id, name, role, region, mgmt_addr, public_ip, public_key, reality_public_key,
-			client_vless_public_key, state,
+			client_vless_public_key, client_wg_public_key, state,
 			drain, decommission, active_transport, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
 			agent_version, wire_version,
 			created_at, updated_at, last_seen
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			name=excluded.name, role=excluded.role, region=excluded.region,
 			mgmt_addr=excluded.mgmt_addr, public_ip=excluded.public_ip,
 			public_key=excluded.public_key, reality_public_key=excluded.reality_public_key,
 			client_vless_public_key=excluded.client_vless_public_key,
+			client_wg_public_key=excluded.client_wg_public_key,
 			state=excluded.state,
 			drain=excluded.drain, decommission=excluded.decommission,
 			active_transport=excluded.active_transport,
@@ -107,7 +143,7 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 			updated_at=excluded.updated_at, last_seen=excluded.last_seen`
 	_, err := s.db.ExecContext(ctx, q,
 		n.ID, n.Name, string(n.Role), n.Region, n.MgmtAddr, n.PublicIP,
-		n.PublicKey, n.RealityPublicKey, n.ClientVLESSPublicKey,
+		n.PublicKey, n.RealityPublicKey, n.ClientVLESSPublicKey, n.ClientWGPublicKey,
 		string(n.State), boolToInt(n.Drain), boolToInt(n.Decommission),
 		string(n.ActiveTransport), n.LastError,
 		n.SSH.Host, n.SSH.Port, n.SSH.User, n.SSH.KeyPath,
@@ -123,7 +159,7 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 // GetNode implements Store.
 func (s *SQLiteStore) GetNode(ctx context.Context, id string) (domain.Node, error) {
 	const q = `SELECT id, name, role, region, mgmt_addr, public_ip, public_key, reality_public_key,
-		client_vless_public_key,
+		client_vless_public_key, client_wg_public_key,
 		state, drain, decommission, active_transport, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
 		agent_version, wire_version, created_at, updated_at, last_seen FROM nodes WHERE id = ?`
 	return scanNode(s.db.QueryRowContext(ctx, q, id))
@@ -132,7 +168,7 @@ func (s *SQLiteStore) GetNode(ctx context.Context, id string) (domain.Node, erro
 // ListNodes implements Store.
 func (s *SQLiteStore) ListNodes(ctx context.Context) ([]domain.Node, error) {
 	const q = `SELECT id, name, role, region, mgmt_addr, public_ip, public_key, reality_public_key,
-		client_vless_public_key,
+		client_vless_public_key, client_wg_public_key,
 		state, drain, decommission, active_transport, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
 		agent_version, wire_version, created_at, updated_at, last_seen FROM nodes ORDER BY name`
 	rows, err := s.db.QueryContext(ctx, q)
@@ -237,6 +273,18 @@ func (s *SQLiteStore) SetNodeClientVlessKey(ctx context.Context, id, publicKey s
 		publicKey, fmtTime(s.now().UTC()), id)
 	if err != nil {
 		return fmt.Errorf("set client vless key for %q: %w", id, err)
+	}
+	return requireAffected(res)
+}
+
+// SetNodeClientWGKey implements Store: records the master's client-facing
+// WireGuard public key, separate from the node's fleet-internal public_key.
+func (s *SQLiteStore) SetNodeClientWGKey(ctx context.Context, id, publicKey string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE nodes SET client_wg_public_key=?, updated_at=? WHERE id=?`,
+		publicKey, fmtTime(s.now().UTC()), id)
+	if err != nil {
+		return fmt.Errorf("set client wg key for %q: %w", id, err)
 	}
 	return requireAffected(res)
 }
@@ -357,6 +405,10 @@ func (s *SQLiteStore) RecordStatus(ctx context.Context, st domain.NodeStatus) er
 	if err != nil {
 		return fmt.Errorf("marshal exit health: %w", err)
 	}
+	clientPeers, err := json.Marshal(st.ClientPeers)
+	if err != nil {
+		return fmt.Errorf("marshal client peers: %w", err)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin status tx: %w", err)
@@ -365,15 +417,17 @@ func (s *SQLiteStore) RecordStatus(ctx context.Context, st domain.NodeStatus) er
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO node_status (node_id, state, reported_at, last_handshake,
-			egress_ip, reconcile_error, checks_json, exit_health_json)
-		VALUES (?,?,?,?,?,?,?,?)
+			egress_ip, reconcile_error, checks_json, exit_health_json, client_peers_json)
+		VALUES (?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(node_id) DO UPDATE SET
 			state=excluded.state, reported_at=excluded.reported_at,
 			last_handshake=excluded.last_handshake, egress_ip=excluded.egress_ip,
 			reconcile_error=excluded.reconcile_error, checks_json=excluded.checks_json,
-			exit_health_json=excluded.exit_health_json`,
+			exit_health_json=excluded.exit_health_json,
+			client_peers_json=excluded.client_peers_json`,
 		st.NodeID, string(st.State), fmtTime(orDefault(st.ReportedAt, s.now().UTC())),
 		fmtTime(st.LastHandshake), st.EgressIP, st.ReconcileError, string(checks), string(exitHealth),
+		string(clientPeers),
 	); err != nil {
 		return fmt.Errorf("record status for %q: %w", st.NodeID, err)
 	}
@@ -389,16 +443,17 @@ func (s *SQLiteStore) RecordStatus(ctx context.Context, st domain.NodeStatus) er
 // GetStatus implements Store.
 func (s *SQLiteStore) GetStatus(ctx context.Context, id string) (domain.NodeStatus, error) {
 	const q = `SELECT node_id, state, reported_at, last_handshake, egress_ip,
-		reconcile_error, checks_json, exit_health_json FROM node_status WHERE node_id = ?`
+		reconcile_error, checks_json, exit_health_json, client_peers_json FROM node_status WHERE node_id = ?`
 	var (
 		st                                domain.NodeStatus
 		stateS, reportedAt, lastHandshake string
 		checksJSON                        string
 		exitHealthJSON                    string
+		clientPeersJSON                   string
 	)
 	err := s.db.QueryRowContext(ctx, q, id).Scan(
 		&st.NodeID, &stateS, &reportedAt, &lastHandshake,
-		&st.EgressIP, &st.ReconcileError, &checksJSON, &exitHealthJSON)
+		&st.EgressIP, &st.ReconcileError, &checksJSON, &exitHealthJSON, &clientPeersJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.NodeStatus{}, ErrNotFound
 	}
@@ -413,6 +468,9 @@ func (s *SQLiteStore) GetStatus(ctx context.Context, id string) (domain.NodeStat
 	}
 	if err := json.Unmarshal([]byte(exitHealthJSON), &st.ExitHealth); err != nil {
 		return domain.NodeStatus{}, fmt.Errorf("unmarshal exit health for %q: %w", id, err)
+	}
+	if err := json.Unmarshal([]byte(clientPeersJSON), &st.ClientPeers); err != nil {
+		return domain.NodeStatus{}, fmt.Errorf("unmarshal client peers for %q: %w", id, err)
 	}
 	return st, nil
 }
@@ -431,7 +489,7 @@ func scanNode(row rowScanner) (domain.Node, error) {
 	)
 	err := row.Scan(
 		&n.ID, &n.Name, &roleS, &n.Region, &n.MgmtAddr, &n.PublicIP, &n.PublicKey, &n.RealityPublicKey,
-		&n.ClientVLESSPublicKey,
+		&n.ClientVLESSPublicKey, &n.ClientWGPublicKey,
 		&stateS, &drain, &decommission, &activeXport, &n.LastError, &n.SSH.Host, &n.SSH.Port, &n.SSH.User, &n.SSH.KeyPath,
 		&n.AgentVersion, &n.WireVersion,
 		&createdAt, &updatedAt, &seen,

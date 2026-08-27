@@ -10,12 +10,24 @@ import (
 // AmneziaWG 3.0 parameter model.
 //
 // Every 3.0 field lives on AWGShared rather than AWGLocal, and that is a
-// deliberate safety choice rather than a claim about the protocol. Header
-// protection and content padding demonstrably MUST match — the receiver derives
-// the same nonce and strips the same padding — while the timer ranges plausibly
-// may differ per end. Getting "must match" wrong breaks the tunnel; getting "may
-// differ" wrong only costs a degree of freedom we have no use for. So all of them
-// are shared until something proves otherwise.
+// deliberate safety choice rather than a claim about the protocol. Getting "must
+// match" wrong breaks the tunnel; getting "may differ" wrong only costs a degree
+// of freedom we have no use for. So all of them are shared until something proves
+// otherwise, and only ONE of them is actually known to require it.
+//
+// Measured against a 3.1 kernel module with both ends rendered by the production
+// renderers (2026-08-27), against an UNMODIFIED AmneziaWG 2.0 peer:
+//
+//   - HeaderProtectionKey MUST match. A 2.0 peer gets no handshake at all. This is
+//     the one parameter whose rollout is a flag day for every client.
+//   - ContentPaddingAddition did NOT have to match: a padding server and a 2.0
+//     peer passed traffic cleanly, including packets at the MTU edge. The likely
+//     reason is that the inner IP header carries its own length, so a receiver
+//     that knows nothing of the padding simply ignores the tail. It stays shared
+//     anyway — we have no use for a per-end value, and this is one observation,
+//     not a reading of the module's source.
+//   - The timer ranges did not have to match either, which is what makes a staged
+//     migration possible: see wg.WithAWG3Timers.
 //
 // The 3.0 timers are ranges, not scalars: the device redraws the value on every
 // timer arm. That is the point of them — a fixed 25-second keepalive is a timing

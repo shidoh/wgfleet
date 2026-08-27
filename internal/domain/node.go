@@ -61,6 +61,10 @@ type Node struct {
 	// co-located controller+master carries both. It seeds the vless:// links the UI
 	// hands end users. Like the others, the private key never leaves the master.
 	ClientVLESSPublicKey string
+	// ClientWGPublicKey is the master's CLIENT-FACING WireGuard public key: the
+	// identity of the interface end users dial, published by the agent so the
+	// controller can render client configs. Empty while wg-easy owns that leg.
+	ClientWGPublicKey string
 
 	// Drain, when set, takes the node out of the load balancer: it stays a
 	// configured peer/proxy (existing connections survive) but receives no new
@@ -103,6 +107,26 @@ type NodeStatus struct {
 	ReconcileError string             // non-empty if the last reconcile failed
 	Checks         []HealthCheck      // individual self-check results
 	ExitHealth     []ExitTunnelHealth // master only: per-exit tunnel health from mihomo
+	// ClientPeers is the master's view of the end users on its client-facing
+	// interface, read from the live interface rather than from desired state. It
+	// only appears once the agent owns that interface; while wg-easy holds it, the
+	// same numbers come from wg-easy's own metrics endpoint.
+	ClientPeers []ClientPeerStatus
+}
+
+// ClientPeerStatus is one end user's live peer on the master's client interface.
+// Keyed by public key rather than by name: the interface knows nothing about
+// labels, and the controller matches these back onto its credentials.
+// It deliberately does NOT carry the peer's endpoint. That is the end user's
+// real, pre-tunnel IP — the single piece of data this system exists to keep
+// nobody from having. Reporting it would persist a connection log in the
+// controller's store, put it in every backup, and (under ADR-0027) replicate it
+// to every master, in exchange for a column no page displays.
+type ClientPeerStatus struct {
+	PublicKey     string
+	LastHandshake time.Time // zero when the peer has never completed one
+	ReceivedBytes int64
+	SentBytes     int64
 }
 
 // HealthCheck is a single named self-check result from an agent.

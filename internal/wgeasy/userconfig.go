@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/shidoh/wgfleet/internal/domain"
 )
@@ -174,7 +175,12 @@ func RenderUserConfigUpdateSQL(name string, c UserConfigColumns) string {
 // ReadUserConfig returns the interface's current managed user-config columns.
 // found is false (no error) when the row does not exist yet.
 func ReadUserConfig(ctx context.Context, dbPath, name string) (cols UserConfigColumns, found bool, err error) {
-	db, err := open(dbPath)
+	db, err := openReadOnly(dbPath)
+	if errors.Is(err, os.ErrNotExist) {
+		// wg-easy is not set up here. Callers treat this as "pending", the same as an
+		// absent row, rather than as a failure.
+		return UserConfigColumns{}, false, nil
+	}
 	if err != nil {
 		return UserConfigColumns{}, false, err
 	}
