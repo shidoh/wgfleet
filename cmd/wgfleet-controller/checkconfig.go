@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	_ "modernc.org/sqlite" // read-only probe of the store's schema version
 
@@ -37,10 +38,16 @@ import (
 // not the store (which startup creates and migrates).
 
 // checkManifest runs both verdicts. main wires this to --check-config.
-func checkManifest(path string) error {
+// storeOverride, when non-empty, is the --store flag: it overrides controller.store
+// everywhere else in this binary, so the check has to see the same value the
+// controller would actually open.
+func checkManifest(path, storeOverride string) error {
 	cfg, err := checkManifestOnly(path)
 	if err != nil {
 		return err
+	}
+	if storeOverride != "" {
+		cfg.Controller.Store = storeOverride
 	}
 	return checkHostReadiness(cfg)
 }
@@ -152,7 +159,18 @@ func checkStoreOpenable(path string) error {
 	}
 	f, err := os.Open(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil // first start: Open will create it
+		// First start: store.Open will create the file — but only if it can. A
+		// directory that does not exist is not a first start, it is a path the
+		// controller will fail on at startup with `unable to open database file (14)`,
+		// which is the crash loop this whole subcommand exists to catch. Measured: a
+		// manifest naming /nonexistent/dir/p.db passed --check-config with rc=0 and
+		// then refused to start.
+		if dir := filepath.Dir(path); dir != "" && dir != "." {
+			if _, derr := os.Stat(dir); derr != nil {
+				return fmt.Errorf("the directory for the store does not exist: %w", derr)
+			}
+		}
+		return nil
 	}
 	if err != nil {
 		return err

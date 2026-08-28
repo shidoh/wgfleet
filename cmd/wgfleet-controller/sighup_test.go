@@ -49,3 +49,24 @@ func TestBarePlanIsRefusedNotServed(t *testing.T) {
 		t.Error("anySubcommand missed a selected subcommand")
 	}
 }
+
+// Dispatch is an ordered if-chain, so two subcommands on one line meant the first in
+// the chain ran and the second was never mentioned: `--provision exit-de-1 --backup
+// /tmp/y.age` took a backup and said nothing about the provision that was asked for.
+func TestTwoSubcommandsAreRefusedRatherThanRaced(t *testing.T) {
+	got := selectedSubcommands(map[string]bool{
+		"--provision": true, "--backup": true, "--restore": false,
+	})
+	if len(got) != 2 {
+		t.Fatalf("selected = %v, want both named", got)
+	}
+	if got[0] != "--backup" || got[1] != "--provision" {
+		t.Errorf("selected = %v, want a stable sorted order", got)
+	}
+	if n := len(selectedSubcommands(map[string]bool{"--backup": true})); n != 1 {
+		t.Errorf("one subcommand reported as %d", n)
+	}
+	if n := len(selectedSubcommands(map[string]bool{"--backup": false})); n != 0 {
+		t.Errorf("no subcommand reported as %d", n)
+	}
+}

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"text/tabwriter"
 	"time"
 
@@ -23,9 +24,18 @@ func runCertsCheckExpiration(cfg *config.ControllerConfig) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "CERTIFICATE\tEXPIRES\tREMAINING")
 
+	// Every certificate this host actually holds, not just the CA.
+	//
+	// The loop used to be a one-element slice while the flag help said "prints what
+	// this host holds" — and on a co-located master, which is the deployment this
+	// project ships, the same box also holds the node certificate the agent presents
+	// to the control plane. That is the one with a one-year life and the one an
+	// operator running this command is asking about. It is absent when the controller
+	// runs alone, which the empty-path skip below already handles.
 	rows := 0
 	for _, c := range []struct{ label, path string }{
 		{"controller CA", cfg.Controller.PKI.CACert},
+		{"this node's agent certificate", localNodeCertPath()},
 	} {
 		if c.path == "" {
 			continue
@@ -45,11 +55,33 @@ func runCertsCheckExpiration(cfg *config.ControllerConfig) error {
 	if rows == 0 {
 		return fmt.Errorf("no certificates found; is this the controller host?")
 	}
-	fmt.Fprintf(os.Stderr, "\nNode certificates live ON the nodes and are renewed by their own agents\n"+
-		"(wire v%d and above). Watch wgfleet_agent_cert_expiry_timestamp_seconds for the\n"+
-		"fleet-wide view; a node whose remaining time stops rising is one to look at.\n", certRenewalWire)
+	fmt.Fprintf(os.Stderr, "\nThe OTHER nodes' certificates live on those nodes and are renewed by their own\n"+
+		"agents (wire v%d and above), between 70%% and 90%% of the certificate's life. This\n"+
+		"host cannot read them; wgfleet_agent_cert_expiry_timestamp_seconds is the\n"+
+		"fleet-wide view, and a node whose remaining time stops rising is one to look at.\n"+
+		"\nThe controller's own SERVER certificate is not listed because it is not a file:\n"+
+		"it is minted in memory at every start and lives as long as the process does.\n", certRenewalWire)
 	return nil
 }
+
+// localNodeCertPath is where an agent on THIS host keeps its client certificate.
+// Read from the agent's own manifest when there is one, so a non-default layout is
+// still found; "" when this host runs no agent, which is the split deployment.
+func localNodeCertPath() string {
+	acfg, err := config.Load(defaultAgentConfigPath, &config.AgentConfig{})
+	if err != nil {
+		return ""
+	}
+	path := config.ExpandPath(acfg.Agent.Identity.Cert)
+	if _, serr := os.Stat(path); serr != nil {
+		return ""
+	}
+	return path
+}
+
+// defaultAgentConfigPath is where a co-located agent's manifest lives. Named here
+// rather than inlined so the one place that reads another component's file says so.
+const defaultAgentConfigPath = "/etc/wgfleet/agent.yaml"
 
 // humanUntil renders a duration the way an operator reads it: in days, and saying
 // so plainly when it has already passed.
@@ -76,8 +108,16 @@ func runCertsRenew(cfg *config.ControllerConfig, nodeID string, provider config.
 	if err != nil {
 		return fmt.Errorf("issue certificate for %q: %w", nodeID, err)
 	}
-	certPath := nodeID + ".crt"
-	keyPath := nodeID + ".key"
+	// Under a directory named after the node, the way --issue-node does, rather than
+	// two bare filenames in whatever the current working directory happened to be —
+	// a git checkout, /tmp, somebody's home — where a live node PRIVATE KEY then
+	// stays, unnoticed, with instructions that never mention deleting it.
+	outDir := filepath.Join("pki", nodeID)
+	if err := os.MkdirAll(outDir, 0o700); err != nil {
+		return err
+	}
+	certPath := filepath.Join(outDir, "node.crt")
+	keyPath := filepath.Join(outDir, "node.key")
 	if err := os.WriteFile(certPath, kp.CertPEM, 0o644); err != nil {
 		return err
 	}
@@ -85,11 +125,13 @@ func runCertsRenew(cfg *config.ControllerConfig, nodeID string, provider config.
 		return err
 	}
 	fmt.Printf("wrote %s and %s\n\n", certPath, keyPath)
+	// The manifest already knows how to reach this node, so print the real target
+	// rather than a <node> placeholder the operator has to go and look up.
+	target := sshTargetFor(cfg, nodeID)
 	fmt.Printf("Install them on %s and restart its agent:\n", nodeID)
-	fmt.Printf("  scp %s %s root@<node>:/etc/wgfleet/\n", certPath, keyPath)
-	fmt.Printf("  ssh root@<node> 'mv /etc/wgfleet/%s /etc/wgfleet/node.crt && "+
-		"mv /etc/wgfleet/%s /etc/wgfleet/node.key && chmod 600 /etc/wgfleet/node.key && "+
-		"systemctl restart wgfleet-agent'\n", certPath, keyPath)
+	fmt.Printf("  scp %s %s %s:/etc/wgfleet/\n", certPath, keyPath, target)
+	fmt.Printf("  ssh %s 'chmod 600 /etc/wgfleet/node.key && systemctl restart wgfleet-agent'\n", target)
+	fmt.Printf("\nThen delete the local copy — it is a live node identity:\n  rm -rf %s\n", outDir)
 	fmt.Fprintf(os.Stderr, "\nThe old certificate is NOT revoked — there is no CRL. It stops being useful\n"+
 		"when it expires; until then both are valid.\n")
 	return nil
@@ -97,3 +139,30 @@ func runCertsRenew(cfg *config.ControllerConfig, nodeID string, provider config.
 
 // certRenewalWire is named here so the message above cannot drift from the gate.
 const certRenewalWire = pki.NodeCertRenewalWire
+
+// sshTargetFor renders the user@host the manifest already holds for a node, so the
+// printed recipe is runnable rather than a template with a placeholder in it. Falls
+// back to the placeholder when the node is not in the manifest.
+func sshTargetFor(cfg *config.ControllerConfig, nodeID string) string {
+	for _, e := range cfg.Fleet.Exits {
+		if e.Name == nodeID && e.SSH.Host != "" {
+			return sshUserHost(e.SSH.User, e.SSH.Host, e.SSH.Port)
+		}
+	}
+	for _, m := range cfg.Fleet.Masters {
+		if m.Name == nodeID && m.SSH.Host != "" {
+			return sshUserHost(m.SSH.User, m.SSH.Host, m.SSH.Port)
+		}
+	}
+	return "root@<node>"
+}
+
+func sshUserHost(user, host string, port int) string {
+	if user == "" {
+		user = "root"
+	}
+	if port != 0 && port != 22 {
+		return fmt.Sprintf("-p %d %s@%s", port, user, host)
+	}
+	return user + "@" + host
+}

@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -111,7 +112,12 @@ func run() error {
 	// It runs BEFORE the permission self-heal below and touches nothing: a check
 	// that modifies the thing it checks is not a check.
 	if *checkConfig {
-		return checkManifest(*configPath)
+		// --store overrides controller.store everywhere else, so it has to override it
+		// here too. It used to be applied forty lines below this point, which made
+		// `--check-config --store <path>` accept the flag, document it, and silently
+		// check the manifest's store instead — on the one subcommand an operator would
+		// most want to point at an alternate database.
+		return checkManifest(*configPath, *storePath)
 	}
 
 	cfg, err := config.Load(*configPath, &config.ControllerConfig{})
@@ -127,6 +133,30 @@ func run() error {
 	if *plan && !anySubcommand(*provision, *upgradeAgent, *importWGEasy, *restoreIn, *backupOut, *certs) && !*rollingUp {
 		return fmt.Errorf("--plan is a modifier, not a command: pass it with --provision, --upgrade-agent, " +
 			"--rolling-upgrade, --import-wg-easy or --restore. To check the manifest without starting anything, use --check-config")
+	}
+	// Dispatch below is an ordered if-chain, so two subcommands on one line meant the
+	// first in the chain ran and the second was never mentioned: `--provision exit-de-1
+	// --backup /tmp/y.age` took a backup and said nothing about the provision the
+	// operator asked for. Naming them all is the only answer that cannot be mistaken.
+	if selected := selectedSubcommands(map[string]bool{
+		"--provision":       *provision != "",
+		"--upgrade-agent":   *upgradeAgent != "",
+		"--rolling-upgrade": *rollingUp,
+		"--import-wg-easy":  *importWGEasy != "",
+		"--backup":          *backupOut != "",
+		"--restore":         *restoreIn != "",
+		"--certs":           *certs != "",
+	}); len(selected) > 1 {
+		return fmt.Errorf("these do different things and only one can run: %s. Pass one at a time",
+			strings.Join(selected, ", "))
+	}
+	// --plan means "change nothing", and two subcommands could not honour it: --backup
+	// wrote a real archive holding the CA key and every client key, and --certs renew
+	// issued a real certificate. Neither has a dry run to offer, so say that rather
+	// than accept the flag and ignore it.
+	if *plan && (*backupOut != "" || *certs != "") {
+		return fmt.Errorf("--plan has no meaning here: --backup and --certs have no dry run. " +
+			"Drop --plan, or pick a subcommand that plans (--provision, --upgrade-agent, --rolling-upgrade, --restore)")
 	}
 	if *certs != "" {
 		switch *certs {
@@ -700,6 +730,19 @@ func (s portalSource) ListWGClients(ctx context.Context, id string) ([]domain.WG
 }
 
 // anySubcommand reports whether any of these string flags selected a subcommand.
+// selectedSubcommands returns the names of every mutually exclusive subcommand the
+// operator asked for, sorted so the message is stable.
+func selectedSubcommands(chosen map[string]bool) []string {
+	var out []string
+	for name, on := range chosen {
+		if on {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func anySubcommand(vals ...string) bool {
 	for _, v := range vals {
 		if v != "" {

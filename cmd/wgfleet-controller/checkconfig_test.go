@@ -41,7 +41,7 @@ func exampleManifest(t *testing.T, mode os.FileMode) string {
 // the refusal into a crash loop of the control plane.
 func TestCheckManifestRejectsWhatTheControllerWouldRefuse(t *testing.T) {
 	p := writeManifest(t, "controller:\n  listen: [oops\n", 0o600)
-	err := checkManifest(p)
+	err := checkManifest(p, "")
 	if err == nil {
 		t.Fatal("a manifest that cannot be parsed was reported as valid")
 	}
@@ -80,7 +80,7 @@ func TestCheckManifestDoesNotTouchTheFile(t *testing.T) {
 }
 
 func TestCheckManifestReportsAMissingFile(t *testing.T) {
-	if err := checkManifest(filepath.Join(t.TempDir(), "absent.yaml")); err == nil {
+	if err := checkManifest(filepath.Join(t.TempDir(), "absent.yaml"), ""); err == nil {
 		t.Fatal("a missing manifest was reported as valid")
 	}
 }
@@ -195,4 +195,31 @@ func resolveAWG3Key2(t *testing.T, cfg *config.ControllerConfig) error {
 	t.Helper()
 	_, err := resolveAWG3Key(cfg, config.EnvSecretProvider{})
 	return err
+}
+
+// --check-config exists to answer, without restarting, the question a restart
+// answers destructively. A store path the controller cannot open is precisely the
+// crash loop it was written to catch — and a manifest naming a directory that does
+// not exist passed with rc=0, then failed at startup with
+// `unable to open database file (14)`.
+func TestCheckConfigRefusesAStoreItCannotOpen(t *testing.T) {
+	if err := checkStoreOpenable(filepath.Join(t.TempDir(), "no-such-dir", "state.db")); err == nil {
+		t.Error("a store under a directory that does not exist was accepted as a first start")
+	}
+	// A file that simply does not exist yet, in a directory that does, IS a first
+	// start and must stay acceptable.
+	if err := checkStoreOpenable(filepath.Join(t.TempDir(), "state.db")); err != nil {
+		t.Errorf("a genuine first start was refused: %v", err)
+	}
+}
+
+// --store overrides controller.store everywhere else in this binary, so it has to
+// override it here too. It used to be applied after the check had already run,
+// which made the flag accepted, documented, and silently ignored.
+func TestCheckConfigHonoursTheStoreOverride(t *testing.T) {
+	p := exampleManifest(t, 0o600)
+	missing := filepath.Join(t.TempDir(), "no-such-dir", "state.db")
+	if err := checkManifest(p, missing); err == nil {
+		t.Error("--store was accepted and then ignored")
+	}
 }
