@@ -2,6 +2,7 @@ package keybroker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -1190,5 +1191,56 @@ func TestExitSpecCarriesPublicUDPPorts(t *testing.T) {
 	}
 	if got := spec.Firewall.PublicUDPPorts; len(got) != 1 || got[0] != 51821 {
 		t.Fatalf("exit Firewall.PublicUDPPorts = %v, want [51821]", got)
+	}
+}
+
+// flakyNodeStore fails exactly one call: reading a node's inventory row.
+type flakyNodeStore struct {
+	store.Store
+	name string
+	err  error
+}
+
+func (f flakyNodeStore) GetNode(ctx context.Context, id string) (domain.Node, error) {
+	if id == f.name {
+		return domain.Node{}, f.err
+	}
+	return f.Store.GetNode(ctx, id)
+}
+
+// The exit leg needs the same floor the client leg already has: an unreadable
+// store must fail the render, not render an exit with no master peer.
+//
+// lookupPubKey collapsed every failure — ErrNotFound, a locked database, a
+// cancelled context — into "not registered yet", and renderExitSpec then logged a
+// warning and returned a spec with zero peers. That spec is VALID, so nothing
+// downstream rejects it: the exit's wgPlanner sees a changed awg0.conf and runs
+// awg-quick down + up, raising a tunnel that leads nowhere. Meanwhile
+// exit/planners.go promises in a comment that it "never tears anything down on
+// missing information".
+func TestExitSpecFailsRatherThanDroppingTheMasterPeer(t *testing.T) {
+	ctx := context.Background()
+	b, st := newBroker(t)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1",
+		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7",
+		"/Lpxg7UgcxjrQcfYYl9CaqXDLy/bYSHQ3iD/KXnY1zU=", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(ctx, "exit-de-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if len(spec.Peers) == 0 {
+		t.Fatalf("fixture is not exercising the path: exit has no peers to begin with")
+	}
+
+	boom := errors.New("database is locked")
+	b.store = flakyNodeStore{Store: st, name: "master-xa-1", err: boom}
+	spec, err = b.RenderNodeSpec(ctx, "exit-de-1")
+	if err == nil {
+		t.Fatalf("render succeeded despite an unreadable store; peers = %+v", spec.Peers)
+	}
+	if !errors.Is(err, boom) {
+		t.Errorf("render error = %v, want it to wrap the store failure", err)
 	}
 }

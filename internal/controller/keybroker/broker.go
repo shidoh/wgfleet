@@ -351,7 +351,10 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	port := exit.WGListenPort()
 	egress := domain.EgressMethod(exit.Egress)
 	// The exit's own store node carries the operator's live active-transport override.
-	exitNode, _ := b.lookupPubKey(ctx, exit.Name)
+	exitNode, _, err := b.lookupPubKey(ctx, exit.Name)
+	if err != nil {
+		return domain.NodeSpec{}, err
+	}
 
 	// The management overlay (ZeroTier) must be trusted on every exit without the
 	// operator hand-listing it: route it DIRECT so client→mgmt traffic (e.g. DNS to
@@ -375,11 +378,16 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		// its I1-I5 signatures may use the full CPS tag set including <c>/<t>.
 		seed := wg.TunnelSeed(exit.Name, master.Name, awgSalt)
 		p := wg.DeriveAWGParamsForEnd(seed, "exit", true)
-		// AmneziaWG 3.0, when the operator opted in AND this exit's agent can render
-		// it. The SAME decision is taken for the master end below from the same
-		// inputs — both ends of one tunnel must agree on the generation or the
-		// handshake never completes, so this must never be decided twice differently.
-		if awg3Enabled(b.fleet.AWG3For(exit), exitNode) {
+		masterNode, _, merr := b.lookupPubKey(ctx, master.Name)
+		if merr != nil {
+			return domain.NodeSpec{}, merr
+		}
+		// AmneziaWG 3.0, when the operator opted in AND BOTH agents can render it.
+		// The same decision is taken for the master end in renderMasterSpec from the
+		// same two node records — both ends of one tunnel must agree on the generation
+		// or the handshake never completes, so this must never be decided twice
+		// differently, and it must never be decided from one end's record alone.
+		if awg3Enabled(b.fleet.AWG3For(exit), exitNode, masterNode) {
 			p = wg.WithAWG3(p, seed, b.awg3Key)
 		}
 		awg = &p
@@ -429,7 +437,10 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		b.log.Warn("exit has no master to peer with", "exit", exit.Name)
 		return spec, nil
 	}
-	masterNode, masterPub := b.lookupPubKey(ctx, master.Name)
+	masterNode, masterPub, err := b.lookupPubKey(ctx, master.Name)
+	if err != nil {
+		return domain.NodeSpec{}, err
+	}
 	phase := exit.PerTunnelKeyPhase()
 
 	// Legacy shared-identity peer. Kept in every phase but `on`, so the master always
@@ -628,7 +639,10 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	var dnsUpstreams []string
 
 	for _, exit := range b.fleet.Exits {
-		exitNode, exitPub := b.lookupPubKey(ctx, exit.Name)
+		exitNode, exitPub, eerr := b.lookupPubKey(ctx, exit.Name)
+		if eerr != nil {
+			return domain.NodeSpec{}, eerr
+		}
 		if exitPub == "" {
 			b.log.Warn("exit public key not yet registered; omitting from master mihomo proxies",
 				"master", master.Name, "exit", exit.Name)
@@ -724,9 +738,15 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			// signatures free of the <c>/<t> tags it cannot parse.
 			seed := wg.TunnelSeed(exit.Name, master.Name, awgSalt)
 			awg := wg.DeriveAWGParamsForEnd(seed, "master", false)
-			// Mirror of the exit end in renderExitSpec — same gate, same inputs, so
-			// the two ends of this tunnel cannot disagree about the AWG generation.
-			if awg3Enabled(b.fleet.AWG3For(exit), exitNode) {
+			masterNode, _, merr := b.lookupPubKey(ctx, master.Name)
+			if merr != nil {
+				return domain.NodeSpec{}, merr
+			}
+			// Mirror of the exit end in renderExitSpec — same gate, same two node
+			// records, so the two ends of this tunnel cannot disagree about the AWG
+			// generation. THIS end is rendered into mihomo by the master's own agent,
+			// which is why the master's record has to be one of the inputs.
+			if awg3Enabled(b.fleet.AWG3For(exit), exitNode, masterNode) {
 				awg = wg.WithAWG3(awg, seed, b.awg3Key)
 			}
 			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
@@ -902,7 +922,15 @@ func (b *Broker) throughputAutoSuspend(ctx context.Context) map[string]bool {
 	degraded := make(map[string]bool)
 	healthy := 0
 	for _, exit := range b.fleet.Exits {
-		node, pub := b.lookupPubKey(ctx, exit.Name)
+		node, pub, err := b.lookupPubKey(ctx, exit.Name)
+		if err != nil {
+			// Auto-suspend removes an exit from the load balancer. Deciding that from
+			// an inventory we could not read is exactly the kind of guess this
+			// function must not make; suspend nothing this pass.
+			b.log.Warn("auto-suspend: inventory read failed; suspending nothing this pass",
+				"exit", exit.Name, "err", err)
+			return nil
+		}
 		if pub == "" || node.Decommission {
 			continue
 		}
@@ -1032,7 +1060,7 @@ func (b *Broker) composeSpec(ctx context.Context, master config.MasterConfig) do
 		} else {
 			// Pre-ADR-0024 default: clients resolve directly against the exit blockys.
 			for _, exit := range b.fleet.Exits {
-				if node, _ := b.lookupPubKey(ctx, exit.Name); node.MgmtAddr != "" {
+				if node, _, err := b.lookupPubKey(ctx, exit.Name); err == nil && node.MgmtAddr != "" {
 					dns = append(dns, node.MgmtAddr)
 				}
 			}
@@ -1070,7 +1098,7 @@ func (b *Broker) renderDNS(ctx context.Context, exit config.ExitConfig) domain.D
 	if !exit.DNSFilter {
 		return domain.DNSFilterSpec{}
 	}
-	node, _ := b.lookupPubKey(ctx, exit.Name)
+	node, _, _ := b.lookupPubKey(ctx, exit.Name)
 	d := exit.DNS
 	prometheus := true // default on (docs/DESIGN.md §9: no blind components)
 	if d.Prometheus != nil {
@@ -1140,14 +1168,30 @@ func dnsCustomConfig(d config.DNSConfig) domain.CustomConfig {
 	return cc
 }
 
-// lookupPubKey returns the inventory node and its registered public key (empty
-// if the node is unknown or has not registered yet).
-func (b *Broker) lookupPubKey(ctx context.Context, name string) (domain.Node, string) {
+// lookupPubKey returns the inventory node and its registered public key.
+//
+// "Not registered yet" and "we could not find out" are DIFFERENT answers and this
+// used to return the same thing for both — a zero Node and an empty key, for
+// ErrNotFound, a locked database and a cancelled context alike. Callers read that
+// as "no key yet", which is a legitimate bootstrap state, and rendered a spec
+// around it: an exit with no master peer, or a tunnel gated down to AWG 2.0. Those
+// specs are VALID, so nothing downstream rejects them; the exit's planner sees a
+// changed awg0.conf and runs awg-quick down + up, raising a tunnel that leads
+// nowhere. A transient store error would take the whole data plane with it.
+//
+// So ErrNotFound alone keeps the old meaning — (zero node, "", nil), the bootstrap
+// case a caller may legitimately render around. Every other error is returned, and
+// the spec render fails: the node keeps its last-good config, which is what "we
+// could not find out" has to mean. Same rule the client leg already follows.
+func (b *Broker) lookupPubKey(ctx context.Context, name string) (domain.Node, string, error) {
 	node, err := b.store.GetNode(ctx, name)
-	if err != nil {
-		return domain.Node{}, ""
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return domain.Node{}, "", nil
+	case err != nil:
+		return domain.Node{}, "", fmt.Errorf("reading %q from the inventory: %w", name, err)
 	}
-	return node, node.PublicKey
+	return node, node.PublicKey, nil
 }
 
 // tunnelPubKey returns the master's per-tunnel WireGuard public key for one exit
