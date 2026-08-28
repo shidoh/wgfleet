@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"log/slog"
 	"strings"
 	"syscall"
@@ -14,7 +13,10 @@ import (
 // teaches the operator that the signal is harmless, on every machine except the one
 // that coordinates the fleet.
 func TestSIGHUPDoesNotKillTheController(t *testing.T) {
-	var buf bytes.Buffer
+	// syncBuf, not bytes.Buffer: the signal goroutine writes the log line while the
+	// polling loop below reads it, which is a genuine data race the -race detector
+	// fails on. (Shared with listen_test.go in this package.)
+	var buf syncBuf
 	stop := ignoreSIGHUP(slog.New(slog.NewTextHandler(&buf, nil)))
 	defer stop()
 
