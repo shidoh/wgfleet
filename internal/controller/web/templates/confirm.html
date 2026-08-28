@@ -1,0 +1,28 @@
+{{define "confirm"}}{{template "layout" .}}{{end}}
+{{define "content"}}
+{{/* The server-side half of a destructive action.
+
+     Every dangerous form in this console is gated by onsubmit="return
+     lockAction(this)", and that gate is JavaScript: with the script not yet parsed
+     (it loads deferred) the function does not exist, the handler throws, and the
+     form submits with no prompt at all; with JavaScript off the handler never runs
+     and the same thing happens. So the only prompt the operator was ever guaranteed
+     was one that could disappear without warning.
+
+     This page is what they get instead. lockAction sets the hidden `confirm` field
+     when the dialog is accepted, so an operator with a working script still sees a
+     single dialog and never lands here — this is the floor, not an extra step. */}}
+<section class="panel">
+  <h2 class="panel-label">{{.Heading}}</h2>
+  <p class="cfg-hint warn">{{.Consequence}}</p>
+  {{if .Detail}}<p class="dim">{{.Detail}}</p>{{end}}
+  <div class="action-bar">
+    <form method="post" action="{{.Action}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <input type="hidden" name="confirm" value="1">
+      <button class="btn ghost-red" type="submit" data-pending="Working…">{{.ConfirmLabel}}</button>
+    </form>
+    <a class="btn" href="{{.CancelHref}}">Cancel</a>
+  </div>
+</section>
+{{end}}

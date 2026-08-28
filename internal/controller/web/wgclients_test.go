@@ -100,7 +100,17 @@ func TestWGClientIssueAndRevoke(t *testing.T) {
 		t.Fatalf("clients after issue = %+v", clients)
 	}
 
-	if res := post(t, h, "/nodes/master-xa-1/wg-clients/id-laptop/revoke"); res.StatusCode != http.StatusSeeOther {
+	// Unconfirmed: the server asks and revokes nothing. Revoking deletes somebody's
+	// only way in, and the page's own prompt is JavaScript that may not have loaded.
+	if res := post(t, h, "/nodes/master-xa-1/wg-clients/id-laptop/revoke"); res.StatusCode != http.StatusOK {
+		t.Fatalf("unconfirmed revoke status = %d, want the confirmation page", res.StatusCode)
+	}
+	if len(clients) != 1 {
+		t.Fatalf("an unconfirmed revoke deleted the credential anyway: %+v", clients)
+	}
+
+	if res := postWith(t, h, "/nodes/master-xa-1/wg-clients/id-laptop/revoke",
+		url.Values{"confirm": {"1"}}); res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("revoke status = %d", res.StatusCode)
 	}
 	if len(clients) != 0 {

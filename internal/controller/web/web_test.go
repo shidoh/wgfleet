@@ -304,8 +304,21 @@ func TestFormatSinceBuckets(t *testing.T) {
 }
 
 func post(t *testing.T, h http.Handler, path string) *http.Response {
+	return postWith(t, h, path, nil)
+}
+
+// postWith posts with a body, which destructive actions now need: they refuse a
+// request carrying no `confirm` and render a confirmation page instead, because
+// their only other prompt is JavaScript that may not have loaded.
+func postWith(t *testing.T, h http.Handler, path string, form url.Values) *http.Response {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, path, nil)
+	var req *http.Request
+	if form == nil {
+		req = httptest.NewRequest(http.MethodPost, path, nil)
+	} else {
+		req = httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	if hh, ok := h.(*Handler); ok {
 		req.Header.Set("X-CSRF-Token", hh.csrf)
@@ -341,9 +354,25 @@ func TestDeleteAction(t *testing.T) {
 	h, st := newTestHandler(t, nil)
 	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
 
+	// Unconfirmed: the server asks, and deletes nothing. The page's own prompt is
+	// JavaScript — deferred, and absent entirely with scripting off — so without this
+	// the most destructive action in the console happened on one click, silently.
 	res := post(t, h, "/nodes/exit-de-1/delete")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("unconfirmed delete status = %d, want the confirmation page", res.StatusCode)
+	}
+	body, _ := io.ReadAll(res.Body)
+	if !strings.Contains(string(body), "Delete exit-de-1?") {
+		t.Errorf("the confirmation page does not name what it is about to do:\n%s", body)
+	}
+	if _, err := st.GetNode(context.Background(), "exit-de-1"); err != nil {
+		t.Fatal("an unconfirmed delete removed the node anyway")
+	}
+
+	// Confirmed: it goes through.
+	res = postWith(t, h, "/nodes/exit-de-1/delete", url.Values{"confirm": {"1"}})
 	if res.StatusCode != http.StatusSeeOther {
-		t.Fatalf("delete status = %d", res.StatusCode)
+		t.Fatalf("confirmed delete status = %d", res.StatusCode)
 	}
 	if _, err := st.GetNode(context.Background(), "exit-de-1"); err == nil {
 		t.Error("delete action did not remove the node")

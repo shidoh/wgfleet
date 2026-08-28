@@ -104,6 +104,7 @@ type Handler struct {
 	profileTmpl   *template.Template // layout + admin profile / change-password
 	clientsTmpl   *template.Template // layout + client-VLESS credential management (master)
 	wgClientsTmpl *template.Template // layout + client-WireGuard credential management (master)
+	confirmTmpl   *template.Template // layout + the server-side confirmation page
 	mux           *http.ServeMux
 	csrf          string       // per-process CSRF token, embedded in forms and double-submit cookie
 	log           *slog.Logger // structured logger; surfaces render failures the page swallows
@@ -164,13 +165,17 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	}
 	wgClientsTmpl, err := parsePage("templates/layout.html", "templates/wgclients.html", "templates/wgclients_panel.html")
 	if err != nil {
+		return nil, err
+	}
+	confirmTmpl, err := parsePage("templates/layout.html", "templates/confirm.html")
+	if err != nil {
 		return nil, fmt.Errorf("web: parse wg clients templates: %w", err)
 	}
 	token, err := newCSRFToken()
 	if err != nil {
 		return nil, fmt.Errorf("web: generate csrf token: %w", err)
 	}
-	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, clientsTmpl: clientsTmpl, wgClientsTmpl: wgClientsTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute), subLimit: auth.NewIPLimiter(10, time.Minute, 4096)}
+	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, clientsTmpl: clientsTmpl, wgClientsTmpl: wgClientsTmpl, confirmTmpl: confirmTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute), subLimit: auth.NewIPLimiter(10, time.Minute, 4096)}
 
 	staticHandler := http.FileServer(http.FS(staticFS))
 	h.mux.Handle("GET /static/", staticHandler)
@@ -542,6 +547,17 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	if h.needsConfirmation(w, r, confirmView{
+		Title:        "Delete " + id,
+		Heading:      "Delete " + id + "?",
+		Consequence:  "This removes the node from the fleet inventory permanently, along with every client credential issued on it. Those people lose their tunnel and cannot be given it back — they need new configs.",
+		Detail:       "The node's own files are not touched; this is the controller forgetting it. Nothing here can be undone from the console.",
+		Action:       "/nodes/" + id + "/delete",
+		ConfirmLabel: "Delete " + id,
+		CancelHref:   "/nodes/" + id,
+	}) {
+		return
+	}
 	if err := h.store.DeleteNode(r.Context(), id); err != nil {
 		h.redirectErr(w, r, "/nodes/"+id, "delete node", err)
 		return
@@ -1436,4 +1452,44 @@ func formatSince(d time.Duration) string {
 
 func httpError(w http.ResponseWriter, what string, err error) {
 	http.Error(w, fmt.Sprintf("%s: %v", what, err), http.StatusInternalServerError)
+}
+
+// confirmView is the data behind templates/confirm.html.
+type confirmView struct {
+	Title        string
+	NodeCount    int
+	User         string
+	CSRF         string
+	Heading      string
+	Consequence  string
+	Detail       string
+	Action       string
+	ConfirmLabel string
+	CancelHref   string
+}
+
+// needsConfirmation renders the server-side confirmation page and reports true when
+// the caller must stop.
+//
+// The console's prompts are all `onsubmit="return lockAction(this)"`, which is
+// JavaScript: before the deferred script has parsed the function does not exist and
+// the throw does not cancel the submit, and with JavaScript off the handler never
+// runs at all. Either way the operator gets no prompt and the action happens. A
+// confirmation that can vanish without notice is not a confirmation, and the actions
+// behind these particular buttons — deleting a node, revoking somebody's only way
+// in — are the ones where that matters.
+//
+// lockAction sets the hidden `confirm` field once its dialog is accepted, so nothing
+// changes for an operator whose browser is working normally.
+func (h *Handler) needsConfirmation(w http.ResponseWriter, r *http.Request, v confirmView) bool {
+	if r.FormValue("confirm") != "" {
+		return false
+	}
+	v.NodeCount = h.fleetCount(r.Context())
+	v.CSRF = h.csrf
+	if u, ok := h.currentUser(r); ok {
+		v.User = u
+	}
+	h.render(w, h.confirmTmpl, "confirm", v)
+	return true
 }

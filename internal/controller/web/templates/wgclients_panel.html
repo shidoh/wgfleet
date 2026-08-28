@@ -92,6 +92,11 @@
                 onsubmit="return lockAction(this)"
                 data-confirm="Revoke {{.Name}}? The credential and its key are deleted permanently — the person will need a new config.">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            {{/* Empty until lockAction fills it in; the server asks on its own page
+                 otherwise. This form's prompt is JavaScript, and a prompt that can
+                 fail to load is not a prompt for an action that deletes somebody's
+                 only way in. */}}
+            <input type="hidden" name="confirm" value="">
             {{/* The only button here that names its client, because it is the only
                  irreversible one — and as a visually-hidden SUFFIX, so the
                  accessible name stays a superset of the visible text rather than

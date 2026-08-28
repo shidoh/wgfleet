@@ -14,6 +14,13 @@
 function lockAction(form) {
   var msg = form.getAttribute('data-confirm');
   if (msg && !window.confirm(msg)) return false;
+  // Tell the server this was confirmed HERE, so it does not ask again on its own
+  // page. That page is the floor: this function is deferred, so before it parses —
+  // and always, with JavaScript off — the onsubmit handler either throws or never
+  // runs, and the form submits with no prompt at all. A confirmation that can
+  // vanish without notice is not one, so the server keeps its own.
+  var f = form.querySelector('input[name="confirm"]');
+  if (f) f.value = '1';
   var btn = form.querySelector('button[type="submit"], button:not([type])');
   if (btn) {
     var pending = btn.getAttribute('data-pending') || 'Working…';

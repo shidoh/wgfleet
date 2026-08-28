@@ -77,6 +77,12 @@
   <form method="post" action="/nodes/{{.Node.ID}}/delete" onsubmit="return lockAction(this)"
         data-confirm="Delete {{.Node.Name}} from inventory? It has been decommissioned; this removes it permanently.{{if .WGClientCount}} This also DELETES {{.WGClientCount}} client credential{{if ne .WGClientCount 1}}s{{end}} — every one of those people loses their tunnel, and the only way back is the encrypted backup or re-issuing to each of them by hand.{{else if .WGClientCountUnknown}} This ALSO deletes every client credential on this master — the count could not be read just now, so check the AWG clients page before confirming. Recovery is the encrypted backup or re-issuing to each person by hand.{{end}}">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    {{/* Empty until lockAction fills it in. The server refuses a delete without it
+         and asks on its own page instead, because this form's only prompt is
+         JavaScript: before the deferred script parses, and always with JavaScript
+         off, the onsubmit handler cannot run and the node is deleted on one click
+         with no question asked. */}}
+    <input type="hidden" name="confirm" value="">
     <button type="submit" class="btn ghost-red" data-pending="Deleting…">Delete</button>
   </form>
   {{else}}

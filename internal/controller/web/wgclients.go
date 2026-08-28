@@ -376,6 +376,20 @@ func (h *Handler) handleWGClientRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 	id, clientID := r.PathValue("id"), r.PathValue("client")
 	dest := "/nodes/" + id + "/wg-clients"
+	// The other irreversible action in the console, and the other one whose only
+	// prompt was JavaScript. Revoking deletes the credential and its key: the person
+	// is off the fleet and cannot be put back, only issued a new profile.
+	if h.needsConfirmation(w, r, confirmView{
+		Title:        "Revoke a credential",
+		Heading:      "Revoke this credential?",
+		Consequence:  "The credential and its key are deleted permanently. The person using it loses their tunnel immediately and will need a new config — the old one cannot be restored.",
+		Detail:       "If you only want to cut access temporarily, pause it instead: that is reversible and the same config works again afterwards.",
+		Action:       dest + "/" + clientID + "/revoke",
+		ConfirmLabel: "Revoke permanently",
+		CancelHref:   dest,
+	}) {
+		return
+	}
 	if err := h.renderer.RevokeWGClient(r.Context(), id, clientID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			h.redirectErr(w, r, dest, "revoke client", errors.New("client not found"))
