@@ -504,3 +504,44 @@ func TestIssueWGClientRejectsAnInjectableName(t *testing.T) {
 		t.Error("RenameWGClient accepted an injectable name")
 	}
 }
+
+// A managed client interface must hand clients a resolver.
+//
+// ClientAWGDNS() falls back to the raw compose.client_dns manifest key, and that
+// key is commented out in every shipped example because it "defaults to the exits'
+// mgmt addresses" — a default that lives in composeSpec and that the managed path
+// never consulted. So `client_awg.managed: true` on an un-edited manifest rendered
+// configs with NO `DNS =` line at all, and the phone kept its carrier resolver:
+// the two-tier DNS of ADR-0024 reached wg-easy's clients and stopped reaching ours.
+func TestClientWGSpecHandsOutTheFleetResolver(t *testing.T) {
+	b, _, ctx := brokerWithManagedMaster(t)
+	// The manifest sets neither client_awg.dns nor compose.client_dns — the shipped
+	// shape, and the one that produced a config with no DNS line.
+	for i := range b.fleet.Masters {
+		b.fleet.Masters[i].ClientAWG.DNS = nil
+		b.fleet.Masters[i].Compose.ClientDNS = nil
+		b.fleet.Masters[i].DNSFilter = true
+	}
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if spec.Master.ClientWG == nil {
+		t.Fatal("no client interface rendered")
+	}
+	got := spec.Master.ClientWG.DNS
+	if len(got) == 0 {
+		t.Fatal("the client interface hands out no DNS at all; every client falls back to its carrier resolver")
+	}
+	// ADR-0024: with master-tier blocky the clients' single resolver is the master's
+	// own address in the client pool, reached through the tunnel.
+	if want := "10.80.0.1"; got[0] != want {
+		t.Errorf("client DNS = %v, want the master gateway %q first", got, want)
+	}
+	// And it must agree with what the compose stack hands wg-easy's clients: two
+	// renderers disagreeing about the resolver is how this broke in the first place.
+	if compose := spec.Master.Compose.ClientDNS; len(compose) > 0 && compose[0] != got[0] {
+		t.Errorf("compose hands out %v but the managed interface hands out %v", compose, got)
+	}
+}

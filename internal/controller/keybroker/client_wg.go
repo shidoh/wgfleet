@@ -176,7 +176,7 @@ func (b *Broker) clientWGSpec(ctx context.Context, master config.MasterConfig, s
 		AddressPool:   master.ClientAWG.AddressPool,
 		ServerAddress: serverAddr,
 		MTU:           mtu,
-		DNS:           master.ClientAWGDNS(),
+		DNS:           b.clientResolvers(ctx, master),
 		Keepalive:     master.ClientAWG.Keepalive,
 		AllowedIPs:    master.ClientAWGAllowedIPs(),
 		AWG:           awg,
