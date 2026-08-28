@@ -205,7 +205,12 @@ func validateForBackend(p domain.AWGParams, backend domain.ClientWGBackend) erro
 // credential must not change what it hands out.
 func ClientKeepaliveFor(spec, clientID string) int {
 	if spec == "" {
-		return ClientKeepaliveSeconds
+		// No operator range: derive one anyway. Returning the bare constant here is
+		// what left every client in the fleet on the same 25-second beacon, because
+		// client_awg.keepalive is unset in every shipped example — the correlation
+		// this function exists to remove was removed only for operators who had
+		// already thought about it.
+		return KeepaliveFor("client|" + clientID)
 	}
 	lo, hi, isRange := strings.Cut(spec, "-")
 	loN, err := strconv.Atoi(strings.TrimSpace(lo))

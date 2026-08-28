@@ -68,7 +68,9 @@ func TestBuild(t *testing.T) {
 	if res.Client.Name != "laptop" || res.Master.ID != "m1" {
 		t.Fatalf("result = %+v", res)
 	}
-	for _, want := range []string{"PrivateKey = Y2xpZW50LWtleQ==", "Endpoint = 203.0.113.1:443", "PersistentKeepalive = 25"} {
+	// PersistentKeepalive is asserted by presence, not value: it is derived per
+	// credential rather than fixed at 25, so the fleet no longer shares one beacon.
+	for _, want := range []string{"PrivateKey = Y2xpZW50LWtleQ==", "Endpoint = 203.0.113.1:443", "PersistentKeepalive = "} {
 		if !strings.Contains(res.Config, want) {
 			t.Errorf("config missing %q:\n%s", want, res.Config)
 		}

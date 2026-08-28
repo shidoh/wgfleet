@@ -19,6 +19,7 @@ import (
 	yaml "go.yaml.in/yaml/v3"
 
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/wg"
 )
 
 // DefaultRedirPort is mihomo's redirect port when the spec leaves it unset.
@@ -99,6 +100,19 @@ type RenderInput struct {
 	// rewrites config.yaml and reloads mihomo, so a flapping exit would otherwise
 	// churn the whole data plane.
 	ReserveActive bool
+	// Resolvers is where mihomo sends its OWN lookups. The agent supplies it, for
+	// the same reason ReserveActive is a render input: the answer depends on what is
+	// actually running on the node (does this master run blocky?), which the
+	// controller cannot see and does not need to.
+	//
+	// This matters more than it looks. mihomo does not merely forward what the client
+	// resolved: with the sniffer recovering the SNI and override-destination on, it
+	// re-resolves the hostname itself before dialling the proxy. Those lookups used
+	// to go, in cleartext UDP/53 from the master's own address, to a hardcoded public
+	// resolver — handing the one uplink the adversary is assumed to watch the full
+	// browsing metadata of every user, and a poisoning lever besides. Empty falls
+	// back to encrypted public resolvers, never to cleartext.
+	Resolvers []string
 }
 
 // RenderConfig renders mihomo's config.yaml. It validates each tunnel's AWG
@@ -133,6 +147,11 @@ func RenderConfig(in RenderInput) (string, error) {
 		healthInterval = DefaultHealthInterval
 	}
 
+	resolvers := in.Resolvers
+	if len(resolvers) == 0 {
+		resolvers = fallbackResolvers
+	}
+
 	base := map[string]any{
 		"mode":         "rule",
 		"log-level":    "info",
@@ -141,11 +160,15 @@ func RenderConfig(in RenderInput) (string, error) {
 		"bind-address": in.Spec.BindAddress,
 		"redir-port":   redir,
 		"dns": map[string]any{
-			"enable":             true,
-			"listen":             "127.0.0.1:1053",
-			"ipv6":               false,
-			"default-nameserver": []any{"77.88.8.8", "8.8.8.8"},
-			"nameserver":         []any{"77.88.8.8", "8.8.8.8"},
+			"enable": true,
+			"listen": "127.0.0.1:1053",
+			"ipv6":   false,
+			// Both keys get the same list on purpose. default-nameserver exists to
+			// resolve the HOSTNAMES of other DNS servers, so with IP-literal resolvers
+			// it is inert — but leaving a public resolver sitting in it is a leak
+			// waiting for the first hostname-form entry somebody adds later.
+			"default-nameserver": toAnySlice(resolvers),
+			"nameserver":         toAnySlice(resolvers),
 		},
 		"sniffer": map[string]any{
 			"enable":               true,
@@ -381,7 +404,7 @@ func wireguardProxy(t domain.ExitTunnel, host string, port int, privateKey strin
 		// Keepalive is a PROXY-level field in mihomo (WireGuardOption); the peer
 		// struct has no such field, so a peer-level value is silently dropped and
 		// the master↔exit tunnel would idle out behind NAT.
-		"persistent-keepalive": 25,
+		"persistent-keepalive": wg.KeepaliveFor("master-exit|master|" + t.ServerPublicKey),
 		"peers":                []any{peer},
 	}
 	if t.MTU > 0 {
@@ -725,3 +748,11 @@ func hasAnyPrefix(s string, prefixes []string) bool {
 	}
 	return false
 }
+
+// fallbackResolvers is what mihomo uses when the node has no fleet resolver to
+// point at — no local blocky and no exit blocky reachable. Encrypted transports
+// only: a master that has lost its resolver must degrade to "somebody else can see
+// which names I ask for", never to "the country I am sitting in can read them off
+// the wire". Quad9 and Cloudflare rather than the operator's own upstreams, which
+// are a manifest concern and may themselves be unreachable in this state.
+var fallbackResolvers = []string{"tls://9.9.9.9", "tls://1.1.1.1"}

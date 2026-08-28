@@ -231,8 +231,15 @@ func TestRenderConfigStructure(t *testing.T) {
 
 	// Keepalive is a PROXY-level field in mihomo, not a peer field — assert it sits
 	// on the proxy and NOT inside the peer (where mihomo would silently drop it).
-	if p0["persistent-keepalive"] != 25 {
-		t.Errorf("proxy[0] persistent-keepalive = %v, want 25 (proxy-level)", p0["persistent-keepalive"])
+	// The VALUE is derived per tunnel rather than fixed at 25: one period shared by
+	// the whole fleet is a shape a passive observer can join our tunnels on.
+	switch ka := p0["persistent-keepalive"].(type) {
+	case int:
+		if ka < 15 || ka > 28 {
+			t.Errorf("proxy[0] persistent-keepalive = %d, outside the NAT-safe band [15,28]", ka)
+		}
+	default:
+		t.Errorf("proxy[0] persistent-keepalive = %v (%T), want an int at proxy level", ka, ka)
 	}
 	peers, _ := p0["peers"].([]any)
 	peer0, _ := peers[0].(map[string]any)
@@ -984,5 +991,76 @@ func TestRenderRealityFingerprintAndEmptySNI(t *testing.T) {
 	pmv := mk(func(rt *domain.RealityTunnel) { rt.Mode = domain.RealityModeVision; rt.Mux = true })
 	if _, has := pmv["xhttp-opts"]; has {
 		t.Error("vision proxy must not carry xhttp-opts even with Mux")
+	}
+}
+
+// mihomo must not resolve on its own, in the clear, against a public resolver.
+//
+// The renderer hardcoded `nameserver: [77.88.8.8, 8.8.8.8]` with no
+// proxy-server-nameserver, no nameserver-policy and no remote resolution. With the
+// sniffer recovering the SNI and override-destination on, mihomo re-resolves every
+// hostname a client visits — so the master sent a plaintext UDP/53 query naming
+// that host, from its own address, to a Russian resolver, and only then tunnelled
+// the answer's IP to an exit. That is the full browsing metadata of every user, on
+// the one uplink the adversary is assumed to watch, plus a poisoning lever. The
+// fleet's own resolver (ADR-0024 blocky, whose upstreams are the exits over the
+// management overlay) was running the whole time and mihomo never asked it.
+func TestRenderConfigResolvesThroughTheFleetResolver(t *testing.T) {
+	in := sampleInput()
+	in.Resolvers = []string{"127.0.0.1"}
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	dns, _ := cfg["dns"].(map[string]any)
+	if dns == nil {
+		t.Fatal("no dns section")
+	}
+	for _, key := range []string{"nameserver", "default-nameserver"} {
+		list, _ := dns[key].([]any)
+		if len(list) == 0 {
+			t.Fatalf("dns.%s is empty", key)
+		}
+		for _, v := range list {
+			s := fmt.Sprint(v)
+			if s != "127.0.0.1" {
+				t.Errorf("dns.%s contains %q; every mihomo lookup must go to the fleet resolver", key, s)
+			}
+		}
+	}
+	if strings.Contains(out, "77.88.8.8") {
+		t.Error("the rendered config still names a public Russian resolver")
+	}
+}
+
+// With no fleet resolver to point at, the fallback must at least be encrypted and
+// must not be the resolver of the country the master sits in.
+func TestRenderConfigFallbackResolverIsEncrypted(t *testing.T) {
+	in := sampleInput()
+	in.Resolvers = nil
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "77.88.8.8") {
+		t.Error("the fallback still names a public Russian resolver")
+	}
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	dns, _ := cfg["dns"].(map[string]any)
+	list, _ := dns["nameserver"].([]any)
+	if len(list) == 0 {
+		t.Fatal("dns.nameserver is empty")
+	}
+	for _, v := range list {
+		if s := fmt.Sprint(v); !strings.HasPrefix(s, "tls://") && !strings.HasPrefix(s, "https://") {
+			t.Errorf("fallback nameserver %q is cleartext DNS", s)
+		}
 	}
 }

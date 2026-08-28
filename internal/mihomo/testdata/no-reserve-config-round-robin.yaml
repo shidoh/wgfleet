@@ -2,14 +2,14 @@ allow-lan: true
 bind-address: 10.80.0.1
 dns:
   default-nameserver:
-    - 77.88.8.8
-    - 8.8.8.8
+    - tls://9.9.9.9
+    - tls://1.1.1.1
   enable: true
   ipv6: false
   listen: 127.0.0.1:1053
   nameserver:
-    - 77.88.8.8
-    - 8.8.8.8
+    - tls://9.9.9.9
+    - tls://1.1.1.1
 external-controller: 10.20.25.254:9090
 external-ui: ui
 geo-auto-update: true
@@ -44,7 +44,7 @@ proxies:
         port: 36050
         public-key: tonqJKi1LFkgd150tF0eNEJDGyeRqT40QlUCtnWUh3A=
         server: exit-a.example.net
-    persistent-keepalive: 25
+    persistent-keepalive: 27
     private-key: MASTERPRIVKEYbase64ExampleValueForTestingABC=
     type: wireguard
     udp: true
@@ -70,7 +70,7 @@ proxies:
         port: 57102
         public-key: H5MvraCiOLEIP6z+EHobf33Nt9EUdtjTRfO0vftZomg=
         server: exit-b.example.net
-    persistent-keepalive: 25
+    persistent-keepalive: 17
     private-key: MASTERPRIVKEYbase64ExampleValueForTestingABC=
     type: wireguard
     udp: true

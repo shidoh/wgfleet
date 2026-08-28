@@ -2,6 +2,7 @@ package wg
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -133,10 +134,20 @@ func TestRenderClientConfig(t *testing.T) {
 		"PresharedKey = cHNrLWxhcHRvcC0wMDAwMDAwMDAwMDAwMDAwMDAwMA=",
 		"AllowedIPs = 0.0.0.0/0",
 		"Endpoint = 203.0.113.1:443",
-		"PersistentKeepalive = 25",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("client config missing %q:\n%s", want, got)
+		}
+	}
+	// The keepalive is DERIVED per credential rather than the fleet-wide 25 that
+	// used to sit here: one interval shared by every client is a period a passive
+	// observer can join our users on. Assert the NAT-safe band, not a literal.
+	if m := regexp.MustCompile(`(?m)^PersistentKeepalive = (\d+)$`).FindStringSubmatch(got); m == nil {
+		t.Errorf("client config has no PersistentKeepalive:\n%s", got)
+	} else {
+		n, _ := strconv.Atoi(m[1])
+		if n < 15 || n > 28 {
+			t.Errorf("PersistentKeepalive = %d, outside the NAT-safe band [15,28]", n)
 		}
 	}
 	// The decoy must be the CLIENT's own, derived from its public key — not the

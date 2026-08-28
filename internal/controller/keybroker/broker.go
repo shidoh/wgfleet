@@ -455,8 +455,11 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 				PublicKey:  masterPub,
 				Endpoint:   "", // master dials the exit; exit is the server side
 				AllowedIPs: []string{host32(masterAddr)},
-				Keepalive:  domain.DefaultKeepaliveSeconds,
-				MTU:        serverMTU,
+				// Per-tunnel, not the fleet-wide 25: a keepalive is a beacon whose
+				// PERIOD joined every tunnel we run into one set for a passive
+				// observer. It is a local decision, so the two ends need not agree.
+				Keepalive: wg.KeepaliveFor("master-exit|exit|" + exit.Name),
+				MTU:       serverMTU,
 			})
 		}
 	}
@@ -484,7 +487,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 				PublicKey:  perTunnelPub,
 				Endpoint:   "",
 				AllowedIPs: []string{host32(perTunnelAddr)},
-				Keepalive:  domain.DefaultKeepaliveSeconds,
+				Keepalive:  wg.KeepaliveFor("master-exit|exit|per-tunnel|" + exit.Name),
 				MTU:        serverMTU,
 			})
 		}
@@ -1044,28 +1047,47 @@ func mihomoStrategy(balance string) string {
 	}
 }
 
+// clientResolvers is the fleet's answer to "what DNS does a client of this master
+// use", for every renderer that has to answer it.
+//
+// It used to live inline in composeSpec, which meant it reached wg-easy's clients
+// and nobody else: the managed client interface asked MasterConfig.ClientAWGDNS(),
+// whose fallback is the RAW compose.client_dns manifest key rather than this
+// derivation. That key is commented out in every shipped example — precisely
+// because it "defaults to the exits' mgmt addresses" — so a manifest that turned on
+// client_awg.managed rendered client configs with no `DNS =` line at all, and every
+// phone quietly kept its carrier resolver. ADR-0024's two-tier DNS stopped at the
+// door of the component that replaced wg-easy.
+//
+// One derivation, one answer, both renderers.
+func (b *Broker) clientResolvers(ctx context.Context, master config.MasterConfig) []string {
+	if dns := master.ClientAWGDNS(); len(dns) > 0 {
+		return dns
+	}
+	if master.DNSFilter {
+		// Master-tier blocky (ADR-0024): clients use the master gateway (its own
+		// address in the client pool) as their single DNS, through the tunnel.
+		if addr, err := nthHost(master.ClientAWG.AddressPool, exitHostIndex); err == nil {
+			return []string{addr.String()}
+		}
+		return nil
+	}
+	// Pre-ADR-0024 default: clients resolve directly against the exit blockys.
+	var dns []string
+	for _, exit := range b.fleet.Exits {
+		if node, _, err := b.lookupPubKey(ctx, exit.Name); err == nil && node.MgmtAddr != "" {
+			dns = append(dns, node.MgmtAddr)
+		}
+	}
+	return dns
+}
+
 // composeSpec assembles the master's container-stack desired state. Client DNS
 // defaults to the exits' mgmt addresses (where blocky listens) when the operator
 // has not set it explicitly. The master's own public IP seeds wg-easy first run.
 func (b *Broker) composeSpec(ctx context.Context, master config.MasterConfig) domain.ComposeSpec {
 	cc := master.Compose
-	dns := append([]string(nil), cc.ClientDNS...)
-	if len(dns) == 0 {
-		if master.DNSFilter {
-			// Master-tier blocky (ADR-0024): clients use the master gateway (its own
-			// address in the client pool) as their single DNS, through the tunnel.
-			if addr, err := nthHost(master.ClientAWG.AddressPool, exitHostIndex); err == nil {
-				dns = []string{addr.String()}
-			}
-		} else {
-			// Pre-ADR-0024 default: clients resolve directly against the exit blockys.
-			for _, exit := range b.fleet.Exits {
-				if node, _, err := b.lookupPubKey(ctx, exit.Name); err == nil && node.MgmtAddr != "" {
-					dns = append(dns, node.MgmtAddr)
-				}
-			}
-		}
-	}
+	dns := b.clientResolvers(ctx, master)
 	// PublicIP seeds wg-easy's INIT_HOST (the endpoint clients dial) and is needed
 	// for unattended setup to complete. Prefer the discovered address from the
 	// store; fall back to the manifest's public_ip so a co-located master (hand-

@@ -177,11 +177,15 @@ func TestWGClientConfigDownload(t *testing.T) {
 		"PrivateKey = Y2xpZW50LXByaXZhdGUtMDAwMDAwMDAwMDAwMDAwMA=",
 		"Address = 10.80.0.2/32",
 		"Endpoint = 203.0.113.1:443",
-		"PersistentKeepalive = 25",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("config missing %q:\n%s", want, body)
 		}
+	}
+	// Derived per credential, not the fleet-wide 25: one keepalive period shared by
+	// every client is a beacon a passive observer can join our users on.
+	if !strings.Contains(body, "PersistentKeepalive = ") {
+		t.Errorf("config has no PersistentKeepalive:\n%s", body)
 	}
 	if got := res.Header.Get("Content-Disposition"); !strings.Contains(got, `"laptop.conf"`) {
 		t.Errorf("Content-Disposition = %q", got)
