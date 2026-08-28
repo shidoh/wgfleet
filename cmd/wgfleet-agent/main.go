@@ -50,7 +50,6 @@ import (
 	"github.com/shidoh/wgfleet/internal/hardening"
 	"github.com/shidoh/wgfleet/internal/metrics"
 	"github.com/shidoh/wgfleet/internal/mihomo"
-	"github.com/shidoh/wgfleet/internal/routing"
 	"github.com/shidoh/wgfleet/internal/version"
 	"github.com/shidoh/wgfleet/internal/wg"
 	"github.com/shidoh/wgfleet/internal/wgeasy"
@@ -210,29 +209,10 @@ func run() error {
 		mgmt = strings.TrimSpace(cfg.Agent.MgmtAddr)
 	}
 
-	// The node's public IP. An explicit --public-ip wins: behind NAT the host cannot
-	// see its own external address, and only the operator knows it. Otherwise look at
-	// the interface the default route leaves by — a local read, no outbound call to
-	// an echo-my-IP service, which on this fleet would be both a dependency that
-	// fails when it matters and a signal we have no reason to emit.
-	//
-	// Empty is a valid answer and is left empty. It used to be filled in by the
-	// console from the manifest's ssh.host, which put a ZeroTier address in a column
-	// labelled PUBLIC on every node whose SSH goes over the mgmt overlay.
-	reportedIP := *publicIP
-	if reportedIP == "" {
-		// Bounded: two `ip` invocations that either answer at once or are not going to.
-		dctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		reportedIP = routing.DiscoverPublicIP(dctx)
-		cancel()
-		slog.Info("public IP not configured; "+routing.FormatDiscovery(reportedIP),
-			"node", cfg.Agent.NodeID)
-	}
-
 	a := &agent{
 		cfg:      cfg,
 		role:     role,
-		publicIP: reportedIP,
+		publicIP: *publicIP,
 		mgmtAddr: mgmt,
 		stateDir: *stateDir,
 		paths:    paths,

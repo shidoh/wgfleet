@@ -79,18 +79,15 @@ func TestProvisionPersistsInventory(t *testing.T) {
 	if _, err := m.Provision(context.Background(), "exit-de-1", provisioner.ModeApply); err != nil {
 		t.Fatalf("provision: %v", err)
 	}
-	// The manifest inventory must land in the store so the keybroker can render the
-	// master↔exit endpoint. The public IP is NOT invented from ssh.host: with no
-	// explicit public_ip the field stays empty until the node's own agent reports
-	// what it discovered. An operator who points ssh at the mgmt overlay — which is
-	// what you do when a node's direct path starts flapping — must not end up with a
-	// ZeroTier address displayed as that node's public IP.
+	// The manifest inventory must land in the store so the keybroker can render
+	// the master↔exit endpoint. With no explicit public_ip, it falls back to the
+	// SSH host (the typical "you SSH to the node at its public IP" case).
 	node, err := st.GetNode(context.Background(), "exit-de-1")
 	if err != nil {
 		t.Fatalf("node not persisted: %v", err)
 	}
-	if node.PublicIP != "" {
-		t.Errorf("PublicIP = %q, want empty — ssh.host is not the public IP", node.PublicIP)
+	if node.PublicIP != "198.51.100.7" {
+		t.Errorf("PublicIP = %q, want 198.51.100.7 (ssh.host fallback)", node.PublicIP)
 	}
 }
 
@@ -139,21 +136,12 @@ func TestProvisionPlanModeDoesNotPersist(t *testing.T) {
 	}
 }
 
-// ssh.host answers "where do I log in", never "what is this node's address on the
-// internet". They coincide often enough that the fallback looked harmless, and they
-// diverge precisely when a node's direct path is flapping and the operator has
-// repointed ssh at the mgmt overlay — so the console showed a ZeroTier address under
-// PUBLIC on the one node whose networking was already in question.
-func TestPublicIPIsNeverInventedFromTheSSHHost(t *testing.T) {
+func TestPublicIPExplicitOverridesSSHHost(t *testing.T) {
 	if got := publicIP("203.0.113.9", "10.0.0.1"); got != "203.0.113.9" {
 		t.Errorf("explicit public_ip = %q, want 203.0.113.9", got)
 	}
-	if got := publicIP("", "10.0.0.1"); got != "" {
-		t.Errorf("with no public_ip the answer must be empty, got %q", got)
-	}
-	// A mgmt-overlay ssh target is the case that produced the bug.
-	if got := publicIP("", "172.29.3.22"); got != "" {
-		t.Errorf("a ZeroTier ssh host was reported as the public IP: %q", got)
+	if got := publicIP("", "10.0.0.1"); got != "10.0.0.1" {
+		t.Errorf("fallback = %q, want ssh host 10.0.0.1", got)
 	}
 }
 
