@@ -2,9 +2,11 @@ package master
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/netfw"
 )
 
 // TeardownPlanners returns the reverse-of-reconcile planners for a master node:
@@ -33,6 +35,26 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 			"nft", "delete", "table", "ip", "wgfleet_master"),
 		reconcile.BestEffortExecAction("remove master input-firewall table",
 			"nft", "delete", "table", "inet", "wgfleet"),
+		// The IPv6 refusal, and the sysctl that makes it reachable. Order matters and
+		// is the mirror of the ON path: lower forwarding FIRST, because between the two
+		// commands a host with the drop policy already deleted but forwarding still on
+		// is an open IPv6 router. Leaving either behind is worse than untidy — a
+		// decommissioned host later repurposed as an exit silently drops every
+		// forwarded IPv6 packet, with no rendered file anywhere on the box to explain
+		// why (the ruleset is wiped below, the kernel table is not).
+		reconcile.BestEffortExecAction("stop forwarding IPv6",
+			"sysctl", "-w", "net.ipv6.conf.all.forwarding=0"),
+		reconcile.BestEffortExecAction("remove the client-facing IPv6 table",
+			"nft", "delete", "table", "ip6", "wgfleet_master_v6"),
+		// TPROXY policy routing. The rule and the table it points at outlive both nft
+		// tables, and a stray `fwmark 0x2 lookup 51821` on a repurposed host sends
+		// anything carrying that mark to a local-delivery route that no longer means
+		// anything here.
+		reconcile.BestEffortExecAction("remove the TPROXY policy route",
+			"ip", "rule", "del", "fwmark", fmt.Sprintf("%#x", netfw.TProxyMark),
+			"lookup", fmt.Sprintf("%d", netfw.TProxyTable)),
+		reconcile.BestEffortExecAction("flush the TPROXY route table",
+			"ip", "route", "flush", "table", fmt.Sprintf("%d", netfw.TProxyTable)),
 	}
 	// Master-tier blocky runs as its own compose project (ADR-0024); bring it down too.
 	if p.paths.DNSCompose != "" {
@@ -73,6 +95,18 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 		{p.paths.ClientWGConf, "client interface config (interface key + client preshared keys)"},
 		{p.paths.ClientWGKey, "client-facing WireGuard private key"},
 		{ClaimPathFor(p.paths.ClientWGConf), "client interface claim"},
+	}
+	// The applied-markers beside each ruleset. Wiping the ruleset and leaving its
+	// marker means a re-provision that renders byte-identical bytes finds a marker
+	// that already matches and never runs `nft -f` at all — the node comes back with
+	// the file on disk and nothing in the kernel.
+	for _, path := range []string{p.paths.NFT, p.paths.V6NFT, p.paths.FirewallNFT} {
+		if path == "" {
+			continue
+		}
+		wipe = append(wipe, struct{ path, what string }{
+			reconcile.NFTAppliedMarker(path), "applied-marker for " + path,
+		})
 	}
 	for _, w := range wipe {
 		if w.path == "" {

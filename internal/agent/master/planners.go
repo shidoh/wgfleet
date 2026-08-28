@@ -426,9 +426,14 @@ type firewallPlanner struct {
 	// clientIface is the client-facing WG interface ("wg0") whose DNAT'd TCP must be
 	// accepted into the local mihomo redir port (see RenderInput.RedirInterface).
 	clientIface string
-	// loaded reports whether the live kernel has the input-firewall table.
-	// nil ⇒ a real `nft list table inet wgfleet` probe; tests inject a stub.
+	// loaded reports whether the live kernel holds THIS input-firewall ruleset.
+	// nil ⇒ a real probe against the kernel; tests inject a stub.
 	loaded func() bool
+	// lastRendered is what Plan just rendered, so isLoaded can ask the strong
+	// question — does the kernel hold this — rather than "is a table by this name
+	// present". Set on the receiver copy inside Plan, which is why isLoaded is only
+	// ever taken as a method value after the assignment.
+	lastRendered string
 }
 
 func (firewallPlanner) Component() string { return "master firewall (nftables)" }
@@ -484,32 +489,32 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	if err != nil {
 		return nil, err
 	}
-	file, err := reconcile.FileAction(p.path, []byte(ruleset), 0o644, nil)
+	// Same gate as the NAT table beside it, and for the same two reasons: an apply
+	// that FAILED must not be recorded as done, and a table that is merely PRESENT is
+	// not a table that holds what we wrote. Measured on the stand before this changed:
+	// `nft add rule inet wgfleet input udp dport 65099 accept` and
+	// `nft delete rule inet wgfleet input handle 15` (the ICMP accept) both survived
+	// three reconcile passes and an agent restart with the node reporting
+	// `drift=0 state=Ready`. This is the table holding the drop policy, the whitelist,
+	// the SSH accept and the mark accept every intercepted datagram depends on — the
+	// one where a rule someone added by hand should not outlive the next pass.
+	p.lastRendered = ruleset
+	actions, err := reconcile.NFTApply(p.path, []byte(ruleset), p.isLoaded, "apply master firewall atomically")
 	if err != nil {
 		return nil, err
-	}
-	actions := []reconcile.Action{file}
-	switch {
-	case file.Changes():
-		actions = append(actions, reconcile.ExecAction("apply master firewall atomically", "nft", "-f", p.path))
-	case !p.isLoaded():
-		// Ruleset unchanged but the kernel lost the table — a reboot cleared nft
-		// state, or the baseline was re-applied by a re-provision. Reload to self-heal
-		// (ADR-0015 / ADR-0020). Without this the master silently runs with no input
-		// firewall after a reboot while health checks still pass.
-		actions = append(actions, reconcile.ExecAction("reload master firewall (kernel table missing)", "nft", "-f", p.path))
-	default:
-		actions = append(actions, reconcile.NoChangeAction("nft -f", "ruleset already loaded"))
 	}
 	return actions, nil
 }
 
 func (p firewallPlanner) isLoaded() bool {
-	if p.loaded == nil {
-		// The master input firewall shares the exit's `inet wgfleet` table name.
-		return netfw.TableLoaded("inet", netfw.ExitTable)
+	if p.loaded != nil {
+		return p.loaded()
 	}
-	return p.loaded()
+	// The master input firewall shares the exit's `inet wgfleet` table name.
+	if matches, known := netfw.TableMatches("inet", netfw.ExitTable, p.lastRendered); known {
+		return matches
+	}
+	return netfw.TableLoaded("inet", netfw.ExitTable)
 }
 
 // --- master NAT (DNAT clients → mihomo, MASQUERADE, drop QUIC) ---

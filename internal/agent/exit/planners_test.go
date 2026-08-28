@@ -2,6 +2,8 @@ package exit
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -48,23 +50,51 @@ func TestFirewallReloadGate(t *testing.T) {
 	if _, err := os.Stat(paths.NFT); err != nil {
 		t.Fatalf("firewall ruleset not written: %v", err)
 	}
-
-	// File unchanged + kernel table MISSING ⇒ reload.
+	// The exec failed on this dev box, so no applied-marker exists and the next pass
+	// must RETRY rather than call the ruleset done — the hole that let a failed
+	// `nft -f` close over a node permanently.
 	acts, err := pl.Plan(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasChangingSummary(acts, "reload firewall") {
+	if !hasChangingSummary(acts, "apply ruleset atomically") {
+		t.Errorf("a failed apply was recorded as finished, got %+v", acts)
+	}
+
+	// Record the apply by hand, as a successful exec would.
+	writeAppliedMarker(t, paths.NFT)
+
+	// Ruleset applied + kernel table MISSING ⇒ reload.
+	acts, err = pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasChangingSummary(acts, "kernel table missing") {
 		t.Errorf("expected a reload action when the kernel table is missing, got %+v", acts)
 	}
 
-	// File unchanged + kernel table PRESENT ⇒ no change.
+	// Ruleset applied + kernel table PRESENT ⇒ no change.
 	loaded = true
 	acts2, _ := pl.Plan(context.Background(), spec)
 	for _, a := range acts2 {
 		if a.Changes() {
 			t.Errorf("expected no-change when the kernel reflects the ruleset, got %+v", acts2)
 		}
+	}
+}
+
+// writeAppliedMarker records the digest NFTApply would have recorded had the exec
+// succeeded, so a test on a box with no nft can reach the states beyond the retry.
+func writeAppliedMarker(t *testing.T, path string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(raw)
+	if err := os.WriteFile(reconcile.NFTAppliedMarker(path),
+		[]byte(hex.EncodeToString(sum[:])), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

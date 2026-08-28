@@ -575,12 +575,23 @@ func TestMasterFirewallReloadGate(t *testing.T) {
 		}
 	}
 
-	// File unchanged + kernel table MISSING ⇒ reload (post-reboot self-heal).
+	// The exec failed on this dev box, so no applied-marker exists and the next pass
+	// must RETRY rather than call the ruleset done.
 	acts, err := pl.Plan(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasChangingSummary(acts, "reload master firewall") {
+	if !hasChangingSummary(acts, "apply master firewall atomically") {
+		t.Errorf("a failed apply was recorded as finished, got %+v", acts)
+	}
+	writeAppliedMarker(t, paths.FirewallNFT)
+
+	// Ruleset applied + kernel table MISSING ⇒ reload (post-reboot self-heal).
+	acts, err = pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasChangingSummary(acts, "kernel table missing") {
 		t.Errorf("expected a reload action when the kernel table is missing, got %+v", acts)
 	}
 
@@ -776,5 +787,20 @@ func markNFTApplied(t *testing.T, rulesetPath string) {
 	if err := os.WriteFile(reconcile.NFTAppliedMarker(rulesetPath),
 		[]byte(hex.EncodeToString(sum[:])), 0o644); err != nil {
 		t.Fatalf("write marker: %v", err)
+	}
+}
+
+// writeAppliedMarker records the digest NFTApply would have recorded had the exec
+// succeeded, so a test on a box with no nft can reach the states beyond the retry.
+func writeAppliedMarker(t *testing.T, path string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(raw)
+	if err := os.WriteFile(reconcile.NFTAppliedMarker(path),
+		[]byte(hex.EncodeToString(sum[:])), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

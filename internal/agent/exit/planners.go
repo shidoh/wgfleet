@@ -129,9 +129,14 @@ type firewallPlanner struct {
 	// warpMTUCache is the auto-probed WARP MTU cache path (effectiveWARPMTU), used to
 	// size the forwarded-TCP MSS clamp to the real WARP path.
 	warpMTUCache string
-	// loaded reports whether the live kernel has the exit firewall table.
-	// nil ⇒ a real `nft list table inet wgfleet` probe; tests inject a stub.
+	// loaded reports whether the live kernel holds THIS exit firewall ruleset.
+	// nil ⇒ a real probe against the kernel; tests inject a stub.
 	loaded func() bool
+	// lastRendered is what Plan just rendered, so isLoaded can ask the strong
+	// question — does the kernel hold this — rather than "is a table by this name
+	// present". Set on the receiver copy inside Plan, which is why isLoaded is only
+	// ever taken as a method value after the assignment.
+	lastRendered string
 }
 
 func (firewallPlanner) Component() string { return "firewall (nftables)" }
@@ -175,31 +180,30 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	if err != nil {
 		return nil, err
 	}
-	file, err := reconcile.FileAction(p.path, []byte(ruleset), 0o644, nil)
+	// NFTApply, and a by-content probe: an apply that FAILED must not be recorded as
+	// done, and a table that is merely PRESENT is not a table that holds what we
+	// wrote. Measured on the stand before this changed — `nft delete rule inet wgfleet
+	// input handle 15` on the exit survived three reconcile passes with the node
+	// reporting `drift=0 state=Ready`, while deleting the WHOLE table was repaired in
+	// under 15 seconds. This table carries the whitelist, the scanner-ASN blacklist,
+	// `ct state invalid drop` and the egress leak guard; a rule quietly removed from
+	// it is exactly what nothing else in the system would notice.
+	p.lastRendered = ruleset
+	actions, err := reconcile.NFTApply(p.path, []byte(ruleset), p.isLoaded, "apply ruleset atomically")
 	if err != nil {
 		return nil, err
-	}
-	actions := []reconcile.Action{file}
-	switch {
-	case file.Changes():
-		actions = append(actions, reconcile.ExecAction("apply ruleset atomically", "nft", "-f", p.path))
-	case !p.isLoaded():
-		// Ruleset unchanged but the kernel lost the table — a reboot, a manual flush,
-		// or a re-provision that re-applied the baseline. Reload to self-heal (ADR-0015
-		// pattern, mirroring masterNATPlanner/routingPlanner). Without this the exit
-		// would silently run with no whitelist/AS-blacklist while health checks pass.
-		actions = append(actions, reconcile.ExecAction("reload firewall (kernel table missing)", "nft", "-f", p.path))
-	default:
-		actions = append(actions, reconcile.NoChangeAction("nft -f", "ruleset already loaded"))
 	}
 	return actions, nil
 }
 
 func (p firewallPlanner) isLoaded() bool {
-	if p.loaded == nil {
-		return netfw.TableLoaded("inet", netfw.ExitTable)
+	if p.loaded != nil {
+		return p.loaded()
 	}
-	return p.loaded()
+	if matches, known := netfw.TableMatches("inet", netfw.ExitTable, p.lastRendered); known {
+		return matches
+	}
+	return netfw.TableLoaded("inet", netfw.ExitTable)
 }
 
 // --- amneziawg interface ---
