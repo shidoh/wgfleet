@@ -160,25 +160,34 @@ spec:
     # value is always 1 and never 0. Both of these alerted on `== 0` and therefore
     # could not fire — one of them at severity: critical. The state lives in the
     # LABEL, so that is what these match on now.
-    - alert: WgfleetEgressBlocked
+    # Both of these can only fire on an exit running WARP. EgressClassifier returns
+    # no class unless a `warp-egress` health check is present, and ObserveEgress
+    # no-ops on an empty one — so an exit with `egress: direct` publishes no
+    # reachability series and neither rule can ever fire for it. That is correct for
+    # a WARP-reachability probe and misleading as a fleet-wide guarantee: on a
+    # direct-egress fleet the critical "your users' traffic is blackholed" signal
+    # does not exist, and the dashboard's Egress panel shows No data rather than 0.
+    - alert: WgfleetWARPEgressBlocked
       expr: wgfleet_agent_egress_reachability{state="blocked"} == 1
       for: 10m
       labels:
         severity: critical
         service: wgfleet
       annotations:
-        summary: Egress blocked on exit {{ $labels.node }}
-        description: 'Exit {{ $labels.node }} classifies its egress as blocked. Traffic routed to this
-          exit is blackholed (see lesson: ''egress rule from all cuts off the exit'').'
-    - alert: WgfleetEgressDegraded
+        summary: WARP egress blocked on exit {{ $labels.node }}
+        description: 'Exit {{ $labels.node }} classifies its WARP egress as blocked. Traffic routed to
+          this exit is blackholed. Only exits running WARP publish this; an exit on direct egress
+          cannot raise it.'
+    - alert: WgfleetWARPEgressDegraded
       expr: wgfleet_agent_egress_reachability{state="degraded"} == 1
       for: 30m
       labels:
         severity: warning
         service: wgfleet
       annotations:
-        summary: Egress degraded on exit {{ $labels.node }}
-        description: Exit {{ $labels.node }} has been running on a degraded egress path for 30m.
+        summary: WARP egress degraded on exit {{ $labels.node }}
+        description: Exit {{ $labels.node }} has been running on a degraded WARP egress path for 30m.
+          Only exits running WARP publish this.
   - name: wgfleet.reconcile
     interval: 30s
     rules:
@@ -281,6 +290,20 @@ spec:
         description: wgfleet_controller_config_info has been absent for 15m — either the controller is
           down, or it cannot read its own manifest and drift detection is blind.
     - alert: WgfleetASBlacklistEmpty
+      # Absent is not zero, and the failure this names produces ABSENT. FWCollector
+      # emits a per-family series only for sets it actually finds, so a reconciler
+      # that stopped creating the set — exactly "abuse filtering is off" — yields
+      # silence, and `== 0` could never fire. Measured on the stand: the exit's
+      # `inet wgfleet` table exists and carries no blacklist set, and its /metrics has
+      # no wgfleet_fw_as_blacklist_size at all. WgfleetNoClientPeers got an `or` arm
+      # for precisely this and this rule did not.
+      #
+      # What this rule can and cannot see, stated plainly rather than implied:
+      # it fires when the set EXISTS and is empty. It cannot fire when the set is
+      # gone, because distinguishing "the reconciler stopped creating it" from
+      # "firewall.as_blacklist is off for this exit" needs a series saying the
+      # feature is enabled, and nothing publishes one yet. Until it does, an exit
+      # that has lost the set entirely is invisible here.
       expr: wgfleet_fw_as_blacklist_size{family="v4"} == 0
       for: 1h
       labels:
@@ -288,8 +311,8 @@ spec:
         service: wgfleet
       annotations:
         summary: AS blacklist is empty on {{ $labels.node }}
-        description: The nftables AS blacklist ({{ $labels.family }}) on {{ $labels.node }} has 0 entries
-          — the feed probe is failing and abuse filtering is off.
+        description: The nftables AS blacklist ({{ $labels.family }}) on {{ $labels.node }} exists with 0
+          entries — the feed probe is failing and abuse filtering is off.
     - alert: WgfleetNodeCertExpiring
       # Node certificates are issued for a year and the agent renews its own between
       # 70% and 90% of that, in place, over the control plane. So this rule no longer

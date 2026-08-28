@@ -155,7 +155,14 @@ deploy_one() {
     if ! systemctl is-active --quiet '$svc'; then
       if [ -f '/usr/local/bin/${bin}.prev' ]; then
         echo \"  $svc failed to start — rolling back to .prev\" >&2
-        sudo cp -f '/usr/local/bin/${bin}.prev' '/usr/local/bin/${bin}'
+        # install + mv, not cp, for the same reason the install above uses them:
+        # cp writes IN PLACE, and a crash-looping unit alternates between running and
+        # its RestartSec gap, so the recovery path itself returns ETXTBSY on roughly a
+        # coin flip — and `set -e` then aborts before the restart, leaving the node on
+        # the bad binary with a non-zero exit that reads like a rollback was tried.
+        # A rename is atomic and never touches the running image.
+        sudo install -o root -g root -m 0755 '/usr/local/bin/${bin}.prev' '/usr/local/bin/${bin}.rollback'
+        sudo mv -f '/usr/local/bin/${bin}.rollback' '/usr/local/bin/${bin}'
         sudo systemctl restart '$svc'
         sleep 2
         echo \"  after rollback: \$(systemctl is-active $svc)\" >&2

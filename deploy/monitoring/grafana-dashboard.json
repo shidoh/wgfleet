@@ -1263,7 +1263,7 @@
   },
   {
    "type": "row",
-   "title": "Egress (ADR-0021 throughput watchdog)",
+   "title": "Egress (throughput watchdog)",
    "collapsed": false,
    "gridPos": {
     "h": 1,
@@ -1365,7 +1365,7 @@
   {
    "type": "table",
    "title": "Active egress method",
-   "description": "Which egress each exit is currently using (warp / direct). Differs from the preferred egress while failed over (ADR-0017).",
+   "description": "Which egress each exit is currently using (warp / direct). Differs from the preferred egress while failed over.",
    "datasource": {
     "type": "prometheus",
     "uid": "${datasource}"
@@ -1618,7 +1618,7 @@
   {
    "type": "timeseries",
    "title": "Config drift (resources repaired)",
-   "description": "Resources the agent had to repair while the desired spec was unchanged — i.e. real drift or external tampering (ADR-0015).",
+   "description": "Resources the agent had to repair while the desired spec was unchanged — i.e. real drift or external tampering.",
    "datasource": {
     "type": "prometheus",
     "uid": "${datasource}"
@@ -1674,7 +1674,7 @@
   },
   {
    "type": "row",
-   "title": "Transport (ADR-0025 dual-transport)",
+   "title": "Transport (dual-transport)",
    "collapsed": false,
    "gridPos": {
     "h": 1,
@@ -1688,7 +1688,7 @@
   {
    "type": "table",
    "title": "Active transport",
-   "description": "Which master↔exit transport each exit is currently routed over (awg / reality-xhttp). Switch it per node on its detail page (ADR-0025).",
+   "description": "Which master↔exit transport each exit is currently routed over (awg / reality-xhttp). Switch it per node on its detail page.",
    "datasource": {
     "type": "prometheus",
     "uid": "${datasource}"
@@ -1792,7 +1792,7 @@
   },
   {
    "type": "row",
-   "title": "Client-facing VLESS (ADR-0031)",
+   "title": "Client-facing VLESS",
    "collapsed": false,
    "gridPos": {
     "h": 1,
@@ -1806,7 +1806,7 @@
   {
    "type": "stat",
    "title": "Client-VLESS inbound down",
-   "description": "Masters whose client-facing VLESS/REALITY inbound self-check is failing. Non-zero means DPI-throttled clients can't fall back to the VLESS transport (ADR-0031).",
+   "description": "Masters whose client-facing VLESS/REALITY inbound self-check is failing. Non-zero means DPI-throttled clients can't fall back to the VLESS transport.",
    "datasource": {
     "type": "prometheus",
     "uid": "${datasource}"
@@ -1867,7 +1867,7 @@
   {
    "type": "stat",
    "title": "VLESS clients issued",
-   "description": "Total VLESS/REALITY client credentials issued across selected masters (ADR-0031).",
+   "description": "Total VLESS/REALITY client credentials issued across selected masters.",
    "datasource": {
     "type": "prometheus",
     "uid": "${datasource}"
@@ -1925,7 +1925,7 @@
   {
    "type": "timeseries",
    "title": "VLESS clients per master",
-   "description": "Issued VLESS/REALITY client count per master over time (ADR-0031).",
+   "description": "Issued VLESS/REALITY client count per master over time.",
    "datasource": {
     "type": "prometheus",
     "uid": "${datasource}"
