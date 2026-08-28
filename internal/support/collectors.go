@@ -10,8 +10,15 @@ package support
 // class of problem that cannot be diagnosed remotely by any other means.
 //
 // Every command here is read-only. None ever runs `awg showconf` or
-// `wg showconf` — both print the private key; `awg show` is safe and prints
-// "private key: (hidden)" itself.
+// `wg showconf` — both print the private key.
+//
+// `awg show` is NOT self-redacting, whatever this comment used to claim. It hides
+// the private and preshared keys and then prints the AmneziaWG 3.x header
+// protection key in full; a real bundle from a live fleet carried it, in a file the
+// tool tells the operator to send to a tester. The redaction layer is what makes
+// this command safe to collect, not the command's own manners — see
+// secrets.secretKeyRe, which now knows that name and the space-separated spelling
+// every WireGuard tool uses.
 func NodeCollectors(role string) []Collector {
 	cs := []Collector{
 		// identity.txt — what node is this, what is it running, what time does

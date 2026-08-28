@@ -345,3 +345,35 @@ func TestScrubAndGateAgreeAcrossValueShapes(t *testing.T) {
 		})
 	}
 }
+
+// A support bundle is a file the tool tells the operator to send to somebody else.
+// Everything below was found verbatim in a real bundle from a live fleet, or is
+// spelled the way this project spells it on disk.
+func TestScrubCoversTheNamesThisProjectActuallyUses(t *testing.T) {
+	for _, tc := range []struct{ name, line, secret string }{
+		// `awg show` prints this one in FULL, while hiding the two beside it — and
+		// the collector's own comment cited that hiding as proof it was safe.
+		{"awg show header protection key", "  header protection key: TPMBtlTJQfkpwDIG4Nh6bYgkhGi8Fzs8Gzp6AfFdm34=", "TPMBtlTJQfkpwDIG4Nh6bYgkhGi8Fzs8Gzp6AfFdm34="},
+		// Space-separated spellings: how every WireGuard tool writes them.
+		{"space-separated private key", "  private key: cHJpdmF0ZS1rZXktdmFsdWU=", "cHJpdmF0ZS1rZXktdmFsdWU="},
+		{"space-separated preshared key", "  preshared key: cHNrLXZhbHVlLWhlcmU=", "cHNrLXZhbHVlLWhlcmU="},
+		// Underscore-prefixed names: "_" is a word character, so a leading \b made
+		// every one of these invisible to the old pattern.
+		{"fleet secret", "fleet_secret: s3cr3tvalue", "s3cr3tvalue"},
+		{"awg3 key", "awg3_key: aaaabbbbccccdddd", "aaaabbbbccccdddd"},
+		{"admin password", "admin_password=hunter2hunter2", "hunter2hunter2"},
+		{"ca key path value", "ca_key: BEGINPRIVATEKEYMATERIAL", "BEGINPRIVATEKEYMATERIAL"},
+		{"vless uuid", `"uuid": "3f1c9a4e-0000-0000-0000-000000000001"`, "3f1c9a4e-0000-0000-0000-000000000001"},
+		{"psk", "psk = cHNrCg==", "cHNrCg=="},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Scrub(tc.line)
+			if strings.Contains(got, tc.secret) {
+				t.Errorf("Scrub left the secret in place:\n  in:  %s\n  out: %s", tc.line, got)
+			}
+			if !strings.Contains(got, redactedMarker) {
+				t.Errorf("Scrub did not mark the line as redacted: %s", got)
+			}
+		})
+	}
+}

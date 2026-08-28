@@ -35,7 +35,27 @@ import (
 // explicitly the layer for text whose format we do not control. Sharing
 // this regex also keeps Scrub and Gate consistent by construction — Gate
 // cannot fire on a line Scrub already fully redacted.
-var secretKeyRe = regexp.MustCompile(`(?im)\b(private[_-]?key|pre[_-]?shared[_-]?key|secret|password|passwd|token|authorization|api[_-]?key)\b["']?\s*[:=]\s*["']?(.+?)["']?\s*$`)
+// Three things this pattern got wrong for a long time, each of which leaked:
+//
+//   - The separator class was [_-]? , so it matched "private_key" and
+//     "private-key" but NOT "private key" — which is exactly how `wg`/`awg show`
+//     and most WireGuard tooling spell it.
+//   - It was anchored with a leading \b, and "_" is a word character, so
+//     "fleet_secret", "admin_password", "ca_key" and "awg3_key" had no boundary
+//     before the matched word and sailed through untouched. A leading name part
+//     is now consumed instead of required to be absent.
+//   - It knew nothing of "header protection key". `awg show` deliberately prints
+//     "private key: (hidden)" and this file's own comment cites that as proof the
+//     command is safe to collect — but it prints the AmneziaWG 3.x header
+//     protection key IN FULL. A real bundle carried the live key of a live fleet,
+//     in a tarball the tool tells the operator to send to a tester. Also added:
+//     psk, uuid, passphrase, and a bare "key" term reached through the name
+//     prefix, which is what catches awg3_key, ca_key and anything else this
+//     project names that way without listing each one.
+//
+// Over-masking trailing prose is the correct trade here and always was: it costs
+// readability, and the alternative costs a secret.
+var secretKeyRe = regexp.MustCompile(`(?im)[\w.-]*(private[_\s-]?key|pre[_\s-]?shared[_\s-]?key|preshared[_\s-]?key|header[_\s-]?protection[_\s-]?key|secret|password|passwd|passphrase|token|authorization|psk|uuid|key)["']?\s*[:=]\s*["']?(.+?)["']?\s*$`)
 
 // redactedMarker is what an already-masked value looks like. The renderers emit
 // it, so the gate must treat it as safe rather than as a surviving secret.
