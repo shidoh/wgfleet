@@ -77,6 +77,7 @@ func run() error {
 		backupOut    = flag.String("backup", "", "snapshot controller (+co-located master) state to an age-encrypted archive at this path, then exit")
 		restoreIn    = flag.String("restore", "", "restore controller state from an age-encrypted archive at this path, then exit")
 		ageRecipient = flag.String("age-recipient", "", "with --backup: encrypt to this age recipient instead of prompting for a passphrase")
+		ageIdentity  = flag.String("age-identity", "", "with --restore: path to the age identity file for an archive encrypted to a recipient. Omit for a passphrase-encrypted archive, which age prompts for. An archive written with --age-recipient CANNOT be restored without this")
 		supportBnd   = flag.Bool("support-bundle", false, "write a read-only diagnostic archive, then exit (requires --fleet)")
 		fleetMode    = flag.Bool("fleet", false, "with --support-bundle: also render inventory from the store and walk every exit over SSH")
 		supportNote  = flag.String("note", "", "with --support-bundle: free-form description of the problem, embedded in the bundle's manifest")
@@ -136,7 +137,7 @@ func run() error {
 		return nil
 	}
 	if *restoreIn != "" {
-		p, err := runRestore(context.Background(), *restoreIn, *plan, nil, int(api.WireContractVersion), controllerEndpoint(cfg.Controller))
+		p, err := runRestore(context.Background(), *restoreIn, *plan, nil, *ageIdentity, int(api.WireContractVersion), controllerEndpoint(cfg.Controller))
 		if err != nil {
 			return err
 		}

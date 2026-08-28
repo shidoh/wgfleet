@@ -30,11 +30,27 @@ func AgeEncryptor(recipient string) EncryptFunc {
 	}
 }
 
-// AgeDecryptor returns a DecryptFunc backed by `age -d`. age resolves the
-// identity or passphrase itself (interactively or via AGE env vars).
-func AgeDecryptor() DecryptFunc {
+// AgeDecryptor returns a DecryptFunc backed by `age -d`, reading identity from
+// the file at identityPath when one is given.
+//
+// An empty path means passphrase mode, where age prompts on the terminal. It used
+// to be the ONLY mode: this ran a bare `age -d` and its comment claimed age would
+// "resolve the identity itself (interactively or via AGE env vars)". age does no
+// such thing — an identity comes from -i and nowhere else. So every archive made
+// with --age-recipient, which is the form the Web UI's button produces and the form
+// the operations runbook documents first, decrypted to
+// "age: error: no identity matched any of the recipients" and could not be
+// restored at all. A backup you cannot restore is not a backup, and the way that
+// was discovered is the way it would have been discovered in production.
+func AgeDecryptor(identityPath string) DecryptFunc {
 	return func(ctx context.Context, ciphertext []byte) ([]byte, error) {
-		return runAge(ctx, []string{"-d"}, ciphertext, true)
+		args := []string{"-d"}
+		if identityPath != "" {
+			args = append(args, "-i", identityPath)
+		}
+		// Only passphrase mode needs the terminal; with an identity file there is
+		// nothing to prompt for and stderr stays captured for the error message.
+		return runAge(ctx, args, ciphertext, identityPath == "")
 	}
 }
 

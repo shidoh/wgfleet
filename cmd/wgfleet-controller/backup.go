@@ -35,9 +35,9 @@ func runBackup(src backup.Sources, outPath, recipient string, encrypt backup.Enc
 // runRestore reads an age-encrypted archive and lays it back down (or, in plan
 // mode, reports what it would do). In apply mode it first refuses if a
 // controller is still serving on listenAddr (spec §4 step 1).
-func runRestore(ctx context.Context, archivePath string, plan bool, decrypt backup.DecryptFunc, wire int, listenAddr string) (backup.RestorePlan, error) {
+func runRestore(ctx context.Context, archivePath string, plan bool, decrypt backup.DecryptFunc, identityPath string, wire int, listenAddr string) (backup.RestorePlan, error) {
 	if decrypt == nil {
-		decrypt = backup.AgeDecryptor()
+		decrypt = backup.AgeDecryptor(identityPath)
 	}
 	if !plan && listenAddr != "" && controllerIsLive(listenAddr) {
 		return backup.RestorePlan{}, fmt.Errorf("a controller is still serving on %s; stop it before restoring", listenAddr)

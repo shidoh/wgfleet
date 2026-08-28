@@ -29,6 +29,7 @@ Every flag on both binaries. For what to *do* with them see
 | `--backup <out>` | | snapshot controller (+co-located master) state to an age-encrypted archive at `<out>`, then exit |
 | `--restore <in>` | | restore controller state from an age-encrypted archive `<in>`, then exit (controller must be stopped) |
 | `--age-recipient <rcpt>` | | with `--backup`: encrypt to this age recipient instead of prompting for a passphrase |
+| `--age-identity <path>` | | with `--restore`: the age identity file for an archive that was encrypted to a recipient. Omit it for a passphrase-encrypted archive, which age prompts for. **An archive written with `--age-recipient` cannot be restored without this**, and that includes every archive the Web UI's backup button produces — that path requires a recipient |
 | `--plan` | | with `--restore`: show what would be laid down, change nothing |
 | `--support-bundle` | | write a read-only diagnostic archive (no secrets, not encrypted) and exit; requires `--fleet` |
 | `--fleet` | | with `--support-bundle`: collect the store inventory and walk every exit over SSH |
