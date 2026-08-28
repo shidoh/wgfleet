@@ -184,16 +184,28 @@ func Script(steps []Step) string {
 
 // TeardownActions reverses Render: it flushes the egress routing table and
 // deletes the ip rules pointing at it, plus flushes conntrack so the old WARP
-// path is forgotten immediately (an earlier finding, in reverse). Used when an exit node
-// is decommissioned. The deletes tolerate "rule does not exist".
+// path is forgotten immediately (an earlier finding, in reverse).
+//
+// Two callers: decommissioning an exit, and the WARP→direct failover (ADR-0017),
+// where "render nothing" had been mistaken for "undo the previous something" and
+// the WARP rules survived a failover that was supposed to abandon them.
+//
+// Every step is BestEffort, and that is load-bearing rather than tidy. On the
+// failover path this runs on a node that may never have had WARP rules at all, and
+// `ip rule del` answers non-zero when the rule is not there — an intolerant step
+// would fail the reconcile pass of every direct-egress exit on its first pass.
+// The comment claimed the deletes tolerated that long before the flag did.
 func TeardownActions() []Step {
 	return []Step{
 		{Summary: fmt.Sprintf("flush egress routing table %d", EgressTable),
-			Argv: []string{"ip", "route", "flush", "table", fmt.Sprintf("%d", EgressTable)}},
+			Argv:       []string{"ip", "route", "flush", "table", fmt.Sprintf("%d", EgressTable)},
+			BestEffort: true},
 		{Summary: "remove egress-table rule",
-			Argv: []string{"ip", "rule", "del", "lookup", fmt.Sprintf("%d", EgressTable)}},
+			Argv:       []string{"ip", "rule", "del", "lookup", fmt.Sprintf("%d", EgressTable)},
+			BestEffort: true},
 		{Summary: "flush conntrack (forget the WARP path)",
-			Argv: []string{"conntrack", "-F"}},
+			Argv:       []string{"conntrack", "-F"},
+			BestEffort: true},
 	}
 }
 

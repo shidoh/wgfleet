@@ -260,3 +260,20 @@ func TestRenderRealityEgressMarkDirectEgressNoop(t *testing.T) {
 		t.Errorf("direct egress should render no steps, got %d", len(steps))
 	}
 }
+
+// TeardownActions runs on the WARP→direct failover path, on a node that may never
+// have had WARP rules at all — `ip rule del` answers non-zero when the rule is not
+// there, and an intolerant step would fail the whole reconcile pass of every
+// direct-egress exit. The doc comment always claimed the deletes tolerate that;
+// the BestEffort flag that makes it true was never set.
+func TestTeardownActionsTolerateAbsentRules(t *testing.T) {
+	steps := TeardownActions()
+	if len(steps) == 0 {
+		t.Fatal("TeardownActions() returned nothing")
+	}
+	for _, s := range steps {
+		if !s.BestEffort {
+			t.Errorf("teardown step %q is not best-effort; it will fail the pass on a node with no WARP rules", s.Summary)
+		}
+	}
+}
