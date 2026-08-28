@@ -49,9 +49,18 @@ the containers wgfleet runs (mihomo, xray, blocky, wg-easy — a missing one
 on a node that doesn't run it is normal, not an error). A master
 additionally reports its ZeroTier overlay status.
 
-Every command is read-only. `awg showconf` / `wg showconf` — the commands
-that print a private key — are never run; only `awg show`, which prints
-`(hidden)` in their place.
+Every command is read-only. `awg showconf` / `wg showconf` — the commands that
+dump a whole config including the private key — are never run.
+
+`awg show` **is** run, and choosing it is not by itself what makes the bundle
+safe. It masks the private key as `(hidden)`, and this document used to cite that
+as proof the command was harmless — but it prints the AmneziaWG 3.x **header
+protection key in full**, and a real bundle from a live fleet carried that live
+key in a tarball this tool tells you to send to a tester. What makes the bundle
+safe is the redaction pass every collected file goes through before the archive
+is written (see below), and the gate that refuses to write an archive when
+something that looks like a secret survives it. Read that as the guarantee, not
+the choice of command.
 
 In `--fleet` mode the controller adds one more section: its own inventory —
 every node's name, role, state, agent version, mgmt address, last-seen time,
