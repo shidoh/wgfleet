@@ -335,6 +335,12 @@ type agent struct {
 	// failover can never fire and the standby is never warmed. Nil for exits.
 	tier *master.TierSelector
 
+	// renewBackoff / renewNotBefore hold off a failing certificate renewal. Process
+	// lifetime, like tier and restarts above and for the same reason: the reconcile
+	// loop is the only caller and it runs every 30 seconds for months.
+	renewBackoff   time.Duration
+	renewNotBefore time.Time
+
 	// restarts throttles SELF-HEAL restarts for the PROCESS lifetime, for exactly
 	// the same reason as tier above: planners are rebuilt every pass, so a governor
 	// created per pass would forget every restart it ever recorded and the throttle
@@ -1427,26 +1433,71 @@ func buildClientTLS(cfg *config.AgentConfig) (*tls.Config, error) {
 //
 // Called from the reconcile loop rather than a timer: the loop already runs every
 // 30 seconds with a live controller connection, which is exactly what renewal needs,
-// and a node that cannot reconcile cannot renew anyway. A failure is logged and
-// dropped — the current certificate is still valid for weeks at this point, and the
-// next pass tries again.
+// and a node that cannot reconcile cannot renew anyway.
+//
+// A failure BACKS OFF rather than retrying at the loop's cadence. The renewal window
+// is ~110 days wide, so at one attempt per pass a controller below wire 10, or one
+// with no CA loaded, produced roughly 316 thousand identical WARN lines and as many
+// P-256 keygens and RPCs before the certificate finally lapsed — on the same node
+// whose Register path was rewritten specifically to stop emitting 59k lines a day.
+// The condition that most needs to be visible was drowning itself. Doubling from one
+// pass up to an hour keeps the first few failures prompt (a controller restart
+// recovers within a pass) and turns a stuck node into roughly 24 lines a day.
 func (a *agent) renewCertificateIfDue(ctx context.Context) {
 	cfg := a.cfg
 	notBefore, notAfter, err := certrenew.NotBeforeAfter(cfg.Agent.Identity.Cert)
 	if err != nil {
-		return // no certificate to reason about; nothing to renew
+		// The one node that will never renew is the one that would otherwise say
+		// nothing: this is the agent's own certificate, and being unable to read it is
+		// not a quiet fact.
+		a.log.Warn("cannot read this node's own certificate; renewal is not possible",
+			"path", cfg.Agent.Identity.Cert, "err", err)
+		return
 	}
 	if !certrenew.Due(cfg.Agent.NodeID, notBefore, notAfter, time.Now()) {
+		return
+	}
+	if now := time.Now(); now.Before(a.renewNotBefore) {
 		return
 	}
 	paths := certrenew.Paths{
 		Cert: cfg.Agent.Identity.Cert, Key: cfg.Agent.Identity.Key, CA: cfg.Agent.Identity.CA,
 	}
 	if err := certrenew.Rotate(ctx, a.client, paths); err != nil {
-		a.log.Warn("certificate renewal failed; will retry", "expires", notAfter, "err", err)
+		a.renewBackoff = nextRenewBackoff(a.renewBackoff)
+		a.renewNotBefore = time.Now().Add(a.renewBackoff)
+		if time.Now().After(notAfter) {
+			// Renewal travels over the mTLS channel this certificate opens, so an
+			// EXPIRED one can never renew: the handshake fails before the RPC. "Will
+			// retry" is then false, and it is the message an operator reads at the exact
+			// moment they need the out-of-band path instead.
+			a.log.Error("this node's certificate has EXPIRED and cannot renew itself; "+
+				"re-issue it out of band with `wgfleet-controller --certs renew --node "+cfg.Agent.NodeID+"`",
+				"expired", notAfter, "err", err)
+			return
+		}
+		a.log.Warn("certificate renewal failed", "expires", notAfter,
+			"next_attempt_in", a.renewBackoff, "err", err)
 		return
 	}
+	a.renewBackoff, a.renewNotBefore = 0, time.Time{}
 	a.log.Info("control-plane certificate renewed", "previous_expiry", notAfter)
+}
+
+// nextRenewBackoff doubles from one reconcile pass up to an hour.
+func nextRenewBackoff(current time.Duration) time.Duration {
+	const (
+		first = 30 * time.Second
+		max   = time.Hour
+	)
+	switch {
+	case current <= 0:
+		return first
+	case current*2 >= max:
+		return max
+	default:
+		return current * 2
+	}
 }
 
 // serverNameOf returns the host portion of the controller endpoint, which must

@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestResolveMetricsBind(t *testing.T) {
 	tests := []struct {
@@ -27,5 +30,41 @@ func TestResolveMetricsBind(t *testing.T) {
 				t.Fatalf("resolveMetricsBind(%q, %q) = %q, want %q", tt.flagVal, tt.mgmt, got, tt.want)
 			}
 		})
+	}
+}
+
+// The renewal window is ~110 days wide and the reconcile loop runs every 30 seconds,
+// so a deterministic failure — a controller below wire 10, or one with no CA loaded —
+// meant ~316k identical WARN lines, keygens and RPCs before the certificate lapsed.
+// Backoff is what makes a stuck node legible instead of loud.
+func TestRenewBackoffDoublesToAnHour(t *testing.T) {
+	got := nextRenewBackoff(0)
+	if got != 30*time.Second {
+		t.Errorf("first backoff = %v, want one reconcile pass", got)
+	}
+	steps := 0
+	for got < time.Hour && steps < 20 {
+		next := nextRenewBackoff(got)
+		if next <= got {
+			t.Fatalf("backoff stopped growing at %v", got)
+		}
+		got = next
+		steps++
+	}
+	if got != time.Hour {
+		t.Errorf("backoff settled at %v, want an hour", got)
+	}
+	if n := nextRenewBackoff(time.Hour); n != time.Hour {
+		t.Errorf("backoff grew past its cap: %v", n)
+	}
+	// Roughly a day of failures should cost tens of lines, not tens of thousands.
+	var elapsed time.Duration
+	attempts := 0
+	for d := time.Duration(0); elapsed < 24*time.Hour; attempts++ {
+		d = nextRenewBackoff(d)
+		elapsed += d
+	}
+	if attempts > 40 {
+		t.Errorf("%d attempts in 24h; the failure drowns itself again", attempts)
 	}
 }
