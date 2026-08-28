@@ -280,6 +280,12 @@ body { margin:0; min-height:100vh; display:grid; justify-items:center; align-ite
   border-radius:14px; padding:28px; }
 h1 { margin:0 0 4px; font-size:20px; }
 .sub { margin:0 0 20px; color:#8b98a9; font-size:15px; }
+/* .lead is the failure page's body, and it is not a subtitle. It was .sub — the
+   class built for the one-line name under a heading — so the whole explanation a
+   person reads when their VPN has just stopped rendered in the weakest grey on the
+   page, at the size meant for a caption. It is the only text there; it gets the
+   page's own colour. */
+.lead { margin:0; color:#e6edf3; font-size:16px; }
 p { font-size:15px; }
 dl { margin:12px 0 0; display:grid; grid-template-columns:auto 1fr; gap:8px 16px; font-size:15px; }
 ol.steps { margin:0 0 22px; padding-left:20px; font-size:15px; }
@@ -292,8 +298,13 @@ dt { color:#8b98a9; } dd { margin:0; font-family:ui-monospace, SFMono-Regular, M
    narrow phone, where flex:1 would otherwise make both buttons equal. */
 a.btn { flex:1 1 140px; text-align:center; padding:14px 16px; border-radius:9px; text-decoration:none;
   border:1px solid #2b3646; color:#e6edf3; background:#1d2531; }
-/* #2559c4, not #2f6feb: the brighter blue put white text at 3.87:1, below AA. */
-a.btn.primary { background:#2559c4; border-color:#2559c4; flex:1 1 100%; }
+/* Two axes, and the first version measured only one. #2559c4 rather than #2f6feb
+   because the brighter blue put the LABEL at 3.87:1, below AA — but the fill it was
+   darkened to sits at 2.66:1 against the card, and border-color was set to the same
+   value, so the only call-to-action on the product's public surface had no boundary
+   at all: on a phone in daylight, a faintly bluer rectangle. The label keeps its
+   5.38:1; the border now carries the 3:1 that WCAG asks of a component edge. */
+a.btn.primary { background:#2559c4; border-color:#6f9bf0; flex:1 1 100%; }
 a.btn:active { transform:scale(.98); filter:brightness(1.15); }
 a.btn:focus-visible { outline:2px solid #e6edf3; outline-offset:2px; }
 .notice { margin:0 0 20px; padding:14px 16px; border-radius:9px;
@@ -359,5 +370,5 @@ const failHTML = `<!doctype html>
 <meta name="robots" content="noindex, nofollow">
 <title>Your VPN profile</title>
 <style>` + portalCSS + `</style></head>
-<body><main class="card"><h1>{{.Heading}}</h1><p class="sub">{{.Body}}</p></main></body></html>
+<body><main class="card"><h1>{{.Heading}}</h1><p class="lead">{{.Body}}</p></main></body></html>
 `

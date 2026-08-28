@@ -74,7 +74,11 @@
      secondary text, and it clears AA. */
   /* Raised from #3a4150 (1.85:1 — invisible, not quiet) to clear the 3:1 floor that
      applies to the 20px bold numeral it paints. "Receding" is the intent; a zero
-     nobody can read is not a quieter zero, it is a missing one. */
+     nobody can read is not a quieter zero, it is a missing one.
+     It is for THAT numeral only. It reached 3.05:1, which passes as large text and
+     fails as small text, and it was also painting two 10.5px labels — so the token
+     now has exactly one user (.chip-stat.is-zero .num) and anything smaller uses
+     --text-label. */
   --text-zero:     #576178;
 
   /* ---- Accent: green (healthy / ready / carrying) ------------------ */
@@ -578,7 +582,11 @@ a:focus-visible,
 .topo-grp { display: flex; align-items: center; gap: var(--sp-3); margin: var(--sp-5) 0 var(--sp-3); }
 .topo-grp-lbl { font-size: var(--fs-label); letter-spacing: var(--track-label); color: var(--text-label); }
 .topo-grp-line { flex: 1; height: 1px; background: var(--border-rule); }
-.topo-grp-n { font-size: var(--fs-label); color: var(--text-zero); font-variant-numeric: tabular-nums; }
+/* --text-zero is reasoned about, and passes, at the 20px bold numeral it was raised
+   for. Here and on .foot-sep it paints 10.5px text, where 3.05:1 is well under the
+   4.5:1 small text needs — and the count beside CARRYING/RESERVE is a number the
+   operator reads, not a decoration. */
+.topo-grp-n { font-size: var(--fs-label); color: var(--text-label); font-variant-numeric: tabular-nums; }
 
 .topo-group { position: relative; padding-left: var(--sp-8); }
 .topo-rail {
@@ -677,7 +685,7 @@ a:focus-visible,
   font-size: var(--fs-label);
   color: var(--text-label);
 }
-.topo-card-foot .foot-sep { color: var(--text-zero); }
+.topo-card-foot .foot-sep { color: var(--text-label); }
 .topo-trunk .topo-card-foot { border-top: 0; padding-top: 0; }
 
 /* ============================================================
@@ -1317,7 +1325,13 @@ details.hand-out[open] > .client-cfg { margin-top: var(--sp-5); }
   overflow-wrap: anywhere;
 }
 .kv dd.strong { color: var(--text-strong); font-weight: 600; }
-.kv dd.dim    { color: var(--text-label); }
+/* A value is not a label. When --text-dim was merged into --text-label this landed
+   on the same token as `.kv dt` beside it, so 4 of the 7 INVENTORY rows and both
+   STATUS rows rendered as one undifferentiated grey run and the two-column grid
+   stopped reading as label/value at all. The merge was right for contrast and wrong
+   for structure: what a de-emphasised VALUE needs is to sit one step ABOVE its term,
+   not on it. */
+.kv dd.dim    { color: var(--text-muted); }
 
 .rule {
   height: 1px;
