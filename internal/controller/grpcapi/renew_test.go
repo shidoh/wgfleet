@@ -13,8 +13,12 @@ import (
 	"crypto/tls"
 	pb "github.com/shidoh/wgfleet/internal/api/pb/wgfleet/v1"
 	"github.com/shidoh/wgfleet/internal/controller/pki"
+	"github.com/shidoh/wgfleet/internal/controller/store"
+	"github.com/shidoh/wgfleet/internal/domain"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 	"math/big"
 )
 
@@ -57,7 +61,7 @@ func TestRenewCertificateIssuesForTheVerifiedCallerOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	spy := &spySigner{ca: ca}
-	svc := NewService(nil, nil, nil)
+	svc := NewService(renewTestStore(t, "exit-de-1", "master-xa-1"), nil, nil)
 	svc.SetCertSigner(spy)
 
 	ctx := ctxWithNodeIdentity(t, "exit-de-1")
@@ -75,7 +79,7 @@ func TestRenewCertificateIssuesForTheVerifiedCallerOnly(t *testing.T) {
 
 // An unauthenticated caller has no identity, so there is nothing to renew.
 func TestRenewCertificateRefusesAnUnidentifiedCaller(t *testing.T) {
-	svc := NewService(nil, nil, nil)
+	svc := NewService(renewTestStore(t, "exit-de-1", "master-xa-1"), nil, nil)
 	svc.SetCertSigner(&spySigner{})
 	if _, err := svc.RenewCertificate(context.Background(),
 		&pb.RenewCertificateRequest{CsrDer: []byte("x")}); err == nil {
@@ -86,7 +90,7 @@ func TestRenewCertificateRefusesAnUnidentifiedCaller(t *testing.T) {
 // A controller with no CA must say so rather than fail obscurely: a node that
 // cannot renew is heading for expiry and should hear about it.
 func TestRenewCertificateSaysSoWithNoCA(t *testing.T) {
-	svc := NewService(nil, nil, nil)
+	svc := NewService(renewTestStore(t, "exit-de-1", "master-xa-1"), nil, nil)
 	_, err := svc.RenewCertificate(ctxWithNodeIdentity(t, "exit-de-1"),
 		&pb.RenewCertificateRequest{CsrDer: testCSR(t, "exit-de-1")})
 	if err == nil {
@@ -96,7 +100,7 @@ func TestRenewCertificateSaysSoWithNoCA(t *testing.T) {
 
 func TestRenewCertificateRefusesAnEmptyRequest(t *testing.T) {
 	ca, _ := pki.NewCA("test-ca")
-	svc := NewService(nil, nil, nil)
+	svc := NewService(renewTestStore(t, "exit-de-1", "master-xa-1"), nil, nil)
 	svc.SetCertSigner(&spySigner{ca: ca})
 	if _, err := svc.RenewCertificate(ctxWithNodeIdentity(t, "exit-de-1"),
 		&pb.RenewCertificateRequest{}); err == nil {
@@ -132,4 +136,69 @@ func ctxWithNodeIdentity(t *testing.T, cn string) context.Context {
 			VerifiedChains: [][]*x509.Certificate{{cert}},
 		}},
 	})
+}
+
+// Expiry was the only revocation this system ever had: there is no CRL, so Drain →
+// Decommission → Delete removed the inventory row and the fleet then WAITED OUT the
+// certificate. Renewal taken from the CN alone quietly repealed that — a retired
+// host would have been handed a fresh year on every anniversary, forever, and
+// Register re-creates the row it was deleted from on the very next pass. A VPS
+// handed back to its provider must not leave with a self-renewing key to the
+// control plane.
+func TestRenewCertificateRefusesNodesThatLeftTheFleet(t *testing.T) {
+	ca, err := pki.NewCA("test-ca")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("deleted from inventory", func(t *testing.T) {
+		svc := NewService(renewTestStore(t, "master-xa-1"), nil, nil)
+		svc.SetCertSigner(&spySigner{ca: ca})
+		_, err := svc.RenewCertificate(ctxWithNodeIdentity(t, "exit-retired"),
+			&pb.RenewCertificateRequest{CsrDer: testCSR(t, "exit-retired")})
+		if status.Code(err) != codes.PermissionDenied {
+			t.Errorf("a node that is not in the inventory renewed: err = %v", err)
+		}
+	})
+
+	t.Run("decommissioned", func(t *testing.T) {
+		st := renewTestStore(t, "exit-de-1")
+		if err := st.SetNodeDecommission(context.Background(), "exit-de-1", true); err != nil {
+			t.Fatal(err)
+		}
+		svc := NewService(st, nil, nil)
+		svc.SetCertSigner(&spySigner{ca: ca})
+		_, err := svc.RenewCertificate(ctxWithNodeIdentity(t, "exit-de-1"),
+			&pb.RenewCertificateRequest{CsrDer: testCSR(t, "exit-de-1")})
+		if status.Code(err) != codes.PermissionDenied {
+			t.Errorf("a decommissioned node renewed: err = %v", err)
+		}
+	})
+
+	t.Run("still in the fleet", func(t *testing.T) {
+		svc := NewService(renewTestStore(t, "exit-de-1"), nil, nil)
+		svc.SetCertSigner(&spySigner{ca: ca})
+		if _, err := svc.RenewCertificate(ctxWithNodeIdentity(t, "exit-de-1"),
+			&pb.RenewCertificateRequest{CsrDer: testCSR(t, "exit-de-1")}); err != nil {
+			t.Errorf("a live node was refused: %v", err)
+		}
+	})
+}
+
+// renewTestStore builds an in-memory inventory holding exactly these nodes.
+func renewTestStore(t *testing.T, ids ...string) store.Store {
+	t.Helper()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	for _, id := range ids {
+		if err := st.UpsertNode(context.Background(), domain.Node{
+			ID: id, Name: id, Role: domain.RoleExit, State: domain.StateReady,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return st
 }
