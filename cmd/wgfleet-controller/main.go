@@ -156,7 +156,7 @@ func run() error {
 	// Backup/restore operate on files (store db, CA, manifest, master state) and
 	// do not need a loaded CA — handle them before the secret-provider/CA load.
 	if *backupOut != "" {
-		if err := runBackup(backup.DefaultSources(cfg, *configPath), *backupOut, *ageRecipient, nil); err != nil {
+		if err := runBackup(backup.DefaultSources(cfg, *configPath), *backupOut, *ageRecipient, nil, cfg); err != nil {
 			return err
 		}
 		fmt.Printf("backup written to %s\n", *backupOut)

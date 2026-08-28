@@ -8,13 +8,20 @@ import (
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/api"
+	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/backup"
 )
 
 // runBackup snapshots the controller (and co-located master, if present) into an
 // age-encrypted archive at outPath. Sources are injected so callers (and tests)
 // control which on-disk paths are read; production passes backup.DefaultSources.
-func runBackup(src backup.Sources, outPath, recipient string, encrypt backup.EncryptFunc) error {
+func runBackup(src backup.Sources, outPath, recipient string, encrypt backup.EncryptFunc, cfg *config.ControllerConfig) error {
+	// Say what this archive CANNOT carry before writing it, not after. "backup
+	// written to ..." used to mean the same whether the fleet CA was inside it or
+	// not, and the difference is discovered during a restore.
+	for _, w := range src.Warnings(cfg) {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
 	if encrypt == nil {
 		encrypt = backup.AgeEncryptor(recipient)
 	}

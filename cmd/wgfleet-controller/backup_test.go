@@ -55,7 +55,7 @@ func TestRunBackupRestoreRoundTripCLI(t *testing.T) {
 
 	out := filepath.Join(dir, "backup.tar.age")
 	identityEnc := func(_ context.Context, p []byte) ([]byte, error) { return p, nil }
-	if err := runBackup(src, out, "", identityEnc); err != nil {
+	if err := runBackup(src, out, "", identityEnc, nil); err != nil {
 		t.Fatalf("runBackup: %v", err)
 	}
 	if fi, err := os.Stat(out); err != nil || fi.Size() == 0 {

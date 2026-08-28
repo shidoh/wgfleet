@@ -1,9 +1,11 @@
 package backup
 
 import (
+	"github.com/shidoh/wgfleet/internal/config"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -121,5 +123,68 @@ func TestGatherItemsCapturesMasterWGKey(t *testing.T) {
 	}
 	if !slices.Contains(layers, LayerMaster) {
 		t.Error("master layer must be reported when wg.key is present")
+	}
+}
+
+// The archive must carry the two secrets that cannot be regenerated without
+// invalidating every client profile in the fleet.
+//
+// Neither was in it. A fresh awg3_key derives a different chacha20 header-protection
+// key on every 3.x tunnel at once; a fresh client-vless key invalidates every
+// profile's pinned pbk=. And the controller refuses to START without the first when
+// header protection is on, so a restore onto a clean host did not come back
+// degraded — it did not come back.
+func TestGatherItemsCarriesTheIrreplaceableSecrets(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("secret-"+name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	src := Sources{
+		ControllerYAML: write("controller.yaml"),
+		CACert:         write("ca.crt"),
+		CAKey:          write("ca.key"),
+		AWG3Key:        write("awg3.key"),
+		ClientVLESSKey: write("client-vless.key"),
+	}
+	snap := write("state.db")
+
+	items, _, err := GatherItems(src, snap, os.Stat)
+	if err != nil {
+		t.Fatalf("GatherItems: %v", err)
+	}
+	names := map[string]bool{}
+	for _, it := range items {
+		names[it.Name] = true
+	}
+	for _, want := range []string{"controller/awg3.key", "master/client-vless.key"} {
+		if !names[want] {
+			t.Errorf("the archive does not carry %q; a restore onto a clean host cannot come back", want)
+		}
+	}
+}
+
+// What cannot be carried must be said out loud, before the archive is written.
+func TestSourcesWarnAboutSecretsThatCannotTravel(t *testing.T) {
+	cfg := &config.ControllerConfig{}
+	cfg.Fleet.AWG3Key = "env://WGFLEET_AWG3_KEY"
+
+	// Neither secret resolves to a file on this host.
+	got := Sources{}.Warnings(cfg)
+	if len(got) != 2 {
+		t.Fatalf("got %d warnings, want one for the CA key and one for the fleet secret: %v", len(got), got)
+	}
+	joined := strings.Join(got, "\n")
+	for _, want := range []string{"CA private key", "awg3_key"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("warnings do not mention %q:\n%s", want, joined)
+		}
+	}
+	// With both in files there is nothing to warn about.
+	if got := (Sources{CAKey: "/etc/wgfleet/ca.key", AWG3Key: "/etc/wgfleet/awg3.key"}).Warnings(cfg); len(got) != 0 {
+		t.Errorf("warned about secrets that ARE in the archive: %v", got)
 	}
 }

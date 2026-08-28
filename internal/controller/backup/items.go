@@ -51,6 +51,18 @@ type Sources struct {
 	// It self-heals today by re-adopting from wg-easy's database, but the migration
 	// ends with that database deleted, at which point this file is the only copy.
 	ClientWGKey string
+	// AWG3Key is the fleet secret the AmneziaWG 3.x header-protection key is derived
+	// from, and ClientVLESSKey is the master's client-facing REALITY private key.
+	// Both were simply absent from every archive.
+	//
+	// Neither is regenerable in any sense that matters. A fresh awg3_key derives a
+	// different chacha20 key on every 3.x tunnel at once, which invalidates every
+	// client profile in the field; a fresh REALITY key invalidates every profile's
+	// pinned `pbk=`. And the controller REFUSES TO START without the first when
+	// header protection is on — so a restore onto a clean host did not come back
+	// degraded, it did not come back at all.
+	AWG3Key        string
+	ClientVLESSKey string
 }
 
 // DefaultSources fills Sources from config plus the fixed master paths.
@@ -76,6 +88,8 @@ func DefaultSources(cfg *config.ControllerConfig, configPath string) Sources {
 		WGEasyAdmin:    mp.WGEasyAdmin,
 		WGKey:          destWGKey,
 		ClientWGKey:    destClientWGKey,
+		AWG3Key:        awg3KeyPath(cfg),
+		ClientVLESSKey: mp.ClientVLESSKey,
 		NodeCert:       destNodeCert,
 		NodeKey:        destNodeKey,
 		AgentYAML:      destAgentYAML,
@@ -104,6 +118,7 @@ func GatherItems(src Sources, dbSnapshot string, exists func(string) (os.FileInf
 	// Optional controller items (CA key file may be absent if sops-backed).
 	for _, o := range []struct{ path, name, dest string }{
 		{src.CAKey, "controller/ca.key", src.CAKey},
+		{src.AWG3Key, "controller/awg3.key", src.AWG3Key},
 		{src.SOPSFile, "controller/secrets.sops.yaml", src.SOPSFile},
 	} {
 		if o.path == "" {
@@ -126,6 +141,7 @@ func GatherItems(src Sources, dbSnapshot string, exists func(string) (os.FileInf
 		{src.WGEasyAdmin, "master/wg-easy-admin-password", destWGEasyAdmin},
 		{src.WGKey, "master/wg.key", destWGKey},
 		{src.ClientWGKey, "master/client-wg.key", destClientWGKey},
+		{src.ClientVLESSKey, "master/client-vless.key", src.ClientVLESSKey},
 		{src.NodeCert, "master/node.crt", destNodeCert},
 		{src.NodeKey, "master/node.key", destNodeKey},
 		{src.AgentYAML, "master/agent.yaml", destAgentYAML},
@@ -185,14 +201,51 @@ func plannedItems(src Sources) []struct{ path, name, dest string } {
 		{"", "controller/state.db", firstNonEmpty(src.StateDB, destStateDB)},
 		{src.CACert, "controller/ca.crt", src.CACert},
 		{src.CAKey, "controller/ca.key", src.CAKey},
+		{src.AWG3Key, "controller/awg3.key", src.AWG3Key},
 		{src.SOPSFile, "controller/secrets.sops.yaml", src.SOPSFile},
 		{src.WGEasyDB, "master/wg-easy.db", src.WGEasyDB},
 		{src.WGEasyAdmin, "master/wg-easy-admin-password", destWGEasyAdmin},
 		{src.WGKey, "master/wg.key", destWGKey},
 		{src.ClientWGKey, "master/client-wg.key", destClientWGKey},
+		{src.ClientVLESSKey, "master/client-vless.key", src.ClientVLESSKey},
 		{src.NodeCert, "master/node.crt", destNodeCert},
 		{src.NodeKey, "master/node.key", destNodeKey},
 		{src.AgentYAML, "master/agent.yaml", destAgentYAML},
+	}
+	return out
+}
+
+// awg3KeyPath resolves fleet.awg3_key to a file this host can copy, or "" when the
+// secret does not live in a file (env:// or a provider reference) and therefore
+// cannot travel in the archive at all — which Warnings says out loud.
+func awg3KeyPath(cfg *config.ControllerConfig) string {
+	raw := string(cfg.Fleet.AWG3Key)
+	switch {
+	case strings.HasPrefix(raw, "file://"):
+		return config.ExpandPath(strings.TrimPrefix(raw, "file://"))
+	case raw != "" && !cfg.Fleet.AWG3Key.IsReference():
+		return config.ExpandPath(raw) // bare path (dev)
+	}
+	return ""
+}
+
+// Warnings lists the irreplaceable things this host CANNOT put in an archive.
+//
+// Silence was the old behaviour and the expensive one: GatherItems skipped an
+// element it could not stat and said nothing, so "backup written to ..." meant the
+// same whether the fleet CA was inside it or not. An operator learns the difference
+// during a restore, which is the worst possible moment.
+func (s Sources) Warnings(cfg *config.ControllerConfig) []string {
+	var out []string
+	if s.CAKey == "" {
+		out = append(out, "the CA private key is not a file on this host (pki.ca_key is an env:// or secret:// "+
+			"reference), so it is NOT in this archive — a restore onto a clean host cannot issue certificates "+
+			"until you supply it separately")
+	}
+	if s.AWG3Key == "" && cfg != nil && cfg.Fleet.AWG3Key != "" {
+		out = append(out, "fleet.awg3_key is not a file on this host, so it is NOT in this archive — "+
+			"restoring without it means the controller refuses to start while header protection is on, and "+
+			"regenerating it invalidates every client profile at once")
 	}
 	return out
 }
