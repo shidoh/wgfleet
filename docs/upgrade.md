@@ -95,7 +95,8 @@ plane refusing service does not break the data plane.
 
    - **From the UI:** open the node page → **Upgrade agent**.
 
-   The upgrade is just *upload new binary + restart the service*. The data plane
+   The upgrade is *upload new binary + restart the service*, and then **wait for the
+node to say it came back on it**. The data plane
    (kernel WG interfaces, mihomo/wg-easy/blocky containers) survives the restart,
    so **no drain is required** and clients are not dropped.
 
@@ -154,6 +155,16 @@ plane refusing service does not break the data plane.
   self-healing. Rehearse it before rolling: if mihomo is not listening on the
   transparent port, intercepted UDP is dropped rather than leaked — better, but a
   different behaviour from today.
+- **Wire v10 adds `RenewCertificate`, and an agent below it never renews.** Node
+  certificates last a year and agents at v10 renew their own between 70% and 90% of
+  that, over the control plane, with nothing for the operator to do. An agent on an
+  older contract keeps reconciling happily — `MinSupportedWire` is still 1, so it is
+  not refused and not auto-upgraded — and simply runs to `NotAfter`, then falls off
+  the control plane. One node per provisioning anniversary, roughly eleven months
+  after the roll, and the only way back is SSH plus `--certs renew`. So: after any
+  upgrade, confirm every node reports wire 10 before considering it done —
+  `wgfleet_node_agent_info` carries `wire_version`, and a straggler is invisible in
+  the cert alerting too, because the expiry metric arrives at v10 as well.
 - **Wire v9 adds `ClientWGSpec.ipv6_prefix`**, and with it the opt-in
   `client_awg.ipv6: block`. Default is `off` and nothing changes. Switched on, the
   controller refuses to render it for an agent below v9 rather than hand a client

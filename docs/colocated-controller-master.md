@@ -214,7 +214,7 @@ sudo systemctl enable --now wgfleet-controller wgfleet-agent
 
 ```bash
 # Dry-run the master's plan first if you like (writes nothing):
-sudo wgfleet-agent --config /etc/wgfleet/agent.yaml --plan \
+sudo wgfleet-agent --config /etc/wgfleet/agent.yaml --once --plan \
      --mgmt-addr <mgmt> --public-ip <public-ip>
 ```
 
@@ -283,7 +283,8 @@ agent before the controller restart so the file is written before mihomo reloads
 - **Pin the mihomo version**, not `:latest` — and not `Alpha`, which is a moving tag that
   defeats the pin. The code default is now `v1.19.30` (AmneziaWG 2.0 shipped in `v1.19.14`).
   ⚠️ `v1.19.27` and older **crash-loop on AmneziaWG-2.0 master↔exit junk**. The AmneziaWG obfuscation
-  params are derived safely by the platform — it floors `Jmin ≥ S4` so no junk packet is short
+  params are derived safely by the platform — it keeps `Jmin ≥ S4 + 8`, shifting the whole
+  junk band rather than clamping onto that floor, so no junk packet is short
   enough to trip the unguarded S4-strip in older `amneziawg-go` builds (this was a real
   crash-loop: `Jmin=22` with `S4=52` panicked mihomo on a 41-byte junk packet; fixed in the
   derivation, so the mihomo/kernel pairing no longer matters).

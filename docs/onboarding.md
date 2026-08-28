@@ -147,8 +147,8 @@ installs the agent + systemd unit, and starts it. The agent then reconciles.
 - **Web UI** (`controller.webui`, ZeroTier-only): node should move
   `Pending → Provisioning → Reconciling → Ready`, with per-check health.
 - **Metrics** (`controller.metrics`): `wgfleet_nodes{state="Ready"}`.
-- **Client credentials.** With `client_awg.managed: true` — the default for a new
-  fleet — the agent owns the client interface itself and there is no wg-easy: issue,
+- **Client credentials.** With `client_awg.managed: true` — **not** the default; taking
+  the client leg over is always an explicit decision — the agent owns the client interface itself and there is no wg-easy: issue,
   pause, rename and revoke credentials on the master's page in the console, and hand
   each person their own self-service link. Set the master's `public_ip`; it is the
   endpoint written into every client config.
@@ -193,7 +193,8 @@ buttons or store flags.
   defeats the pin. The code default is now `v1.19.30`, which carries AmneziaWG 2.0 (it
   shipped in `v1.19.14`). ⚠️ Do not fall back to `v1.19.27` or older: those **crash-loop on
   AmneziaWG-2.0 master↔exit junk**. The AmneziaWG-param safety is otherwise handled
-  by the platform: it floors `Jmin ≥ S4` so no obfuscation junk packet is short enough to trip
+  by the platform: it keeps `Jmin ≥ S4 + 8` — shifting the whole junk band rather than clamping onto
+  that floor — so no obfuscation junk packet is short enough to trip
   the unguarded S4-strip in older `amneziawg-go` (mihomo) builds. (This was a real crash-loop —
   our derivation once produced `Jmin=22` with `S4=52`, panicking mihomo on a 41-byte junk packet;
   fixed in the derivation, so any mihomo/kernel pairing is safe now.)

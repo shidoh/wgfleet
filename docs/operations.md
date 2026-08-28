@@ -96,7 +96,7 @@ In practice:
 
 - **Keep a second SSH session open** on the master for the whole of any firewall,
   routing or client-interface change. If the new state locks you out, the old
-  session is still there and `wgfleet-agent --plan` will show you why.
+  session is still there and `wgfleet-agent --once --plan` will show you why.
 - **Reach an exit through the master** when its own public path wedges:
   `ssh <master>` then `ssh root@<exit-mgmt-addr>`.
 - **Have provider console access ready** (VNC/serial) before touching the master's
@@ -151,18 +151,36 @@ wgfleet-controller --backup fleet.tar.age --age-recipient age1...
 #   ...or without --age-recipient to be prompted for a passphrase.
 
 # Restore onto a fresh node (controller MUST be stopped). --plan shows the change set.
-wgfleet-controller --restore fleet.tar.age --plan
-wgfleet-controller --restore fleet.tar.age
+# An archive written with --age-recipient needs --age-identity on BOTH lines; without
+# it age cannot decrypt and the --plan line fails before it shows you anything.
+wgfleet-controller --restore fleet.tar.age --age-identity key.txt --plan
+wgfleet-controller --restore fleet.tar.age --age-identity key.txt
+#   ...drop --age-identity for a passphrase-encrypted archive; age prompts for it.
 ```
 
 What is captured: the store db (consistent `VACUUM INTO` snapshot), the CA cert + key,
-`controller.yaml`, the sops secrets file (verbatim, when configured), and — when this
-node is also a master — the wg-easy client db, the wg-easy admin password, and the node
-identity (`node.crt`/`node.key`/`agent.yaml`). The archive carries the CA key and every
-client key, so the **age envelope is its only at-rest protection** — store it like a secret.
+`controller.yaml`, the sops secrets file (verbatim, when configured), the fleet secret
+`awg3.key`, and — when this node is also a master — the master's own AmneziaWG key, the
+client-interface key, the client-facing VLESS/REALITY key, the wg-easy client db and
+admin password (where wg-easy is still in use), and the node identity
+(`node.crt`/`node.key`/`agent.yaml`). That is **six private keys** in one envelope, so
+the age envelope is its only at-rest protection — store it like a secret.
 
-Restore moves any existing destination aside to `<path>.bak-<timestamp>` before writing,
-and writes each file atomically. It refuses to run while a controller is still serving on
+A secret the controller cannot put in the archive is warned about **before** the archive
+is written, on the console's Backup button as well as the CLI: a `pki.ca_key` behind
+`env://` or `secret://`, an `awg3_key` that is not a file, or either of them configured
+at a path this host cannot read. An archive without the CA cannot issue or renew any
+certificate on a rebuilt host, and every node then falls off the control plane as its
+certificate expires — so treat that warning as a failed backup, not a note.
+
+Restore checks every destination in the archive **before it writes anything**, then
+moves each existing file aside to `<path>.bak-<timestamp>` and writes atomically. It
+writes only where this host's own `controller.yaml` says its files live, with this
+host's own permissions rather than the modes recorded in the archive — `age -r` does
+not authenticate a sender, so both the path and the mode are untrusted input. A
+rejected archive therefore leaves the box exactly as it found it. It also removes a
+stale SQLite write-ahead log beside a restored database, which otherwise belongs to the
+generation of the file just replaced. It refuses to run while a controller is still serving on
 the configured endpoint.
 
 **Migration.** Agents dial `controller: <mgmt>:8443`. The zero-touch path is to rejoin

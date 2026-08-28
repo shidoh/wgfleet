@@ -250,7 +250,7 @@ Useful commands on any node:
 ```bash
 systemctl status wgfleet-agent
 journalctl -u wgfleet-agent -f
-wgfleet-agent --config /etc/wgfleet/agent.yaml --plan   # dry run: what would change
+wgfleet-agent --config /etc/wgfleet/agent.yaml --once --plan   # dry run: what would change
 ```
 
 ## Next: RU / non-RU split tunnel + DNS filtering

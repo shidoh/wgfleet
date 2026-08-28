@@ -38,9 +38,17 @@ Precedence, lowest to highest:
 
 1. **Built-in default** — what you get by omitting the key. Listed per key below.
 2. **`controller.yaml` / `agent.yaml`** value.
-3. **Environment override** — any key can be overridden with a `WGFLEET_`-prefixed
-   env var: uppercase the path and replace dots with underscores.
-   `controller.listen` → `WGFLEET_CONTROLLER_LISTEN=0.0.0.0:9443`.
+3. **Environment override** — a `WGFLEET_`-prefixed env var: uppercase the path and
+   replace dots with underscores. `controller.listen` → `WGFLEET_CONTROLLER_LISTEN`.
+
+   **This reaches only keys whose every path segment is a single word.** The loader
+   turns *every* underscore back into a dot, so it cannot tell a separator from a
+   word: a variable naming a two-word key resolves to a dotted path with an extra
+   level in it, matches nothing, and is **silently ignored** — no error, no warning.
+   (`WGFLEET_CONTROLLER_STALENESS_AFTER` is the shape that fails.) Anything
+   under `fleet.masters[]` / `fleet.exits[]` is unreachable regardless, having no
+   scalar path. Use the manifest for those; the env override is for the handful of
+   single-word keys, and for secrets referenced as `env://`.
 4. **CLI flag**, where one exists (`--config`, `--store`, `--metrics`, …). There is no
    `--listen`: the controller's listen addresses come from the manifest only.
 
@@ -451,10 +459,10 @@ rendered tree, and only the leaves you name are affected. Two consequences:
 
 Anything you override is yours to maintain: wgfleet will not correct it, and a
 future release that changes the rendered defaults will still apply your override on
-top. Check dry-run output after any override change:
+top. Validate the manifest after any override change:
 
 ```sh
-wgfleet-controller --config controller.yaml --plan
+wgfleet-controller --config controller.yaml --check-config
 ```
 
 ---
@@ -474,8 +482,17 @@ Checks worth knowing about:
 - Durations, MTUs and MSS values are range-checked; the error names the key and the
   accepted band.
 
-To check a manifest without touching the fleet, run the controller in plan mode —
-it loads, validates and renders every node's desired state, changing nothing.
+To check a manifest without touching the fleet, run `--check-config`. It parses and
+validates the file, prints its digest and the master/exit counts, and then makes the
+checks a restart makes before it serves — the secret provider, the CA, `fleet.awg3_key`
+resolved rather than merely referenced, and whether the store is one this binary can
+open. It changes nothing: it does not create the store, run migrations or tighten the
+manifest's permissions.
+
+There is no "plan mode" for serving. `--plan` is a modifier for the subcommands that
+have a dry run (`--provision`, `--upgrade-agent`, `--rolling-upgrade`, `--restore`,
+`--import-wg-easy`); on its own, or with `--backup` or `--certs`, it is refused rather
+than ignored.
 
 ## AmneziaWG 3.0
 

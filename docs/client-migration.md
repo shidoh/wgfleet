@@ -45,7 +45,8 @@ does not migrate. Part 2's dry run names them.
 
 ## 1. Upgrade the binaries
 
-Wire contract 7 → 8. **Controller first.** The reverse order makes the master's
+Wire contract 7 → 8 for this migration (the contract has since moved to 10).
+**Controller first.** The reverse order makes the master's
 reconcile fail on every pass until the controller catches up.
 
 ```bash
@@ -74,7 +75,7 @@ detects the wire bump and orders the two correctly.
 Verify:
 
 ```bash
-wgfleet-controller --version                           # wire-contract version 8
+wgfleet-controller --version                           # wire-contract version 10 today
 docker ps --filter name=wg-easy --format '{{.Status}}'  # uptime unchanged
 
 # THE CHECK THAT DECIDES WHETHER PART 3 WORKS. Run it here, not later.
@@ -150,7 +151,7 @@ interface and the imported credentials are inert.
 ```
 
 Validate and restart the controller (there is no reload signal — `systemctl
-reload` does not apply, and `kill -HUP` terminates it):
+reload` does not apply; `kill -HUP` is caught and logged, and changes nothing):
 
 ```bash
 wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
