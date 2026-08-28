@@ -50,9 +50,14 @@ func TestRenderMasterNATEgressLeakGuard(t *testing.T) {
 	for _, want := range []string{
 		"chain egress_leak_guard",
 		"type filter hook postrouting priority srcnat + 10",
-		// Mirrors the masquerade's scope exactly, or it would either miss the leak or
-		// fire on traffic that was translated correctly.
-		`ip saddr 10.80.0.0/24 oifname != "wg0" counter drop`,
+		// Two exclusions the exit's copy of this rule has carried for a while and
+		// this one did not. Without `oifname != "lo"` the master cannot reach its own
+		// portal or resolver, which both bind the gateway address: the packet leaves
+		// over loopback WITH the gateway as its source and the guard eats it (measured
+		// on a rehearsal — the counter moved by seven while curl timed out). Without
+		// `ip saddr != <gateway>` the master's own originated traffic is judged by a
+		// rule written for traffic it forwards on a client's behalf.
+		`ip saddr 10.80.0.0/24 ip saddr != 10.80.0.1 oifname != "wg0" oifname != "lo" counter drop`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("master egress leak guard missing %q:\n%s", want, out)
@@ -70,7 +75,7 @@ func TestRenderMasterNATEgressLeakGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out2, `ip saddr 10.80.0.0/24 oifname != "wg0" counter drop`) {
+	if !strings.Contains(out2, `ip saddr 10.80.0.0/24 ip saddr != 10.80.0.1 oifname != "wg0" oifname != "lo" counter drop`) {
 		t.Errorf("guard did not canonicalize the client pool:\n%s", out2)
 	}
 }

@@ -156,7 +156,21 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// of cause.
 	b.WriteString("\n\tchain egress_leak_guard {\n")
 	b.WriteString("\t\ttype filter hook postrouting priority srcnat + 10; policy accept;\n")
-	fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q counter drop\n", clientCIDR, in.ClientInterface)
+	// Two exclusions, both measured rather than reasoned, and both missing here long
+	// after the exit's copy of this rule grew them:
+	//
+	//   - `oifname != "lo"`. Anything on the master that dials the gateway address
+	//     routes over loopback with the gateway as its SOURCE, matches "not wg0", and
+	//     is dropped. That address is where the client portal and the local resolver
+	//     live — the two services this file's own DNAT exception exists to protect —
+	//     so the master could not reach its own services. Measured on a rehearsal:
+	//     `curl http://<gw>:7895/` timed out and the guard's counter moved by seven.
+	//   - `ip saddr != <gateway>`. The gateway is inside the client pool, so traffic
+	//     the master ORIGINATES from it is caught by a rule meant for traffic it
+	//     FORWARDS on a client's behalf. On the exit, counting those made a healthy
+	//     node report half a million leaks.
+	fmt.Fprintf(&b, "\t\tip saddr %s%s oifname != %q oifname != \"lo\" counter drop\n",
+		clientCIDR, gatewaySourceGuard(in.ClientCIDR), in.ClientInterface)
 	b.WriteString("\t}\n")
 
 	b.WriteString("}\n")
@@ -196,4 +210,15 @@ func gatewayAddr(clientCIDR string) (string, error) {
 		return "", fmt.Errorf("client pool %q has no host address", clientCIDR)
 	}
 	return addr.String(), nil
+}
+
+// gatewaySourceGuard renders the `ip saddr != <gateway>` exclusion for the leak
+// guard, or "" when the pool has no derivable gateway (in which case the guard is
+// merely as strict as it always was, never stricter).
+func gatewaySourceGuard(clientCIDR string) string {
+	gw, err := gatewayAddr(clientCIDR)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf(" ip saddr != %s", gw)
 }
