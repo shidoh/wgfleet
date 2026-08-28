@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 
 	_ "modernc.org/sqlite" // read-only probe of the store's schema version
 
@@ -114,6 +115,19 @@ func checkHostReadiness(cfg *config.ControllerConfig) error {
 		if _, kerr := resolveAWG3Key(cfg, provider); kerr != nil {
 			hostErrs = append(hostErrs, "fleet.awg3_key: "+kerr.Error())
 		}
+	}
+	// `age` is a RUNTIME dependency of --backup and --restore, and nothing installs
+	// it: not install.sh, not prepare-node.sh, and no document lists it. An operator
+	// reaches for a backup immediately before a risky change, which is exactly the
+	// moment to discover it rather than the moment to discover it does not work.
+	//
+	// A warning and not an error: a controller with no `age` serves the fleet
+	// perfectly well, it merely cannot be backed up, and refusing to start over that
+	// would be a worse trade than saying so.
+	if _, aerr := exec.LookPath("age"); aerr != nil {
+		fmt.Fprintf(os.Stderr, "\nwarning: `age` is not installed on this host.\n"+
+			"  --backup and --restore shell out to it, so both will fail; the controller itself is fine.\n"+
+			"  Install it before you need it (apt install age).\n")
 	}
 	if len(hostErrs) == 0 {
 		return nil

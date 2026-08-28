@@ -33,6 +33,10 @@ This is the short path. For the reasoning behind each step see
   below use `<version>` as a stand-in — substitute the release you downloaded
   (e.g. `v0.2.0`); the folder it unpacks into is always `wgfleet-linux-<arch>`.
 
+- **`age`** on the master, if you want backups: `apt install age`. `--backup` and
+  `--restore` shell out to it and fail without it, which is a bad thing to learn
+  on the day you reach for a backup. `--check-config` warns when it is missing.
+
 > Every command below runs as **root** on the server (`sudo -i` first).
 
 ---
