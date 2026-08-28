@@ -237,15 +237,47 @@ func awg3KeyPath(cfg *config.ControllerConfig) string {
 // during a restore, which is the worst possible moment.
 func (s Sources) Warnings(cfg *config.ControllerConfig) []string {
 	var out []string
-	if s.CAKey == "" {
+	switch {
+	case s.CAKey == "":
 		out = append(out, "the CA private key is not a file on this host (pki.ca_key is an env:// or secret:// "+
-			"reference), so it is NOT in this archive — a restore onto a clean host cannot issue certificates "+
-			"until you supply it separately")
+			"reference), so it is NOT in this archive. Copy it to the recovery host yourself — a restore "+
+			"onto a clean host cannot issue or renew any certificate without it, and every node falls off "+
+			"the control plane as its certificate expires")
+	case !readable(s.CAKey):
+		// The gap the first version of this function left open. It read the SOURCES —
+		// "is a path configured" — while GatherItems skips an item it cannot stat, so a
+		// ca_key that was configured and then moved, deleted or made unreadable produced
+		// a non-empty string here, no warning, and an archive with no CA in it. That is
+		// the exact case the paragraph above claims to cover.
+		out = append(out, fmt.Sprintf("the CA private key is configured at %s but this host cannot read it, "+
+			"so it is NOT in this archive. Check the path and the permissions and take the backup again — "+
+			"a restore without the CA cannot issue or renew any certificate", s.CAKey))
 	}
-	if s.AWG3Key == "" && cfg != nil && cfg.Fleet.AWG3Key != "" {
-		out = append(out, "fleet.awg3_key is not a file on this host, so it is NOT in this archive — "+
-			"restoring without it means the controller refuses to start while header protection is on, and "+
-			"regenerating it invalidates every client profile at once")
+	switch {
+	case cfg == nil || cfg.Fleet.AWG3Key == "":
+	case s.AWG3Key == "":
+		out = append(out, "fleet.awg3_key is not a file on this host, so it is NOT in this archive. Copy it "+
+			"to the recovery host yourself — restoring without it means the controller refuses to start "+
+			"while header protection is on, and regenerating it invalidates every client profile at once")
+	case !readable(s.AWG3Key):
+		out = append(out, fmt.Sprintf("fleet.awg3_key is configured at %s but this host cannot read it, so "+
+			"it is NOT in this archive. Check the path and the permissions and take the backup again — "+
+			"regenerating this key invalidates every client profile at once", s.AWG3Key))
 	}
 	return out
+}
+
+// readable reports whether a configured path is a file this host can actually open.
+// Warnings needs the question GatherItems asks (can I stat it), not the question
+// Sources answers (is a path configured).
+func readable(path string) bool {
+	if path == "" {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	_ = f.Close()
+	return true
 }

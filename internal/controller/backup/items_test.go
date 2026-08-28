@@ -183,8 +183,28 @@ func TestSourcesWarnAboutSecretsThatCannotTravel(t *testing.T) {
 			t.Errorf("warnings do not mention %q:\n%s", want, joined)
 		}
 	}
-	// With both in files there is nothing to warn about.
-	if got := (Sources{CAKey: "/etc/wgfleet/ca.key", AWG3Key: "/etc/wgfleet/awg3.key"}).Warnings(cfg); len(got) != 0 {
+	// With both in files this host can actually read, there is nothing to warn about.
+	dir := t.TempDir()
+	caKey, awg3 := filepath.Join(dir, "ca.key"), filepath.Join(dir, "awg3.key")
+	for _, p := range []string{caKey, awg3} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := (Sources{CAKey: caKey, AWG3Key: awg3}).Warnings(cfg); len(got) != 0 {
 		t.Errorf("warned about secrets that ARE in the archive: %v", got)
+	}
+
+	// A path that is CONFIGURED but unreadable is the case the first version missed:
+	// Warnings read the Sources ("is a path set") while GatherItems skips what it
+	// cannot stat, so a ca_key that had been moved produced a non-empty string, no
+	// warning, and an archive with no CA in it.
+	moved := filepath.Join(dir, "gone.key")
+	got = (Sources{CAKey: moved, AWG3Key: awg3}).Warnings(cfg)
+	if len(got) != 1 {
+		t.Fatalf("a configured but unreadable CA key produced %d warnings: %v", len(got), got)
+	}
+	if !strings.Contains(got[0], "cannot read it") || !strings.Contains(got[0], moved) {
+		t.Errorf("the warning does not say which file or why:\n%s", got[0])
 	}
 }

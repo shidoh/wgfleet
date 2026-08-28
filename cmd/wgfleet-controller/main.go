@@ -456,8 +456,17 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 			return nil
 		}
 		exportBackup := func(ctx context.Context, recipient string) ([]byte, error) {
+			src := backup.DefaultSources(cfg, configPath)
+			// The console's Backup button is the path an operator actually uses, and it
+			// was the one that never consulted Warnings: the CLI printed "the CA private
+			// key is NOT in this archive" and the browser downloaded the same archive in
+			// silence. An archive missing the CA is not a backup of this fleet, and the
+			// place to find that out is not a restore.
+			for _, w := range src.Warnings(cfg) {
+				slog.Warn("backup is missing something irreplaceable", "detail", w)
+			}
 			return backup.Export(ctx, backup.ExportOptions{
-				Sources:     backup.DefaultSources(cfg, configPath),
+				Sources:     src,
 				WireVersion: int(api.WireContractVersion),
 				Encrypt:     backup.AgeEncryptor(recipient),
 			})
