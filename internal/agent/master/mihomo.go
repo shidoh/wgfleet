@@ -76,7 +76,7 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 	}
 	cfg, err := mihomo.RenderConfig(mihomo.RenderInput{
 		Spec: *spec.Master, PrivateKey: p.privateKey, ReserveActive: reserveActive,
-		TunnelPrivateKey: p.tunnelKey,
+		TunnelPrivateKey: p.tunnelKey, Resolvers: mihomoResolvers(spec),
 	})
 	if err != nil {
 		return nil, err
@@ -471,4 +471,31 @@ func localAddrPresent(host string) bool {
 		}
 	}
 	return false
+}
+
+// mihomoResolvers picks where mihomo sends its own lookups on THIS node.
+//
+// Loopback first when the master runs blocky: blocky binds 127.0.0.1 alongside the
+// client gateway, and loopback is the one address that does not wait for wg0 to
+// come up — mihomo starts before the client interface exists. From there ADR-0024
+// takes over: blocky forwards to the exits' blocky over the management overlay,
+// which forwards over DoT. Nothing leaves this node's uplink in cleartext, and
+// mihomo's own lookups get the same blocklists the clients get.
+//
+// There is no loop to worry about: blocky's upstreams are mgmt IP literals, so it
+// needs no DNS of its own, and mihomo routes the management overlay DIRECT.
+//
+// If blocky is not running here, the clients' own resolvers (the exits' blocky) are
+// the next best answer — and if there is none of that either, RenderConfig falls
+// back to encrypted public resolvers. Pointing at blocky costs nothing in
+// availability: blocky is already the clients' ONLY resolver, so a blocky that is
+// down has taken their DNS with it whatever mihomo does.
+func mihomoResolvers(spec domain.NodeSpec) []string {
+	if spec.DNS.Enabled {
+		return []string{"127.0.0.1"}
+	}
+	if spec.Master != nil && len(spec.Master.Compose.ClientDNS) > 0 {
+		return append([]string(nil), spec.Master.Compose.ClientDNS...)
+	}
+	return nil
 }
