@@ -107,6 +107,13 @@ type RenderInput struct {
 	// but no DNS). 0 ⇒ clients use some other resolver (the pre-ADR-0024 default
 	// where clients pointed at the exit blockys directly).
 	ClientDNSPort int
+	// TProxyMark, when > 0 (master role), makes the input chain accept packets the
+	// TPROXY chain marked. It has to key on the MARK and not on a port: tproxy hands
+	// the datagram to a transparent socket without rewriting it, so it reaches INPUT
+	// still addressed to whatever the client asked for. An accept on the tproxy port
+	// would match nothing and the drop policy would eat every intercepted datagram —
+	// pings and DNS fine, all other client UDP silently gone (an earlier finding's shape).
+	TProxyMark int
 	// ClampMSS, when > 0 (exit role), clamps forwarded TCP SYN/SYN-ACK MSS in BOTH
 	// directions to this value. Client traffic crosses the master↔exit tunnel
 	// (WGServer.MTU, e.g. 1360) AND the egress (WARP). The egress leg alone is NOT
@@ -323,6 +330,11 @@ func RenderRuleset(in RenderInput) (string, error) {
 		}
 		if in.RedirPort > 0 {
 			fmt.Fprintf(&b, "\t\tiifname %q tcp dport %d accept\n", redirIface, in.RedirPort)
+		}
+		// Client UDP intercepted by TPROXY. See TProxyMark: the mark is the only thing
+		// that still identifies these packets by the time they reach INPUT.
+		if in.TProxyMark > 0 {
+			fmt.Fprintf(&b, "\t\tmeta mark %#x accept\n", in.TProxyMark)
 		}
 		// Client-facing resolver (master-tier blocky, ADR-0024): clients query the
 		// master gateway for DNS, which lands on INPUT. Open it UDP+TCP, scoped to the

@@ -118,3 +118,4 @@ sniffer:
       ports:
         - 443
         - 8443
+tproxy-port: 7896

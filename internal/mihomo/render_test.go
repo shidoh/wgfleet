@@ -1064,3 +1064,45 @@ func TestRenderConfigFallbackResolverIsEncrypted(t *testing.T) {
 		}
 	}
 }
+
+// mihomo must offer a transparent UDP listener, or the master's TPROXY rules
+// steer client UDP at a socket that is not there and it is dropped instead of
+// leaked — trading one failure for another.
+func TestRenderConfigOffersATProxyListener(t *testing.T) {
+	in := sampleInput()
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	redir, _ := cfg["redir-port"].(int)
+	tp, ok := cfg["tproxy-port"].(int)
+	if !ok {
+		t.Fatalf("no tproxy-port in the rendered config; client UDP has nowhere to go")
+	}
+	if tp == redir {
+		t.Errorf("tproxy-port %d collides with redir-port %d", tp, redir)
+	}
+	if tp != TProxyPortFor(redir) {
+		t.Errorf("tproxy-port = %d, want %d — the agent derives the nft target with the same rule and the two must agree", tp, TProxyPortFor(redir))
+	}
+}
+
+func TestTProxyPortFollowsAnOverriddenRedirPort(t *testing.T) {
+	in := sampleInput()
+	in.Spec.RedirPort = 9100
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := yaml.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg["tproxy-port"]; got != 9101 {
+		t.Errorf("tproxy-port = %v, want 9101 (redir+1) so an operator override moves both", got)
+	}
+}

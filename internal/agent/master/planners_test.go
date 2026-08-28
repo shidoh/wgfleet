@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/mihomo"
+	"github.com/shidoh/wgfleet/internal/netfw"
 	"github.com/shidoh/wgfleet/internal/wg"
 	"github.com/shidoh/wgfleet/internal/wgeasy"
 )
@@ -504,8 +506,10 @@ func TestMasterNATReloadGate(t *testing.T) {
 	spec, _ := masterSpec(t)
 
 	loaded := false
+	// The tproxy policy routing has its own gate and its own test; stub it as
+	// present so this one keeps measuring only the nft reload gate.
 	pl := masterNATPlanner{path: paths.NFT, clientIface: "wg0",
-		loaded: func() bool { return loaded }}
+		loaded: func() bool { return loaded }, tproxyReady: func() bool { return true }}
 
 	// First apply writes the ruleset file (the nft exec fails on a dev box, but the
 	// FileAction runs first, so the file lands).
@@ -622,5 +626,71 @@ func TestComposePlannerSurfacesWorldReadableModeRepair(t *testing.T) {
 	}
 	if !strings.Contains(actions[0].Summary, "repairing mode to 600") {
 		t.Fatalf("expected a mode-repair action, got %q", actions[0].Summary)
+	}
+}
+
+// TPROXY is not just an nft rule: a marked packet still has to be told to stay on
+// this host. Without `ip rule fwmark <m> lookup <t>` and a `local default` route in
+// that table, the kernel routes the intercepted datagram normally and the
+// transparent socket never sees it — client UDP would be dropped instead of
+// leaked, which trades one broken behaviour for another.
+func TestMasterNATInstallsTProxyPolicyRouting(t *testing.T) {
+	paths := testPaths(t)
+	spec, _ := masterSpec(t)
+
+	pl := masterNATPlanner{path: paths.NFT, clientIface: "wg0",
+		loaded: func() bool { return false }, tproxyReady: func() bool { return false }}
+
+	acts, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dump string
+	for _, a := range acts {
+		dump += a.Summary + " | " + a.Display + "\n"
+	}
+	for _, want := range []string{
+		fmt.Sprintf("fwmark %#x", netfw.TProxyMark),
+		fmt.Sprintf("table %d", netfw.TProxyTable),
+		"local",
+	} {
+		if !strings.Contains(dump, want) {
+			t.Errorf("the plan never installs %q; TPROXY'd UDP has no route home:\n%s", want, dump)
+		}
+	}
+}
+
+// And the same drift repair the nft table gets: someone flushing `ip rule` must
+// not leave the master silently dropping every client datagram until a reboot.
+func TestMasterNATRepairsTProxyPolicyRoutingDrift(t *testing.T) {
+	paths := testPaths(t)
+	spec, _ := masterSpec(t)
+
+	ready := false
+	pl := masterNATPlanner{path: paths.NFT, clientIface: "wg0",
+		loaded: func() bool { return true }, tproxyReady: func() bool { return ready }}
+
+	eng := reconcile.NewEngine(nil, pl)
+	_, _ = eng.Reconcile(context.Background(), spec, reconcile.ModeApply)
+
+	// nft unchanged and loaded, but the policy routing is gone ⇒ reinstall it.
+	acts, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasChangingSummary(acts, "tproxy") {
+		t.Errorf("no repair when the tproxy policy routing is missing: %+v", acts)
+	}
+
+	// Everything in place ⇒ nothing to do.
+	ready = true
+	acts2, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range acts2 {
+		if a.Changes() {
+			t.Errorf("steady state must not re-run the tproxy setup: %+v", acts2)
+		}
 	}
 }

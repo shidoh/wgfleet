@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/shidoh/wgfleet/internal/agent/dockerfw"
@@ -462,11 +463,19 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 			clientDNSPort = spec.DNS.Ports.DNS
 		}
 	}
+	// The mark masterNATPlanner's TPROXY chain sets. Both planners must agree, so
+	// both read it from the same constant — an accept for a mark nothing sets is
+	// dead, and a mark with no accept means every intercepted datagram is dropped.
+	tproxyMark := 0
+	if spec.Master != nil && spec.Master.BindAddress != "" {
+		tproxyMark = netfw.TProxyMark
+	}
 	ruleset, err := netfw.RenderRuleset(netfw.RenderInput{
 		Firewall:         spec.Firewall,
 		Role:             domain.RoleMaster,
 		OverlayMSS:       p.overlayMSS,
 		RedirPort:        redir,
+		TProxyMark:       tproxyMark,
 		RedirInterface:   p.clientIface,
 		ClientAdminPorts: adminPorts,
 		ClientMSS:        clientMSS,
@@ -511,6 +520,9 @@ type masterNATPlanner struct {
 	// loaded reports whether the live kernel currently has the master NAT table.
 	// nil ⇒ a real `nft list table ip wgfleet_master` probe; tests inject a stub.
 	loaded func() bool
+	// tproxyReady reports whether the kernel still carries the policy routing the
+	// TPROXY rules depend on. nil ⇒ a real `ip rule`/`ip route` probe.
+	tproxyReady func() bool
 }
 
 func (masterNATPlanner) Component() string { return "master NAT (nftables)" }
@@ -523,10 +535,20 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 	if redir == 0 {
 		redir = mihomo.DefaultRedirPort
 	}
+	// TPROXY needs a listener to hand the packet to. The port is derived from the
+	// redirect port by the same rule mihomo's renderer uses, so the two cannot drift
+	// apart through an operator override; an empty bind address means the controller
+	// has not resolved the gateway yet, and we render no interception rather than
+	// steer UDP at an address that does not exist.
+	tproxyAddr := ""
+	if spec.Master.BindAddress != "" {
+		tproxyAddr = fmt.Sprintf("%s:%d", spec.Master.BindAddress, mihomo.TProxyPortFor(redir))
+	}
 	ruleset, err := netfw.RenderMasterNAT(netfw.MasterNATInput{
 		ClientInterface: p.clientIface,
 		ClientCIDR:      spec.WGServer.AddressPool,
 		RedirAddr:       fmt.Sprintf("%s:%d", spec.Master.BindAddress, redir),
+		TProxyAddr:      tproxyAddr,
 		PrivateCIDRs:    spec.Master.DirectCIDRs,
 	})
 	if err != nil {
@@ -550,7 +572,56 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 	default:
 		actions = append(actions, reconcile.NoChangeAction("nft -f", "ruleset already loaded"))
 	}
+	// The nft rules mark the packet; these two tell the kernel a marked packet stays
+	// here so the transparent socket can accept it. Without them TPROXY silently
+	// does nothing useful: the datagram is routed normally, no socket ever sees it,
+	// and client UDP is dropped rather than proxied — worse than the leak it
+	// replaces. Repaired on drift for the same reason the nft table is (ADR-0015):
+	// someone flushing `ip rule` must not break every client until the next reboot.
+	if tproxyAddr != "" && (file.Changes() || !p.isTProxyReady()) {
+		actions = append(actions, tproxyRouteActions()...)
+	} else if tproxyAddr != "" {
+		actions = append(actions, reconcile.NoChangeAction("tproxy policy routing", "fwmark rule and local route in place"))
+	}
 	return actions, nil
+}
+
+// tproxyRouteActions installs the policy routing TPROXY needs, idempotently: the
+// delete is best-effort so a first run has nothing to fail on, and `ip route
+// replace` is idempotent by construction.
+func tproxyRouteActions() []reconcile.Action {
+	table := fmt.Sprintf("%d", netfw.TProxyTable)
+	mark := fmt.Sprintf("%#x", netfw.TProxyMark)
+	return []reconcile.Action{
+		reconcile.BestEffortExecAction(
+			fmt.Sprintf("drop any stale tproxy rule (fwmark %s table %s)", mark, table),
+			"ip", "rule", "del", "fwmark", mark, "lookup", table),
+		reconcile.ExecAction(
+			fmt.Sprintf("send tproxy-marked packets (fwmark %s) to table %s", mark, table),
+			"ip", "rule", "add", "fwmark", mark, "lookup", table),
+		reconcile.ExecAction(
+			fmt.Sprintf("keep tproxy-marked packets local (local default in table %s)", table),
+			"ip", "route", "replace", "local", "0.0.0.0/0", "dev", "lo", "table", table),
+	}
+}
+
+func (p masterNATPlanner) isTProxyReady() bool {
+	if p.tproxyReady == nil {
+		return tproxyPolicyRoutingLive()
+	}
+	return p.tproxyReady()
+}
+
+// tproxyPolicyRoutingLive asks the kernel whether BOTH halves are still there.
+// Either one missing breaks interception, so both are checked.
+func tproxyPolicyRoutingLive() bool {
+	table := fmt.Sprintf("%d", netfw.TProxyTable)
+	rules, err := exec.Command("ip", "rule", "list").Output()
+	if err != nil || !strings.Contains(string(rules), "lookup "+table) {
+		return false
+	}
+	routes, err := exec.Command("ip", "route", "show", "table", table).Output()
+	return err == nil && strings.Contains(string(routes), "local default")
 }
 
 func (p masterNATPlanner) isLoaded() bool {

@@ -1,6 +1,7 @@
 package netfw
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -727,5 +728,50 @@ func TestRenderRulesetPublicUDPPortsStable(t *testing.T) {
 	}
 	if a != b {
 		t.Errorf("manifest order changed the rendered ruleset:\n--- a ---\n%s\n--- b ---\n%s", a, b)
+	}
+}
+
+// A TPROXY'd packet still traverses INPUT, and it does so with the destination
+// the CLIENT chose — tproxy hands it to a transparent socket without rewriting
+// anything. So an accept keyed on the tproxy port would never match, and the
+// master's drop policy would swallow every intercepted datagram: client UDP
+// silently dead, exactly the shape of an earlier finding (pings and DNS fine, the
+// redirected protocol gone). The mark the tproxy chain set is the only thing that
+// identifies these packets, so the accept has to key on that.
+func TestMasterInputAcceptsTProxyMarkedPackets(t *testing.T) {
+	out, err := RenderRuleset(RenderInput{
+		Role:           domain.RoleMaster,
+		Firewall:       domain.FirewallSpec{WGPort: 443},
+		RedirPort:      7895,
+		RedirInterface: "wg0",
+		TProxyMark:     TProxyMark,
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	input, ok := chainBody(out, "chain input")
+	if !ok {
+		t.Fatalf("no input chain:\n%s", out)
+	}
+	want := fmt.Sprintf("meta mark %#x accept", TProxyMark)
+	if !strings.Contains(input, want) {
+		t.Errorf("input chain never accepts %q; every intercepted client datagram is dropped:\n%s", want, input)
+	}
+}
+
+// And without interception configured the rule must not appear — an accept for a
+// mark nothing sets is a rule that can only ever surprise the next reader.
+func TestMasterInputHasNoTProxyAcceptWhenUnused(t *testing.T) {
+	out, err := RenderRuleset(RenderInput{
+		Role:           domain.RoleMaster,
+		Firewall:       domain.FirewallSpec{WGPort: 443},
+		RedirPort:      7895,
+		RedirInterface: "wg0",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(out, "meta mark") {
+		t.Errorf("rendered a mark-based accept with no interception configured:\n%s", out)
 	}
 }

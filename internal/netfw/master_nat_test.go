@@ -152,3 +152,69 @@ func TestMasterNATLeavesTrafficToTheGatewayAlone(t *testing.T) {
 		}
 	}
 }
+
+// Client UDP must reach mihomo, not the master's own uplink.
+//
+// The only DNAT the master ever rendered was `ip protocol tcp`, and QUIC on 443
+// was dropped so browsers fell back to TCP. Everything else a client sent over UDP
+// — DNS to a resolver that is not the gateway, QUIC on any other port, WebRTC,
+// games, DoQ — traversed a forward chain with policy accept, got masqueraded, and
+// left the MASTER's public uplink. The user saw "connected through an exit"; the
+// observer on that uplink saw their UDP sourced at the master, never at an exit.
+// TPROXY is the standard answer: intercept in mangle/prerouting and hand the
+// packet to a transparent socket without rewriting it.
+func TestMasterNATSendsClientUDPToMihomo(t *testing.T) {
+	out, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+		TProxyAddr:      "10.80.0.1:7896",
+		PrivateCIDRs:    []string{"192.168.0.0/16"},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	// The interception itself, on new flows.
+	if !strings.Contains(out, "tproxy ip to 10.80.0.1:7896") {
+		t.Errorf("no tproxy rule; client UDP still leaves the master's own uplink:\n%s", out)
+	}
+	// Established transparent flows must be re-marked before the tproxy rule, or
+	// only the first packet of every UDP flow is intercepted.
+	if !strings.Contains(out, "socket transparent 1") {
+		t.Errorf("no divert rule for established transparent sockets:\n%s", out)
+	}
+	// The same exemptions the TCP redirect honours: private destinations stay
+	// DIRECT, and traffic to the gateway is a request to the master's own services
+	// (the portal, the resolver), never internet traffic to route through an exit.
+	tproxyLine := ""
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "tproxy ip to") {
+			tproxyLine = line
+		}
+	}
+	for _, want := range []string{`iifname "wg0"`, "ip daddr != 192.168.0.0/16", "ip daddr != 10.80.0.1"} {
+		if !strings.Contains(tproxyLine, want) {
+			t.Errorf("tproxy rule is missing %q:\n\t%s", want, tproxyLine)
+		}
+	}
+}
+
+// With no tproxy target configured the ruleset must render exactly as before —
+// an agent that cannot intercept UDP still has to serve TCP.
+func TestMasterNATWithoutTProxyIsUnchanged(t *testing.T) {
+	out, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(out, "tproxy") {
+		t.Errorf("rendered a tproxy rule with no target:\n%s", out)
+	}
+	if !strings.Contains(out, "dnat to 10.80.0.1:7895") {
+		t.Errorf("the TCP redirect must survive:\n%s", out)
+	}
+}

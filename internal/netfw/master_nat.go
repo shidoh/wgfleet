@@ -19,10 +19,26 @@ type MasterNATInput struct {
 	ClientInterface string // client WG interface, e.g. "wg0"
 	ClientCIDR      string // client WG pool, e.g. "10.80.0.0/24"
 	RedirAddr       string // mihomo redir target, e.g. "10.80.0.1:7895"
+	// TProxyAddr is mihomo's TPROXY listener, e.g. "10.80.0.1:7896". Empty ⇒ render
+	// no UDP interception at all, which is the pre-TPROXY behaviour: an agent whose
+	// mihomo has no tproxy-port must not have client UDP steered into a socket that
+	// is not there.
+	TProxyAddr string
 	// PrivateCIDRs are destinations that bypass the DNAT (kept DIRECT): RFC1918,
 	// CGNAT, mgmt overlay. Rendered as `ip daddr != <cidr>` guards.
 	PrivateCIDRs []string
 }
+
+// TProxyMark is the fwmark TPROXY'd client packets carry so policy routing can
+// send them to the local table instead of out an uplink. Distinct from
+// routing.EffectiveFwMark's client mark, which lives on EXITS and means something
+// else entirely; a shared value would make two unrelated policies collide the
+// first time a node ever played both roles.
+const TProxyMark = 0x2
+
+// TProxyTable is the routing table holding the `local default` route that keeps a
+// marked packet on this host so the transparent socket can accept it.
+const TProxyTable = 51821
 
 // RenderMasterNAT renders the master's nft NAT ruleset: drop client QUIC, DNAT
 // non-private client TCP to mihomo, and MASQUERADE client traffic outbound.
@@ -70,10 +86,44 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	b.WriteString("\tchain prerouting {\n")
 	b.WriteString("\t\ttype nat hook prerouting priority dstnat; policy accept;\n")
 	// Drop client QUIC so browsers fall back to TCP through mihomo.
+	//
+	// Kept even now that UDP is intercepted: this rule already prevented the leak
+	// for the single largest UDP flow, it is the behaviour the fleet has been tested
+	// on, and re-enabling HTTP/3 through TPROXY is a one-line change once the
+	// interception itself has been proven under real load. One behavioural change at
+	// a time.
 	fmt.Fprintf(&b, "\t\tiifname %q%s udp dport 443 drop\n", in.ClientInterface, guards)
 	// DNAT non-private client TCP to mihomo's redir-port.
 	fmt.Fprintf(&b, "\t\tiifname %q%s%s ip protocol tcp dnat to %s\n", in.ClientInterface, guards, gatewayGuard, in.RedirAddr)
 	b.WriteString("\t}\n\n")
+
+	// Client UDP, intercepted rather than NAT'd.
+	//
+	// The redirect above is TCP-only, and everything else a client sent over UDP used
+	// to traverse the forward chain, get masqueraded and leave the MASTER's uplink —
+	// so DNS to a foreign resolver, QUIC on a non-443 port, WebRTC and games all
+	// egressed from the master's own address instead of an exit's. TPROXY is the
+	// right tool because it does NOT rewrite the packet: mihomo reads the original
+	// destination off a transparent socket, which is exactly what a proxy needs.
+	//
+	// Two chains, in the order the kernel runs them. The divert chain re-marks
+	// packets that already belong to an established transparent socket; without it
+	// only the FIRST packet of each flow is intercepted and the rest go back to
+	// leaking. The tproxy chain then catches genuinely new flows, honouring the same
+	// exemptions the TCP redirect does — private destinations stay DIRECT, and the
+	// gateway address belongs to the master's own services, not to the internet.
+	if in.TProxyAddr != "" {
+		b.WriteString("\tchain client_udp_divert {\n")
+		b.WriteString("\t\ttype filter hook prerouting priority mangle - 10; policy accept;\n")
+		fmt.Fprintf(&b, "\t\tmeta l4proto udp socket transparent 1 meta mark set %#x accept\n", TProxyMark)
+		b.WriteString("\t}\n\n")
+
+		b.WriteString("\tchain client_udp_tproxy {\n")
+		b.WriteString("\t\ttype filter hook prerouting priority mangle; policy accept;\n")
+		fmt.Fprintf(&b, "\t\tiifname %q%s%s meta l4proto udp meta mark set %#x tproxy ip to %s accept\n",
+			in.ClientInterface, guards, gatewayGuard, TProxyMark, in.TProxyAddr)
+		b.WriteString("\t}\n\n")
+	}
 
 	b.WriteString("\tchain postrouting {\n")
 	b.WriteString("\t\ttype nat hook postrouting priority srcnat; policy accept;\n")

@@ -22,6 +22,22 @@ import (
 	"github.com/shidoh/wgfleet/internal/wg"
 )
 
+// TProxyPortFor returns the transparent-UDP listener that pairs with a given
+// redirect port.
+//
+// Redirect handles TCP only, so client UDP had no proxy path at all and leaked out
+// the master's own uplink. TPROXY gives it one — but only if the nft rule and
+// mihomo agree on the port, and they are rendered by different components on
+// different sides of the wire. Deriving both from the redirect port keeps them in
+// step through an operator override without adding a second knob to the manifest
+// (and a second thing to get wrong).
+func TProxyPortFor(redirPort int) int {
+	if redirPort == 0 {
+		redirPort = DefaultRedirPort
+	}
+	return redirPort + 1
+}
+
 // DefaultRedirPort is mihomo's redirect port when the spec leaves it unset.
 const DefaultRedirPort = 7895
 
@@ -159,6 +175,10 @@ func RenderConfig(in RenderInput) (string, error) {
 		"allow-lan":    true,
 		"bind-address": in.Spec.BindAddress,
 		"redir-port":   redir,
+		// Transparent UDP. Redirect cannot carry UDP, so without this every client
+		// datagram that was not QUIC-on-443 left the master's own uplink instead of an
+		// exit's. The master's nft rules derive the same port from redir-port.
+		"tproxy-port": TProxyPortFor(redir),
 		"dns": map[string]any{
 			"enable": true,
 			"listen": "127.0.0.1:1053",
