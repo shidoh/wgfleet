@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" width="1200" height="620" role="img" aria-label="wgfleet architecture. Control plane: a single wgfleet-controller binary holds desired state and inventory in SQLite, runs the PKI and per-node mTLS certificates, brokers public keys only, renders each NodeSpec, provisions blank VMs over SSH, and serves a gRPC API, Web UI and metrics. Agents on every node pull their NodeSpec and push status plus their public key over gRPC with mTLS. Data plane: clients connect over AmneziaWG or VLESS to the master, which runs wg-easy, mihomo routing and load balancing, nftables and blocky; the master reaches each exit over its own AmneziaWG tunnel; each exit runs awg-quick, wgcf for Cloudflare WARP egress, policy routing, nftables and blocky, and leaves to the internet under a WARP IP. Russian and private destinations go direct, never through an exit, and all management interfaces bind the ZeroTier overlay only.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" width="1200" height="620" role="img" aria-label="wgfleet architecture. Control plane: a single wgfleet-controller binary holds desired state and inventory in SQLite, runs the PKI and per-node mTLS certificates, brokers public keys only, renders each NodeSpec, provisions blank VMs over SSH, and serves a gRPC API, Web UI and metrics. Agents on every node pull their NodeSpec and push status plus their public key over gRPC with mTLS. Data plane: clients connect over AmneziaWG or VLESS to the master, where the agent owns the client AmneziaWG interface and mihomo routes and load-balances, alongside nftables and blocky; the master reaches each exit over its own AmneziaWG tunnel; each exit runs awg-quick, wgcf for Cloudflare WARP egress, policy routing, nftables and blocky, and leaves to the internet under a WARP IP. Russian and private destinations go direct, never through an exit, and all management interfaces bind the ZeroTier overlay only.">
   <title>wgfleet architecture — control plane above, data plane below</title>
   <defs>
     <radialGradient id="pg" cx="50%" cy="-15%" r="130%">
@@ -61,7 +61,7 @@
     <text x="518" y="420" font-size="15" fill="#5a6270" text-anchor="end">agent role</text>
     <rect x="262" y="436" width="256" height="1" fill="#161b24"/>
     <g font-size="17" fill="#8b93a1">
-      <text x="262" y="464">wg-easy — client AWG</text>
+      <text x="262" y="464">agent — client AWG (wg0)</text>
       <text x="262" y="490">mihomo — route + balance</text>
       <text x="262" y="516">nftables — DNAT / NAT</text>
       <text x="262" y="542">blocky — DNS filtering</text>

@@ -36,7 +36,10 @@ secrets, and remote machines over SSH and mTLS. Security-relevant areas include:
   listen on the management overlay (e.g. ZeroTier) only, never the public
   interface.
 - **Use mTLS for control traffic.** Each node gets its own client certificate at
-  bootstrap; revoking it removes the node from the fleet.
+  bootstrap and renews it itself over that channel. There is no revocation list:
+  decommissioning or deleting a node makes the controller refuse its next renewal,
+  but a certificate already issued stays valid until it expires. Cutting a node off
+  before then means reissuing the CA.
 - **Plan before apply.** Use dry-run / plan mode to review rendered configs and
   redacted secrets before any change reaches production.
 

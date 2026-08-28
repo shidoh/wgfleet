@@ -112,7 +112,7 @@ files, commands and database writes. Drop `--plan` to apply exactly that.
 
 ## Architecture
 
-<img src="assets/readme/architecture.svg" width="100%" alt="wgfleet architecture. Control plane: a single wgfleet-controller binary holds desired state and inventory in SQLite, runs the PKI and per-node mTLS certificates, brokers public keys only, renders each NodeSpec, provisions blank VMs over SSH, and serves a gRPC API, Web UI and metrics. Agents on every node pull their NodeSpec and push status plus their public key over gRPC with mTLS. Data plane: clients connect over AmneziaWG or VLESS to the master, which runs wg-easy, mihomo routing and load balancing, nftables and blocky; the master reaches each exit over its own AmneziaWG tunnel; each exit runs awg-quick, wgcf for Cloudflare WARP egress, policy routing, nftables and blocky, and leaves to the internet under a WARP IP. Russian and private destinations go direct, never through an exit, and all management interfaces bind the ZeroTier overlay only.">
+<img src="assets/readme/architecture.svg" width="100%" alt="wgfleet architecture. Control plane: a single wgfleet-controller binary holds desired state and inventory in SQLite, runs the PKI and per-node mTLS certificates, brokers public keys only, renders each NodeSpec, provisions blank VMs over SSH, and serves a gRPC API, Web UI and metrics. Agents on every node pull their NodeSpec and push status plus their public key over gRPC with mTLS. Data plane: clients connect over AmneziaWG or VLESS to the master, where the agent owns the client AmneziaWG interface and mihomo routes and load-balances, alongside nftables and blocky; the master reaches each exit over its own AmneziaWG tunnel; each exit runs awg-quick, wgcf for Cloudflare WARP egress, policy routing, nftables and blocky, and leaves to the internet under a WARP IP. Russian and private destinations go direct, never through an exit, and all management interfaces bind the ZeroTier overlay only.">
 
 Two binaries. **`wgfleet-controller`** holds desired state, brokers keys,
 provisions nodes and serves the API, UI and metrics. **`wgfleet-agent`** runs on
@@ -294,7 +294,9 @@ build DKMS for you. Full walkthrough: [`docs/onboarding.md`](docs/onboarding.md)
 - **The controller brokers public keys, never private ones.** AmneziaWG keys are
   generated and kept on each node; only the public key is published.
 - **mTLS identity.** Each node gets a client certificate at bootstrap whose CN
-  is its node ID. Revoking the certificate removes the node from the fleet.
+  is its node ID. Removing a node from the inventory, or decommissioning it, makes
+  the controller refuse to renew that certificate — see the gaps note below for what
+  that does and does not buy you.
 - **Self-checks drive lifecycle state.** After each apply the agent runs
   role-specific checks — handshake freshness, egress reachability, WARP egress,
   DNS filter, mihomo API — and the derived state feeds the dashboard and metrics.
@@ -349,9 +351,13 @@ Full rules and their rationale: [`docs/adr/`](docs/adr/) and
 - Secrets resolve through a provider (`env://`, a `0600` `file://`, or SOPS/age).
   No keys or real IPs in git.
 
-Known gaps, stated plainly: there is **no certificate revocation list** (revoking
-a node today means reissuing the CA), the gRPC endpoints are **not rate-limited**,
-and the Web UI speaks **plain HTTP**. The last two are mitigated by binding to the
+Known gaps, stated plainly: there is **no certificate revocation list**. Node
+certificates last a year and agents renew their own between 70% and 90% of that,
+so the only thing that ends a node's membership is the controller refusing that
+renewal — which it does for a node that has been decommissioned or deleted. A
+certificate already issued stays valid until it expires; cutting a node off sooner
+than that still means reissuing the CA. The gRPC endpoints are also **not
+rate-limited**, and the Web UI speaks **plain HTTP**. The last two are mitigated by binding to the
 management overlay only, not by the code.
 
 Reporting a vulnerability: [SECURITY.md](SECURITY.md).
@@ -367,7 +373,7 @@ MVP, in active development, `go test -race` green.
 | Domain model, config, SQLite store, gRPC/mTLS transport, PKI, key broker | ✅ |
 | Reconcile engine with first-class dry-run | ✅ |
 | Exit data plane — awg-quick, wgcf/WARP, policy routing, nftables, blocky | ✅ |
-| Master data plane — mihomo, NAT, wg-easy client AWG, container lifecycle | ✅ |
+| Master data plane — mihomo, NAT, agent-owned client AWG interface, container lifecycle | ✅ |
 | SSH provisioner, UI-triggered provisioning, agent upgrade, wire-contract gate | ✅ |
 | Health checks, drift repair, graceful drain, teardown, staleness sweep | ✅ |
 | AmneziaWG parameter generator, auto-MTU, SOPS/age secrets | ✅ |

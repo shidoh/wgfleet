@@ -115,6 +115,32 @@ need the agent `/metrics` (step 1).
 | `wgfleet_agent_egress_active` | `method` | active egress, warp/direct |
 | `wgfleet_agent_egress_throughput_bytes` | | measured egress bandwidth |
 | `wgfleet_agent_start_time_seconds` | | process start (for uptime) |
+| `wgfleet_agent_cert_expiry_timestamp_seconds` | | when this node's mTLS certificate expires; **read at every scrape, not at boot** |
+| `wgfleet_agent_cert_expiry_read_errors_total` | | scrapes at which that certificate could not be read or parsed |
+
+**Watching the certificate.** Agents renew their own mTLS certificate in place,
+between 70% and 90% of its life, with no restart — so on a healthy node the expiry
+steps forward roughly once a year and otherwise sits still. A node whose remaining
+time **stops going up** is one whose renewal is failing, and by the time
+`WgfleetNodeCertExpiring` fires it has been failing for at least forty days. The
+gauge is re-read on every scrape for exactly this reason: an earlier version read
+the file once at process start, so a node that renewed cleanly and a node whose
+renewal had been broken for months published the identical series.
+
+**WireGuard / AmneziaWG peers** (`wgfleet_wg_*`, agent endpoint, `node` + `role`,
+per interface):
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `wgfleet_wg_handshake_age_seconds` | `iface,peer` | seconds since that peer's last handshake |
+| `wgfleet_wg_peers_active` | `iface` | peers with a handshake inside the freshness window |
+| `wgfleet_wg_collector_up` | `iface` | 1 when the peer dump could be read, 0 when it could not |
+
+`wgfleet_wg_collector_up` exists because absence of the peer series is otherwise
+indistinguishable from having no peers — "the interface has zero clients" and "we
+could not run `awg show`" are different facts and only one of them is an outage.
+`WgfleetNoClientPeers` reads both arms for that reason.
+
 
 **Scheduled probes** (`wgfleet_probe_*`, agent endpoint, `node` + `role` labels).
 These cover the timer-driven probes that refresh a cache on their own schedule —
