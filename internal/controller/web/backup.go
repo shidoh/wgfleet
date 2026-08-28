@@ -33,6 +33,11 @@ func (h *Handler) handleBackupExport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("backup failed: %v", err), http.StatusInternalServerError)
 		return
 	}
+	// The most secret bytes this system produces — the fleet CA and every client key
+	// — and they were the only credential download with no cache directive. The WG
+	// config and QR endpoints have carried one from the start; this was an omission,
+	// not a policy.
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="wgfleet-backup.tar.age"`)
 	_, _ = w.Write(archive)

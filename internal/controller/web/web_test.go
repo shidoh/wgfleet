@@ -1355,3 +1355,32 @@ func TestNodePageDropsTheWGEasyLinkOnceMigrated(t *testing.T) {
 		t.Errorf("a migrated master still links to wg-easy: %q", got)
 	}
 }
+
+// Anything that carries a credential, or lists them, must say not to keep a copy.
+//
+// The rule was decided and then applied to one family: the WG config and QR
+// endpoints had `no-store` from the start, while the backup archive (the fleet CA
+// and every client key), the VLESS clash profile (a client private key), the
+// subscription endpoint (whose BODY is the secret, and whose route is auth-exempt)
+// and every rendered admin page had nothing at all.
+func TestCredentialSurfacesForbidCaching(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+
+	for _, path := range []string{"/", "/nodes/master-xa-1"} {
+		res, _ := get(t, h, path)
+		if got := res.Header.Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s: Cache-Control = %q, want no-store — the page lists client ids and addresses", path, got)
+		}
+	}
+
+	// The sign-in page too, where it actually renders: it carries the CSRF token and
+	// is the page a shared machine is most likely to keep in history. (With a session
+	// present it only redirects, and a 303 to "/" is nothing worth protecting.)
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if got := rec.Result().Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("/login: Cache-Control = %q, want no-store", got)
+	}
+}

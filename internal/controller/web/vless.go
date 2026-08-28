@@ -169,6 +169,9 @@ func (h *Handler) handleClientClash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	yaml := buildClashConfig(host, *cv, node.ClientVLESSPublicKey, node.MgmtAddr, found)
+	// Carries the client's private key; a credential, cached like any other file
+	// without this.
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", "wgfleet-"+name+".yaml"))
 	_, _ = w.Write([]byte(yaml))
@@ -328,6 +331,10 @@ func (h *Handler) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	if cidrs := h.renderer.ClientVLESSRouteThrough(master); len(cidrs) > 0 {
 		w.Header().Set("routing", buildRoutingObject(master, cidrs))
 	}
+	// The body is the secret — a vless:// link with the UUID in it — and this route
+	// is authExempt, which makes it the most exposed of the three and the one that
+	// had no cache directive at all.
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Profile-Update-Interval", "24")
 	_, _ = w.Write([]byte(base64.StdEncoding.EncodeToString([]byte(link + "\n"))))

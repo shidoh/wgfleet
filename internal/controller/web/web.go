@@ -177,7 +177,7 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	}
 	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, clientsTmpl: clientsTmpl, wgClientsTmpl: wgClientsTmpl, confirmTmpl: confirmTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute), subLimit: auth.NewIPLimiter(10, time.Minute, 4096)}
 
-	staticHandler := http.FileServer(http.FS(staticFS))
+	staticHandler := newStaticAssets(staticFS)
 	h.mux.Handle("GET /static/", staticHandler)
 	h.mux.HandleFunc("GET /login", h.handleLoginForm)
 	h.mux.HandleFunc("POST /login", h.handleLogin)
@@ -234,6 +234,9 @@ type authPage struct {
 
 func (h *Handler) renderAuth(w http.ResponseWriter, screen, errMsg string) {
 	h.setCSRFCookie(w)
+	// The sign-in page carries the CSRF token and is the page a shared machine is
+	// most likely to have in history.
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	title := "Sign in"
 	if screen == "setup" {
@@ -1213,6 +1216,10 @@ func mihomoURL(node domain.Node, spec domain.NodeSpec) string {
 
 func (h *Handler) render(w http.ResponseWriter, tmpl *template.Template, name string, data any) {
 	h.setCSRFCookie(w)
+	// Every page behind the login lists credential ids, client addresses and
+	// endpoints, and none of them said not to keep a copy — so bfcache, history and
+	// any intermediary that ignores Set-Cookie could replay them after a logout.
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
 		// Headers may already be sent; surface best-effort in-page AND log it, so a
