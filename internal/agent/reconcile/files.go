@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"os"
 	"path/filepath"
 
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -22,11 +23,19 @@ func ManagedFileActions(files []domain.ManagedFile, baseDir string) ([]Action, e
 		if !filepath.IsAbs(target) {
 			target = filepath.Join(baseDir, target)
 		}
+		// A secret file is written 0600, not 0644. FileAction refuses the pair
+		// (redactor, group-readable mode) on purpose — redaction only hides the
+		// content from plan output, so the mode is the only at-rest control. Passing
+		// 0644 here made that refusal fire on the operator's own config: `custom.files`
+		// with `secret: true` returned an error out of every planner that writes them,
+		// and the node stopped converging entirely, on every pass, for good.
+		perm := os.FileMode(0o644)
 		var redact Redactor
 		if f.Secret {
+			perm = 0o600
 			redact = secretFileRedactor
 		}
-		a, err := FileAction(target, []byte(f.Content), 0o644, redact)
+		a, err := FileAction(target, []byte(f.Content), perm, redact)
 		if err != nil {
 			return nil, err
 		}
