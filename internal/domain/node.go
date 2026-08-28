@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // SSHTarget describes how to reach a blank VM during the provisioning
 // bootstrap. It is used ONLY in Phase 0/1; once the agent is installed the
@@ -228,4 +231,35 @@ type AuthRecord struct {
 	PasswordHash  string
 	SessionSecret []byte
 	UpdatedAt     time.Time
+}
+
+// AgentBackReason reports why this node does not yet count as "back after an agent
+// upgrade", or "" when it does.
+//
+// All four conditions are load-bearing and none is sufficient alone: Ready can be
+// stale state left behind by the previous binary, a matching version does not mean
+// the reconcile is healthy, a LastSeen from before the restart belongs to the old
+// process, and a report that is merely recent enough can still be minutes old on a
+// node that has since wedged.
+//
+// It lives here rather than in the rollout coordinator because three other things
+// upgrade an agent — the CLI's --upgrade-agent, the Web UI button and the
+// wire-version gate's automatic push — and all three used to upload, restart and
+// report success without ever asking whether the node came back. The coordinator
+// was the only caller that checked, and a check only one of four callers performs
+// is a check the operator cannot rely on.
+func (n Node) AgentBackReason(want string, restartedAt, now time.Time, freshWithin time.Duration) string {
+	if n.State != StateReady {
+		return "state is " + string(n.State)
+	}
+	if n.AgentVersion != want {
+		return fmt.Sprintf("reports version %q, want %q", n.AgentVersion, want)
+	}
+	if !n.LastSeen.After(restartedAt) {
+		return "has not reported since the restart"
+	}
+	if age := now.Sub(n.LastSeen); age > freshWithin {
+		return fmt.Sprintf("last report is %s old", age.Truncate(time.Second))
+	}
+	return ""
 }

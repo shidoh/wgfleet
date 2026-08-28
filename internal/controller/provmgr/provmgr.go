@@ -424,3 +424,46 @@ func toSSHTarget(s config.SSHConfig) domain.SSHTarget {
 		InsecureIgnoreHostKey: s.InsecureIgnoreHostKey,
 	}
 }
+
+// AwaitAgentBack waits for a node to report in on the version it was just upgraded
+// to, and returns why it did not when it did not.
+//
+// It exists because uploading a binary and restarting a service is not an upgrade:
+// it is the first half of one. Three of the four paths that upgrade an agent —
+// --upgrade-agent, the Web UI button and the wire-version gate's automatic push —
+// did exactly that and then reported success, so an agent that started and could not
+// converge looked identical to one that worked, and the operator found out later
+// from something else entirely. The rolling upgrade was the only caller that
+// checked; the check is the same one, taken from domain.Node.
+//
+// It does not roll back. The coordinator does that because it is walking a fleet and
+// must not leave a half-upgraded one behind; a single-node upgrade the operator
+// asked for is theirs to decide about, and a surprise downgrade to whatever
+// .prev happens to be is not obviously the kinder outcome. Saying plainly what
+// happened is.
+func (m *Manager) AwaitAgentBack(ctx context.Context, nodeID, want string, restartedAt time.Time, timeout, freshWithin time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var last string
+	for {
+		node, err := m.store.GetNode(ctx, nodeID)
+		switch {
+		case err != nil:
+			last = "cannot read the node: " + err.Error()
+		default:
+			if last = node.AgentBackReason(want, restartedAt, time.Now(), freshWithin); last == "" {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%s did not come back on %s within %s: %s. It is running whatever it "+
+				"started; check `journalctl -u wgfleet-agent` on the node, and roll back with the "+
+				"previous binary at /usr/local/bin/wgfleet-agent.prev if it cannot converge",
+				nodeID, want, timeout, last)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+}

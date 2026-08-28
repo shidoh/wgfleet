@@ -370,20 +370,11 @@ func (c *Coordinator) confirm(ctx context.Context, id, want string, restartedAt 
 // All three conditions are load-bearing: Ready alone can be stale state left by
 // the previous binary, a matching version alone does not mean the reconcile is
 // healthy, and a LastSeen that predates the restart is the old process's.
+//
+// The conditions themselves live on domain.Node, because three other paths upgrade
+// an agent and none of them used to ask this question at all.
 func (c *Coordinator) gateReason(n domain.Node, want string, restartedAt time.Time) string {
-	if n.State != domain.StateReady {
-		return "state is " + string(n.State)
-	}
-	if n.AgentVersion != want {
-		return fmt.Sprintf("reports version %q, want %q", n.AgentVersion, want)
-	}
-	if !n.LastSeen.After(restartedAt) {
-		return "has not reported since the restart"
-	}
-	if age := c.now().Sub(n.LastSeen); age > c.cfg.FreshWithin {
-		return fmt.Sprintf("last report is %s old", age.Truncate(time.Second))
-	}
-	return ""
+	return n.AgentBackReason(want, restartedAt, c.now(), c.cfg.FreshWithin)
 }
 
 // nodeUntouched reports whether err says the upgrade failed BEFORE it modified

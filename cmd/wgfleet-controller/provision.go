@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/pki"
@@ -79,14 +80,30 @@ func upgradeAgentNode(cfg *config.ControllerConfig, ca *pki.CA, node, agentBin s
 	if plan {
 		mode = provisioner.ModePlan
 	}
+	restartedAt := time.Now()
 	report, err := mgr.UpgradeAgent(context.Background(), node, mode)
 	if err != nil {
 		return fmt.Errorf("upgrade %q: %w", node, err)
 	}
 	if plan {
 		fmt.Print(report.String())
-	} else {
-		slog.Info("agent upgrade applied", "node", node, "steps", len(report.Plan.Steps))
+		return nil
 	}
+	slog.Info("agent upgrade applied; waiting for the node to report back",
+		"node", node, "steps", len(report.Plan.Steps))
+	// Uploading and restarting is the first half of an upgrade. Without this the
+	// command reported success for an agent that started and could not converge, and
+	// the operator learned otherwise from something else entirely — days later.
+	want, verr := (&agentBinVersion{path: agentBin}).get(context.Background())
+	if verr != nil {
+		// We upgraded but cannot say to what, so we cannot confirm it either. Say so
+		// rather than claim success.
+		return fmt.Errorf("upgraded %q but cannot identify the binary to confirm against: %w", node, verr)
+	}
+	if err := mgr.AwaitAgentBack(context.Background(), node, want,
+		restartedAt, 3*time.Minute, 2*time.Minute); err != nil {
+		return err
+	}
+	slog.Info("agent upgrade confirmed", "node", node)
 	return nil
 }
