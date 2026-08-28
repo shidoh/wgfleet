@@ -29,9 +29,44 @@ func TestAWG3EnabledRequiresOptInAndWire(t *testing.T) {
 		{"not opted in, old agent", false, 1, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := awg3Enabled(tc.optIn, domain.Node{WireVersion: tc.wire})
+			got := awg3Enabled(tc.optIn, domain.Node{WireVersion: tc.wire}, domain.Node{WireVersion: api.WireAWG3})
 			if got != tc.want {
 				t.Errorf("awg3Enabled(optIn=%v, wire=%d) = %v, want %v", tc.optIn, tc.wire, got, tc.want)
+			}
+		})
+	}
+}
+
+// The gate must consult BOTH ends of the tunnel, not just the exit.
+//
+// Both call sites passed the EXIT's node record, and the comment beside them said
+// the two ends "cannot disagree" because they are decided from the same inputs —
+// which was exactly the bug: those inputs described one end. The 3.x parameters on
+// the master's side are rendered into mihomo by the MASTER's agent, so a master
+// below wire v7 drops them and speaks 2.0 to an exit already on 3.x. And
+// rollout.BuildPlan excludes masters by construction, so "exits ahead of the
+// master" is the fleet's normal state, not a rare one.
+func TestAWG3EnabledRequiresBothEnds(t *testing.T) {
+	cur := api.WireAWG3
+	old := api.WireAWG3 - 1
+	for _, tc := range []struct {
+		name              string
+		exitWire, mstWire uint32
+		want              bool
+	}{
+		{"both current", cur, cur, true},
+		{"master behind", cur, old, false},
+		{"exit behind", old, cur, false},
+		{"both behind", old, old, false},
+		{"master never reported", cur, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := awg3Enabled(true,
+				domain.Node{WireVersion: tc.exitWire},
+				domain.Node{WireVersion: tc.mstWire})
+			if got != tc.want {
+				t.Errorf("awg3Enabled(exit=%d, master=%d) = %v, want %v",
+					tc.exitWire, tc.mstWire, got, tc.want)
 			}
 		})
 	}
