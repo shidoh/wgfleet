@@ -48,6 +48,12 @@
   {{end}}
 </section>
 
+{{if .PollError}}
+{{/* The refresh itself failed. Said here, in the fragment that just replaced the
+     list, because the alternative — an error status htmx refuses to swap — leaves
+     the previous rows on screen with nothing to indicate they have stopped moving. */}}
+<p class="error-note" role="status">The fleet list could not be refreshed: {{.PollError}}. What you are looking at is the last good reading, not the current state.</p>
+{{end}}
 <div class="section-head">
   <span class="section-label">FLEET</span>
   {{/* No node count here: the topbar carries it on every page, and the summary

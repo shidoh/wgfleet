@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
@@ -640,4 +641,35 @@ func TestPollDoesNotEatTheFlash(t *testing.T) {
 			t.Fatalf("the poll cleared %q, so the page about to render it shows nothing", c.Name)
 		}
 	}
+}
+
+// htmx does not swap a 5xx, so answering a failed poll with one left the fleet list
+// showing minutes-old rows under a pulsing LIVE chip that asserted the opposite —
+// and nothing on the page ever said the refresh had stopped. The bad news has to be
+// IN the fragment.
+func TestFleetPollSaysSoWhenItCannotRead(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+	// Only the fleet listing fails: the session lookup still has to work, or the
+	// request never reaches the handler under test.
+	h.store = nodeListUnreadable{Store: st}
+
+	res, body := get(t, h, "/partials/nodes")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d; htmx will not swap this, so the page keeps stale rows", res.StatusCode)
+	}
+	if !strings.Contains(body, "could not be refreshed") {
+		t.Errorf("a failed poll rendered no warning:\n%s", body)
+	}
+	if !strings.Contains(body, "last good reading") {
+		t.Error("the warning does not say what the operator is looking at instead")
+	}
+}
+
+// nodeListUnreadable is a store whose only defect is that the inventory cannot be
+// listed — the shape of a transient sqlite failure during a poll.
+type nodeListUnreadable struct{ store.Store }
+
+func (nodeListUnreadable) ListNodes(context.Context) ([]domain.Node, error) {
+	return nil, errors.New("database is locked")
 }

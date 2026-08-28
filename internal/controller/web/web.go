@@ -805,6 +805,11 @@ type listData struct {
 	Flash     string       // one-shot error surfaced from a failed action redirect
 	CSRF      string       // CSRF token for the backup-export form
 	Rollout   *rolloutData // rolling agent upgrade panel; nil when not configured
+	// PollError, when set, says the 5s refresh could not read the fleet. It is
+	// rendered INTO the swapped fragment rather than returned as a 5xx, because htmx
+	// does not swap an error response — so a failing poll left stale rows on screen
+	// under a pulsing LIVE chip and told nobody.
+	PollError string
 }
 
 // topology is the master↔exit routing picture shown on the fleet list — now the
@@ -1051,7 +1056,13 @@ func (h *Handler) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleNodesPartial(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.nodeRows(r.Context())
 	if err != nil {
-		httpError(w, "list nodes", err)
+		// A 5xx here is not swapped by htmx, so the fleet list went on showing
+		// minutes-old rows under a pulsing LIVE chip asserting the opposite, and
+		// nothing anywhere said the refresh had stopped. Answer with the fragment and
+		// the bad news IN it: the operator is looking at this page precisely because
+		// they want to know the current state, and "I cannot tell you" is an answer.
+		h.log.Warn("fleet poll failed", "err", err)
+		h.render(w, h.listTmpl, "nodes-table", listData{PollError: err.Error()})
 		return
 	}
 	h.render(w, h.listTmpl, "nodes-table", listData{

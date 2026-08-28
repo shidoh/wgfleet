@@ -119,10 +119,22 @@
       {{/* Everything below is used ONCE per client, at hand-out. The operator's
            daily task is scanning this list, so it is collapsed by default — the
            same call node.html made for its spec groups. */}}
+      {{/* The paused hint lives OUT here, above the preserved subtree.
+
+           hx-preserve moves this node verbatim across every 10s swap, which means
+           everything inside it is rendered once, at page load, and never again. That
+           is right for a config and a QR — they do not change — and wrong for
+           anything that reports state: with the hand-out already open, pausing a
+           credential flipped the chip at the top of the card to "paused" while the
+           panel below it went on offering the download with no warning at all. The
+           two halves of the same card disagreed, and the stale half was the one
+           holding the file. */}}
+      {{if not .Enabled}}<p class="cfg-hint warn">Paused — this config will not connect until you resume access.</p>{{end}}
       {{/* hx-preserve keeps this node across the 10s swap. Without it the panel
            the operator opened to copy a link or scan a QR snapped shut under
            them on the next poll — and the focus guard does not help, because
-           reading a QR focuses nothing. */}}
+           reading a QR focuses nothing. Nothing inside it may depend on state that
+           can change while it is open; see above. */}}
       <details class="cfg-direct hand-out" id="handout-{{.ID}}" hx-preserve="true">
         <summary>Config, QR &amp; rename</summary>
         <div class="client-cfg">
@@ -151,7 +163,6 @@
               <div class="field-label">CONFIG · download the .conf or scan the QR</div>
               <div class="cfg-actions">
                 <a class="btn go" href="/nodes/{{$.NodeID}}/wg-clients/{{.ID}}/config">↓ Download .conf</a>
-                {{if not .Enabled}}<span class="cfg-hint warn">paused — this config will not connect until you resume access</span>{{end}}
               </div>
             </div>
           </div>
