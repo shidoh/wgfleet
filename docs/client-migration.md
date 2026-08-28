@@ -2,19 +2,47 @@
 
 For a master whose clients are still served by wg-easy.
 
-Four parts, each a separate decision. Stopping after any of them is fine.
+## Read this first
 
-1. Upgrade the binaries — required, does not touch the client leg
-2. Import the credentials — reversible, changes nothing live
-3. Hand the interface over — the cutover
-4. AmneziaWG 3.x — optional, later
+**Parts 1-3 are invisible to your users.** The agent adopts wg-easy's own interface
+key, so every config already on someone's phone keeps working, untouched. Nobody has
+to re-import anything and nobody needs to be told in advance.
 
-The handover is transparent: the agent adopts wg-easy's own interface key, so
-**no config already handed out stops working.**
+**Part 4 is where it gets painful, and only one setting in it.** `awg3: full` adds
+header protection, which every client must re-import before it works again — and you
+cannot send the new config through the tunnel, because after the flip nobody is
+inside the tunnel. That is a step you plan around people, not around the fleet. It is
+optional, it can wait indefinitely, and nothing else in this document depends on it.
+
+Four parts, each a separate decision:
+
+| | What it is | Reversible? | Do users notice? |
+|---|---|---|---|
+| 1 | Upgrade the binaries | yes, `.prev` binaries | no |
+| 2 | Import the credentials | yes, nothing goes live | no |
+| 3 | Hand the interface over — the cutover | yes, until you issue a new client | no |
+| 4 | AmneziaWG 3.x `timers` | yes | no |
+| 4 | AmneziaWG 3.x `full` | **no** | **every one of them, at once** |
+
+**Stopping after any part is a finished state, not a half-migration.** Most fleets
+should do 1-3 and leave 4 alone until there is a reason. Part 3 is the one worth
+doing: it is what moves credentials into the controller's store, so issuing, pausing,
+renaming and revoking become console actions and each person gets a self-service link
+instead of a file you have to re-send.
+
+**If something goes wrong**, [Rollback](#rollback) is in part 3 and it is free right
+up until you issue your first new client. Read it before you start part 3, not after.
+
+**What to tell your users:** nothing, for parts 1-3. For part 4 `full`, see the
+sequence at the end — it is the only step that needs their cooperation, and it needs
+it from every one of them before you flip the switch.
 
 ---
 
 ## Pre-flight
+
+Six checks. The first four ask *can this machine do the handover at all*; the last two
+are your way back. None of them changes anything.
 
 ```bash
 cat /sys/module/amneziawg/version    # kernel module generation
@@ -44,6 +72,9 @@ does not migrate. Part 2's dry run names them.
 ---
 
 ## 1. Upgrade the binaries
+
+*Required. Reversible via the `.prev` binaries the deploy script leaves behind.
+Your users see nothing — this part does not touch the client leg at all.*
 
 Wire contract 7 → 8 for this migration (the contract has since moved to 10).
 **Controller first.** The reverse order makes the master's
@@ -103,6 +134,13 @@ because the decision it verifies has already been made by the time you read this
 
 ## 2. Import the credentials
 
+*Reversible, and nothing goes live. This copies wg-easy's clients into the
+controller's store where they sit inert; wg-easy still owns the interface and still
+serves every one of them. You can run it, read the report, and walk away.*
+
+**This is where you find out who will not survive the cutover**, while it is still
+free to fix. Run the dry run, fix what it names, re-run until it is clean.
+
 Reads wg-easy's database, never writes to it. Run on the master, controller live.
 
 The pool must match what wg-easy handed out:
@@ -146,6 +184,17 @@ interface and the imported credentials are inert.
 
 ## 3. Hand the interface over
 
+*The cutover. Reversible until you issue your first new client — after that a
+rollback strands the people you issued. Your users see nothing: the agent adopts
+wg-easy's interface key, so the configs on their phones keep working.*
+
+**What actually happens:** on the next reconcile pass the agent takes `wg0` over
+with the same key and the peers you imported in part 2, and wg-easy is retired one
+pass later, only after a pass has observed the new interface up and serving. If the
+bring-up fails, wg-easy is still there — that is why it lingers.
+
+**Read [Rollback](#rollback) below before you do this.**
+
 ```yaml
         managed: true
 ```
@@ -179,6 +228,9 @@ wg-easy's database plus its image, both checked in pre-flight.
 
 ### Rollback
 
+*Free until you issue your first new client. After that it strands exactly those
+people — see the warning at the end of this section.*
+
 Only if the module is 1.x or 2.x.
 
 ```yaml
@@ -200,6 +252,16 @@ Archive `wg-easy.db` off the box — it is what a rollback reads.
 ---
 
 ## 4. AmneziaWG 3.x
+
+*Optional, and there is no deadline. Two settings with very different costs:
+`timers` is invisible and reversible; `full` requires **every** user to re-import
+before their tunnel works again, and you cannot deliver the new config through the
+tunnel. Do not start this part on the same evening as part 3.*
+
+**Which one do you want?** `timers` if you want the 3.x timing behaviour and nothing
+else — it costs your users nothing. `full` only when you have a concrete reason to
+want header protection AND you can reach every single user to coordinate. If you
+cannot list your users by name right now, you are not ready for `full`.
 
 **The order is forced.** The wg-easy image carries generation-1 tools, so
 upgrading the master's kernel module while that image is still in use breaks it:
@@ -246,13 +308,22 @@ is reachable only from inside the tunnel — and after the flip nobody is inside
 tunnel. Fetching a link *before* the flip is no better: the portal renders from the
 live spec, so it hands out the pre-3.x config. The order that works is:
 
-1. download every client's `.conf` from the Web UI and send them out, telling
-   people to import **after** you say so;
-2. wait for confirmation from each person;
-3. only then set `full` and announce it.
+1. download every client's `.conf` from the Web UI and send them out over whatever
+   channel you use with those people — not the portal — telling them to save it and
+   **not** import it yet;
+2. wait until every single person has confirmed they have the file. Not most of
+   them: the ones who have not are the ones who will be cut off with no way to reach
+   you through the tunnel;
+3. only then set `full`, restart, and tell everyone to import now;
+4. stay available. Whoever imports late, or imports the wrong file, is offline until
+   you hear from them on another channel.
 
-It is not reversible for them either — going back to `timers` breaks the config
-they just imported.
+Going back does not rescue them either: reverting to `timers` breaks the config they
+have just imported, so a botched flip is two rounds of re-handout, not one.
+
+**Do this when you can afford the evening**, with the fleet otherwise quiet, and not
+straight after part 3. If you have more users than you can personally chase, that is
+the signal to stay on `timers`.
 
 Requires `managed: true` and a 3.x module. With an older module the agent refuses
 the config and keeps the last-good one rather than taking the leg down.
@@ -261,6 +332,16 @@ the config and keeps the last-good one rather than taking the leg down.
 
 ## Troubleshooting
 
+First, the two questions people ask at 2am:
+
+- **"Did I just cut everyone off?"** Check `awg show wg0 peers | wc -l` against your
+  client count and `awg show wg0 public-key` against what it was before. If the key
+  changed, the adoption failed — roll back (part 3) and read the agent log for
+  `adopted the client interface key from wg-easy`.
+- **"Can I undo this?"** Yes, until you issued a new client after the cutover. See
+  [Rollback](#rollback). The wg-easy database and image you saved in pre-flight are
+  what it needs; nothing in the store has to be undone.
+
 | Symptom | Cause |
 |---|---|
 | every client dies at cutover | the key was not adopted — check the agent log for `adopted the client interface key from wg-easy`, then roll back |
@@ -268,6 +349,9 @@ the config and keeps the last-good one rather than taking the leg down.
 | interface will not come up, log says 3.x refused | module is older than the config asks for |
 | portal times out | bound somewhere other than the master's mgmt address, or its port is missing from `client_admin_ports` |
 | no *Download .conf* button | the master has not published its interface key yet — one reconcile pass |
+| import says a client is `NOT MIGRATED` and you do not know why | the table in part 2 lists every reason and its fix; nothing is live yet, so take your time |
+| wg-easy container still running after the cutover | by design — it is retired one pass after a pass observed the new interface serving. Give it one reconcile interval |
+| a user says "it stopped working" and you did parts 1-3 only | it is not this migration: those parts do not change any config in the field. Check the node's health and the master↔exit tunnels first |
 
 ## See also
 

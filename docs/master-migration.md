@@ -4,6 +4,17 @@ Moving a co-located controller+master (control plane + client-facing AmneziaWG)
 to a new box. Exits are not touched and keep running throughout — they reconnect
 on their own at the end.
 
+**What your users see: an outage for as long as the move takes.** This box is the
+one they dial. Their traffic stops when you stop the old master and resumes when the
+new one is serving — there is no failover here, because there is only one master.
+Exits keep running on their last-good config the whole time, so nothing has to be
+rebuilt; what is down is the way in.
+
+So: do this in a window you have announced, expect the outage to be the length of
+your slowest step (the restore and the first reconcile, not the file copy), and read
+step 5 **before** you start — whether your users need new configs afterwards is
+decided by the two questions below, not by anything you do later.
+
 ## Answer two questions first
 
 They decide whether this is a 15-minute job or a client-config re-issue.
