@@ -82,14 +82,30 @@ Leave the box powered on. It is your rollback until step 6.
 
 ## 4. Restore and start — new VM
 
+`--restore` loads the manifest before it restores anything, and step 2's
+`install.sh` leaves `<mgmt-zt-ip>` and `<public-ip>` placeholders in it — so the
+restore refuses with *"mgmt_addr \"<mgmt-zt-ip>\" is not a valid IP address"*
+before reaching the archive. Fill those two in first; the restore then overwrites
+the whole file anyway, so anything syntactically valid will do:
+
 ```bash
+sudo sed -i "s|<mgmt-zt-ip>|$(ip -4 -o addr show dev zt+ | awk '{print $4}' | cut -d/ -f1)|; \
+             s|<public-ip>|$(curl -4 -s ifconfig.me)|" /etc/wgfleet/controller.yaml
 sudo wgfleet-controller --restore /root/fleet.tar.age --plan   # shows the change set
 sudo wgfleet-controller --restore /root/fleet.tar.age
 ```
 
+If the archive was written with `--age-recipient` rather than a passphrase, pass
+the identity too — without it `age` cannot decrypt at all:
+
+```bash
+sudo wgfleet-controller --restore /root/fleet.tar.age --age-identity /root/key.txt
+```
+
 Restore moves any existing destination aside to `<path>.bak-<timestamp>` and
 writes each file atomically — including the config templates `install.sh` just
-dropped.
+dropped. It writes ONLY to the paths this host's own configuration names; an
+archive asking for anywhere else is refused.
 
 Start the controller first: the agent's first spec pull must find it serving.
 
