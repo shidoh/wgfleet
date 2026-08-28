@@ -171,3 +171,21 @@ func (c *Client) ReportStatus(ctx context.Context, st domain.NodeStatus) (uint32
 	}
 	return ack.GetReceived(), nil
 }
+
+// RenewCertificate asks the controller to sign a certificate request and returns
+// the new certificate and the CA, both PEM.
+//
+// The request travels over the CURRENT mTLS connection, which is what authorises
+// it: the controller issues for the identity that connection already proved and for
+// no other. Nothing about the node's private key is sent — only the public half,
+// inside the CSR.
+func (c *Client) RenewCertificate(ctx context.Context, csrDER []byte) (certPEM, caPEM []byte, err error) {
+	resp, err := c.rpc.RenewCertificate(ctx, &pb.RenewCertificateRequest{CsrDer: csrDER})
+	if err != nil {
+		return nil, nil, fmt.Errorf("renew certificate: %w", err)
+	}
+	if len(resp.GetCertPem()) == 0 {
+		return nil, nil, fmt.Errorf("renew certificate: controller returned no certificate")
+	}
+	return resp.GetCertPem(), resp.GetCaCertPem(), nil
+}

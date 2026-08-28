@@ -33,6 +33,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/shidoh/wgfleet/internal/agent/certrenew"
 	"github.com/shidoh/wgfleet/internal/agent/client"
 	egressfo "github.com/shidoh/wgfleet/internal/agent/egress"
 	"github.com/shidoh/wgfleet/internal/agent/exit"
@@ -400,6 +401,14 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	}
 	ctx, cancel := context.WithTimeout(base, budget)
 	defer cancel()
+
+	// Renew the control-plane certificate if it is past its renewal point. Done here
+	// because the reconcile loop is already the thing with a live controller
+	// connection, and a node that cannot reconcile could not renew anyway. Apply mode
+	// only: a dry run must not rotate the node's identity.
+	if !plan {
+		a.renewCertificateIfDue(ctx)
+	}
 
 	// Obtain the node's WG key. In apply mode it is generated and persisted on
 	// first run; in plan mode a missing key is generated ephemerally just for
@@ -1392,7 +1401,50 @@ func buildClientTLS(cfg *config.AgentConfig) (*tls.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read CA cert: %w", err)
 	}
-	return pki.ClientTLS(certPEM, keyPEM, caPEM, serverNameOf(cfg.Agent.Controller))
+	// Reloadable, because renewal that needs a restart to take effect is renewal
+	// that takes effect months late — quite possibly after the certificate it
+	// replaced has expired.
+	load := func() (tls.Certificate, error) {
+		c, err := os.ReadFile(cfg.Agent.Identity.Cert)
+		if err != nil {
+			return tls.Certificate{}, err
+		}
+		k, err := os.ReadFile(cfg.Agent.Identity.Key)
+		if err != nil {
+			return tls.Certificate{}, err
+		}
+		return tls.X509KeyPair(c, k)
+	}
+	_ = certPEM
+	_ = keyPEM
+	return pki.ReloadableClientTLS(load, caPEM, serverNameOf(cfg.Agent.Controller))
+}
+
+// renewCertificateIfDue rotates this node's control-plane certificate once it is
+// past the renewal point (see certrenew.DueAt).
+//
+// Called from the reconcile loop rather than a timer: the loop already runs every
+// 30 seconds with a live controller connection, which is exactly what renewal needs,
+// and a node that cannot reconcile cannot renew anyway. A failure is logged and
+// dropped — the current certificate is still valid for weeks at this point, and the
+// next pass tries again.
+func (a *agent) renewCertificateIfDue(ctx context.Context) {
+	cfg := a.cfg
+	notBefore, notAfter, err := certrenew.NotBeforeAfter(cfg.Agent.Identity.Cert)
+	if err != nil {
+		return // no certificate to reason about; nothing to renew
+	}
+	if !certrenew.Due(cfg.Agent.NodeID, notBefore, notAfter, time.Now()) {
+		return
+	}
+	paths := certrenew.Paths{
+		Cert: cfg.Agent.Identity.Cert, Key: cfg.Agent.Identity.Key, CA: cfg.Agent.Identity.CA,
+	}
+	if err := certrenew.Rotate(ctx, a.client, paths); err != nil {
+		a.log.Warn("certificate renewal failed; will retry", "expires", notAfter, "err", err)
+		return
+	}
+	a.log.Info("control-plane certificate renewed", "previous_expiry", notAfter)
 }
 
 // serverNameOf returns the host portion of the controller endpoint, which must
