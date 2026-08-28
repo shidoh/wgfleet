@@ -57,6 +57,8 @@
       <dd>{{if .Iface.FullTunnel}}<span class="mono">0.0.0.0/0</span> · full tunnel
         {{else}}{{.Iface.RouteCount}} networks{{end}}</dd>
       <dt>Obfuscation</dt><dd>{{.Iface.AWG}}</dd>
+      <dt>IPv6</dt><dd>{{.Iface.IPv6}}</dd>
+      <dt>Client UDP</dt><dd>{{.Iface.UDP}}</dd>
       <dt>Backend</dt><dd>{{.Iface.Backend}}</dd>
     </dl>
     {{if .Iface.FullTunnel}}

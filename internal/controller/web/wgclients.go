@@ -84,6 +84,12 @@ type wgIfaceView struct {
 	FullTunnel bool
 	Backend    string
 	AWG        string
+	// IPv6 and UDP describe two things that change what a client's traffic DOES and
+	// were visible nowhere in the product: the operator could not answer "is IPv6
+	// blocked?" or "is client UDP being carried?" from any surface, only by reading
+	// `nft list ruleset` on the master.
+	IPv6 string
+	UDP  string
 }
 
 // wgClientRow is one issued credential rendered for the page.
@@ -542,6 +548,21 @@ func ifaceView(cw *domain.ClientWGSpec) *wgIfaceView {
 		// value that silently costs a client access to its own local network.
 		FullTunnel: len(cw.AllowedIPs) == 0 || (len(cw.AllowedIPs) == 1 && cw.AllowedIPs[0] == "0.0.0.0/0"),
 		Backend:    string(cw.ResolvedBackend()),
+	}
+	// The IPv6 half of the client policy. "off" is not nothing: it means the client
+	// keeps its own native IPv6, so every dual-stack destination happy eyeballs
+	// prefers leaves the tunnel while the app says connected.
+	if cw.IPv6Prefix != "" {
+		v.IPv6 = "blocked · " + cw.IPv6Prefix + " (clients route ::/0 here and are refused audibly)"
+	} else {
+		v.IPv6 = "off · clients keep their own IPv6, which bypasses the tunnel"
+	}
+	// UDP is carried through the proxy whenever the master has an address to bind a
+	// transparent listener on — the same condition the agent renders the rules from.
+	if cw.ServerAddress != "" {
+		v.UDP = "carried through the proxy (TPROXY)"
+	} else {
+		v.UDP = "not intercepted — pending the gateway address"
 	}
 	switch {
 	case cw.AWG == nil:
