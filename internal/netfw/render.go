@@ -333,8 +333,14 @@ func RenderRuleset(in RenderInput) (string, error) {
 		}
 		// Client UDP intercepted by TPROXY. See TProxyMark: the mark is the only thing
 		// that still identifies these packets by the time they reach INPUT.
+		//
+		// Scoped to UDP arriving on the client interface, because an unscoped
+		// `meta mark 0x2 accept` is a hole in a drop policy that anything able to set
+		// that mark can walk through. The mark itself is now written only after a
+		// successful tproxy (see master_nat.go), so the two halves agree: a packet
+		// reaching INPUT with this mark was intercepted, on this interface, over UDP.
 		if in.TProxyMark > 0 {
-			fmt.Fprintf(&b, "\t\tmeta mark %#x accept\n", in.TProxyMark)
+			fmt.Fprintf(&b, "\t\tiifname %q meta l4proto udp meta mark %#x accept\n", redirIface, in.TProxyMark)
 		}
 		// Client-facing resolver (master-tier blocky, ADR-0024): clients query the
 		// master gateway for DNS, which lands on INPUT. Open it UDP+TCP, scoped to the

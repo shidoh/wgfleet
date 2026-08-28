@@ -184,10 +184,12 @@ func TestMasterNATSendsClientUDPToMihomo(t *testing.T) {
 	if !strings.Contains(out, "tproxy ip to 10.80.0.1:7896") {
 		t.Errorf("no tproxy rule; client UDP still leaves the master's own uplink:\n%s", out)
 	}
-	// Established transparent flows must be re-marked before the tproxy rule, or
-	// only the first packet of every UDP flow is intercepted.
-	if !strings.Contains(out, "socket transparent 1") {
-		t.Errorf("no divert rule for established transparent sockets:\n%s", out)
+	// No divert chain: `socket transparent 1` is a TCP idiom that for UDP can only
+	// ever match datagrams addressed to mihomo's own listeners — which the guard
+	// below deliberately excludes — and accepting those bypasses the input drop
+	// policy into the self-dial shape of an earlier finding.
+	if strings.Contains(out, "socket transparent 1") {
+		t.Errorf("the divert chain is back; it accepts client UDP addressed to mihomo itself:\n%s", out)
 	}
 	// The same exemptions the TCP redirect honours: private destinations stay
 	// DIRECT, and traffic to the gateway is a request to the master's own services
@@ -202,6 +204,33 @@ func TestMasterNATSendsClientUDPToMihomo(t *testing.T) {
 		if !strings.Contains(tproxyLine, want) {
 			t.Errorf("tproxy rule is missing %q:\n\t%s", want, tproxyLine)
 		}
+	}
+	// A datagram the tproxy could not take must be DROPPED, not forwarded. Measured
+	// on the stand: with mihomo stopped, the client's DNS kept working and left the
+	// MASTER's own uplink — the exact leak this chain exists to end, invisible to the
+	// user because nothing broke.
+	dropLine := ""
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "meta l4proto udp counter drop") {
+			dropLine = line
+		}
+	}
+	if dropLine == "" {
+		t.Errorf("no drop for un-intercepted client UDP; a stopped proxy leaks out the master's uplink:\n%s", out)
+	}
+	for _, want := range []string{`iifname "wg0"`, "ip daddr != 192.168.0.0/16", "ip daddr != 10.80.0.1"} {
+		if !strings.Contains(dropLine, want) {
+			t.Errorf("the drop is not scoped like the rule above it, missing %q:\n\t%s", want, dropLine)
+		}
+	}
+
+	// Statement order decides what a FAILED interception does. nft_tproxy_eval
+	// returns NFT_BREAK when no transparent socket is listening, ending the rule —
+	// so a mark written before the tproxy stays on a packet that was never
+	// intercepted, and the policy route then delivers it to the master's own local
+	// sockets past a drop policy. Written after, the same failure just forwards.
+	if i, j := strings.Index(tproxyLine, "tproxy ip to"), strings.Index(tproxyLine, "meta mark set"); i > j {
+		t.Errorf("the mark is set before the tproxy, so a failed interception still marks the packet:\n\t%s", tproxyLine)
 	}
 }
 

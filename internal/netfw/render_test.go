@@ -753,7 +753,11 @@ func TestMasterInputAcceptsTProxyMarkedPackets(t *testing.T) {
 	if !ok {
 		t.Fatalf("no input chain:\n%s", out)
 	}
-	want := fmt.Sprintf("meta mark %#x accept", TProxyMark)
+	// Scoped: an unscoped `meta mark 0x2 accept` is an unconditional hole in a drop
+	// policy, and the mark is not a capability — anything on the box able to set it
+	// walks through. UDP, on the client interface, which is the only shape a
+	// successfully intercepted client datagram can have.
+	want := fmt.Sprintf("iifname %q meta l4proto udp meta mark %#x accept", "wg0", TProxyMark)
 	if !strings.Contains(input, want) {
 		t.Errorf("input chain never accepts %q; every intercepted client datagram is dropped:\n%s", want, input)
 	}

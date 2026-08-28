@@ -116,22 +116,49 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// right tool because it does NOT rewrite the packet: mihomo reads the original
 	// destination off a transparent socket, which is exactly what a proxy needs.
 	//
-	// Two chains, in the order the kernel runs them. The divert chain re-marks
-	// packets that already belong to an established transparent socket; without it
-	// only the FIRST packet of each flow is intercepted and the rest go back to
-	// leaking. The tproxy chain then catches genuinely new flows, honouring the same
-	// exemptions the TCP redirect does — private destinations stay DIRECT, and the
-	// gateway address belongs to the master's own services, not to the internet.
+	// ONE chain, and the statement order inside its rule is load-bearing.
+	//
+	// `tproxy` comes BEFORE `meta mark set`. nft_tproxy_eval returns NFT_BREAK when
+	// the socket lookup finds no transparent listener, which ends evaluation of the
+	// rule — so with the mark written first, a packet that FAILED to be intercepted
+	// still carried mark 0x2. That mark is consumed by the policy route
+	// (`fwmark 0x2 lookup 51821` → `local default dev lo`) two hooks later, which
+	// makes the kernel treat the packet as locally destined and hand it to the input
+	// chain, where `meta mark 0x2 accept` waved it past a `policy drop` and delivered
+	// it to whatever wildcard-bound socket matched the port. Every mihomo restart —
+	// a compose change, mihomoRedirPlanner, mihomoWGDupPlanner — opened that window,
+	// and on a stock box systemd-resolved is listening on 0.0.0.0:5353. With the mark
+	// written only after a successful interception, a failed lookup degrades to what
+	// the world was before TPROXY existed: the datagram is forwarded and masqueraded.
+	//
+	// There is no companion divert chain. The usual `socket transparent 1` chain at
+	// mangle-10 is a TCP idiom: it re-marks packets belonging to an ESTABLISHED
+	// transparent socket. For UDP the lookup uses the packet's ORIGINAL tuple
+	// (client → 8.8.8.8:53), and mihomo's transparent sockets are bound to the
+	// gateway address, so it never matched an intercepted flow — nothing was leaking
+	// for it to catch, since this chain has no ct-state guard and re-intercepts every
+	// packet anyway. What it DID match was client datagrams addressed to mihomo's own
+	// listeners, which the guard below deliberately excludes and the input drop policy
+	// would otherwise eat; accepting those is the an earlier finding self-dial shape.
 	if in.TProxyAddr != "" {
-		b.WriteString("\tchain client_udp_divert {\n")
-		b.WriteString("\t\ttype filter hook prerouting priority mangle - 10; policy accept;\n")
-		fmt.Fprintf(&b, "\t\tmeta l4proto udp socket transparent 1 meta mark set %#x accept\n", TProxyMark)
-		b.WriteString("\t}\n\n")
-
 		b.WriteString("\tchain client_udp_tproxy {\n")
 		b.WriteString("\t\ttype filter hook prerouting priority mangle; policy accept;\n")
-		fmt.Fprintf(&b, "\t\tiifname %q%s%s meta l4proto udp meta mark set %#x tproxy ip to %s accept\n",
-			in.ClientInterface, guards, gatewayGuard, TProxyMark, in.TProxyAddr)
+		fmt.Fprintf(&b, "\t\tiifname %q%s%s meta l4proto udp tproxy ip to %s meta mark set %#x accept\n",
+			in.ClientInterface, guards, gatewayGuard, in.TProxyAddr, TProxyMark)
+		// FAIL CLOSED. The rule above ends at NFT_BREAK when no transparent socket is
+		// listening — every mihomo restart — and without this second rule the datagram
+		// simply falls through to the forward chain and the masquerade, i.e. it leaves
+		// the MASTER's own uplink. Measured on the stand: stop the container and the
+		// client's DNS keeps working, sourced from the master's public address instead
+		// of an exit's. That is the precise failure this whole chain exists to end, and
+		// it is worse than an outage, because the user cannot see it. An interception
+		// that did not happen is a packet that must not travel.
+		//
+		// Scoped identically to the rule above, so it can only ever catch traffic that
+		// rule was meant to take: the private-destination and gateway exemptions still
+		// go DIRECT, and everything the master itself sends is on another interface.
+		fmt.Fprintf(&b, "\t\tiifname %q%s%s meta l4proto udp counter drop\n",
+			in.ClientInterface, guards, gatewayGuard)
 		b.WriteString("\t}\n\n")
 	}
 

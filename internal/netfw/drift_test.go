@@ -21,8 +21,7 @@ func TestRenderedChainCountsIgnoresEverythingTheKernelIgnores(t *testing.T) {
 	got := renderedChainCounts(out)
 	want := map[string]int{
 		"prerouting":        1, // the tcp dnat; the QUIC drop is gone once UDP is proxied
-		"client_udp_divert": 1,
-		"client_udp_tproxy": 1,
+		"client_udp_tproxy": 2, // intercept, then drop what was not intercepted
 		"postrouting":       1,
 		"egress_leak_guard": 1,
 	}
