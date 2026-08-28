@@ -64,7 +64,7 @@ fleet:
       client_awg:
         listen_port: 443                    # UDP; standard ports are less conspicuous
         address_pool: 10.80.0.0/24          # client WG subnet
-      client_vless:                         # DPI-resistant client transport, alongside client_awg (ADR-0031)
+      client_vless:                         # DPI-resistant client transport, alongside client_awg
         enabled: true                       # omit the block to leave it off
         # listen_port: 0 ⇒ per-master high port in [40000,60000] (443 is inspected; high ports pass)
         # empty_sni: true (default) — no-SNI ClientHello (RU-TSPU bypass)
@@ -88,7 +88,7 @@ fleet:
           log-level: info
           # Resolve via the master's blocky so private/internal domains resolve for proxied
           # clients (the sniffer rewrites dst to the SNI domain and mihomo re-resolves it; public
-          # DNS doesn't know blocky's split → ERR_CONNECTION_CLOSED, an earlier finding). Needs dns_filter.
+          # DNS doesn't know blocky's split → ERR_CONNECTION_CLOSED). Needs dns_filter.
           # dns: { nameserver: [127.0.0.1:53] }
         extra_files:                        # provisioned alongside config.yaml (mihomo include files)
           - path: direct-domains.yaml
@@ -113,11 +113,11 @@ fleet:
     - name: exit-de-1
       region: de
       egress: warp                          # preferred egress method: warp | direct
-      egress_fallback: [direct]             # ordered fallbacks for censorship-adaptive failover (ADR-0017)
+      egress_fallback: [direct]             # ordered fallbacks for censorship-adaptive failover
       warp_mtu: 0                           # WARP interface MTU; 0 ⇒ default 1380 + auto-probe (tracepath, capped, only lowers). Set if the real path is < that.
       address_pool: 10.81.0.0/24
       mgmt_addr: 10.20.0.5                 # ZeroTier address (admin/metrics/DNS bind)
-      transports:                           # master↔exit transport(s), ADR-0025; omit ⇒ AWG-only
+      transports:                           # master↔exit transport(s); omit ⇒ AWG-only
         awg: { enabled: true, listen_port: 0 }       # primary transport. WG UDP port; 0 ⇒ stable-random derived
         reality:                            # fallback transport (VLESS+REALITY+XHTTP, xray) for when AWG is DPI-blocked
           enabled: true

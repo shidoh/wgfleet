@@ -99,3 +99,72 @@ func shippedFiles(t *testing.T) []string {
 	}
 	return out
 }
+
+// Every intra-doc link in a shipped document must resolve INSIDE the archive.
+//
+// The docs link each other by repo name (docs/cli.md); the release target renames
+// them on the way in (CLI.md). On a case-sensitive filesystem — every server these
+// ship to — that left 16 dead links, the first of them on the first page a tester
+// opens, and six more pointed at documents the archive did not carry at all. The
+// Makefile now rewrites the names and ships the missing files; this is what keeps
+// the two halves from drifting apart again.
+func TestShippedDocsLinkOnlyToShippedDocs(t *testing.T) {
+	mk, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Parse the release target's copies: repo path -> archive name.
+	shipped := map[string]string{} // repo path (e.g. docs/cli.md) -> CLI.md
+	archive := map[string]bool{}   // names present in the archive
+	cp := regexp.MustCompile(`(?m)^\tcp (\S+\.md)\s+\$\(DIST\)/\$\(PKG\)/(\S+)$`)
+	for _, m := range cp.FindAllStringSubmatch(string(mk), -1) {
+		shipped[m[1]] = m[2]
+		archive[m[2]] = true
+	}
+	if len(shipped) < 8 {
+		t.Fatalf("parsed only %d shipped docs from the Makefile; the parser has drifted", len(shipped))
+	}
+
+	link := regexp.MustCompile(`\]\(([^)#]+\.md)`)
+	for repoPath, archiveName := range shipped {
+		body, err := os.ReadFile(filepath.Join("..", "..", repoPath))
+		if err != nil {
+			t.Errorf("%s is listed in the release archive but not in the repo: %v", repoPath, err)
+			continue
+		}
+		for _, m := range link.FindAllStringSubmatch(string(body), -1) {
+			target := m[1]
+			if strings.HasPrefix(target, "http") {
+				continue
+			}
+			base := strings.TrimPrefix(strings.TrimPrefix(target, "../"), "./")
+			// A link may already name the ARCHIVE path (examples/RU-SPLIT-TUNNEL.md),
+			// which is correct as written and needs no rewrite.
+			if archive[base] {
+				continue
+			}
+			// Otherwise it names a repo doc, and the Makefile's rewrite turns it into
+			// the archive name below.
+			renamed, isShipped := shipped["docs/"+base]
+			if !isShipped {
+				renamed, isShipped = shipped[base]
+			}
+			if !isShipped {
+				// Not a doc the archive carries under a renamed form; it must at least
+				// exist in the repo, or the link is dead everywhere.
+				if _, err := os.Stat(filepath.Join("..", "..", "docs", base)); err != nil {
+					if _, err2 := os.Stat(filepath.Join("..", "..", base)); err2 != nil {
+						t.Errorf("%s links %q, which exists nowhere", repoPath, target)
+					}
+				}
+				t.Errorf("%s (ships as %s) links %q, which the release archive does not carry — "+
+					"either add it to release-archive or stop linking it from a shipped document",
+					repoPath, archiveName, target)
+				continue
+			}
+			if !archive[renamed] {
+				t.Errorf("%s links %q which maps to %q, absent from the archive", repoPath, target, renamed)
+			}
+		}
+	}
+}

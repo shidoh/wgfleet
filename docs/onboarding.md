@@ -61,7 +61,7 @@ pre-flight) and joins ZeroTier. Then, in **ZeroTier Central**:
    ZeroTier agree.
 
 > **Why mgmt_addr matters:** every admin/metrics/DNS surface binds the ZeroTier
-> address only, never the public interface (docs/DESIGN.md §9). The provisioner and
+> address only, never the public interface. The provisioner and
 > agent also talk to the controller over this overlay.
 
 ## 2. Describe the fleet
@@ -172,7 +172,7 @@ buttons or store flags.
   A kernel upgrade rebuilds it via DKMS and `modules-load.d` re-inserts it on boot.
 - **`mgmt_addr` is the ZeroTier IP**, planned in advance and assigned in ZT Central.
 - **WARP MTU**: if egress packets fragment / "first N requests fail", the real
-  WARP path is below 1500 — pin `exits[].warp_mtu` (an earlier finding: 1320–1420).
+  WARP path is below 1500 — pin `exits[].warp_mtu` (typically 1320–1420).
 - **WARP blocked by the ISP**: if `warp-egress` stays red and the tunnel never comes up
   (`wg show wgcf` → `0 B received`), it may be a path/provider block of UDP to
   Cloudflare's WARP endpoint, not a wgfleet issue. Confirm with

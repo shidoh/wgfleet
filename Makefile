@@ -82,6 +82,31 @@ controller-linux:
 # tarball filename, which DOES carry the version.
 PKG     := wgfleet-linux-$(ARCH)
 ARCHIVE := wgfleet-$(VERSION)-linux-$(ARCH)
+
+# fixlinks rewrites repo doc names to their archive names inside one file.
+# $(1) file, $(2) prefix ("" at the archive root, "../" one level down).
+#
+# perl rather than sed: BSD sed has no alternation inside \( \), so the obvious
+# expression silently matched nothing on macOS and the archive shipped with the
+# broken links it was meant to fix.
+define fixlinks
+perl -pi -e '\
+  s{\]\((?:\./|\.\./)?QUICKSTART\.md}{]($(2)INSTALL.md}g; \
+  s{\]\((?:\./|\.\./)?configuration\.md}{]($(2)CONFIGURATION.md}g; \
+  s{\]\((?:\./|\.\./)?master-migration\.md}{]($(2)MASTER-MIGRATION.md}g; \
+  s{\]\((?:\./|\.\./)?client-migration\.md}{]($(2)CLIENT-MIGRATION.md}g; \
+  s{\]\((?:\./|\.\./)?support-bundle\.md}{]($(2)SUPPORT-BUNDLE.md}g; \
+  s{\]\((?:\./|\.\./)?upgrade\.md}{]($(2)UPGRADE.md}g; \
+  s{\]\((?:\./|\.\./)?operations\.md}{]($(2)OPERATIONS.md}g; \
+  s{\]\((?:\./|\.\./)?cli\.md}{]($(2)CLI.md}g; \
+  s{\]\((?:\./|\.\./)?manifest\.md}{]($(2)MANIFEST.md}g; \
+  s{\]\((?:\./|\.\./)?colocated-controller-master\.md}{]($(2)COLOCATED-CONTROLLER-MASTER.md}g; \
+  s{\]\((?:\./|\.\./)?onboarding\.md}{]($(2)ONBOARDING.md}g; \
+  s{\]\((?:\./|\.\./)?SECURITY\.md}{]($(2)SECURITY.md}g; \
+  s{\]\((?:\./|\.\./)?(?:docs/)?recipes/ru-split-tunnel-dns-filter\.md}{]($(2)examples/RU-SPLIT-TUNNEL.md}g; \
+' "$(1)"
+endef
+
 release-archive: agent-linux controller-linux
 	@rm -rf $(DIST)/$(PKG) $(DIST)/wgfleet-*-linux-$(ARCH).tar.gz
 	@mkdir -p $(DIST)/$(PKG)/examples $(DIST)/$(PKG)/systemd $(DIST)/$(PKG)/monitoring
@@ -98,6 +123,12 @@ release-archive: agent-linux controller-linux
 	cp docs/upgrade.md                          $(DIST)/$(PKG)/UPGRADE.md
 	cp docs/operations.md                       $(DIST)/$(PKG)/OPERATIONS.md
 	cp docs/cli.md                              $(DIST)/$(PKG)/CLI.md
+	# Linked from the docs above and, until now, absent from the archive: a tester
+	# following INSTALL.md hit a dead link on the first page.
+	cp docs/manifest.md                         $(DIST)/$(PKG)/MANIFEST.md
+	cp docs/colocated-controller-master.md      $(DIST)/$(PKG)/COLOCATED-CONTROLLER-MASTER.md
+	cp docs/onboarding.md                       $(DIST)/$(PKG)/ONBOARDING.md
+	cp SECURITY.md                              $(DIST)/$(PKG)/SECURITY.md
 	cp deploy/deploy-master.sh                  $(DIST)/$(PKG)/deploy-master.sh
 	cp deploy/prepare-node.sh                   $(DIST)/$(PKG)/prepare-node.sh
 	cp deploy/client-diag.sh                    $(DIST)/$(PKG)/client-diag.sh
@@ -105,6 +136,14 @@ release-archive: agent-linux controller-linux
 	cp deploy/examples/controller-split-ru.yaml $(DIST)/$(PKG)/examples/
 	cp docs/recipes/ru-split-tunnel-dns-filter.md $(DIST)/$(PKG)/examples/RU-SPLIT-TUNNEL.md
 	cp deploy/systemd/*.service                 $(DIST)/$(PKG)/systemd/
+	# Rewrite intra-doc links to the names the archive actually uses.
+	#
+	# Every doc links its siblings by their REPO name (docs/cli.md) and this target
+	# renames them on the way in (CLI.md). On a case-sensitive filesystem — which is
+	# every server these ship to — that left 16 dead links, starting on the first page
+	# a tester opens. Files under examples/ sit one level down, so they get ../.
+	@cd $(DIST)/$(PKG) && for f in *.md; do $(call fixlinks,$$f,); done
+	@cd $(DIST)/$(PKG) && for f in examples/*.md; do $(call fixlinks,$$f,../); done
 	cp deploy/monitoring/grafana-dashboard.json deploy/monitoring/README.md $(DIST)/$(PKG)/monitoring/
 	cp deploy/monitoring/servicemonitor.yaml deploy/monitoring/scrapeconfig.yaml deploy/monitoring/vmstaticscrape.yaml $(DIST)/$(PKG)/monitoring/
 	cp deploy/monitoring/vmrule.yaml deploy/monitoring/prometheusrule.yaml $(DIST)/$(PKG)/monitoring/
