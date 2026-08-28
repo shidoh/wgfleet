@@ -41,7 +41,8 @@ Precedence, lowest to highest:
 3. **Environment override** — any key can be overridden with a `WGFLEET_`-prefixed
    env var: uppercase the path and replace dots with underscores.
    `controller.listen` → `WGFLEET_CONTROLLER_LISTEN=0.0.0.0:9443`.
-4. **CLI flag**, where one exists (`--listen`, `--metrics`, `--config`, …).
+4. **CLI flag**, where one exists (`--config`, `--store`, `--metrics`, …). There is no
+   `--listen`: the controller's listen addresses come from the manifest only.
 
 Durations are Go duration strings: `30s`, `5m`, `24h`, `168h`. Sizes and ports are
 plain integers. Lists accept YAML sequences or a comma-separated string.

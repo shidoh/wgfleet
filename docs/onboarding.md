@@ -147,11 +147,16 @@ installs the agent + systemd unit, and starts it. The agent then reconciles.
 - **Web UI** (`controller.webui`, ZeroTier-only): node should move
   `Pending → Provisioning → Reconciling → Ready`, with per-check health.
 - **Metrics** (`controller.metrics`): `wgfleet_nodes{state="Ready"}`.
-- **wg-easy on the master comes up without the setup wizard.** The agent seeds its
-  unattended setup (admin user + host/port); the admin password is generated on the
-  master and never sent to the controller. Read it back to log into the wg-easy UI:
-  `sudo cat /etc/wgfleet/wg-easy-admin-password` (username `admin`). Set the master's
-  `public_ip` — it is wg-easy's `INIT_HOST` and is required for unattended setup.
+- **Client credentials.** With `client_awg.managed: true` — the default for a new
+  fleet — the agent owns the client interface itself and there is no wg-easy: issue,
+  pause, rename and revoke credentials on the master's page in the console, and hand
+  each person their own self-service link. Set the master's `public_ip`; it is the
+  endpoint written into every client config.
+
+  Only on a master still running wg-easy (a fleet part-way through the migration) is
+  there a wg-easy UI to log into: `sudo cat /etc/wgfleet/wg-easy-admin-password`
+  (username `admin`). That file does not exist once the agent has taken the interface
+  over.
 - An exit reaches `Ready` only when its self-checks pass: fresh WG handshake,
   WARP egress actually exits via Cloudflare, DNS filter resolves.
 

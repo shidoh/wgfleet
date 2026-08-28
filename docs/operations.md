@@ -25,13 +25,35 @@ Plan output shows files (with secrets redacted), commands, and DB updates.
 - **Actions** (all confirmed POSTs with CSRF + same-origin checks):
   - **Provision** — SSH-bootstrap a `Pending` node asynchronously (Pending → Provisioning → Ready).
   - **Upgrade** — roll the agent binary forward over SSH without tearing down the data plane.
-  - **Drain** — keep the node as a configured proxy but remove it from load-balance;
-    existing connections survive, no new traffic.
-  - **Undrain** — rejoin the load-balance group.
+  - **Take out of routing** (drain) — keep the node as a configured proxy but remove
+    it from load-balance; existing connections survive, no new traffic.
+  - **Resume routing** (undrain) — rejoin the load-balance group.
   - **Decommission** — tell the agent to tear down the data plane on next reconcile
     (stop services, clear routing/firewall, best-effort reverse reconcile).
   - **Delete** — remove the node from inventory.
   - **Download backup** — export an age-encrypted archive of the controller (and co-located master) state.
+
+## Client credentials (AmneziaWG)
+
+On a master with `client_awg.managed`, its node page has a **Client credentials**
+panel. This is where the day-2 work lives, and all of it is one click:
+
+- **Issue** — creates a credential and takes you straight to its card. Hand the
+  person their **self-service link** (a page carrying only their own profile, reached
+  over the tunnel or the portal address) rather than the file itself, so a lost phone
+  is a revoke rather than a re-send. The `.conf` and a QR are on the same card.
+- **Pause** — the reversible one. The peer is removed from the interface, so the
+  device stops connecting and their self-service page says so; the same config works
+  again the moment you resume. This is what you want for a device that will come
+  back: a holiday, a phone being repaired, a suspicion you have not confirmed.
+- **Rename** — the credential's name is only a label for you. Renaming changes
+  nothing the person holds.
+- **Revoke** — permanent. The credential and its key are deleted, the person is off
+  the fleet immediately, and there is no way back except issuing a new profile. The
+  console asks you to confirm on its own page, naming the credential, because the
+  browser dialog is JavaScript and can silently fail to load.
+
+A VLESS credential (below) has no pause: revoking is the only way to cut one off.
 
 ## Client access (VLESS)
 
@@ -147,6 +169,41 @@ the configured endpoint.
 ZeroTier on the new node as the **same mgmt address** — the CA, certs, and endpoint all
 match and the fleet re-adopts itself. If the mgmt address changes, update every node's
 `agent.yaml` `controller:` and re-issue the server cert SAN (restore prints this reminder).
+
+## Certificates
+
+Every node authenticates to the controller with an mTLS certificate issued for a
+year, and **agents renew their own** between 70% and 90% of that — in place, over the
+control plane, with no restart and nothing for you to do. The renewal moment is
+spread deterministically per node name, so a fleet provisioned in one week does not
+renew in one week.
+
+What to watch: `wgfleet_agent_cert_expiry_timestamp_seconds`. On a healthy node that
+number steps forward roughly once a year; a node whose remaining time **stops going
+up** is one whose renewal is failing, and by the time `WgfleetNodeCertExpiring` fires
+it has been failing for at least forty days. The usual causes are a node that has
+been offline, a controller with no CA loaded, or a clock that is wrong.
+
+`wgfleet-controller --certs check-expiration` prints what THIS host holds: the fleet
+CA, and the local agent's certificate on a co-located master. It cannot see the other
+nodes — those certificates are on those nodes.
+
+If one does lapse, the automatic path is closed to it: renewal travels over the mTLS
+channel the expired certificate opens, so the handshake fails before the request. Use
+the out-of-band path:
+
+```bash
+sudo wgfleet-controller --certs renew --node exit-de-1
+```
+
+It writes `pki/exit-de-1/node.{crt,key}` and prints the scp/ssh lines for that node,
+taken from the manifest. Delete the local copy afterwards — it is a live node
+identity — and note that the old certificate is not revoked (there is no CRL); it
+simply stops being useful when it expires.
+
+A node that leaves the fleet cannot renew either: `Decommission`, or deletion from
+the inventory, refuses the request. That is deliberate, and it is the only revocation
+this system has.
 
 ## Metrics
 

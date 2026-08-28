@@ -19,7 +19,7 @@ Every flag on both binaries. For what to *do* with them see
 | `--issue-node <id>` | | issue an mTLS bundle (`node.crt`/`node.key`/`ca.crt`) for a node, then exit |
 | `--issue-out <dir>` | `pki/<id>` | output dir for `--issue-node` |
 | `--provision <node>` | | SSH-bootstrap the named fleet node, then exit |
-| `--plan` | | with `--provision`, `--upgrade-agent`, `--rolling-upgrade` or `--import-wg-easy`: dry-run, change nothing |
+| `--plan` | | with `--provision`, `--upgrade-agent`, `--rolling-upgrade`, `--import-wg-easy` or `--restore`: dry-run, change nothing. It is a modifier, never a command: on its own, and with `--backup` or `--certs` (neither of which has a dry run), it is refused rather than ignored |
 | `--agent-bin <path>` | (from config) | with `--provision` or `--upgrade-agent`: agent binary to install |
 | `--controller-endpoint <addr>` | (from config) | with `--provision`: endpoint the agent will dial |
 | `--upgrade-agent <node>` | | roll the agent binary forward over SSH on the named node, then exit |
@@ -31,6 +31,9 @@ Every flag on both binaries. For what to *do* with them see
 | `--age-recipient <rcpt>` | | with `--backup`: encrypt to this age recipient instead of prompting for a passphrase |
 | `--age-identity <path>` | | with `--restore`: the age identity file for an archive that was encrypted to a recipient. Omit it for a passphrase-encrypted archive, which age prompts for. **An archive written with `--age-recipient` cannot be restored without this**, and that includes every archive the Web UI's backup button produces — that path requires a recipient |
 | `--plan` | | with `--restore`: show what would be laid down, change nothing |
+| `--certs check-expiration` | | print when the certificates ON THIS HOST expire — the fleet CA, and the agent's own certificate when this box runs one — then exit. The other nodes' certificates live on those nodes and are renewed by their own agents; watch `wgfleet_agent_cert_expiry_timestamp_seconds` for the fleet-wide view, and look at any node whose remaining time stops going up |
+| `--certs renew --node <id>` | | re-issue one node's certificate out of band and write it under `pki/<id>/`, then exit. This is the fallback for the case the automatic path cannot cover: a certificate that has ALREADY expired, whose node can no longer open the mTLS channel a renewal would travel over. Prints the exact scp/ssh lines for that node, taken from the manifest. The old certificate is **not** revoked — there is no CRL — so both are valid until the old one expires. Delete the local copy afterwards; it is a live node identity |
+| `--node <id>` | | with `--certs renew`: which node to re-issue for |
 | `--support-bundle` | | write a read-only diagnostic archive (no secrets, not encrypted) and exit; requires `--fleet` |
 | `--fleet` | | with `--support-bundle`: collect the store inventory and walk every exit over SSH |
 | `--note <text>` | | with `--support-bundle`: describe what went wrong; embedded in the archive and subject to the same secret checks as everything else |

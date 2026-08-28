@@ -2,7 +2,7 @@
 
 You do not need a separate VM for the controller. The control plane is **pull-based**
 — the agent always dials the controller, the controller never dials the agent — so
-running `wgfleet-controller` and a `wgfleet-agent --role master` on the **same box**
+running `wgfleet-controller` and a `wgfleet-agent` on the **same box**
 is a fully supported topology. It is the recommended default for small fleets where
 a dedicated controller VM is not worth it.
 

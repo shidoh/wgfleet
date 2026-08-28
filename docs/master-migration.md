@@ -91,21 +91,29 @@ the whole file anyway, so anything syntactically valid will do:
 ```bash
 sudo sed -i "s|<mgmt-zt-ip>|$(ip -4 -o addr show dev zt+ | awk '{print $4}' | cut -d/ -f1)|; \
              s|<public-ip>|$(curl -4 -s ifconfig.me)|" /etc/wgfleet/controller.yaml
+# If the archive was written with --age-recipient (step 1's headline command),
+# add --age-identity /root/key.txt to BOTH lines; without it age cannot decrypt
+# at all and the first line fails before it shows you anything.
 sudo wgfleet-controller --restore /root/fleet.tar.age --plan   # shows the change set
 sudo wgfleet-controller --restore /root/fleet.tar.age
 ```
 
-If the archive was written with `--age-recipient` rather than a passphrase, pass
-the identity too — without it `age` cannot decrypt at all:
+With a recipient-encrypted archive the two commands read:
 
 ```bash
+sudo wgfleet-controller --restore /root/fleet.tar.age --age-identity /root/key.txt --plan
 sudo wgfleet-controller --restore /root/fleet.tar.age --age-identity /root/key.txt
 ```
 
-Restore moves any existing destination aside to `<path>.bak-<timestamp>` and
-writes each file atomically — including the config templates `install.sh` just
-dropped. It writes ONLY to the paths this host's own configuration names; an
-archive asking for anywhere else is refused.
+Restore checks every destination in the archive BEFORE it writes anything, then
+moves each existing file aside to `<path>.bak-<timestamp>` and writes atomically —
+including the config templates `install.sh` just dropped. It writes ONLY to the
+paths this host's own configuration names, with this host's own permissions; an
+archive asking for anywhere else is refused before the first write, so a rejected
+archive leaves the box exactly as it found it.
+
+If the refusal names a path you recognise, this host's `controller.yaml` puts that
+file somewhere the old one did not. Make the two agree and run the restore again.
 
 Start the controller first: the agent's first spec pull must find it serving.
 
