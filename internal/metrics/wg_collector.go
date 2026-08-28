@@ -36,6 +36,10 @@ type WGCollector struct {
 	rxBytes      *prometheus.Desc
 	txBytes      *prometheus.Desc
 	peersActive  *prometheus.Desc
+	// collectorUp says whether the dump could be read at all. Without it, "we cannot
+	// see the peers" and "there are no peers" are the same silence — and the alert
+	// that matters keys on a series that simply would not exist.
+	collectorUp *prometheus.Desc
 }
 
 var _ prometheus.Collector = (*WGCollector)(nil)
@@ -69,6 +73,10 @@ func NewWGCollector(reg *prometheus.Registry, node, role string, ifaces []string
 			prometheus.BuildFQName(namespace, "wg", "peers_active"),
 			"Number of peers on an interface with a handshake within the recent window.",
 			[]string{"iface"}, cl),
+		collectorUp: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "wg", "collector_up"),
+			"1 when this node's peer dump could be read, 0 when it could not. Absence of the peer series is otherwise indistinguishable from having no peers.",
+			[]string{"iface"}, cl),
 	}
 	reg.MustRegister(c)
 	return c
@@ -80,6 +88,7 @@ func (c *WGCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.rxBytes
 	ch <- c.txBytes
 	ch <- c.peersActive
+	ch <- c.collectorUp
 }
 
 // Collect implements prometheus.Collector. Each interface is probed
@@ -92,8 +101,13 @@ func (c *WGCollector) Collect(ch chan<- prometheus.Metric) {
 		out, err := c.dump(ctx, iface)
 		cancel()
 		if err != nil {
+			// Say so, rather than contributing nothing. A missing peer series and a
+			// peer count of zero look identical to an alerting rule, and the rule that
+			// matters here is the one that says every user has lost the tunnel.
+			ch <- prometheus.MustNewConstMetric(c.collectorUp, prometheus.GaugeValue, 0, iface)
 			continue
 		}
+		ch <- prometheus.MustNewConstMetric(c.collectorUp, prometheus.GaugeValue, 1, iface)
 		peers := parseWGDump(out)
 		active := 0
 		for _, p := range peers {
@@ -112,14 +126,42 @@ func (c *WGCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-// wgShowDump runs the real `wg show <iface> dump`. AmneziaWG's `awg` produces the
-// identical dump format, but `wg` reads awg kernel interfaces too, so one command
-// covers both. A non-zero exit (no such interface, wg not installed, non-Linux)
-// returns the error, which the collector treats as "no series".
+// wgShowDump runs `awg show <iface> dump`, falling back to `wg show`.
+//
+// It used to run `wg` alone, justified by a comment claiming "wg reads awg kernel
+// interfaces too, so one command covers both". Neither half of that held on a real
+// node: the master has no `wg` installed at all, and on an exit `wg show awg0 dump`
+// answers "Operation not supported". The whole wgfleet_wg_* family was therefore
+// emitted by nobody, on any node, for as long as it has existed — and
+// WgfleetNoClientPeers, the one alert that says "your users have lost the VPN",
+// could never fire. `awg` is the binary these nodes actually have, so it goes
+// first; `wg` stays as the fallback for a plain-WireGuard node.
 func wgShowDump(ctx context.Context, iface string) (string, error) {
-	out, err := exec.CommandContext(ctx, "wg", "show", iface, "dump").Output()
+	return dumpWith(ctx, runDumpCmd, iface)
+}
+
+// dumpRunner executes one dump binary. Injected so the ordering above is testable
+// without either binary being installed.
+type dumpRunner func(ctx context.Context, bin, iface string) (string, error)
+
+func runDumpCmd(ctx context.Context, bin, iface string) (string, error) {
+	out, err := exec.CommandContext(ctx, bin, "show", iface, "dump").Output()
 	if err != nil {
 		return "", err
 	}
 	return string(out), nil
+}
+
+func dumpWith(ctx context.Context, run dumpRunner, iface string) (string, error) {
+	var firstErr error
+	for _, bin := range []string{"awg", "wg"} {
+		out, err := run(ctx, bin, iface)
+		if err == nil {
+			return out, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return "", firstErr
 }
