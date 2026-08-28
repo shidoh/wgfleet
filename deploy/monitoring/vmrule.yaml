@@ -301,13 +301,12 @@ spec:
         description: The nftables AS blacklist ({{ $labels.family }}) on {{ $labels.node }} has 0 entries
           — the feed probe is failing and abuse filtering is off.
     - alert: WgfleetNodeCertExpiring
-      # Node certificates are issued for a year and NOTHING renews them: no RPC, no
-      # code path that reads NotAfter after issuance, no runbook step. The
-      # controller re-mints its own server certificate on every start, so the server
-      # half self-heals and the node half does not — a fleet provisioned across one
-      # month falls off the control plane across one month, one node per anniversary,
-      # and without this rule the first symptom is a node that stopped reporting.
-      # 30 days is chosen to be longer than any plausible holiday.
+      # Node certificates are issued for a year and the agent renews its own between
+      # 70% and 90% of that, in place, over the control plane. So this rule no longer
+      # means "the anniversary is near" — it means RENEWAL IS FAILING, and has been
+      # for at least 40 days by the time it fires: the node has been offline, or the
+      # controller has no CA loaded, or its clock is wrong. 30 days is what is left
+      # after the renewal window closes, which is also longer than any holiday.
       expr: (wgfleet_agent_cert_expiry_timestamp_seconds - time()) < 30 * 86400
       for: 1h
       labels:
@@ -315,9 +314,10 @@ spec:
         service: wgfleet
       annotations:
         summary: mTLS certificate for {{ $labels.node }} expires in {{ $value | humanizeDuration }}
-        description: The control-plane certificate for {{ $labels.node }} expires soon and there is no
-          automatic renewal. Re-issue it (wgfleet-controller --issue-node) and install it on the node
-          before it lapses, or the agent will be refused and the node will stop converging.
+        description: The control-plane certificate for {{ $labels.node }} expires soon, which means its
+          agent has failed to renew it for at least 40 days — check that the node is reachable and that
+          the controller has a CA loaded. If it lapses the agent is refused and the node stops
+          converging; recover it out of band with `wgfleet-controller --certs renew {{ $labels.node }}`.
     - alert: WgfleetNodeCertExpired
       expr: (wgfleet_agent_cert_expiry_timestamp_seconds - time()) < 0
       for: 5m
@@ -326,8 +326,10 @@ spec:
         service: wgfleet
       annotations:
         summary: mTLS certificate for {{ $labels.node }} has EXPIRED
-        description: '{{ $labels.node }} can no longer authenticate to the controller. It is running its
-          last-good configuration and will not receive another one until a new certificate is installed.'
+        description: '{{ $labels.node }} can no longer authenticate to the controller, so it can no longer
+          renew itself either — the renewal RPC needs the handshake the expiry has already closed. It is
+          running its last-good configuration until a certificate is installed out of band
+          (`wgfleet-controller --certs renew {{ $labels.node }}`, delivered over SSH).'
     - alert: WgfleetProbeStale
       # Guarded against the never-succeeded case: that probe reports a timestamp of 0
       # BY DESIGN, so an unguarded subtraction claims ~56 years of staleness, fires

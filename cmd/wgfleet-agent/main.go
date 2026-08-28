@@ -245,11 +245,13 @@ func run() error {
 		// best-effort). Firewall metrics are only populated on exits (table inet
 		// wgfleet), but the collector is safe to register everywhere.
 		metrics.NewWGCollector(reg, cfg.Agent.NodeID, string(role), wgIfacesForRole(role), nil)
-		// When this node's control-plane certificate expires. Nothing renews it, so
-		// the only defence is that somebody is looking; a failure to read it is
-		// logged and not fatal, because a node that cannot publish the date is still
-		// a node that should keep reconciling.
-		if err := metrics.NewCertExpiryGauge(reg, cfg.Agent.NodeID, string(role), cfg.Agent.Identity.Cert); err != nil {
+		// When this node's control-plane certificate expires. The agent renews it in
+		// place (renewCertificateIfDue, below), so the series is read at scrape time
+		// rather than at boot — a frozen one would report the pre-renewal date
+		// forever and alert on it. A failure to read the file at startup is logged
+		// and not fatal, because a node that cannot publish the date is still a node
+		// that should keep reconciling.
+		if err := metrics.NewCertExpiryCollector(reg, cfg.Agent.NodeID, string(role), cfg.Agent.Identity.Cert); err != nil {
 			slog.Warn("certificate expiry gauge unavailable", "node", cfg.Agent.NodeID, "err", err)
 		}
 		metrics.NewFWCollector(reg, cfg.Agent.NodeID, string(role), nil)
