@@ -55,3 +55,32 @@ func TestMihomoRedirPlannerRebindsOnALostTProxyListener(t *testing.T) {
 		}
 	}
 }
+
+// A spec mihomo cannot render must defer THIS component, not abort the pass.
+//
+// The engine stops at the first planner error and this planner runs ahead of the
+// master NAT, DOCKER-USER, blocky and the VLESS inbound. So "every exit is drained"
+// — a condition the controller can produce and the node cannot fix — used to stop
+// the master converging its own firewall. A master that rebooted in that state came
+// back with no client DNAT, no TPROXY and no masquerade, and the self-heal branches
+// written for exactly that never got to run.
+func TestMihomoPlannerDefersInsteadOfAbortingThePass(t *testing.T) {
+	p := mihomoPlanner{paths: PathsUnder(t.TempDir()), privateKey: "k"}
+	// No exit tunnels at all: RenderConfig refuses this, by design.
+	spec := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{BindAddress: "10.80.0.1"}}
+
+	acts, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Plan() = %v; an unrenderable spec must not fail the pass", err)
+	}
+	var dump string
+	for _, a := range acts {
+		dump += a.Summary + "\n"
+		if a.Changes() {
+			t.Errorf("a deferred pass must change nothing, got %q", a.Summary)
+		}
+	}
+	if !strings.Contains(dump, "keeping the last-good config") {
+		t.Errorf("the deferral does not say why:\n%s", dump)
+	}
+}

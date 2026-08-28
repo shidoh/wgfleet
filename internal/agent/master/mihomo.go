@@ -79,7 +79,20 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 		TunnelPrivateKey: p.tunnelKey, Resolvers: mihomoResolvers(spec),
 	})
 	if err != nil {
-		return nil, err
+		// Defer this component; do NOT fail the pass.
+		//
+		// The engine aborts on the first planner error, and this planner runs before
+		// the master NAT, DOCKER-USER, blocky and the client VLESS inbound. So a
+		// spec the controller sent that mihomo cannot render — every exit drained, a
+		// tunnel whose per-tunnel key will not resolve, params mihomo's userspace
+		// backend rejects — stopped ALL of them. On a master that rebooted in that
+		// state it came back with no client DNAT, no TPROXY and no masquerade, and
+		// the !isLoaded() self-heal branches written for exactly that never ran.
+		//
+		// Keeping the last-good config is what this situation calls for anyway: the
+		// data plane on disk still works, and the fault is upstream, not here.
+		return []reconcile.Action{reconcile.NoChangeAction("mihomo (data plane)",
+			"spec rejected, keeping the last-good config: "+err.Error())}, nil
 	}
 	// Snapshot the on-disk config BEFORE the FileAction overwrites it, so we can tell
 	// whether the wireguard proxies (AmneziaWG params) changed and a hot reload would
