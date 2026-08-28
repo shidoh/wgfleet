@@ -183,20 +183,26 @@ func (b *Broker) RegisterClientWGKey(ctx context.Context, nodeID, publicKey stri
 // desired state, or nil when the transport is disabled. Camouflage falls back
 // per-exit-style (manifest → fleet default → safe built-in); the issued client
 // credentials come from the store (UI-managed), and empty_sni defaults ON.
-func (b *Broker) clientVLESSSpec(ctx context.Context, master config.MasterConfig) *domain.ClientVLESSServerSpec {
+func (b *Broker) clientVLESSSpec(ctx context.Context, master config.MasterConfig) (*domain.ClientVLESSServerSpec, error) {
 	cv := master.ClientVLESS
 	if !cv.Enabled {
-		return nil
+		return nil, nil
 	}
 	sni := firstNonEmpty(cv.SNI, cv.DestDomain, b.fleet.RealityDefaultSNI, DefaultRealitySNI)
 	dest := firstNonEmpty(cv.DestHostPort(), b.fleet.RealityDefaultDest, sni+":443")
 	clients, err := b.store.ListVLESSClients(ctx, master.Name)
 	if err != nil {
-		// Render the inbound with no clients rather than failing the whole master
-		// spec — the listener still comes up; issuance re-renders it.
-		b.log.Warn("listing client vless credentials failed; rendering inbound with none",
-			"master", master.Name, "err", err)
-		clients = nil
+		// Fail the render rather than emit an inbound with no clients.
+		//
+		// This used to log a warning and carry on with nil, on the reasoning that "the
+		// listener still comes up". It does — authenticating nobody. The agent applies
+		// the changed config and restarts xray, so one transient store read de-issues
+		// every VLESS credential until the next successful render. The client interface
+		// refuses exactly this shape for exactly this reason, and the argument for
+		// treating VLESS differently was that fewer people use it — a usage assumption,
+		// not a safety one, and wrong in the case that matters: VLESS is the transport
+		// people reach for precisely when AWG is being throttled.
+		return nil, fmt.Errorf("client VLESS inbound: listing credentials: %w", err)
 	}
 	return &domain.ClientVLESSServerSpec{
 		ListenPort:    master.ClientVLESSListenPort(),
@@ -212,7 +218,7 @@ func (b *Broker) clientVLESSSpec(ctx context.Context, master config.MasterConfig
 		AllowIPv6:     cv.AllowIPv6,
 		SocksPort:     domain.ClientVLESSSocksPort,
 		Image:         config.ResolveImage(cv.Image, cv.Tag, compose.DefaultXrayImage),
-	}
+	}, nil
 }
 
 // IssueVLESSClient mints a fresh client credential (random UUID + REALITY short-id)
@@ -618,7 +624,11 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	ms.Compose = b.composeSpec(ctx, master)
 	// Client-facing VLESS+REALITY+XHTTP inbound (a DPI-resistant alternative to the
 	// client AWG). Its world-facing TCP port opens like any other public service.
-	ms.ClientVLESS = b.clientVLESSSpec(ctx, master)
+	vlessSpec, verr := b.clientVLESSSpec(ctx, master)
+	if verr != nil {
+		return domain.NodeSpec{}, verr
+	}
+	ms.ClientVLESS = vlessSpec
 	if ms.ClientVLESS != nil {
 		spec.Firewall.PublicTCPPorts = append(spec.Firewall.PublicTCPPorts, ms.ClientVLESS.ListenPort)
 	}

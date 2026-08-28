@@ -1244,3 +1244,45 @@ func TestExitSpecFailsRatherThanDroppingTheMasterPeer(t *testing.T) {
 		t.Errorf("render error = %v, want it to wrap the store failure", err)
 	}
 }
+
+// flakyVLESSStore fails exactly one call: listing VLESS credentials.
+type flakyVLESSStore struct {
+	store.Store
+	err error
+}
+
+func (f flakyVLESSStore) ListVLESSClients(context.Context, string) ([]domain.VLESSClient, error) {
+	return nil, f.err
+}
+
+// A transient store read must not de-issue every VLESS client.
+//
+// This rendered the inbound with nil clients and logged a warning, on the reasoning
+// that "the listener still comes up". It does — authenticating nobody: the config
+// changes, the agent restarts xray, and every credential stops working until the
+// next successful render. The client interface refuses this exact shape; the excuse
+// for treating VLESS differently was that fewer people use it, which is a usage
+// assumption rather than a safety argument, and wrong where it counts — VLESS is
+// what people fall back to when AWG is being throttled.
+func TestClientVLESSSpecFailsRatherThanDeIssuingEveryone(t *testing.T) {
+	ctx := context.Background()
+	fleet := testFleet()
+	fleet.Masters[0].ClientVLESS.Enabled = true
+	b, st := newBrokerWithFleet(t, fleet)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1",
+		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+
+	if _, err := b.RenderNodeSpec(ctx, "master-xa-1"); err != nil {
+		t.Fatalf("fixture does not render cleanly: %v", err)
+	}
+
+	boom := errors.New("database is locked")
+	b.store = flakyVLESSStore{Store: st, err: boom}
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err == nil {
+		t.Fatalf("render succeeded with an unreadable store; inbound = %+v", spec.Master.ClientVLESS)
+	}
+	if !errors.Is(err, boom) {
+		t.Errorf("render error = %v, want it to wrap the store failure", err)
+	}
+}
