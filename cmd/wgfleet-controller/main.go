@@ -71,7 +71,7 @@ func run() error {
 		provision    = flag.String("provision", "", "SSH-bootstrap the named fleet node, then exit")
 		upgradeAgent = flag.String("upgrade-agent", "", "roll the named node's agent binary forward (upload + restart) over SSH, then exit")
 		rollingUp    = flag.Bool("rolling-upgrade", false, "roll every outdated EXIT agent forward one node at a time (reserve tier first), then exit")
-		plan         = flag.Bool("plan", false, "with --provision/--upgrade-agent/--rolling-upgrade/--import-wg-easy: dry-run, show the plan and change nothing")
+		plan         = flag.Bool("plan", false, "with --provision/--upgrade-agent/--rolling-upgrade/--import-wg-easy/--restore: dry-run, show the plan and change nothing. It belongs to those subcommands only — on its own it is refused rather than ignored, because serving IS the controller's non-dry-run behaviour")
 		agentBin     = flag.String("agent-bin", "", "with --provision/--upgrade-agent/--rolling-upgrade: path to the wgfleet-agent binary to install (default controller.agent_bin)")
 		ctlEndpoint  = flag.String("controller-endpoint", "", "with --provision: controller mTLS endpoint the agent dials (default controller.listen)")
 		backupOut    = flag.String("backup", "", "snapshot controller (+co-located master) state to an age-encrypted archive at this path, then exit")
@@ -117,6 +117,16 @@ func run() error {
 	cfg, err := config.Load(*configPath, &config.ControllerConfig{})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+	// --plan on its own used to fall through to serve(). Every subcommand consults it
+	// and none of them was selected, so the flag that means "change nothing" started
+	// the control plane: a port conflict on a live master, and a second unsupervised
+	// controller on a stopped one. Refusing is the honest answer — there is no dry-run
+	// of serving, and configuration.md's advice to "check the dry-run output after an
+	// override change" was describing something that never existed.
+	if *plan && !anySubcommand(*provision, *upgradeAgent, *importWGEasy, *restoreIn, *backupOut, *certs) && !*rollingUp {
+		return fmt.Errorf("--plan is a modifier, not a command: pass it with --provision, --upgrade-agent, " +
+			"--rolling-upgrade, --import-wg-easy or --restore. To check the manifest without starting anything, use --check-config")
 	}
 	if *certs != "" {
 		switch *certs {
@@ -347,6 +357,9 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 		return fmt.Errorf("listen on %q: %w", cfg.Controller.Listen, err)
 	}
 
+	// SIGHUP would otherwise terminate the process (Go's default), and the agent
+	// catches it on every node — so the reflex is trained everywhere and fatal here.
+	defer ignoreSIGHUP(slog.Default())()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -438,11 +451,7 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 			log:    slog.Default(),
 		})
 		webSrv = &http.Server{Addr: cfg.Controller.WebUI, Handler: webHandler}
-		go func() {
-			if err := webSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				slog.Error("web ui server error", "err", err)
-			}
-		}()
+		go serveWithRetry("web ui", webSrv, slog.Default())
 	}
 
 	// Client self-service portal: a separate listener carrying only "your own
@@ -466,11 +475,7 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 			Handler:           portalHandler,
 			ReadHeaderTimeout: 10 * time.Second,
 		}
-		go func() {
-			if err := portalSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				slog.Error("client portal server error", "err", err)
-			}
-		}()
+		go serveWithRetry("client portal", portalSrv, slog.Default())
 	}
 
 	// Prometheus /metrics — a scrape-time projection of the state store plus the
@@ -481,11 +486,7 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 		mux := http.NewServeMux()
 		mux.Handle("GET /metrics", metrics.Handler(reg))
 		metricsSrv = &http.Server{Addr: cfg.Controller.Metrics, Handler: mux}
-		go func() {
-			if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				slog.Error("metrics server error", "err", err)
-			}
-		}()
+		go serveWithRetry("metrics", metricsSrv, slog.Default())
 	}
 
 	slog.Info("controller serving",
@@ -695,4 +696,14 @@ func (s portalSource) RenderNodeSpec(ctx context.Context, id string) (domain.Nod
 
 func (s portalSource) ListWGClients(ctx context.Context, id string) ([]domain.WGClient, error) {
 	return s.broker.ListWGClients(ctx, id)
+}
+
+// anySubcommand reports whether any of these string flags selected a subcommand.
+func anySubcommand(vals ...string) bool {
+	for _, v := range vals {
+		if v != "" {
+			return true
+		}
+	}
+	return false
 }
