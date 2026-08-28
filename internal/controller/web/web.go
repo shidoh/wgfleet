@@ -500,9 +500,28 @@ func (h *Handler) handleDecommission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	// Enforce drain→decommission order (not just advise it in the confirm copy).
-	if n, err := h.store.GetNode(r.Context(), id); err == nil && !n.Drain {
+	// Enforce drain→decommission order (not just advise it in the confirm copy), and
+	// fail CLOSED: the first version skipped the requirement entirely when the store
+	// read errored, so a locked database turned the guard into a no-op and let an
+	// in-rotation node be decommissioned under live traffic.
+	n, err := h.store.GetNode(r.Context(), id)
+	if err != nil {
+		h.redirectErr(w, r, "/nodes/"+id, "decommission refused", err)
+		return
+	}
+	if !n.Drain {
 		h.redirectErr(w, r, "/nodes/"+id, "decommission refused", fmt.Errorf("take the node out of routing first (Drain), then decommission"))
+		return
+	}
+	if h.needsConfirmation(w, r, confirmView{
+		Title:        "Decommission " + id,
+		Heading:      "Decommission " + id + "?",
+		Consequence:  "The agent tears this node's data plane down on its next pass: its tunnels, firewall rules and proxy configuration are removed. Anyone still connected through it is disconnected.",
+		Detail:       "This is reversible from the console — Recommission puts the node back and the agent rebuilds it — but the outage in between is real. The node stays in the inventory either way.",
+		Action:       "/nodes/" + id + "/decommission",
+		ConfirmLabel: "Decommission " + id,
+		CancelHref:   "/nodes/" + id,
+	}) {
 		return
 	}
 	if err := h.store.SetNodeDecommission(r.Context(), id, true); err != nil {
@@ -1489,7 +1508,10 @@ type confirmView struct {
 // lockAction sets the hidden `confirm` field once its dialog is accepted, so nothing
 // changes for an operator whose browser is working normally.
 func (h *Handler) needsConfirmation(w http.ResponseWriter, r *http.Request, v confirmView) bool {
-	if r.FormValue("confirm") != "" {
+	// PostFormValue, not FormValue: FormValue also reads the URL query, so
+	// `POST /nodes/x/delete?confirm=1` walked past the page the operator was meant to
+	// read. A confirmation that a bookmark or a pasted URL can carry is not one.
+	if r.PostFormValue("confirm") != "" {
 		return false
 	}
 	v.NodeCount = h.fleetCount(r.Context())

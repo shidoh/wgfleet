@@ -379,13 +379,19 @@ func (h *Handler) handleWGClientRevoke(w http.ResponseWriter, r *http.Request) {
 	// The other irreversible action in the console, and the other one whose only
 	// prompt was JavaScript. Revoking deletes the credential and its key: the person
 	// is off the fleet and cannot be put back, only issued a new profile.
+	//
+	// Name the credential. The JavaScript prompt this page replaces said "Revoke
+	// alice-iphone?", so a fallback reading "Revoke this credential?" carried LESS
+	// than the thing it was standing in for — at the one moment the operator has
+	// already left a list of forty near-identical cards and can no longer check.
+	who := h.wgClientName(r.Context(), id, clientID)
 	if h.needsConfirmation(w, r, confirmView{
-		Title:        "Revoke a credential",
-		Heading:      "Revoke this credential?",
+		Title:        "Revoke " + who,
+		Heading:      "Revoke " + who + "?",
 		Consequence:  "The credential and its key are deleted permanently. The person using it loses their tunnel immediately and will need a new config — the old one cannot be restored.",
 		Detail:       "If you only want to cut access temporarily, pause it instead: that is reversible and the same config works again afterwards.",
 		Action:       dest + "/" + clientID + "/revoke",
-		ConfirmLabel: "Revoke permanently",
+		ConfirmLabel: "Revoke " + who,
 		CancelHref:   dest,
 	}) {
 		return
@@ -594,4 +600,21 @@ func ifaceView(cw *domain.ClientWGSpec) *wgIfaceView {
 		v.AWG = "2.0"
 	}
 	return v
+}
+
+// wgClientName resolves a credential id to the name the operator gave it, for the
+// confirmation page. A lookup failure falls back to the id rather than to nothing:
+// the point is that the page names WHICH credential, and an id the operator can
+// match against the card they came from still does that.
+func (h *Handler) wgClientName(ctx context.Context, masterID, clientID string) string {
+	clients, err := h.renderer.ListWGClients(ctx, masterID)
+	if err != nil {
+		return clientID
+	}
+	for _, c := range clients {
+		if c.ID == clientID {
+			return c.Name
+		}
+	}
+	return clientID
 }

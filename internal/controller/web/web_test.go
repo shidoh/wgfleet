@@ -432,11 +432,20 @@ func TestDecommissionGatedOnDrain(t *testing.T) {
 		t.Error("decommission form should be hidden (disabled button) until drained")
 	}
 
-	// Drain first ⇒ decommission now succeeds.
+	// Drain first ⇒ decommission now succeeds — once confirmed. Decommissioning
+	// tears a live node's data plane down, so it carries the same server-side floor
+	// as delete and revoke: an unconfirmed POST renders the page and changes nothing.
 	_ = st.SetNodeDrain(context.Background(), "exit-de-1", true)
-	post(t, h, "/nodes/exit-de-1/decommission")
+	res := post(t, h, "/nodes/exit-de-1/decommission")
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("unconfirmed decommission status = %d, want the confirmation page", res.StatusCode)
+	}
+	if n, _ := st.GetNode(context.Background(), "exit-de-1"); n.Decommission {
+		t.Fatal("an unconfirmed decommission tore the node down anyway")
+	}
+	postWith(t, h, "/nodes/exit-de-1/decommission", url.Values{"confirm": {"1"}})
 	if n, _ := st.GetNode(context.Background(), "exit-de-1"); !n.Decommission {
-		t.Fatal("decommission should succeed once the node is drained")
+		t.Fatal("decommission should succeed once the node is drained and confirmed")
 	}
 }
 
@@ -631,7 +640,7 @@ func TestDecommissionAction(t *testing.T) {
 	// Drained first — decommission is gated on Drain (see TestDecommissionGatedOnDrain).
 	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady, Drain: true})
 
-	res := post(t, h, "/nodes/exit-de-1/decommission")
+	res := postWith(t, h, "/nodes/exit-de-1/decommission", url.Values{"confirm": {"1"}})
 	if res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("decommission status = %d", res.StatusCode)
 	}

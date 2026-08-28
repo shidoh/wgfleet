@@ -451,6 +451,22 @@ func (h *Handler) handleClientRevoke(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	name := r.PathValue("name")
 	dest := "/nodes/" + id + "/clients"
+	// The same act as revoking an AmneziaWG credential, and for a long time the only
+	// one of the pair without a server-side gate: the AWG side got the confirmation
+	// page while this one kept a JavaScript-only prompt, i.e. one that vanishes
+	// silently whenever the deferred script has not parsed yet. Two identical buttons
+	// one page apart, one of them a floor and one of them not.
+	if h.needsConfirmation(w, r, confirmView{
+		Title:        "Revoke " + name,
+		Heading:      "Revoke " + name + "?",
+		Consequence:  "The credential and its UUID are deleted permanently. The person using it loses this profile immediately and will need a new one — the old link and QR stop working and cannot be restored.",
+		Detail:       "A VLESS credential has no pause: revoking is the only way to cut it off, and the only way back is to issue a new one under a new UUID.",
+		Action:       dest + "/" + name + "/revoke",
+		ConfirmLabel: "Revoke " + name,
+		CancelHref:   dest,
+	}) {
+		return
+	}
 	if err := h.renderer.RevokeVLESSClient(r.Context(), id, name); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			h.redirectErr(w, r, dest, "revoke client", errors.New("client not found"))

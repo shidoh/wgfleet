@@ -12,15 +12,27 @@
      This page is what they get instead. lockAction sets the hidden `confirm` field
      when the dialog is accepted, so an operator with a working script still sees a
      single dialog and never lands here — this is the floor, not an extra step. */}}
-<section class="panel">
-  <h2 class="panel-label">{{.Heading}}</h2>
-  <p class="cfg-hint warn">{{.Consequence}}</p>
+{{/* Hierarchy is the whole job of this page, and the first version inverted it: the
+     heading was .panel-label — the console's 10.5px letter-spaced ALL-CAPS section
+     label — so "Delete exit-fra-01?" rendered smaller and fainter than the
+     escape-hatch caveat two lines below it, which at 13px was the largest text on a
+     page whose only purpose is to make one consequence unmissable. Now the name of
+     what is about to be destroyed is the page title, the consequence is prose, and
+     the caveat is the smallest thing on the page. */}}
+<section class="panel confirm">
+  <h1 class="detail-title">{{.Heading}}</h1>
+  <p class="confirm-consequence">{{.Consequence}}</p>
   {{if .Detail}}<p class="dim">{{.Detail}}</p>{{end}}
-  <div class="action-bar">
+  <div class="action-bar confirm-actions">
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <input type="hidden" name="confirm" value="1">
-      <button class="btn ghost-red" type="submit" data-pending="Working…">{{.ConfirmLabel}}</button>
+      {{/* Filled, not ghost. The destructive control was a borderless .ghost-red
+           whose only edge sat at 1.32:1 while Cancel was a filled button — so the
+           safe choice was the heavier object on the page, and the two were thrown to
+           opposite ends by space-between. Weight now follows consequence, and the
+           pair sits together where they can be compared. */}}
+      <button class="btn danger" type="submit" data-pending="Working…">{{.ConfirmLabel}}</button>
     </form>
     <a class="btn" href="{{.CancelHref}}">Cancel</a>
   </div>

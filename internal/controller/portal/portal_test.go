@@ -338,3 +338,25 @@ func TestPortalPagesShareOneStylesheet(t *testing.T) {
 		}
 	}
 }
+
+// The page hiding the button was never the same thing as the file being refused:
+// handleConfig and handleQR ignored Enabled entirely, so anyone who reloaded the
+// link out of their history — or simply kept the /config URL — was handed a full
+// config with a live private key for a peer the server had already removed. The
+// claim in TestPortalMutedProfile's comment was true of the PAGE and false of the
+// two endpoints behind it.
+func TestPortalPausedProfileServesNoConfigOrQR(t *testing.T) {
+	h := testPortal(t)
+	for _, path := range []string{"/c/1111222233334444/config", "/c/1111222233334444/qr"} {
+		res, body := fetch(t, h, path)
+		if res.StatusCode != http.StatusForbidden {
+			t.Errorf("GET %s = %d, want 403", path, res.StatusCode)
+		}
+		if strings.Contains(body, "PrivateKey") {
+			t.Errorf("GET %s handed out a private key for a paused credential", path)
+		}
+		if !strings.Contains(body, "paused") {
+			t.Errorf("GET %s does not say the profile is paused:\n%s", path, body)
+		}
+	}
+}

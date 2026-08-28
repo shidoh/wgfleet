@@ -143,10 +143,17 @@ func (h *Handler) handlePage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+var errPaused = errors.New("this profile is paused")
+
+// handleConfig serves the .conf file the page links to.
 func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 	res, err := h.resolve(r)
 	if err != nil {
 		h.fail(w, err)
+		return
+	}
+	if !res.Client.Enabled {
+		h.fail(w, errPaused)
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -160,6 +167,10 @@ func (h *Handler) handleQR(w http.ResponseWriter, r *http.Request) {
 	res, err := h.resolve(r)
 	if err != nil {
 		h.fail(w, err)
+		return
+	}
+	if !res.Client.Enabled {
+		h.fail(w, errPaused)
 		return
 	}
 	// Big enough that a phone camera can resolve the modules. Measured on a real
@@ -188,6 +199,17 @@ func (h *Handler) fail(w http.ResponseWriter, err error) {
 		"Your profile may have been replaced or switched off. Your VPN app keeps using the profile it "+
 			"already has, so nothing on your device needs deleting — ask whoever sent you this link for a new one."
 	switch {
+	case errors.Is(err, errPaused):
+		// The page already hides the buttons and says the profile is paused, but the
+		// two URLs behind them ignored Enabled entirely — so anyone who had the link
+		// in their history, or simply reloaded, downloaded a full config with a live
+		// private key for a peer the server has removed. The page and the file have
+		// to agree, and the person needs to know it is a pause, not a loss: this is
+		// the one failure here that someone can actually do something about.
+		status, heading, body = http.StatusForbidden,
+			"This profile is paused",
+			"It has been switched off for now and will not connect. Nothing is wrong with your device and "+
+				"nothing needs deleting — ask whoever sent you this link to switch it back on."
 	case errors.Is(err, errTooManyAttempts):
 		status, heading, body = http.StatusTooManyRequests,
 			"Too many tries",

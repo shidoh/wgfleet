@@ -1027,6 +1027,51 @@ details.cfg-direct[open] .cfg-row { margin-top: var(--sp-4); }
 }
 .btn.ghost-red:hover { border-color: var(--red); color: var(--red); background: none; }
 
+/* .btn.danger — the destructive control on the confirmation page, and the only
+   place in the console that gets a FILLED red.
+   .ghost-red is right in an action bar full of other buttons, where a red fill on a
+   row of six would shout. It is wrong on a page whose entire content is one choice:
+   there its border sat at 1.32:1 — the faintest edge in this file — beside a Cancel
+   that is a filled .btn, so the safe option was the heavier object and severity ran
+   backwards. Fill and border are both raised well past the 3:1 that WCAG 1.4.11 asks
+   of a component boundary, and the label keeps --red rather than --red-text because
+   there is a darker ground under it now. */
+.btn.danger {
+  color: var(--red);
+  background: rgba(248,113,113,.12);
+  border-color: rgba(248,113,113,.45);
+  font-weight: 600;
+}
+.btn.danger:hover {
+  background: rgba(248,113,113,.20);
+  border-color: var(--red);
+  color: var(--red);
+}
+
+/* The confirmation page is one panel holding one decision, so it does not want the
+   full-bleed rhythm of a dashboard section. */
+.panel.confirm { max-width: 62ch; }
+
+/* The consequence is the reason the page exists: prose weight, not hint weight. It
+   was .cfg-hint.warn — 12px, the size this console uses for form hints — which put
+   it below the caveat under it in the visual order. */
+.confirm-consequence {
+  margin: var(--sp-5) 0 var(--sp-4);
+  font-size: var(--fs-subject);
+  line-height: 1.55;
+  color: var(--text);
+}
+
+/* Keep the pair together and put the destructive one first, in reading order and in
+   the tab order. space-between threw them to opposite ends of a wide panel, which is
+   the one layout that makes two options impossible to weigh against each other. */
+.confirm-actions {
+  justify-content: flex-start;
+  gap: var(--sp-5);
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
 .btn:disabled {
   /* .45 composited to 2.35:1 against the card — below the 3:1 floor for
      non-text UI, and unreadable on a laptop screen at an angle. A disabled
