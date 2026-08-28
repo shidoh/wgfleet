@@ -393,10 +393,20 @@ func DeriveAWGParamsForEnd(tunnelSeed, endLabel string, kernel bool) domain.AWGP
 	// Floor Jmin above S4 so no junk packet this end SENDS is short enough to
 	// underflow a peer that strips S4 from incoming junk before length-checking it
 	// (amneziawg-go ≤20251104 bug; see junkS4Margin). S4 is shared, so flooring on
-	// the sending end protects the receiving end. Shift Jmax by the same amount to
-	// keep the Jmin<Jmax gap; both stay well under the 1280 ceiling.
-	if floor := shared.S4 + junkS4Margin; local.Jmin < floor {
-		shift := floor - local.Jmin
+	// the sending end protects the receiving end.
+	//
+	// The shift is CONSTANT for a given S4 — every draw moves by the same amount —
+	// rather than per-end "raise it to the floor if it is under". That version was a
+	// clamp wearing a shift's clothes: Jmin is drawn from [8,40] and the floor lands
+	// in [24,40], so it pushed 77% of ends onto exactly S4+junkS4Margin and left 17
+	// distinct values across 2000 tunnels. Jmin stopped being a decoy and became a
+	// function of S4 — and S4 is SHARED, printed in every client config, so one
+	// captured config would have given away the junk window of every tunnel with the
+	// same S4. Moving the whole band keeps distinct draws distinct. Jmax rides along
+	// to preserve the Jmin<Jmax gap; the worst case (40+88 shifted by 32) is 160,
+	// well under the 1280 ceiling. Same correction floorClientJunk already applies
+	// to the client decoy.
+	if shift := shared.S4 + junkS4Margin - jminLow; shift > 0 {
 		local.Jmin += shift
 		local.Jmax += shift
 	}

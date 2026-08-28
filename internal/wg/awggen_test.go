@@ -1,6 +1,7 @@
 package wg
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -325,3 +326,46 @@ func FuzzDeriveAWGParamsForEnd(f *testing.F) {
 }
 
 const awgTestSalt = "wgfleet-awg-v1"
+
+// Flooring Jmin must not destroy the spread it is flooring.
+//
+// The floor shifted each end UP TO the floor when it fell below it, so every value
+// drawn under S4+margin — most of the band, since Jmin is drawn from [8,40] and the
+// floor lands in [24,40] — collapsed onto exactly S4+8. Jmin then carried almost no
+// entropy and was readable straight off S4, which is a SHARED parameter printed in
+// every client config. A censor holding one config learns the junk window of every
+// tunnel that shares that S4.
+//
+// A constant shift moves the whole band by one amount instead, so distinct draws
+// stay distinct. This is the same correction the client decoy already carries
+// (floorClientJunk); the tunnel path was left behind.
+func TestDeriveAWGParamsForEndKeepsJunkSpreadAboveTheFloor(t *testing.T) {
+	seen := make(map[int]int)
+	atFloor, total := 0, 0
+	for i := 0; i < 2000; i++ {
+		p := DeriveAWGParamsForEnd(fmt.Sprintf("node-%d|node-%d|salt", i, i*7+1), "exit", true)
+		floor := p.Shared.S4 + junkS4Margin
+		if p.Local.Jmin < floor {
+			t.Fatalf("Jmin %d is below the floor %d (S4=%d)", p.Local.Jmin, floor, p.Shared.S4)
+		}
+		if p.Local.Jmin >= p.Local.Jmax {
+			t.Fatalf("Jmin %d >= Jmax %d", p.Local.Jmin, p.Local.Jmax)
+		}
+		if p.Local.Jmax > 1280 {
+			t.Fatalf("Jmax %d exceeds the 1280 ceiling", p.Local.Jmax)
+		}
+		if p.Local.Jmin == floor {
+			atFloor++
+		}
+		seen[p.Local.Jmin]++
+		total++
+	}
+	// With a shift the floor is one outcome among many; with a clamp it was the
+	// single most likely value by a wide margin.
+	if share := float64(atFloor) / float64(total); share > 0.10 {
+		t.Errorf("%.0f%% of ends sit exactly on the floor — Jmin is derivable from the shared S4", share*100)
+	}
+	if len(seen) < 20 {
+		t.Errorf("only %d distinct Jmin values across %d tunnels; the junk window carries no entropy", len(seen), total)
+	}
+}
