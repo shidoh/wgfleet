@@ -3,6 +3,7 @@ package keybroker
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -543,5 +544,69 @@ func TestClientWGSpecHandsOutTheFleetResolver(t *testing.T) {
 	// renderers disagreeing about the resolver is how this broke in the first place.
 	if compose := spec.Master.Compose.ClientDNS; len(compose) > 0 && compose[0] != got[0] {
 		t.Errorf("compose hands out %v but the managed interface hands out %v", compose, got)
+	}
+}
+
+// The IPv6 block is rendered as ONE thing or not at all.
+//
+// "::/0" tells the client to stop using its own IPv6 and send it here; ipv6_prefix
+// is what lets the master answer. Rendering the route without the prefix — which is
+// exactly what happens if an agent too old to understand the field is served one —
+// abandons a working v6 path for one that drops silently: pages load then stall,
+// video plays then freezes, and it reads as an MTU fault for days.
+func TestClientWGSpecRendersTheIPv6BlockAsAWhole(t *testing.T) {
+	b, st, ctx := brokerWithManagedMaster(t)
+	for i := range b.fleet.Masters {
+		b.fleet.Masters[i].ClientAWG.IPv6 = config.ClientIPv6Block
+	}
+
+	// Agent on the current wire: both halves.
+	setWireVersion(t, st, "master-xa-1", api.WireClientIPv6)
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	cw := spec.Master.ClientWG
+	if cw == nil {
+		t.Fatal("no client interface")
+	}
+	if cw.IPv6Prefix == "" {
+		t.Error("no ipv6_prefix: the master has no address to answer IPv6 from")
+	}
+	if !slices.Contains(cw.AllowedIPs, "::/0") {
+		t.Errorf("no ::/0 in the client's AllowedIPs %v; the device keeps preferring its own IPv6", cw.AllowedIPs)
+	}
+	if err := cw.Validate(); err != nil {
+		t.Errorf("the rendered spec does not validate: %v", err)
+	}
+
+	// Agent one version too old: NEITHER half. Not the route on its own.
+	setWireVersion(t, st, "master-xa-1", api.WireClientIPv6-1)
+	spec, err = b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	cw = spec.Master.ClientWG
+	if cw == nil {
+		t.Fatal("no client interface")
+	}
+	if slices.Contains(cw.AllowedIPs, "::/0") {
+		t.Errorf("an agent that cannot answer IPv6 was still told to hand out ::/0: %v", cw.AllowedIPs)
+	}
+	if cw.IPv6Prefix != "" {
+		t.Errorf("ipv6_prefix %q rendered for an agent that drops the field", cw.IPv6Prefix)
+	}
+}
+
+// And with the knob off, nothing about IPv6 appears at all.
+func TestClientWGSpecOmitsIPv6WhenOff(t *testing.T) {
+	b, _, ctx := brokerWithManagedMaster(t)
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	cw := spec.Master.ClientWG
+	if cw.IPv6Prefix != "" || slices.Contains(cw.AllowedIPs, "::/0") {
+		t.Errorf("IPv6 leaked into the default render: prefix=%q allowed=%v", cw.IPv6Prefix, cw.AllowedIPs)
 	}
 }

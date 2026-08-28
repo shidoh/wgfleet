@@ -68,8 +68,21 @@ func indexOf(s, sub string) int {
 
 // Guard: the wire version must never drift by accident. Changing it is a
 // deliberate act with a rollout consequence, so it takes a deliberate test edit.
-func TestWireContractVersionIs8(t *testing.T) {
-	if WireContractVersion != 8 {
-		t.Fatalf("WireContractVersion = %d, want 8 (bumped for MasterSpec.client_wg — the agent-owned client interface)", WireContractVersion)
+func TestWireContractVersionIs9(t *testing.T) {
+	if WireContractVersion != 9 {
+		t.Fatalf("WireContractVersion = %d, want 9 (bumped for ClientWGSpec.ipv6_prefix — the client-facing IPv6 block)", WireContractVersion)
+	}
+}
+
+// A bump is only worth anything if something reads it. Every version that gates a
+// feature must have a named constant, because MinSupportedWire is 1 and therefore
+// the bump ALONE refuses nobody: the gate is the named comparison, never the number.
+func TestClientIPv6GateIsNamedAndCurrent(t *testing.T) {
+	if WireClientIPv6 != WireContractVersion {
+		t.Errorf("WireClientIPv6 = %d but the contract is at %d; the gate must name the version that introduced the field",
+			WireClientIPv6, WireContractVersion)
+	}
+	if CheckWire(WireClientIPv6-1) == WireAgentTooOld {
+		t.Error("MinSupportedWire has moved; re-read whether the named gates are still the thing doing the gating")
 	}
 }

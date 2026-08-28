@@ -125,6 +125,27 @@ plane refusing service does not break the data plane.
 - **Bumping `MinSupportedWire`** strands any agent older than the new minimum on
   its last-good spec until it is rolled. Do it deliberately and only after the
   fleet is known to be past that version.
+- **This release restarts mihomo once on every master.** The per-tunnel keepalive
+  period is now derived instead of fixed at 25 seconds — one interval shared by the
+  whole fleet was a shape a passive observer could join our tunnels on — and
+  keepalive is a proxy-level field, so the change rewrites the `proxies:` block and
+  a hot reload would silently no-op. The agent restarts the container instead: a
+  few seconds of client traffic, once, on the pass that first applies it. Nothing
+  has to be reissued; keepalive is a local decision and an already-installed client
+  config keeps working unchanged.
+- **This release also carries client UDP.** Client UDP other than QUIC-on-443 used
+  to traverse the master's forward chain and leave its own uplink, so it never
+  reached an exit; it is now intercepted with TPROXY and proxied like TCP. The
+  master gains an `ip rule`/`ip route` pair and two nft chains, all reconciled and
+  self-healing. Rehearse it before rolling: if mihomo is not listening on the
+  transparent port, intercepted UDP is dropped rather than leaked — better, but a
+  different behaviour from today.
+- **Wire v9 adds `ClientWGSpec.ipv6_prefix`**, and with it the opt-in
+  `client_awg.ipv6: block`. Default is `off` and nothing changes. Switched on, the
+  controller refuses to render it for an agent below v9 rather than hand a client
+  an IPv6 default route the master cannot answer — the route without the answer is
+  a black hole that reads as an MTU fault for days, so the two halves ship
+  together or not at all. Deploy the controller first, as always.
 - **This release adds a key that is REQUIRED once AmneziaWG 3.x is on.** If
   `fleet.awg3` or any `exits[].awg3` is true, the controller now refuses to start
   without `fleet.awg3_key` — and the header-protection key it derives is a

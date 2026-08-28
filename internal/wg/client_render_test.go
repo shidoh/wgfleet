@@ -2,6 +2,7 @@ package wg
 
 import (
 	"fmt"
+	"net/netip"
 	"regexp"
 	"strconv"
 	"strings"
@@ -473,5 +474,64 @@ func TestClientDecoyClearsTheSharedS4(t *testing.T) {
 	// decoy exists to prevent.
 	if len(seen) < 10 {
 		t.Errorf("only %d distinct Jmin values across 200 clients — flooring collapsed the spread", len(seen))
+	}
+}
+
+// With the IPv6 block on, BOTH ends have to be addressed in the prefix: the client
+// needs a v6 address or its OS installs no ::/0 route at all and the block does
+// nothing, and the master needs one or it has no source address to send the ICMPv6
+// rejection from — which is the entire difference between blocking IPv6 and
+// black-holing it.
+func TestIPv6BlockAddressesBothEnds(t *testing.T) {
+	spec := clientSpec()
+	prefix, err := ClientULAFor(spec.AddressPool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.IPv6Prefix = prefix.String()
+	spec.AllowedIPs = []string{"0.0.0.0/0", "::/0"}
+
+	// The interface the master brings up.
+	iface, err := RenderClientInterface(ClientInterfaceInput{Spec: spec, PrivateKey: "c2VydmVyLXByaXZhdGUtMDAwMDAwMDAwMDAwMDAwMA="})
+	if err != nil {
+		t.Fatalf("interface: %v", err)
+	}
+	gwV6, _ := ClientV6For(prefix, netip.MustParseAddr("10.80.0.1"))
+	if !strings.Contains(iface, gwV6.String()+"/64") {
+		t.Errorf("the master's interface has no address in %v; it cannot answer IPv6:\n%s", prefix, iface)
+	}
+	// Every peer must be reachable in v6 too, or the rejection cannot be routed back.
+	peerV6, _ := ClientV6For(prefix, netip.MustParseAddr("10.80.0.2"))
+	if !strings.Contains(iface, peerV6.String()+"/128") {
+		t.Errorf("peer 10.80.0.2 has no v6 AllowedIPs entry:\n%s", iface)
+	}
+
+	// The config the client imports.
+	cfg, err := RenderClientConfig(ClientConfigInput{
+		Spec: spec,
+		Client: domain.WGClient{Name: "laptop", Address: "10.80.0.2/32", PublicKey: testClientPubA,
+			PrivateKey: "Y2xpZW50LXByaXZhdGUtMDAwMDAwMDAwMDAwMDAwMA=", PresharedKey: "cHNrLWxhcHRvcC0wMDAwMDAwMDAwMDAwMDAwMDAwMA="},
+		ServerPublicKey: "c2VydmVyLXB1YmxpYy0wMDAwMDAwMDAwMDAwMDAwMDA=", Endpoint: "203.0.113.1:443",
+	})
+	if err != nil {
+		t.Fatalf("client config: %v", err)
+	}
+	if !strings.Contains(cfg, peerV6.String()+"/128") {
+		t.Errorf("the client config carries no v6 address, so the OS installs no ::/0 route:\n%s", cfg)
+	}
+	if !strings.Contains(cfg, "::/0") {
+		t.Errorf("the client config carries no ::/0:\n%s", cfg)
+	}
+}
+
+// And with no prefix nothing about v6 appears — the default every fleet runs.
+func TestNoIPv6WithoutAPrefix(t *testing.T) {
+	spec := clientSpec()
+	iface, err := RenderClientInterface(ClientInterfaceInput{Spec: spec, PrivateKey: "c2VydmVyLXByaXZhdGUtMDAwMDAwMDAwMDAwMDAwMA="})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(iface, "fd") && strings.Contains(iface, "::") {
+		t.Errorf("v6 leaked into the default interface render:\n%s", iface)
 	}
 }

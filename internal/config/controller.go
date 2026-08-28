@@ -544,6 +544,21 @@ type ClientAWGConfig struct {
 	// these parameters — its schema has no column for any of them — so a value here
 	// would silently do nothing, which config validation refuses.
 	AWG3 string `koanf:"awg3"`
+
+	// IPv6 decides what a client is told about IPv6. "off" (the default, and what
+	// every fleet ran before this knob existed) says nothing at all: the client keeps
+	// its own native IPv6, and every dual-stack destination happy eyeballs prefers —
+	// Google, Cloudflare, most CDNs — leaves the tunnel while the app says
+	// "connected". "block" claims ::/0 into the tunnel and has the master answer it
+	// with ICMPv6 administratively-prohibited, so the client stops using v6 at all
+	// and falls back to IPv4 in milliseconds.
+	//
+	// It is NOT "carry v6": the data plane is IPv4-only (forwarding off, mihomo
+	// ipv6:false, WARP's v6 egress dead) and that is a separate project. The
+	// difference between "block" and an earlier finding's black hole is the ICMP, and
+	// nothing else — which is why this defaults off and wants a rehearsal before an
+	// operator turns it on.
+	IPv6 string `koanf:"ipv6"`
 	// MTU overrides the client interface MTU. 0 ⇒ the controller derives it from
 	// the hop chain (clientFacingMTU), which is the right answer in almost every
 	// case; set it only to pin a value the derivation cannot know about.

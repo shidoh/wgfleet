@@ -17,6 +17,7 @@ type Paths struct {
 	MihomoConfig   string // mihomo config.yaml
 	DirectNetworks string // included direct-networks.yaml
 	NFT            string // master NAT ruleset
+	V6NFT          string // master client-facing IPv6 ruleset (ip6 wgfleet_master_v6)
 	FirewallNFT    string // master input-firewall ruleset (inet wgfleet)
 	ExtraFilesDir  string // base dir for operator extra files with relative paths
 	UIDir          string // mihomo external-ui dir; the agent populates it (see dashboardPlanner)
@@ -38,6 +39,7 @@ func DefaultPaths() Paths {
 		MihomoConfig:   "/etc/mihomo/config.yaml",
 		DirectNetworks: "/etc/mihomo/direct-networks.yaml",
 		NFT:            "/etc/wgfleet/wgfleet-master.nft",
+		V6NFT:          "/etc/wgfleet/wgfleet-master-v6.nft",
 		FirewallNFT:    "/etc/wgfleet/wgfleet.nft",
 		ExtraFilesDir:  "/etc/mihomo",
 		UIDir:          "/etc/mihomo/ui",
@@ -66,6 +68,7 @@ func PathsUnder(dir string) Paths {
 		MihomoConfig:   filepath.Join(dir, "config.yaml"),
 		DirectNetworks: filepath.Join(dir, "direct-networks.yaml"),
 		NFT:            filepath.Join(dir, "wgfleet-master.nft"),
+		V6NFT:          filepath.Join(dir, "wgfleet-master-v6.nft"),
 		FirewallNFT:    filepath.Join(dir, "wgfleet.nft"),
 		ExtraFilesDir:  dir,
 		UIDir:          filepath.Join(dir, "ui"),

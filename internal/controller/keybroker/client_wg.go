@@ -166,6 +166,31 @@ func (b *Broker) clientWGSpec(ctx context.Context, master config.MasterConfig, s
 		// last-good interface with all its peers.
 		return nil, fmt.Errorf("client WG interface: listing credentials: %w", err)
 	}
+	// The IPv6 block, rendered as one thing or not at all.
+	//
+	// "::/0" tells the client to stop preferring its own IPv6 and send it here;
+	// IPv6Prefix is what lets the master address itself in v6 and answer with an
+	// ICMPv6 rejection. Either alone is worse than neither: the route without the
+	// answer abandons a working path for one that drops silently, and that failure
+	// wears the costume of an MTU fault. So the wire gate covers BOTH — an agent that
+	// would drop the prefix is not handed the route either, and simply keeps today's
+	// IPv4-only behaviour.
+	allowedIPs := master.ClientAWGAllowedIPs()
+	ipv6Prefix := ""
+	if master.ClientAWG.IPv6 == config.ClientIPv6Block {
+		if node.WireVersion >= api.WireClientIPv6 {
+			prefix, perr := wg.ClientULAFor(master.ClientAWG.AddressPool)
+			if perr != nil {
+				return nil, fmt.Errorf("client WG interface: deriving the IPv6 prefix: %w", perr)
+			}
+			ipv6Prefix = prefix.String()
+			allowedIPs = append(append([]string(nil), allowedIPs...), "::/0")
+		} else {
+			b.log.Warn("client IPv6 block not rendered: agent is too old to answer IPv6",
+				"master", master.Name, "agent_wire", node.WireVersion, "need_wire", api.WireClientIPv6)
+		}
+	}
+
 	mtu := master.ClientAWGMTU()
 	if mtu == 0 {
 		mtu = server.MTU
@@ -178,7 +203,8 @@ func (b *Broker) clientWGSpec(ctx context.Context, master config.MasterConfig, s
 		MTU:           mtu,
 		DNS:           b.clientResolvers(ctx, master),
 		Keepalive:     master.ClientAWG.Keepalive,
-		AllowedIPs:    master.ClientAWGAllowedIPs(),
+		AllowedIPs:    allowedIPs,
+		IPv6Prefix:    ipv6Prefix,
 		AWG:           awg,
 		Backend:       master.ClientAWGBackend(),
 		Clients:       domain.PeersOf(clients),

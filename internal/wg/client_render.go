@@ -50,6 +50,15 @@ func RenderClientInterface(in ClientInterfaceInput) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// The master's own address inside the client-facing IPv6 prefix. It is the source
+	// the ICMPv6 administratively-prohibited answer goes out from, and without it a
+	// client handed "::/0" gets silence instead of a rejection — which is the whole
+	// difference between blocking IPv6 and black-holing it.
+	if v6, verr := interfaceV6Address(in.Spec); verr != nil {
+		return "", verr
+	} else if v6 != "" {
+		addr += ", " + v6
+	}
 
 	var b strings.Builder
 	b.WriteString("[Interface]\n")
@@ -89,9 +98,39 @@ func RenderClientInterface(in ClientInterfaceInput) (string, error) {
 		if p.PresharedKey != "" {
 			fmt.Fprintf(&b, "PresharedKey = %s\n", p.PresharedKey)
 		}
-		fmt.Fprintf(&b, "AllowedIPs = %s\n", p.Address)
+		allowed := p.Address
+		// A peer is only reachable on the addresses listed here, so the rejection can
+		// only be routed back to a client whose v6 address is one of them.
+		if v6, verr := clientV6Address(in.Spec, p.Address); verr != nil {
+			return "", verr
+		} else if v6 != "" {
+			allowed += ", " + v6
+		}
+		fmt.Fprintf(&b, "AllowedIPs = %s\n", allowed)
 	}
 	return b.String(), nil
+}
+
+// interfaceV6Address returns the master's own address inside the client-facing
+// IPv6 prefix, as "addr/64" so the interface owns the whole subnet route, or ""
+// when the interface is IPv4-only.
+func interfaceV6Address(spec domain.ClientWGSpec) (string, error) {
+	if spec.IPv6Prefix == "" {
+		return "", nil
+	}
+	prefix, err := netip.ParsePrefix(spec.IPv6Prefix)
+	if err != nil {
+		return "", fmt.Errorf("wg render: ipv6_prefix %q: %w", spec.IPv6Prefix, err)
+	}
+	gw, err := netip.ParseAddr(spec.ServerAddress)
+	if err != nil {
+		return "", fmt.Errorf("wg render: server address %q: %w", spec.ServerAddress, err)
+	}
+	v6, err := ClientV6For(prefix, gw)
+	if err != nil {
+		return "", fmt.Errorf("wg render: %w", err)
+	}
+	return v6.String() + "/64", nil
 }
 
 // RenderClientConfig renders one end user's .conf.
@@ -123,7 +162,16 @@ func RenderClientConfig(in ClientConfigInput) (string, error) {
 	var b strings.Builder
 	b.WriteString("[Interface]\n")
 	fmt.Fprintf(&b, "PrivateKey = %s\n", in.Client.PrivateKey)
-	fmt.Fprintf(&b, "Address = %s\n", in.Client.Address)
+	addr := in.Client.Address
+	if v6, err := clientV6Address(in.Spec, in.Client.Address); err != nil {
+		return "", err
+	} else if v6 != "" {
+		// Without a v6 address on its own interface the OS installs no ::/0 route, so
+		// the "::/0" below would be inert and the device would go on preferring its
+		// native IPv6 — the block would look configured and do nothing.
+		addr += ", " + v6
+	}
+	fmt.Fprintf(&b, "Address = %s\n", addr)
 	if dns := strings.Join(in.Spec.DNS, ", "); dns != "" {
 		fmt.Fprintf(&b, "DNS = %s\n", dns)
 	}
@@ -286,4 +334,30 @@ func floorClientJunk(local domain.AWGLocal, s4 int) domain.AWGLocal {
 		local.Jmax += shift
 	}
 	return local
+}
+
+// clientV6Address returns one client's address inside the master's client-facing
+// IPv6 prefix, or "" when the interface is IPv4-only.
+//
+// Derived from the client's IPv4 address rather than allocated: the store hands out
+// exactly one address per credential, and two clients cannot collide in v6 without
+// having already collided in v4, which the store's UNIQUE(master, address) makes
+// impossible. One allocator, one place where "which address is this" is decided.
+func clientV6Address(spec domain.ClientWGSpec, v4 string) (string, error) {
+	if spec.IPv6Prefix == "" {
+		return "", nil
+	}
+	prefix, err := netip.ParsePrefix(spec.IPv6Prefix)
+	if err != nil {
+		return "", fmt.Errorf("wg render: ipv6_prefix %q: %w", spec.IPv6Prefix, err)
+	}
+	host, err := netip.ParsePrefix(v4)
+	if err != nil {
+		return "", fmt.Errorf("wg render: client address %q: %w", v4, err)
+	}
+	v6, err := ClientV6For(prefix, host.Addr())
+	if err != nil {
+		return "", fmt.Errorf("wg render: %w", err)
+	}
+	return v6.String() + "/128", nil
 }

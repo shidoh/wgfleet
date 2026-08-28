@@ -64,7 +64,13 @@ const (
 	// users actually dial, with no error on either side. Deploy the controller
 	// FIRST, and note that a nil client_wg is the safe state: it means
 	// "wg-easy still owns this leg", which is what every un-migrated master reports.
-	WireContractVersion uint32 = 8
+	// v9 adds ClientWGSpec.ipv6_prefix. A v8 agent drops it and brings the client
+	// interface up IPv4-only — while the controller, if it were not gated, would
+	// already be writing "::/0" into every client config. The client would then
+	// abandon its own working IPv6 path for one that silently drops, which is
+	// an earlier finding restaged: stalls that read as an MTU fault for days. Hence
+	// WireClientIPv6 below, and hence the two must be rendered together or not at all.
+	WireContractVersion uint32 = 9
 
 	// WireClientWG is the wire version that introduced MasterSpec.client_wg. The
 	// controller refuses to render the client interface for a master below it: such
@@ -75,6 +81,14 @@ const (
 	// compared against WireContractVersion so a later bump for something unrelated
 	// does not silently re-close the client interface to the whole fleet.
 	WireClientWG uint32 = 8
+
+	// WireClientIPv6 is the wire version that introduced ClientWGSpec.ipv6_prefix.
+	// The controller refuses to hand clients an IPv6 default route unless the master's
+	// agent can address the interface in v6 and answer forwarded v6 with an ICMPv6
+	// rejection — without both halves "::/0" is a black hole, not a block. Named
+	// rather than compared against WireContractVersion so a later bump for something
+	// unrelated does not silently re-close this to the whole fleet.
+	WireClientIPv6 uint32 = 9
 
 	// WireAWG3 is the wire version that introduced the AmneziaWG 3.0 block on
 	// AWGShared. The controller refuses to render 3.0 params for a node below it:

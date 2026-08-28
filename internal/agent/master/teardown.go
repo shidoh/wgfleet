@@ -54,6 +54,7 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 		{p.paths.MihomoConfig, "mihomo config"},
 		{p.paths.DirectNetworks, "direct-networks include"},
 		{p.paths.NFT, "master NAT ruleset"},
+		{p.paths.V6NFT, "master client-facing IPv6 ruleset"},
 		{p.paths.FirewallNFT, "master input-firewall ruleset"},
 		{p.paths.Compose, "container compose file"},
 		{p.paths.WGEasyDB, "wg-easy client database"},

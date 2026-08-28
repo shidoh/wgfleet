@@ -86,16 +86,30 @@ func validateClientAWG(i int, m MasterConfig) []error {
 	}
 	errs = append(errs, validateTunnelReachesItself(i, m)...)
 
+	switch m.ClientAWG.IPv6 {
+	case "", ClientIPv6Off, ClientIPv6Block:
+	default:
+		errs = append(errs, fmt.Errorf("fleet.masters[%d]: unknown client_awg.ipv6 %q (want %q or %q)",
+			i, m.ClientAWG.IPv6, ClientIPv6Off, ClientIPv6Block))
+	}
+	if m.ClientAWG.IPv6 == ClientIPv6Block && !m.ClientAWGManaged() {
+		errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.ipv6 is %q but client_awg.managed is not true — "+
+			"only the agent-owned interface can answer IPv6; wg-easy would hand out the route and drop the packets",
+			i, ClientIPv6Block))
+	}
+
 	for _, a := range m.ClientAWGAllowedIPs() {
 		p, err := netip.ParsePrefix(a)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.allowed_ips entry %q is not a valid CIDR: %w", i, a, err))
 			continue
 		}
-		// The data plane is IPv4-only. wg-easy's own default put "::/0" in front of
-		// every client and stalled dual-stack traffic until the operator re-imported
+		// wg-easy's own default put "::/0" in front of every client over an IPv4-only
+		// data plane and stalled dual-stack traffic until the operator re-imported
 		// every device; owning the render means refusing to repeat it.
-		if p.Addr().Is6() && p.Bits() == 0 {
+		// client_awg.ipv6: block is the deliberate version of the same route, paired
+		// with a master that answers it, so it is allowed there and nowhere else.
+		if p.Addr().Is6() && p.Bits() == 0 && m.ClientAWG.IPv6 != ClientIPv6Block {
 			errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.allowed_ips must not contain the IPv6 default route %q on an IPv4-only data plane", i, a))
 		}
 	}
@@ -310,3 +324,12 @@ func validateTunnelReachesItself(i int, m MasterConfig) []error {
 	}
 	return errs
 }
+
+// Client-facing IPv6 modes for client_awg.ipv6.
+const (
+	// ClientIPv6Off tells the client nothing about IPv6. Its own native v6 keeps
+	// working and keeps bypassing the tunnel.
+	ClientIPv6Off = "off"
+	// ClientIPv6Block hands the client ::/0 and has the master refuse it audibly.
+	ClientIPv6Block = "block"
+)

@@ -228,6 +228,17 @@ message ClientWGSpec {
   reserved 8;
   string backend = 9;                 // "kernel" (default) | "userspace"
   repeated WGClientPeer clients = 10; // ENABLED credentials only
+  // ipv6_prefix is the master's client-facing IPv6 /64 (RFC 4193 unique-local,
+  // derived from address_pool). Empty ⇒ the interface stays IPv4-only, which is the
+  // default and what every fleet ran before this field existed.
+  //
+  // It travels with allowed_ips containing "::/0" and is the thing that makes that
+  // route safe: the master addresses itself inside this prefix and answers forwarded
+  // IPv6 with ICMPv6 administratively-prohibited, so a dual-stack client falls back
+  // to IPv4 in milliseconds. Handing out "::/0" WITHOUT it is an earlier finding — the
+  // client's own v6 path is abandoned for one that silently drops, and pages stall
+  // in a way that looks like an MTU problem for days.
+  string ipv6_prefix = 11;
 }
 
 // WGClientPeer is the node-facing view of one issued credential: everything the

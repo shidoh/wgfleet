@@ -116,7 +116,7 @@ func Planners(in Input) []reconcile.Planner {
 		// only serves it, never downloads — see dashboardPlanner).
 		dashboardPlanner{uiDir: in.Paths.UIDir},
 		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey, tier: in.Tier},
-		masterNATPlanner{path: in.Paths.NFT, clientIface: in.ClientInterface},
+		masterNATPlanner{path: in.Paths.NFT, v6Path: in.Paths.V6NFT, clientIface: in.ClientInterface},
 		dockerfw.NewForwardPlanner(
 			"master forwarding (ip_forward + DOCKER-USER)",
 			in.ClientInterface, defaultClientInterface,
@@ -516,6 +516,7 @@ func (p firewallPlanner) isLoaded() bool {
 
 type masterNATPlanner struct {
 	path        string
+	v6Path      string
 	clientIface string
 	// loaded reports whether the live kernel currently has the master NAT table.
 	// nil ⇒ a real `nft list table ip wgfleet_master` probe; tests inject a stub.
@@ -572,6 +573,32 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 	default:
 		actions = append(actions, reconcile.NoChangeAction("nft -f", "ruleset already loaded"))
 	}
+	// The client-facing IPv6 policy, when the controller has decided this master
+	// answers IPv6 at all. Rendered here rather than in its own planner because it is
+	// the same decision as the NAT above — what happens to a client's packets — and
+	// splitting it would let the two halves converge at different times, which for
+	// the seconds in between is a client with a ::/0 route and a master that ignores
+	// it. Forwarding has to be on for the reject to be reachable at all; the chain's
+	// drop policy is what keeps that from turning a master with a public IPv6 address
+	// into an open router.
+	if spec.Master.ClientWG != nil && spec.Master.ClientWG.IPv6Prefix != "" && p.v6Path != "" {
+		v6, verr := netfw.RenderMasterV6Block(p.clientIface, spec.Master.ClientWG.IPv6Prefix)
+		if verr != nil {
+			return nil, verr
+		}
+		v6file, verr := reconcile.FileAction(p.v6Path, []byte(v6), 0o644, nil)
+		if verr != nil {
+			return nil, verr
+		}
+		actions = append(actions, v6file)
+		if v6file.Changes() {
+			actions = append(actions,
+				reconcile.ExecAction("enable IPv6 forwarding so the client refusal is reachable",
+					"sysctl", "-w", "net.ipv6.conf.all.forwarding=1"),
+				reconcile.ExecAction("apply the client-facing IPv6 refusal atomically", "nft", "-f", p.v6Path))
+		}
+	}
+
 	// The nft rules mark the packet; these two tell the kernel a marked packet stays
 	// here so the transparent socket can accept it. Without them TPROXY silently
 	// does nothing useful: the datagram is routed normally, no socket ever sees it,

@@ -1222,6 +1222,17 @@ type ClientWGSpec struct {
 	Awg           *AWGParams             `protobuf:"bytes,7,opt,name=awg,proto3" json:"awg,omitempty"`                                 // obfuscation for this interface (server end)
 	Backend       string                 `protobuf:"bytes,9,opt,name=backend,proto3" json:"backend,omitempty"`                         // "kernel" (default) | "userspace"
 	Clients       []*WGClientPeer        `protobuf:"bytes,10,rep,name=clients,proto3" json:"clients,omitempty"`                        // ENABLED credentials only
+	// ipv6_prefix is the master's client-facing IPv6 /64 (RFC 4193 unique-local,
+	// derived from address_pool). Empty ⇒ the interface stays IPv4-only, which is the
+	// default and what every fleet ran before this field existed.
+	//
+	// It travels with allowed_ips containing "::/0" and is the thing that makes that
+	// route safe: the master addresses itself inside this prefix and answers forwarded
+	// IPv6 with ICMPv6 administratively-prohibited, so a dual-stack client falls back
+	// to IPv4 in milliseconds. Handing out "::/0" WITHOUT it is an earlier finding — the
+	// client's own v6 path is abandoned for one that silently drops, and pages stall
+	// in a way that looks like an MTU problem for days.
+	Ipv6Prefix    string `protobuf:"bytes,11,opt,name=ipv6_prefix,json=ipv6Prefix,proto3" json:"ipv6_prefix,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1317,6 +1328,13 @@ func (x *ClientWGSpec) GetClients() []*WGClientPeer {
 		return x.Clients
 	}
 	return nil
+}
+
+func (x *ClientWGSpec) GetIpv6Prefix() string {
+	if x != nil {
+		return x.Ipv6Prefix
+	}
+	return ""
 }
 
 // WGClientPeer is the node-facing view of one issued credential: everything the
@@ -3158,7 +3176,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x15health_check_interval\x18\x0e \x01(\x05R\x13healthCheckInterval\x12(\n" +
 	"\x10max_failed_times\x18\x0f \x01(\x05R\x0emaxFailedTimes\x12>\n" +
 	"\fclient_vless\x18\x10 \x01(\v2\x1b.wgfleet.v1.ClientVlessSpecR\vclientVless\x125\n" +
-	"\tclient_wg\x18\x11 \x01(\v2\x18.wgfleet.v1.ClientWGSpecR\bclientWg\"\xbb\x02\n" +
+	"\tclient_wg\x18\x11 \x01(\v2\x18.wgfleet.v1.ClientWGSpecR\bclientWg\"\xdc\x02\n" +
 	"\fClientWGSpec\x12\x1f\n" +
 	"\vlisten_port\x18\x01 \x01(\x05R\n" +
 	"listenPort\x12!\n" +
@@ -3171,7 +3189,9 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x03awg\x18\a \x01(\v2\x15.wgfleet.v1.AWGParamsR\x03awg\x12\x18\n" +
 	"\abackend\x18\t \x01(\tR\abackend\x122\n" +
 	"\aclients\x18\n" +
-	" \x03(\v2\x18.wgfleet.v1.WGClientPeerR\aclientsJ\x04\b\b\x10\t\"\x80\x01\n" +
+	" \x03(\v2\x18.wgfleet.v1.WGClientPeerR\aclients\x12\x1f\n" +
+	"\vipv6_prefix\x18\v \x01(\tR\n" +
+	"ipv6PrefixJ\x04\b\b\x10\t\"\x80\x01\n" +
 	"\fWGClientPeer\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +

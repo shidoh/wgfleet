@@ -694,3 +694,58 @@ func TestMasterNATRepairsTProxyPolicyRoutingDrift(t *testing.T) {
 		}
 	}
 }
+
+// The IPv6 refusal must be applied by the same planner, in the same pass, as the
+// rest of the client policy. Split across planners the two halves converge at
+// different times, and for those seconds a client holds a ::/0 route into a master
+// that ignores it — which is the black hole, not the block.
+func TestMasterNATAppliesTheIPv6Refusal(t *testing.T) {
+	paths := testPaths(t)
+	spec, _ := masterSpec(t)
+	prefix, err := wg.ClientULAFor(spec.WGServer.AddressPool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Master.ClientWG = &domain.ClientWGSpec{
+		ListenPort: 443, AddressPool: spec.WGServer.AddressPool,
+		ServerAddress: "10.80.0.1", IPv6Prefix: prefix.String(),
+	}
+
+	pl := masterNATPlanner{path: paths.NFT, v6Path: paths.V6NFT, clientIface: "wg0",
+		loaded: func() bool { return true }, tproxyReady: func() bool { return true }}
+	acts, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dump string
+	for _, a := range acts {
+		dump += a.Summary + " | " + a.Display + "\n"
+	}
+	if !strings.Contains(dump, "reject with icmpv6 type admin-prohibited") {
+		t.Errorf("no audible IPv6 refusal in the plan:\n%s", dump)
+	}
+	// Without forwarding the packet never reaches a forward chain and no ICMP is
+	// generated at all — the reject rule would be decoration.
+	if !strings.Contains(dump, "net.ipv6.conf.all.forwarding=1") {
+		t.Errorf("IPv6 forwarding is never enabled, so the refusal is unreachable:\n%s", dump)
+	}
+}
+
+// With no prefix the master must not touch IPv6 at all — not the ruleset, and
+// certainly not the forwarding sysctl.
+func TestMasterNATLeavesIPv6AloneByDefault(t *testing.T) {
+	paths := testPaths(t)
+	spec, _ := masterSpec(t)
+
+	pl := masterNATPlanner{path: paths.NFT, v6Path: paths.V6NFT, clientIface: "wg0",
+		loaded: func() bool { return true }, tproxyReady: func() bool { return true }}
+	acts, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range acts {
+		if strings.Contains(a.Summary+a.Display, "ipv6") || strings.Contains(a.Summary+a.Display, "icmpv6") {
+			t.Errorf("IPv6 touched with the block off: %s | %s", a.Summary, a.Display)
+		}
+	}
+}

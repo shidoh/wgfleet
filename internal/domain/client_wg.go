@@ -58,6 +58,16 @@ type ClientWGSpec struct {
 	// Backend selects what actually carries the interface: the kernel module (as
 	// on the exits) or the userspace amneziawg-go daemon. Empty ⇒ kernel.
 	Backend ClientWGBackend
+	// IPv6Prefix is the master's client-facing IPv6 /64 (RFC 4193 unique-local,
+	// derived from AddressPool by wg.ClientULAFor). Empty ⇒ the interface is
+	// IPv4-only, which is the default.
+	//
+	// It is inseparable from AllowedIPs carrying "::/0": the prefix is what lets the
+	// master address itself in v6 and answer a forwarded v6 packet with ICMPv6
+	// administratively-prohibited, so a dual-stack client falls back to IPv4 at once
+	// instead of stalling. Validate() refuses "::/0" without it, because that pairing
+	// is an earlier finding — a v6 default route into a data plane that drops it silently.
+	IPv6Prefix string
 	// Clients are the ENABLED peers only. A muted credential is absent here, so a
 	// re-render drops it from the interface while the user's config stays valid.
 	Clients []WGClientPeer
@@ -152,7 +162,21 @@ func (s ClientWGSpec) Validate() error {
 	default:
 		errs = append(errs, fmt.Errorf("unknown backend %q", s.Backend))
 	}
-	errs = append(errs, validateClientAllowedIPs(s.AllowedIPs)...)
+	errs = append(errs, validateClientAllowedIPs(s.AllowedIPs, s.IPv6Prefix)...)
+	if s.IPv6Prefix != "" {
+		switch p, err := netip.ParsePrefix(s.IPv6Prefix); {
+		case err != nil:
+			errs = append(errs, fmt.Errorf("ipv6_prefix %q: %w", s.IPv6Prefix, err))
+		case !p.Addr().Is6():
+			errs = append(errs, fmt.Errorf("ipv6_prefix %q is not an IPv6 prefix", s.IPv6Prefix))
+		case p.Bits() != 64:
+			errs = append(errs, fmt.Errorf("ipv6_prefix %q must be a /64", s.IPv6Prefix))
+		case p.Addr().As16()[0] != 0xfd:
+			// Anything but unique-local would be an address range we do not own; a
+			// client routing it into the tunnel would lose the real one.
+			errs = append(errs, fmt.Errorf("ipv6_prefix %q is not inside fd00::/8 (RFC 4193 unique-local)", s.IPv6Prefix))
+		}
+	}
 	if err := ValidateClientKeepalive(s.Keepalive); err != nil {
 		errs = append(errs, err)
 	}
@@ -245,10 +269,16 @@ func validateClientPeer(i int, c WGClientPeer, pool netip.Prefix, server netip.A
 	return errs
 }
 
-// validateClientAllowedIPs rejects a malformed prefix and, specifically, the IPv6
-// default route: the data plane is IPv4-only and "::/0" black-holes dual-stack
-// clients.
-func validateClientAllowedIPs(allowed []string) []error {
+// validateClientAllowedIPs rejects a malformed prefix and, specifically, an IPv6
+// default route that nothing is prepared to answer.
+//
+// "::/0" on its own is an earlier finding: the data plane is IPv4-only, so a dual-stack
+// client abandons its own working v6 path for one that drops silently, and pages
+// stall in a way that reads as an MTU fault for days. Paired with ipv6Prefix it is
+// the opposite — the master addresses itself in that prefix and answers forwarded
+// v6 with ICMPv6 administratively-prohibited, so the client falls back to IPv4 in
+// milliseconds. The route is not the hazard; the route without the answer is.
+func validateClientAllowedIPs(allowed []string, ipv6Prefix string) []error {
 	var errs []error
 	for _, a := range allowed {
 		p, err := netip.ParsePrefix(a)
@@ -256,8 +286,9 @@ func validateClientAllowedIPs(allowed []string) []error {
 			errs = append(errs, fmt.Errorf("allowed IPs %q: %w", a, err))
 			continue
 		}
-		if p.Addr().Is6() && p.Bits() == 0 {
-			errs = append(errs, fmt.Errorf("allowed IPs %q: the data plane is IPv4-only, an IPv6 default route black-holes clients", a))
+		if p.Addr().Is6() && p.Bits() == 0 && ipv6Prefix == "" {
+			errs = append(errs, fmt.Errorf("allowed IPs %q: an IPv6 default route needs an ipv6_prefix for the master to answer from, "+
+				"or it black-holes dual-stack clients", a))
 		}
 	}
 	return errs

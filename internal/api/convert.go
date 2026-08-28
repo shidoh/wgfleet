@@ -197,6 +197,7 @@ func clientWGToProto(c *domain.ClientWGSpec) *pb.ClientWGSpec {
 		AllowedIps:    c.AllowedIPs,
 		Awg:           awgToProto(c.AWG),
 		Backend:       string(c.Backend),
+		Ipv6Prefix:    c.IPv6Prefix,
 	}
 	for _, p := range c.Clients {
 		out.Clients = append(out.Clients, &pb.WGClientPeer{
@@ -222,6 +223,7 @@ func clientWGFromProto(c *pb.ClientWGSpec) *domain.ClientWGSpec {
 		AllowedIPs:    c.GetAllowedIps(),
 		AWG:           awgFromProto(c.GetAwg()),
 		Backend:       domain.ClientWGBackend(c.GetBackend()),
+		IPv6Prefix:    c.GetIpv6Prefix(),
 	}
 	for _, p := range c.GetClients() {
 		out.Clients = append(out.Clients, domain.WGClientPeer{
