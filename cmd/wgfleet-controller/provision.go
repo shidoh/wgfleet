@@ -80,11 +80,16 @@ func upgradeAgentNode(cfg *config.ControllerConfig, ca *pki.CA, node, agentBin s
 	if plan {
 		mode = provisioner.ModePlan
 	}
-	restartedAt := time.Now()
 	report, err := mgr.UpgradeAgent(context.Background(), node, mode)
 	if err != nil {
 		return fmt.Errorf("upgrade %q: %w", node, err)
 	}
+	// AFTER the upload and restart, not before them. The upload takes tens of seconds
+	// over SSH, so a mark taken beforehand is satisfied by a report from the very
+	// process being replaced — and re-running an upgrade with the same version to
+	// unstick a node printed "confirmed" on the strength of the OLD agent checking in
+	// mid-transfer, which is exactly the case the confirmation exists to catch.
+	restartedAt := time.Now()
 	if plan {
 		fmt.Print(report.String())
 		return nil

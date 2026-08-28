@@ -270,6 +270,15 @@ func (m *Manager) TriggerUpgrade(nodeID string) error {
 		// Locked variant on purpose — we hold the lock already. Calling UpgradeAgent
 		// here would have it try to acquire it again and fail every single time.
 		_, err := m.upgradeAgentLocked(bg, node, provisioner.ModeApply)
+		if err == nil {
+			// Uploading a binary and restarting a service is the FIRST HALF of an
+			// upgrade. This path serves the Web UI's Upgrade button and the wire-gate's
+			// automatic push, and both used to stop here: an agent that started and
+			// could not converge logged "agent upgrade applied" and, worse, had its
+			// LastError CLEARED — so the node went green in the console on the strength
+			// of a successful scp. Only --upgrade-agent waited. Now all of them do.
+			err = m.awaitAfterUpgrade(bg, nodeID)
+		}
 		// Record the outcome on the node so a background upgrade failure is visible
 		// in the UI (the detail page surfaces Node.LastError) instead of being
 		// swallowed into a log line the operator never sees. Success clears it.
@@ -278,10 +287,35 @@ func (m *Manager) TriggerUpgrade(nodeID string) error {
 			m.log.Error("agent upgrade failed", "node", nodeID, "err", err)
 			return
 		}
-		m.log.Info("agent upgrade applied; restarted agent will re-register", "node", nodeID)
+		m.log.Info("agent upgrade confirmed", "node", nodeID)
 	}()
 	return nil
 }
+
+// awaitAfterUpgrade confirms the node came back on the binary we just installed.
+//
+// restartedAt is taken HERE, after the upload and restart have returned, not before
+// them: the upload takes tens of seconds over SSH, so a "restartedAt" captured
+// before it is satisfied by a report from the very process the upgrade is replacing.
+// Re-running an upgrade with the same version to unstick a node then printed
+// "confirmed" on the strength of the old agent checking in mid-transfer.
+func (m *Manager) awaitAfterUpgrade(ctx context.Context, nodeID string) error {
+	restartedAt := time.Now()
+	want, err := provisioner.ProbeLocalAgentVersion(ctx, m.opts.AgentBinPath)
+	if err != nil {
+		// We upgraded but cannot say to what, so we cannot confirm it either. Say so
+		// rather than claim success.
+		return fmt.Errorf("upgraded but cannot identify the binary to confirm against: %w", err)
+	}
+	return m.AwaitAgentBack(ctx, nodeID, want, restartedAt, upgradeConfirmTimeout, upgradeReportFresh)
+}
+
+// How long to wait for a node to report in on its new binary, and how recent that
+// report has to be. Shared by every upgrade path so they cannot drift apart.
+const (
+	upgradeConfirmTimeout = 3 * time.Minute
+	upgradeReportFresh    = 2 * time.Minute
+)
 
 // recordUpgradeOutcome stamps a background agent-upgrade result onto the node's
 // LastError (preserving its operational state): the error message on failure, or
@@ -434,7 +468,9 @@ func toSSHTarget(s config.SSHConfig) domain.SSHTarget {
 // did exactly that and then reported success, so an agent that started and could not
 // converge looked identical to one that worked, and the operator found out later
 // from something else entirely. The rolling upgrade was the only caller that
-// checked; the check is the same one, taken from domain.Node.
+// checked; the check is the same one, taken from domain.Node. All four call it now
+// (the UI button and the version gate through TriggerUpgrade → awaitAfterUpgrade),
+// and the earlier version of this paragraph claimed that before it was true.
 //
 // It does not roll back. The coordinator does that because it is walking a fleet and
 // must not leave a half-upgraded one behind; a single-node upgrade the operator
