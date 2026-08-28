@@ -521,6 +521,9 @@ type masterNATPlanner struct {
 	// loaded reports whether the live kernel currently has the master NAT table.
 	// nil ⇒ a real `nft list table ip wgfleet_master` probe; tests inject a stub.
 	loaded func() bool
+	// lastRendered is the ruleset this pass produced, so isLoaded can compare the
+	// kernel against it rather than against the mere existence of a table.
+	lastRendered string
 	// v6Loaded is the same probe for the client-facing IPv6 table.
 	v6Loaded func() bool
 	// tproxyReady reports whether the kernel still carries the policy routing the
@@ -562,6 +565,7 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 	// keeps the old table while the new bytes sit on disk, and the next pass sees an
 	// unchanged file plus a present table and reports "already loaded" forever. It
 	// also re-applies when the kernel has lost the table, which is what a reboot does.
+	p.lastRendered = ruleset
 	actions, err := reconcile.NFTApply(p.path, []byte(ruleset), p.isLoaded, "apply master NAT atomically")
 	if err != nil {
 		return nil, err
@@ -686,11 +690,19 @@ func (p masterNATPlanner) isV6Loaded() bool {
 	return p.v6Loaded()
 }
 
+// isLoaded asks whether the kernel holds THIS ruleset, not merely a table by that
+// name. Presence alone left a hand-flushed chain invisible: measured on a rehearsal,
+// flushing the TPROXY chain leaked a client's DNS query in cleartext one second
+// later while four consecutive passes reported drift=0. An unanswerable question
+// (no nft, a dev box) falls back to presence, which is the old, safe behaviour.
 func (p masterNATPlanner) isLoaded() bool {
-	if p.loaded == nil {
-		return netfw.TableLoaded("ip", netfw.MasterNATTable)
+	if p.loaded != nil {
+		return p.loaded()
 	}
-	return p.loaded()
+	if matches, known := netfw.TableMatches("ip", netfw.MasterNATTable, p.lastRendered); known {
+		return matches
+	}
+	return netfw.TableLoaded("ip", netfw.MasterNATTable)
 }
 
 // Master forwarding (ip_forward + DOCKER-USER accept, an earlier finding) is handled by

@@ -19,7 +19,11 @@ import (
 // beside the ruleset records the digest of the last apply that actually succeeded,
 // written through OnApplied so a failed exec leaves it stale and the next pass
 // retries. Presence in the kernel is still checked as well, because a reboot
-// clears nft state without touching either file.
+// clears nft state without touching either file — and `loaded` is expected to ask
+// the stronger question wherever it can: not "is a table by this name present" but
+// "does it hold what we wrote". A present table with a chain someone flushed by hand
+// is the case that leaked a client's DNS query in cleartext while four consecutive
+// reconcile passes reported drift=0.
 //
 // The marker lives next to the ruleset rather than in /run on purpose: /run is
 // cleared on reboot, and a reboot must re-apply because the KERNEL lost the table,

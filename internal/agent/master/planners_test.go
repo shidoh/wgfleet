@@ -136,7 +136,10 @@ func TestMasterPlanModeWritesNothing(t *testing.T) {
 	out := report.String()
 	for _, want := range []string{
 		"mihomo (data plane)", "type: wireguard", "amnezia-wg-option",
-		"master NAT (nftables)", "dnat to 10.80.0.1:7895", "udp dport 443 drop",
+		// The QUIC drop is GONE once UDP can be proxied: it lived at the dstnat hook
+		// and shadowed the interception at mangle, so keeping both black-holed every
+		// client's HTTP/3. The interception itself is what must be here now.
+		"master NAT (nftables)", "dnat to 10.80.0.1:7895", "tproxy ip to 10.80.0.1:7896",
 		"master firewall (nftables)", `iifname "zt*" accept`,
 		"direct-domains.yaml",
 		"container stack (docker compose)", "wg-easy", "mihomo", "EXPERIMENTAL_AWG=true",
