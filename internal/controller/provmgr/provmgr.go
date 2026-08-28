@@ -439,15 +439,23 @@ func (m *Manager) findNode(name string) (domain.Node, config.SSHConfig, bool) {
 	return domain.Node{}, config.SSHConfig{}, false
 }
 
-// publicIP resolves a node's advertised public IP: the explicit manifest value,
-// or the SSH host when unset (for typical setups where you SSH to the node at
-// its public IP). It must be set explicitly when SSH goes via a bastion or a
-// forwarded local port (e.g. Lima), where ssh.host is not the peer endpoint.
-func publicIP(explicit, sshHost string) string {
-	if explicit != "" {
-		return explicit
-	}
-	return sshHost
+// publicIP resolves a node's public IP from the manifest: the explicit value, or
+// nothing.
+//
+// It used to fall back to ssh.host, on the reasoning that you usually SSH to a node
+// at its public address. Usually is not always, and the exception is the case that
+// matters: when a node's direct path starts flapping the operator points ssh at the
+// mgmt overlay instead — and the console then displayed a ZeroTier address in a
+// column labelled PUBLIC, on a node whose real public address was fine. A field that
+// is right most of the time and silently wrong exactly when the network is
+// misbehaving is worse than an empty one, because nobody goes looking.
+//
+// The agent discovers its own address now (routing.DiscoverPublicIP) and reports it
+// at Register, so this manifest value is the fallback rather than the primary
+// source, and an empty answer here means the console shows "—" — which the operator
+// can see and fix with one key.
+func publicIP(explicit, _ string) string {
+	return explicit
 }
 
 func toSSHTarget(s config.SSHConfig) domain.SSHTarget {
