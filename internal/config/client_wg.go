@@ -15,7 +15,7 @@ import (
 // on what addresses.
 
 // validateClientAWG checks one master's client_awg block.
-func validateClientAWG(i int, m MasterConfig) []error {
+func validateClientAWG(i int, m MasterConfig, fleet FleetSection) []error {
 	var errs []error
 
 	switch m.ClientAWGBackend() {
@@ -84,7 +84,7 @@ func validateClientAWG(i int, m MasterConfig) []error {
 			"client_awg.exclude_from_tunnel is not — nothing has been taken out of the tunnel, so there is "+
 			"nothing to put back and the setting does nothing", i))
 	}
-	errs = append(errs, validateTunnelReachesItself(i, m)...)
+	errs = append(errs, validateTunnelReachesItself(i, m, fleet)...)
 
 	switch m.ClientAWG.IPv6 {
 	case "", ClientIPv6Off, ClientIPv6Block:
@@ -282,7 +282,43 @@ func localHost(host string) bool {
 // with it. Nothing downstream can catch this. The expansion is arithmetic and
 // produces a perfectly well-formed list; the rendered config is valid; the Web UI
 // reports "N networks". It only shows up as a person saying nothing works.
-func validateTunnelReachesItself(i int, m MasterConfig) []error {
+// ClientResolversFromManifest is the resolver list a client of this master will be
+// handed, as far as the MANIFEST alone can say.
+//
+// It exists because the answer used to be derived in two places that then drifted:
+// the validator below read only the raw `client_awg.dns` / `compose.client_dns`
+// keys, while the broker learned to fall back to ADR-0024's derivation. So a
+// manifest that set neither passed validation with no DNS to check, and the broker
+// then handed clients a resolver the tunnel did not route to — a config that
+// connects and resolves nothing, which reaches the operator as "it doesn't work".
+//
+// The broker additionally consults the store, because an exit's mgmt address can be
+// discovered at registration rather than written down. That case is invisible here
+// and is the one gap left: a manifest that omits `mgmt_addr` for an exit cannot be
+// checked at startup.
+func (f FleetSection) ClientResolversFromManifest(m MasterConfig) []string {
+	if dns := m.ClientAWGDNS(); len(dns) > 0 {
+		return dns
+	}
+	if m.DNSFilter {
+		// ADR-0024: clients use the master's own address in the client pool.
+		if pool, err := netip.ParsePrefix(m.ClientAWG.AddressPool); err == nil {
+			if gw := pool.Masked().Addr().Next(); gw.IsValid() {
+				return []string{gw.String()}
+			}
+		}
+		return nil
+	}
+	var out []string
+	for _, e := range f.Exits {
+		if e.MgmtAddr != "" {
+			out = append(out, e.MgmtAddr)
+		}
+	}
+	return out
+}
+
+func validateTunnelReachesItself(i int, m MasterConfig, fleet FleetSection) []error {
 	if len(m.ClientAWG.ExcludeFromTunnel) == 0 {
 		return nil
 	}
@@ -311,7 +347,7 @@ func validateTunnelReachesItself(i int, m MasterConfig) []error {
 				"client_awg.route_through_cidrs", i, m.ClientAWG.AddressPool, gw))
 		}
 	}
-	for _, d := range m.ClientAWGDNS() {
+	for _, d := range fleet.ClientResolversFromManifest(m) {
 		addr, err := netip.ParseAddr(d)
 		if err != nil {
 			continue // reported by the caller's own parse loop

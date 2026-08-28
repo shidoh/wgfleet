@@ -1194,7 +1194,7 @@ func (c ControllerConfig) Validate() error {
 				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.address_pool %q is not a valid CIDR: %w", i, m.ClientAWG.AddressPool, err))
 			}
 		}
-		errs = append(errs, validateClientAWG(i, m)...)
+		errs = append(errs, validateClientAWG(i, m, c.Fleet)...)
 		if cv := m.ClientVLESS; cv.Enabled {
 			if p := cv.ListenPort; p != 0 && (p < 1 || p > 65535) {
 				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_vless.listen_port %d out of range", i, p))

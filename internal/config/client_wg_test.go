@@ -302,7 +302,7 @@ func TestExcludeFromTunnelMustNotCutOffTheGatewayOrDNS(t *testing.T) {
 
 	m := base()
 	m.ClientAWG.ExcludeFromTunnel = []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
-	errs := validateClientAWG(0, m)
+	errs := validateClientAWG(0, m, FleetSection{})
 	var gotPool, gotDNS bool
 	for _, err := range errs {
 		if strings.Contains(err.Error(), "10.80.0.0/24") {
@@ -321,14 +321,14 @@ func TestExcludeFromTunnelMustNotCutOffTheGatewayOrDNS(t *testing.T) {
 
 	// Putting them back is the documented fix, and it must clear both.
 	m.ClientAWG.RouteThroughCIDRs = []string{"10.80.0.0/24", "10.20.0.0/16"}
-	if errs := validateClientAWG(0, m); len(errs) != 0 {
+	if errs := validateClientAWG(0, m, FleetSection{}); len(errs) != 0 {
 		t.Errorf("route_through_cidrs did not resolve the exclusion: %v", errs)
 	}
 
 	// An exclusion that touches neither is fine as it stands.
 	ok := base()
 	ok.ClientAWG.ExcludeFromTunnel = []string{"192.168.0.0/16"}
-	if errs := validateClientAWG(0, ok); len(errs) != 0 {
+	if errs := validateClientAWG(0, ok, FleetSection{}); len(errs) != 0 {
 		t.Errorf("a harmless exclusion was refused: %v", errs)
 	}
 }
@@ -382,5 +382,52 @@ func TestAWG3HeaderProtectionRequiresAFleetSecret(t *testing.T) {
 	c.Fleet.AWG3Key = "secret://awg3-key"
 	if errs := validateAWG3Secret(c); len(errs) != 0 {
 		t.Errorf("3.x was refused despite a configured secret: %v", errs)
+	}
+}
+
+// The validator must see the resolver the CONTROLLER will actually hand out, not
+// just the one the operator wrote down.
+//
+// It used to read only client_awg.dns / compose.client_dns. A manifest that set
+// neither — the shipped shape, because the resolver "defaults to the exits' mgmt
+// addresses" — therefore had no DNS to check, passed validation, and the broker
+// then handed clients a resolver that exclude_from_tunnel had removed from the
+// tunnel. The result is a config that connects and resolves nothing, which reaches
+// the operator weeks later as "it doesn't work".
+func TestTunnelReachesItselfChecksTheDerivedResolver(t *testing.T) {
+	fleet := FleetSection{Exits: []ExitConfig{{Name: "exit-de-1", MgmtAddr: "192.168.105.2"}}}
+	m := MasterConfig{Name: "master-xa-1"}
+	m.ClientAWG.AddressPool = "10.80.0.0/24"
+	// Neither client_awg.dns nor compose.client_dns — the shipped shape.
+	m.ClientAWG.ExcludeFromTunnel = []string{"192.168.0.0/16"}
+
+	errs := validateTunnelReachesItself(0, m, fleet)
+	var named bool
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "192.168.105.2") {
+			named = true
+		}
+	}
+	if !named {
+		t.Fatalf("the excluded resolver was not caught; clients would resolve nothing: %v", errs)
+	}
+
+	// Routing it back in clears the finding.
+	m.ClientAWG.RouteThroughCIDRs = []string{"192.168.105.0/24"}
+	for _, e := range validateTunnelReachesItself(0, m, fleet) {
+		if strings.Contains(e.Error(), "192.168.105.2") {
+			t.Errorf("still reported after route_through_cidrs put it back: %v", e)
+		}
+	}
+}
+
+// With master-tier blocky the resolver is the gateway, which is inside the pool and
+// therefore always in the tunnel — the check must not invent a problem there.
+func TestTunnelReachesItselfAcceptsTheMasterGateway(t *testing.T) {
+	m := MasterConfig{Name: "master-xa-1", DNSFilter: true}
+	m.ClientAWG.AddressPool = "10.80.0.0/24"
+	m.ClientAWG.ExcludeFromTunnel = []string{"192.168.0.0/16"}
+	if errs := validateTunnelReachesItself(0, m, FleetSection{}); len(errs) != 0 {
+		t.Errorf("the master gateway was reported unreachable from its own tunnel: %v", errs)
 	}
 }
