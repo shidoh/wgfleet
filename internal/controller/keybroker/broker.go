@@ -81,7 +81,7 @@ func (b *Broker) RegisterPublicKey(ctx context.Context, nodeID, publicKey string
 	// that injects extra wg-quick directives (e.g. PostUp) into every peer's
 	// awg0.conf, which awg-quick executes — remote config injection on peers.
 	if !wg.ValidKey(publicKey) {
-		return fmt.Errorf("keybroker: malformed WireGuard public key for %q", nodeID)
+		return fmt.Errorf("%q published a malformed AWG public key (want 32 bytes, base64)", nodeID)
 	}
 	if b.keyUnchanged(ctx, nodeID, publicKey, func(n domain.Node) string { return n.PublicKey }) {
 		return nil
@@ -288,7 +288,7 @@ func (b *Broker) RegisterTunnelKey(ctx context.Context, nodeID, tunnel, publicKe
 	// Same injection guard as RegisterPublicKey: this value is rendered verbatim as
 	// `PublicKey = <value>` into the exit's awg0.conf, which awg-quick executes.
 	if !wg.ValidKey(publicKey) {
-		return fmt.Errorf("keybroker: malformed per-tunnel WireGuard public key for %q tunnel %q", nodeID, tunnel)
+		return fmt.Errorf("%q published a malformed per-tunnel AWG public key for tunnel %q (want 32 bytes, base64)", nodeID, tunnel)
 	}
 	if _, ok := b.findExit(tunnel); !ok {
 		return fmt.Errorf("keybroker: per-tunnel key for unknown exit %q (from %q)", tunnel, nodeID)

@@ -20,7 +20,7 @@
 <details class="backup-section">
   <summary class="backup-summary">BACKUP &amp; MIGRATE</summary>
   <div class="backup-card">
-    <p class="backup-lead">One <code>age</code>-encrypted archive of everything irreplaceable — node inventory, CA, manifest, and this master's wg-easy clients. Restore it after a loss, or migrate the controller to a fresh node.</p>
+    <p class="backup-lead">One <code>age</code>-encrypted archive of everything irreplaceable — node inventory, CA, manifest, the fleet secret, and this master's client credentials and keys. Restore it after a loss, or migrate the controller to a fresh node.</p>
     <form class="backup-form" method="post" action="/backup">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <div class="field-label">AGE RECIPIENT</div>

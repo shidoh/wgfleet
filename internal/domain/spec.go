@@ -371,14 +371,14 @@ func (s NodeSpec) Validate() error {
 	// down with it. clientVlessPlanner validates it and defers that one component,
 	// which is what the paragraph above argues for and what this line prevented.
 	if s.WGServer.ListenPort <= 0 || s.WGServer.ListenPort > 65535 {
-		errs = append(errs, fmt.Errorf("WG listen port %d out of range", s.WGServer.ListenPort))
+		errs = append(errs, fmt.Errorf("AWG listen port %d out of range (1-65535)", s.WGServer.ListenPort))
 	}
 	if s.WGServer.AddressPool == "" {
-		errs = append(errs, errors.New("WG server address pool is required"))
+		errs = append(errs, errors.New("the AWG server needs an address pool (client_awg.address_pool)"))
 	}
 	if s.WGServer.MTU != 0 && (s.WGServer.MTU < 1280 || s.WGServer.MTU > 1500) {
 		// 1280 is the IPv6 minimum MTU; below it tunnels are unreliable.
-		errs = append(errs, fmt.Errorf("WG server MTU %d outside sane range [1280,1500]", s.WGServer.MTU))
+		errs = append(errs, fmt.Errorf("AWG server MTU %d is outside the workable range 1280-1500", s.WGServer.MTU))
 	}
 	if s.WGServer.AWG != nil {
 		if err := s.WGServer.AWG.Validate(); err != nil {

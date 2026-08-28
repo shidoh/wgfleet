@@ -125,7 +125,7 @@ install_deps() {
     fi
   fi
 
-  # --- Docker (mihomo + wg-easy run in containers) ---
+  # --- Docker (the data-plane containers run here) ---
   if command -v docker >/dev/null 2>&1; then
     log "Docker already installed"
   else
@@ -276,7 +276,7 @@ fleet:
   masters:
     - name: master-1
       mgmt_addr: "${mgmt}"       # same ZT address as controller.listen host
-      public_ip: "${pub}"        # seeds wg-easy first run (INIT_HOST)
+      public_ip: "${pub}"        # the address clients dial
       client_awg: { listen_port: 443, address_pool: 10.80.0.0/24 }
       routing:    { direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16], balance: health }
       compose:    { wg_easy_web_port: 51821 }   # mihomo pinned to a safe default (v1.19.30); do NOT set :latest or "Alpha"
@@ -340,7 +340,7 @@ $( [ -z "$ZT_NETWORK" ] && echo "   (join first:  zerotier-cli join <zt-network-
      systemctl status wgfleet-controller wgfleet-agent
 
 6. Open the Web UI over SSH/ZT at http://127.0.0.1:9000 — the master goes
-   Reconciling -> Ready once wg-easy + mihomo are up. Add exits from there or:
+   Reconciling -> Ready once its data plane is up. Add exits from there or:
      wgfleet-controller --config $ETC/controller.yaml --provision <exit> --plan
 
 7. Add your exit servers — see step 7 of the quickstart.
