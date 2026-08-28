@@ -30,6 +30,11 @@ doing: it is what moves credentials into the controller's store, so issuing, pau
 renaming and revoking become console actions and each person gets a self-service link
 instead of a file you have to re-send.
 
+**One check decides everything.** [The key check](#1a-the-key-check--do-not-skip-this)
+at the end of part 1 verifies that the agent will adopt wg-easy's identity rather than
+mint its own. It is two commands, it fails silently, and its failure is the only way
+this migration cuts everyone off at once. Run it even if you stop after part 1.
+
 **If something goes wrong**, [Rollback](#rollback) is in part 3 and it is free right
 up until you issue your first new client. Read it before you start part 3, not after.
 
@@ -41,8 +46,10 @@ it from every one of them before you flip the switch.
 
 ## Pre-flight
 
-Six checks. The first four ask *can this machine do the handover at all*; the last two
-are your way back. None of them changes anything.
+Two blocks. Neither changes anything.
+
+**Can this machine do the handover?** Five questions. A "no" to any of them is a
+reason to stop and fix it, not to carry on carefully.
 
 ```bash
 cat /sys/module/amneziawg/version    # kernel module generation
@@ -50,7 +57,12 @@ command -v awg awg-quick             # BOTH must be on the HOST — see below
 docker images | grep wg-easy         # must be present locally — rollback needs it
 ls -l /etc/wireguard/wg-easy.db      # must exist, holds your clients
 docker restart wg-easy && sleep 3 && docker logs --tail 20 wg-easy   # rollback must actually work
+```
 
+**Your way back.** Three copies. Take them even if you are only doing part 1 — the
+cheapest moment to have them is before anything has happened.
+
+```bash
 wgfleet-controller --config /etc/wgfleet/controller.yaml --backup /root/pre-migration.age
 cp /etc/wireguard/wg-easy.db /root/wg-easy.db.bak
 cp /var/lib/wgfleet/state.db  /root/state.db.bak
@@ -76,9 +88,15 @@ does not migrate. Part 2's dry run names them.
 *Required. Reversible via the `.prev` binaries the deploy script leaves behind.
 Your users see nothing — this part does not touch the client leg at all.*
 
-Wire contract 7 → 8 for this migration (the contract has since moved to 10).
-**Controller first.** The reverse order makes the master's
-reconcile fail on every pass until the controller catches up.
+This migration was introduced at wire contract 8. **The contract has moved on since —
+a current build reports 10, and that is expected, not a sign you have the wrong
+archive.** What matters is not the number but the order.
+
+**Controller first.** An agent newer than its controller is refused a spec entirely,
+so the reverse order makes the master's reconcile fail on every pass until the
+controller catches up. The deploy script checks both versions and flips the order
+itself when the contract moves forward; if you install by hand, install the
+controller first.
 
 ```bash
 systemctl stop wgfleet-controller
@@ -103,32 +121,56 @@ own and the exits stay on the old build until you run the command above.
 On a co-located master upgrade its agent too — `deploy/deploy-master.sh --both`
 detects the wire bump and orders the two correctly.
 
-Verify:
+Verify the upgrade itself:
 
 ```bash
-wgfleet-controller --version                           # wire-contract version 10 today
-docker ps --filter name=wg-easy --format '{{.Status}}'  # uptime unchanged
+wgfleet-controller --version                            # the wire contract this build speaks
+docker ps --filter name=wg-easy --format '{{.Status}}'  # uptime unchanged: nothing restarted
+```
 
-# THE CHECK THAT DECIDES WHETHER PART 3 WORKS. Run it here, not later.
+**Nothing about the client interface changed here.** `client_awg.managed` defaults
+off and the rendered compose file is byte-identical, so the wg-easy container is not
+recreated. You may stop after this part indefinitely — but not before the next one.
+
+### 1a. The key check — do not skip this
+
+*This is the single check whose failure means **every client stops working at once**,
+and it fails silently: nothing looks wrong until part 3, by which point the damage is
+done. It costs two commands. Run it now, at the end of part 1, even if part 3 is
+weeks away.*
+
+```bash
 awg show wg0 public-key                    # what wg-easy is serving right now
 awg pubkey < /etc/wgfleet/client-wg.key    # what the agent will serve
 ```
 
-**These two MUST match.** Every client config in the field pins the first value;
-the handover works precisely because the agent adopts it instead of minting its
-own. If they differ, the agent generated a fresh identity — and since an existing
-key file wins on every later pass, nothing will ever re-adopt. Nothing looks wrong
-until part 3, at which point every client stops handshaking at once.
+**These two MUST print the same key.** Every client config in the field pins the
+first value. The whole handover works precisely because the agent adopts that key
+instead of minting its own — so if the agent has already minted one, the cutover
+swaps the server identity under every device at the same moment.
 
-If they differ: stop. Check that `/etc/wireguard/wg-easy.db` is where the agent
-looks, `rm /etc/wgfleet/client-wg.key`, restart the agent, and re-run the check.
-The agent also logs its identity once per start and reports a mismatch as an
-ERROR — `journalctl -u wgfleet-agent | grep -i "client interface identity"`.
+**Why it can already be wrong by the time you read this:** the agent adopts the key
+on a pass where it does not yet have one of its own, and an existing key file wins on
+every later pass. If it ever generated a fresh identity — because it could not find
+wg-easy's database — nothing will re-adopt on its own. The decision has been made
+before you looked.
 
-**Nothing else about the client interface changed.** `client_awg.managed` defaults
-off and the rendered compose file is byte-identical, so the wg-easy container is
-not recreated. You may stop here indefinitely — but do not skip the key check,
-because the decision it verifies has already been made by the time you read this.
+**If they differ, stop here.** Do not proceed to part 2.
+
+```bash
+# 1. is the database where the agent looks?
+ls -l /etc/wireguard/wg-easy.db
+
+# 2. what did the agent decide, and why?
+journalctl -u wgfleet-agent | grep -i "client interface identity"
+#    a mismatch is logged as an ERROR, once per agent start
+
+# 3. discard the wrongly-minted key and let it adopt again
+rm /etc/wgfleet/client-wg.key
+systemctl restart wgfleet-agent
+
+# 4. re-run the two commands above until they match
+```
 
 ---
 
@@ -193,7 +235,10 @@ with the same key and the peers you imported in part 2, and wg-easy is retired o
 pass later, only after a pass has observed the new interface up and serving. If the
 bring-up fails, wg-easy is still there — that is why it lingers.
 
-**Read [Rollback](#rollback) below before you do this.**
+**Before you do this:** you ran [the key check](#1a-the-key-check--do-not-skip-this)
+at the end of part 1 and the two keys matched. If you did not, go back and run it now
+— it is the difference between a transparent cutover and every client dropping at
+once. And read [Rollback](#rollback) below.
 
 ```yaml
         managed: true
