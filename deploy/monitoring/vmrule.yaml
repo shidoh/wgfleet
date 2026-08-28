@@ -58,7 +58,11 @@ spec:
         description: Agent metrics at {{ $labels.instance }} have been down for 10m. Either the agent
           is dead, or the mgmt overlay (ZeroTier) path to it is broken.
     - alert: WgfleetAgentUnscraped
-      expr: max(wgfleet_nodes{state="Ready"}) - count(up{job="wgfleet",component="agent"} == 1) > 0
+      # `or vector(0)` because count() over an empty set returns no series, not 0:
+      # with EVERY agent down the subtraction yielded nothing and the total-outage
+      # case — the one that matters most — was the one case this could not report.
+      # The same fix was applied to WgfleetNoReadyExit and missed here.
+      expr: max(wgfleet_nodes{state="Ready"}) - (count(up{job="wgfleet",component="agent"} == 1) or vector(0)) > 0
       for: 30m
       labels:
         severity: warning
@@ -257,7 +261,13 @@ spec:
       # interface is up and authenticating nobody. Nothing watched this, so a
       # handover that raised an empty interface — or a client leg that came back
       # without its peers — was visible only as people complaining.
+      # The `or` arm is load-bearing. For as long as this rule existed the series
+      # it watches was emitted by NOBODY — the collector shelled to `wg show` on
+      # nodes that only have `awg` — so the alert could not fire, and its silence
+      # read exactly like health. An absent series must be the loudest case here,
+      # not the quietest.
       expr: wgfleet_wg_peers_active{iface="wg0"} == 0
+        or (wgfleet_wg_collector_up{iface="wg0"} == 0)
       for: 10m
       labels:
         severity: critical
@@ -290,8 +300,41 @@ spec:
         summary: AS blacklist is empty on {{ $labels.node }}
         description: The nftables AS blacklist ({{ $labels.family }}) on {{ $labels.node }} has 0 entries
           — the feed probe is failing and abuse filtering is off.
+    - alert: WgfleetNodeCertExpiring
+      # Node certificates are issued for a year and NOTHING renews them: no RPC, no
+      # code path that reads NotAfter after issuance, no runbook step. The
+      # controller re-mints its own server certificate on every start, so the server
+      # half self-heals and the node half does not — a fleet provisioned across one
+      # month falls off the control plane across one month, one node per anniversary,
+      # and without this rule the first symptom is a node that stopped reporting.
+      # 30 days is chosen to be longer than any plausible holiday.
+      expr: (wgfleet_agent_cert_expiry_timestamp_seconds - time()) < 30 * 86400
+      for: 1h
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: mTLS certificate for {{ $labels.node }} expires in {{ $value | humanizeDuration }}
+        description: The control-plane certificate for {{ $labels.node }} expires soon and there is no
+          automatic renewal. Re-issue it (wgfleet-controller --issue-node) and install it on the node
+          before it lapses, or the agent will be refused and the node will stop converging.
+    - alert: WgfleetNodeCertExpired
+      expr: (wgfleet_agent_cert_expiry_timestamp_seconds - time()) < 0
+      for: 5m
+      labels:
+        severity: critical
+        service: wgfleet
+      annotations:
+        summary: mTLS certificate for {{ $labels.node }} has EXPIRED
+        description: '{{ $labels.node }} can no longer authenticate to the controller. It is running its
+          last-good configuration and will not receive another one until a new certificate is installed.'
     - alert: WgfleetProbeStale
-      expr: time() - wgfleet_probe_last_success_timestamp_seconds > 7 * 86400
+      # Guarded against the never-succeeded case: that probe reports a timestamp of 0
+      # BY DESIGN, so an unguarded subtraction claims ~56 years of staleness, fires
+      # within the hour and pre-empts WgfleetProbeNeverSucceeded, which is the rule
+      # that actually describes what happened. README.md carried the correct form all
+      # along; both shipped rule files carried the broken one.
+      expr: time() - (wgfleet_probe_last_success_timestamp_seconds > 0) > 7 * 86400
       for: 1h
       labels:
         severity: warning
