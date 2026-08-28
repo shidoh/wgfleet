@@ -19,9 +19,18 @@ func nftSummaries(actions []Action) string {
 // runAll applies every changing action. On a dev box `nft` does not exist, so the
 // exec genuinely fails — which is the case under test: a failed apply must leave
 // the marker unwritten.
-func runAll(actions []Action) {
+// runAllButTheExec applies everything except the command itself — modelling an
+// `nft -f` that ran and FAILED, on every platform.
+//
+// It used to be runAll, which relied on the exec failing because "on a dev box nft
+// does not exist". On a Linux CI runner or either stand VM, running as root,
+// `nft -f` on `table ip x {}` SUCCEEDS: the marker is written, the assertion below
+// fires, and the test leaves a stray `ip x` table in the host's kernel. A test whose
+// verdict is a property of the machine — and which inverts on the platform the
+// product actually ships to — is worse than no test.
+func runAllButTheExec(actions []Action) {
 	for _, a := range actions {
-		if a.apply != nil && a.Changes() {
+		if a.Kind != ActionExec && a.apply != nil && a.Changes() {
 			_ = a.apply(context.Background())
 		}
 	}
@@ -43,7 +52,7 @@ func TestNFTApplyRetriesAfterAFailedApply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runAll(first) // the exec fails here (no nft on this box), so no marker is recorded
+	runAllButTheExec(first) // the exec failed, so no marker is recorded
 
 	if _, err := os.Stat(NFTAppliedMarker(path)); err == nil {
 		t.Fatal("a failed apply recorded itself as successful")
@@ -73,13 +82,7 @@ func TestNFTApplyIsQuietOnceAppliedAndPresent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, a := range first {
-		if a.Kind != ActionExec && a.apply != nil && a.Changes() {
-			if err := a.apply(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
+	runAllButTheExec(first)
 	// Stand in for the exec succeeding, which is all OnApplied does.
 	if err := os.WriteFile(NFTAppliedMarker(path), []byte(digestOf(ruleset)), 0o644); err != nil {
 		t.Fatal(err)

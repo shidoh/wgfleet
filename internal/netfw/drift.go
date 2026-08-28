@@ -42,15 +42,24 @@ func TableMatches(family, name, ruleset string) (matches, known bool) {
 	if len(want) == 0 {
 		return false, false
 	}
+	return chainCountsMatch(live, want), true
+}
+
+// chainCountsMatch is the comparison itself, kept separate from the exec so it can
+// be tested without a kernel. It was inline once, and the test that claimed to cover
+// it had reimplemented it beside itself — so replacing TableMatches with
+// `return true, true` left every assertion passing, including the one whose failure
+// message reads "the drift probe cannot see the case it was written for".
+func chainCountsMatch(live, want map[string]int) bool {
 	if len(live) != len(want) {
-		return false, true
+		return false
 	}
 	for chain, n := range want {
 		if live[chain] != n {
-			return false, true
+			return false
 		}
 	}
-	return true, true
+	return true
 }
 
 // nftJSON is the shape `nft -j list table` emits: a flat list of tagged objects.
@@ -96,25 +105,51 @@ func kernelChainCounts(family, name string) (map[string]int, error) {
 // in each chain. The chain's own `type ... hook ...; policy ...;` declaration is
 // part of the chain, not a rule, and neither are comments or blank lines — the
 // kernel counts none of them either.
+//
+// One rule per line is an invariant of the renderers in this package, not a
+// property of nftables, and getting it wrong is not a silent inaccuracy: a count
+// that never matches the kernel makes TableMatches report drift on every pass, so
+// `nft -f` runs every 30 seconds forever and agent_drift_total climbs on a healthy
+// node. So the walk is defensive about the two shapes that would break it. Nested
+// blocks — a `set { … }` or a `map { … }` declared beside the chains — are tracked
+// by depth so their contents are attributed to nobody and their closing brace does
+// not end the enclosing chain. A rule continued across lines is not something these
+// renderers emit, but if one ever appears the trailing-comma/backslash check keeps
+// it counted as one rule rather than several.
 func renderedChainCounts(ruleset string) map[string]int {
 	counts := map[string]int{}
-	chain := ""
+	chain, chainDepth := "", 0
+	depth := 0
+	continued := false
 	for _, raw := range strings.Split(ruleset, "\n") {
 		line := strings.TrimSpace(raw)
 		switch {
 		case line == "" || strings.HasPrefix(line, "#"):
 			continue
-		case strings.HasPrefix(line, "chain ") && strings.HasSuffix(line, "{"):
-			chain = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "chain "), "{"))
-			counts[chain] = 0
-		case line == "}":
-			chain = ""
-		case chain == "":
+		case strings.HasSuffix(line, "{"):
+			depth++
+			// Chains do not nest, so the first `chain X {` we meet opens one and its
+			// rules are the lines one level inside it. Any other block — a set, a map,
+			// the table itself — is depth we walk past without attributing anything.
+			if chain == "" && strings.HasPrefix(line, "chain ") {
+				chain = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "chain "), "{"))
+				chainDepth = depth
+				counts[chain] = 0
+			}
+		case strings.HasPrefix(line, "}"):
+			if chain != "" && depth == chainDepth {
+				chain, chainDepth = "", 0
+			}
+			depth--
+		case chain == "" || depth != chainDepth:
 			continue
 		case strings.HasPrefix(line, "type ") && strings.Contains(line, "hook "):
 			continue
 		default:
-			counts[chain]++
+			if !continued {
+				counts[chain]++
+			}
+			continued = strings.HasSuffix(line, ",") || strings.HasSuffix(line, "\\")
 		}
 	}
 	return counts

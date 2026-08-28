@@ -57,45 +57,74 @@ func TestTableMatchesSeesAFlushedChain(t *testing.T) {
 		live[k] = v
 	}
 	live["client_udp_tproxy"] = 0
-	if chainCountsEqual(live, want) {
+	if chainCountsMatch(live, want) {
 		t.Error("a flushed chain compared equal; the drift probe cannot see the case it was written for")
 	}
 
 	// A rule added by hand is drift too.
 	live["client_udp_tproxy"] = want["client_udp_tproxy"] + 1
-	if chainCountsEqual(live, want) {
+	if chainCountsMatch(live, want) {
 		t.Error("an added rule compared equal")
 	}
 
 	// And an untouched kernel must compare equal, or the reconciler thrashes.
-	if !chainCountsEqual(want, want) {
+	if !chainCountsMatch(want, want) {
 		t.Error("an identical ruleset compared unequal")
 	}
 
 	// A missing chain entirely.
 	delete(live, "egress_leak_guard")
-	if chainCountsEqual(live, want) {
+	if chainCountsMatch(live, want) {
 		t.Error("a missing chain compared equal")
 	}
 }
 
-// chainCountsEqual mirrors TableMatches' comparison without needing a live kernel.
-func chainCountsEqual(live, want map[string]int) bool {
-	if len(live) != len(want) {
-		return false
+// Unknown must never be reported as drift: a dev box with no nft would otherwise
+// re-apply on every pass forever. And unknown must be reported as unknown — the
+// first version of this test skipped on `known` and fell off the end otherwise, so
+// it could not fail either way.
+func TestTableMatchesReportsUnknownRatherThanDrift(t *testing.T) {
+	matches, known := TableMatches("ip", "wgfleet_definitely_not_here", "chain x {\n\taccept\n}\n")
+	if known {
+		t.Fatalf("a table that does not exist was reported as a known answer (matches=%v)", matches)
 	}
-	for c, n := range want {
-		if live[c] != n {
-			return false
-		}
+	if matches {
+		t.Error("an unanswerable probe claimed the kernel matches")
 	}
-	return true
+	// An empty ruleset is not a claim that the kernel is empty: nothing was rendered,
+	// so there is nothing to compare against and the honest answer is "unknown".
+	if _, known := TableMatches("ip", "wgfleet_definitely_not_here", ""); known {
+		t.Error("an empty ruleset was treated as an answerable comparison")
+	}
 }
 
-// Unknown must never be reported as drift: a dev box with no nft would otherwise
-// re-apply on every pass forever.
-func TestTableMatchesReportsUnknownRatherThanDrift(t *testing.T) {
-	if _, known := TableMatches("ip", "wgfleet_definitely_not_here", "chain x {\n\taccept\n}\n"); known {
-		t.Skip("this box has nft and the table somehow exists")
+// A set or map declared beside the chains must not be attributed to a chain, and its
+// closing brace must not end the chain before it. Getting this wrong is not a silent
+// inaccuracy: a count that can never match the kernel makes every pass see drift, so
+// `nft -f` runs every 30 seconds forever on a healthy node.
+func TestRenderedChainCountsWalksPastNestedBlocks(t *testing.T) {
+	ruleset := `table ip wgfleet_master {
+	set direct_v4 {
+		type ipv4_addr
+		flags interval
+		elements = { 10.0.0.0/8,
+		             192.168.0.0/16 }
+	}
+
+	chain prerouting {
+		type nat hook prerouting priority dstnat; policy accept;
+		ip daddr != 10.80.0.1 tcp dport 1-65535 dnat to 10.80.0.1:7895
+	}
+
+	chain postrouting {
+		type nat hook postrouting priority srcnat; policy accept;
+		ip saddr 10.80.0.0/24 masquerade
+	}
+}
+`
+	got := renderedChainCounts(ruleset)
+	want := map[string]int{"prerouting": 1, "postrouting": 1}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("chain counts = %v, want %v", got, want)
 	}
 }

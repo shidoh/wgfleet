@@ -1,6 +1,7 @@
 package certrenew
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/pem"
@@ -50,9 +51,9 @@ func TestRotateInstallsAMatchedPairAndKeepsTheKeyLocal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keyPEM, err := os.ReadFile(p.Key)
-	if err != nil {
-		t.Fatal(err)
+	keyPEM, kerr := os.ReadFile(p.Key)
+	if kerr != nil {
+		t.Fatal(kerr)
 	}
 	cert, err := tlsPairValid(certPEM, keyPEM)
 	if err != nil {
@@ -69,14 +70,26 @@ func TestRotateInstallsAMatchedPairAndKeepsTheKeyLocal(t *testing.T) {
 	if perm := info.Mode().Perm(); perm != 0o600 {
 		t.Errorf("key mode = %#o, want 0600", perm)
 	}
-	// Nothing resembling a private key may appear in what we sent.
+	// The private half must never leave the node. The previous version of this check
+	// PEM-encoded the CSR under an "EC PRIVATE KEY" label and asserted the result was
+	// non-nil — which it always is — so it would have passed unchanged if Rotate had
+	// marshalled and transmitted the key itself. Compare against the actual key on
+	// disk instead.
 	csr, err := x509.ParseCertificateRequest(signer.lastCSR)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: signer.lastCSR}) == nil {
-		t.Fatal("unreachable")
+	block, _ := pem.Decode(keyPEM)
+	if block == nil {
+		t.Fatal("the installed key is not PEM")
 	}
+	if bytes.Contains(signer.lastCSR, block.Bytes) {
+		t.Fatal("the private key was transmitted inside the certificate request")
+	}
+	if bytes.Contains(signer.lastCSR, keyPEM) {
+		t.Fatal("the PEM-encoded private key was transmitted inside the certificate request")
+	}
+	// And what we sent must be a CSR proving possession, not merely well-formed bytes.
 	if err := csr.CheckSignature(); err != nil {
 		t.Errorf("the request we sent is not self-signed: %v", err)
 	}
