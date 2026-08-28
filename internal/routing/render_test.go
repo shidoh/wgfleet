@@ -277,3 +277,36 @@ func TestTeardownActionsTolerateAbsentRules(t *testing.T) {
 		}
 	}
 }
+
+// Teardown must reverse everything Render installed, not the first thing it finds.
+//
+// Render can point TWO rules at the egress table — prefEgress (`from <pool>`) and
+// prefRealityEgress (`fwmark <mark>`) — and a bare `ip rule del lookup <table>`
+// deletes one match. On a WARP→direct failover on an exit that carries REALITY, one
+// rule survived; the table was flushed so lookups fell through, but the kernel no
+// longer matched what ManagedPrefs and the next ipRuleReplace believed about it,
+// while the comment called this "the exact inverse of Render".
+func TestTeardownActionsRemovesEveryEgressRule(t *testing.T) {
+	steps := TeardownActions()
+	var dels int
+	for _, s := range steps {
+		if len(s.Argv) >= 3 && s.Argv[0] == "ip" && s.Argv[1] == "rule" && s.Argv[2] == "del" {
+			dels++
+		}
+	}
+	// One delete per priority Render can install against the egress table.
+	if want := 2; dels < want {
+		t.Errorf("teardown issues %d rule deletions, want at least %d — Render can install "+
+			"prefEgress AND prefRealityEgress against the same table", dels, want)
+	}
+	// And every one of them must be by PRIORITY, not by table: `del lookup <table>`
+	// removes a single match and cannot say which.
+	for _, s := range steps {
+		if len(s.Argv) >= 3 && s.Argv[1] == "rule" && s.Argv[2] == "del" {
+			joined := strings.Join(s.Argv, " ")
+			if !strings.Contains(joined, "pref ") {
+				t.Errorf("rule deletion is not pinned to a priority: %s", joined)
+			}
+		}
+	}
+}

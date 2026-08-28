@@ -200,8 +200,22 @@ func TeardownActions() []Step {
 		{Summary: fmt.Sprintf("flush egress routing table %d", EgressTable),
 			Argv:       []string{"ip", "route", "flush", "table", fmt.Sprintf("%d", EgressTable)},
 			BestEffort: true},
-		{Summary: "remove egress-table rule",
-			Argv:       []string{"ip", "rule", "del", "lookup", fmt.Sprintf("%d", EgressTable)},
+		// One delete per PRIORITY, not a single `del lookup <table>`.
+		//
+		// Render can point two rules at the egress table — prefEgress (`from <pool>`)
+		// and prefRealityEgress (`fwmark <mark>`) — and `ip rule del lookup <table>`
+		// removes one match and cannot say which. On a WARP→direct failover on an exit
+		// carrying REALITY that left one rule standing: the table was flushed so
+		// lookups fell through, but the kernel stopped matching what ManagedPrefs and
+		// the next ipRuleReplace believed about it, while this function's own comment
+		// called itself the exact inverse of Render. Deleting by priority names exactly
+		// what Render installed, and each is best-effort so a priority that was never
+		// installed costs nothing.
+		{Summary: fmt.Sprintf("remove the client egress rule (pref %d)", prefEgress),
+			Argv:       []string{"ip", "rule", "del", "pref", fmt.Sprintf("%d", prefEgress)},
+			BestEffort: true},
+		{Summary: fmt.Sprintf("remove the REALITY egress rule (pref %d)", prefRealityEgress),
+			Argv:       []string{"ip", "rule", "del", "pref", fmt.Sprintf("%d", prefRealityEgress)},
 			BestEffort: true},
 		{Summary: "flush conntrack (forget the WARP path)",
 			Argv:       []string{"conntrack", "-F"},
