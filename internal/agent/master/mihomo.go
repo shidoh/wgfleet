@@ -242,6 +242,11 @@ type mihomoRedirPlanner struct {
 	// listening reports whether a TCP socket is LISTENing on addr; nil ⇒ a passive
 	// socket-table read (socketListening). It must never open a connection to addr.
 	listening func(addr string) bool
+	// udpListening is the same for the TPROXY listener. Client UDP is handed to a
+	// transparent socket, and TPROXY to a socket that is not there DROPS the
+	// datagram — so a lost UDP bind breaks every client's DNS, QUIC and games in
+	// silence, which is the failure this planner exists to catch on TCP.
+	udpListening func(addr string) bool
 	// localUp reports whether host is assigned to a local interface; nil ⇒ real check.
 	localUp func(host string) bool
 	// gov throttles this SELF-HEAL restart; nil ⇒ unthrottled. Shares mihomo's
@@ -282,14 +287,27 @@ func (p mihomoRedirPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]rec
 	if listening == nil {
 		listening = socketListening
 	}
-	if listening(addr) {
+	udpListening := p.udpListening
+	if udpListening == nil {
+		udpListening = udpSocketListening
+	}
+	tproxyAddr := net.JoinHostPort(bindHost, strconv.Itoa(mihomo.TProxyPortFor(redir)))
+	tcpUp, udpUp := listening(addr), udpListening(tproxyAddr)
+	if tcpUp && udpUp {
 		return []reconcile.Action{reconcile.NoChangeAction("mihomo redirect listener",
-			"listening on "+addr)}, nil
+			"listening on "+addr+" and "+tproxyAddr)}, nil
+	}
+	down := tproxyAddr
+	if !tcpUp {
+		down = addr
+		if !udpUp {
+			down = addr + " and " + tproxyAddr
+		}
 	}
 
 	compose := p.compose
 	restart := reconcile.CustomAction(reconcile.ActionUpdate, "mihomo redirect listener",
-		"redir listener down on "+addr+" — restart mihomo to rebind",
+		"listener down on "+down+" — restart mihomo to rebind",
 		"docker compose -f "+compose+" restart mihomo",
 		func(ctx context.Context) error {
 			c := exec.CommandContext(ctx, "docker", "compose", "-f", compose, "restart", "mihomo")
@@ -428,8 +446,17 @@ func composeRestartMihomo(compose string) func(context.Context) error {
 // self-amplifying connection storm that pins the master's CPU. A passive socket-table
 // read avoids that entirely. Fails safe to true (an unreadable probe must never
 // trigger a needless mihomo restart).
-func socketListening(addr string) bool {
-	out, err := exec.Command("ss", "-ltnH").CombinedOutput()
+func socketListening(addr string) bool { return socketListeningOn(addr, "-ltnH") }
+
+// udpSocketListening is the same question for a UDP bind. It exists because the
+// TCP-only form was the only one there was, so the TPROXY listener — which is what
+// carries every client datagram now — had nothing watching it at all: a lost bind
+// meant client UDP was silently dropped, since TPROXY hands packets to a socket
+// that is not there.
+func udpSocketListening(addr string) bool { return socketListeningOn(addr, "-lunH") }
+
+func socketListeningOn(addr, ssFlags string) bool {
+	out, err := exec.Command("ss", ssFlags).CombinedOutput()
 	if err != nil {
 		return true // can't tell → assume up; never falsely restart mihomo
 	}
