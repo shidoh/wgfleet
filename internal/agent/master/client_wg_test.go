@@ -596,13 +596,25 @@ func TestClientInterfacePlannerRunsBeforeCompose(t *testing.T) {
 	}
 }
 
-// The agent must refuse to drop every live peer, whatever the controller says.
+// Revoking or pausing the LAST credential must actually take effect.
 //
-// The controller-side fix stopped it RENDERING an empty peer set on a store
-// failure, and that was the whole defence. An older controller — a rollback, or an
-// agent rolled forward first — can still send one, and on a migrated master
-// wg-easy is gone, so there is nothing to catch nine people falling off at once.
-func TestClientWGPlannerRefusesToDropEveryLivePeer(t *testing.T) {
+// This used to be the opposite test. The planner refused any spec with zero
+// clients while peers were live, reading that shape as "the controller could not
+// read its credential store" — and it is also exactly the shape of the operator
+// legitimately revoking everyone. Revoke reported success in the UI, the planner
+// declined every pass forever, and the revoked peer stayed on the live interface.
+// A revocation that does not revoke is a security hole, and the old test locked it
+// in.
+//
+// The floor is gone rather than narrowed, for three reasons. The controller cannot
+// produce that spec: a store failure fails the whole render (11e785b, and its own
+// test). No RELEASED controller ever could — keybroker/client_wg.go does not exist
+// in any tag, so the only builds with the old behaviour are dev commits from a
+// 20-hour window that was never shipped. And the floor only ever fired at EXACTLY
+// zero, so a controller bug rendering one client instead of nine sailed straight
+// through it: it was never the defence it read as. The controller is the authority
+// on who its clients are, and the agent's job is to converge on that.
+func TestClientWGPlannerAppliesARevokeOfTheLastCredential(t *testing.T) {
 	p := clientPlanner(t, true)
 	full := managedSpec(t)
 	live := full.Master.ClientWG.Clients[0].PublicKey
@@ -614,26 +626,26 @@ func TestClientWGPlannerRefusesToDropEveryLivePeer(t *testing.T) {
 
 	actions, err := p.Plan(context.Background(), empty)
 	if err != nil {
-		t.Fatalf("Plan() = %v, want a refusal that does not abort the pass", err)
+		t.Fatalf("Plan() = %v", err)
 	}
 	got := summaries(actions)
-	if strings.Contains(got, "bring the client interface up") {
-		t.Fatalf("the planner raised an interface serving nobody:\n%s", got)
+	if strings.Contains(got, "refusing a spec with no clients") {
+		t.Fatalf("the planner still refuses a legitimate revoke-all:\n%s", got)
 	}
-	if !strings.Contains(got, "refusing a spec with no clients") {
-		t.Fatalf("the refusal is not explained:\n%s", got)
+	if !strings.Contains(got, "bring the client interface up") {
+		t.Fatalf("the revoke never reaches the live interface:\n%s", got)
 	}
 
-	// Absence of the whole block still means "release it" — that is the one
-	// legitimate way to say so, and this floor must not have broken it.
+	// Absence of the whole block still means "release it" — a different instruction
+	// from "serve nobody", and the one the operator uses to hand the leg back.
 	unmanaged := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}}
 	claimIt(t, p)
 	if got := summaries(mustPlan(t, p, unmanaged)); !strings.Contains(got, "bring ours down") {
 		t.Fatalf("releasing the interface no longer works:\n%s", got)
 	}
 
-	// And a genuinely empty fleet — no live peers — is allowed to render an empty
-	// interface, which is how a freshly managed master starts.
+	// And a master with no credentials yet still renders an empty interface, which
+	// is how a freshly managed master starts.
 	p2 := clientPlanner(t, false)
 	p2.ifacePeers = func(string) ([]string, error) { return nil, nil }
 	if got := summaries(mustPlan(t, p2, empty)); strings.Contains(got, "refusing a spec") {

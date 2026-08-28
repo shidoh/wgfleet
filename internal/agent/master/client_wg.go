@@ -118,22 +118,33 @@ func (p clientWGPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	// every case the ownership question was meant to: a wg-easy container that
 	// recreated wg0 carries wg-easy's peer list, which will not match ours, so we
 	// re-apply and take it over.
-	// A floor the controller cannot provide. 11e785b stopped the CONTROLLER from
-	// rendering an empty peer set on a store failure, and that is the whole defence:
-	// nothing on this side refuses to apply one. An older controller — a rollback, or
-	// simply an agent rolled forward first — can still hand us zero peers, and the
-	// planner would dutifully tear down a working interface and raise it serving
-	// nobody. wg-easy is gone on a migrated master, so there is no fallback to catch
-	// that.
+	// A spec with zero clients is APPLIED, not refused.
 	//
-	// Absence of the block is still the one legitimate way to say "release it"; this
-	// only refuses the shape that says "keep serving, but to no one".
-	if len(cw.Clients) == 0 {
-		if live, known := p.livePeerCount(); known && live > 0 {
-			return p.deferred(fmt.Sprintf(
-				"refusing a spec with no clients while %d peer(s) are live — the controller could not "+
-					"read its credential store, or is older than this agent", live)), nil
-		}
+	// This used to defer, on the theory that "serve nobody" could only come from a
+	// controller that had failed to read its credential store. It is also, exactly,
+	// what the operator revoking or pausing their last credential produces — and the
+	// agent cannot tell those apart from the spec, because they are the same spec.
+	// So the refusal turned Revoke into a no-op that reported success: the UI said
+	// done, the planner declined on that pass and every pass after it, and the
+	// revoked peer stayed on the live interface. A revocation that does not revoke
+	// is worse than any failure it was guarding against.
+	//
+	// It also would not have caught what it was written for. The controller cannot
+	// produce that spec: a store failure fails the whole render and the node keeps
+	// its last-good config (11e785b, keybroker/client_wg.go). No RELEASED controller
+	// ever could — keybroker/client_wg.go exists in no tag, so the only builds with
+	// the old behaviour are dev commits from a 20-hour unreleased window. And the
+	// check fired at EXACTLY zero, so a controller rendering one client instead of
+	// nine went straight through it. It read like a floor and was a tripwire on one
+	// arity.
+	//
+	// The controller is the authority on who its clients are. Absence of the whole
+	// block remains a different instruction — "release the leg" — handled above.
+	// Removing every live peer is still worth a line in the journal, so it is
+	// summarised rather than silent.
+	if live, known := p.livePeerCount(); known && live > 0 && len(cw.Clients) == 0 {
+		actions = append(actions, reconcile.NoChangeAction("client AmneziaWG interface",
+			fmt.Sprintf("the spec has no clients: removing all %d live peer(s)", live)))
 	}
 
 	// Past every deferral: whatever the last pass declined to do, it is doing it now.
