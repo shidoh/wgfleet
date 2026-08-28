@@ -27,7 +27,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -244,6 +244,13 @@ func run() error {
 		// best-effort). Firewall metrics are only populated on exits (table inet
 		// wgfleet), but the collector is safe to register everywhere.
 		metrics.NewWGCollector(reg, cfg.Agent.NodeID, string(role), wgIfacesForRole(role), nil)
+		// When this node's control-plane certificate expires. Nothing renews it, so
+		// the only defence is that somebody is looking; a failure to read it is
+		// logged and not fatal, because a node that cannot publish the date is still
+		// a node that should keep reconciling.
+		if err := metrics.NewCertExpiryGauge(reg, cfg.Agent.NodeID, string(role), cfg.Agent.Identity.Cert); err != nil {
+			slog.Warn("certificate expiry gauge unavailable", "node", cfg.Agent.NodeID, "err", err)
+		}
 		metrics.NewFWCollector(reg, cfg.Agent.NodeID, string(role), nil)
 		// Scheduled probes degrade silently by design (a failure keeps the last-good
 		// value and only WARNs), so without this a probe that fails 100% of the time
@@ -331,12 +338,20 @@ type agent struct {
 	// would never engage. Non-nil on every role — the exit planners take it too.
 	restarts *restart.Governor
 
-	// clientKeyAudited runs the client-identity audit once per process. Per PASS
-	// would reopen wg-easy's database every reconcile forever; per RESTART is the
-	// right cadence for a fact that can only change when someone intervenes, and it
-	// puts a fresh line in the journal after every restart so the check survives
-	// log rotation.
-	clientKeyAudited sync.Once
+	// clientKeyAudited records that the client-identity audit has run AND REACHED AN
+	// ANSWER. Per PASS would reopen wg-easy's database every reconcile forever; per
+	// RESTART is the right cadence for a fact that can only change when someone
+	// intervenes, and it puts a fresh line in the journal after every restart.
+	//
+	// It is not a sync.Once, because a Once latches on the attempt rather than on
+	// the result. The audit's most important half reads the LIVE interface, and on
+	// the first pass after a host reboot that interface does not exist yet — the
+	// client-interface planner raises it later in the very same pass. So the read
+	// failed, the check was skipped in silence, and the process's one opportunity
+	// was spent: the loudest guard in the whole handover ("the controller is handing
+	// out configs pinned to a key nobody answers with") could never fire on a
+	// rebooted node, which is precisely the node most likely to need it.
+	clientKeyAudited atomic.Bool
 
 	// lastSpecPrint fingerprints the spec from the previous applied pass. A pass
 	// that changes resources while this is unchanged is config drift (the world
@@ -973,7 +988,9 @@ func (a *agent) ensureClientWGKey(persist bool) (kp wg.KeyPair, ephemeral bool, 
 		if perr != nil {
 			return wg.KeyPair{}, false, fmt.Errorf("stored client wg key invalid: %w", perr)
 		}
-		a.clientKeyAudited.Do(func() { a.auditClientWGKey(pub) })
+		if !a.clientKeyAudited.Load() && a.auditClientWGKey(pub) {
+			a.clientKeyAudited.Store(true)
+		}
 		return wg.KeyPair{PrivateKey: priv, PublicKey: pub}, false, nil
 	case !errors.Is(rerr, fs.ErrNotExist):
 		// The file exists but cannot be read (EIO, EACCES, a truncated write).
@@ -1027,12 +1044,24 @@ func (a *agent) ensureClientWGKey(persist bool) (kp wg.KeyPair, ephemeral bool, 
 // every subsequent pass, so a key minted once because wg-easy's database was
 // momentarily unrecognisable is never revisited. Nothing looks wrong until the
 // handover, at which point every config in the field stops handshaking at once.
-func (a *agent) auditClientWGKey(pub string) {
+// auditClientWGKey reports whether it reached an answer. An inconclusive run — the
+// live interface not up yet, the database unreadable — returns false so the caller
+// tries again next pass instead of treating the attempt as the audit.
+func (a *agent) auditClientWGKey(pub string) (conclusive bool) {
 	// First against the LIVE interface. This is the check that keeps working after
 	// wg-easy is gone, and it catches the case the database cannot see at all: a
 	// key file that no longer matches what is actually answering handshakes,
 	// because something else raised the interface.
-	if live, err := master.InterfacePublicKey(master.ClientWGInterface); err == nil && live != "" && live != pub {
+	live, lerr := master.InterfacePublicKey(master.ClientWGInterface)
+	switch {
+	case lerr != nil || live == "":
+		// Not up yet — ordinary on the first pass after a reboot, since the client
+		// interface planner raises it later in this same pass. Say so and report the
+		// run inconclusive so the next pass repeats it.
+		a.log.Info("client interface identity audit deferred: the live interface cannot be read yet",
+			"interface", master.ClientWGInterface, "err", lerr)
+		return false
+	case live != pub:
 		a.log.Error("CLIENT INTERFACE IDENTITY MISMATCH — the key this agent publishes is NOT the key the live "+
 			"interface is serving. Clients authenticate against the live one, so the controller is handing out "+
 			"configs pinned to a key nobody answers with.",
@@ -1044,7 +1073,7 @@ func (a *agent) auditClientWGKey(pub string) {
 		// wg-easy is gone: after the handover this is the ordinary state, and there
 		// is nothing left to compare against. Still say what we serve.
 		a.log.Info("client interface identity", "public_key", pub)
-		return
+		return true
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1052,22 +1081,23 @@ func (a *agent) auditClientWGKey(pub string) {
 	if err != nil || !found {
 		a.log.Info("client interface identity (wg-easy's key could not be read for comparison)",
 			"public_key", pub, "db", db)
-		return
+		return true
 	}
 	theirs, err := wg.PublicKeyOf(priv)
 	if err != nil {
 		a.log.Info("client interface identity (wg-easy's key is unusable)", "public_key", pub)
-		return
+		return true
 	}
 	if theirs == pub {
 		a.log.Info("client interface identity matches wg-easy's; existing client configs stay valid",
 			"public_key", pub)
-		return
+		return true
 	}
 	a.log.Error("CLIENT INTERFACE IDENTITY DIVERGED FROM wg-easy — every client config in the field would stop "+
 		"working at the handover. Do not set client_awg.managed until this is resolved: remove the agent's key "+
 		"file so it re-adopts wg-easy's, or confirm the clients have already been reissued.",
 		"agent_public_key", pub, "wg_easy_public_key", theirs, "key_file", a.masterPaths().ClientWGKey)
+	return true
 }
 
 // adoptState says what wg-easy's database had to offer.
