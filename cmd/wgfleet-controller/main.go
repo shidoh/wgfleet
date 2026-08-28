@@ -77,6 +77,8 @@ func run() error {
 		backupOut    = flag.String("backup", "", "snapshot controller (+co-located master) state to an age-encrypted archive at this path, then exit")
 		restoreIn    = flag.String("restore", "", "restore controller state from an age-encrypted archive at this path, then exit")
 		ageRecipient = flag.String("age-recipient", "", "with --backup: encrypt to this age recipient instead of prompting for a passphrase")
+		certs        = flag.String("certs", "", "certificate maintenance, then exit: `check-expiration` prints what this host holds and when it lapses; `renew` re-issues one node's certificate out of band (use with --node), for a node whose certificate has ALREADY expired and can therefore no longer renew itself")
+		certsNode    = flag.String("node", "", "with --certs renew: the node to re-issue for")
 		ageIdentity  = flag.String("age-identity", "", "with --restore: path to the age identity file for an archive encrypted to a recipient. Omit for a passphrase-encrypted archive, which age prompts for. An archive written with --age-recipient CANNOT be restored without this")
 		supportBnd   = flag.Bool("support-bundle", false, "write a read-only diagnostic archive, then exit (requires --fleet)")
 		fleetMode    = flag.Bool("fleet", false, "with --support-bundle: also render inventory from the store and walk every exit over SSH")
@@ -115,6 +117,20 @@ func run() error {
 	cfg, err := config.Load(*configPath, &config.ControllerConfig{})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+	if *certs != "" {
+		switch *certs {
+		case "check-expiration":
+			return runCertsCheckExpiration(cfg)
+		case "renew":
+			provider, perr := config.NewSecretProvider(context.Background(), cfg)
+			if perr != nil {
+				return perr
+			}
+			return runCertsRenew(cfg, *certsNode, provider)
+		default:
+			return fmt.Errorf("--certs %q is not a thing to do (want check-expiration or renew)", *certs)
+		}
 	}
 	// Self-heal the manifest mode: it carries WG/REALITY private keys and the wg-easy
 	// admin password, so it must be owner-only. A hand-created or hand-edited
@@ -370,6 +386,12 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 	provMgr.SetBaseContext(ctx)
 	// Let the version gate auto-upgrade a too-old agent by pushing a fresh binary.
 	svc.SetUpgradeTrigger(provMgr)
+	// Agent-driven certificate renewal. The node asks over its still-valid mTLS
+	// channel and gets a certificate for the identity that channel already proved;
+	// there is no approval step because there is nothing left to decide. Without
+	// this, node certificates simply run to expiry — one node per provisioning
+	// anniversary, first visible as a node that stopped reporting.
+	svc.SetCertSigner(ca)
 
 	var webSrv *http.Server
 	if cfg.Controller.WebUI != "" {
