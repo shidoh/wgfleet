@@ -46,6 +46,14 @@ func (p clientVlessPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]r
 		}
 		return []reconcile.Action{reconcile.NoChangeAction("client vless inbound", "disabled")}, nil
 	}
+	// Validated HERE, not in NodeSpec.Validate: a spec-level failure makes the agent
+	// refuse the whole spec, so one bad camouflage target would stop this master
+	// converging everything else it runs. Deferring keeps the last-good inbound
+	// serving and leaves the rest of the node reconciling.
+	if err := cv.Validate(); err != nil {
+		return []reconcile.Action{reconcile.NoChangeAction("client vless inbound",
+			"spec rejected, keeping the last-good inbound: "+err.Error())}, nil
+	}
 	if p.privateKey == "" {
 		return []reconcile.Action{reconcile.NoChangeAction("client vless inbound",
 			"pending: REALITY private key not yet available")}, nil

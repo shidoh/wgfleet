@@ -363,11 +363,13 @@ func (s NodeSpec) Validate() error {
 	// already validates it and defers just that one component, keeping the
 	// last-good interface config serving; that soft-fail is the intended behaviour
 	// and it could never run while this gate stood in front of it.
-	if s.Master != nil && s.Master.ClientVLESS != nil {
-		if err := s.Master.ClientVLESS.Validate(); err != nil {
-			errs = append(errs, fmt.Errorf("client vless: %w", err))
-		}
-	}
+	// ClientVLESS is not validated here either, for the reason stated just above it.
+	// It used to be, in the very next statement after that paragraph: a bad SNI or an
+	// unusable camouflage target failed the whole spec, the agent refused it, and the
+	// master stopped converging mihomo, the NAT, DOCKER-USER, blocky and the client
+	// interface — a client transport nobody may even be using taking the data plane
+	// down with it. clientVlessPlanner validates it and defers that one component,
+	// which is what the paragraph above argues for and what this line prevented.
 	if s.WGServer.ListenPort <= 0 || s.WGServer.ListenPort > 65535 {
 		errs = append(errs, fmt.Errorf("WG listen port %d out of range", s.WGServer.ListenPort))
 	}
