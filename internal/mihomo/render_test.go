@@ -1025,10 +1025,15 @@ func TestRenderConfigResolvesThroughTheFleetResolver(t *testing.T) {
 		if len(list) == 0 {
 			t.Fatalf("dns.%s is empty", key)
 		}
-		for _, v := range list {
-			s := fmt.Sprint(v)
-			if s != "127.0.0.1" {
-				t.Errorf("dns.%s contains %q; every mihomo lookup must go to the fleet resolver", key, s)
+		if got := fmt.Sprint(list[0]); got != "127.0.0.1" {
+			t.Errorf("dns.%s starts with %q, want the fleet resolver first", key, got)
+		}
+		// The rest are the encrypted fallbacks. mihomo re-resolves on every proxied
+		// connection, so a fleet resolver that stops answering must cost privacy, not
+		// the data plane — but it must never fall back to cleartext.
+		for _, v := range list[1:] {
+			if s := fmt.Sprint(v); !strings.HasPrefix(s, "tls://") && !strings.HasPrefix(s, "https://") {
+				t.Errorf("dns.%s fallback %q is cleartext DNS", key, s)
 			}
 		}
 	}

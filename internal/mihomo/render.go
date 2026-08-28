@@ -163,10 +163,23 @@ func RenderConfig(in RenderInput) (string, error) {
 		healthInterval = DefaultHealthInterval
 	}
 
-	resolvers := in.Resolvers
-	if len(resolvers) == 0 {
-		resolvers = fallbackResolvers
-	}
+	// The fleet's resolver first, the encrypted public ones behind it — never the
+	// fleet's alone.
+	//
+	// Pointing mihomo at one address that might not answer is how this broke on a
+	// rehearsal: the resolver was the exits' blocky, no blocky was running, and
+	// mihomo answered every proxied connection with "dns resolve failed: connection
+	// refused". The whole data plane, not just DNS. mihomo re-resolves the sniffed
+	// domain on EVERY proxied connection (measured: a client that did no DNS of its
+	// own still produced seven A? queries from the master), so its resolver is not a
+	// convenience — it is a hard dependency of forwarding anything at all.
+	//
+	// So a dead fleet resolver has to degrade, and the only question is to what. To
+	// an encrypted transport, and never back to cleartext: DoT to Quad9 tells an
+	// observer on the master's uplink that a lookup happened and nothing about what
+	// was asked, which is a different order of exposure from the plaintext UDP/53
+	// this used to send to a public resolver in the censoring country.
+	resolvers := append(append([]string(nil), in.Resolvers...), fallbackResolvers...)
 
 	base := map[string]any{
 		"mode":         "rule",
@@ -769,10 +782,10 @@ func hasAnyPrefix(s string, prefixes []string) bool {
 	return false
 }
 
-// fallbackResolvers is what mihomo uses when the node has no fleet resolver to
-// point at — no local blocky and no exit blocky reachable. Encrypted transports
-// only: a master that has lost its resolver must degrade to "somebody else can see
-// which names I ask for", never to "the country I am sitting in can read them off
-// the wire". Quad9 and Cloudflare rather than the operator's own upstreams, which
-// are a manifest concern and may themselves be unreachable in this state.
+// fallbackResolvers sit behind the fleet's own resolver so that losing it costs
+// privacy rather than the data plane. Encrypted transports only: a master that has
+// lost its resolver must degrade to "somebody else can see which names I ask for",
+// never to "the country I am sitting in can read them off the wire". Quad9 and
+// Cloudflare rather than the operator's own upstreams, which are a manifest concern
+// and may themselves be unreachable in exactly this state.
 var fallbackResolvers = []string{"tls://9.9.9.9", "tls://1.1.1.1"}
