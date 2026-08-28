@@ -26,22 +26,24 @@ VictoriaMetrics-Operator.
 | controller | `<mgmt-addr>:9300` | `controller.metrics` in `controller.yaml` |
 | agent | `<mgmt-addr>:9301` | `--metrics <mgmt-addr>:9301` agent flag |
 
-## 1. Enable the agent `/metrics`
+## 1. The agent `/metrics` endpoint
 
-Each agent serves metrics only when started with `--metrics`. Bind it to the
-node's ZT address (the agent already knows it via `--mgmt-addr`):
+**It is on by default** at `<mgmt_addr>:9301` — the agent binds it to the same
+management address it already knows, never a public interface. There is nothing to
+enable and no systemd drop-in to write; earlier revisions of this file described one
+and it is obsolete.
 
-```ini
-# /etc/systemd/system/wgfleet-agent.service.d/metrics.conf  (drop-in)
-# Replace 10.20.0.20 with THIS node's ZT/mgmt address.
-[Service]
-ExecStart=
-ExecStart=/usr/local/bin/wgfleet-agent --config /etc/wgfleet/agent.yaml --log-format json --metrics 10.20.0.20:9301
+`--metrics` is an *override*, not a switch: pass an explicit `host:port` to move it,
+or `off` to disable it entirely.
+
+```bash
+# where it is listening right now
+ss -lntp | grep 9301
+curl -s http://<mgmt_addr>:9301/metrics | head
 ```
 
-then `systemctl daemon-reload && systemctl restart wgfleet-agent`. New nodes get
-this automatically from the provisioner. The controller's `/metrics` is already on
-`controller.metrics` (9300).
+The controller's `/metrics` is on `controller.metrics` (9300) and is likewise bound
+to the management address only.
 
 ## 2. Scrape from Kubernetes
 
@@ -164,32 +166,54 @@ reported `Ready`, so auto-MTU discovery was dead and a real PMTU
 regression would have gone unnoticed. These two timestamps make "attempting on
 schedule, never succeeding" a visible state.
 
-## 4. Alerts worth having
+## 4. Alerts
 
-```yaml
-groups:
-  - name: wgfleet-probes
-    rules:
-      # The probe runs and fails every time: it has attempted, but never once
-      # produced a result. This is the shape of a probe that is dead but silent.
-      - alert: WgfleetProbeNeverSucceeded
-        expr: wgfleet_probe_last_success_timestamp_seconds == 0
-        for: 2h
-        labels: { severity: warning }
-        annotations:
-          summary: "{{ $labels.probe }} on {{ $labels.node }} has never succeeded"
-          description: "The probe is attempting on schedule but has never produced a result; the node is silently running on the built-in default."
+**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 27 alerts,
+already applied by step 2 above. Earlier revisions of this file printed two of them
+as a snippet to paste; the copies drifted from the shipped rules (different group
+name, different `for`, a different expression on one), so pasting produced a second,
+differently-behaving alert beside the real one. The rules carry their reasoning in
+comments — read the file, do not retype it.
 
-      # It worked once and then stopped. Both probes run about daily.
-      - alert: WgfleetProbeStale
-        expr: |
-          (wgfleet_probe_last_success_timestamp_seconds > 0)
-          and (time() - wgfleet_probe_last_success_timestamp_seconds > 7 * 24 * 3600)
-        for: 1h
-        labels: { severity: warning }
-        annotations:
-          summary: "{{ $labels.probe }} on {{ $labels.node }} has not succeeded in 7d"
-          description: "Last-good value still in force; the probe has been failing since {{ $value | humanizeTimestamp }}."
-```
+What ships, by severity:
 
-Both are also on the dashboard's **Scheduled probes** row.
+| Alert | Severity |
+|---|---|
+| `WgfleetClientPathDown` | critical |
+| `WgfleetControllerDown` | critical |
+| `WgfleetNoClientPeers` | critical |
+| `WgfleetNoReadyExit` | critical |
+| `WgfleetNodeCertExpired` | critical |
+| `WgfleetNodeError` | critical |
+| `WgfleetNodeReportStale` | critical |
+| `WgfleetWARPEgressBlocked` | critical |
+| `WgfleetASBlacklistEmpty` | warning |
+| `WgfleetAgentFlapping` | warning |
+| `WgfleetAgentScrapeDown` | warning |
+| `WgfleetAgentUnscraped` | warning |
+| `WgfleetAgentVersionSkew` | warning |
+| `WgfleetConfigDrift` | warning |
+| `WgfleetConfigUnreadable` | warning |
+| `WgfleetHealthCheckFailing` | warning |
+| `WgfleetNodeCertExpiring` | warning |
+| `WgfleetNodeDrainedTooLong` | warning |
+| `WgfleetNodeNotReady` | warning |
+| `WgfleetNodeReconcileFailed` | warning |
+| `WgfleetPersistentDrift` | warning |
+| `WgfleetProbeNeverSucceeded` | warning |
+| `WgfleetProbeStale` | warning |
+| `WgfleetReconcileErrors` | warning |
+| `WgfleetWARPEgressDegraded` | warning |
+| `WgfleetWireGuardHandshakeStale` | warning |
+| `WgfleetWireVersionSkew` | warning |
+
+Two notes worth carrying in your head:
+
+- **`WgfleetWARPEgress{Blocked,Degraded}` only fire on an exit running WARP.** The
+  reachability classifier produces nothing without a `warp-egress` health check, so an
+  exit on direct egress publishes no such series and cannot raise these. They were
+  called `WgfleetEgress*` until 2026-08-28; if you have Alertmanager routes or
+  silences on the old names, they match nothing now.
+- **`WgfleetNodeCert{Expiring,Expired}` mean renewal is BROKEN, not that a birthday is
+  near.** Agents renew themselves between 70% and 90% of the certificate's life, so by
+  the time the 30-day warning fires it has been failing for at least forty days.

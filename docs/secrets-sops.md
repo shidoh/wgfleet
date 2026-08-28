@@ -101,5 +101,17 @@ ca-key: |
 warp-token: "abc123..."
 ```
 
-`secret://warp-token` then resolves to that value. (Only the CA key is wired
-through `secret://` today; other fields are a follow-up — see ADR-0018.)
+`secret://warp-token` then resolves to that value.
+
+Two fields are wired through the provider today: `controller.pki.ca_key` and
+`fleet.awg3_key`. The second one matters more than it looks — whenever header
+protection is on for any node, the controller **refuses to start** until that secret
+resolves to at least 32 bytes, so putting it behind a provider makes the provider a
+startup dependency of the whole control plane. Other fields are a follow-up (ADR-0018).
+
+⚠️ **Restoring onto a rebuilt host.** `--restore` preflights every destination in the
+archive against *this* host's `controller.yaml` and writes nothing if one is not a
+place this host keeps files. A fresh host whose config does not yet name
+`controller.secrets.sops_file` will therefore refuse the whole restore rather than
+land it partially. Put the config in place first, then restore — the "restore, then
+configure" order does not work.

@@ -3,7 +3,10 @@
 Two YAML files: the **controller config** (`controller.yaml`, which embeds the
 **fleet manifest**) and the per-node **agent config** (`agent.yaml`). Flags
 override file values; `WGFLEET_`-prefixed env vars override too (e.g.
-`WGFLEET_CONTROLLER_LISTEN=...` -> `controller.listen`).
+`WGFLEET_CONTROLLER_LISTEN=...` -> `controller.listen`) — but only for keys whose
+every path segment is a single word, because the loader turns every underscore back
+into a dot and cannot tell a separator from a word. Anything under `masters[]` /
+`exits[]` is unreachable that way. See [configuration.md](configuration.md) §1.
 
 This page is the *annotated example* — every block with the reasoning next to it.
 For the **exhaustive, per-key** list (type, default, meaning) see
@@ -61,9 +64,32 @@ fleet:
   masters:
     - name: master-xa-1
       mgmt_addr: 10.20.25.254              # ZeroTier address
+      public_ip: 203.0.113.10               # the endpoint clients dial, written into every
+                                            # client config. NOT a description of the box:
+                                            # see the note under exits[] below, where the
+                                            # distinction has bitten us.
       client_awg:
+        managed: true                       # the AGENT owns the client interface: credentials
+                                            # live in the controller's store, and issue / pause
+                                            # / rename / revoke are console actions. Omit it and
+                                            # the master runs wg-easy instead — the legacy path,
+                                            # kept for existing installs and for rollback.
         listen_port: 443                    # UDP; standard ports are less conspicuous
         address_pool: 10.80.0.0/24          # client WG subnet
+        # ipv6: block                       # opt-in. Hands clients ::/0 AND answers forwarded
+                                            # v6 with ICMPv6 admin-prohibited, so a dual-stack
+                                            # phone falls back to IPv4 in milliseconds instead
+                                            # of leaving the tunnel via carrier IPv6. Handing
+                                            # the route without the refusal is a black hole —
+                                            # that is why this is one knob and not two.
+        # mtu: 1360                         # client interface MTU; leave unset to derive
+        # keepalive: 25                     # 0/unset ⇒ derived per credential, 15-28s
+        # backend: kernel                   # kernel (default) | userspace
+        # allowed_ips: [0.0.0.0/0]          # what the client routes INTO the tunnel
+        # exclude_from_tunnel: [192.168.0.0/16]   # carved back OUT of allowed_ips
+        # awg3: timers                      # off (default) | timers | full. `full` adds the
+                                            # header-protection key and is a FLAG DAY: every
+                                            # client config must be reissued. Needs fleet.awg3_key.
       client_vless:                         # DPI-resistant client transport, alongside client_awg
         enabled: true                       # omit the block to leave it off
         # listen_port: 0 ⇒ per-master high port in [40000,60000] (443 is inspected; high ports pass)
@@ -117,6 +143,20 @@ fleet:
       warp_mtu: 0                           # WARP interface MTU; 0 ⇒ default 1380 + auto-probe (tracepath, capped, only lowers). Set if the real path is < that.
       address_pool: 10.81.0.0/24
       mgmt_addr: 10.20.0.5                 # ZeroTier address (admin/metrics/DNS bind)
+      # public_ip: 198.51.100.7             # ⚠️ This is THE ENDPOINT THE MASTER DIALS, not a
+                                            # description of the node. Unset, it falls back to
+                                            # ssh.host — which is right until the day a node's
+                                            # direct path starts flapping and you repoint ssh
+                                            # at the mgmt overlay. Then the master follows,
+                                            # which may be exactly what you want (a node whose
+                                            # public path is blocked keeps working over the
+                                            # overlay) or exactly what you do not. Set it
+                                            # explicitly whenever ssh and the tunnel should go
+                                            # different ways. It also seeds a /32 DIRECT route
+                                            # so full-tunnel clients can still reach the node.
+                                            # For a PROVISIONED node the store's value wins
+                                            # over this key: editing it here does not move a
+                                            # live endpoint.
       transports:                           # master↔exit transport(s); omit ⇒ AWG-only
         awg: { enabled: true, listen_port: 0 }       # primary transport. WG UDP port; 0 ⇒ stable-random derived
         reality:                            # fallback transport (VLESS+REALITY+XHTTP, xray) for when AWG is DPI-blocked

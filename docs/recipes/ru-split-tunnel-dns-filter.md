@@ -219,6 +219,12 @@ master's own blocky (which knows the split), and map the zones:
 mihomo:
   overrides:
     dns: { nameserver: ["127.0.0.1:53"] }   # requires dns_filter: true (blocky on :53)
+
+> ⚠️ **No longer needed (2026-08-28).** The agent now supplies the resolver list and
+> the renderer sets the fleet resolver *exclusively* — a public fallback beside it was
+> a concurrent pool, not a fallback, so mihomo raced the two and leaked queries. This
+> override REPLACES the rendered list, so setting it by hand now re-creates the very
+> problem it used to solve. Leave it out.
 dns:
   overrides:
     conditional:
@@ -299,7 +305,7 @@ docker logs mihomo 2>&1 | grep -Ei 'geoip-ru|geosite-ru|provider'   # fetched, n
 **4. DNS filtering works.** From the connected device:
 
 ```sh
-nslookup doubleclick.net      # blocked → 0.0.0.0 / NXDOMAIN
+nslookup doubleclick.net      # blocked → NXDOMAIN / NXDOMAIN
 nslookup example.com          # resolves
 ```
 

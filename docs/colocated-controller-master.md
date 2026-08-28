@@ -26,7 +26,7 @@ a dedicated controller VM is not worth it.
 ┌────────────────────────── master node (one VM) ──────────────────────────┐
 │  wgfleet-controller            wgfleet-agent (role=master)                 │
 │   ├─ mTLS API   <mgmt>:8443  ◄──── dials ──── controller: <mgmt>:8443      │
-│   ├─ Web UI     127.0.0.1:9000     ├─ wg-easy (client AmneziaWG)           │
+│   ├─ Web UI     127.0.0.1:9000     ├─ agent — client AmneziaWG (wg0)       │
 │   ├─ /metrics   127.0.0.1:9300     ├─ mihomo  (master↔exit + LB, :9090)    │
 │   ├─ sqlite store                  ├─ nftables NAT                          │
 │   └─ CA key (issues node certs)    └─ /metrics <mgmt>:9301                  │
@@ -59,7 +59,7 @@ Both processes share the host network namespace, so their listeners must not col
 | controller /metrics | `127.0.0.1:9300` | mgmt/loopback only |
 | agent /metrics | `<mgmt>:9301` | pick a port ≠ 9300 |
 | mihomo Clash API | `<mgmt>:9090` | set by the master spec |
-| wg-easy web | `<mgmt>:51821` (or your choice) | `compose.wg_easy_web_port` |
+| wg-easy web (legacy path only) | `<mgmt>:51821` (or your choice) | `compose.wg_easy_web_port` |
 | client AmneziaWG | `:443/udp` (or your choice) | `client_awg.listen_port` |
 
 ## Steps
@@ -123,14 +123,17 @@ fleet:
   masters:
     - name: master-xa-1
       mgmt_addr: "<mgmt>"        # same ZT address as controller.listen host
-      public_ip: "<public-ip>"  # seeds wg-easy first run (INIT_HOST)
-      client_awg: { listen_port: 443, address_pool: 10.80.0.0/24 }
+      public_ip: "<public-ip>"  # the endpoint written into every client config
+      # managed: true hands the client interface to the AGENT. Leave it out and the
+      # master runs wg-easy instead — the legacy path, kept for existing installs and
+      # for rollback. New fleets should set it: credentials then live in the
+      # controller's store, and issue/pause/rename/revoke are console actions.
+      client_awg: { managed: true, listen_port: 443, address_pool: 10.80.0.0/24 }
       routing:   { direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16], direct_geo: [RU], balance: health }
       mihomo:    { dashboard_disabled: false }  # metacubexd dashboard, downloaded via a DIRECT detour
                                                 # (the master reaches GitHub on its own path, not via an
                                                 # exit). If GitHub is blocked even directly from this box,
                                                 # set dashboard_disabled: true or dashboard_url: "<mirror>".
-      compose:   { wg_easy_web_port: 51821 }
   exits:
     - name: exit-de-1           # provisioned later over SSH from this controller
       region: de
@@ -221,15 +224,18 @@ sudo wgfleet-agent --config /etc/wgfleet/agent.yaml --once --plan \
 Open the Web UI on `http://127.0.0.1:9000` (tunnel it over SSH/ZT). The master should
 move `Reconciling → Ready` once wg-easy + mihomo are up and its self-checks pass.
 
-> **wg-easy comes up non-interactively (no setup wizard).** The agent seeds wg-easy's
-> unattended setup, so it does NOT prompt for a password/host/port. To log into the
-> wg-easy UI (`http://<mgmt>:<wg_easy_web_port>`), read the agent-generated admin
-> password off the master — it is never sent to the controller:
+> **Where client credentials live.** With `client_awg.managed: true` (above) the agent
+> owns the interface and there is no wg-easy: issue, pause, rename and revoke on the
+> master's page in the console, and hand each person their own self-service link. There
+> is no admin UI to log into and no password file to read.
+>
+> Without that key the master runs wg-easy instead. Then, and only then, it comes up
+> non-interactively (the agent seeds the unattended setup) and you read its admin
+> password off the master — it never reaches the controller:
 > ```bash
 > sudo cat /etc/wgfleet/wg-easy-admin-password   # username: admin
 > ```
-> `public_ip` (step 3) must be set: it becomes wg-easy's `INIT_HOST` (the endpoint
-> clients dial) and is required for the unattended setup to complete.
+> Either way `public_ip` (step 3) must be set: it is the endpoint clients dial.
 
 ### 8. Add the exits (normal flow, from this same controller)
 

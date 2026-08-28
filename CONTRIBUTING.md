@@ -18,7 +18,7 @@ You need a recent Go toolchain (see `go.mod` for the version). Common tasks are
 in the `Makefile`:
 
 ```bash
-make fmt      # gofumpt formatting
+make fmt      # gofmt -w cmd internal
 make vet      # go vet
 make test     # unit tests (table-driven)
 make race     # tests with the race detector
@@ -77,7 +77,7 @@ wgfleet/
 │   ├── operations.md           dashboard, VLESS clients, backup/restore, metrics, health
 │   ├── DESIGN.md               full project context + conventions
 │   ├── lessons.md              hard-won operational lessons baked into reconcile
-│   ├── adr/                    architecture decision records (0001–0027)
+│   ├── adr/                    architecture decision records (0001–0032)
 │   ├── onboarding.md           node provisioning walkthrough
 │   ├── colocated-controller-master.md  co-location on the master (default for small fleets)
 │   ├── recipes/                task-oriented config recipes (RU split-tunnel + DNS filter, …)
@@ -97,7 +97,8 @@ wgfleet/
   pure function with no side effects; `Apply` only runs in apply mode; secrets
   are redacted in plan output.
 - **Tests** are table-driven; provisioning is tested against SSH mocks, not live
-  nodes. Keep `golangci-lint` and `gofumpt` clean.
+  nodes. Keep `gofmt`, `go vet` and `go test -race ./...` clean — those four steps are the
+  gate, and `make lint` is not one of them (there is no such rule).
 - **Significant architectural decisions** get an ADR under `docs/adr/`.
 
 ## Before opening a pull request
@@ -120,7 +121,7 @@ plus a `SHA256SUMS`, to a GitHub Release:
 
 | Asset | Contents |
 |---|---|
-| `wgfleet-<version>-linux-amd64.tar.gz` | `wgfleet-controller`, `wgfleet-agent`, `install.sh`, `INSTALL.md` (the quickstart), `CONFIGURATION.md`, `LICENSE`, `DISCLAIMER.md`, `prepare-node.sh`, `examples/`, `systemd/`, `monitoring/`, `VERSION` (unpacks into `wgfleet-linux-amd64/`) |
+| `wgfleet-<version>-linux-amd64.tar.gz` | `wgfleet-controller`, `wgfleet-agent`, `install.sh`, `deploy-master.sh`, `prepare-node.sh`, `client-diag.sh`, `LICENSE`, `DISCLAIMER.md`, `SECURITY.md`, `VERSION`, and the docs the archive renames on the way in: `INSTALL.md` (quickstart), `CONFIGURATION.md`, `MANIFEST.md`, `CLI.md`, `OPERATIONS.md`, `UPGRADE.md`, `ONBOARDING.md`, `COLOCATED-CONTROLLER-MASTER.md`, `MASTER-MIGRATION.md`, `CLIENT-MIGRATION.md`, `SUPPORT-BUNDLE.md`, plus `examples/`, `systemd/`, `monitoring/`. Intra-doc links are rewritten to those names by the `fixlinks` pass — a tester has no repo, so a link that escapes the package root is a dead end, and two tests guard it |
 | `wgfleet-<version>-linux-arm64.tar.gz` | same, for ARM |
 | `SHA256SUMS` | checksums over the archives |
 

@@ -134,10 +134,8 @@ reconnect on their own within a reconcile interval; nothing to do on them.
 
 ## 5. Only if the public IP changed
 
-The client-facing endpoint is stored inside the restored wg-easy database.
-wg-easy applies its `INIT_*` environment only when it first creates that
-database and ignores it afterwards — so a restored database keeps **the old
-public IP baked in**, and existing client configs keep dialing the dead box.
+Existing client configs carry the old endpoint and keep dialing the dead box. What
+you do about it depends on which client leg this master runs.
 
 1. Update the manifest so the rest of the system agrees:
 
@@ -152,10 +150,20 @@ public IP baked in**, and existing client configs keep dialing the dead box.
    sudo systemctl restart wgfleet-controller
    ```
 
-2. Change the host in the wg-easy admin UI.
+2. **With `client_awg.managed: true`** — the agent owns the interface and there is
+   nothing else to change. The controller renders configs from `public_ip` on demand,
+   so every config the console or the self-service portal serves from now on carries
+   the new endpoint. There is no wg-easy database and no admin UI.
 
-3. Re-issue client configs. Every existing device needs a fresh config or QR
-   code — an already-imported peer cannot be told about a new endpoint.
+   **Without it** (legacy wg-easy path) the endpoint is baked into the restored
+   wg-easy database: wg-easy applies its `INIT_*` environment only when it first
+   creates that database and ignores it afterwards. Change the host in the wg-easy
+   admin UI as well.
+
+3. Re-hand-out. Every already-imported peer needs a fresh config or QR — a device
+   cannot be told about a new endpoint. On the managed path, send each person their
+   self-service link again rather than a file: the page re-renders from the live spec,
+   so the same link now yields the corrected config.
 
 To avoid this step next time, put a **DNS name** in `public_ip` rather than a
 literal address, so a future move is a DNS record change.
