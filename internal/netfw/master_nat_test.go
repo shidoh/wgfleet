@@ -223,3 +223,37 @@ func TestMasterNATWithoutTProxyIsUnchanged(t *testing.T) {
 		t.Errorf("the TCP redirect must survive:\n%s", out)
 	}
 }
+
+// With TPROXY in place the QUIC drop must go, or it shadows the interception it
+// was a stand-in for.
+//
+// The drop lives at the `dstnat` hook (priority -100) and the interception at
+// `mangle` (-150), so despite reading first in the rendered file it runs SECOND.
+// Measured on a rehearsal: client UDP to :5353 and :4433 reached an exit while :443
+// produced no mihomo entry and nothing on the tunnel — every client's HTTP/3
+// black-holed until it timed out into TCP, which is itself a shape worth avoiding,
+// while mihomo's sniffer was configured for QUIC on exactly that port.
+func TestMasterNATStopsDroppingQUICOnceItCanProxyIt(t *testing.T) {
+	with, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0", ClientCIDR: "10.80.0.0/24",
+		RedirAddr: "10.80.0.1:7895", TProxyAddr: "10.80.0.1:7896",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(with, "udp dport 443 drop") {
+		t.Errorf("QUIC is still dropped while UDP is intercepted; the drop shadows the tproxy:\n%s", with)
+	}
+
+	// Without an interception target the drop is still the right answer: the only
+	// alternative is letting QUIC leave the master's own uplink.
+	without, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0", ClientCIDR: "10.80.0.0/24", RedirAddr: "10.80.0.1:7895",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(without, "udp dport 443 drop") {
+		t.Errorf("with no UDP path, QUIC must still be dropped rather than leaked:\n%s", without)
+	}
+}

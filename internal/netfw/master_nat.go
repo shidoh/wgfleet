@@ -85,14 +85,24 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 
 	b.WriteString("\tchain prerouting {\n")
 	b.WriteString("\t\ttype nat hook prerouting priority dstnat; policy accept;\n")
-	// Drop client QUIC so browsers fall back to TCP through mihomo.
+	// Client QUIC is PROXIED now, not dropped.
 	//
-	// Kept even now that UDP is intercepted: this rule already prevented the leak
-	// for the single largest UDP flow, it is the behaviour the fleet has been tested
-	// on, and re-enabling HTTP/3 through TPROXY is a one-line change once the
-	// interception itself has been proven under real load. One behavioural change at
-	// a time.
-	fmt.Fprintf(&b, "\t\tiifname %q%s udp dport 443 drop\n", in.ClientInterface, guards)
+	// Dropping UDP/443 was a stand-in for having no UDP path at all: with only a TCP
+	// redirect, QUIC could either leave the master's own uplink or be killed so
+	// browsers fell back to TCP, and killing it was the better of the two. TPROXY
+	// removed that choice, and keeping the drop turned it into a trap — the drop sits
+	// at the `dstnat` hook (priority -100) while the interception sits at `mangle`
+	// (-150), so despite reading first in this file it runs SECOND and shadows it.
+	// Measured on a rehearsal: client UDP to :5353 and :4433 reached an exit, while
+	// :443 produced no mihomo entry and nothing on the tunnel at all. Every client's
+	// HTTP/3 black-holed until it timed out into TCP — itself a distinctive shape —
+	// while mihomo's sniffer was configured to handle QUIC on exactly that port.
+	//
+	// The drop is only correct when there is no UDP path; TProxyAddr is precisely the
+	// statement that there is one.
+	if in.TProxyAddr == "" {
+		fmt.Fprintf(&b, "\t\tiifname %q%s udp dport 443 drop\n", in.ClientInterface, guards)
+	}
 	// DNAT non-private client TCP to mihomo's redir-port.
 	fmt.Fprintf(&b, "\t\tiifname %q%s%s ip protocol tcp dnat to %s\n", in.ClientInterface, guards, gatewayGuard, in.RedirAddr)
 	b.WriteString("\t}\n\n")

@@ -163,23 +163,31 @@ func RenderConfig(in RenderInput) (string, error) {
 		healthInterval = DefaultHealthInterval
 	}
 
-	// The fleet's resolver first, the encrypted public ones behind it — never the
-	// fleet's alone.
+	// The fleet's resolver, EXCLUSIVELY when there is one.
 	//
-	// Pointing mihomo at one address that might not answer is how this broke on a
-	// rehearsal: the resolver was the exits' blocky, no blocky was running, and
-	// mihomo answered every proxied connection with "dns resolve failed: connection
-	// refused". The whole data plane, not just DNS. mihomo re-resolves the sniffed
-	// domain on EVERY proxied connection (measured: a client that did no DNS of its
-	// own still produced seven A? queries from the master), so its resolver is not a
-	// convenience — it is a hard dependency of forwarding anything at all.
+	// This briefly listed the public resolvers behind the fleet's own, to keep a
+	// resolver that stops answering from taking the data plane down with it. That was
+	// wrong about mihomo: `nameserver` is a concurrent POOL, not an ordered fallback —
+	// it races every member and takes the first answer. Measured on a rehearsal, the
+	// result was permanent DoT connections from the master to 1.1.1.1:853 and
+	// 9.9.9.9:853, keepalives and all: a standing signature on the one uplink the
+	// censor is assumed to watch, and the full browsing metadata of every user handed
+	// to two resolvers outside the fleet. "Faster than blocky" is not a tie-break we
+	// want deciding where our users' names get resolved.
 	//
-	// So a dead fleet resolver has to degrade, and the only question is to what. To
-	// an encrypted transport, and never back to cleartext: DoT to Quad9 tells an
-	// observer on the master's uplink that a lookup happened and nothing about what
-	// was asked, which is a different order of exposure from the plaintext UDP/53
-	// this used to send to a public resolver in the censoring country.
-	resolvers := append(append([]string(nil), in.Resolvers...), fallbackResolvers...)
+	// So a fleet resolver that does not answer is a FAULT, to be reported rather than
+	// silently routed around. On a real deployment it is not even a new failure mode:
+	// blocky is the clients' only resolver, so a blocky that is down has already taken
+	// their DNS with it whatever mihomo does. The public list is for the genuinely
+	// resolver-less node, where the alternative is not forwarding at all.
+	//
+	// mihomo re-resolves the sniffed domain on EVERY proxied connection — measured, a
+	// client that did no DNS of its own still produced seven A? queries from the
+	// master — so this list is not a convenience, it is a dependency of forwarding.
+	resolvers := in.Resolvers
+	if len(resolvers) == 0 {
+		resolvers = fallbackResolvers
+	}
 
 	base := map[string]any{
 		"mode":         "rule",
