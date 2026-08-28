@@ -521,6 +521,8 @@ type masterNATPlanner struct {
 	// loaded reports whether the live kernel currently has the master NAT table.
 	// nil ⇒ a real `nft list table ip wgfleet_master` probe; tests inject a stub.
 	loaded func() bool
+	// v6Loaded is the same probe for the client-facing IPv6 table.
+	v6Loaded func() bool
 	// tproxyReady reports whether the kernel still carries the policy routing the
 	// TPROXY rules depend on. nil ⇒ a real `ip rule`/`ip route` probe.
 	tproxyReady func() bool
@@ -555,24 +557,16 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 	if err != nil {
 		return nil, err
 	}
-	file, err := reconcile.FileAction(p.path, []byte(ruleset), 0o644, nil)
+	// NFTApply gates on what was APPLIED, not on what was written. Gating on the file
+	// alone let a FAILED `nft -f` look finished: the apply is atomic, so the kernel
+	// keeps the old table while the new bytes sit on disk, and the next pass sees an
+	// unchanged file plus a present table and reports "already loaded" forever. It
+	// also re-applies when the kernel has lost the table, which is what a reboot does.
+	actions, err := reconcile.NFTApply(p.path, []byte(ruleset), p.isLoaded, "apply master NAT atomically")
 	if err != nil {
 		return nil, err
 	}
-	actions := []reconcile.Action{file}
-	switch {
-	case file.Changes():
-		actions = append(actions, reconcile.ExecAction("apply master NAT atomically", "nft", "-f", p.path))
-	case !p.isLoaded():
-		// Ruleset unchanged but the kernel no longer has the table — a reboot cleared
-		// nft state, or someone flushed it by hand. Reload to self-heal (ADR-0015
-		// live-kernel drift repair, mirroring routingPlanner). Without this the master
-		// silently runs with no DNAT/MASQUERADE/drop-QUIC after a reboot while health
-		// checks still pass: a "Ready but broken" client ingress.
-		actions = append(actions, reconcile.ExecAction("reload master NAT (kernel table missing)", "nft", "-f", p.path))
-	default:
-		actions = append(actions, reconcile.NoChangeAction("nft -f", "ruleset already loaded"))
-	}
+	natChanged := changesAmong(actions)
 	// The client-facing IPv6 policy, when the controller has decided this master
 	// answers IPv6 at all. Rendered here rather than in its own planner because it is
 	// the same decision as the NAT above — what happens to a client's packets — and
@@ -581,21 +575,45 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 	// it. Forwarding has to be on for the reject to be reachable at all; the chain's
 	// drop policy is what keeps that from turning a master with a public IPv6 address
 	// into an open router.
-	if spec.Master.ClientWG != nil && spec.Master.ClientWG.IPv6Prefix != "" && p.v6Path != "" {
-		v6, verr := netfw.RenderMasterV6Block(p.clientIface, spec.Master.ClientWG.IPv6Prefix)
-		if verr != nil {
-			return nil, verr
-		}
-		v6file, verr := reconcile.FileAction(p.v6Path, []byte(v6), 0o644, nil)
-		if verr != nil {
-			return nil, verr
-		}
-		actions = append(actions, v6file)
-		if v6file.Changes() {
+	if p.v6Path != "" {
+		v6Wanted := spec.Master.ClientWG != nil && spec.Master.ClientWG.IPv6Prefix != ""
+		switch {
+		case v6Wanted:
+			v6, verr := netfw.RenderMasterV6Block(p.clientIface, spec.Master.ClientWG.IPv6Prefix)
+			if verr != nil {
+				return nil, verr
+			}
+			// Forwarding first, every time the ruleset is (re-)applied. It is a sysctl,
+			// so a reboot silently returns it to 0 while the file on disk is unchanged —
+			// and a client whose config already carries ::/0 then meets a master that
+			// drops IPv6 in silence, which is precisely the black hole this feature
+			// exists to replace. NFTApply's kernel probe is what notices; gating on the
+			// file alone re-created the hazard on the first reboot.
+			v6Actions, verr := reconcile.NFTApply(p.v6Path, []byte(v6), p.isV6Loaded,
+				"apply the client-facing IPv6 refusal atomically")
+			if verr != nil {
+				return nil, verr
+			}
+			if changesAmong(v6Actions) {
+				actions = append(actions, reconcile.ExecAction(
+					"enable IPv6 forwarding so the client refusal is reachable",
+					"sysctl", "-w", "net.ipv6.conf.all.forwarding=1"))
+			}
+			actions = append(actions, v6Actions...)
+		case p.isV6Loaded():
+			// The operator turned the block off, or handed the client interface back.
+			// Forwarding goes down BEFORE the chain does: between those two commands the
+			// master would otherwise be an IPv6 router with its drop policy already
+			// deleted, which is a worse state than either end of the transition.
 			actions = append(actions,
-				reconcile.ExecAction("enable IPv6 forwarding so the client refusal is reachable",
-					"sysctl", "-w", "net.ipv6.conf.all.forwarding=1"),
-				reconcile.ExecAction("apply the client-facing IPv6 refusal atomically", "nft", "-f", p.v6Path))
+				reconcile.ExecAction("stop forwarding IPv6 now that the client refusal is going away",
+					"sysctl", "-w", "net.ipv6.conf.all.forwarding=0"),
+				reconcile.ExecAction("remove the client-facing IPv6 refusal",
+					"nft", "delete", "table", "ip6", netfw.MasterV6Table).BestEffort())
+			if forget, ferr := reconcile.RemoveFileAction(reconcile.NFTAppliedMarker(p.v6Path),
+				"forget the applied IPv6 ruleset"); ferr == nil {
+				actions = append(actions, forget)
+			}
 		}
 	}
 
@@ -605,7 +623,7 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 	// and client UDP is dropped rather than proxied — worse than the leak it
 	// replaces. Repaired on drift for the same reason the nft table is (ADR-0015):
 	// someone flushing `ip rule` must not break every client until the next reboot.
-	if tproxyAddr != "" && (file.Changes() || !p.isTProxyReady()) {
+	if tproxyAddr != "" && (natChanged || !p.isTProxyReady()) {
 		actions = append(actions, tproxyRouteActions()...)
 	} else if tproxyAddr != "" {
 		actions = append(actions, reconcile.NoChangeAction("tproxy policy routing", "fwmark rule and local route in place"))
@@ -649,6 +667,23 @@ func tproxyPolicyRoutingLive() bool {
 	}
 	routes, err := exec.Command("ip", "route", "show", "table", table).Output()
 	return err == nil && strings.Contains(string(routes), "local default")
+}
+
+// changesAmong reports whether any of these actions would do something.
+func changesAmong(actions []reconcile.Action) bool {
+	for _, a := range actions {
+		if a.Changes() {
+			return true
+		}
+	}
+	return false
+}
+
+func (p masterNATPlanner) isV6Loaded() bool {
+	if p.v6Loaded == nil {
+		return netfw.TableLoaded("ip6", netfw.MasterV6Table)
+	}
+	return p.v6Loaded()
 }
 
 func (p masterNATPlanner) isLoaded() bool {

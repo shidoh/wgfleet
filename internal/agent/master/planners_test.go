@@ -3,7 +3,9 @@ package master
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -519,16 +521,21 @@ func TestMasterNATReloadGate(t *testing.T) {
 		t.Fatalf("NAT ruleset not written: %v", err)
 	}
 
-	// File unchanged + kernel table MISSING ⇒ reload.
+	// The apply-marker stands in for the exec having succeeded: `nft` does not exist
+	// on a dev box, so without this the planner correctly keeps RETRYING the apply and
+	// this test cannot reach the question it is asking.
+	markNFTApplied(t, paths.NFT)
+
+	// Applied + kernel table MISSING ⇒ reload.
 	acts, err := pl.Plan(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasChangingSummary(acts, "reload master NAT") {
+	if !hasChangingSummary(acts, "kernel table missing") {
 		t.Errorf("expected a reload action when the kernel table is missing, got %+v", acts)
 	}
 
-	// File unchanged + kernel table PRESENT ⇒ no change.
+	// Applied + kernel table PRESENT ⇒ no change.
 	loaded = true
 	acts2, err := pl.Plan(context.Background(), spec)
 	if err != nil {
@@ -672,6 +679,10 @@ func TestMasterNATRepairsTProxyPolicyRoutingDrift(t *testing.T) {
 
 	eng := reconcile.NewEngine(nil, pl)
 	_, _ = eng.Reconcile(context.Background(), spec, reconcile.ModeApply)
+	// `nft` does not exist on a dev box, so the apply legitimately fails and leaves no
+	// applied-marker. Stand in for a successful one, or the NAT half never goes quiet
+	// and this test cannot measure the tproxy half on its own.
+	markNFTApplied(t, paths.NFT)
 
 	// nft unchanged and loaded, but the policy routing is gone ⇒ reinstall it.
 	acts, err := pl.Plan(context.Background(), spec)
@@ -747,5 +758,20 @@ func TestMasterNATLeavesIPv6AloneByDefault(t *testing.T) {
 		if strings.Contains(a.Summary+a.Display, "ipv6") || strings.Contains(a.Summary+a.Display, "icmpv6") {
 			t.Errorf("IPv6 touched with the block off: %s | %s", a.Summary, a.Display)
 		}
+	}
+}
+
+// markNFTApplied records the ruleset currently on disk as successfully applied,
+// which is what reconcile.NFTApply's OnApplied hook does on a real node.
+func markNFTApplied(t *testing.T, rulesetPath string) {
+	t.Helper()
+	b, err := os.ReadFile(rulesetPath)
+	if err != nil {
+		t.Fatalf("read ruleset: %v", err)
+	}
+	sum := sha256.Sum256(b)
+	if err := os.WriteFile(reconcile.NFTAppliedMarker(rulesetPath),
+		[]byte(hex.EncodeToString(sum[:])), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
 	}
 }
