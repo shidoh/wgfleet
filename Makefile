@@ -104,6 +104,9 @@ perl -pi -e '\
   s{\]\((?:\./|\.\./)?onboarding\.md}{]($(2)ONBOARDING.md}g; \
   s{\]\((?:\./|\.\./)?SECURITY\.md}{]($(2)SECURITY.md}g; \
   s{\]\((?:\./|\.\./)?(?:docs/)?recipes/ru-split-tunnel-dns-filter\.md}{]($(2)examples/RU-SPLIT-TUNNEL.md}g; \
+  s{\]\((?:\.\./)*deploy/examples/controller-split-ru\.yaml}{]($(2)examples/controller-split-ru.yaml}g; \
+  s{\]\((?:\.\./)*deploy/examples/controller\.yaml}{]($(2)examples/controller.yaml}g; \
+  s{\]\((?:\.\./)*deploy/examples/agent\.yaml}{]($(2)examples/agent.yaml}g; \
 ' "$(1)"
 endef
 
@@ -142,6 +145,11 @@ release-archive: agent-linux controller-linux
 	# renames them on the way in (CLI.md). On a case-sensitive filesystem — which is
 	# every server these ship to — that left 16 dead links, starting on the first page
 	# a tester opens. Files under examples/ sit one level down, so they get ../.
+	#
+	# The deploy/examples/*.yaml rules matter for the same reason and were missed the
+	# first time: three links pointed at ../deploy/examples/… which, from inside the
+	# package, resolves ABOVE the archive root. Those are the manifests the docs tell
+	# a tester to copy, so the dead link is on the path they are being walked down.
 	@cd $(DIST)/$(PKG) && for f in *.md; do $(call fixlinks,$$f,); done
 	@cd $(DIST)/$(PKG) && for f in examples/*.md; do $(call fixlinks,$$f,../); done
 	cp deploy/monitoring/grafana-dashboard.json deploy/monitoring/README.md $(DIST)/$(PKG)/monitoring/

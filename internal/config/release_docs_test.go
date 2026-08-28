@@ -30,7 +30,14 @@ func TestShippedDocsHaveNoInternalReferences(t *testing.T) {
 		t.Fatalf("parsed only %d shipped files from the Makefile; the recipe format probably changed", len(shipped))
 	}
 	for _, rel := range shipped {
-		if ext := filepath.Ext(rel); ext != ".md" && ext != ".yaml" && ext != ".yml" && ext != ".sh" && ext != ".service" {
+		// .json is in the list because grafana-dashboard.json is the most-referenced
+		// file in the archive and carried ten ADR citations plus a lesson number in its
+		// panel titles and descriptions. It was skipped for being an extension nobody
+		// thought of, which is precisely the shape of failure this test exists to catch:
+		// not the files we remembered, but the next one somebody packs.
+		switch filepath.Ext(rel) {
+		case ".md", ".yaml", ".yml", ".sh", ".service", ".json":
+		default:
 			continue // binaries and generated files
 		}
 		body, err := os.ReadFile(filepath.Join(repoRoot, rel))
@@ -124,8 +131,26 @@ func TestShippedDocsLinkOnlyToShippedDocs(t *testing.T) {
 	if len(shipped) < 8 {
 		t.Fatalf("parsed only %d shipped docs from the Makefile; the parser has drifted", len(shipped))
 	}
+	// Everything ELSE the archive carries, so a link to a shipped manifest or script
+	// can be resolved too. `cp a b dir/` puts each source under its own basename.
+	dirCp := regexp.MustCompile(`(?m)^\tcp ((?:\S+ )+)\$\(DIST\)/\$\(PKG\)/(\S*/)$`)
+	for _, m := range dirCp.FindAllStringSubmatch(string(mk), -1) {
+		for _, src := range strings.Fields(m[1]) {
+			matches, _ := filepath.Glob(filepath.Join("..", "..", src))
+			if len(matches) == 0 {
+				matches = []string{src}
+			}
+			for _, mt := range matches {
+				archive[m[2]+filepath.Base(mt)] = true
+			}
+		}
+	}
 
-	link := regexp.MustCompile(`\]\(([^)#]+\.md)`)
+	// Every relative link, not only the .md ones. The first version of this regex
+	// ended in `\.md`, so three links pointing at ../deploy/examples/*.yaml — the
+	// manifests the docs tell a tester to copy — were never examined at all, and
+	// resolved from inside the package to a path ABOVE the archive root.
+	link := regexp.MustCompile(`\]\(([^)#][^)]*)\)`)
 	for repoPath, archiveName := range shipped {
 		body, err := os.ReadFile(filepath.Join("..", "..", repoPath))
 		if err != nil {
@@ -134,10 +159,17 @@ func TestShippedDocsLinkOnlyToShippedDocs(t *testing.T) {
 		}
 		for _, m := range link.FindAllStringSubmatch(string(body), -1) {
 			target := m[1]
-			if strings.HasPrefix(target, "http") {
+			if strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
 				continue
 			}
-			base := strings.TrimPrefix(strings.TrimPrefix(target, "../"), "./")
+			base := strings.TrimLeft(strings.ReplaceAll(target, "./", ""), "./")
+			base = strings.TrimPrefix(base, "docs/")
+			// The Makefile's fixlinks rewrites repo paths to the names the archive
+			// uses; mirror the one class that is not a plain rename, so the check
+			// measures the archive as built rather than the source as written.
+			if i := strings.Index(base, "deploy/examples/"); i >= 0 {
+				base = "examples/" + filepath.Base(base)
+			}
 			// A link may already name the ARCHIVE path (examples/RU-SPLIT-TUNNEL.md),
 			// which is correct as written and needs no rewrite.
 			if archive[base] {
