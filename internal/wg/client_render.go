@@ -322,12 +322,17 @@ func clientDecoy(spec domain.ClientWGSpec, c domain.WGClient) domain.AWGLocal {
 // [16,32], so most credentials sent junk short enough to underflow a receiver
 // that strips S4 before length-checking it (domain.AWGJunkS4Margin).
 //
-// It shifts the whole window by a CONSTANT instead of clamping to the floor the
-// way DeriveAWGParamsForEnd does, and the difference matters here: clamping maps
-// every client below the floor onto the same Jmin, which would erase the
-// per-credential junk profile this derivation exists to produce and make two
-// people's traffic correlatable. A constant shift preserves the spread exactly.
-// The other end is one tunnel, where that trade does not arise.
+// It shifts the whole window by a CONSTANT rather than clamping to the floor,
+// because clamping maps every client below the floor onto the same Jmin — which
+// would erase the per-credential junk profile this derivation exists to produce and
+// make two people's traffic correlatable. A constant shift preserves the spread
+// exactly.
+//
+// DeriveAWGParamsForEnd clamped for a while and now shifts too, for the same reason
+// found the same way: measured across 2000 tunnels the clamp put 77% of ends on one
+// value and left 17 distinct ones, turning Jmin into a function of the SHARED S4
+// that is printed in every client config. This comment used to cite that clamp as
+// the contrast; the two derivations now agree.
 func floorClientJunk(local domain.AWGLocal, s4 int) domain.AWGLocal {
 	if shift := s4 + domain.AWGJunkS4Margin - jminLow; shift > 0 {
 		local.Jmin += shift

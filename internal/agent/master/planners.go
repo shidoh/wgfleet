@@ -531,6 +531,9 @@ type masterNATPlanner struct {
 	lastRendered string
 	// v6Loaded is the same probe for the client-facing IPv6 table.
 	v6Loaded func() bool
+	// lastV6Rendered is the ip6 ruleset this pass produced, so isV6Loaded can compare
+	// the kernel against it rather than against the mere existence of a table.
+	lastV6Rendered string
 	// v6Forwarding reports whether net.ipv6.conf.all.forwarding is 1. nil ⇒ read
 	// /proc. It is a separate question from v6Loaded and has to be asked separately:
 	// the table and the sysctl are lost by different accidents.
@@ -602,6 +605,7 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 			// drops IPv6 in silence, which is precisely the black hole this feature
 			// exists to replace. NFTApply's kernel probe is what notices; gating on the
 			// file alone re-created the hazard on the first reboot.
+			p.lastV6Rendered = v6
 			v6Actions, verr := reconcile.NFTApply(p.v6Path, []byte(v6), p.isV6Loaded,
 				"apply the client-facing IPv6 refusal atomically")
 			if verr != nil {
@@ -743,11 +747,24 @@ func (p masterNATPlanner) weEnabledV6Forwarding() bool {
 	return err == nil
 }
 
+// isV6Loaded asks the same strong question its three siblings ask: does the kernel
+// hold what we WROTE, not merely a table by that name.
+//
+// It was the last presence-only probe left after the rest moved to TableMatches, and
+// it guards the newest and least forgiving table: an ip6 forward chain whose policy
+// is drop and whose one rule is the ICMPv6 refusal. A flushed chain there leaves the
+// policy in place and the refusal gone — every forwarded client IPv6 packet
+// disappears with no ICMP back, which is precisely the silent black hole this table
+// was added to replace. Fixing a bug class on three resources and leaving the fourth
+// is how the class comes back.
 func (p masterNATPlanner) isV6Loaded() bool {
-	if p.v6Loaded == nil {
-		return netfw.TableLoaded("ip6", netfw.MasterV6Table)
+	if p.v6Loaded != nil {
+		return p.v6Loaded()
 	}
-	return p.v6Loaded()
+	if matches, known := netfw.TableMatches("ip6", netfw.MasterV6Table, p.lastV6Rendered); known {
+		return matches
+	}
+	return netfw.TableLoaded("ip6", netfw.MasterV6Table)
 }
 
 // isLoaded asks whether the kernel holds THIS ruleset, not merely a table by that
