@@ -133,6 +133,20 @@ plane refusing service does not break the data plane.
   few seconds of client traffic, once, on the pass that first applies it. Nothing
   has to be reissued; keepalive is a local decision and an already-installed client
   config keeps working unchanged.
+- **This release also re-derives the AmneziaWG junk window, on every tunnel.** The
+  floor that keeps a junk packet from underflowing a peer's S4-strip used to CLAMP
+  `Jmin` onto `S4 + 8`; it now SHIFTS the whole band by the same amount. The clamp
+  put 77% of ends on one value and left 17 distinct ones across 2000 tunnels, which
+  made `Jmin` a function of S4 — and S4 is shared and printed in every client config.
+  The shift is the fix, but it changes `Jmin`/`Jmax` for essentially every tunnel end
+  (measured: 486 of 500 seeds), so **every exit rewrites `awg0.conf` and bounces the
+  interface** on the first pass after the CONTROLLER restarts — the values are
+  rendered by the controller, so this happens before any agent is touched. Expect a
+  few seconds per exit; the passes are independently phased, so they normally
+  stagger rather than land together. Nothing has to be reissued: `Jmin`/`Jmax` are
+  local-send parameters, the shared `S`/`H` values do not move, and the safety
+  invariant (`Jmin >= S4 + 8`) holds under both forms, so an already-installed client
+  config keeps working unchanged.
 - **This release also carries client UDP.** Client UDP other than QUIC-on-443 used
   to traverse the master's forward chain and leave its own uplink, so it never
   reached an exit; it is now intercepted with TPROXY and proxied like TCP. The
