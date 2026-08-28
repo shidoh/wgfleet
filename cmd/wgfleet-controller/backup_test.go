@@ -63,7 +63,7 @@ func TestRunBackupRestoreRoundTripCLI(t *testing.T) {
 	}
 
 	identityDec := func(_ context.Context, c []byte) ([]byte, error) { return c, nil }
-	plan, err := runRestore(context.Background(), out, true /*plan*/, identityDec, "", 99, "")
+	plan, err := runRestore(context.Background(), out, true /*plan*/, identityDec, "", 99, "", nil)
 	if err != nil {
 		t.Fatalf("runRestore plan: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestRunRestoreRefusesLiveController(t *testing.T) {
 	dec := func(_ context.Context, c []byte) ([]byte, error) { return c, nil }
 
 	// Apply mode (plan=false) must refuse while the address accepts connections.
-	if _, err := runRestore(context.Background(), out, false, dec, "", 99, ln.Addr().String()); err == nil {
+	if _, err := runRestore(context.Background(), out, false, dec, "", 99, ln.Addr().String(), nil); err == nil {
 		t.Fatal("expected apply-mode restore to refuse a live controller")
 	}
 }

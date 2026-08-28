@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -73,5 +74,49 @@ func TestRestoreRejectsNewerWire(t *testing.T) {
 	identity := func(_ context.Context, c []byte) ([]byte, error) { return c, nil }
 	if _, err := Restore(context.Background(), archive, RestoreOptions{Decrypt: identity, WireVersion: 7}); err == nil {
 		t.Fatal("expected refusal restoring a newer-wire archive")
+	}
+}
+
+// The archive says where each item goes, and the archive is untrusted input:
+// `age -r` does not authenticate a sender, so anyone holding the public key can
+// build one. Restore used to read Dest straight from its manifest — an arbitrary
+// root-owned write on the control-plane host.
+func TestRestoreRefusesADestinationThisHostDoesNotOwn(t *testing.T) {
+	dir := t.TempDir()
+	legit := filepath.Join(dir, "state.db")
+	evil := filepath.Join(dir, "authorized_keys")
+	archive := buildTestArchive(t, evil, 99)
+	identity := func(_ context.Context, c []byte) ([]byte, error) { return c, nil }
+
+	_, err := Restore(context.Background(), archive, RestoreOptions{
+		Decrypt: identity, WireVersion: 99,
+		AllowedDests: map[string]bool{filepath.Clean(legit): true},
+	})
+	if err == nil {
+		t.Fatal("an archive wrote outside the set of places this host keeps files")
+	}
+	if !strings.Contains(err.Error(), "not a place this host keeps anything") {
+		t.Errorf("the refusal does not explain itself: %v", err)
+	}
+	if _, serr := os.Stat(evil); serr == nil {
+		t.Error("the refused destination was written anyway")
+	}
+}
+
+// And an archive naming only places this host does own restores normally.
+func TestRestoreAcceptsThisHostsOwnDestinations(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "state.db")
+	archive := buildTestArchive(t, dest, 99)
+	identity := func(_ context.Context, c []byte) ([]byte, error) { return c, nil }
+
+	if _, err := Restore(context.Background(), archive, RestoreOptions{
+		Decrypt: identity, WireVersion: 99,
+		AllowedDests: map[string]bool{filepath.Clean(dest): true},
+	}); err != nil {
+		t.Fatalf("a legitimate restore was refused: %v", err)
+	}
+	if b, err := os.ReadFile(dest); err != nil || string(b) != "NEWDB" {
+		t.Errorf("restore did not write the file: %v %q", err, b)
 	}
 }

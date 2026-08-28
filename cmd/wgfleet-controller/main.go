@@ -163,7 +163,8 @@ func run() error {
 		return nil
 	}
 	if *restoreIn != "" {
-		p, err := runRestore(context.Background(), *restoreIn, *plan, nil, *ageIdentity, int(api.WireContractVersion), controllerEndpoint(cfg.Controller))
+		p, err := runRestore(context.Background(), *restoreIn, *plan, nil, *ageIdentity, int(api.WireContractVersion),
+			controllerEndpoint(cfg.Controller), backup.AllowedDestsFor(backup.DefaultSources(cfg, *configPath)))
 		if err != nil {
 			return err
 		}

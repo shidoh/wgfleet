@@ -35,7 +35,7 @@ func runBackup(src backup.Sources, outPath, recipient string, encrypt backup.Enc
 // runRestore reads an age-encrypted archive and lays it back down (or, in plan
 // mode, reports what it would do). In apply mode it first refuses if a
 // controller is still serving on listenAddr (spec §4 step 1).
-func runRestore(ctx context.Context, archivePath string, plan bool, decrypt backup.DecryptFunc, identityPath string, wire int, listenAddr string) (backup.RestorePlan, error) {
+func runRestore(ctx context.Context, archivePath string, plan bool, decrypt backup.DecryptFunc, identityPath string, wire int, listenAddr string, allowedRestoreDests map[string]bool) (backup.RestorePlan, error) {
 	if decrypt == nil {
 		decrypt = backup.AgeDecryptor(identityPath)
 	}
@@ -46,10 +46,14 @@ func runRestore(ctx context.Context, archivePath string, plan bool, decrypt back
 	if err != nil {
 		return backup.RestorePlan{}, fmt.Errorf("read archive %q: %w", archivePath, err)
 	}
+	// Where THIS host keeps its files. The archive's own manifest says where it
+	// wants each item written, and that is untrusted input — `age -r` does not
+	// authenticate a sender, so a crafted archive was an arbitrary root-owned write.
 	return backup.Restore(ctx, raw, backup.RestoreOptions{
-		Decrypt:     decrypt,
-		WireVersion: wire,
-		Plan:        plan,
+		AllowedDests: allowedRestoreDests,
+		Decrypt:      decrypt,
+		WireVersion:  wire,
+		Plan:         plan,
 	})
 }
 

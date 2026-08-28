@@ -29,6 +29,24 @@ type RestoreOptions struct {
 	WireVersion int // the running controller's wire-contract version
 	Plan        bool
 	Now         func() time.Time
+	// AllowedDests is the set of absolute paths this host is willing to have written,
+	// derived from its OWN configuration (see AllowedDestsFor). Empty disables the
+	// check, which exists only so older tests keep compiling; every real caller
+	// supplies it.
+	AllowedDests map[string]bool
+}
+
+// AllowedDestsFor returns the paths a restore of THIS host may write, taken from
+// the same Sources that a backup of it would read. Anything an archive asks for
+// outside this set is not a restore of this host.
+func AllowedDestsFor(src Sources) map[string]bool {
+	allowed := map[string]bool{}
+	for _, it := range plannedItems(src) {
+		if it.dest != "" {
+			allowed[filepath.Clean(it.dest)] = true
+		}
+	}
+	return allowed
 }
 
 // Restore decrypts and unpacks an archive. In apply mode it moves each existing
@@ -61,9 +79,27 @@ func Restore(ctx context.Context, archive []byte, opts RestoreOptions) (RestoreP
 		plan.Warnings = append(plan.Warnings, "archive has no master layer: wg-easy clients and node identity are not restored")
 	}
 
+	// The archive says where each item goes. That is untrusted input.
+	//
+	// `age -r` does not authenticate the sender — the recipient is a public key — so
+	// an archive is a file anyone who knows the key can construct, and until now
+	// restore read `Dest` and `Mode` straight out of its manifest.json with no
+	// allowlist, no prefix check and nothing stopping "..". That is arbitrary
+	// root-owned write on the control plane host: an authorized_keys, a unit file, a
+	// replacement agent.yaml.
+	//
+	// The fix is not to sanitise the path but to stop asking the archive. THIS host's
+	// own configuration already says where each artifact belongs, and a restore that
+	// wanted to write anywhere else is, by definition, not a restore of this host.
+	allowed := opts.AllowedDests
 	for _, it := range items {
 		if it.Dest == "" {
 			return RestorePlan{}, fmt.Errorf("item %q has no restore destination", it.Name)
+		}
+		if len(allowed) > 0 && !allowed[filepath.Clean(it.Dest)] {
+			return RestorePlan{}, fmt.Errorf("archive item %q wants to write %q, which is not a place this "+
+				"host keeps anything — refusing. A restore writes only where this controller's own "+
+				"configuration says its files live", it.Name, it.Dest)
 		}
 		pw := PlannedWrite{Dest: it.Dest, Mode: it.Mode}
 		if _, err := os.Stat(it.Dest); err == nil {

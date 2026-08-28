@@ -169,3 +169,30 @@ func firstNonEmpty(a, b string) string {
 	}
 	return b
 }
+
+// plannedItems lists every (path, name, dest) this host's Sources describe,
+// regardless of what exists on disk right now.
+//
+// GatherItems walks the same three groups but skips what is absent, because a
+// backup can only carry what is there. AllowedDestsFor needs the opposite: the full
+// set of places a restore of this host is permitted to write, whether or not the
+// file happens to exist today. Keeping both readings of one list in one place is
+// what stops them drifting — a destination added to the backup and not to the
+// allowlist would be refused on restore, which is a very confusing bug.
+func plannedItems(src Sources) []struct{ path, name, dest string } {
+	out := []struct{ path, name, dest string }{
+		{src.ControllerYAML, "controller/controller.yaml", src.ControllerYAML},
+		{"", "controller/state.db", firstNonEmpty(src.StateDB, destStateDB)},
+		{src.CACert, "controller/ca.crt", src.CACert},
+		{src.CAKey, "controller/ca.key", src.CAKey},
+		{src.SOPSFile, "controller/secrets.sops.yaml", src.SOPSFile},
+		{src.WGEasyDB, "master/wg-easy.db", src.WGEasyDB},
+		{src.WGEasyAdmin, "master/wg-easy-admin-password", destWGEasyAdmin},
+		{src.WGKey, "master/wg.key", destWGKey},
+		{src.ClientWGKey, "master/client-wg.key", destClientWGKey},
+		{src.NodeCert, "master/node.crt", destNodeCert},
+		{src.NodeKey, "master/node.key", destNodeKey},
+		{src.AgentYAML, "master/agent.yaml", destAgentYAML},
+	}
+	return out
+}
