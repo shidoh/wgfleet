@@ -419,19 +419,30 @@ func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 	if len(steps) == 0 {
 		// Direct egress runs no policy routing — but if the state file currently holds
 		// a WARP ruleset, the active egress just switched WARP→direct (a censorship
-		// failover, ADR-0017). routing.Render can't see that transition (it sees only
-		// the new direct intent and returns nothing), so flush conntrack here: flows
-		// pinned to the now-dead WARP path must re-resolve at once instead of black-
-		// holing for up to the conntrack timeout. The state-file marker
-		// makes it a one-shot — it fires only the pass the intent actually changes.
+		// failover, ADR-0017). routing.Render can't see that transition: it is handed
+		// only the new direct intent and returns nothing.
+		//
+		// Rendering nothing is not the same as undoing something, and for a long time
+		// this branch confused the two. It flushed conntrack and stopped there, so
+		// `ip rule from <pool> lookup <egress-table>` and the table's `default dev
+		// wgcf` survived in the kernel — and warpPlanner keeps wgcf UP on purpose, so
+		// there was still a live interface for them to point at. Every client packet
+		// went on being policy-routed into the tunnel ADR-0017 had just declared
+		// blocked, and the flush re-pinned the flows onto that same dead path. The
+		// whole failover was a no-op in the data plane.
+		//
+		// TeardownActions is the exact inverse of Render and ends with its own
+		// conntrack flush, so it subsumes what this branch used to do. Its deletes
+		// tolerate "does not exist", which is what makes it safe on a node that never
+		// had WARP. The state-file marker keeps it a one-shot: it fires only on the
+		// pass the intent actually changes.
 		file, err := reconcile.FileAction(p.statePath, []byte(directEgressMarker), 0o644, nil)
 		if err != nil {
 			return nil, err
 		}
 		actions := []reconcile.Action{file}
 		if file.Changes() {
-			actions = append(actions, reconcile.BestEffortExecAction(
-				"flush conntrack on egress switch to direct", "conntrack", "-D"))
+			actions = append(actions, routingExecActions(routing.TeardownActions())...)
 		} else {
 			actions = append(actions, reconcile.NoChangeAction("policy routing", "direct egress, no policy routing"))
 		}

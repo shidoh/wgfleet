@@ -818,3 +818,63 @@ func TestWGPlannerNeverTearsDownOnMissingTransportInfo(t *testing.T) {
 		t.Fatal("an explicit reality-only set must report AWG disabled")
 	}
 }
+
+// The WARP→direct failover must actually REMOVE the WARP policy routing.
+//
+// Flushing conntrack was the whole of the transition, and it is the half that does
+// nothing on its own: routing.Render returns no steps for a direct-egress intent,
+// so `ip rule from <pool> lookup 51820` and `default dev wgcf` stayed in the kernel,
+// and warpPlanner keeps wgcf up by design. Every client packet kept being policy-
+// routed into the tunnel ADR-0017 had just declared blocked, and the conntrack flush
+// merely re-pinned the flows onto the same dead path. TeardownActions existed and
+// was reachable only from decommission.
+func TestRoutingRemovesWARPRulesOnSwitchToDirect(t *testing.T) {
+	paths := testPaths(t)
+	warp, _ := exitSpec(t)
+
+	// Only the state file matters here; the sysctl/ip steps cannot run off-Linux.
+	eng := reconcile.NewEngine(nil, routingPlanner{statePath: paths.RoutingState})
+	_, _ = eng.Reconcile(context.Background(), warp, reconcile.ModeApply)
+
+	direct := warp
+	direct.Egress = domain.EgressDirect
+	direct.Routing.EgressInterface = ""
+	actions, err := routingPlanner{statePath: paths.RoutingState}.Plan(context.Background(), direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawRuleDel, sawTableFlush bool
+	for _, a := range actions {
+		switch {
+		case strings.Contains(a.Display, "ip rule del"):
+			sawRuleDel = true
+		case strings.Contains(a.Display, "ip route flush table"):
+			sawTableFlush = true
+		}
+	}
+	if !sawRuleDel || !sawTableFlush {
+		t.Errorf("WARP→direct must delete the egress ip rule and flush the egress table; "+
+			"rule_del=%v table_flush=%v\nplan:\n%s", sawRuleDel, sawTableFlush, planDump(actions))
+	}
+
+	// And a steady direct pass must not keep re-issuing them.
+	eng2 := reconcile.NewEngine(nil, routingPlanner{statePath: paths.RoutingState})
+	_, _ = eng2.Reconcile(context.Background(), direct, reconcile.ModeApply)
+	steady, err := routingPlanner{statePath: paths.RoutingState}.Plan(context.Background(), direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range steady {
+		if strings.Contains(a.Display, "ip rule del") {
+			t.Errorf("steady direct egress must not re-run the teardown:\n%s", planDump(steady))
+		}
+	}
+}
+
+func planDump(actions []reconcile.Action) string {
+	var b strings.Builder
+	for _, a := range actions {
+		b.WriteString("  " + a.Summary + " | " + a.Display + "\n")
+	}
+	return b.String()
+}
