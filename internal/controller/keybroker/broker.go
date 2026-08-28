@@ -477,7 +477,10 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		if aerr != nil {
 			return domain.NodeSpec{}, fmt.Errorf("exit %q: per-tunnel master address: %w", exit.Name, aerr)
 		}
-		perTunnelPub := b.tunnelPubKey(ctx, master.Name, exit.Name)
+		perTunnelPub, kerr := b.tunnelPubKey(ctx, master.Name, exit.Name)
+		if kerr != nil {
+			return domain.NodeSpec{}, fmt.Errorf("exit %q: %w", exit.Name, kerr)
+		}
 		switch {
 		case perTunnelPub == "":
 			// The master has not published this tunnel's key yet (it publishes after it
@@ -1227,18 +1230,22 @@ func (b *Broker) lookupPubKey(ctx context.Context, name string) (domain.Node, st
 }
 
 // tunnelPubKey returns the master's per-tunnel WireGuard public key for one exit
-// (ADR-0030), or "" when it has not been published yet. A store error is treated
-// the same as "not yet registered": callers already tolerate a missing key by
-// rendering the legacy peer, and failing the whole spec render over it would take
-// the master down for a key that is only additive.
-func (b *Broker) tunnelPubKey(ctx context.Context, masterName, exitName string) string {
+// (ADR-0030), or "" when it has not been published yet.
+//
+// "Not published yet" and "the store could not answer" are different facts and must
+// not share a return value. The first is ordinary — the master publishes the key
+// after it first sees the exit in its own spec — and the caller handles it. The
+// second used to collapse into the same empty string, and in phase `on` the legacy
+// peer is no longer rendered, so ONE sqlite busy or IO error during a render pass
+// produced an exit spec with no master peer at all. The agent applies that, and the
+// master↔exit tunnel drops for every user until a later pass happens to succeed. A
+// failed read is a failed render.
+func (b *Broker) tunnelPubKey(ctx context.Context, masterName, exitName string) (string, error) {
 	keys, err := b.store.ListNodeTunnelKeys(ctx, masterName)
 	if err != nil {
-		b.log.Warn("failed to read per-tunnel keys; falling back to the shared master key",
-			"master", masterName, "exit", exitName, "err", err)
-		return ""
+		return "", fmt.Errorf("read per-tunnel keys for master %q: %w", masterName, err)
 	}
-	return keys[exitName]
+	return keys[exitName], nil
 }
 
 func (b *Broker) masterDirectCIDRs(m config.MasterConfig) []string {

@@ -2,6 +2,10 @@ package keybroker
 
 import (
 	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/shidoh/wgfleet/internal/config"
@@ -226,4 +230,35 @@ func TestRegisterTunnelKey(t *testing.T) {
 			})
 		}
 	})
+}
+
+// "The key has not been published yet" and "the store could not answer" are
+// different facts, and for a while they shared one empty string. In phase `on` the
+// legacy peer is no longer rendered, so a single sqlite busy or IO error during a
+// render pass produced an exit spec with NO master peer at all — which the agent
+// then applies, dropping the master↔exit tunnel for every user until some later pass
+// happens to succeed. A failed read has to fail the render.
+func TestExitRenderFailsRatherThanDropTheMasterPeerOnAStoreError(t *testing.T) {
+	ctx := context.Background()
+	_, st := newBrokerWithFleet(t, fleetWithPhase(domain.PerTunnelKeyOn))
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", masterSharedKey, domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.25.1", "198.51.100.1", "", domain.RoleExit)
+
+	broken := New(tunnelKeysUnreadable{Store: st}, fleetWithPhase(domain.PerTunnelKeyOn),
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	spec, err := broken.RenderNodeSpec(ctx, "exit-de-1")
+	if err == nil {
+		t.Fatalf("a failed key read rendered a spec with %d peer(s) instead of failing", len(spec.Peers))
+	}
+	if !strings.Contains(err.Error(), "per-tunnel keys") {
+		t.Errorf("the error does not name what could not be read: %v", err)
+	}
+}
+
+// tunnelKeysUnreadable is a store whose only defect is that the per-tunnel key
+// table cannot be read — the shape of a transient sqlite failure.
+type tunnelKeysUnreadable struct{ store.Store }
+
+func (tunnelKeysUnreadable) ListNodeTunnelKeys(context.Context, string) (map[string]string, error) {
+	return nil, errors.New("database is locked")
 }
