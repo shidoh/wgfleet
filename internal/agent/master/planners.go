@@ -531,6 +531,10 @@ type masterNATPlanner struct {
 	lastRendered string
 	// v6Loaded is the same probe for the client-facing IPv6 table.
 	v6Loaded func() bool
+	// v6Forwarding reports whether net.ipv6.conf.all.forwarding is 1. nil ⇒ read
+	// /proc. It is a separate question from v6Loaded and has to be asked separately:
+	// the table and the sysctl are lost by different accidents.
+	v6Forwarding func() bool
 	// tproxyReady reports whether the kernel still carries the policy routing the
 	// TPROXY rules depend on. nil ⇒ a real `ip rule`/`ip route` probe.
 	tproxyReady func() bool
@@ -603,14 +607,34 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 			if verr != nil {
 				return nil, verr
 			}
-			if changesAmong(v6Actions) {
+			// Forwarding is checked against the KERNEL, not against whether the nft
+			// actions happen to be changing. It is a sysctl: a `sysctl --system`, a
+			// package postinst, a hardening drop-in or a reboot returns it to 0 while
+			// the ruleset on disk and the table in the kernel are both untouched — and
+			// the reconciler, gating on `changesAmong(v6Actions)`, then had nothing to
+			// do, forever. The kernel discards client IPv6 before any chain runs, no
+			// ICMPv6 is generated, and every client holding ::/0 is back in the silent
+			// black hole this feature exists to replace. The nft half was watched; the
+			// half that makes it reachable at all was not.
+			//
+			// It goes FIRST, before the chain that depends on it, so the window between
+			// the two is a master that forwards nothing rather than one that forwards
+			// everything with no policy loaded.
+			if !p.isV6ForwardingOn() {
 				actions = append(actions, reconcile.ExecAction(
 					"enable IPv6 forwarding so the client refusal is reachable",
 					"sysctl", "-w", "net.ipv6.conf.all.forwarding=1"))
+			} else {
+				actions = append(actions, reconcile.NoChangeAction(
+					"net.ipv6.conf.all.forwarding", "already 1"))
 			}
 			actions = append(actions, v6Actions...)
-		case p.isV6Loaded():
+		case p.isV6Loaded() || p.weEnabledV6Forwarding():
 			// The operator turned the block off, or handed the client interface back.
+			// Keyed on EITHER half being present, not just the table: a table lost some
+			// other way used to leave forwarding=1 with nothing gating it and no path
+			// back, because the only branch that could lower it required the table to
+			// still be there.
 			// Forwarding goes down BEFORE the chain does: between those two commands the
 			// master would otherwise be an IPv6 router with its drop policy already
 			// deleted, which is a worse state than either end of the transition.
@@ -686,6 +710,37 @@ func changesAmong(actions []reconcile.Action) bool {
 		}
 	}
 	return false
+}
+
+// isV6ForwardingOn reads the sysctl rather than assuming it. An unreadable value —
+// a non-Linux dev box, where the file does not exist — reports "off", so the plan
+// still SHOWS the intent. `sysctl -w` is idempotent, so re-asserting a value that is
+// already set costs nothing on the node that matters.
+func (p masterNATPlanner) isV6ForwardingOn() bool {
+	if p.v6Forwarding != nil {
+		return p.v6Forwarding()
+	}
+	raw, err := os.ReadFile("/proc/sys/net/ipv6/conf/all/forwarding")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(raw)) == "1"
+}
+
+// weEnabledV6Forwarding reports whether THIS agent is the reason IPv6 forwarding is
+// on, evidenced by the applied-marker beside the ruleset we wrote.
+//
+// The off-path needs it. Keying "lower forwarding" on the sysctl alone would have
+// the agent switch off a setting the host has for its own reasons the first time the
+// block is disabled; keying it on the table alone left forwarding=1 with nothing
+// gating it whenever the table was lost some other way. The marker is the record of
+// what we did, which is the only thing we are entitled to undo.
+func (p masterNATPlanner) weEnabledV6Forwarding() bool {
+	if p.v6Path == "" {
+		return false
+	}
+	_, err := os.Stat(reconcile.NFTAppliedMarker(p.v6Path))
+	return err == nil
 }
 
 func (p masterNATPlanner) isV6Loaded() bool {

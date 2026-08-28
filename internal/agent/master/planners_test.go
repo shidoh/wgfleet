@@ -804,3 +804,88 @@ func writeAppliedMarker(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 }
+
+// The nft table was watched and the sysctl that makes it reachable was not, so a
+// `sysctl --system`, a hardening drop-in or a package postinst could return
+// net.ipv6.conf.all.forwarding to 0 with the ruleset on disk and the table in the
+// kernel both untouched — and the reconciler, gating on "did the nft actions
+// change", had nothing to do, forever. The kernel then discards client IPv6 before
+// any chain runs, no ICMPv6 is generated, and every client holding ::/0 is back in
+// the silent black hole the feature exists to replace.
+func TestMasterNATRepairsIPv6ForwardingWithoutTheRulesetChanging(t *testing.T) {
+	paths := testPaths(t)
+	spec, _ := masterSpec(t)
+	prefix, perr := wg.ClientULAFor(spec.WGServer.AddressPool)
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	spec.Master.ClientWG = &domain.ClientWGSpec{
+		ListenPort: 443, AddressPool: spec.WGServer.AddressPool,
+		ServerAddress: "10.80.0.1", IPv6Prefix: prefix.String(),
+	}
+
+	forwarding := false
+	pl := masterNATPlanner{
+		path: paths.NFT, v6Path: paths.V6NFT, clientIface: "wg0",
+		loaded:       func() bool { return true },
+		v6Loaded:     func() bool { return true },
+		v6Forwarding: func() bool { return forwarding },
+		tproxyReady:  func() bool { return true },
+	}
+	// Write both rulesets and record them as applied, so nothing about the nft half
+	// is changing on the pass under test. Plan() renders; the FileActions only touch
+	// disk in apply mode, and the exec beside them would fail on a box with no nft.
+	first, ferr := pl.Plan(context.Background(), spec)
+	if ferr != nil {
+		t.Fatal(ferr)
+	}
+	applyNonExec(t, first)
+	writeAppliedMarker(t, paths.NFT)
+	writeAppliedMarker(t, paths.V6NFT)
+
+	acts, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasChangingSummary(acts, "enable IPv6 forwarding") {
+		t.Errorf("forwarding is off and the ruleset is unchanged, so nothing repairs it:\n%s", dumpActions(acts))
+	}
+
+	// And once the kernel agrees, the pass is quiet again.
+	forwarding = true
+	acts, err = pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasChangingSummary(acts, "enable IPv6 forwarding") {
+		t.Errorf("forwarding is already on and the planner still wants to set it:\n%s", dumpActions(acts))
+	}
+}
+
+// dumpActions renders a plan for a failure message.
+func dumpActions(acts []reconcile.Action) string {
+	var b strings.Builder
+	for _, a := range acts {
+		b.WriteString(a.Summary + " | " + a.Display + "\n")
+	}
+	return b.String()
+}
+
+// applyNonExec runs a plan's file writes without its commands, so a test on a box
+// with no nft can reach the states that only exist after the ruleset is on disk.
+// The engine is the only thing that can apply an action, and it would run the execs
+// too, so the ruleset is written directly from what the plan says it should hold.
+func applyNonExec(t *testing.T, acts []reconcile.Action) {
+	t.Helper()
+	for _, a := range acts {
+		if a.Kind != reconcile.ActionCreate && a.Kind != reconcile.ActionUpdate {
+			continue
+		}
+		if !a.Changes() {
+			continue
+		}
+		if err := os.WriteFile(a.Target, []byte(a.Display), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
