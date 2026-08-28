@@ -68,9 +68,9 @@ func indexOf(s, sub string) int {
 
 // Guard: the wire version must never drift by accident. Changing it is a
 // deliberate act with a rollout consequence, so it takes a deliberate test edit.
-func TestWireContractVersionIs9(t *testing.T) {
-	if WireContractVersion != 9 {
-		t.Fatalf("WireContractVersion = %d, want 9 (bumped for ClientWGSpec.ipv6_prefix — the client-facing IPv6 block)", WireContractVersion)
+func TestWireContractVersionIs10(t *testing.T) {
+	if WireContractVersion != 10 {
+		t.Fatalf("WireContractVersion = %d, want 10 (bumped for RenewCertificate — agent-driven certificate rotation)", WireContractVersion)
 	}
 }
 
@@ -78,7 +78,10 @@ func TestWireContractVersionIs9(t *testing.T) {
 // feature must have a named constant, because MinSupportedWire is 1 and therefore
 // the bump ALONE refuses nobody: the gate is the named comparison, never the number.
 func TestClientIPv6GateIsNamedAndCurrent(t *testing.T) {
-	if WireClientIPv6 != WireContractVersion {
+	if WireCertRenewal != WireContractVersion {
+		t.Errorf("WireCertRenewal = %d but the contract is at %d", WireCertRenewal, WireContractVersion)
+	}
+	if WireClientIPv6 >= WireContractVersion {
 		t.Errorf("WireClientIPv6 = %d but the contract is at %d; the gate must name the version that introduced the field",
 			WireClientIPv6, WireContractVersion)
 	}

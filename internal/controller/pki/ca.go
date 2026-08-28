@@ -221,3 +221,56 @@ func decodePEM(data []byte, types ...string) ([]byte, error) {
 	}
 	return nil, fmt.Errorf("unexpected PEM type %q, want one of %v", block.Type, types)
 }
+
+// SignNodeCSR issues a fresh node certificate for a certificate request the node
+// generated itself.
+//
+// This is the renewal path, and it differs from IssueNodeCert in the one way that
+// matters: the node keeps its private key. Bootstrap has no choice — there is no
+// channel yet, so the controller mints both halves and ships them over SSH — but a
+// node that is already talking to us can generate a keypair, send only the public
+// half, and never put its identity on the wire at all.
+//
+// callerID is the identity of the VERIFIED mTLS peer, and it overrides whatever
+// subject the request carries. A certificate request is an unauthenticated blob of
+// the requester's choosing; treating its CommonName as the name to issue would let
+// any node with a valid certificate rename itself into any other node in the fleet.
+// The same rule the gRPC layer already follows: identity comes from the connection,
+// never from the message.
+func (ca *CA) SignNodeCSR(csrDER []byte, callerID string) ([]byte, error) {
+	if callerID == "" {
+		return nil, fmt.Errorf("sign CSR: caller identity is required")
+	}
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	if err != nil {
+		return nil, fmt.Errorf("sign CSR: parse: %w", err)
+	}
+	// The signature proves the requester holds the private key for the public key
+	// they are asking us to certify. Without this check a node could have us certify
+	// somebody else's public key under its own name.
+	if err := csr.CheckSignature(); err != nil {
+		return nil, fmt.Errorf("sign CSR: signature: %w", err)
+	}
+	serial, err := randomSerial()
+	if err != nil {
+		return nil, err
+	}
+	now := ca.now()
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: callerID, Organization: []string{"wgfleet"}},
+		NotBefore:    now.Add(-time.Minute),
+		NotAfter:     now.Add(leafValidity),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.cert, csr.PublicKey, ca.key)
+	if err != nil {
+		return nil, fmt.Errorf("sign CSR: %w", err)
+	}
+	return pemBlock("CERTIFICATE", der), nil
+}
+
+// NodeCertRenewalWire mirrors api.WireCertRenewal for callers that must name the
+// version in operator-facing text without importing the wire contract.
+const NodeCertRenewalWire = 10

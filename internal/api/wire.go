@@ -70,7 +70,10 @@ const (
 	// abandon its own working IPv6 path for one that silently drops, which is
 	// an earlier finding restaged: stalls that read as an MTU fault for days. Hence
 	// WireClientIPv6 below, and hence the two must be rendered together or not at all.
-	WireContractVersion uint32 = 9
+	// v10 adds RenewCertificate. An agent below it has no way to renew and will run
+	// to expiry in silence, so the gate is what tells the operator which nodes still
+	// need a hand rather than letting them discover it one anniversary at a time.
+	WireContractVersion uint32 = 10
 
 	// WireClientWG is the wire version that introduced MasterSpec.client_wg. The
 	// controller refuses to render the client interface for a master below it: such
@@ -81,6 +84,14 @@ const (
 	// compared against WireContractVersion so a later bump for something unrelated
 	// does not silently re-close the client interface to the whole fleet.
 	WireClientWG uint32 = 8
+
+	// WireCertRenewal is the wire version that introduced RenewCertificate. Below it
+	// an agent cannot renew its own control-plane certificate: it will keep working
+	// until NotAfter and then be refused, one node per provisioning anniversary. The
+	// controller cannot fix that remotely — renewal needs a channel the expiry has
+	// already closed — so the gate exists to make the set of such nodes visible while
+	// something can still be done about it.
+	WireCertRenewal uint32 = 10
 
 	// WireClientIPv6 is the wire version that introduced ClientWGSpec.ipv6_prefix.
 	// The controller refuses to hand clients an IPv6 default route unless the master's

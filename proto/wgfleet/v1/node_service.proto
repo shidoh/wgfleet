@@ -17,6 +17,19 @@ service NodeService {
   // the node.
   rpc PublishPublicKey(PublishPublicKeyRequest) returns (PublishPublicKeyResponse);
 
+  // RenewCertificate signs a certificate request the node generated, returning a
+  // fresh client certificate for the SAME identity the caller already
+  // authenticated as. The node keeps its private key: only the public half
+  // travels.
+  //
+  // There is no approval step and no request object to approve. Asking requires a
+  // certificate that is still valid, the answer is scoped to the caller's own
+  // verified CommonName, and a node can therefore only ever renew itself. That is
+  // the whole authorisation model, and it is why an expired certificate cannot be
+  // renewed this way — at that point there is no channel left to ask over, and the
+  // operator re-issues out of band over SSH.
+  rpc RenewCertificate(RenewCertificateRequest) returns (RenewCertificateResponse);
+
   // PullSpec returns the node's desired NodeSpec, rendered by the controller
   // from fleet config + the registry of peer public keys.
   rpc PullSpec(PullSpecRequest) returns (NodeSpec);
@@ -481,4 +494,18 @@ message ExportersSpec {
   bool node = 1;
   bool wg = 2;
   bool warp = 3;
+}
+
+// RenewCertificateRequest carries a DER-encoded PKCS#10 certificate request. Its
+// subject is ignored: the controller issues for the caller's verified identity, not
+// for the name the request asks for.
+message RenewCertificateRequest {
+  bytes csr_der = 1;
+}
+
+// RenewCertificateResponse returns the freshly signed certificate in PEM form, plus
+// the CA certificate so a node can also pick up a CA rotation without a second trip.
+message RenewCertificateResponse {
+  bytes cert_pem = 1;
+  bytes ca_cert_pem = 2;
 }

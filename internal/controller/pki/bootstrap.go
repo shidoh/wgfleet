@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 )
 
 // SaveCA writes the CA certificate (0644) and private key (0600) to disk. The
@@ -84,6 +85,41 @@ func ClientTLS(certPEM, keyPEM, caCertPEM []byte, serverName string) (*tls.Confi
 		RootCAs:      pool,
 		ServerName:   serverName,
 		MinVersion:   tls.VersionTLS13,
+	}, nil
+}
+
+// ReloadableClientTLS is ClientTLS with a certificate that can be swapped while the
+// process runs.
+//
+// Renewal is worthless if picking up the new certificate needs a restart: the agent
+// would rotate, keep presenting the old one, and only actually change identity at
+// the next unrelated restart — which on a healthy node might be months away, i.e.
+// after the certificate it renewed had already expired. GetClientCertificate is
+// consulted per handshake, so a reconnect after rotation presents the new pair while
+// connections already open keep the old one, which stays valid until its own expiry.
+func ReloadableClientTLS(load func() (tls.Certificate, error), caCertPEM []byte, serverName string) (*tls.Config, error) {
+	cert, err := load()
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caCertPEM) {
+		return nil, fmt.Errorf("no certificates found in CA PEM")
+	}
+	var holder atomic.Pointer[tls.Certificate]
+	holder.Store(&cert)
+	return &tls.Config{
+		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			// Re-read on every handshake rather than caching: a handshake is rare and a
+			// stale identity is expensive, so the cheap thing to do is the current thing.
+			if fresh, err := load(); err == nil {
+				holder.Store(&fresh)
+			}
+			return holder.Load(), nil
+		},
+		RootCAs:    pool,
+		ServerName: serverName,
+		MinVersion: tls.VersionTLS13,
 	}, nil
 }
 

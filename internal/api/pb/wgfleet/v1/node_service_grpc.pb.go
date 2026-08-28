@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	NodeService_Register_FullMethodName         = "/wgfleet.v1.NodeService/Register"
 	NodeService_PublishPublicKey_FullMethodName = "/wgfleet.v1.NodeService/PublishPublicKey"
+	NodeService_RenewCertificate_FullMethodName = "/wgfleet.v1.NodeService/RenewCertificate"
 	NodeService_PullSpec_FullMethodName         = "/wgfleet.v1.NodeService/PullSpec"
 	NodeService_ReportStatus_FullMethodName     = "/wgfleet.v1.NodeService/ReportStatus"
 )
@@ -40,6 +41,18 @@ type NodeServiceClient interface {
 	// only ever stores public keys (key-broker model); private keys never leave
 	// the node.
 	PublishPublicKey(ctx context.Context, in *PublishPublicKeyRequest, opts ...grpc.CallOption) (*PublishPublicKeyResponse, error)
+	// RenewCertificate signs a certificate request the node generated, returning a
+	// fresh client certificate for the SAME identity the caller already
+	// authenticated as. The node keeps its private key: only the public half
+	// travels.
+	//
+	// There is no approval step and no request object to approve. Asking requires a
+	// certificate that is still valid, the answer is scoped to the caller's own
+	// verified CommonName, and a node can therefore only ever renew itself. That is
+	// the whole authorisation model, and it is why an expired certificate cannot be
+	// renewed this way — at that point there is no channel left to ask over, and the
+	// operator re-issues out of band over SSH.
+	RenewCertificate(ctx context.Context, in *RenewCertificateRequest, opts ...grpc.CallOption) (*RenewCertificateResponse, error)
 	// PullSpec returns the node's desired NodeSpec, rendered by the controller
 	// from fleet config + the registry of peer public keys.
 	PullSpec(ctx context.Context, in *PullSpecRequest, opts ...grpc.CallOption) (*NodeSpec, error)
@@ -70,6 +83,16 @@ func (c *nodeServiceClient) PublishPublicKey(ctx context.Context, in *PublishPub
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PublishPublicKeyResponse)
 	err := c.cc.Invoke(ctx, NodeService_PublishPublicKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) RenewCertificate(ctx context.Context, in *RenewCertificateRequest, opts ...grpc.CallOption) (*RenewCertificateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RenewCertificateResponse)
+	err := c.cc.Invoke(ctx, NodeService_RenewCertificate_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +137,18 @@ type NodeServiceServer interface {
 	// only ever stores public keys (key-broker model); private keys never leave
 	// the node.
 	PublishPublicKey(context.Context, *PublishPublicKeyRequest) (*PublishPublicKeyResponse, error)
+	// RenewCertificate signs a certificate request the node generated, returning a
+	// fresh client certificate for the SAME identity the caller already
+	// authenticated as. The node keeps its private key: only the public half
+	// travels.
+	//
+	// There is no approval step and no request object to approve. Asking requires a
+	// certificate that is still valid, the answer is scoped to the caller's own
+	// verified CommonName, and a node can therefore only ever renew itself. That is
+	// the whole authorisation model, and it is why an expired certificate cannot be
+	// renewed this way — at that point there is no channel left to ask over, and the
+	// operator re-issues out of band over SSH.
+	RenewCertificate(context.Context, *RenewCertificateRequest) (*RenewCertificateResponse, error)
 	// PullSpec returns the node's desired NodeSpec, rendered by the controller
 	// from fleet config + the registry of peer public keys.
 	PullSpec(context.Context, *PullSpecRequest) (*NodeSpec, error)
@@ -135,6 +170,9 @@ func (UnimplementedNodeServiceServer) Register(context.Context, *RegisterRequest
 }
 func (UnimplementedNodeServiceServer) PublishPublicKey(context.Context, *PublishPublicKeyRequest) (*PublishPublicKeyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PublishPublicKey not implemented")
+}
+func (UnimplementedNodeServiceServer) RenewCertificate(context.Context, *RenewCertificateRequest) (*RenewCertificateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenewCertificate not implemented")
 }
 func (UnimplementedNodeServiceServer) PullSpec(context.Context, *PullSpecRequest) (*NodeSpec, error) {
 	return nil, status.Error(codes.Unimplemented, "method PullSpec not implemented")
@@ -199,6 +237,24 @@ func _NodeService_PublishPublicKey_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_RenewCertificate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenewCertificateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).RenewCertificate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_RenewCertificate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).RenewCertificate(ctx, req.(*RenewCertificateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _NodeService_PullSpec_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PullSpecRequest)
 	if err := dec(in); err != nil {
@@ -238,6 +294,10 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PublishPublicKey",
 			Handler:    _NodeService_PublishPublicKey_Handler,
+		},
+		{
+			MethodName: "RenewCertificate",
+			Handler:    _NodeService_RenewCertificate_Handler,
 		},
 		{
 			MethodName: "PullSpec",

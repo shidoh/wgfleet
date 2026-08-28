@@ -40,6 +40,7 @@ type Service struct {
 	renderer SpecRenderer
 	log      *slog.Logger
 	trigger  UpgradeTrigger // optional auto-upgrade hook; see SetUpgradeTrigger
+	signer   CertSigner     // optional CA for RenewCertificate; see SetCertSigner
 }
 
 var _ pb.NodeServiceServer = (*Service)(nil)

@@ -3063,6 +3063,107 @@ func (x *ExportersSpec) GetWarp() bool {
 	return false
 }
 
+// RenewCertificateRequest carries a DER-encoded PKCS#10 certificate request. Its
+// subject is ignored: the controller issues for the caller's verified identity, not
+// for the name the request asks for.
+type RenewCertificateRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CsrDer        []byte                 `protobuf:"bytes,1,opt,name=csr_der,json=csrDer,proto3" json:"csr_der,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenewCertificateRequest) Reset() {
+	*x = RenewCertificateRequest{}
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenewCertificateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenewCertificateRequest) ProtoMessage() {}
+
+func (x *RenewCertificateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenewCertificateRequest.ProtoReflect.Descriptor instead.
+func (*RenewCertificateRequest) Descriptor() ([]byte, []int) {
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *RenewCertificateRequest) GetCsrDer() []byte {
+	if x != nil {
+		return x.CsrDer
+	}
+	return nil
+}
+
+// RenewCertificateResponse returns the freshly signed certificate in PEM form, plus
+// the CA certificate so a node can also pick up a CA rotation without a second trip.
+type RenewCertificateResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CertPem       []byte                 `protobuf:"bytes,1,opt,name=cert_pem,json=certPem,proto3" json:"cert_pem,omitempty"`
+	CaCertPem     []byte                 `protobuf:"bytes,2,opt,name=ca_cert_pem,json=caCertPem,proto3" json:"ca_cert_pem,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenewCertificateResponse) Reset() {
+	*x = RenewCertificateResponse{}
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenewCertificateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenewCertificateResponse) ProtoMessage() {}
+
+func (x *RenewCertificateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenewCertificateResponse.ProtoReflect.Descriptor instead.
+func (*RenewCertificateResponse) Descriptor() ([]byte, []int) {
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *RenewCertificateResponse) GetCertPem() []byte {
+	if x != nil {
+		return x.CertPem
+	}
+	return nil
+}
+
+func (x *RenewCertificateResponse) GetCaCertPem() []byte {
+	if x != nil {
+		return x.CaCertPem
+	}
+	return nil
+}
+
 var File_wgfleet_v1_node_service_proto protoreflect.FileDescriptor
 
 const file_wgfleet_v1_node_service_proto_rawDesc = "" +
@@ -3351,10 +3452,16 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\rExportersSpec\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\bR\x04node\x12\x0e\n" +
 	"\x02wg\x18\x02 \x01(\bR\x02wg\x12\x12\n" +
-	"\x04warp\x18\x03 \x01(\bR\x04warp2\xbb\x02\n" +
+	"\x04warp\x18\x03 \x01(\bR\x04warp\"2\n" +
+	"\x17RenewCertificateRequest\x12\x17\n" +
+	"\acsr_der\x18\x01 \x01(\fR\x06csrDer\"U\n" +
+	"\x18RenewCertificateResponse\x12\x19\n" +
+	"\bcert_pem\x18\x01 \x01(\fR\acertPem\x12\x1e\n" +
+	"\vca_cert_pem\x18\x02 \x01(\fR\tcaCertPem2\x9a\x03\n" +
 	"\vNodeService\x12E\n" +
 	"\bRegister\x12\x1b.wgfleet.v1.RegisterRequest\x1a\x1c.wgfleet.v1.RegisterResponse\x12]\n" +
-	"\x10PublishPublicKey\x12#.wgfleet.v1.PublishPublicKeyRequest\x1a$.wgfleet.v1.PublishPublicKeyResponse\x12=\n" +
+	"\x10PublishPublicKey\x12#.wgfleet.v1.PublishPublicKeyRequest\x1a$.wgfleet.v1.PublishPublicKeyResponse\x12]\n" +
+	"\x10RenewCertificate\x12#.wgfleet.v1.RenewCertificateRequest\x1a$.wgfleet.v1.RenewCertificateResponse\x12=\n" +
 	"\bPullSpec\x12\x1b.wgfleet.v1.PullSpecRequest\x1a\x14.wgfleet.v1.NodeSpec\x12G\n" +
 	"\fReportStatus\x12\x18.wgfleet.v1.StatusReport\x1a\x1b.wgfleet.v1.ReportStatusAck(\x01B.Z,github.com/shidoh/wgfleet/internal/api/pb;pbb\x06proto3"
 
@@ -3370,7 +3477,7 @@ func file_wgfleet_v1_node_service_proto_rawDescGZIP() []byte {
 	return file_wgfleet_v1_node_service_proto_rawDescData
 }
 
-var file_wgfleet_v1_node_service_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_wgfleet_v1_node_service_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_wgfleet_v1_node_service_proto_goTypes = []any{
 	(*RegisterRequest)(nil),          // 0: wgfleet.v1.RegisterRequest
 	(*RegisterResponse)(nil),         // 1: wgfleet.v1.RegisterResponse
@@ -3407,6 +3514,8 @@ var file_wgfleet_v1_node_service_proto_goTypes = []any{
 	(*FirewallSpec)(nil),             // 32: wgfleet.v1.FirewallSpec
 	(*RoutingSpec)(nil),              // 33: wgfleet.v1.RoutingSpec
 	(*ExportersSpec)(nil),            // 34: wgfleet.v1.ExportersSpec
+	(*RenewCertificateRequest)(nil),  // 35: wgfleet.v1.RenewCertificateRequest
+	(*RenewCertificateResponse)(nil), // 36: wgfleet.v1.RenewCertificateResponse
 }
 var file_wgfleet_v1_node_service_proto_depIdxs = []int32{
 	7,  // 0: wgfleet.v1.StatusReport.checks:type_name -> wgfleet.v1.HealthCheck
@@ -3445,14 +3554,16 @@ var file_wgfleet_v1_node_service_proto_depIdxs = []int32{
 	21, // 33: wgfleet.v1.DNSFilterSpec.custom:type_name -> wgfleet.v1.CustomConfig
 	0,  // 34: wgfleet.v1.NodeService.Register:input_type -> wgfleet.v1.RegisterRequest
 	2,  // 35: wgfleet.v1.NodeService.PublishPublicKey:input_type -> wgfleet.v1.PublishPublicKeyRequest
-	4,  // 36: wgfleet.v1.NodeService.PullSpec:input_type -> wgfleet.v1.PullSpecRequest
-	5,  // 37: wgfleet.v1.NodeService.ReportStatus:input_type -> wgfleet.v1.StatusReport
-	1,  // 38: wgfleet.v1.NodeService.Register:output_type -> wgfleet.v1.RegisterResponse
-	3,  // 39: wgfleet.v1.NodeService.PublishPublicKey:output_type -> wgfleet.v1.PublishPublicKeyResponse
-	10, // 40: wgfleet.v1.NodeService.PullSpec:output_type -> wgfleet.v1.NodeSpec
-	9,  // 41: wgfleet.v1.NodeService.ReportStatus:output_type -> wgfleet.v1.ReportStatusAck
-	38, // [38:42] is the sub-list for method output_type
-	34, // [34:38] is the sub-list for method input_type
+	35, // 36: wgfleet.v1.NodeService.RenewCertificate:input_type -> wgfleet.v1.RenewCertificateRequest
+	4,  // 37: wgfleet.v1.NodeService.PullSpec:input_type -> wgfleet.v1.PullSpecRequest
+	5,  // 38: wgfleet.v1.NodeService.ReportStatus:input_type -> wgfleet.v1.StatusReport
+	1,  // 39: wgfleet.v1.NodeService.Register:output_type -> wgfleet.v1.RegisterResponse
+	3,  // 40: wgfleet.v1.NodeService.PublishPublicKey:output_type -> wgfleet.v1.PublishPublicKeyResponse
+	36, // 41: wgfleet.v1.NodeService.RenewCertificate:output_type -> wgfleet.v1.RenewCertificateResponse
+	10, // 42: wgfleet.v1.NodeService.PullSpec:output_type -> wgfleet.v1.NodeSpec
+	9,  // 43: wgfleet.v1.NodeService.ReportStatus:output_type -> wgfleet.v1.ReportStatusAck
+	39, // [39:44] is the sub-list for method output_type
+	34, // [34:39] is the sub-list for method input_type
 	34, // [34:34] is the sub-list for extension type_name
 	34, // [34:34] is the sub-list for extension extendee
 	0,  // [0:34] is the sub-list for field type_name
@@ -3469,7 +3580,7 @@ func file_wgfleet_v1_node_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_wgfleet_v1_node_service_proto_rawDesc), len(file_wgfleet_v1_node_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   35,
+			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
