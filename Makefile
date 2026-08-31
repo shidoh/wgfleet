@@ -10,6 +10,13 @@ PROTO_SRC := $(shell find $(PROTO_DIR) -name '*.proto')
 # --agent-bin`. Override ARCH=arm64 for ARM VMs (e.g. Apple-silicon Lima, AWS
 # Graviton). Output lands in dist/.
 ARCH      ?= amd64
+# TAR_NOXATTR is set only when tar accepts it (macOS bsdtar). GNU tar on the CI
+# builder neither needs nor has it. Without it, macOS packs its extended attributes
+# and GNU tar on the target prints ~40 lines of "Ignoring unknown extended header
+# keyword LIBARCHIVE.xattr.com.apple.provenance" — the first thing a tester sees on
+# unpacking, and it reads like a damaged archive.
+TAR_NOXATTR := $(shell tar --no-xattrs --version >/dev/null 2>&1 && echo --no-xattrs)
+
 DIST      := dist
 
 # Build identity stamped into both binaries via -ldflags. VERSION comes from the
@@ -157,7 +164,12 @@ release-archive: agent-linux controller-linux
 	cp deploy/monitoring/vmrule.yaml deploy/monitoring/prometheusrule.yaml $(DIST)/$(PKG)/monitoring/
 	@echo "$(VERSION) $(COMMIT) $(DATE) linux/$(ARCH)" > $(DIST)/$(PKG)/VERSION
 	chmod 0755 $(DIST)/$(PKG)/wgfleet-controller $(DIST)/$(PKG)/wgfleet-agent $(DIST)/$(PKG)/*.sh
-	tar -C $(DIST) -czf $(DIST)/$(ARCHIVE).tar.gz $(PKG)
+# COPYFILE_DISABLE stops macOS bsdtar packing its extended attributes, which GNU
+# tar on the target then reports as ~40 lines of "Ignoring unknown extended header
+# keyword LIBARCHIVE.xattr.com.apple.provenance" — the first thing a tester sees on
+# unpacking. Harmless, and it reads like the archive is damaged. No effect on Linux,
+# where the release is normally built.
+	COPYFILE_DISABLE=1 tar $(TAR_NOXATTR) -C $(DIST) -czf $(DIST)/$(ARCHIVE).tar.gz $(PKG)
 	@echo "packed $(DIST)/$(ARCHIVE).tar.gz"
 
 tidy:
