@@ -320,10 +320,17 @@ kernel module and tools sources.
   shadow an adjacent pair — otherwise roughly half of new TLS connections stall
   silently. The generator iterates until the sizes are provably safe. Kernel
   limits are far looser and are *not* sufficient.
-- **`I1–I5` mimic a real UDP protocol.** Each tunnel end picks a cover protocol
-  from its seed — QUIC Initial, STUN binding or DTLS ClientHello — and fills all
-  five slots with structurally valid, per-slot-varied packets, so a DPI box sees
-  QUIC or WebRTC rather than a VPN handshake.
+- **`I1–I5` currently imitate a real UDP protocol — and a 2026-08-28 measurement
+  says that is worse than sending noise.** Each tunnel end picks a cover protocol
+  from its seed (QUIC Initial, STUN binding or DTLS ClientHello) and fills all five
+  slots with per-slot-varied packets. The packets are *not* structurally valid:
+  QUIC's varint Length is never emitted, and the DTLS handshake header is 4 bytes
+  where RFC 6347 wants 12. A dissector therefore recognises the protocol **and**
+  marks it malformed — a cleaner signal than the same sizes filled with random
+  bytes, which measured as plain `UDP` with no attribution at all. Fixing this is
+  an open decision (valid protocols vs. noise), not a pending patch:
+  [ADR-0022](docs/adr/0022-awg-collision-safe-params-and-mimicry.md) carries the
+  refutation and the reasoning.
 - **All obfuscation lives in `[Interface]`,** never in `[Peer]`, and shared
   parameters are derived deterministically from a per-tunnel seed so both ends
   compute the same set with no coordination.
