@@ -133,12 +133,12 @@ func (m *Manager) ManifestNodes() []domain.Node {
 
 	var out []domain.Node
 	for _, mm := range m.fleet.Masters {
-		n, _, _ := m.findNode(mm.Name)
+		n, _, _ := m.findNodeLocked(mm.Name)
 		n.State = domain.StatePending
 		out = append(out, n)
 	}
 	for _, e := range m.fleet.Exits {
-		n, _, _ := m.findNode(e.Name)
+		n, _, _ := m.findNodeLocked(e.Name)
 		n.State = domain.StatePending
 		out = append(out, n)
 	}
@@ -461,7 +461,18 @@ func (m *Manager) clearInflight(nodeID string) {
 func (m *Manager) findNode(name string) (domain.Node, config.SSHConfig, bool) {
 	m.fleetMu.RLock()
 	defer m.fleetMu.RUnlock()
+	return m.findNodeLocked(name)
+}
 
+// findNodeLocked is findNode for callers that ALREADY hold fleetMu. It exists
+// because sync.RWMutex forbids recursive read locking: the mutex is
+// writer-preferring, so once a writer (ForgetExit) queues, it blocks new readers —
+// including a second RLock on the goroutine that already holds the first. That
+// goroutine cannot release the outer lock until the inner one is granted, and the
+// inner one waits for the writer, which waits for the outer. ManifestNodes used to
+// call the locking findNode from inside its own read section, which wedged every
+// dashboard render the moment a node delete raced a page load.
+func (m *Manager) findNodeLocked(name string) (domain.Node, config.SSHConfig, bool) {
 	for _, mm := range m.fleet.Masters {
 		if mm.Name == name {
 			return domain.Node{
