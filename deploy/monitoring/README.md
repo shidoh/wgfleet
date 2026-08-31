@@ -153,6 +153,11 @@ refresh (`as_blacklist_feed`):
 |---|---|---|
 | `wgfleet_probe_last_success_timestamp_seconds` | `probe` | unix time of the last successful run; **0 = never succeeded** |
 | `wgfleet_probe_last_attempt_timestamp_seconds` | `probe` | unix time of the last attempt, successful or not; 0 = never ran |
+| `wgfleet_controller_store_up` | — | 1 when the controller could read its store on this scrape, 0 when it could not. Fleet-wide rules gate on it, so an unreadable store no longer reads as an empty fleet |
+| `wgfleet_controller_ca_expiry_timestamp_seconds` | — | unix time the fleet CA expires. Every node certificate chains to it, so its lapse cannot be repaired over the control plane |
+| `wgfleet_controller_config_drift` | — | 1 when the manifest on disk differs from the one the controller loaded, 0 when they match, **absent when it cannot be read** — which is what `WgfleetConfigUnreadable` watches |
+| `wgfleet_agent_transport_active` | `transport` | which master↔exit transport this exit is serving (exit-only) |
+| `wgfleet_fw_as_blacklist_size` | `family` | size of the scanner-ASN blacklist set actually loaded in nftables |
 
 A probe that has never even attempted to run on a node (feature disabled, or
 `warp_mtu` pinned by the operator) emits **no series at all** — an all-zero pair

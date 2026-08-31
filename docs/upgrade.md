@@ -58,7 +58,7 @@ plane refusing service does not break the data plane.
    ```yaml
    # controller.yaml
    controller:
-     agent_bin: /opt/wgfleet/dist/wgfleet-agent-linux-amd64
+     agent_bin: /opt/wgfleet/dist/wgfleet-agent
    ```
 
 2. **Upgrade the controller.** Replace its binary and restart it. While it is
@@ -131,7 +131,7 @@ binaries land, so a normal change does not read as a fault.
 - **`--rolling-upgrade` skips nodes that are not reporting** rather than pushing to
   them, timing out and rolling them back. They are listed as skipped in the plan; a
   run can now legitimately leave a node behind.
-- **The alert rules changed** (`deploy/monitoring/`): four fixed, one added for CA
+- **The alert rules changed** (`monitoring/ (in the release archive; deploy/monitoring/ in the repo)`): four fixed, one added for CA
   expiry. Apply them whenever convenient — they are written to fail open, so the
   order relative to the binaries does not matter.
 

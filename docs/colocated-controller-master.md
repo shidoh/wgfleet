@@ -74,7 +74,7 @@ Same kernel-risky prep as any node — the master's client-facing interface is
 AmneziaWG (kernel module), and the data plane runs in Docker:
 
 ```bash
-sudo ./deploy/prepare-node.sh <zerotier-network-id>  # AmneziaWG DKMS module + ZeroTier join
+sudo ././prepare-node.sh <zerotier-network-id>  # AmneziaWG DKMS module + ZeroTier join
 sudo zerotier-cli listnetworks  # authorize the node, assign it a stable managed IP = <mgmt>
 
 # prepare-node.sh deliberately does NOT install Docker — that is normally the
@@ -91,8 +91,8 @@ architecture (`ARCH=amd64` default, `ARCH=arm64` for Graviton/Ampere). Build on 
 dev box and copy, or build on the VM (needs Go 1.26+):
 
 ```bash
-make agent-linux      ARCH=amd64     # → dist/wgfleet-agent-linux-amd64
-make controller-linux ARCH=amd64     # → dist/wgfleet-controller-linux-amd64
+./deploy-master.sh --agent   # (repo checkout: make agent-linux)      ARCH=amd64     # → dist/wgfleet-agent-linux-amd64
+./deploy-master.sh --controller   # (repo checkout: make controller-linux) ARCH=amd64     # → dist/wgfleet-controller-linux-amd64
 sudo install -m755 dist/wgfleet-agent-linux-amd64      /usr/local/bin/wgfleet-agent
 sudo install -m755 dist/wgfleet-controller-linux-amd64 /usr/local/bin/wgfleet-controller
 sudo mkdir -p /etc/wgfleet /var/lib/wgfleet
@@ -242,7 +242,7 @@ move `Reconciling → Ready` once wg-easy + mihomo are up and its self-checks pa
 The exits are remote VMs, so they ARE provisioned over SSH by the controller:
 
 ```bash
-# On each exit VM first: sudo ./deploy/prepare-node.sh <zerotier-network-id> ; authorize + assign its ZT IP.
+# On each exit VM first: sudo ././prepare-node.sh <zerotier-network-id> ; authorize + assign its ZT IP.
 sudo wgfleet-controller --config /etc/wgfleet/controller.yaml --provision exit-de-1 --plan
 sudo wgfleet-controller --config /etc/wgfleet/controller.yaml --provision exit-de-1 \
      --agent-bin /usr/local/bin/wgfleet-agent
@@ -253,14 +253,14 @@ sudo wgfleet-controller --config /etc/wgfleet/controller.yaml --provision exit-d
 The exits update their agent via the controller (Web UI upgrade button /
 `controller --upgrade-agent <node>`, over SSH). The co-located master has **no
 such path** — it is not SSH-provisioned and cannot bootstrap itself — so use
-`deploy/deploy-master.sh`, the master's equivalent. It cross-builds on your
+`./deploy-master.sh`, the master's equivalent. It cross-builds on your
 machine, copies over SSH, installs ETXTBSY-safe (temp + atomic rename over the
 running binary) and restarts the services:
 
 ```bash
 # both binaries (default); or --agent / --controller for one
-deploy/deploy-master.sh root@<master-host>
-deploy/deploy-master.sh root@<master-host> --plan     # dry-run, build + show intent
+./deploy-master.sh root@<master-host>
+./deploy-master.sh root@<master-host> --plan     # dry-run, build + show intent
 ```
 
 When deploying **both**, it installs/restarts the agent FIRST, then the
@@ -304,7 +304,7 @@ agent before the controller restart so the file is written before mihomo reloads
   - **Geo**: keep `geo-auto-update: false` and serve RU geo via `.mrs` HTTP rule-providers with
     `proxy: DIRECT` (they auto-update over the direct path) — see the hardening section of
     [recipes/ru-split-tunnel-dns-filter.md](recipes/ru-split-tunnel-dns-filter.md) and its
-    `deploy/examples/controller-split-ru.yaml`.
+    `examples/controller-split-ru.yaml`.
 
   If GitHub is blocked even directly from the master, set `dashboard_disabled: true`.
 - **Convergence takes a pass or two.** The master can only render its mihomo proxies once

@@ -74,7 +74,7 @@
   </form>
   {{else if .CanDecommission}}
   <form method="post" action="/nodes/{{.Node.ID}}/decommission" onsubmit="return lockAction(this)"
-        data-confirm="Decommission {{.Node.Name}}? The agent will tear down its data plane (stop services, bring tunnels down).">
+        data-confirm="Decommission {{.Node.Name}}? The agent will tear down its data plane (stop services, bring tunnels down) AND destroy this exit&#39;s WireGuard and REALITY private keys. Recommission rebuilds it, but with new keys — it is re-peered from scratch, not restored.">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     <button type="submit" class="btn ghost-amber" data-pending="Decommissioning…">Decommission</button>
   </form>
@@ -91,7 +91,7 @@
   {{end}}
   {{if .CanDelete}}
   <form method="post" action="/nodes/{{.Node.ID}}/delete" onsubmit="return lockAction(this)"
-        data-confirm="Delete {{.Node.Name}} from inventory? It has been decommissioned; this removes it permanently.{{if .WGClientCount}} This also DELETES {{.WGClientCount}} client credential{{if ne .WGClientCount 1}}s{{end}} — every one of those people loses their tunnel, and the only way back is the encrypted backup or re-issuing to each of them by hand.{{else if .WGClientCountUnknown}} This ALSO deletes every client credential on this master — the count could not be read just now, so check the AWG clients page before confirming. Recovery is the encrypted backup or re-issuing to each person by hand.{{end}}">
+        data-confirm="Delete {{.Node.Name}} from inventory? This removes the exit permanently, and removes its declaration from the manifest so it does not come back as a Pending card. Its certificate is NOT revoked: if the box still runs its agent it re-registers and reappears. No client credential lives on an exit, so nobody&#39;s config is deleted by this.">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     {{/* Empty until lockAction fills it in. The server refuses a delete without it
          and asks on its own page instead, because this form's only prompt is

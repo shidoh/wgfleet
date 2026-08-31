@@ -119,7 +119,7 @@ before reaching the archive. Fill those two in first; the restore then overwrite
 the whole file anyway, so anything syntactically valid will do:
 
 ```bash
-sudo sed -i "s|<mgmt-zt-ip>|$(ip -4 -o addr show dev zt+ | awk '{print $4}' | cut -d/ -f1)|; \
+sudo sed -i "s|<mgmt-zt-ip>|$(ip -4 -o addr show | awk '/ zt/ {print $4}' | cut -d/ -f1)|; \
              s|<public-ip>|$(curl -4 -s ifconfig.me)|" /etc/wgfleet/controller.yaml
 # If the archive was written with --age-recipient (step 1's headline command),
 # add --age-identity /root/key.txt to BOTH lines; without it age cannot decrypt

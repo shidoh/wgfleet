@@ -165,6 +165,9 @@ Back on the **master**, add the exit to the config:
 nano /etc/wgfleet/controller.yaml
 ```
 
+Replace the `exits: []` line with the block below — an empty flow list cannot have
+items pasted under it:
+
 ```yaml
   exits:
     - name: exit-1
@@ -209,8 +212,8 @@ Repeat this step for every additional exit (new name, new `address_pool`).
 
 ## Step 8 — Connect your devices
 
-wgfleet issues client credentials itself. Add one line to the master's
-`client_awg` block:
+wgfleet issues client credentials itself. The template already sets this — check
+the master's `client_awg` block reads:
 
 ```yaml
         managed: true   # the agent carries the client interface

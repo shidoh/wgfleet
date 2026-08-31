@@ -21,9 +21,12 @@ The work splits cleanly in two:
 
 ## 0. One-time controller setup
 
+From the unpacked release archive the binaries are already here; from a repo
+checkout, build them first.
+
 ```sh
-# Build the controller (or `make controller-linux` to run it on a VM).
-go build -o wgfleet-controller ./cmd/wgfleet-controller
+# Release archive: nothing to build — wgfleet-controller sits in this directory.
+# Repo checkout:   go build -o wgfleet-controller ./cmd/wgfleet-controller
 
 # Generate the CA at the configured pki paths (controller.yaml → pki.ca_cert/ca_key).
 ./wgfleet-controller --config controller.yaml --init-pki
@@ -35,7 +38,15 @@ go build -o wgfleet-controller ./cmd/wgfleet-controller
 > `controller.advertise` (the reachable address — controller behind a NAT/LB/gateway);
 > otherwise agents are told to dial `0.0.0.0:8443`, which is undialable.
 
-Build the Linux agent that `--provision` installs on each node:
+`--provision` installs a Linux agent binary on each node. Point
+`controller.agent_bin` at it:
+
+```yaml
+controller:
+  agent_bin: ./wgfleet-agent        # release archive: it is in this directory
+```
+
+From a repo checkout instead, cross-build one and point at that:
 
 ```sh
 make agent-linux              # dist/wgfleet-agent-linux-amd64
@@ -48,7 +59,9 @@ Get the ZeroTier network id (`controller.yaml → fleet.zerotier_network`),
 then on **each** VM — directly, or as cloud-init user-data:
 
 ```sh
-scp deploy/prepare-node.sh root@<vm-ip>:/root/
+# `prepare-node.sh` is in the release archive beside this file; in a repo checkout
+# it is deploy/prepare-node.sh.
+scp prepare-node.sh root@<vm-ip>:/root/
 ssh root@<vm-ip> 'bash prepare-node.sh <zerotier-network-id>'
 ```
 
@@ -66,7 +79,7 @@ pre-flight) and joins ZeroTier. Then, in **ZeroTier Central**:
 
 ## 2. Describe the fleet
 
-Fill `fleet.yaml` (see `deploy/examples/controller.yaml`). Per node you need its
+Fill your `controller.yaml` (see `examples/controller.yaml`). Per node you need its
 role, address pool, the planned `mgmt_addr`, and an SSH bootstrap target:
 
 ```yaml
@@ -135,7 +148,7 @@ installs the agent + systemd unit, and starts it. The agent then reconciles.
 > provisioner knows which agent binary to install. Build it with `make agent-linux
 > [ARCH=arm64]` → `dist/wgfleet-agent-linux-<arch>`.
 >
-> Provisioning is also available from the read-only Web UI (a **Provision** button
+> Provisioning is also available from the Web UI (a **Provision** button
 > on Pending/Error nodes) once the controller is running.
 
 ## 4. Verify

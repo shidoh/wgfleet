@@ -28,7 +28,7 @@ controller:
   advertise: "10.20.25.254:8443"  # when listen differs from the dialable address (e.g. controller
                                    # behind NAT/gateway). becomes the default endpoint baked into
                                    # agents and seeds an extra SAN on the server cert.
-  webui:   "10.20.25.254:9000"    # read-only dashboard; bind mgmt/ZT only (empty disables)
+  webui:   "10.20.25.254:9000"    # admin dashboard (provision/decommission/delete/backup); bind mgmt/ZT only (empty disables)
   metrics: "10.20.25.254:9300"    # Prometheus /metrics; bind mgmt/ZT only (empty disables)
   store:   "/var/lib/wgfleet/state.db"
   agent_bin: "/usr/local/bin/wgfleet-agent"  # agent binary installed during UI-triggered provisioning (optional)

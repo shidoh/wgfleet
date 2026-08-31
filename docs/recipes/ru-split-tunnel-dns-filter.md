@@ -7,7 +7,7 @@ client. This is the most common wgfleet setup; this page shows the exact keys
 that produce it, the hardening that makes it survive real RU network conditions,
 and how to verify each piece.
 
-It assumes you have already read [QUICKSTART.md](../QUICKSTART.md) or
+It assumes you have already read [INSTALL.md](../INSTALL.md) or
 [colocated-controller-master.md](../colocated-controller-master.md) and can
 bring a master + one exit to `Ready`. This recipe only changes **what goes in
 `controller.yaml`** — the bring-up steps are identical.
@@ -263,18 +263,24 @@ mihomo:
 Same flow as any config change — no special steps:
 
 ```sh
-# edit /etc/wgfleet/controller.yaml (or start from the example)
+# edit /etc/wgfleet/controller.yaml (or start from the example), then:
+wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
 systemctl restart wgfleet-controller
-# preview, then apply, per node:
-wgfleet-controller --config /etc/wgfleet/controller.yaml --provision master-1 --plan
-wgfleet-controller --config /etc/wgfleet/controller.yaml --provision master-1
+```
+
+**That is the whole change.** The agents pick it up on their next reconcile
+(default 30s) and hot-reload mihomo/blocky — routing and denylist tweaks never
+need a re-provision.
+
+Provisioning is for a node that is not in the fleet yet, and it is exits only:
+
+```sh
 wgfleet-controller --config /etc/wgfleet/controller.yaml --provision exit-1 --plan
 wgfleet-controller --config /etc/wgfleet/controller.yaml --provision exit-1
 ```
 
-On an already-running fleet, the agent picks the change up on its next reconcile
-(default 30s) and hot-reloads mihomo/blocky; you don't have to re-provision for
-a routing or denylist tweak.
+The co-located master is not SSH-provisioned — it is installed by `install.sh` and
+upgraded with `./deploy-master.sh`, so it has no `ssh:` block to provision through.
 
 ## Verify
 

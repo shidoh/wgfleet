@@ -277,10 +277,17 @@ fleet:
     - name: master-1
       mgmt_addr: "${mgmt}"       # same ZT address as controller.listen host
       public_ip: "${pub}"        # the address clients dial
-      client_awg: { listen_port: 443, address_pool: 10.80.0.0/24 }
+      # Block style, not flow: the guides tell you to add keys here, and you cannot
+      # add a line to a { } mapping.
+      client_awg:
+        listen_port: 443
+        address_pool: 10.80.0.0/24
+        managed: true            # the agent owns the client interface (wg-easy is the legacy path)
       routing:    { direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16], balance: health }
       compose:    { wg_easy_web_port: 51821 }   # mihomo pinned to a safe default (v1.19.30); do NOT set :latest or "Alpha"
-  exits: []                      # add exits later, then: wgfleet-controller --provision <name>
+  # Add exits here, then: wgfleet-controller --provision <name>. Until the first one
+  # registers the master reads Degraded — mihomo has nothing to balance yet.
+  exits: []
 YAML
   chmod 0600 "$ETC/controller.yaml"   # holds WG/REALITY private keys + passwords once populated
   log "wrote $ETC/controller.yaml (template)"

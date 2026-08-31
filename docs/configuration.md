@@ -84,18 +84,18 @@ SOPS setup is covered in `docs/secrets-sops.md` in the source repository.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `controller.listen` | string | **required** | gRPC/mTLS endpoint agents connect to, e.g. `0.0.0.0:9443` |
+| `controller.listen` | string | **required** | gRPC/mTLS endpoint agents connect to. Bind the mgmt/ZT address, e.g. `10.20.25.254:8443` — agents dial exactly what is written here, so `0.0.0.0` works only together with `controller.advertise` |
 | `controller.advertise` | string | = `listen` | Address agents should dial when it differs from the bind — behind NAT, a gateway, or a published load balancer. Also adds a SAN to the server certificate so TLS validates the dialed name |
 | `controller.store` | string | **required** | Path to the SQLite state database |
 | `controller.webui` | string | disabled | Web UI bind. **Must be a mgmt/overlay address** unless `WGFLEET_ALLOW_PUBLIC_BIND=1` |
 | `controller.metrics` | string | disabled | Prometheus `/metrics` bind (conventionally `<mgmt>:9300`). Same mgmt-only restriction |
-| `controller.client_portal_url` | string | — | Base URL clients reach the portal on, e.g. `http://10.80.0.1:8080`. The controller knows its bind, not the address a phone types, so without this it cannot show you the per-client link to hand out |
+| `controller.client_portal_url` | string | — | Base URL clients reach the portal on — the address a phone types, e.g. `https://vpn.example.org`. The controller knows its bind, not the address a phone types, so without this it cannot show you the per-client link to hand out |
 | `controller.client_portal` | string | disabled | Bind for the client self-service portal: a person opens their own link and gets their own profile and QR — nothing else. Deliberately a separate listener from `webui`, which can provision, decommission and drain nodes and export a fleet backup; bind it on the master's **mgmt address** and list its port in `client_admin_ports` — that is how a client-facing service on the master is reached, and it is where the wg-easy UI lived. Binding it on the gateway address inside the client pool does not work: the master's NAT and input firewall are built around the mgmt address. A public bind is refused outright, since the portal serves private keys over plain HTTP |
 | `controller.agent_bin` | string | — | Path to the `wgfleet-agent` binary the controller installs during UI-triggered provisioning. Also the rolling upgrade's target: nodes are selected by comparing against **this binary's** version, not the controller's, so upgrading only the controller does not make the fleet look outdated |
 | `controller.staleness_after` | duration | `3m` | Mark a node Degraded after this long with no status report. Negative disables the sweep |
 | `controller.session_ttl` | duration | `168h` (7d) | Web panel sliding session lifetime |
 | `controller.pki.ca_cert` | string | **required** | Path to the fleet CA certificate (public) |
-| `controller.pki.ca_key` | secret | — | Reference to the CA private key — see [Secret values](#secret-values) |
+| `controller.pki.ca_key` | secret | **required** | Reference to the CA private key — see [Secret values](#secret-values). Every start except `--init-pki` loads it and refuses to run without it |
 | `controller.secrets.sops_file` | string | env provider | Path to a SOPS-encrypted YAML file backing `secret://` lookups |
 
 ---
@@ -122,7 +122,11 @@ provisioning time, which means **changing them requires re-provisioning the node
 | `fleet.hardening.sshd` | bool | `true` | **Fleet default.** Manage the sshd drop-in (`/etc/ssh/sshd_config.d/10-wgfleet-hardening.conf`: key-only auth, no root password, no X11 forwarding), reconciled every pass. Set `false` to hand sshd back to you — see below |
 | `fleet.hardening.fail2ban` | bool | `true` | **Fleet default.** Manage the fail2ban sshd jail (`/etc/fail2ban/jail.d/wgfleet.conf`) |
 | `fleet.awg3` | bool | `false` | **Fleet default.** Run the master↔exit AmneziaWG tunnels on **AmneziaWG 3.0** (header protection + randomised timers). Opt-in, unlike the hardening keys above — see [AmneziaWG 3.0](#amneziawg-30) |
-| `fleet.awg3_key` | secret ref | — | **Required whenever header protection is on** (`fleet.awg3`, `fleet.exits[].awg3`, or `client_awg.awg3: full`). The fleet secret the 3.x chacha20 header-protection key is derived from. Every other AmneziaWG parameter comes from a public, versioned salt — they resist DPI by being non-default, not by being unknown — but this one is a key whose whole purpose is that an observer does not have it, so it may not come from anything in this repository. Write it as a `secret://` reference to 32+ random bytes; the controller refuses to start if header protection is enabled without it. The 3.x **timers** need no secret |
+| `fleet.awg3_key` | secret ref | — | **Required whenever header protection is on** (`fleet.awg3`, `fleet.exits[].awg3`, or `client_awg.awg3: full`). The fleet secret the 3.x chacha20 header-protection key is derived from. Every other AmneziaWG parameter comes from a public, versioned salt — they resist DPI by being non-default, not by being unknown — but this one is a key whose whole purpose is that an observer does not have it, so it may not come from anything in this repository. Write it to a FILE and reference it as `file:///etc/wgfleet/awg3.key` (32+ random
+bytes). A `secret://` or `env://` reference works too, but only a file travels in
+`--backup` — every other form is reported as missing from the archive, and losing
+this key invalidates every client config in the field at once. Whatever form you
+choose, the controller refuses to start if header protection is enabled without it. The 3.x **timers** need no secret |
 
 ### Turning hardening off
 
@@ -548,7 +552,7 @@ modinfo amneziawg | grep ^version   # kernel module generation
 awg --version                       # userspace tools generation
 ```
 
-`tools/check-awg3-status.sh` tracks the upstream readiness gates, including a
+`tools/check-awg3-status.sh` (in the source repository) tracks the upstream readiness gates, including a
 watch-list of open defects in the kernel module itself.
 
 [wg-easy#2728]: https://github.com/wg-easy/wg-easy/issues/2728
