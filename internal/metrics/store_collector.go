@@ -37,6 +37,13 @@ type StoreCollector struct {
 	nodeDrain        *prometheus.Desc
 	nodeDecommission *prometheus.Desc
 	nodeVLESSClients *prometheus.Desc
+	// storeUp is 1 when this scrape read the store, 0 when it could not. Without it
+	// a read error made the WHOLE fleet surface vanish while /metrics still answered
+	// 200 — so `up` stayed 1 and the fleet-wide rules read the silence as fact:
+	// WgfleetNoReadyExit paged critical with "every exit is out of rotation" for a
+	// locked SQLite file, with the data plane untouched. WGCollector already learned
+	// this; its sibling had not.
+	storeUp *prometheus.Desc
 }
 
 var _ prometheus.Collector = (*StoreCollector)(nil)
@@ -47,6 +54,10 @@ func NewStoreCollector(reg *prometheus.Registry, st store.Store) *StoreCollector
 	c := &StoreCollector{
 		store: st,
 		now:   time.Now,
+		storeUp: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "controller", "store_up"),
+			"1 when the controller could read its store on this scrape, 0 when it could not. Gate fleet-wide rules on this: without it an unreadable store looks exactly like an empty fleet.",
+			nil, nil),
 		nodesByState: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "", "nodes"),
 			"Number of fleet nodes in each lifecycle state.",
@@ -104,6 +115,7 @@ func (c *StoreCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.nodeDrain
 	ch <- c.nodeDecommission
 	ch <- c.nodeVLESSClients
+	ch <- c.storeUp
 }
 
 // Collect implements prometheus.Collector. Store errors yield no metrics for
@@ -114,8 +126,12 @@ func (c *StoreCollector) Collect(ch chan<- prometheus.Metric) {
 
 	nodes, err := c.store.ListNodes(ctx)
 	if err != nil {
+		// Say so, then stop. Emitting nothing at all is what made a read error
+		// indistinguishable from a fleet with no nodes in it.
+		ch <- prometheus.MustNewConstMetric(c.storeUp, prometheus.GaugeValue, 0)
 		return
 	}
+	ch <- prometheus.MustNewConstMetric(c.storeUp, prometheus.GaugeValue, 1)
 
 	counts := map[domain.NodeState]int{}
 	for _, n := range nodes {

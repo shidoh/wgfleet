@@ -134,8 +134,10 @@ everywhere else.
   converges every node and keeps it there.
 - **Autoprovisioning** — a blank Ubuntu VM (SSH only) becomes a `Ready` exit
   node and joins the load balancer, from the CLI or a button in the Web UI.
-- **Key broker, not key store** — AmneziaWG keys are generated on-node and never
-  leave it. A compromised controller cannot leak node private keys.
+- **Key broker for nodes** — a node's own AmneziaWG keys are generated on-node and
+  never leave it, so a compromised controller cannot leak them. This does **not**
+  extend to end-user credentials: since ADR-0032 the controller stores each client's
+  private key, so it can re-issue a config. See [Security model](#security-model).
 - **Dry-run everywhere** — plan mode for reconcile, provisioning, upgrades and
   restore.
 - **Support bundle** — one command produces a plain-text archive of diagnostic
@@ -291,8 +293,9 @@ build DKMS for you. Full walkthrough: [`docs/onboarding.md`](docs/onboarding.md)
   converge each node toward its rendered `NodeSpec` and keep it there.
 - **Dry-run is first-class.** `Plan()` is side-effect-free by construction;
   effects run only in apply mode.
-- **The controller brokers public keys, never private ones.** AmneziaWG keys are
-  generated and kept on each node; only the public key is published.
+- **The controller brokers NODE keys, never holding them.** Each node's AmneziaWG
+  keys are generated and kept on that node; only the public key is published. End-user
+  credentials are the deliberate exception — see the security model.
 - **mTLS identity.** Each node gets a client certificate at bootstrap whose CN
   is its node ID. Removing a node from the inventory, or decommissioning it, makes
   the controller refuse to renew that certificate — see the gaps note below for what
@@ -343,7 +346,16 @@ Full rules and their rationale: [`docs/adr/`](docs/adr/) and
 ## Security model
 
 - Node AmneziaWG private keys are generated and stay **on the node**; the
-  controller stores public keys only.
+  controller stores their public keys only.
+- **End-user credentials are different, and this is the sharpest edge in the
+  system.** So the console can re-issue a config someone lost, the controller's
+  SQLite store holds every client's WireGuard **private key** (schema v11
+  `client_wg_credentials.private_key`), alongside the fleet CA key and `awg3_key`
+  when those are `file://` paths. The file is 0600 and not encrypted at rest. Anyone
+  who obtains that one file — seizure, a provider snapshot, a stolen backup —
+  de-anonymises every user, retroactively. If your master sits in a jurisdiction
+  where that is a real risk, weigh it against the convenience it buys, and keep the
+  encrypted backup somewhere the master is not.
 - **mTLS** between controller and agents, one client certificate per node
   (CN = node ID), issued at bootstrap. Revocation removes the node.
 - The Web UI, metrics and every node admin endpoint bind the **ZeroTier

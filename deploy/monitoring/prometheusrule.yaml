@@ -58,7 +58,8 @@ spec:
       # with EVERY agent down the subtraction yielded nothing and the total-outage
       # case — the one that matters most — was the one case this could not report.
       # The same fix was applied to WgfleetNoReadyExit and missed here.
-      expr: max(wgfleet_nodes{state="Ready"}) - (count(up{job="wgfleet",component="agent"} == 1) or vector(0)) > 0
+      expr: (max(wgfleet_nodes{state="Ready"}) - (count(up{job="wgfleet",component="agent"} == 1) or vector(0)) > 0)
+        and on() (wgfleet_controller_store_up == 1)
       for: 30m
       labels:
         severity: warning
@@ -122,7 +123,13 @@ spec:
       # `or vector(0)` is load-bearing: with no Ready exit the inner selector is
       # empty, count() returns no series at all, and the comparison can never be
       # true — the alert was silent in the exact condition it names.
-      expr: (count(wgfleet_node_info{role="exit",state="Ready"} == 1) or vector(0)) < 1
+      # Gated on store_up: an unreadable store emits no node series, which is
+      # indistinguishable from an empty fleet — this paged "every exit is out of
+      # rotation" for a locked SQLite file while the data plane ran fine. The gate
+      # also silences it when the controller is down (WgfleetControllerDown owns
+      # that), so one outage stops producing three pages, one of them false.
+      expr: ((count(wgfleet_node_info{role="exit",state="Ready"} == 1) or vector(0)) < 1)
+        and on() (wgfleet_controller_store_up == 1)
       for: 5m
       labels:
         severity: critical
@@ -192,7 +199,13 @@ spec:
     interval: 30s
     rules:
     - alert: WgfleetReconcileErrors
-      expr: increase(wgfleet_agent_reconcile_total{result!="success"}[15m]) > 0
+      # One failed pass out of thirty held this true for the entire 15m window, so
+      # the 5m `for:` was met by construction: a single RPC timeout on a flaky link
+      # paged, and the agent had already self-healed by the time anyone looked. What
+      # matters is not converging — hence the second clause, which is what separates
+      # "wobbling but recovering" from "stuck".
+      expr: increase(wgfleet_agent_reconcile_total{result!="success"}[30m]) > 5
+        and increase(wgfleet_agent_reconcile_total{result="success"}[30m]) == 0
       for: 5m
       labels:
         severity: warning
@@ -266,8 +279,16 @@ spec:
       # nodes that only have `awg` — so the alert could not fire, and its silence
       # read exactly like health. An absent series must be the loudest case here,
       # not the quietest.
-      expr: wgfleet_wg_peers_active{iface="wg0"} == 0
-        or (wgfleet_wg_collector_up{iface="wg0"} == 0)
+      # Split, because the two halves are not the same event. A collector that
+      # cannot read the interface is unambiguous and stays critical. Zero peers is
+      # NOT: peers_active counts handshakes inside a 3-minute window, so a laptop
+      # asleep and a phone with the tunnel off is a genuine, correct zero for hours.
+      # As written this paged critical most nights, which is how a channel stops
+      # being read. Requiring that the interface HAD peers in the last 6h keeps the
+      # collapse case (they were here, now none are) and drops the quiet night.
+      expr: (wgfleet_wg_collector_up{iface="wg0"} == 0)
+        or (wgfleet_wg_peers_active{iface="wg0"} == 0
+            and max_over_time(wgfleet_wg_peers_active{iface="wg0"}[6h]) > 0)
       for: 10m
       labels:
         severity: critical
@@ -280,7 +301,11 @@ spec:
       # The drift collector emits NOTHING when it cannot read the manifest, on
       # purpose. That silence needs its own alert, or a deleted controller.yaml
       # looks exactly like a healthy one.
-      expr: absent(wgfleet_controller_config_info)
+      # Watch config_drift, not config_info: the collector emits config_info from
+      # the digest it already holds in memory, BEFORE it tries to read the file, so
+      # config_info survives exactly the failure this alert is named for. Only
+      # config_drift goes absent when the manifest cannot be read.
+      expr: absent(wgfleet_controller_config_drift)
       for: 15m
       labels:
         severity: warning

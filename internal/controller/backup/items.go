@@ -223,10 +223,22 @@ func awg3KeyPath(cfg *config.ControllerConfig) string {
 	switch {
 	case strings.HasPrefix(raw, "file://"):
 		return config.ExpandPath(strings.TrimPrefix(raw, "file://"))
-	case raw != "" && !cfg.Fleet.AWG3Key.IsReference():
+	case raw != "" && !cfg.Fleet.AWG3Key.IsReference() && looksLikePath(raw):
 		return config.ExpandPath(raw) // bare path (dev)
 	}
 	return ""
+}
+
+// looksLikePath keeps an INLINE secret from being mistaken for a filename. Nothing
+// refuses `awg3_key: <48 random bytes>` written straight into the manifest, and the
+// startup message all but invites it by naming `openssl rand -base64 48`. Treated as
+// a path, the value was stat()ed, failed, and then formatted into a warning with %s
+// — reaching stderr, the journal (the console's Backup button) and from there a
+// support bundle, where the scrubber cannot catch it because it arrives as prose
+// with no `key=` anchor. A secret must never be handled as a filename.
+func looksLikePath(raw string) bool {
+	return strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "~") ||
+		strings.HasPrefix(raw, "./") || strings.HasPrefix(raw, "../")
 }
 
 // Warnings lists the irreplaceable things this host CANNOT put in an archive.

@@ -30,8 +30,11 @@ secrets, and remote machines over SSH and mTLS. Security-relevant areas include:
 - **Never commit secrets.** WireGuard/AmneziaWG private keys, the CA key, WARP
   credentials, and node identities must stay out of git. The provided
   `.gitignore` excludes the common patterns; verify before pushing.
-- **Keep private keys on the node.** By design the controller brokers only
-  public keys; node private keys are generated on the node and never leave it.
+- **Keep node private keys on the node.** By design the controller brokers only
+  public keys for NODES; a node's private key is generated on it and never leaves.
+  End-user client credentials are the documented exception: the controller stores
+  client private keys so it can re-issue configs, so the store file is itself
+  key material — treat `state.db` with the same care as the CA key.
 - **Bind the management plane privately.** Admin UIs and `/metrics` are meant to
   listen on the management overlay (e.g. ZeroTier) only, never the public
   interface.

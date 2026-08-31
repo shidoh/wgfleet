@@ -49,7 +49,12 @@ type RestoreOptions struct {
 // three artifacts that are not secrets.
 func destMode(dest string) os.FileMode {
 	switch filepath.Base(dest) {
-	case "ca.crt", "node.crt", "controller.yaml", "agent.yaml":
+	// controller.yaml is NOT in this list: it carries WG/REALITY private keys and the
+	// admin password, and three other places force it to 0600 (config.writeFileAtomic,
+	// the controller's startup self-heal, install.sh). Restoring it 0644 reopened, on
+	// a DR host, exactly the hole the 2026-07-25 audit closed everywhere else — and
+	// the archive had recorded the correct 0600, which this overrode.
+	case "ca.crt", "node.crt", "agent.yaml":
 		return 0o644
 	default:
 		return 0o600
