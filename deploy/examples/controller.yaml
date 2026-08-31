@@ -47,7 +47,8 @@ controller:
   # (secret://NAME -> $WGFLEET_SECRET_<NAME>). With sops_file, secret://NAME is
   # resolved by decrypting a SOPS-encrypted YAML file once at startup and looking
   # NAME up among its keys. Supply the age identity via SOPS_AGE_KEY_FILE in the
-  # controller's environment (systemd: EnvironmentFile). See docs/secrets-sops.md.
+  # controller's environment (systemd: EnvironmentFile). Setup is covered in
+  # docs/secrets-sops.md in the source repository.
   # secrets:
   #   sops_file: "/etc/wgfleet/secrets.enc.yaml"
 

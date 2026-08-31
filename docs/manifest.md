@@ -242,7 +242,7 @@ that are secret use a scheme reference:
 When `controller.secrets.sops_file` is set to a SOPS-encrypted YAML file (age/PGP/KMS),
 `secret://NAME` is resolved by decrypting the file at startup and looking up the key.
 **CA private keys can use `secret://` and are loaded in-memory** (never written to disk);
-the CA cert still reads from a `file://` path. (See `docs/secrets-sops.md` for setup.)
+the CA cert still reads from a `file://` path. (Setup is covered in `docs/secrets-sops.md` in the source repository.)
 
 AmneziaWG private keys are generated and persisted **on the node** (0600) and are
 never sent to the controller. `--state-dir <dir>` relocates them (and all managed

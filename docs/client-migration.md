@@ -21,7 +21,7 @@ Four parts, each a separate decision:
 | 1 | Upgrade the binaries | yes, `.prev` binaries | no |
 | 2 | Import the credentials | yes, nothing goes live | no |
 | 3 | Hand the interface over — the cutover | yes, until you issue a new client | no |
-| 4 | AmneziaWG 3.x `timers` | yes | no — but needs the master's module on 3.x first |
+| 4 | AmneziaWG 3.x `timers` | yes | a reconnect blip; needs the master's module on 3.x first |
 | 4 | AmneziaWG 3.x `full` | **no** | **every one of them, at once** |
 
 **Stopping after any part is a finished state, not a half-migration.** Most fleets
@@ -325,9 +325,15 @@ systemctl restart wgfleet-controller
         awg3: timers   # off | timers | full
 ```
 
-**`timers`** — randomises the 3.x timers. Measured against a real 3.1 module
-(2026-08-31 rehearsal, two VMs): an untouched 2.0 client kept handshaking across a
-rekey and never dropped a ping. **No client re-imports anything.**
+**`timers`** — randomises the 3.x timers. **No client re-imports anything**, and no
+config in the field becomes invalid. Measured against a real 3.1 module (2026-08-31
+rehearsal, two VMs): an untouched 2.0 client kept working across rekeys afterwards.
+
+It is not quite invisible, though. When the change lands the master rewrites and
+reloads its client interface, so clients reconnect: in the rehearsal one ping was
+lost and the tunnel was back within about twenty seconds, on its own, with no user
+action. Expect a blip, not an outage — and do not schedule it during something that
+cannot tolerate one.
 
 **What `full` looks like from the user's side — measure this once and you will write
 the announcement differently.** In the same rehearsal, the moment header protection
@@ -370,15 +376,37 @@ is reachable only from inside the tunnel — and after the flip nobody is inside
 tunnel. Fetching a link *before* the flip is no better: the portal renders from the
 live spec, so it hands out the pre-3.x config. The order that works is:
 
-1. download every client's `.conf` from the Web UI and send them out over whatever
-   channel you use with those people — not the portal — telling them to save it and
-   **not** import it yet;
-2. wait until every single person has confirmed they have the file. Not most of
-   them: the ones who have not are the ones who will be cut off with no way to reach
-   you through the tunnel;
-3. only then set `full`, restart, and tell everyone to import now;
-4. stay available. Whoever imports late, or imports the wrong file, is offline until
-   you hear from them on another channel.
+1. **Warn people first, and hand out nothing yet.** Tell them a new file is coming
+   tonight, that the tunnel will look connected and be dead until they import it,
+   and on what channel to expect it. Make sure that channel works for every one of
+   them — the ones it does not reach are the ones you will not be able to reach
+   afterwards either.
+2. **Set `full`, validate, restart.** The configs do not exist until you do: they
+   are rendered from the live spec, so anything downloaded before this moment is a
+   pre-`full` file that will never connect. Verified in the rehearsal — the old file
+   produced no handshake at all, not a degraded one.
+
+   ```bash
+   wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
+   systemctl restart wgfleet-controller
+   ```
+
+3. **Wait for the master to converge, then download.** Confirm header protection is
+   actually live before you hand anything out — otherwise you will send the old file
+   a second time:
+
+   ```bash
+   awg showconf wg0 | grep -c HeaderProtectionKey   # must print 1
+   ```
+
+   Then download every client's `.conf` from the Web UI and send them out.
+4. **Stay available.** From step 2 until each person imports, they are offline. Whoever
+   imports late, or imports the wrong file, stays offline until you hear from them on
+   another channel.
+
+There is no ordering that avoids the outage window: the file that works cannot exist
+until the flip that breaks the old one. What you are choosing is how short the window
+is and how well people were warned.
 
 Going back does not rescue them either: reverting to `timers` breaks the config they
 have just imported, so a botched flip is two rounds of re-handout, not one.
