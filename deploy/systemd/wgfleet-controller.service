@@ -4,22 +4,23 @@
 Description=wgfleet controller
 After=network-online.target
 Wants=network-online.target
-# Deliberately NO StartLimit. Reaching one puts the unit in `failed`, where it stays
-# until someone runs `systemctl reset-failed` — a manual step after every fixed
-# config, forever, on a control plane whose whole promise is that you hand it a
-# binary and it keeps working. The crash loop it was meant to make visible already
-# is: a controller that cannot start does not serve /metrics, so `up == 0` and
-# WgfleetControllerDown pages critical after 3m. The limit bought a distinction
-# between "looping" and "gave up" and charged an operator ritual for it.
+# Kept as close to systemd's defaults as it can be, on purpose. Nothing updates a
+# unit after the first install — not the agent, not a binary upgrade — so anything
+# added here reaches only new nodes and asks the operator to hand-edit the rest.
+# Add a directive only when there is no other way to get the behaviour, and prefer
+# the default every other time.
+#
+# Two that were tried and removed: StartLimit (lands the unit in `failed`, which
+# then needs `systemctl reset-failed` after every fixed config — and the crash loop
+# it made visible already pages as WgfleetControllerDown, since a controller that
+# cannot start serves no /metrics), and ExecStartPre=--check-config (a nicety that
+# buys nothing the same alert does not).
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/wgfleet-controller --config /etc/wgfleet/controller.yaml --log-format json
 Restart=on-failure
 RestartSec=5
-# Refuse to start on a manifest this binary would reject, instead of crash-looping
-# on it. --check-config changes nothing and exits non-zero when the config is bad.
-ExecStartPre=/usr/local/bin/wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
 NoNewPrivileges=yes
 
 [Install]

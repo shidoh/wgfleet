@@ -219,10 +219,6 @@ Wants=network-online.target
 ExecStart=/usr/local/bin/wgfleet-controller --config /etc/wgfleet/controller.yaml --log-format json
 Restart=on-failure
 RestartSec=5
-# Refuse to start on a manifest this binary would reject, rather than crash-loop on
-# it. --check-config changes nothing and exits non-zero only when the controller
-# would genuinely fail to start.
-ExecStartPre=/usr/local/bin/wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
 NoNewPrivileges=yes
 
 [Install]
@@ -247,7 +243,6 @@ NoNewPrivileges=yes
 [Install]
 WantedBy=multi-user.target
 UNIT
-
 
 # Non-fatal: containers/WSL have the unit files but no running systemd, and there
 # is no reason to abort the rest of the install (configs, next steps) over it.
