@@ -60,6 +60,7 @@ func newTimedManager(t *testing.T, dial DialFunc, onProv ProvisionObserver, step
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	m := New(st, ca, testFleet(), Options{
 		ControllerEndpoint: "ctl:8443", Dial: dial, OnProvision: onProv,
+		AgentBinPath: writeFakeAgentBin(t),
 	}, log)
 
 	cur := time.Unix(1_700_000_000, 0)

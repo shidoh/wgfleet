@@ -39,6 +39,18 @@ func readyMock() *provisioner.MockRunner {
 	return r
 }
 
+// writeFakeAgentBin writes a stand-in agent binary and returns its path. Apply-mode
+// provisioning refuses without one (a node would get a unit with nothing to run),
+// so every fixture that provisions for real needs a file here.
+func writeFakeAgentBin(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "wgfleet-agent")
+	if err := os.WriteFile(p, []byte("#!/bin/true\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 func newManager(t *testing.T, dial DialFunc) (*Manager, store.Store) {
 	t.Helper()
 	st, err := store.Open(":memory:")
@@ -51,7 +63,7 @@ func newManager(t *testing.T, dial DialFunc) (*Manager, store.Store) {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	m := New(st, ca, testFleet(), Options{ControllerEndpoint: "ctl:8443", Dial: dial}, log)
+	m := New(st, ca, testFleet(), Options{ControllerEndpoint: "ctl:8443", Dial: dial, AgentBinPath: writeFakeAgentBin(t)}, log)
 	return m, st
 }
 
@@ -158,6 +170,7 @@ func TestProvisionNilStoreDoesNotPanic(t *testing.T) {
 	m := New(nil, ca, testFleet(), Options{
 		ControllerEndpoint: "ctl:8443",
 		Dial:               func(domain.SSHTarget) (provisioner.Runner, error) { return mock, nil },
+		AgentBinPath:       writeFakeAgentBin(t),
 	}, log)
 
 	if _, err := m.Provision(context.Background(), "exit-de-1", provisioner.ModeApply); err != nil {

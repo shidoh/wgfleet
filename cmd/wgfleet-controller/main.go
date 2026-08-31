@@ -265,19 +265,28 @@ func run() error {
 	if *issueNode != "" {
 		return issueNodeBundle(ca, *issueNode, *issueOut)
 	}
+	// The flag documents "(default controller.agent_bin)" and nothing applied it: the
+	// one-shot subcommands passed the bare flag, so `--provision <node>` with the
+	// manifest key set — the command the guides give — installed no agent at all.
+	// The long-running controller reads cfg.Controller.AgentBin directly, so the UI
+	// path was unaffected, which is why this survived.
+	effectiveAgentBin := *agentBin
+	if effectiveAgentBin == "" {
+		effectiveAgentBin = cfg.Controller.AgentBin
+	}
 	if *provision != "" {
 		return provisionNode(cfg, ca, provisionOpts{
 			node:        *provision,
 			plan:        *plan,
-			agentBin:    *agentBin,
+			agentBin:    effectiveAgentBin,
 			ctlEndpoint: *ctlEndpoint,
 		})
 	}
 	if *upgradeAgent != "" {
-		return upgradeAgentNode(cfg, ca, *upgradeAgent, *agentBin, *plan)
+		return upgradeAgentNode(cfg, ca, *upgradeAgent, effectiveAgentBin, *plan)
 	}
 	if *rollingUp {
-		return rollingUpgrade(cfg, ca, *agentBin, *plan)
+		return rollingUpgrade(cfg, ca, effectiveAgentBin, *plan)
 	}
 
 	return serve(cfg, ca, provider, *configPath)

@@ -156,6 +156,18 @@ func (m *Manager) Provision(ctx context.Context, nodeID string, mode provisioner
 	if node.SSH.Host == "" || node.SSH.KeyPath == "" {
 		return provisioner.Report{}, fmt.Errorf("node %q has no ssh target", nodeID)
 	}
+	// Refuse BEFORE anything is issued or uploaded. Bootstrap installs the systemd
+	// unit either way, so provisioning without a binary leaves a unit in a restart
+	// loop with nothing to run and a node that never registers — and the bootstrap
+	// reported that as a completed run, because the missing upload degraded to a
+	// no-op "check" step. The two upgrade paths already refuse this state; apply-mode
+	// provisioning is the one that told the operator it had worked. Plan mode still
+	// renders, so previewing a node does not need the binary in hand.
+	if mode == provisioner.ModeApply && m.opts.AgentBinPath == "" {
+		return provisioner.Report{}, fmt.Errorf(
+			"no agent binary configured (set controller.agent_bin, or pass --agent-bin): "+
+				"provisioning %q would install the unit with nothing to run", nodeID)
+	}
 
 	// Time the apply only — a plan executes nothing, so its duration is noise. The
 	// deferred record fires on every return below (cert error, dial error, success),
