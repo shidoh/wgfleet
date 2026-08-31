@@ -4,13 +4,13 @@
 Description=wgfleet controller
 After=network-online.target
 Wants=network-online.target
-# systemd's default start limit is 5 starts in 10s; at RestartSec=5 that is
-# mathematically unreachable, so a controller that cannot load its manifest
-# restarted forever at 12/min, never entered `failed`, and filled the journal
-# indefinitely — visible only if someone happened to look. A wider window lets it
-# actually give up, which is the state an operator and an alert can both see.
-StartLimitIntervalSec=300
-StartLimitBurst=5
+# Deliberately NO StartLimit. Reaching one puts the unit in `failed`, where it stays
+# until someone runs `systemctl reset-failed` — a manual step after every fixed
+# config, forever, on a control plane whose whole promise is that you hand it a
+# binary and it keeps working. The crash loop it was meant to make visible already
+# is: a controller that cannot start does not serve /metrics, so `up == 0` and
+# WgfleetControllerDown pages critical after 3m. The limit bought a distinction
+# between "looping" and "gave up" and charged an operator ritual for it.
 
 [Service]
 Type=simple

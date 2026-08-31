@@ -212,12 +212,6 @@ fi
 cat > "$UNITDIR/wgfleet-controller.service" <<'UNIT'
 [Unit]
 Description=wgfleet controller
-# The default start limit (5 starts / 10s) is unreachable at RestartSec=5, so a
-# controller that cannot load its config restarted forever instead of landing in
-# `failed`. After the limit: fix the config, then `systemctl reset-failed
-# wgfleet-controller && systemctl start wgfleet-controller`.
-StartLimitIntervalSec=300
-StartLimitBurst=5
 After=network-online.target
 Wants=network-online.target
 
