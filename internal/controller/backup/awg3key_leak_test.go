@@ -1,6 +1,10 @@
 package backup
 
 import (
+	"crypto/rand"
+	"encoding/base64"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -52,25 +56,66 @@ func TestRestoreKeepsTheManifestOwnerOnly(t *testing.T) {
 }
 
 // A bare relative filename is a legitimate spelling and must keep travelling; only
-// inline key material must be refused. The first cut required an explicit path
-// prefix, which quietly stopped backing up `awg3_key: awg3.key`.
-func TestBareFilenameIsStillTreatedAsAPath(t *testing.T) {
-	for _, raw := range []string{"awg3.key", "keys/awg3.key", "/etc/wgfleet/awg3.key", "~/awg3.key", "./awg3.key"} {
-		cfg := &config.ControllerConfig{}
-		cfg.Fleet.AWG3Key = config.Secret(raw)
-		if awg3KeyPath(cfg) == "" {
-			t.Errorf("%q was not recognised as a path, so it would stop being backed up", raw)
-		}
+// inline key material must be refused. Detection is by the FILESYSTEM, not by the
+// shape of the string — a shape heuristic classified more than a third of real
+// `openssl rand -base64 48` secrets as filenames, because that is exactly 64
+// characters with no padding and `/` is a legal base64 character.
+func TestPathDetectionUsesTheFilesystemNotTheShape(t *testing.T) {
+	dir := t.TempDir()
+	bare := "awg3.key"
+	if err := os.WriteFile(filepath.Join(dir, bare), []byte("k"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	// ...while inline key material still is not.
-	for _, raw := range []string{
-		"S3cr3tHeaderProtectionKeyMaterialAAAABBBBCCCC==",
-		"kQ8v+2mZ3xR7yT1uV5wX9aB0cD4eF6gH8iJ0kL2mN4o=",
-	} {
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	// A bare name that exists is a path.
+	cfg := &config.ControllerConfig{}
+	cfg.Fleet.AWG3Key = config.Secret(bare)
+	if awg3KeyPath(cfg) == "" {
+		t.Errorf("%q exists on disk but was not recognised as a path", bare)
+	}
+	// An absolute path that exists is a path.
+	abs := filepath.Join(dir, "abs.key")
+	if err := os.WriteFile(abs, []byte("k"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg2 := &config.ControllerConfig{}
+	cfg2.Fleet.AWG3Key = config.Secret(abs)
+	if awg3KeyPath(cfg2) == "" {
+		t.Errorf("%q exists but was not recognised as a path", abs)
+	}
+	// A path that does NOT exist is not trusted on its face — `/` is in the base64
+	// alphabet, so an absolute-looking value can be a secret.
+	cfg3 := &config.ControllerConfig{}
+	cfg3.Fleet.AWG3Key = config.Secret("/etc/wgfleet/does-not-exist.key")
+	if awg3KeyPath(cfg3) != "" {
+		t.Error("a non-existent path was trusted by its prefix alone")
+	}
+}
+
+// The measured failure: real secrets, generated the way the product tells operators
+// to, must never be treated as filenames — and must never reach a warning.
+func TestRealAWG3SecretsAreNeverTreatedAsPaths(t *testing.T) {
+	for i := 0; i < 500; i++ {
+		raw := make([]byte, 48)
+		if _, err := rand.Read(raw); err != nil {
+			t.Fatal(err)
+		}
+		secret := base64.StdEncoding.EncodeToString(raw) // `openssl rand -base64 48`
+
 		cfg := &config.ControllerConfig{}
-		cfg.Fleet.AWG3Key = config.Secret(raw)
+		cfg.Fleet.AWG3Key = config.Secret(secret)
 		if p := awg3KeyPath(cfg); p != "" {
-			t.Errorf("inline secret treated as a path: %q", p)
+			t.Fatalf("an inline secret was treated as a path: %q", p)
+		}
+		for _, w := range (Sources{}).Warnings(cfg) {
+			if strings.Contains(w, secret) {
+				t.Fatalf("a secret reached a warning: %q", w)
+			}
 		}
 	}
 }

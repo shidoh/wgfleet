@@ -580,7 +580,16 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	// pass N+1 renders exit peers from them. That matches how the fleet already
 	// converges as nodes register, and it is why the rollout requires confirming a
 	// key is registered before advancing an exit's phase.
-	if !plan && a.role == domain.RoleMaster && spec.Master != nil {
+	// !fromCache is not cosmetic here. This is the last controller call left in the
+	// pass, and it runs BEFORE engine.Reconcile — so on a cached pass it would dial a
+	// controller the agent has just concluded is unreachable, on the SAME pass
+	// context, with no per-call deadline of its own. Against a black-holing path
+	// (which is what DeadlineExceeded usually means, and which counts as
+	// unreachable) that call can burn the pass budget and leave nothing for the local
+	// convergence this whole fallback exists to guarantee. It would also publish keys
+	// derived from a possibly-stale exit list while every other identity publish in
+	// the pass is skipped.
+	if !plan && !fromCache && a.role == domain.RoleMaster && spec.Master != nil {
 		if err := a.publishTunnelKeys(ctx, kp.PrivateKey, spec.Master.ExitTunnels); err != nil {
 			// Non-fatal: the shared key still works in every phase up to `switch`, so a
 			// publish failure must not stop the reconcile that keeps traffic flowing.

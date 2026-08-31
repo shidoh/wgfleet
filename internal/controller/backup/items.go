@@ -229,31 +229,27 @@ func awg3KeyPath(cfg *config.ControllerConfig) string {
 	return ""
 }
 
-// looksLikePath keeps an INLINE secret from being mistaken for a filename. Nothing
-// refuses `awg3_key: <48 random bytes>` written straight into the manifest, and the
-// startup message all but invites it by naming `openssl rand -base64 48`. Treated as
-// a path, the value was stat()ed, failed, and then formatted into a warning with %s
-// — reaching stderr, the journal (the console's Backup button) and from there a
-// support bundle, where the scrubber cannot catch it because it arrives as prose
-// with no `key=` anchor. A secret must never be handled as a filename.
+// looksLikePath decides whether fleet.awg3_key names a file this host can copy, or
+// is the key itself written inline.
+//
+// It asks the filesystem instead of the string. Guessing from the shape cannot
+// work: the value the product tells operators to generate is `openssl rand -base64
+// 48`, which is exactly 64 characters with no padding, and `/` is a legal base64
+// character — so a length-and-charset heuristic classified more than a third of
+// real secrets as filenames, stat()ed them, and then formatted the secret into a
+// warning. That is the leak this function exists to prevent, reproduced by the
+// function itself.
+//
+// EVERY spelling must resolve, including an absolute-looking one: `/` is in the
+// base64 alphabet too, so roughly one secret in sixty starts with it and would sail
+// through a prefix shortcut. There is no spelling that can be trusted on its face.
+//
+// The cost is that a mistyped path reads as "not a file on this host" rather than as
+// a broken path. That is still true and still actionable — and the alternative is a
+// rule that hands the fleet secret to the journal a few times a year.
 func looksLikePath(raw string) bool {
-	if strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "~") ||
-		strings.HasPrefix(raw, "./") || strings.HasPrefix(raw, "../") {
-		return true
-	}
-	// A bare relative name is a legitimate spelling — `awg3_key: awg3.key` is what a
-	// manifest next to its key files looks like, and it used to be backed up. Only an
-	// explicit prefix was accepted at first, which silently stopped carrying such a
-	// key while warning that it was "not a file on this host": true of a reference,
-	// misleading here, and easy to read as boilerplate.
-	//
-	// The thing being excluded is INLINE key material. Base64 of 32+ random bytes is
-	// long, and carries characters a filename would not: whitespace, '+', '/', '='.
-	// A short token with none of those is a filename.
-	if raw == "" || len(raw) > 64 || strings.ContainsAny(raw, " \t\n+=") {
-		return false
-	}
-	return true
+	st, err := os.Stat(config.ExpandPath(raw))
+	return err == nil && st.Mode().IsRegular()
 }
 
 // Warnings lists the irreplaceable things this host CANNOT put in an archive.
@@ -287,9 +283,12 @@ func (s Sources) Warnings(cfg *config.ControllerConfig) []string {
 			"to the recovery host yourself — restoring without it means the controller refuses to start "+
 			"while header protection is on, and regenerating it invalidates every client profile at once")
 	case !readable(s.AWG3Key):
-		out = append(out, fmt.Sprintf("fleet.awg3_key is configured at %s but this host cannot read it, so "+
-			"it is NOT in this archive. Check the path and the permissions and take the backup again — "+
-			"regenerating this key invalidates every client profile at once", s.AWG3Key))
+		// The value is NOT interpolated. If the path detection above ever mistakes a
+		// secret for a filename, this line is where it would reach stderr, the journal
+		// and a support bundle — as prose, where the scrubber cannot mask it.
+		out = append(out, "fleet.awg3_key names a file this host cannot read, so it is NOT in this "+
+			"archive. Check the path in the manifest and its permissions, then take the backup again — "+
+			"regenerating this key invalidates every client profile at once")
 	}
 	// Two things a rebuild cannot proceed without, which this archive never carries
 	// and never said so. Both are recovery CHANNELS rather than fleet state, which is
