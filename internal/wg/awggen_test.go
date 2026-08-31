@@ -2,6 +2,8 @@ package wg
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -158,78 +160,97 @@ func TestDeriveSignaturesAlwaysGenerated(t *testing.T) {
 				if s == "" {
 					t.Fatalf("seed %q kernel=%v: I%d is empty", seed, kernel, k+1)
 				}
-				if !strings.HasPrefix(s, "<b 0x") {
-					t.Fatalf("seed %q I%d missing literal prefix: %q", seed, k+1, s)
+			}
+			// What actually has to hold is that the module accepts these: an
+			// unknown or malformed CPS tag is -EINVAL, not an ignored field, so a
+			// bad template takes the interface down rather than degrading.
+			p := DeriveAWGParamsForEnd(seed, "end", kernel)
+			if err := p.Validate(); err != nil {
+				t.Fatalf("seed %q kernel=%v: params invalid: %v", seed, kernel, err)
+			}
+			if !kernel {
+				// A userspace peer additionally rejects the kernel-only tags.
+				if err := p.ValidateUserspace(); err != nil {
+					t.Fatalf("seed %q: userspace params invalid: %v", seed, err)
 				}
 			}
 		}
 	}
 }
 
-// TestICoverProtocolMimicry verifies the I-packets imitate a REAL UDP protocol
-// (QUIC / STUN / DTLS) rather than random noise: every slot of a tunnel carries the
-// SAME cover protocol's wire signature, the choice VARIES across tunnels, and the
-// templates are userspace-safe (no <c>/<t>, which would corrupt the protocol layout)
-// so both the kernel and userspace profiles validate identically.
-func TestICoverProtocolMimicry(t *testing.T) {
-	classify := func(i1 string) string {
-		switch {
-		case strings.HasPrefix(i1, "<b 0x16fefd"): // DTLS 1.2 handshake record
-			return "dtls"
-		case strings.HasPrefix(i1, "<b 0x0001"): // STUN Binding Request (type 0x0001)
-			return "stun"
-		case strings.HasPrefix(i1, "<b 0xc") && strings.Contains(i1, "00000001"): // QUIC v1 Initial
-			return "quic"
-		default:
-			return ""
-		}
-	}
+// TestISlotsAreOpaqueNoise pins the decision taken in ADR-0022 after the
+// 2026-08-28 measurement: I1-I5 carry NO protocol structure at all.
+//
+// The previous design filled the slots with QUIC/STUN/DTLS templates. Measured,
+// that was worse than sending nothing of the sort: the packets were recognised as
+// their protocol AND malformed (the QUIC varint Length was never emitted, the DTLS
+// handshake header was 4 bytes where RFC 6347 wants 12, and the length fields were
+// literally `<r N>` random bytes), so a dissector got a cleaner signal out of them
+// than out of noise. The same sizes filled with random bytes measured as plain UDP
+// with no attribution at all. Structure is the liability here, so there must be
+// none: no literal `<b ...>` bytes, one random run per slot, nothing else.
+func TestISlotsAreOpaqueNoise(t *testing.T) {
+	rTag := regexp.MustCompile(`^<r (\d+)>$`)
 
-	protos := map[string]bool{}
 	fleetI1 := map[string]bool{}
 	for i := 0; i < 300; i++ {
-		seed := string(rune(i)) + "-tunnel"
+		seed := fmt.Sprintf("tunnel-%d", i)
 		for _, kernel := range []bool{true, false} {
-			kp := DeriveAWGParamsForEnd(seed, "mimicry", kernel)
-			loc := kp.Local
-			// Both profiles must be userspace-safe (mimicry uses no <c>/<t>).
-			if err := kp.ValidateUserspace(); err != nil {
-				t.Fatalf("seed %q kernel=%v: mimicry must validate userspace: %v", seed, kernel, err)
-			}
-			proto := classify(loc.I1)
-			if proto == "" {
-				t.Fatalf("seed %q I1 matches no cover protocol: %q", seed, loc.I1)
-			}
+			loc := DeriveAWGLocal(seed, kernel)
 			slots := []string{loc.I1, loc.I2, loc.I3, loc.I4, loc.I5}
 			distinct := map[string]bool{}
-			for k, s := range slots {
-				if strings.Contains(s, "<c>") || strings.Contains(s, "<t>") {
-					t.Fatalf("seed %q I%d uses <c>/<t> (breaks protocol mimicry): %q", seed, k+1, s)
+			for k, sig := range slots {
+				m := rTag.FindStringSubmatch(sig)
+				if m == nil {
+					t.Fatalf("seed %q I%d is not a single random run: %q", seed, k+1, sig)
 				}
-				if classify(s) != proto { // every slot is the SAME protocol (a flow is one protocol)
-					t.Fatalf("seed %q I%d is a different protocol than I1 (%s): %q", seed, k+1, proto, s)
+				// Any literal byte is a fingerprint an analyser can key on — that is
+				// exactly what the measurement caught.
+				if strings.Contains(sig, "<b ") {
+					t.Fatalf("seed %q I%d carries literal protocol bytes: %q", seed, k+1, sig)
 				}
-				distinct[s] = true
+				// <c>/<t> are kernel-only tags; a userspace peer rejects them outright.
+				if strings.Contains(sig, "<c>") || strings.Contains(sig, "<t>") {
+					t.Fatalf("seed %q I%d uses a kernel-only tag: %q", seed, k+1, sig)
+				}
+				n, err := strconv.Atoi(m[1])
+				if err != nil {
+					t.Fatalf("seed %q I%d has an unparsable length: %q", seed, k+1, sig)
+				}
+				if n < iNoiseLow || n > iNoiseHigh {
+					t.Errorf("seed %q I%d length %d outside [%d,%d]", seed, k+1, n, iNoiseLow, iNoiseHigh)
+				}
+				distinct[sig] = true
 			}
-			// The five slots must NOT all be one static byte string (the bug fixed
-			// here: a fixed STUN template made every slot — and both ends — identical).
+			// The five slots must not collapse to one size — that would hand back a
+			// static per-interface shape.
 			if len(distinct) < 2 {
-				t.Errorf("seed %q kernel=%v: I1-I5 are all identical (%q) — per-slot field variation broken", seed, kernel, loc.I1)
+				t.Errorf("seed %q kernel=%v: I1-I5 are all identical (%q)", seed, kernel, loc.I1)
 			}
-			protos[proto] = true
-			fleetI1[loc.I1] = true
+		}
+		fleetI1[DeriveAWGLocal(seed, true).I1] = true
+	}
+	// Sizes are drawn from a bounded range, so exact collisions across 300 seeds are
+	// expected and fine; what must not happen is the range collapsing to a handful.
+	if len(fleetI1) < 40 {
+		t.Errorf("I1 sizes barely vary across the fleet: only %d distinct of 300 seeds", len(fleetI1))
+	}
+}
+
+// The two ends of one tunnel must not end up with the same I-packet shapes: a
+// matched pair on both directions is a correlatable signature.
+func TestISlotsDifferBetweenTheTwoEnds(t *testing.T) {
+	same := 0
+	for i := 0; i < 200; i++ {
+		seed := fmt.Sprintf("tunnel-%d", i)
+		a := DeriveAWGLocal(seed+"|a", true)
+		b := DeriveAWGLocal(seed+"|b", true)
+		if a.I1 == b.I1 && a.I2 == b.I2 && a.I3 == b.I3 && a.I4 == b.I4 && a.I5 == b.I5 {
+			same++
 		}
 	}
-	// Over 300 seeds we must see real variation across the cover protocols AND across
-	// I1 templates (no fleet-wide static fingerprint).
-	if len(protos) < 2 {
-		t.Errorf("cover protocol barely varies across seeds: saw %v", protos)
-	}
-	// I1 must be highly varied across the 300 distinct tunnel seeds (no static
-	// fleet-wide fingerprint). Some collision is fine — the templates still look like
-	// genuine QUIC/STUN/DTLS — but the bulk must differ.
-	if len(fleetI1) < 250 {
-		t.Errorf("I1 templates barely vary across the fleet: only %d distinct of 300 seeds", len(fleetI1))
+	if same > 4 {
+		t.Errorf("the two ends carried identical I1-I5 in %d/200 tunnels", same)
 	}
 }
 

@@ -320,17 +320,17 @@ kernel module and tools sources.
   shadow an adjacent pair — otherwise roughly half of new TLS connections stall
   silently. The generator iterates until the sizes are provably safe. Kernel
   limits are far looser and are *not* sufficient.
-- **`I1–I5` currently imitate a real UDP protocol — and a 2026-08-28 measurement
-  says that is worse than sending noise.** Each tunnel end picks a cover protocol
-  from its seed (QUIC Initial, STUN binding or DTLS ClientHello) and fills all five
-  slots with per-slot-varied packets. The packets are *not* structurally valid:
-  QUIC's varint Length is never emitted, and the DTLS handshake header is 4 bytes
-  where RFC 6347 wants 12. A dissector therefore recognises the protocol **and**
-  marks it malformed — a cleaner signal than the same sizes filled with random
-  bytes, which measured as plain `UDP` with no attribution at all. Fixing this is
-  an open decision (valid protocols vs. noise), not a pending patch:
-  [ADR-0022](docs/adr/0022-awg-collision-safe-params-and-mimicry.md) carries the
-  refutation and the reasoning.
+- **`I1–I5` are opaque noise, deliberately.** Each slot is a run of random bytes
+  whose size is derived per end and per slot; the module regenerates the contents on
+  every handshake initiation. They used to imitate QUIC / STUN / DTLS, until a
+  2026-08-28 measurement showed that was worse than noise: the packets were
+  recognised as their protocol **and** malformed, which hands a dissector a cleaner
+  signal than random bytes do. Making them genuinely valid would not have helped —
+  cover only holds while the whole flow speaks the protocol, and the AWG handshake
+  that follows on the same 5-tuple does not. Protocol impersonation belongs on a
+  transport that can sustain it for a whole session, which is what the VLESS +
+  REALITY + XHTTP leg is for
+  ([ADR-0022](docs/adr/0022-awg-collision-safe-params-and-mimicry.md)).
 - **All obfuscation lives in `[Interface]`,** never in `[Peer]`, and shared
   parameters are derived deterministically from a per-tunnel seed so both ends
   compute the same set with no coordination.

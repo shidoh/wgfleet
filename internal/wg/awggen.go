@@ -70,12 +70,16 @@ const (
 	jminLow, jminHigh = 8, 40  // lower bound of the junk size window
 	jGapLow, jGapHigh = 24, 88 // Jmax = Jmin + gap, so Jmin < Jmax always holds
 
-	// awgSignatureSlots is the number of I-packet (I1-I5) slots we fill — all with
-	// packets mimicking ONE cover protocol per tunnel-end (see deriveSignatures).
+	// awgSignatureSlots is the number of I-packet (I1-I5) slots we fill — each with
+	// an opaque run of random bytes (see deriveSignatures).
 	awgSignatureSlots = 5
-	// coverProtocolCount is how many real UDP protocols the I-packets can imitate
-	// (QUIC Initial / STUN binding / DTLS ClientHello). One is chosen per tunnel-end.
-	coverProtocolCount = 3
+	// iNoiseLow/iNoiseHigh bound the per-slot I-packet size. The band is the one the
+	// old cover-protocol templates happened to occupy (~95-207 B), kept deliberately:
+	// it is the size distribution the 2026-08-28 counterfactual actually measured as
+	// unattributable, and it stays clear of the decorated handshake sizes the
+	// userspace classifier keys on, so nothing about packet classification moves.
+	iNoiseLow  = 96
+	iNoiseHigh = 208
 )
 
 // DeriveAWGLocal returns the local (per-end) AmneziaWG parameters for one end:
@@ -106,133 +110,41 @@ func deriveJunk(seed string) (jc, jmin, jmax int) {
 	return jc, jmin, jmax
 }
 
-// deriveSignatures generates the I1-I5 CPS templates from seed. The I-packets are
-// emitted BEFORE the WireGuard handshake to disguise the opening datagrams as some
-// other protocol — this is where the obfuscation actually lives. Instead of random
-// noise we mimic a REAL UDP protocol: one cover protocol (QUIC / STUN / DTLS) is
-// chosen per tunnel-end from the seed, and every I-slot is a structurally-valid
-// packet of that protocol whose variable fields (connection IDs, transaction IDs,
-// opaque payloads) vary per slot. A passive DPI then classifies the flow as that
-// protocol — QUIC and WebRTC being ubiquitous and impractical to block — rather
-// than as a VPN handshake. Per-end protocol choice + per-slot field variation means
-// no two interfaces share a static fingerprint. The `kernel` profile no longer
-// differs (the <c>/<t> tags would corrupt a real protocol's byte layout, so we use
-// only <b>/<r> — valid for kernel and userspace alike).
+// deriveSignatures generates the I1-I5 CPS templates from seed. The I-packets go
+// out BEFORE the WireGuard handshake, and each one is a single opaque run of random
+// bytes: `<r N>`, with N drawn per slot from the seed.
+//
+// It used to imitate a real UDP protocol — one of QUIC Initial / STUN Binding /
+// DTLS ClientHello per tunnel-end, with per-slot field variation — on the theory
+// that a passive DPI would classify the flow as that protocol rather than as a VPN
+// handshake. Measured on 2026-08-28 that theory was not merely unproven but
+// backwards: the packets were recognised as their protocol AND rejected as
+// malformed, because the length fields were themselves `<r N>` random bytes (CPS
+// has no arithmetic, so a template cannot describe its own length) and the QUIC
+// varint Length was never emitted at all. A dissector therefore got a CLEANER
+// signal out of the cover packets than out of noise — the same sizes filled with
+// random bytes came back as plain UDP with no attribution.
+//
+// Fixing the lengths would not have rescued it either: cover only holds while the
+// whole flow speaks the protocol, and the AWG handshake that follows on the same
+// 5-tuple does not, so a stateful dissector marks the flow malformed however good
+// the opening packets are. Protocol impersonation belongs on a transport that can
+// sustain it for the whole session (VLESS+REALITY+XHTTP), not in five packets in
+// front of a UDP handshake. See ADR-0022.
 //
 // Grammar (verified against amneziawg-linux-kernel-module junk.c jp_parse_tags):
-// the literal `<b 0xHEX>` carries the protocol's fixed wire signature; `<r N>`
-// stands in for the opaque/encrypted variable bytes the receiver fills fresh on
-// every handshake — stable structure, varying content.
+// `<r N>` is N bytes the module regenerates on every handshake initiation, so the
+// SIZE is stable per interface while the CONTENT is fresh every time. The `kernel`
+// profile does not differ: `<r>` is accepted by kernel and userspace alike, unlike
+// the kernel-only `<c>`/`<t>`.
 func deriveSignatures(seed string, kernel bool) [awgSignatureSlots]string {
-	_ = kernel // both profiles are identical now: realistic mimicry uses no <c>/<t>
-	proto := newDetStream(seed + "|cover").intn(coverProtocolCount)
+	_ = kernel // <r> is valid for both profiles; only <c>/<t> are kernel-only
 	var out [awgSignatureSlots]string
 	for k := 0; k < awgSignatureSlots; k++ {
-		out[k] = coverPacket(proto, newDetStream(fmt.Sprintf("%s|I%d", seed, k+1)))
+		d := newDetStream(fmt.Sprintf("%s|I%d", seed, k+1))
+		out[k] = fmt.Sprintf("<r %d>", iNoiseLow+d.intn(iNoiseHigh-iNoiseLow+1))
 	}
 	return out
-}
-
-// coverPacket builds one I-packet template imitating the chosen cover protocol,
-// with its variable fields keyed off d.
-func coverPacket(proto int, d *detStream) string {
-	switch proto {
-	case 0:
-		return quicInitialPacket(d)
-	case 1:
-		return stunBindingPacket(d)
-	default:
-		return dtlsClientHelloPacket(d)
-	}
-}
-
-// litBytes renders a CPS literal tag (<b 0x..>) from raw bytes.
-func litBytes(bs ...byte) string {
-	var b strings.Builder
-	b.WriteString("<b 0x")
-	for _, x := range bs {
-		fmt.Fprintf(&b, "%02x", x)
-	}
-	b.WriteString(">")
-	return b.String()
-}
-
-// quicInitialPacket mimics a QUIC v1 long-header Initial packet (RFC 9000 §17.2.2):
-// first byte 0b11000000|protected, Version 0x00000001, Destination/Source
-// Connection IDs, a zero Token Length, then the (encrypted) length+packet-number+
-// payload as opaque random bytes. The long-header form + version is what a DPI
-// fingerprints as QUIC/HTTP3.
-func quicInitialPacket(d *detStream) string {
-	byte0 := byte(0xc0 | d.intn(16)) // long header, fixed bit, Initial type, protected low bits
-	dcidLen := 4 + d.intn(13)        // 4..16 (typical DCID lengths)
-	scidLen := d.intn(13)            // 0..12
-	payload := 40 + d.intn(121)      // 40..160 opaque bytes
-
-	var b strings.Builder
-	b.WriteString(litBytes(byte0, 0x00, 0x00, 0x00, 0x01, byte(dcidLen))) // byte0 + version + DCID len
-	b.WriteString(fmt.Sprintf("<r %d>", dcidLen))                         // Destination Connection ID
-	b.WriteString(litBytes(byte(scidLen)))                                // SCID len
-	if scidLen > 0 {
-		b.WriteString(fmt.Sprintf("<r %d>", scidLen)) // Source Connection ID
-	}
-	b.WriteString(litBytes(0x00))                 // Token Length = 0
-	b.WriteString(fmt.Sprintf("<r %d>", payload)) // length + packet number + protected payload
-	return b.String()
-}
-
-// stunAttrTypes are real STUN/ICE attribute types we attach to a Binding Request:
-// SOFTWARE, USERNAME, PRIORITY, ICE-CONTROLLING, USE-CANDIDATE (RFC 5389/5245).
-var stunAttrTypes = []uint16{0x8022, 0x0006, 0x0024, 0x802a, 0x0025}
-
-// stunBindingPacket mimics a STUN Binding Request (RFC 5389): type 0x0001, the magic
-// cookie 0x2112A442, a 96-bit random transaction ID, then 1-3 varied attributes of
-// varied length — exactly the shape of a WebRTC/ICE connectivity check. The attribute
-// count, types and lengths are keyed off d, so each I-slot (and each tunnel end, and
-// each tunnel) is a distinct-but-valid STUN packet rather than a static byte string.
-func stunBindingPacket(d *detStream) string {
-	nAttr := 1 + d.intn(3) // 1..3 attributes
-	type attr struct {
-		typ  uint16
-		vlen int
-	}
-	attrs := make([]attr, nAttr)
-	msgLen := 0
-	for i := range attrs {
-		vlen := 4 + d.intn(16)*4 // 4..64, 4-aligned ⇒ no padding
-		attrs[i] = attr{stunAttrTypes[d.intn(len(stunAttrTypes))], vlen}
-		msgLen += 4 + vlen // attribute header (4) + value
-	}
-
-	var b strings.Builder
-	// Binding Request (0x0001) + message length + magic cookie 0x2112A442.
-	b.WriteString(litBytes(0x00, 0x01, byte(msgLen>>8), byte(msgLen), 0x21, 0x12, 0xa4, 0x42))
-	b.WriteString("<r 12>") // 96-bit transaction ID
-	for _, a := range attrs {
-		b.WriteString(litBytes(byte(a.typ>>8), byte(a.typ), byte(a.vlen>>8), byte(a.vlen)))
-		b.WriteString(fmt.Sprintf("<rc %d>", a.vlen)) // attribute value (ASCII text)
-	}
-	return b.String()
-}
-
-// dtlsClientHelloPacket mimics a DTLS 1.2 handshake record carrying a ClientHello
-// (RFC 6347): record type 22 (handshake), version 0xFEFD, epoch/sequence 0, a 2-byte
-// length, then handshake type 1 (ClientHello) and its opaque body. The 0x16 0xFEFD
-// prefix is the DTLS signature a DPI keys on (WebRTC media / some VPNs).
-func dtlsClientHelloPacket(d *detStream) string {
-	cookieLen := d.intn(33)  // DTLS HelloVerify cookie, 0..32 bytes (RFC 6347)
-	body := 60 + d.intn(140) // remaining ClientHello body (version/random/cipher suites/...)
-	var b strings.Builder
-	// Record: handshake (0x16), DTLS 1.2 (0xFEFD), epoch 0, sequence 0, length.
-	b.WriteString(litBytes(0x16, 0xfe, 0xfd, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00))
-	b.WriteString("<r 2>")                   // record length
-	b.WriteString(litBytes(0x01))            // handshake type = ClientHello
-	b.WriteString("<r 3>")                   // handshake length
-	b.WriteString(litBytes(byte(cookieLen))) // cookie length octet
-	if cookieLen > 0 {
-		b.WriteString(fmt.Sprintf("<r %d>", cookieLen)) // cookie bytes
-	}
-	b.WriteString(fmt.Sprintf("<r %d>", body))
-	return b.String()
 }
 
 // detStream is a deterministic byte stream seeded by a string: an unbounded
