@@ -404,6 +404,7 @@ func (h *Handler) handleWGClientRevoke(w http.ResponseWriter, r *http.Request) {
 		h.redirectErr(w, r, dest, "revoke client", err)
 		return
 	}
+	h.audit(r, "revoke AWG client", "node", id, "client", clientID)
 	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
@@ -429,6 +430,7 @@ func (h *Handler) handleWGClientToggle(enable bool) http.HandlerFunc {
 			h.redirectErr(w, r, dest, action, err)
 			return
 		}
+		h.audit(r, action, "node", id, "client", clientID)
 		http.Redirect(w, r, dest, http.StatusSeeOther)
 	}
 }

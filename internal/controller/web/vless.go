@@ -475,6 +475,7 @@ func (h *Handler) handleClientRevoke(w http.ResponseWriter, r *http.Request) {
 		h.redirectErr(w, r, dest, "revoke client", err)
 		return
 	}
+	h.audit(r, "revoke VLESS client", "node", id, "client", name)
 	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 

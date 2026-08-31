@@ -457,6 +457,7 @@ func (h *Handler) handleTransport(w http.ResponseWriter, r *http.Request) {
 		h.redirectErr(w, r, "/nodes/"+id, "set transport", err)
 		return
 	}
+	h.audit(r, "switch node transport", "node", id, "transport", t)
 	http.Redirect(w, r, "/nodes/"+id, http.StatusSeeOther)
 }
 
@@ -534,6 +535,7 @@ func (h *Handler) handleDecommission(w http.ResponseWriter, r *http.Request) {
 		h.redirectErr(w, r, "/nodes/"+id, "set decommission", err)
 		return
 	}
+	h.audit(r, "decommission node", "node", id)
 	http.Redirect(w, r, "/nodes/"+id, http.StatusSeeOther)
 }
 
@@ -549,6 +551,7 @@ func (h *Handler) handleRecommission(w http.ResponseWriter, r *http.Request) {
 		h.redirectErr(w, r, "/nodes/"+id, "cancel decommission", err)
 		return
 	}
+	h.audit(r, "cancel node decommission", "node", id)
 	http.Redirect(w, r, "/nodes/"+id, http.StatusSeeOther)
 }
 
@@ -563,6 +566,11 @@ func (h *Handler) handleDrain(drain bool) http.HandlerFunc {
 		if err := h.store.SetNodeDrain(r.Context(), id, drain); err != nil {
 			h.redirectErr(w, r, "/nodes/"+id, "set drain", err)
 			return
+		}
+		if drain {
+			h.audit(r, "take node out of routing", "node", id)
+		} else {
+			h.audit(r, "return node to routing", "node", id)
 		}
 		http.Redirect(w, r, "/nodes/"+id, http.StatusSeeOther)
 	}
@@ -655,6 +663,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	h.audit(r, "delete node", "node", id, "role", node.Role)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -717,6 +726,24 @@ func (h *Handler) setCSRFCookie(w http.ResponseWriter) {
 // short-lived flash cookie with the message and 303-redirects there. The next
 // render reads-and-clears the flash into the page's styled .error-note, so a
 // failure no longer replaces the whole console with a bare http.Error text page.
+// audit records a console action that CHANGED something, at INFO, naming who did it
+// and to what. Its twin redirectErr logs the failures; for a long time that was the
+// only half that logged at all, so the journal held every refused delete and no
+// record of a single completed one — "who removed this exit, and when" had no answer
+// anywhere on the box a month later.
+//
+// Call it at the point the change is known to have succeeded, never at the top of a
+// handler: an unconfirmed POST renders the confirmation page and changes nothing,
+// and a refused one changes nothing either. A journal that claims a delete happened
+// when it did not is worse than one that says nothing.
+func (h *Handler) audit(r *http.Request, what string, attrs ...any) {
+	user, _ := h.currentUser(r)
+	if user == "" {
+		user = "-"
+	}
+	h.log.Info("console action", append([]any{"action", what, "user", user}, attrs...)...)
+}
+
 func (h *Handler) redirectErr(w http.ResponseWriter, r *http.Request, dest, what string, err error) {
 	msg := what
 	if err != nil {
