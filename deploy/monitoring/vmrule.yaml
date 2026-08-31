@@ -62,8 +62,9 @@ spec:
       # with EVERY agent down the subtraction yielded nothing and the total-outage
       # case — the one that matters most — was the one case this could not report.
       # The same fix was applied to WgfleetNoReadyExit and missed here.
+      # Fails open on a missing gauge — see WgfleetNoReadyExit for why.
       expr: (max(wgfleet_nodes{state="Ready"}) - (count(up{job="wgfleet",component="agent"} == 1) or vector(0)) > 0)
-        and on() (wgfleet_controller_store_up == 1)
+        unless on() (wgfleet_controller_store_up == 0)
       for: 30m
       labels:
         severity: warning
@@ -127,13 +128,19 @@ spec:
       # `or vector(0)` is load-bearing: with no Ready exit the inner selector is
       # empty, count() returns no series at all, and the comparison it feeds can
       # never be true — the alert was silent in the exact condition it names.
-      # Gated on store_up: an unreadable store emits no node series, which is
-      # indistinguishable from an empty fleet — this paged "every exit is out of
-      # rotation" for a locked SQLite file while the data plane ran fine. The gate
-      # also silences it when the controller is down (WgfleetControllerDown owns
-      # that), so one outage stops producing three pages, one of them false.
+      # Suppressed only when the store EXPLICITLY reports itself unreadable: an
+      # unreadable store emits no node series, which is indistinguishable from an
+      # empty fleet — this paged "every exit is out of rotation" for a locked SQLite
+      # file while the data plane ran fine.
+      #
+      # `unless … == 0` and not `and … == 1` on purpose. The gauge is new; with `and`
+      # the whole expression is empty until every controller publishes it, so
+      # applying these rules before the binary would turn this critical alert OFF
+      # rather than merely quieten it — a deployment-order trap with no signal. This
+      # form fails OPEN: no gauge means no suppression, and the alert behaves exactly
+      # as it did before.
       expr: ((count(wgfleet_node_info{role="exit",state="Ready"} == 1) or vector(0)) < 1)
-        and on() (wgfleet_controller_store_up == 1)
+        unless on() (wgfleet_controller_store_up == 0)
       for: 5m
       labels:
         severity: critical
