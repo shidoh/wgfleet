@@ -10,7 +10,8 @@ one `exit`); scale the per-node steps for more.
 
 The work splits cleanly in two:
 
-- **OS prep** (`deploy/prepare-node.sh`) — the environmental bits the provisioner
+- **OS prep** (`prepare-node.sh`, beside this file; `deploy/prepare-node.sh` in a
+  repo checkout) — the environmental bits the provisioner
   deliberately won't do: build the AmneziaWG kernel module (DKMS), cap the systemd
   journal, and join the ZeroTier overlay. Run once per VM. Skipping it leaves the
   journal uncapped, so a unit stuck in a log-spewing loop can fill the disk and

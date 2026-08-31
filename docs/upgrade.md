@@ -45,7 +45,10 @@ plane refusing service does not break the data plane.
 
 ## Recommended order: controller first, then agents
 
-1. **Build the new binaries** (version is stamped from git):
+1. **Get the new binaries.** From a release archive they are already unpacked
+   beside this file — `wgfleet-controller` and `wgfleet-agent`, built for the
+   architecture named in the archive. From a repo checkout, build them (the
+   version is stamped from git):
 
    ```
    make controller-linux ARCH=amd64      # if co-located / self-hosted controller

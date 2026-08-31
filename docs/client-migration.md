@@ -118,7 +118,7 @@ wgfleet-controller --config /etc/wgfleet/controller.yaml --rolling-upgrade
 the controller cannot serve; wire 7 is still supported, so nothing happens on its
 own and the exits stay on the old build until you run the command above.
 
-On a co-located master upgrade its agent too — `deploy/deploy-master.sh --both`
+On a co-located master upgrade its agent too — `./deploy-master.sh --both`
 detects the wire bump and orders the two correctly.
 
 Verify the upgrade itself:

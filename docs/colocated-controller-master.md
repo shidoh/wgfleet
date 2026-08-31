@@ -19,8 +19,10 @@ a dedicated controller VM is not worth it.
 > curl -fsSL https://raw.githubusercontent.com/shidoh/wgfleet/main/install.sh | sudo bash
 > ```
 > It then prints the operator-specific steps (ZeroTier authorization, real
-> addresses, CA init, starting the services). This document is the manual
-> equivalent and the reference for what each step does.
+> addresses, CA init, starting the services). On the `curl | sudo bash` path it
+> also keeps the archive's guides and helper scripts in `/usr/local/share/wgfleet`,
+> since that path leaves you with no unpacked archive to read them from. This
+> document is the manual equivalent and the reference for what each step does.
 
 ```
 ┌────────────────────────── master node (one VM) ──────────────────────────┐

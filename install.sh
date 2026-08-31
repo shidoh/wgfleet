@@ -153,9 +153,10 @@ fi
 if [ -n "$src" ] && [ -f "$src/wgfleet-controller" ] && [ -f "$src/wgfleet-agent" ]; then
   # --- local mode: running from an unpacked release archive ---
   log "installing from the local archive ($src)"
-  [ -f "$src/VERSION" ] && log "archive build: $(cat "$src/VERSION")"
+  if [ -f "$src/VERSION" ]; then log "archive build: $(cat "$src/VERSION")"; fi
   install -m 0755 "$src/wgfleet-controller" "$PREFIX/wgfleet-controller"
   install -m 0755 "$src/wgfleet-agent"      "$PREFIX/wgfleet-agent"
+  DOCS_DIR="$src"
 else
   # --- remote mode: fetch the release archive and verify it ---
   # Release assets are named per-version (wgfleet-<version>-linux-<arch>.tar.gz),
@@ -187,6 +188,18 @@ else
   [ -f "$unpacked/wgfleet-controller" ] || die "unexpected archive layout in $tgz"
   install -m 0755 "$unpacked/wgfleet-controller" "$PREFIX/wgfleet-controller"
   install -m 0755 "$unpacked/wgfleet-agent"      "$PREFIX/wgfleet-agent"
+
+  # Keep the archive's docs and helper scripts. $tmp is wiped by the EXIT trap,
+  # and a curl|bash operator has no other copy: without this the closing banner
+  # would point at guides that no longer exist anywhere on the box.
+  DOCS_DIR="/usr/local/share/wgfleet"
+  install -d -m 0755 "$DOCS_DIR"
+  for f in "$unpacked"/*.md "$unpacked"/*.sh "$unpacked"/VERSION "$unpacked"/LICENSE; do
+    if [ -f "$f" ]; then install -m 0644 "$f" "$DOCS_DIR/"; fi
+  done
+  chmod 0755 "$DOCS_DIR"/*.sh 2>/dev/null || true
+  if [ -d "$unpacked/examples" ]; then cp -r "$unpacked/examples" "$DOCS_DIR/"; fi
+  log "docs and helper scripts kept in $DOCS_DIR"
 fi
 
 log "installed: $("$PREFIX/wgfleet-controller" --version 2>/dev/null || echo wgfleet-controller)"
@@ -352,7 +365,7 @@ $( [ -z "$ZT_NETWORK" ] && echo "   (join first:  zerotier-cli join <zt-network-
 
 7. Add your exit servers — see step 7 of the quickstart.
 
-Full walkthrough:  INSTALL.md       (in this archive)
-Configuration:     CONFIGURATION.md (in this archive)
+Full walkthrough:  $DOCS_DIR/INSTALL.md
+Configuration:     $DOCS_DIR/CONFIGURATION.md
 License:           LICENSE (AGPL-3.0) + DISCLAIMER.md
 EOF
