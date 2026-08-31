@@ -388,7 +388,7 @@ func (h *Handler) handleWGClientRevoke(w http.ResponseWriter, r *http.Request) {
 	if h.needsConfirmation(w, r, confirmView{
 		Title:        "Revoke " + who,
 		Heading:      "Revoke " + who + "?",
-		Consequence:  "The credential and its key are deleted permanently. The person using it loses their tunnel immediately and will need a new config — the old one cannot be restored.",
+		Consequence:  "The credential and its key are deleted permanently and the person using it will need a new config — the old one cannot be restored. The peer is dropped on the master's NEXT reconcile pass, not the instant you confirm: for a credential you believe is compromised, watch the node go green again before you call it cut off.",
 		Detail:       "If you only want to cut access temporarily, pause it instead: that is reversible and the same config works again afterwards.",
 		Action:       dest + "/" + clientID + "/revoke",
 		ConfirmLabel: "Revoke " + who,

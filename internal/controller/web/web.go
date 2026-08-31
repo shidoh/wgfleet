@@ -472,10 +472,26 @@ func (h *Handler) handleProvision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	// Provisioning is the one node action that reached the box with no question
+	// asked, and it is not read-only: it installs over SSH, and starting it means
+	// "bring this node UP", so it CLEARS any Drain or Decommission intent on the way
+	// (provmgr.ensureNode). A node parked out of routing on purpose silently rejoins.
+	if h.needsConfirmation(w, r, confirmView{
+		Title:        "Provision " + id,
+		Heading:      "Provision " + id + "?",
+		Consequence:  "This installs and starts the agent on the node over SSH, and hands it a certificate. If the node is currently out of routing or decommissioned, provisioning CLEARS both flags — it means \"bring this node up\" — so a node you parked deliberately rejoins the fleet.",
+		Detail:       "Existing state on the box is converged to the manifest rather than wiped. It is safe to re-run on a healthy node; the reason to stop and think is a node you took out of rotation on purpose.",
+		Action:       "/nodes/" + id + "/provision",
+		ConfirmLabel: "Provision " + id,
+		CancelHref:   "/nodes/" + id,
+	}) {
+		return
+	}
 	if err := h.prov.TriggerAsync(id); err != nil {
 		h.redirectErr(w, r, "/nodes/"+id, "provision", err)
 		return
 	}
+	h.audit(r, "provision node", "node", id)
 	http.Redirect(w, r, "/nodes/"+id, http.StatusSeeOther)
 }
 
@@ -527,7 +543,7 @@ func (h *Handler) handleDecommission(w http.ResponseWriter, r *http.Request) {
 		Title:        "Decommission " + id,
 		Heading:      "Decommission " + id + "?",
 		Consequence:  "The agent tears this node's data plane down on its next pass: its tunnels, firewall rules and proxy configuration are removed. Anyone still connected through it is disconnected.",
-		Detail:       "This is reversible from the console — Recommission puts the node back and the agent rebuilds it — but the outage in between is real. The node stays in the inventory either way.",
+		Detail:       "This is reversible from the console — Recommission puts the node back and the agent rebuilds it — but the outage in between is real, and the rebuild is not a restore: teardown destroys the exit's WireGuard and REALITY private keys, so it comes back with new ones and is re-peered from scratch. The node stays in the inventory either way.",
 		Action:       "/nodes/" + id + "/decommission",
 		ConfirmLabel: "Decommission " + id,
 		CancelHref:   "/nodes/" + id,
@@ -629,8 +645,8 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if h.needsConfirmation(w, r, confirmView{
 		Title:        "Delete " + id,
 		Heading:      "Delete " + id + "?",
-		Consequence:  "This removes the node from the fleet inventory permanently, along with every client credential issued on it. Those people lose their tunnel and cannot be given it back — they need new configs.",
-		Detail:       "This also removes the node's declaration from the manifest (and its name from any reserve_exits), so bringing it back means declaring it again. The node's own files are not touched; this is the controller forgetting it. Nothing here can be undone from the console.",
+		Consequence:  "This removes the exit from the fleet inventory and from the manifest permanently. The master stops peering with it and its tunnel keys are dropped. No client credentials live on an exit, so nobody's config is deleted by this.",
+		Detail:       "This also removes the node's declaration from the manifest (and its name from any reserve_exits), so bringing it back means declaring it again. Its certificate is NOT revoked: if the box is still running its agent and can reach the controller, it re-registers within a reconcile pass and reappears here. Stop and disable wgfleet-agent on it first, or delete once the server is gone. The node's own files are not touched; this is the controller forgetting it. Nothing here can be undone from the console.",
 		Action:       "/nodes/" + id + "/delete",
 		ConfirmLabel: "Delete " + id,
 		CancelHref:   "/nodes/" + id,

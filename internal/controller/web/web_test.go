@@ -699,7 +699,17 @@ func TestProvisionAction(t *testing.T) {
 	h, st := newProvHandler(t, prov)
 	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StatePending})
 
+	// Unconfirmed: the server asks and starts nothing. Provisioning reaches the box
+	// over SSH and CLEARS Drain/Decommission, so it is not a read-only button.
 	res := post(t, h, "/nodes/exit-de-1/provision")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("unconfirmed provision status = %d, want the confirmation page", res.StatusCode)
+	}
+	if prov.triggered != "" {
+		t.Fatalf("an unconfirmed provision triggered the node anyway (%q)", prov.triggered)
+	}
+
+	res = postWith(t, h, "/nodes/exit-de-1/provision", url.Values{"confirm": {"1"}})
 	if res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("provision status = %d", res.StatusCode)
 	}

@@ -459,7 +459,7 @@ func (h *Handler) handleClientRevoke(w http.ResponseWriter, r *http.Request) {
 	if h.needsConfirmation(w, r, confirmView{
 		Title:        "Revoke " + name,
 		Heading:      "Revoke " + name + "?",
-		Consequence:  "The credential and its UUID are deleted permanently. The person using it loses this profile immediately and will need a new one — the old link and QR stop working and cannot be restored.",
+		Consequence:  "The credential and its UUID are deleted permanently and the person using it will need a new one — the old link and QR cannot be restored. Access stops on the master's NEXT reconcile pass, not the instant you confirm: for a credential you believe is compromised, watch the node go green again before you call it cut off.",
 		Detail:       "A VLESS credential has no pause: revoking is the only way to cut it off, and the only way back is to issue a new one under a new UUID.",
 		Action:       dest + "/" + name + "/revoke",
 		ConfirmLabel: "Revoke " + name,

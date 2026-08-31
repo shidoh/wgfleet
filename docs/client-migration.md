@@ -325,9 +325,26 @@ systemctl restart wgfleet-controller
         awg3: timers   # off | timers | full
 ```
 
-**`timers`** — randomises the 3.x timers. Measured against a real 3.1 module: an
-untouched 2.0 client keeps handshaking and passing traffic across rekeys. **No
-client re-imports anything.**
+**`timers`** — randomises the 3.x timers. Measured against a real 3.1 module
+(2026-08-31 rehearsal, two VMs): an untouched 2.0 client kept handshaking across a
+rekey and never dropped a ping. **No client re-imports anything.**
+
+**What `full` looks like from the user's side — measure this once and you will write
+the announcement differently.** In the same rehearsal, the moment header protection
+landed on the server the old client stopped passing traffic **within seconds** — not
+at the next rekey, so there is no grace period — and, crucially, *nothing about the
+client says so*. The interface stays **UP**. `awg show` keeps printing a "latest
+handshake" that simply gets older: 1m10s, 2m, 5m. There is no error, no disconnect,
+no reconnect attempt that fails visibly. On a phone the VPN toggle is still green.
+
+So the report you will get is **"the VPN is connected but nothing loads"**, from
+people who have no reason to connect that to an email you sent about importing a
+file. Say in the announcement, in those words, that the tunnel will look connected
+and be dead, and that the fix is to import the new file — otherwise the first hour
+is spent on people re-toggling a switch that was never the problem.
+
+The same is true of going back: reverting to `timers` breaks the config they just
+imported, in exactly the same silent way.
 
 **`full` also needs a fleet secret.** Header protection is keyed on
 `fleet.awg3_key`, and the controller REFUSES TO START without it — so on a night
