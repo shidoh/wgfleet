@@ -297,6 +297,22 @@ spec:
         summary: No client has a live handshake on {{ $labels.node }}
         description: The client-facing interface on {{ $labels.node }} has had zero active peers for
           10m. Either every client is offline at once, or the interface is serving an empty peer set.
+    - alert: WgfleetCAExpiringSoon
+      # The CA is issued for ten years, so this fires once — and the one time it
+      # does, it is the most important alert in the file. Every node certificate
+      # chains to it: when it lapses they all become untrusted in the same instant,
+      # and the control plane that would have renewed them is the thing that broke.
+      # 90 days is chosen to be re-issuable calmly, not urgently.
+      expr: (wgfleet_controller_ca_expiry_timestamp_seconds - time()) < 90 * 24 * 3600
+      for: 1h
+      labels:
+        severity: critical
+        service: wgfleet
+      annotations:
+        summary: Fleet CA expires in {{ $value | humanizeDuration }}
+        description: Every node certificate chains to this CA. When it lapses the whole fleet falls off
+          the control plane at once, and there is no channel left to repair it. Re-issue the CA and
+          roll new node bundles before this date.
     - alert: WgfleetConfigUnreadable
       # The drift collector emits NOTHING when it cannot read the manifest, on
       # purpose. That silence needs its own alert, or a deleted controller.yaml

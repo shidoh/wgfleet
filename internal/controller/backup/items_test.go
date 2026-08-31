@@ -172,13 +172,12 @@ func TestSourcesWarnAboutSecretsThatCannotTravel(t *testing.T) {
 	cfg := &config.ControllerConfig{}
 	cfg.Fleet.AWG3Key = "env://WGFLEET_AWG3_KEY"
 
-	// Neither secret resolves to a file on this host.
+	// Neither secret resolves to a file on this host. Assert on WHAT is named, not
+	// how many lines it takes: the list grows as more unbackupable things are found,
+	// and a count assertion turns each addition into a spurious failure.
 	got := Sources{}.Warnings(cfg)
-	if len(got) != 2 {
-		t.Fatalf("got %d warnings, want one for the CA key and one for the fleet secret: %v", len(got), got)
-	}
 	joined := strings.Join(got, "\n")
-	for _, want := range []string{"CA private key", "awg3_key"} {
+	for _, want := range []string{"CA private key", "awg3_key", "ZeroTier identity"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("warnings do not mention %q:\n%s", want, joined)
 		}
@@ -191,8 +190,13 @@ func TestSourcesWarnAboutSecretsThatCannotTravel(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := (Sources{CAKey: caKey, AWG3Key: awg3}).Warnings(cfg); len(got) != 0 {
-		t.Errorf("warned about secrets that ARE in the archive: %v", got)
+	// Readable secrets must not be warned about. The ZeroTier line is unconditional —
+	// it is never in the archive — so exclude it rather than assert an empty list.
+	for _, w := range (Sources{CAKey: caKey, AWG3Key: awg3}).Warnings(cfg) {
+		if strings.Contains(w, "ZeroTier") {
+			continue
+		}
+		t.Errorf("warned about a secret that IS in the archive: %v", w)
 	}
 
 	// A path that is CONFIGURED but unreadable is the case the first version missed:
@@ -201,10 +205,11 @@ func TestSourcesWarnAboutSecretsThatCannotTravel(t *testing.T) {
 	// warning, and an archive with no CA in it.
 	moved := filepath.Join(dir, "gone.key")
 	got = (Sources{CAKey: moved, AWG3Key: awg3}).Warnings(cfg)
-	if len(got) != 1 {
-		t.Fatalf("a configured but unreadable CA key produced %d warnings: %v", len(got), got)
+	joined = strings.Join(got, "\n")
+	if !strings.Contains(joined, "cannot read it") || !strings.Contains(joined, moved) {
+		t.Errorf("the warning does not say which file or why:\n%s", joined)
 	}
-	if !strings.Contains(got[0], "cannot read it") || !strings.Contains(got[0], moved) {
-		t.Errorf("the warning does not say which file or why:\n%s", got[0])
+	if strings.Contains(joined, "awg3_key") {
+		t.Errorf("a readable awg3_key was still warned about:\n%s", joined)
 	}
 }

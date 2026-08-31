@@ -276,6 +276,33 @@ func (s Sources) Warnings(cfg *config.ControllerConfig) []string {
 			"it is NOT in this archive. Check the path and the permissions and take the backup again — "+
 			"regenerating this key invalidates every client profile at once", s.AWG3Key))
 	}
+	// Two things a rebuild cannot proceed without, which this archive never carries
+	// and never said so. Both are recovery CHANNELS rather than fleet state, which is
+	// exactly why their absence is discovered at the worst moment.
+	if cfg != nil {
+		var sshKeys []string
+		seen := map[string]struct{}{}
+		for _, e := range cfg.Fleet.Exits {
+			if e.SSH.KeyPath == "" {
+				continue
+			}
+			if _, dup := seen[e.SSH.KeyPath]; dup {
+				continue
+			}
+			seen[e.SSH.KeyPath] = struct{}{}
+			sshKeys = append(sshKeys, e.SSH.KeyPath)
+		}
+		if len(sshKeys) > 0 {
+			out = append(out, fmt.Sprintf("the SSH private key(s) the exits are provisioned with (%s) are NOT in "+
+				"this archive — only the paths are, in the manifest. A restored controller can see the fleet and "+
+				"cannot provision, upgrade or roll back a single exit: the recovery channel is the part that is "+
+				"missing. Copy them to the recovery host yourself", strings.Join(sshKeys, ", ")))
+		}
+	}
+	out = append(out, "the ZeroTier identity (/var/lib/zerotier-one/) is NOT in this archive. Rejoining as the "+
+		"SAME mgmt address — which the restore checklist tells you to do — is impossible without it, and on a "+
+		"co-located fleet the ZT controller itself lives on the machine you are rebuilding. Back that directory "+
+		"up separately")
 	return out
 }
 

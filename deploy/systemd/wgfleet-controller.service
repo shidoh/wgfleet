@@ -4,12 +4,22 @@
 Description=wgfleet controller
 After=network-online.target
 Wants=network-online.target
+# systemd's default start limit is 5 starts in 10s; at RestartSec=5 that is
+# mathematically unreachable, so a controller that cannot load its manifest
+# restarted forever at 12/min, never entered `failed`, and filled the journal
+# indefinitely — visible only if someone happened to look. A wider window lets it
+# actually give up, which is the state an operator and an alert can both see.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/wgfleet-controller --config /etc/wgfleet/controller.yaml --log-format json
 Restart=on-failure
 RestartSec=5
+# Refuse to start on a manifest this binary would reject, instead of crash-looping
+# on it. --check-config changes nothing and exits non-zero when the config is bad.
+ExecStartPre=/usr/local/bin/wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
 NoNewPrivileges=yes
 
 [Install]

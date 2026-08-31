@@ -37,6 +37,19 @@ jobs:
           go-version-file: go.mod
           check-latest: true
 
+      # A tag can sit on a commit CI never saw: ci.yml runs on push-to-main and PRs
+      # only, and workflow_dispatch will happily tag HEAD. Publishing binaries that
+      # nothing verified — to the fleet AND to testers — is the one place where a
+      # green tree is not optional.
+      - name: Verify before publishing
+        run: |
+          unformatted="$(gofmt -l cmd internal)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"; echo "$unformatted"; exit 1
+          fi
+          go vet ./...
+          go test -race ./...
+
       - name: Resolve build identity
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"

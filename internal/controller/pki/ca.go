@@ -119,6 +119,11 @@ func (ca *CA) Marshal() (KeyPair, error) {
 // CertPEM returns the CA certificate (public, safe to distribute).
 func (ca *CA) CertPEM() []byte { return ca.certPEM }
 
+// NotAfter is when this CA lapses. Every node certificate chains to it, so the
+// lapse invalidates the whole fleet at once — and unlike a node certificate there
+// is no control-plane path left to repair it. Exposed so it can be measured.
+func (ca *CA) NotAfter() time.Time { return ca.cert.NotAfter }
+
 // CertPool returns a pool trusting only this CA, for verifying peers.
 func (ca *CA) CertPool() *x509.CertPool {
 	pool := x509.NewCertPool()

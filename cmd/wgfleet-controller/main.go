@@ -424,6 +424,7 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 		metrics.NewStoreCollector(reg, st)
 		metrics.RegisterBuildInfo(reg, "controller", version.Version, version.Commit)
 		metrics.NewConfigCollector(reg, configPath, effective)
+		metrics.NewCAExpiryCollector(reg, ca.NotAfter())
 		provMetr = metrics.NewProvisionMetrics(reg)
 	}
 
