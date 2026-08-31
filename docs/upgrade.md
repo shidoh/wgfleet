@@ -125,17 +125,31 @@ curl -s <mgmt-addr>:9300/metrics | grep wgfleet_controller_store_up   # must pri
 # only now apply deploy/monitoring/*rule.yaml
 ```
 
-**2. Enable the boot-time firewall on each EXISTING node, once.** New nodes get it
-from provisioning; already-provisioned ones do not, and re-provisioning to pick it
-up would clear their Drain/Decommission flags, which is not a fair trade. On every
-node:
+**2. Install AND enable the boot-time firewall on each EXISTING node, once.** The
+unit is written by provisioning and by `install.sh`; an agent upgrade does not
+install units, so on a node that is already in the fleet the file is simply absent —
+`systemctl enable wgfleet-nft` there fails with "unit does not exist". Copy it
+first. Re-provisioning would install it, but it also clears the node's
+Drain/Decommission flags, which is not a fair trade for one unit file.
+
+From the release archive (or the repo), for each node:
 
 ```bash
-systemctl enable wgfleet-nft     # applies the rendered rulesets at boot
+scp deploy/systemd/wgfleet-nft.service root@<node>:/etc/systemd/system/
+ssh root@<node> 'systemctl daemon-reload && systemctl enable wgfleet-nft'
 ```
 
-Without it, a node that reboots while the controller is unreachable comes up with no
-wgfleet nftables at all and stays that way until the control plane is back.
+Verify it parses before you rely on it — a truncated copy is silently ignored by
+systemd at boot, which is the failure this unit exists to prevent:
+
+```bash
+ssh root@<node> 'systemd-analyze verify /etc/systemd/system/wgfleet-nft.service && systemctl is-enabled wgfleet-nft'
+```
+
+There is nothing to start now: the rules are already loaded on a running node, and
+the unit only does its work at the next boot. Without it, a node that reboots while
+the controller is unreachable comes up with **no wgfleet nftables at all** and stays
+that way until the control plane is back.
 
 **3. Know how the controller now fails.** The unit gained a start limit, so a
 controller that cannot load its manifest lands in `failed` after ~25 seconds
