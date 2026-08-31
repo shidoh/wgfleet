@@ -14,9 +14,10 @@ Type=simple
 ExecStart=/usr/local/bin/wgfleet-agent --config /etc/wgfleet/agent.yaml --log-format json
 Restart=on-failure
 RestartSec=5
-# Deliberately NO StartLimit here, unlike the controller: an agent that gives up
-# leaves its node unmanaged and unreachable by the control plane, which is worse
-# than a loud restart loop on a box that is otherwise fine.
+# No StartLimit, for the same reason the controller has none (see that unit): it
+# lands the service in `failed` until someone runs `systemctl reset-failed`, and an
+# agent that gives up leaves its node unmanaged and unreachable by the control
+# plane — worse than a loud restart loop on a box that is otherwise fine.
 # The agent manages AmneziaWG interfaces, nftables and policy routing.
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
 NoNewPrivileges=yes

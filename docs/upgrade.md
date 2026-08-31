@@ -108,6 +108,33 @@ node to say it came back on it**. The data plane
    wgfleet_nodes{state="Ready"}                               # fleet health
    ```
 
+## What this release changes on its own
+
+Nothing here asks you to do anything on a node. It is what to expect after the
+binaries land, so a normal change does not read as a fault.
+
+- **Every AmneziaWG interface rewrites its config once and bounces.** The I1-I5
+  decoy packets are now opaque noise instead of imitation QUIC/STUN/DTLS (a
+  measurement showed the imitation was recognisable AND malformed, which gives a
+  DPI more to work with than random bytes do — see ADR-0022). I1-I5 may differ
+  between the two ends by design, so **nothing needs reissuing**: expect a few
+  seconds of loss per tunnel on the first pass after the controller restarts, in the
+  same way a Jmin/Jmax change bounces them.
+- **A node that reboots while the controller is unreachable now comes back
+  converged**, from the last spec that applied on it. While it runs that way it
+  reports nothing, so it shows as stale in the console although it is healthy — see
+  "the agent holds its last-good spec" in `operations.md`.
+- **The manifest is validated harder.** Address pools must not overlap anywhere in
+  the fleet, not just between masters. A manifest that has been quietly overlapping
+  is now refused at startup — worth a `--check-config` before the first restart if
+  you have ever copy-pasted an exit block.
+- **`--rolling-upgrade` skips nodes that are not reporting** rather than pushing to
+  them, timing out and rolling them back. They are listed as skipped in the plan; a
+  run can now legitimately leave a node behind.
+- **The alert rules changed** (`deploy/monitoring/`): four fixed, one added for CA
+  expiry. Apply them whenever convenient — they are written to fail open, so the
+  order relative to the binaries does not matter.
+
 ## Notes & gotchas
 
 - **`controller.agent_bin` must be set** for auto-upgrade, `--upgrade-agent`, and

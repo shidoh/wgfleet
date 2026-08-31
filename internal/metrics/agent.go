@@ -99,6 +99,16 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 	}
 
 	m.startTime.Set(float64(now.Unix()))
+	// Create both children up front. A CounterVec materialises a child only on its
+	// first WithLabelValues, so an agent that has never had a SUCCESSFUL pass since it
+	// started exposes result="error" alone — and WgfleetReconcileErrors is written as
+	// `increase(...{result!="success"}) > N and ignoring(result) increase(...{result="success"}) == 0`,
+	// which needs both sides to exist. Without this the alert is not quieter but DEAD
+	// in the case it was written for: an agent restarted by an upgrade or a reboot
+	// that then cannot converge at all.
+	m.reconcileTotal.WithLabelValues("success")
+	m.reconcileTotal.WithLabelValues("error")
+
 	reg.MustRegister(m.reconcileTotal, m.reconcileDuration, m.stateInfo, m.checkUp, m.checkLatency,
 		m.driftTotal, m.driftResources, m.reconcileChanges, m.egressReach, m.egressActive,
 		m.egressThroughput, m.startTime)

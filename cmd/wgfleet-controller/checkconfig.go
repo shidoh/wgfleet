@@ -179,11 +179,10 @@ func checkStoreOpenable(path string) error {
 
 	// Same busy tolerance as the real store (store.Open uses busy_timeout(5000)).
 	// Without it this check failed instantly on a momentary SQLITE_BUSY — a
-	// concurrent --backup, a checkpoint, a monitoring read — while the controller it
-	// is vouching for would have waited and succeeded. That asymmetry was harmless
-	// while this was a manual diagnostic; it stopped being harmless when the unit
-	// began running it as ExecStartPre on every automatic restart, where it can now
-	// refuse a start that would have worked and burn one of the start-limit attempts.
+	// concurrent --backup, a checkpoint, a monitoring read — and reported that the
+	// controller would not start, while the controller it is vouching for would have
+	// waited and succeeded. A check that is stricter than the thing it checks gives
+	// the wrong answer in the one direction that matters.
 	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return err

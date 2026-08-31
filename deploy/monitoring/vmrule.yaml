@@ -305,8 +305,15 @@ spec:
       # NOT: peers_active counts handshakes inside a 3-minute window, so a laptop
       # asleep and a phone with the tunnel off is a genuine, correct zero for hours.
       # As written this paged critical most nights, which is how a channel stops
-      # being read. Requiring that the interface HAD peers in the last 6h keeps the
-      # collapse case (they were here, now none are) and drops the quiet night.
+      # being read. Requiring that the interface HAD peers in the last 24h keeps the
+      # collapse case (they were here, now none are) and drops the quiet night: a
+      # window shorter than a day would let a weekend of no traffic read as recovery.
+      #
+      # The collector-down arm is NOT the same event and stays unconditional — with
+      # one caveat: WGCollector reports collector_up=0 for an interface it cannot
+      # dump, and a master that does not run the client leg has no wg0 at all, so
+      # that master pages this forever. Until the collector distinguishes "absent"
+      # from "unreadable", drop this rule for a fleet mid-migration.
       expr: (wgfleet_wg_collector_up{iface="wg0"} == 0)
         or (wgfleet_wg_peers_active{iface="wg0"} == 0
             and max_over_time(wgfleet_wg_peers_active{iface="wg0"}[24h]) > 0)
