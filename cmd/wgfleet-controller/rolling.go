@@ -45,6 +45,18 @@ func rollingUpgrade(cfg *config.ControllerConfig, ca *pki.CA, agentBin string, p
 	if agentBin == "" {
 		return fmt.Errorf("no agent binary: pass --agent-bin or set controller.agent_bin")
 	}
+	// The comment above says the controller MUST be up, and nothing checked it. With
+	// it stopped, node 1 is uploaded and restarted, fails the come-back gate for its
+	// full timeout because no controller is there to record the check-in, and is then
+	// ROLLED BACK to whatever .prev holds — a downgrade of a healthy node caused by
+	// nothing but the order the operator started things in. A plan changes nothing,
+	// so it stays allowed.
+	if !plan && cfg.Controller.Listen != "" && !controllerIsLive(cfg.Controller.Listen) {
+		return fmt.Errorf("no controller is serving on %s: a rollout confirms each node "+
+			"from the state a running controller records, so every node would fail its "+
+			"come-back gate and be rolled back — start the controller first",
+			cfg.Controller.Listen)
+	}
 
 	st, err := store.Open(cfg.Controller.Store)
 	if err != nil {
@@ -69,7 +81,7 @@ func rollingUpgrade(cfg *config.ControllerConfig, ca *pki.CA, agentBin string, p
 	if err != nil {
 		return fmt.Errorf("identify agent binary %s: %w", agentBin, err)
 	}
-	rp := rollout.BuildPlan(cfg.Fleet, nodes, want)
+	rp := rollout.BuildPlan(cfg.Fleet, nodes, want, time.Now(), rollout.DefaultFreshWithin)
 	printRollingPlan(rp, agentBin)
 	if plan {
 		return nil
@@ -155,7 +167,7 @@ func (w *webRoller) Plan() rollout.Plan {
 		w.log.Warn("rollout plan: list nodes failed", "err", err)
 		return rollout.Plan{Want: want}
 	}
-	return rollout.BuildPlan(w.fleet, nodes, want)
+	return rollout.BuildPlan(w.fleet, nodes, want, time.Now(), rollout.DefaultFreshWithin)
 }
 
 func (w *webRoller) Start() error            { return w.co.Start(w.ctx, w.Plan()) }

@@ -1242,6 +1242,7 @@ func (c ControllerConfig) Validate() error {
 	// authorise unauthenticated key downloads on 0.0.0.0.
 	errs = append(errs, validateClientPortal(c.Controller.ClientPortal, c.Controller.ClientPortalURL)...)
 	errs = append(errs, validateClientPoolsDisjoint(c.Fleet.Masters)...)
+	errs = append(errs, validateAddressPoolsDisjoint(c.Fleet)...)
 	errs = append(errs, validateAWG3Secret(c)...)
 	for i, e := range c.Fleet.Exits {
 		if e.Name == "" {

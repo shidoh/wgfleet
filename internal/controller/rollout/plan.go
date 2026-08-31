@@ -10,6 +10,7 @@ package rollout
 import (
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -73,7 +74,12 @@ func (p Plan) Outdated() int { return len(p.Targets) }
 // client traffic, where the blast radius of a crash-looping agent is zero. Within
 // a tier the order is by name, so a plan is reproducible and an operator reading
 // a dry-run knows exactly which node is next.
-func BuildPlan(fleet config.FleetSection, nodes []domain.Node, want string) Plan {
+// now and freshWithin decide which nodes are up enough to be worth touching. A node
+// that is already down is not a candidate: pushing to it burns the come-back gate's
+// full timeout, ROLLS THE NODE BACK, and halts the rollout at that point — and since
+// reserve sorts first, one dead reserve node blocked every primary behind it while
+// the dry-run listed it as an ordinary target.
+func BuildPlan(fleet config.FleetSection, nodes []domain.Node, want string, now time.Time, freshWithin time.Duration) Plan {
 	reserve := reserveSet(fleet)
 	byID := make(map[string]domain.Node, len(nodes))
 	for _, n := range nodes {
@@ -91,6 +97,16 @@ func BuildPlan(fleet config.FleetSection, nodes []domain.Node, want string) Plan
 			continue
 		case known && n.AgentVersion == want && want != "":
 			plan.Skipped = append(plan.Skipped, Skipped{e.Name, "already on " + want})
+			continue
+		case !known:
+			plan.Skipped = append(plan.Skipped, Skipped{e.Name, "has never reported to the controller"})
+			continue
+		case n.State != domain.StateReady:
+			plan.Skipped = append(plan.Skipped, Skipped{e.Name, "not Ready (" + string(n.State) + ")"})
+			continue
+		case n.LastSeen.IsZero() || now.Sub(n.LastSeen) > freshWithin:
+			plan.Skipped = append(plan.Skipped, Skipped{e.Name,
+				"has not reported for " + now.Sub(n.LastSeen).Round(time.Second).String()})
 			continue
 		}
 		t := Target{NodeID: e.Name, Name: e.Name, Tier: TierPrimary, Current: n.AgentVersion}

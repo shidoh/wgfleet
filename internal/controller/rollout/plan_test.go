@@ -2,6 +2,7 @@ package rollout
 
 import (
 	"testing"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -74,7 +75,7 @@ func TestBuildPlanOrdersReserveTierFirst(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := BuildPlan(fleet(tc.reserve, tc.exits...), nil, "v2")
+			got := BuildPlan(fleet(tc.reserve, tc.exits...), readyNodes("v1", tc.exits...), "v2", planNow, 90*time.Second)
 			if !eq(names(got.Targets), tc.want) {
 				t.Fatalf("order = %v, want %v", names(got.Targets), tc.want)
 			}
@@ -82,8 +83,24 @@ func TestBuildPlanOrdersReserveTierFirst(t *testing.T) {
 	}
 }
 
+// planNow / readyNodes give BuildPlan a fleet that is actually up. BuildPlan skips
+// nodes that have never reported or are not Ready, so an ordering test built on bare
+// IDs would exercise the skip path instead of the ordering it means to check.
+var planNow = time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+
+func readyNodes(version string, names ...string) []domain.Node {
+	out := make([]domain.Node, 0, len(names))
+	for _, n := range names {
+		out = append(out, domain.Node{
+			ID: n, Role: domain.RoleExit, AgentVersion: version,
+			State: domain.StateReady, LastSeen: planNow.Add(-5 * time.Second),
+		})
+	}
+	return out
+}
+
 func TestBuildPlanTagsTiers(t *testing.T) {
-	p := BuildPlan(fleet([]string{"anz3"}, "anz3", "vn1"), nil, "v2")
+	p := BuildPlan(fleet([]string{"anz3"}, "anz3", "vn1"), readyNodes("v1", "anz3", "vn1"), "v2", planNow, 90*time.Second)
 	if len(p.Targets) != 2 {
 		t.Fatalf("targets = %d, want 2", len(p.Targets))
 	}
@@ -100,12 +117,11 @@ func TestBuildPlanTagsTiers(t *testing.T) {
 // the master happening to be absent from fleet.Exits in some manifests.
 func TestBuildPlanNeverIncludesTheMaster(t *testing.T) {
 	f := fleet([]string{"anz3"}, "anz3", "vn1")
-	nodes := []domain.Node{
-		{ID: "wgf0", Role: domain.RoleMaster, AgentVersion: "v1"},
-		{ID: "anz3", Role: domain.RoleExit, AgentVersion: "v1"},
-		{ID: "vn1", Role: domain.RoleExit, AgentVersion: "v1"},
-	}
-	for _, tgt := range BuildPlan(f, nodes, "v2").Targets {
+	nodes := append(readyNodes("v1", "anz3", "vn1"), domain.Node{
+		ID: "wgf0", Role: domain.RoleMaster, AgentVersion: "v1",
+		State: domain.StateReady, LastSeen: planNow,
+	})
+	for _, tgt := range BuildPlan(f, nodes, "v2", planNow, 90*time.Second).Targets {
 		if tgt.NodeID == "wgf0" {
 			t.Fatal("master wgf0 was scheduled for a rolling upgrade")
 		}
@@ -114,18 +130,15 @@ func TestBuildPlanNeverIncludesTheMaster(t *testing.T) {
 
 func TestBuildPlanSkipsUpToDateAndUnreachableNodes(t *testing.T) {
 	f := fleet(nil, "anz3", "vn1")
-	f.Exits = append(f.Exits, config.ExitConfig{Name: "nossh"}) // no SSH target
-	nodes := []domain.Node{
-		{ID: "anz3", AgentVersion: "v2"}, // already current
-		{ID: "vn1", AgentVersion: "v1"},
-	}
-	p := BuildPlan(f, nodes, "v2")
+	f.Exits = append(f.Exits, config.ExitConfig{Name: "nossh"})           // no SSH target
+	nodes := append(readyNodes("v2", "anz3"), readyNodes("v1", "vn1")...) // anz3 already current
+	p := BuildPlan(f, nodes, "v2", planNow, 90*time.Second)
 
 	if !eq(names(p.Targets), []string{"vn1"}) {
 		t.Fatalf("targets = %v, want [vn1]", names(p.Targets))
 	}
 	if len(p.Skipped) != 2 {
-		t.Fatalf("skipped = %v, want 2 entries", p.Skipped)
+		t.Fatalf("skipped = %v, want 2 entries (already-current + no-ssh)", p.Skipped)
 	}
 	if p.Outdated() != 1 {
 		t.Errorf("Outdated() = %d, want 1", p.Outdated())
@@ -133,7 +146,7 @@ func TestBuildPlanSkipsUpToDateAndUnreachableNodes(t *testing.T) {
 }
 
 func TestBuildPlanCarriesCurrentVersion(t *testing.T) {
-	p := BuildPlan(fleet(nil, "vn1"), []domain.Node{{ID: "vn1", AgentVersion: "june-build"}}, "v2")
+	p := BuildPlan(fleet(nil, "vn1"), readyNodes("june-build", "vn1"), "v2", planNow, 90*time.Second)
 	if len(p.Targets) != 1 || p.Targets[0].Current != "june-build" {
 		t.Fatalf("targets = %+v, want one carrying Current=june-build", p.Targets)
 	}

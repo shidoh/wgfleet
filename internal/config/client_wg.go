@@ -179,6 +179,52 @@ const MinAWG3KeyLen = 32
 // (ADR-0027), where an address that belongs to two gateways is ambiguous the
 // moment traffic crosses between them — and where the mistake would surface as
 // intermittent, hard-to-attribute breakage rather than as a startup error.
+// validateAddressPoolsDisjoint rejects overlapping address pools across the WHOLE
+// fleet: every exit's pool against every other exit's, and against each master's
+// client pool. validateClientPoolsDisjoint below covers master↔master only, and only
+// for the multi-master fleet the config rejects one function away — so the topology
+// that actually ships was the unvalidated one.
+//
+// Overlap does not fail loudly. Two exits sharing a pool both hand the master
+// TunnelIP .2; mihomo builds two proxies on the same tunnel address and the second
+// silently misroutes — intermittent, per-destination, and very hard to trace back to
+// a manifest line. An exit pool overlapping a master's client pool breaks the exit's
+// masquerade scope the same quiet way.
+func validateAddressPoolsDisjoint(f FleetSection) []error {
+	type pool struct {
+		what   string
+		prefix netip.Prefix
+	}
+	var (
+		seen []pool
+		errs []error
+	)
+	add := func(what, cidr string) {
+		if cidr == "" {
+			return
+		}
+		p, err := netip.ParsePrefix(cidr)
+		if err != nil {
+			return // already reported as a malformed CIDR
+		}
+		p = p.Masked()
+		for _, other := range seen {
+			if p.Overlaps(other.prefix) {
+				errs = append(errs, fmt.Errorf("address pool %s (%s) overlaps %s (%s)",
+					p, what, other.prefix, other.what))
+			}
+		}
+		seen = append(seen, pool{what: what, prefix: p})
+	}
+	for _, m := range f.Masters {
+		add(fmt.Sprintf("masters[%s].client_awg.address_pool", m.Name), m.ClientAWG.AddressPool)
+	}
+	for _, e := range f.Exits {
+		add(fmt.Sprintf("exits[%s].address_pool", e.Name), e.AddressPool)
+	}
+	return errs
+}
+
 func validateClientPoolsDisjoint(masters []MasterConfig) []error {
 	type pool struct {
 		name   string

@@ -116,6 +116,9 @@ const (
 	defaultConfirmTimeout = 3 * time.Minute
 	defaultPollInterval   = 5 * time.Second
 	defaultFreshWithin    = 90 * time.Second
+	// DefaultFreshWithin is defaultFreshWithin for callers outside this package
+	// (the CLI builds a plan without a Coordinator).
+	DefaultFreshWithin = defaultFreshWithin
 	// rollbackGrace bounds the rollback attempt when the rollout's own context is
 	// already cancelled (operator abort, controller shutdown). Without it a
 	// cancelled rollout would skip the rollback and leave a node on a broken binary.
