@@ -507,6 +507,9 @@ func (h *Handler) handleDecommission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	if !h.requireExit(w, r, id, "decommission") {
+		return
+	}
 	// Enforce drain→decommission order (not just advise it in the confirm copy), and
 	// fail CLOSED: the first version skipped the requirement entirely when the store
 	// read errored, so a locked database turned the guard into a no-op and let an
@@ -547,6 +550,9 @@ func (h *Handler) handleRecommission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	if !h.requireExit(w, r, id, "cancel decommission") {
+		return
+	}
 	if err := h.store.SetNodeDecommission(r.Context(), id, false); err != nil {
 		h.redirectErr(w, r, "/nodes/"+id, "cancel decommission", err)
 		return
@@ -563,6 +569,9 @@ func (h *Handler) handleDrain(drain bool) http.HandlerFunc {
 			return
 		}
 		id := r.PathValue("id")
+		if !h.requireExit(w, r, id, "routing change") {
+			return
+		}
 		if err := h.store.SetNodeDrain(r.Context(), id, drain); err != nil {
 			h.redirectErr(w, r, "/nodes/"+id, "set drain", err)
 			return
@@ -726,6 +735,32 @@ func (h *Handler) setCSRFCookie(w http.ResponseWriter) {
 // short-lived flash cookie with the message and 303-redirects there. The next
 // render reads-and-clears the flash into the page's styled .error-note, so a
 // failure no longer replaces the whole console with a bare http.Error text page.
+// requireExit refuses a routing-lifecycle action on anything but an exit, and
+// reports whether the caller may proceed.
+//
+// The lifecycle is exit-only for a reason the node template states: the master IS
+// the client gateway and load balancer, and this controller runs beside it. The
+// template hides the buttons for a master, but hiding a control is a UI decision,
+// not an access rule — every one of these handlers is reachable as a plain POST.
+// Decommissioning a master is the expensive case: the agent's teardown wipes the
+// client-facing WireGuard and REALITY keys, so every config in the field pins a
+// public key that no longer exists and a re-provision mints a new one. That is the
+// awg3 flag day, with nobody warned and no new config handed out first.
+func (h *Handler) requireExit(w http.ResponseWriter, r *http.Request, id, what string) bool {
+	n, err := h.store.GetNode(r.Context(), id)
+	if err != nil {
+		// Fail closed: a store hiccup must not turn the guard into a no-op.
+		h.redirectErr(w, r, "/nodes/"+id, what+" refused", err)
+		return false
+	}
+	if n.Role != domain.RoleExit {
+		h.redirectErr(w, r, "/nodes/"+id, what+" refused",
+			fmt.Errorf("routing lifecycle is exits only: the master is the client gateway and load balancer, and tearing it down invalidates every client config in the field"))
+		return false
+	}
+	return true
+}
+
 // audit records a console action that CHANGED something, at INFO, naming who did it
 // and to what. Its twin redirectErr logs the failures; for a long time that was the
 // only half that logged at all, so the journal held every refused delete and no

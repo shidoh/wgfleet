@@ -209,3 +209,35 @@ func TestSecondDeleteOnAStaleCardIsNotAnError(t *testing.T) {
 		t.Errorf("second delete redirected to %q, want the fleet list — an already-absent declaration is the end state, not a failure", loc)
 	}
 }
+
+// The routing lifecycle is exit-only — the node template says so and hides the
+// buttons for a master — but only Delete enforced it. Drain and Decommission are
+// reachable as plain POSTs, and a decommissioned MASTER is not a small mistake:
+// agent/master/teardown.go wipes ClientWGConf, ClientWGKey, ClientVLESS and
+// ClientVLESSKey, i.e. the master's client-facing identity. Every config in the
+// field pins the old public key, and a re-provision mints a new one — so it is the
+// awg3 `full` flag day, with no warning and no key handed out in advance.
+func TestMasterLifecycleActionsAreRefusedServerSide(t *testing.T) {
+	for _, action := range []string{"drain", "undrain", "decommission"} {
+		t.Run(action, func(t *testing.T) {
+			h, st := newTestHandler(t, nil)
+			seed(t, st, domain.Node{
+				ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster,
+				State: domain.StateReady, Drain: true, // drained, so only the role can refuse
+			})
+
+			postWith(t, h, "/nodes/master-xa-1/"+action, url.Values{"confirm": {"1"}})
+
+			n, err := st.GetNode(context.Background(), "master-xa-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n.Decommission {
+				t.Error("a plain POST decommissioned the MASTER — its teardown wipes the client-facing keys")
+			}
+			if action == "undrain" && !n.Drain {
+				t.Error("a plain POST changed the master's routing state")
+			}
+		})
+	}
+}
