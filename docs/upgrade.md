@@ -116,7 +116,7 @@ binaries land, so a normal change does not read as a fault.
 - **Every AmneziaWG interface rewrites its config once and bounces.** The I1-I5
   decoy packets are now opaque noise instead of imitation QUIC/STUN/DTLS (a
   measurement showed the imitation was recognisable AND malformed, which gives a
-  DPI more to work with than random bytes do — see ADR-0022). I1-I5 may differ
+  DPI more to work with than random bytes do). I1-I5 may differ
   between the two ends by design, so **nothing needs reissuing**: expect a few
   seconds of loss per tunnel on the first pass after the controller restarts, in the
   same way a Jmin/Jmax change bounces them.
