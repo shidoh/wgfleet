@@ -651,6 +651,14 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 				"forget the applied IPv6 ruleset"); ferr == nil {
 				actions = append(actions, forget)
 			}
+			// The rendered file must go too, not just its marker. wgfleet-nft.service
+			// replays every ruleset still on disk at boot, so leaving this one behind
+			// would reinstall the refusal table on every reboot after the operator
+			// turned client IPv6 off — until the agent's next pass removed it again.
+			if drop, derr := reconcile.RemoveFileAction(p.v6Path,
+				"remove the rendered IPv6 ruleset so it is not replayed at boot"); derr == nil {
+				actions = append(actions, drop)
+			}
 		}
 	}
 

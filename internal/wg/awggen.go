@@ -76,8 +76,14 @@ const (
 	// iNoiseLow/iNoiseHigh bound the per-slot I-packet size. The band is the one the
 	// old cover-protocol templates happened to occupy (~95-207 B), kept deliberately:
 	// it is the size distribution the 2026-08-28 counterfactual actually measured as
-	// unattributable, and it stays clear of the decorated handshake sizes the
-	// userspace classifier keys on, so nothing about packet classification moves.
+	// unattributable, so nothing about the measured result is being extrapolated.
+	//
+	// It does NOT avoid the decorated handshake sizes, and does not need to: with
+	// S in [15,64] those are 148+S1 ∈ [163,212], 92+S2 ∈ [107,156] and 64+S3 ∈
+	// [79,128], all of which this band crosses. an earlier finding's hazard is a genuine
+	// transport DATA packet landing on a handshake size and being read at the wrong
+	// junk offset — awgSizesSafe still guards exactly that. An I-packet is discarded
+	// by the receiver whatever its size, so it is not on that grid at all.
 	iNoiseLow  = 96
 	iNoiseHigh = 208
 )

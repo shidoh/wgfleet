@@ -19,7 +19,9 @@ func TestPlanSkipsNodesThatAreNotUp(t *testing.T) {
 	nodes := []domain.Node{
 		{ID: "anz3", AgentVersion: "v1", State: domain.StateReady, LastSeen: now.Add(-10 * time.Second)},
 		{ID: "vn1", AgentVersion: "v1", State: domain.StateReady, LastSeen: now.Add(-2 * time.Hour)},
-		{ID: "vn2", AgentVersion: "v1", State: domain.StateError, LastSeen: now.Add(-10 * time.Second)},
+		// Degraded but REPORTING: it must stay a target — it may be degraded by the
+		// very bug this rollout carries the fix for.
+		{ID: "vn2", AgentVersion: "v1", State: domain.StateDegraded, LastSeen: now.Add(-10 * time.Second)},
 	}
 	p := BuildPlan(fleet(nil, "anz3", "vn1", "vn2"), nodes, "v2", now, 90*time.Second)
 
@@ -27,8 +29,8 @@ func TestPlanSkipsNodesThatAreNotUp(t *testing.T) {
 	for _, t := range p.Targets {
 		targets = append(targets, t.NodeID)
 	}
-	if len(targets) != 1 || targets[0] != "anz3" {
-		t.Fatalf("targets = %v, want only the healthy node", targets)
+	if len(targets) != 2 || targets[0] != "anz3" || targets[1] != "vn2" {
+		t.Fatalf("targets = %v, want the reporting nodes (healthy + degraded)", targets)
 	}
 
 	reasons := map[string]string{}
@@ -38,8 +40,8 @@ func TestPlanSkipsNodesThatAreNotUp(t *testing.T) {
 	if !strings.Contains(reasons["vn1"], "reported") {
 		t.Errorf("stale node skipped without saying why: %q", reasons["vn1"])
 	}
-	if !strings.Contains(reasons["vn2"], "Error") {
-		t.Errorf("errored node skipped without naming its state: %q", reasons["vn2"])
+	if _, skipped := reasons["vn2"]; skipped {
+		t.Errorf("a degraded but reporting node was skipped: %q", reasons["vn2"])
 	}
 }
 

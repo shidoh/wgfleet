@@ -115,9 +115,11 @@ func BuildPlan(fleet config.FleetSection, nodes []domain.Node, want string, now 
 		case !known:
 			plan.Skipped = append(plan.Skipped, Skipped{e.Name, "has never reported to the controller"})
 			continue
-		case n.State != domain.StateReady:
-			plan.Skipped = append(plan.Skipped, Skipped{e.Name, "not Ready (" + string(n.State) + ")"})
-			continue
+		// Staleness is the ONLY health signal used here, deliberately. What decides
+		// whether an upgrade can succeed is whether the node checks in after its
+		// restart, and LastSeen measures exactly that. Skipping on State would also
+		// skip a Degraded node — including one that is degraded BECAUSE of the bug
+		// being rolled out, which is the node the operator most needs to reach.
 		case n.LastSeen.IsZero() || now.Sub(n.LastSeen) > freshWithin:
 			plan.Skipped = append(plan.Skipped, Skipped{e.Name,
 				"has not reported for " + now.Sub(n.LastSeen).Round(time.Second).String()})

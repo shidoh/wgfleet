@@ -204,15 +204,20 @@ spec:
       # paged, and the agent had already self-healed by the time anyone looked. What
       # matters is not converging — hence the second clause, which is what separates
       # "wobbling but recovering" from "stuck".
+      # `ignoring(result)` is load-bearing and its absence made this rule DEAD: the
+      # counter carries a `result` label, so the left side is result="error" and the
+      # right is result="success". A bare `and` matches on every label including that
+      # one, the signatures never line up, and the whole expression is empty — off,
+      # not quieter, in exactly the not-converging case it exists for.
       expr: increase(wgfleet_agent_reconcile_total{result!="success"}[30m]) > 5
-        and increase(wgfleet_agent_reconcile_total{result="success"}[30m]) == 0
+        and ignoring(result) increase(wgfleet_agent_reconcile_total{result="success"}[30m]) == 0
       for: 5m
       labels:
         severity: warning
         service: wgfleet
       annotations:
         summary: Agent reconcile errors on {{ $labels.node }}
-        description: '{{ $value | printf "%.0f" }} failed reconcile pass(es) in the last 15m on {{ $labels.node
+        description: '{{ $value | printf "%.0f" }} failed reconcile pass(es) in the last 30m, with none succeeding, on {{ $labels.node
           }} (result={{ $labels.result }}).'
     - alert: WgfleetPersistentDrift
       expr: increase(wgfleet_agent_drift_total[1h]) > 10
@@ -288,7 +293,7 @@ spec:
       # collapse case (they were here, now none are) and drops the quiet night.
       expr: (wgfleet_wg_collector_up{iface="wg0"} == 0)
         or (wgfleet_wg_peers_active{iface="wg0"} == 0
-            and max_over_time(wgfleet_wg_peers_active{iface="wg0"}[6h]) > 0)
+            and max_over_time(wgfleet_wg_peers_active{iface="wg0"}[24h]) > 0)
       for: 10m
       labels:
         severity: critical

@@ -25,11 +25,17 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0   # full history + tags so the build can stamp identity
+          # Without this, a workflow_dispatch checked out whatever ref the UI was
+          # sitting on (usually main) while labelling and publishing the result as
+          # the tag typed into the input — verifying and shipping one commit under
+          # another commit's name.
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -48,7 +54,7 @@ jobs:
             echo "These files need gofmt:"; echo "$unformatted"; exit 1
           fi
           go vet ./...
-          go test -race ./...
+          go test -race -timeout 10m ./...
 
       - name: Resolve build identity
         run: |

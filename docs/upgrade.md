@@ -108,6 +108,49 @@ node to say it came back on it**. The data plane
    wgfleet_nodes{state="Ready"}                               # fleet health
    ```
 
+## This release: three steps that are not the binaries
+
+These do not happen on their own. Skipping them leaves the fleet quietly worse off
+than before the upgrade, not better.
+
+**1. Restart the controller BEFORE applying the new alert rules.** Two critical
+rules — `WgfleetNoReadyExit` and `WgfleetAgentUnscraped` — are now gated on
+`wgfleet_controller_store_up`, a metric this release adds. Gating on a series that
+does not exist yet makes the expression empty, so applying the rules first turns
+both alerts **off** rather than merely quieter. Order:
+
+```bash
+systemctl restart wgfleet-controller
+curl -s <mgmt-addr>:9300/metrics | grep wgfleet_controller_store_up   # must print a 1
+# only now apply deploy/monitoring/*rule.yaml
+```
+
+**2. Enable the boot-time firewall on each EXISTING node, once.** New nodes get it
+from provisioning; already-provisioned ones do not, and re-provisioning to pick it
+up would clear their Drain/Decommission flags, which is not a fair trade. On every
+node:
+
+```bash
+systemctl enable wgfleet-nft     # applies the rendered rulesets at boot
+```
+
+Without it, a node that reboots while the controller is unreachable comes up with no
+wgfleet nftables at all and stays that way until the control plane is back.
+
+**3. Know how the controller now fails.** The unit gained a start limit, so a
+controller that cannot load its manifest lands in `failed` after ~25 seconds
+instead of restarting forever. That is the point — an infinite loop is invisible —
+but it also means fixing the file is no longer enough on its own:
+
+```bash
+systemctl reset-failed wgfleet-controller && systemctl start wgfleet-controller
+```
+
+It also runs `--check-config` as `ExecStartPre`, so a manifest this binary rejects
+now refuses to start rather than crash-looping. Run `--check-config` by hand before
+the first restart: this release adds address-pool overlap validation, and a manifest
+that has been quietly overlapping will now be refused.
+
 ## Notes & gotchas
 
 - **`controller.agent_bin` must be set** for auto-upgrade, `--upgrade-agent`, and

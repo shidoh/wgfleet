@@ -212,6 +212,12 @@ fi
 cat > "$UNITDIR/wgfleet-controller.service" <<'UNIT'
 [Unit]
 Description=wgfleet controller
+# The default start limit (5 starts / 10s) is unreachable at RestartSec=5, so a
+# controller that cannot load its config restarted forever instead of landing in
+# `failed`. After the limit: fix the config, then `systemctl reset-failed
+# wgfleet-controller && systemctl start wgfleet-controller`.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 After=network-online.target
 Wants=network-online.target
 
@@ -219,6 +225,10 @@ Wants=network-online.target
 ExecStart=/usr/local/bin/wgfleet-controller --config /etc/wgfleet/controller.yaml --log-format json
 Restart=on-failure
 RestartSec=5
+# Refuse to start on a manifest this binary would reject, rather than crash-loop on
+# it. --check-config changes nothing and exits non-zero only when the controller
+# would genuinely fail to start.
+ExecStartPre=/usr/local/bin/wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
 NoNewPrivileges=yes
 
 [Install]
@@ -261,17 +271,20 @@ ConditionPathExists=/etc/wgfleet/wgfleet.nft
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# A master renders THREE rulesets, not one: the input firewall (both roles), its
-# NAT table, and the client-facing IPv6 table. Replaying only the first would put
-# the firewall back while leaving clients with no egress — a node that looks
-# protected and does not work, which is worse than one that is plainly down.
+# A master renders THREE rulesets, not one: its NAT table, the client-facing IPv6
+# table, and the input firewall shared with exits. Replaying only the last would
+# put the firewall back while leaving clients with no egress — a node that looks
+# protected and does not work, which is worse than one plainly down.
 #
-# Applied in a loop over the files that EXIST rather than as three ExecStart lines
-# with a leading dash: on an exit both master files are absent, and the dash form
-# recorded that as a non-zero ExecMainStatus, so `systemctl status` reported a
-# failure on every healthy exit. A unit whose whole job is to be trustworthy at
-# boot must not cry wolf when it worked.
-ExecStart=/bin/sh -c 'for f in /etc/wgfleet/wgfleet.nft /etc/wgfleet/wgfleet-master.nft /etc/wgfleet/wgfleet-master-v6.nft; do [ -f "$$f" ] && /usr/sbin/nft -f "$$f"; done; exit 0'
+# The three tables are independent (ip wgfleet_master, ip6 …_v6, inet wgfleet) and
+# each file carries its own delete-then-define prelude, so order does not matter
+# functionally. It is chosen so the file that ALWAYS exists runs LAST: the leading
+# dash marks the master-only files optional, but a skipped one still lands in
+# ExecMainStatus, and with the firewall first every healthy exit reported a failed
+# unit. A unit whose whole job is to be trustworthy at boot must not cry wolf.
+ExecStart=-/usr/sbin/nft -f /etc/wgfleet/wgfleet-master.nft
+ExecStart=-/usr/sbin/nft -f /etc/wgfleet/wgfleet-master-v6.nft
+ExecStart=/usr/sbin/nft -f /etc/wgfleet/wgfleet.nft
 Restart=no
 
 [Install]
