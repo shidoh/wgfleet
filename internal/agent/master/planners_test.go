@@ -65,9 +65,10 @@ func masterSpec(t *testing.T) (domain.NodeSpec, string) {
 func TestMihomoRedirPlannerRestartsWhenListenerDown(t *testing.T) {
 	spec, _ := masterSpec(t) // BindAddress 10.80.0.1, RedirPort 7895
 	pl := mihomoRedirPlanner{
-		compose:   "/etc/mihomo/docker-compose.yml",
-		listening: func(string) bool { return false }, // mihomo lost its redir bind
-		localUp:   func(string) bool { return true },  // but wg0/10.80.0.1 is up
+		compose:      "/etc/mihomo/docker-compose.yml",
+		listening:    func(string) bool { return false }, // mihomo lost its redir bind
+		udpListening: func(string) bool { return true },  // TPROXY is fine; only TCP is down
+		localUp:      func(string) bool { return true },  // and wg0/10.80.0.1 is up
 	}
 	acts, err := pl.Plan(context.Background(), spec)
 	if err != nil {
@@ -85,7 +86,14 @@ func TestMihomoRedirPlannerNoOpWhenListening(t *testing.T) {
 	spec, _ := masterSpec(t)
 	pl := mihomoRedirPlanner{
 		listening: func(string) bool { return true },
-		localUp:   func(string) bool { return true },
+		// Both probes must be stubbed. Leaving this nil fell through to the real
+		// socketListening, which shells out to `ss`: absent on a macOS laptop (the
+		// call errors and fails OPEN, so the test passed) and present on the Linux CI
+		// runner (it reports nothing bound on 10.80.0.1:7896, so the planner asked for
+		// a restart and the test failed). A unit test must not depend on the host's
+		// socket table, or on which tools the host happens to ship.
+		udpListening: func(string) bool { return true },
+		localUp:      func(string) bool { return true },
 	}
 	acts, err := pl.Plan(context.Background(), spec)
 	if err != nil {
@@ -102,8 +110,9 @@ func TestMihomoRedirPlannerDefersWhenBindAddrDown(t *testing.T) {
 	spec, _ := masterSpec(t)
 	probed := false
 	pl := mihomoRedirPlanner{
-		listening: func(string) bool { probed = true; return false },
-		localUp:   func(string) bool { return false },
+		listening:    func(string) bool { probed = true; return false },
+		udpListening: func(string) bool { probed = true; return false },
+		localUp:      func(string) bool { return false },
 	}
 	acts, err := pl.Plan(context.Background(), spec)
 	if err != nil {
