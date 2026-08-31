@@ -13,7 +13,8 @@
 # binary — a rename keeps the running process's old inode alive), then restarts.
 # Idempotent and safe to re-run.
 #
-# Run from the repo root (it shells out to the Makefile cross-build targets).
+# Run it from the unpacked release archive (it uses the binaries sitting beside it),
+# or from a repo root (it cross-builds them with make).
 #
 # Usage:
 #   deploy/deploy-master.sh [user@host] [--agent|--controller|--both] [--arch ARCH] [--plan]
@@ -71,7 +72,15 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$MASTER" ] || die "no master ssh target — pass user@host or set MASTER="
-[ -f Makefile ] && [ -d cmd/wgfleet-agent ] || die "run from the wgfleet repo root"
+# Either shape is fine: a repo checkout (we build), or the unpacked release archive
+# (the binaries are already here). Requiring a Makefile made this script unusable for
+# every tarball-only operator, while three docs named it as THE master upgrade path.
+_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f Makefile ] && [ -d cmd/wgfleet-agent ]; then :
+elif [ -f "$_here/wgfleet-agent" ] || [ -f "$_here/wgfleet-controller" ]; then :
+else
+  die "run this from a wgfleet repo root, or from the unpacked release archive (where the binaries are)"
+fi
 command -v go  >/dev/null 2>&1 || die "go toolchain not found (needed to cross-build)"
 command -v scp >/dev/null 2>&1 || die "scp not found"
 
@@ -79,8 +88,23 @@ command -v scp >/dev/null 2>&1 || die "scp not found"
 agent_dist="dist/wgfleet-agent-linux-${ARCH}"
 controller_dist="dist/wgfleet-controller-linux-${ARCH}"
 
-# build_one <make-target> <dist-artifact>
+# build_one <make-target> <dist-artifact> <archive-name>
+#
+# Two ways to get a binary, matching install.sh: from the release archive, where a
+# prebuilt binary sits next to this script and there is no Makefile or source at all,
+# or from a repo checkout, where we cross-build it. The archive case used to be
+# impossible — the script ran `make` unconditionally and every documented master
+# upgrade path told a tarball-only operator to run it.
 build_one() {
+  local here; here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -f "$here/$3" ]; then
+    log "using $3 from this directory (release archive)"
+    mkdir -p "$(dirname "$2")"
+    cp -f "$here/$3" "$2"
+    return
+  fi
+  command -v make >/dev/null 2>&1 || die "no $3 beside this script and no make to build one — \
+run this from the release archive (where the binaries are) or from a repo checkout"
   log "building $2 (GOARCH=$ARCH)"
   make "$1" ARCH="$ARCH" >/dev/null
   [ -f "$2" ] || die "build did not produce $2"
@@ -178,9 +202,9 @@ deploy_one() {
 
 # --- build ------------------------------------------------------------------
 case "$WHAT" in
-  agent)      build_one agent-linux      "$agent_dist" ;;
-  controller) build_one controller-linux "$controller_dist" ;;
-  both)       build_one agent-linux "$agent_dist"; build_one controller-linux "$controller_dist" ;;
+  agent)      build_one agent-linux      "$agent_dist" wgfleet-agent ;;
+  controller) build_one controller-linux "$controller_dist" wgfleet-controller ;;
+  both)       build_one agent-linux "$agent_dist" wgfleet-agent; build_one controller-linux "$controller_dist" wgfleet-controller ;;
 esac
 
 # local_wire — the wire contract this working tree builds, read from source.

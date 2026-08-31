@@ -123,8 +123,11 @@ systemctl enable --now wgfleet-controller wgfleet-agent
 systemctl status wgfleet-controller wgfleet-agent
 ```
 
-Give it 1–2 minutes. The master goes `Reconciling → Ready` once its containers
-are up. Check:
+Give it 1–2 minutes. The master settles at `Degraded`, and at this point that is
+correct: no exit is declared yet, so mihomo has nothing to balance, that one
+component is deferred and its health check fails. Everything else — the client
+interface, nftables, routing — converges normally. It turns `Ready` after Step 7,
+when the first exit registers. Check:
 
 ```bash
 journalctl -u wgfleet-agent -n 30 --no-pager
@@ -139,7 +142,7 @@ ssh -L 9000:127.0.0.1:9000 root@<MASTER-IP>
 ```
 
 Then open <http://127.0.0.1:9000> and log in with the password from step 5.
-You should see the master node, `Ready`.
+You should see the master node. It reads `Degraded` until Step 7 adds an exit — see above.
 
 ## Step 7 — Add an exit server
 
@@ -221,8 +224,11 @@ Import it with the **AmneziaWG** app — iOS, Android or desktop, *not* the plai
 WireGuard app: the obfuscation is AmneziaWG-specific and the ordinary app cannot
 read the profile.
 
-Optionally set `controller.client_portal` (see CONFIGURATION.md) and each
-credential gets a permanent self-service link you can send instead of a file.
+Optionally set `controller.client_portal` **together with**
+`controller.client_portal_url` (see CONFIGURATION.md) and each credential gets a
+permanent self-service link you can send instead of a file. Setting one without the
+other is a startup error — with `Restart=on-failure` that is a restart loop, so run
+`--check-config` before you restart the controller.
 
 > **Upgrading from a wgfleet that used wg-easy?** Do not set `managed: true`
 > straight away — import the existing credentials first, or everyone's tunnel

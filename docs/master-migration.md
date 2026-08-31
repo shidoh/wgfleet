@@ -47,8 +47,27 @@ the sops secrets file, and — because this box is also a master — the wg-easy
 client db, the wg-easy admin password, the AmneziaWG key, and the node identity
 (`node.crt`, `node.key`, `agent.yaml`).
 
+Also captured on a master: the fleet secret `awg3.key`, the client-facing
+WireGuard key and the client VLESS/REALITY key, when they are files on this host.
+
 Not captured, because the agent regenerates it all on first reconcile: nftables
 rules, mihomo/xray/blocky configs, compose files.
+
+**Not captured and NOT regenerable — copy these by hand or you lose the fleet.**
+The migration will complete without them, every exit will go `Ready`, and nothing
+will warn you until the day you need them:
+
+- **The SSH private key(s) the exits are provisioned with** (`fleet.exits[].ssh.key_path`).
+  Only the paths travel, inside `controller.yaml`. Without the keys the new master
+  can see the fleet and cannot provision, upgrade or roll back a single exit — the
+  recovery channel is the part that goes missing.
+- **The ZeroTier identity** (`/var/lib/zerotier-one/`), if you want to rejoin as the
+  same mgmt address rather than authorize a new member and reassign the old IP.
+
+```bash
+# on the OLD master, before you stop it
+scp /root/.ssh/id_ed25519 root@<new-master>:/root/.ssh/
+```
 
 > The archive holds the CA key and every client key. The age envelope is its only
 > protection at rest. Store it like a password.

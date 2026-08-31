@@ -168,7 +168,7 @@ schedule, never succeeding" a visible state.
 
 ## 4. Alerts
 
-**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 27 alerts,
+**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 28 alerts,
 already applied by step 2 above. Earlier revisions of this file printed two of them
 as a snippet to paste; the copies drifted from the shipped rules (different group
 name, different `for`, a different expression on one), so pasting produced a second,
@@ -193,6 +193,7 @@ What ships, by severity:
 | `WgfleetAgentUnscraped` | warning |
 | `WgfleetAgentVersionSkew` | warning |
 | `WgfleetConfigDrift` | warning |
+| `WgfleetCAExpiringSoon` | critical |
 | `WgfleetConfigUnreadable` | warning |
 | `WgfleetHealthCheckFailing` | warning |
 | `WgfleetNodeCertExpiring` | warning |

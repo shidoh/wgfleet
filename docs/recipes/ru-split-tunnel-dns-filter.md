@@ -212,19 +212,16 @@ blocking:
 
 With sniffing on, mihomo rewrites a connection's destination to its SNI and
 **re-resolves** it. Public DNS doesn't know your internal zones, so private
-domains fail with `ERR_CONNECTION_CLOSED`. Point mihomo at the
-master's own blocky (which knows the split), and map the zones:
+domains fail with `ERR_CONNECTION_CLOSED`. mihomo already points at the master's own
+blocky (which knows the split) — you only need to map the zones:
+
+> ⚠️ **No longer needed (2026-08-28), and now harmful.** The agent supplies the
+> resolver list and the renderer sets the fleet resolver *exclusively* — a public
+> fallback beside it was a concurrent pool, not a fallback, so mihomo raced the two
+> and leaked queries. Overriding `dns.nameserver` REPLACES the rendered list, so
+> setting it by hand re-creates the very problem it used to solve. Leave it out.
 
 ```yaml
-mihomo:
-  overrides:
-    dns: { nameserver: ["127.0.0.1:53"] }   # requires dns_filter: true (blocky on :53)
-
-> ⚠️ **No longer needed (2026-08-28).** The agent now supplies the resolver list and
-> the renderer sets the fleet resolver *exclusively* — a public fallback beside it was
-> a concurrent pool, not a fallback, so mihomo raced the two and leaked queries. This
-> override REPLACES the rendered list, so setting it by hand now re-creates the very
-> problem it used to solve. Leave it out.
 dns:
   overrides:
     conditional:
