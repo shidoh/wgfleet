@@ -38,43 +38,6 @@ table inet wgfleet_baseline {
 
 // systemdUnitTemplate runs the agent as a reconcile daemon, restarting on failure.
 // %s is an ExecStart flags tail, currently always empty (the unit is generic).
-// nftUnitTemplate replays the last rendered ruleset at boot. The file persists at
-// /etc/wgfleet/wgfleet.nft; only the kernel state is lost on a reboot, and nothing
-// used to put it back until the agent had started, registered AND completed a pass —
-// so a node rebooted while the controller was unreachable came up with no wgfleet
-// table at all and stayed that way. ConditionPathExists makes it a no-op on a node
-// that has never rendered one.
-const nftUnitTemplate = `[Unit]
-Description=wgfleet firewall (replay the last rendered ruleset)
-DefaultDependencies=no
-After=nftables.service
-Before=network-pre.target
-Wants=network-pre.target
-ConditionPathExists=/etc/wgfleet/wgfleet.nft
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-# A master renders THREE rulesets, not one: its NAT table, the client-facing IPv6
-# table, and the input firewall shared with exits. Replaying only the last would
-# put the firewall back while leaving clients with no egress — a node that looks
-# protected and does not work, which is worse than one plainly down.
-#
-# The three tables are independent (ip wgfleet_master, ip6 …_v6, inet wgfleet) and
-# each file carries its own delete-then-define prelude, so order does not matter
-# functionally. It is chosen so the file that ALWAYS exists runs LAST: the leading
-# dash marks the master-only files optional, but a skipped one still lands in
-# ExecMainStatus, and with the firewall first every healthy exit reported a failed
-# unit. A unit whose whole job is to be trustworthy at boot must not cry wolf.
-ExecStart=-/usr/sbin/nft -f /etc/wgfleet/wgfleet-master.nft
-ExecStart=-/usr/sbin/nft -f /etc/wgfleet/wgfleet-master-v6.nft
-ExecStart=/usr/sbin/nft -f /etc/wgfleet/wgfleet.nft
-Restart=no
-
-[Install]
-WantedBy=sysinit.target
-`
-
 const systemdUnitTemplate = `[Unit]
 Description=wgfleet node agent
 After=network-online.target

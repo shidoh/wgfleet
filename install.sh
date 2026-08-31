@@ -254,47 +254,11 @@ NoNewPrivileges=yes
 WantedBy=multi-user.target
 UNIT
 
-# Replays the last rendered firewall at boot. The ruleset persists on disk; only
-# the kernel state is lost on a reboot, and nothing put it back until the agent had
-# started, registered and completed a pass — so a node rebooted while the controller
-# was unreachable came up with no wgfleet table at all. A no-op before the agent has
-# ever rendered one (ConditionPathExists).
-cat > "$UNITDIR/wgfleet-nft.service" <<'UNIT'
-[Unit]
-Description=wgfleet firewall (replay the last rendered ruleset)
-DefaultDependencies=no
-After=nftables.service
-Before=network-pre.target
-Wants=network-pre.target
-ConditionPathExists=/etc/wgfleet/wgfleet.nft
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-# A master renders THREE rulesets, not one: its NAT table, the client-facing IPv6
-# table, and the input firewall shared with exits. Replaying only the last would
-# put the firewall back while leaving clients with no egress — a node that looks
-# protected and does not work, which is worse than one plainly down.
-#
-# The three tables are independent (ip wgfleet_master, ip6 …_v6, inet wgfleet) and
-# each file carries its own delete-then-define prelude, so order does not matter
-# functionally. It is chosen so the file that ALWAYS exists runs LAST: the leading
-# dash marks the master-only files optional, but a skipped one still lands in
-# ExecMainStatus, and with the firewall first every healthy exit reported a failed
-# unit. A unit whose whole job is to be trustworthy at boot must not cry wolf.
-ExecStart=-/usr/sbin/nft -f /etc/wgfleet/wgfleet-master.nft
-ExecStart=-/usr/sbin/nft -f /etc/wgfleet/wgfleet-master-v6.nft
-ExecStart=/usr/sbin/nft -f /etc/wgfleet/wgfleet.nft
-Restart=no
-
-[Install]
-WantedBy=sysinit.target
-UNIT
 
 # Non-fatal: containers/WSL have the unit files but no running systemd, and there
 # is no reason to abort the rest of the install (configs, next steps) over it.
 systemctl daemon-reload 2>/dev/null \
-  && log "installed systemd units (disabled): wgfleet-controller, wgfleet-agent, wgfleet-nft" \
+  && log "installed systemd units (disabled): wgfleet-controller, wgfleet-agent" \
   || warn "systemd not available here — units written to $UNITDIR but not reloaded"
 
 # ---------------------------------------------------------------------------

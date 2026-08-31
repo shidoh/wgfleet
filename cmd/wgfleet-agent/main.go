@@ -445,11 +445,38 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		adminUser, adminPass = u, p
 	}
 
+	// fromCache marks a pass running on the last-good spec because the controller
+	// could not be reached. Such a pass converges the node but reports nothing (there
+	// is nobody to report to) and does not re-record the cache.
+	var (
+		spec      domain.NodeSpec
+		fromCache bool
+	)
+
 	state, err := a.client.Register(ctx, a.role, a.publicIP, "", a.mgmtAddr)
 	if err != nil {
-		return fmt.Errorf("register: %w", err)
+		// Every subsystem on this node — interfaces, routing, nftables, mihomo,
+		// blocky — is converged by the pass this error used to abort, so a node that
+		// rebooted while the controller was unreachable came up with nothing and
+		// stayed that way. The reconcilers already self-heal a lost kernel state
+		// (reconcile.NFTApply re-applies when the table is gone); they simply never
+		// ran. Give them the last spec that worked instead of giving up.
+		//
+		// Only when NOTHING ANSWERED. A refusal is the controller talking, and its
+		// answer wins over anything on disk — see controllerUnreachable.
+		if plan || !controllerUnreachable(err) {
+			return fmt.Errorf("register: %w", err)
+		}
+		cached, age, cerr := loadSpec(specCacheFile)
+		if cerr != nil {
+			return fmt.Errorf("register: %w (and no last-good spec to fall back on: %v)", err, cerr)
+		}
+		a.log.Warn("controller unreachable; converging on the last-good spec instead of standing still",
+			"err", err, "spec_age", age.Round(time.Second), "path", specCacheFile)
+		fromCache, spec = true, cached
+		state = domain.StateReconciling
 	}
-	if !plan {
+	if !plan && !fromCache {
 		if err := a.client.PublishPublicKey(ctx, kp.PublicKey); err != nil {
 			return fmt.Errorf("publish public key: %w", err)
 		}
@@ -470,7 +497,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			a.log.Info("REALITY key absent; using an ephemeral key for the plan (apply would generate one)")
 		}
 		realityPriv = rPriv
-		if !plan {
+		if !plan && !fromCache {
 			if err := a.client.PublishRealityKey(ctx, rPub); err != nil {
 				return fmt.Errorf("publish reality key: %w", err)
 			}
@@ -489,7 +516,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			a.log.Info("client VLESS REALITY key absent; using an ephemeral key for the plan (apply would generate one)")
 		}
 		realityPriv = cvPriv
-		if !plan {
+		if !plan && !fromCache {
 			if err := a.client.PublishClientVlessKey(ctx, cvPub); err != nil {
 				return fmt.Errorf("publish client vless key: %w", err)
 			}
@@ -510,32 +537,18 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		clientWGPriv = cwKP.PrivateKey
 		// An empty key means "deferred, wg-easy's database would not answer": publish
 		// nothing rather than a key we are not sure we should be using.
-		if !plan && cwKP.PublicKey != "" {
+		if !plan && !fromCache && cwKP.PublicKey != "" {
 			if err := a.client.PublishClientWGKey(ctx, cwKP.PublicKey); err != nil {
 				return fmt.Errorf("publish client wg key: %w", err)
 			}
 		}
 	}
 
-	spec, err := a.client.PullSpec(ctx)
-	if err != nil {
-		// Report before returning. A failed pull freezes EVERY subsystem on this node
-		// — mihomo, the NAT, DOCKER-USER, blocky, the VLESS inbound, the client
-		// interface — and it used to do so in total silence: no status, so no state
-		// change, no health check, and no reconcile metric either. That made the
-		// widest failure mode the least visible one, and less visible than an invalid
-		// spec, which does report. The controller can only see it as staleness, whose
-		// alert says "the control channel is down" — the wrong diagnosis.
-		if !plan {
-			repCtx, repCancel := context.WithTimeout(base, statusReportTimeout)
-			defer repCancel()
-			check := domain.HealthCheck{Name: domain.CheckSpecValid, OK: false,
-				Detail: "could not pull a spec from the controller: " + err.Error()}
-			if rerr := a.reportStatus(repCtx, domain.StateError, []domain.HealthCheck{check}, err, "", nil); rerr != nil {
-				a.log.Error("failed to report the pull failure", "err", rerr)
-			}
+	if !fromCache {
+		spec, err = a.pullSpecOrCache(ctx, base, plan, &fromCache)
+		if err != nil {
+			return err
 		}
-		return fmt.Errorf("pull spec: %w", err)
 	}
 	if err := spec.Validate(); err != nil {
 		// An invalid spec must never be applied: a zero WG port, bad egress, or an
@@ -714,12 +727,28 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	a.log.Info("reconcile applied",
 		"changes", report.ChangeCount(), "drift", len(drifted),
 		"state", state, "checks", len(results), "err", reconcileErr)
+	// Record the spec only once it has actually applied. LAST-GOOD, not
+	// last-received: this is what the node converges to when the controller cannot be
+	// reached, and replaying a spec that failed to apply, unattended, at boot, is not
+	// a recovery. A write failure is not fatal — the pass succeeded, only the safety
+	// net is missing — but it must be visible, because its absence is invisible until
+	// the reboot that needed it.
+	if !plan && reconcileErr == nil && !fromCache {
+		if err := saveSpec(specCacheFile, spec); err != nil {
+			a.log.Warn("could not record the last-good spec; this node cannot self-heal if it reboots while the controller is unreachable",
+				"path", specCacheFile, "err", err)
+		}
+	}
 	// Report on a FRESH context from the parent, never the pass context: a slow or
 	// timed-out apply must still report the node's state, or it sticks in Provisioning.
-	repCtx, repCancel := context.WithTimeout(base, statusReportTimeout)
-	defer repCancel()
-	if err := a.reportStatus(repCtx, state, results, reconcileErr, a.egressIP(repCtx, spec, activeEgress), a.collectExitHealth(repCtx, spec)); err != nil {
-		return err
+	// A cached pass has nobody to report to — that is why it is a cached pass — and
+	// failing here would throw away a convergence that just succeeded.
+	if !fromCache {
+		repCtx, repCancel := context.WithTimeout(base, statusReportTimeout)
+		defer repCancel()
+		if err := a.reportStatus(repCtx, state, results, reconcileErr, a.egressIP(repCtx, spec, activeEgress), a.collectExitHealth(repCtx, spec)); err != nil {
+			return err
+		}
 	}
 	if reconcileErr != nil {
 		return fmt.Errorf("reconcile: %w", reconcileErr)
@@ -1525,4 +1554,41 @@ func setupLogging(format string) {
 // way awg-quick does.
 func clientIfaceName(confPath string) string {
 	return strings.TrimSuffix(filepath.Base(confPath), ".conf")
+}
+
+// pullSpecOrCache fetches the desired spec, falling back to the last-good one when
+// the controller cannot be reached. It sets *fromCache when it did.
+//
+// A failed pull freezes EVERY subsystem on this node — interfaces, routing,
+// nftables, mihomo, blocky, the client leg — because the pass returns before any
+// planner runs. It used to do so in total silence: no status, so no state change,
+// no health check and no reconcile metric, which made the widest failure mode the
+// least visible one. It still reports; it just no longer stands still when there is
+// a spec on disk that worked.
+func (a *agent) pullSpecOrCache(ctx, base context.Context, plan bool, fromCache *bool) (domain.NodeSpec, error) {
+	spec, err := a.client.PullSpec(ctx)
+	if err == nil {
+		return spec, nil
+	}
+	// Only when NOTHING ANSWERED. A refusal — NotFound for a node the operator
+	// deleted, PermissionDenied for a revoked certificate — is the controller
+	// talking, and its answer must win over anything on disk.
+	if !plan && controllerUnreachable(err) {
+		if cached, age, cerr := loadSpec(specCacheFile); cerr == nil {
+			a.log.Warn("controller unreachable; converging on the last-good spec instead of standing still",
+				"err", err, "spec_age", age.Round(time.Second), "path", specCacheFile)
+			*fromCache = true
+			return cached, nil
+		}
+	}
+	if !plan {
+		repCtx, repCancel := context.WithTimeout(base, statusReportTimeout)
+		defer repCancel()
+		check := domain.HealthCheck{Name: domain.CheckSpecValid, OK: false,
+			Detail: "could not pull a spec from the controller: " + err.Error()}
+		if rerr := a.reportStatus(repCtx, domain.StateError, []domain.HealthCheck{check}, err, "", nil); rerr != nil {
+			a.log.Error("failed to report the pull failure", "err", rerr)
+		}
+	}
+	return domain.NodeSpec{}, fmt.Errorf("pull spec: %w", err)
 }
