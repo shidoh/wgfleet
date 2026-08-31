@@ -50,6 +50,10 @@ type Manager struct {
 	now     func() time.Time // injectable clock for provisioning-duration timing
 	baseCtx context.Context  // parent for async jobs; cancelled on controller shutdown
 
+	// fleetMu guards fleet, which is no longer write-once: ForgetExit drops an entry
+	// when the console deletes a node. Readers run on HTTP handler goroutines.
+	fleetMu sync.RWMutex
+
 	mu       sync.Mutex
 	inflight map[string]bool
 	wg       sync.WaitGroup // tracks in-flight async jobs for graceful drain
@@ -87,6 +91,32 @@ func (m *Manager) SetBaseContext(ctx context.Context) {
 // so a background job cannot write to a closed database.
 func (m *Manager) Wait() { m.wg.Wait() }
 
+// ForgetExit drops an exit from the manifest view this Manager serves, after its
+// declaration has been removed from the manifest FILE.
+//
+// The controller reads controller.yaml once at startup and never reloads it, so
+// without this the deletion is invisible to the running process: ManifestNodes()
+// keeps returning the exit, the console re-renders it as a Pending card seconds
+// after the operator deleted it, and — because Provisionable() and findNode() read
+// the same stale copy, SSH target and key path intact — the Provision button on
+// that card still works. Provisioning has no confirmation step, so one click
+// re-creates a node whose declaration is gone from disk; it then disappears for
+// real at the next controller restart, as an outage with no apparent cause.
+//
+// Only exits: masters are not deletable from the console, and dropping the hub
+// from the manifest view would strand every provisioning path that resolves it.
+func (m *Manager) ForgetExit(name string) {
+	m.fleetMu.Lock()
+	defer m.fleetMu.Unlock()
+	kept := make([]config.ExitConfig, 0, len(m.fleet.Exits))
+	for _, e := range m.fleet.Exits {
+		if e.Name != name {
+			kept = append(kept, e)
+		}
+	}
+	m.fleet.Exits = kept
+}
+
 // Provisionable reports whether a node exists in the fleet manifest with an SSH
 // target — i.e. whether it can be provisioned at all.
 func (m *Manager) Provisionable(nodeID string) bool {
@@ -98,6 +128,9 @@ func (m *Manager) Provisionable(nodeID string) bool {
 // inventory stub. The dashboard merges these with the live store so an operator
 // can see (and provision) declared-but-not-yet-provisioned nodes.
 func (m *Manager) ManifestNodes() []domain.Node {
+	m.fleetMu.RLock()
+	defer m.fleetMu.RUnlock()
+
 	var out []domain.Node
 	for _, mm := range m.fleet.Masters {
 		n, _, _ := m.findNode(mm.Name)
@@ -148,19 +181,27 @@ func (m *Manager) Provision(ctx context.Context, nodeID string, mode provisioner
 	if err != nil {
 		return provisioner.Report{}, fmt.Errorf("issue node cert: %w", err)
 	}
+	// Snapshot the fleet under the read lock: these are value-receiver methods and
+	// field reads on a struct ForgetExit can now mutate, and a value receiver copies
+	// the whole FleetSection — slice header included — so reading it unguarded races
+	// with a concurrent console delete.
+	m.fleetMu.RLock()
+	fleet := m.fleet
+	m.fleetMu.RUnlock()
+
 	in := provisioner.BootstrapInput{
 		Node:                node,
 		Bundle:              pki.KeyPair{CertPEM: bundle.CertPEM},
 		NodeKey:             bundle.KeyPEM,
 		CACert:              m.ca.CertPEM(),
 		ControllerEndpoint:  m.opts.ControllerEndpoint,
-		ZeroTierNetwork:     m.fleet.ZeroTierNetwork,
-		MgmtOverlayMSS:      m.fleet.MgmtOverlayMSS,
-		ReconcileInterval:   m.fleet.AgentReconcileInterval(),
-		ASBlacklistV4URL:    m.fleet.ASBlacklistV4URL,
-		ASBlacklistV6URL:    m.fleet.ASBlacklistV6URL,
-		ASBlacklistInterval: m.fleet.ASBlacklistInterval,
-		MgmtIgnoreCIDRs:     m.fleet.MgmtCIDRs(),
+		ZeroTierNetwork:     fleet.ZeroTierNetwork,
+		MgmtOverlayMSS:      fleet.MgmtOverlayMSS,
+		ReconcileInterval:   fleet.AgentReconcileInterval(),
+		ASBlacklistV4URL:    fleet.ASBlacklistV4URL,
+		ASBlacklistV6URL:    fleet.ASBlacklistV6URL,
+		ASBlacklistInterval: fleet.ASBlacklistInterval,
+		MgmtIgnoreCIDRs:     fleet.MgmtCIDRs(),
 	}
 	if m.opts.AgentBinPath != "" {
 		bin, err := os.ReadFile(m.opts.AgentBinPath)
@@ -418,6 +459,9 @@ func (m *Manager) clearInflight(nodeID string) {
 // findNode resolves a node name to its domain.Node + SSH target from the fleet
 // manifest (master or exit).
 func (m *Manager) findNode(name string) (domain.Node, config.SSHConfig, bool) {
+	m.fleetMu.RLock()
+	defer m.fleetMu.RUnlock()
+
 	for _, mm := range m.fleet.Masters {
 		if mm.Name == name {
 			return domain.Node{

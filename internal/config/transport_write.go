@@ -5,9 +5,22 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/shidoh/wgfleet/internal/domain"
 )
+
+// manifestWrite serializes every read-modify-write of the controller manifest.
+// Each writer reads the whole file, edits it in memory and renames a new copy over
+// it, so two overlapping web actions — a node delete racing a transport switch, or
+// two delete requests from two browser tabs — would each start from the same
+// snapshot and the later rename would silently reinstate whatever the earlier one
+// removed. A resurrected exit is indistinguishable from the declared-but-
+// unregistered ghost this deletion path exists to clear, so the race would look
+// like the bug coming back days later with no cause. The controller is the only
+// writer, so a process-local mutex is the whole scope; it is NOT protection against
+// an operator hand-editing the file at the same moment.
+var manifestWrite sync.Mutex
 
 // SetExitActiveTransport rewrites the `active_transport` of a single exit in the
 // controller manifest at path, in place, preserving every other line (comments,
@@ -21,6 +34,9 @@ import (
 // indent. The write is atomic (temp file + rename) and preserves the file mode.
 // An unknown exit is an error — we never silently no-op a switch the operator asked for.
 func SetExitActiveTransport(path, exitName string, t domain.MasterTransport) error {
+	manifestWrite.Lock()
+	defer manifestWrite.Unlock()
+
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read manifest %q: %w", path, err)
@@ -68,7 +84,11 @@ func findExitNameLine(lines []string, exitName string) (idx, indent int, found b
 			continue
 		}
 		rest := strings.TrimSpace(trimmed[2:])
-		if rest == "name: "+exitName || rest == "name: \""+exitName+"\"" {
+		// Compare the unquoted value: `name: fn7`, `name: "fn7"` and `name: 'fn7'` are
+		// the same exit to the YAML parser, so they must be the same exit here. Matching
+		// the raw text missed the single-quoted spelling, which made a delete report
+		// "not found" for an exit the manifest plainly declares.
+		if v, ok := strings.CutPrefix(rest, "name:"); ok && scalarValue(v) == exitName {
 			return i, len(l) - len(trimmed), true
 		}
 	}

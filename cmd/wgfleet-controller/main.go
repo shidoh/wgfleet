@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -439,20 +440,71 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 
 	var webSrv *http.Server
 	if cfg.Controller.WebUI != "" {
-		persistTransport := func(exitName string, t domain.MasterTransport) error {
-			if err := config.SetExitActiveTransport(configPath, exitName, t); err != nil {
-				return err
-			}
-			// The controller just rewrote the manifest itself. Without re-recording the
-			// digest this legitimate write would read as drift from here on, and a
-			// signal that cries wolf after every transport switch is one nobody heeds.
+		// The controller rewrites the manifest itself for a transport switch and for a
+		// node delete. Without re-recording the digest each legitimate write would read
+		// as drift from here on, and a signal that cries wolf after every one of them is
+		// one nobody heeds.
+		// Serializes write-then-digest as one operation. config.RemoveExit and
+		// config.SetExitActiveTransport each lock internally, so the FILE is never
+		// interleaved — but the digest is read after that lock is released, so two
+		// concurrent edits could interleave as "A writes, B writes, B digests, A
+		// digests-and-records-the-older-value", leaving the recorded digest describing
+		// a manifest that is no longer on disk. Nothing is corrupted; the drift signal
+		// just starts crying wolf, which is precisely how a drift signal stops being
+		// read. Taken around the whole closure, always before the config-level lock, so
+		// the two can never be acquired in opposing order.
+		var manifestOp sync.Mutex
+		redigestManifest := func() {
 			if d, derr := config.DigestFile(configPath); derr == nil {
 				effective.Set(d)
-				_ = config.WriteEffective(config.EffectiveFile, d, time.Now())
+				// The breadcrumb in /run is what an out-of-process reader (a support
+				// bundle, an operator's cat) consults to answer "is the running
+				// controller on the file on disk". Dropping this error left it holding
+				// the PRE-edit digest with no trace of why — false drift reported by the
+				// one tool someone reaches for to diagnose drift. Its twin at startup
+				// logs; this was the only branch here that stayed quiet.
+				if werr := config.WriteEffective(config.EffectiveFile, d, time.Now()); werr != nil {
+					slog.Warn("manifest rewritten but the effective-digest breadcrumb could not be updated; a support bundle may report false drift",
+						"path", config.EffectiveFile, "err", werr)
+				}
 			} else {
 				slog.Warn("manifest rewritten but could not re-digest it; drift may now read high",
 					"path", configPath, "err", derr)
 			}
+		}
+		persistTransport := func(exitName string, t domain.MasterTransport) error {
+			manifestOp.Lock()
+			defer manifestOp.Unlock()
+
+			if err := config.SetExitActiveTransport(configPath, exitName, t); err != nil {
+				return err
+			}
+			redigestManifest()
+			return nil
+		}
+		// Deleting a node removes its declaration too, so it stays deleted: the store
+		// row is its live state, but the manifest is what says the node EXISTS, and a
+		// node left declared comes straight back as a Pending card.
+		//
+		// Both halves are required. The file write makes it survive a restart; the
+		// ForgetExit makes it true NOW, because the controller reads the manifest once
+		// at startup and never reloads it. Without the second, the console re-renders
+		// the node seconds after deleting it and — since provisioning reads the same
+		// startup snapshot, SSH target intact, with no confirmation step — one click on
+		// that ghost card re-creates the node the operator just deleted.
+		//
+		// File first: ForgetExit is not persistent, so doing it first and then failing
+		// the write would hide a still-declared exit until the next restart brought it
+		// back. Losing the in-memory drop on a failed write is the recoverable order.
+		removeFromManifest := func(exitName string) error {
+			manifestOp.Lock()
+			defer manifestOp.Unlock()
+
+			if err := config.RemoveExit(configPath, exitName); err != nil {
+				return err
+			}
+			provMgr.ForgetExit(exitName)
+			redigestManifest()
 			return nil
 		}
 		exportBackup := func(ctx context.Context, recipient string) ([]byte, error) {
@@ -471,7 +523,7 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 				Encrypt:     backup.AgeEncryptor(recipient),
 			})
 		}
-		webHandler, err := web.New(st, broker, provMgr, persistTransport, exportBackup, cfg.WebUISessionTTL())
+		webHandler, err := web.New(st, broker, provMgr, persistTransport, removeFromManifest, exportBackup, cfg.WebUISessionTTL())
 		if err != nil {
 			return fmt.Errorf("build web ui: %w", err)
 		}

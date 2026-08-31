@@ -25,7 +25,7 @@ func newBackupHandler(t *testing.T, exporter func(ctx context.Context, recipient
 	if err := st.SetAuthCredential(context.Background(), "admin", hash, secret); err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(st, nil, nil, nil, exporter, testSessionTTL)
+	h, err := New(st, nil, nil, nil, nil, exporter, testSessionTTL)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

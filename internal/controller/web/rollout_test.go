@@ -45,7 +45,7 @@ func (f *fakeRoller) counts() (int, int) {
 
 func rollerHandler(t *testing.T, r Roller) *Handler {
 	t.Helper()
-	h, err := New(nil, nil, nil, nil, nil, 0)
+	h, err := New(nil, nil, nil, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatalf("web.New: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestRolloutStartRefusalRedirectsWithFlash(t *testing.T) {
 
 // With no Roller wired the action must be absent, not broken.
 func TestRolloutEndpointsReportUnconfigured(t *testing.T) {
-	h, err := New(nil, nil, nil, nil, nil, 0)
+	h, err := New(nil, nil, nil, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatalf("web.New: %v", err)
 	}

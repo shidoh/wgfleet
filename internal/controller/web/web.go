@@ -14,6 +14,7 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -112,6 +113,11 @@ type Handler struct {
 	// (the platform's source of truth) so the change survives restart / re-provision.
 	// nil ⇒ store-only (the live override still applies, but is not made durable).
 	persistTransport func(exitName string, t domain.MasterTransport) error
+	// removeFromManifest deletes a node's declaration from the manifest, so a
+	// deleted node stays deleted. Without it, deleting only the store row leaves the
+	// node declared, and nodes() re-adds every declared node the store does not know
+	// as a Pending stub — the node returns on the next page load. nil ⇒ store-only.
+	removeFromManifest func(exitName string) error
 	// exportBackup streams an age-encrypted controller backup for the given age
 	// recipient. nil ⇒ the export endpoint reports 501 Not Implemented.
 	exportBackup func(ctx context.Context, recipient string) ([]byte, error)
@@ -142,7 +148,7 @@ func (h *Handler) SetRoller(r Roller) { h.roller = r }
 // New builds the dashboard handler. renderer and prov may be nil (the spec
 // preview / provision action are then omitted). Each page is parsed as its own
 // template set so the per-page "content" definitions do not collide.
-func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTransport func(exitName string, t domain.MasterTransport) error, exportBackup func(ctx context.Context, recipient string) ([]byte, error), sessionTTL time.Duration) (*Handler, error) {
+func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTransport func(exitName string, t domain.MasterTransport) error, removeFromManifest func(exitName string) error, exportBackup func(ctx context.Context, recipient string) ([]byte, error), sessionTTL time.Duration) (*Handler, error) {
 	listTmpl, err := parsePage("templates/layout.html", "templates/nodes.html", "templates/rollout.html")
 	if err != nil {
 		return nil, fmt.Errorf("web: parse list templates: %w", err)
@@ -175,7 +181,7 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	if err != nil {
 		return nil, fmt.Errorf("web: generate csrf token: %w", err)
 	}
-	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, clientsTmpl: clientsTmpl, wgClientsTmpl: wgClientsTmpl, confirmTmpl: confirmTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute), subLimit: auth.NewIPLimiter(10, time.Minute, 4096)}
+	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, clientsTmpl: clientsTmpl, wgClientsTmpl: wgClientsTmpl, confirmTmpl: confirmTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, removeFromManifest: removeFromManifest, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute), subLimit: auth.NewIPLimiter(10, time.Minute, 4096)}
 
 	staticHandler := newStaticAssets(staticFS)
 	h.mux.Handle("GET /static/", staticHandler)
@@ -569,20 +575,85 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	// Enforce the same predicate the page renders the button on, server-side. The
+	// template hides Delete behind role==exit and CanDelete, but this handler is
+	// reachable as a plain POST, and it never checked either: hiding a control is a
+	// UI decision, not an access rule. handleDecommission re-checks its own gate for
+	// exactly this reason, and delete is the more destructive of the two — the store
+	// cascades every client credential issued on the node (schema v11 ON DELETE
+	// CASCADE), and it now drops the node's manifest block with its keys. What used
+	// to be a recoverable row deletion (the manifest re-added the node as Pending)
+	// is not recoverable any more, so the missing check stopped being survivable.
+	node, storeErr := h.store.GetNode(r.Context(), id)
+	unregistered := storeErr != nil
+	if unregistered {
+		mn, ok := h.manifestNode(id)
+		if !ok {
+			// Neither the store nor the manifest knows this id — a typo or a stale
+			// bookmark. Log it: this was the one branch in the handler that left no
+			// trace, so the operator following a dead link got a bare 404 and the
+			// journal had nothing to explain it.
+			h.log.Warn("delete for an unknown node", "node", id, "path", r.URL.Path)
+			http.Error(w, "node not found", http.StatusNotFound)
+			return
+		}
+		node = mn
+	}
+	if node.Role != domain.RoleExit {
+		h.redirectErr(w, r, "/nodes/"+id, "delete refused",
+			fmt.Errorf("only exits can be deleted: the master is the client gateway and load balancer, and this controller runs beside it"))
+		return
+	}
+	if !node.Decommission && !unregistered {
+		h.redirectErr(w, r, "/nodes/"+id, "delete refused",
+			fmt.Errorf("decommission and tear the node down first, then delete"))
+		return
+	}
 	if h.needsConfirmation(w, r, confirmView{
 		Title:        "Delete " + id,
 		Heading:      "Delete " + id + "?",
 		Consequence:  "This removes the node from the fleet inventory permanently, along with every client credential issued on it. Those people lose their tunnel and cannot be given it back — they need new configs.",
-		Detail:       "The node's own files are not touched; this is the controller forgetting it. Nothing here can be undone from the console.",
+		Detail:       "This also removes the node's declaration from the manifest (and its name from any reserve_exits), so bringing it back means declaring it again. The node's own files are not touched; this is the controller forgetting it. Nothing here can be undone from the console.",
 		Action:       "/nodes/" + id + "/delete",
 		ConfirmLabel: "Delete " + id,
 		CancelHref:   "/nodes/" + id,
 	}) {
 		return
 	}
-	if err := h.store.DeleteNode(r.Context(), id); err != nil {
+	// Store row first, declaration second, and a missing row is not an error. That
+	// order is what makes a retry converge: if the manifest write fails after the row
+	// is gone, the node is left declared-but-unregistered — exactly the ghost this
+	// whole path exists to clear — and pressing Delete again has to finish the job
+	// rather than fail on the row that is already gone. (Manifest-first would strand
+	// the opposite way: the retry would fail on the declaration it already removed.)
+	if err := h.store.DeleteNode(r.Context(), id); err != nil && !errors.Is(err, store.ErrNotFound) {
 		h.redirectErr(w, r, "/nodes/"+id, "delete node", err)
 		return
+	}
+	// Only nodes the manifest actually declares have a block to remove; a node that
+	// registered on its own was never declared, and asking to remove its declaration
+	// would fail on a block that never existed.
+	//
+	// EXITS only, and the role check is not decoration. ManifestNodes() returns
+	// masters as well as exits, and the routing lifecycle is exit-only for a reason
+	// the node template states: the master IS the client gateway and load balancer,
+	// and this controller is co-located with it. The template hides the buttons for a
+	// master, but this handler is reachable as a plain POST, and undeclaring the
+	// master is not a mistake the operator gets to see — a master-less manifest still
+	// loads, so the controller restarts clean and brokers a fleet with no hub.
+	// config.RemoveExit refuses a non-exit on its own; this is the second lock.
+	if mn, declared := h.manifestNode(id); declared && mn.Role == domain.RoleExit && h.removeFromManifest != nil {
+		// Already absent is the end state, not a failure. The controller reads the
+		// manifest once at startup and never reloads it (see cmd/.../sighup.go), so
+		// ManifestNodes() keeps offering this node from its startup snapshot even after
+		// the file stopped declaring it — the card comes back, and the operator presses
+		// Delete again. Telling them the removal failed, when the file already says
+		// exactly what they asked for, would be false and would look like the original
+		// undeletable-ghost bug.
+		if err := h.removeFromManifest(id); err != nil && !errors.Is(err, config.ErrExitNotDeclared) {
+			h.redirectErr(w, r, "/nodes/"+id, "remove node from manifest", err)
+			return
+		}
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
@@ -1086,7 +1157,21 @@ type nodeData struct {
 	CanProvision    bool
 	CanUpgrade      bool // node is provisioned + upgradable over SSH
 	CanDecommission bool // node is drained — safe to tear its data plane down
-	CanDelete       bool // node has been decommissioned — safe to remove from inventory
+	// CanDelete: the node has been decommissioned (torn down, safe to remove from
+	// inventory), OR it has no store row at all — a node declared in the manifest
+	// that never registered, or whose server is gone. The drain→decommission gate
+	// exists to stop a node being torn down while it still carries client traffic;
+	// a node with no store row carries nothing, has no data plane to reverse, and
+	// no flag anybody can set on it — every lifecycle action fails "store: not
+	// found". Gating Delete on it made the ghost of a destroyed server permanently
+	// undeletable from the console.
+	CanDelete bool
+	// Unregistered: the node is declared in the manifest but has no store row —
+	// never provisioned, or its server is gone. Drain and Decommission are store
+	// writes, so for such a node they can only ever fail "store: not found"; the
+	// page offers them as disabled with the reason, instead of as buttons whose
+	// only possible outcome is an error.
+	Unregistered bool
 	// WGClientCount is how many end-user credentials the delete would take with it.
 	// The store cascades them (schema v11 ON DELETE CASCADE), so the confirm has to
 	// say so: the only recovery is the age backup or re-issuing to every person by
@@ -1111,6 +1196,9 @@ type nodeData struct {
 func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	node, err := h.store.GetNode(r.Context(), id)
+	// unregistered: declared in the manifest but with no store row — never
+	// provisioned, or its server is gone. Nothing to drain, nothing to tear down.
+	unregistered := err != nil
 	if err != nil {
 		// Not in the store yet — show it from the manifest (Pending) so it can be
 		// provisioned. Only nodes the manifest knows are shown.
@@ -1126,7 +1214,7 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 		node = backfillFromManifest(node, mn)
 	}
 	user, _ := h.currentUser(r)
-	data := nodeData{Title: node.Name, NodeCount: h.fleetCount(r.Context()), User: user, Node: node, CSRF: h.csrf, CanDelete: node.Decommission, CanDecommission: node.Drain && !node.Decommission, Flash: h.takeFlash(w, r), MetricsURL: metricsURL(node)}
+	data := nodeData{Title: node.Name, NodeCount: h.fleetCount(r.Context()), User: user, Node: node, CSRF: h.csrf, CanDelete: node.Decommission || unregistered, Unregistered: unregistered, CanDecommission: node.Drain && !node.Decommission, Flash: h.takeFlash(w, r), MetricsURL: metricsURL(node)}
 	if node.WireVersion != 0 {
 		if compat := api.CheckWire(node.WireVersion); compat != api.WireCompatible {
 			data.WireSkew = api.IncompatibilityDetail(compat, node.WireVersion)

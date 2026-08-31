@@ -129,7 +129,7 @@ func newTestHandler(t *testing.T, renderer SpecRenderer) (*Handler, store.Store)
 	if err := st.SetAuthCredential(context.Background(), "admin", hash, secret); err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(st, renderer, nil, nil, nil, testSessionTTL)
+	h, err := New(st, renderer, nil, nil, nil, nil, testSessionTTL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +352,9 @@ func TestDrainUndrainActions(t *testing.T) {
 
 func TestDeleteAction(t *testing.T) {
 	h, st := newTestHandler(t, nil)
-	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+	// Decommissioned: the handler enforces the drain->decommission->delete order
+	// server-side, not just in the template.
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady, Decommission: true})
 
 	// Unconfirmed: the server asks, and deletes nothing. The page's own prompt is
 	// JavaScript — deferred, and absent entirely with scripting off — so without this
@@ -685,7 +687,7 @@ func newProvHandler(t *testing.T, prov Provisioner) (*Handler, store.Store) {
 	if err := st.SetAuthCredential(context.Background(), "admin", hash, secret); err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(st, nil, prov, nil, nil, testSessionTTL)
+	h, err := New(st, nil, prov, nil, nil, nil, testSessionTTL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1051,7 +1053,7 @@ func TestSetupCreatesAdminAndLogsIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	h, _ := New(st, nil, nil, nil, nil, testSessionTTL) // no admin seeded
+	h, _ := New(st, nil, nil, nil, nil, nil, testSessionTTL) // no admin seeded
 
 	// With no admin, "/" redirects to /setup.
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
