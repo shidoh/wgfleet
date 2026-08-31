@@ -380,6 +380,7 @@ MVP, in active development, `go test -race` green.
 | Egress-block detection + censorship-adaptive failover | ✅ |
 | Web dashboard, Prometheus metrics, encrypted backup/restore | ✅ |
 | Dual transport — VLESS + REALITY + XHTTP fallback, per-exit, live switch | ✅ |
+| AmneziaWG 3.x — plumbing shipped, **off by default and not enabled on any fleet** | ⏸ |
 
 **Phases 1 and 2 are complete.** **Phase 3** (censorship-adaptive egress) has
 block detection and automatic failover done, with traffic-noise remaining.
@@ -389,6 +390,17 @@ election) are optional and not started.
 Apply-side exec actions and live SSH are validated on **Linux** (Ubuntu 24.04,
 live multi-VM runs). Automatic AmneziaWG → REALITY failover is not implemented;
 switching transports is a manual, per-exit action today.
+
+**AmneziaWG 3.x is written but deliberately switched off.** The knobs exist
+(`fleet.awg3`, `fleet.exits[].awg3` for the master↔exit tunnels, and
+`masters[].client_awg.awg3: off | timers | full` for the leg your users dial), and
+they default to off. Two gates stand behind them — the controller requires wire v7
+from **both** ends of a tunnel, and each agent requires a 3.x kernel module on its
+own node — so a premature flip degrades to "stays on 2.0" rather than to a dead
+tunnel. Header protection additionally needs a `fleet.awg3_key` secret, and it is
+the half no 2.0 peer survives: every client must re-import. The timers half costs
+users nothing. What it takes to turn on, and in what order:
+[docs/client-migration.md](docs/client-migration.md) part 4.
 
 ---
 

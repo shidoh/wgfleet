@@ -516,27 +516,37 @@ re-import. See that key, and `fleet.awg3_key`, which both of them need.
 
 ### Before you turn it on
 
-The controller refuses to render 3.0 parameters for an exit unless **both** hold,
-so a premature flip degrades to "stays on 2.0" rather than to a dead tunnel:
+Two different gates, in two different places — a premature flip degrades to "stays
+on 2.0" rather than to a dead tunnel, but only the first is the controller's.
 
-1. **The exit's agent speaks wire v7 or later.** An older agent drops the 3.0
-   fields and brings its interface up as 2.0, while the master's mihomo — rendered
-   from the same decision — would emit `version: 3`. The two ends would disagree
-   about the wire format and never handshake.
-2. **The exit's kernel module is 3.x.** AmneziaWG 3.0 changed the netlink
-   attribute layout, so the module and `amneziawg-tools` must be on the same
-   generation. A mismatch fails `awg setconf` outright with
-   `attribute type 14 has an invalid length` and the interface never comes up.
+**The controller's gate: BOTH ends of the tunnel speak wire v7 or later.** Not just
+the exit — the master too. An older agent drops the 3.0 fields and brings its
+interface up as 2.0, while the other end, rendered from the same decision, emits
+`version: 3`; the two disagree about the wire format and never handshake. The
+master is the end people forget, and it lags its exits as a matter of routine:
+the rolling upgrade walks the exits and never touches masters. Enabling
+`fleet.awg3` while the master is behind would put every exit on 3.x and leave the
+master's mihomo on 2.0 — the whole data plane, not one node. So the controller
+checks the master's wire version as well, and renders 2.0 for that tunnel until
+both ends are ready.
 
-Check what a node actually runs before flipping the key:
+**The agent's gate: the node's own kernel module is 3.x.** The controller cannot
+check this — a module generation is a local fact that never travels on the wire —
+so it is enforced on the node, by the agent, on every pass. AmneziaWG 3.0 changed
+the netlink attribute layout, so the module and `amneziawg-tools` must be on the
+same generation; a mismatch fails `awg setconf` outright with `attribute type 14
+has an invalid length` and the interface never comes up. Rather than let that
+happen, the agent refuses the 3.x config and keeps the previous good one running.
+This gate fires on **any** 3.x field, timers included — so it also gates
+`client_awg.awg3: timers` on the master's module, not only header protection.
+
+Check what a node actually runs before flipping the key — and check the master,
+not only the exits:
 
 ```sh
 modinfo amneziawg | grep ^version   # kernel module generation
 awg --version                       # userspace tools generation
 ```
-
-The agent re-checks (2) locally on every pass and refuses to apply a 3.0 config to
-a 1.x module, leaving the previous good config running.
 
 `tools/check-awg3-status.sh` tracks the upstream readiness gates, including a
 watch-list of open defects in the kernel module itself.

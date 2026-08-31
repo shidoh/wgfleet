@@ -55,10 +55,12 @@ fleet:
                                              #   DEFAULT; each exit can override it. OPPOSITE
                                              #   polarity to hardening above: omitted ⇒ OFF, because
                                              #   enabling it changes a live tunnel's wire format.
-                                             #   Does NOT touch clients — wg-easy has no 3.0 support
-                                             #   at all. Needs wire v7 AND a 3.x kernel module on the
-                                             #   exit; the controller and the agent each refuse when
-                                             #   their half is unmet, so a premature flip degrades to
+                                             #   Does NOT touch clients — that leg has its own knob,
+                                             #   masters[].client_awg.awg3. Needs wire v7 on BOTH ends
+                                             #   of the tunnel (the master too, and it lags its exits
+                                             #   routinely) AND a 3.x kernel module on the node; the
+                                             #   controller checks the wire versions, the agent checks
+                                             #   its own module, and either refusing degrades to
                                              #   "that exit stays on 2.0", not to a dead tunnel.
 
   masters:

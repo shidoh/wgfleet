@@ -277,9 +277,13 @@ func resolveHardening(node, fleet *bool) bool {
 // the exit's own setting when it states one, else the fleet default, else OFF.
 //
 // Off-by-default is the whole point — see FleetSection.AWG3. This resolves the
-// OPERATOR's intent only; the controller applies two further gates before any 3.0
-// parameter reaches a node (keybroker.awg3Enabled): the exit's agent must speak
-// wire v7, and the exit's kernel module must be 3.x.
+// OPERATOR's intent only; two further gates stand between it and a node, and they
+// live in different places. The CONTROLLER (keybroker.awg3Enabled) requires wire
+// v7 from BOTH ends of the tunnel — the master as well as the exit, because the
+// rolling upgrade walks fleet.exits and leaves masters behind as a matter of
+// course. The AGENT (awgmod.CheckAWG3Supported) requires a 3.x kernel module on
+// the node itself; the controller cannot check that, because a module generation
+// never travels on the wire.
 func (f FleetSection) AWG3For(exit ExitConfig) bool {
 	if exit.AWG3 != nil {
 		return *exit.AWG3

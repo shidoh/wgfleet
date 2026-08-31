@@ -171,9 +171,14 @@ node to say it came back on it**. The data plane
   an IPv6 default route the master cannot answer — the route without the answer is
   a black hole that reads as an MTU fault for days, so the two halves ship
   together or not at all. Deploy the controller first, as always.
-- **This release adds a key that is REQUIRED once AmneziaWG 3.x is on.** If
-  `fleet.awg3` or any `exits[].awg3` is true, the controller now refuses to start
-  without `fleet.awg3_key` — and the header-protection key it derives is a
+- **This release adds a key that is REQUIRED once AmneziaWG 3.x header protection
+  is on.** If `fleet.awg3` or any `exits[].awg3` is true, OR any
+  `masters[].client_awg.awg3` is `full`, the controller now refuses to start
+  without `fleet.awg3_key`. Do not overlook that third trigger: it is the client
+  flag-day setting, so the crash loop described below is exactly what you would hit
+  on the night you have already handed out every new config. (`client_awg.awg3:
+  timers` needs no secret — it turns on no header protection.) The
+  header-protection key it derives is a
   DIFFERENT value from the one your tunnels use today, because it is now keyed on
   that secret instead of a salt compiled into the binary. Setting it flips both
   ends of every 3.x master↔exit tunnel, each on its own pull, so expect up to one

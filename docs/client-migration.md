@@ -21,7 +21,7 @@ Four parts, each a separate decision:
 | 1 | Upgrade the binaries | yes, `.prev` binaries | no |
 | 2 | Import the credentials | yes, nothing goes live | no |
 | 3 | Hand the interface over — the cutover | yes, until you issue a new client | no |
-| 4 | AmneziaWG 3.x `timers` | yes | no |
+| 4 | AmneziaWG 3.x `timers` | yes | no — but needs the master's module on 3.x first |
 | 4 | AmneziaWG 3.x `full` | **no** | **every one of them, at once** |
 
 **Stopping after any part is a finished state, not a half-migration.** Most fleets
@@ -341,8 +341,8 @@ fleet:
 
 Set it once and never change it. Rotating it re-derives the key on every 3.x
 tunnel: the master↔exit tunnels go dark for up to one reconcile interval each
-(both ends are rendered by one controller but applied by seven agents on their own
-schedules), and every client config in the field becomes invalid at once, exactly
+(both ends are rendered by one controller but applied by each node's agent on its
+own schedule), and every client config in the field becomes invalid at once, exactly
 as if you were flipping `full` again. `timers` needs no secret.
 
 **`full`** — adds header protection. **Every client must re-import before it works
