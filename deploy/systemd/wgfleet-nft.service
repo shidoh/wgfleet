@@ -1,0 +1,34 @@
+# Restores the node's firewall at boot, before anything can reach it.
+#
+# The ruleset is rendered by the agent and PERSISTS at /etc/wgfleet/wgfleet.nft;
+# what a reboot loses is only the kernel state. Until now nothing replayed it
+# early: the file sat on disk while the node came up with no wgfleet table at all,
+# and it stayed that way until the agent had started, registered with the
+# controller and completed a reconcile pass. If the controller happened to be
+# unreachable in that window — the exact situation in which a node is most likely
+# to be rebooted — the node ran unfirewalled indefinitely.
+#
+# This is deliberately dumb: apply the file, exit. It does not converge anything
+# and does not care what the controller thinks. The agent still owns the ruleset
+# and will replace it on its first successful pass.
+[Unit]
+Description=wgfleet firewall (replay the last rendered ruleset)
+DefaultDependencies=no
+After=nftables.service
+Before=network-pre.target
+Wants=network-pre.target
+# Nothing to replay before the agent has ever rendered it — a fresh node has no
+# file, and starting is then a no-op rather than a failure.
+ConditionPathExists=/etc/wgfleet/wgfleet.nft
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/wgfleet/wgfleet.nft
+# A ruleset the kernel refuses must be loud, but must not keep the node from
+# booting — the agent is the thing that can repair it, and it needs the node up.
+SuccessExitStatus=0
+Restart=no
+
+[Install]
+WantedBy=sysinit.target

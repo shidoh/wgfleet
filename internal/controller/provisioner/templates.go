@@ -38,6 +38,30 @@ table inet wgfleet_baseline {
 
 // systemdUnitTemplate runs the agent as a reconcile daemon, restarting on failure.
 // %s is an ExecStart flags tail, currently always empty (the unit is generic).
+// nftUnitTemplate replays the last rendered ruleset at boot. The file persists at
+// /etc/wgfleet/wgfleet.nft; only the kernel state is lost on a reboot, and nothing
+// used to put it back until the agent had started, registered AND completed a pass —
+// so a node rebooted while the controller was unreachable came up with no wgfleet
+// table at all and stayed that way. ConditionPathExists makes it a no-op on a node
+// that has never rendered one.
+const nftUnitTemplate = `[Unit]
+Description=wgfleet firewall (replay the last rendered ruleset)
+DefaultDependencies=no
+After=nftables.service
+Before=network-pre.target
+Wants=network-pre.target
+ConditionPathExists=/etc/wgfleet/wgfleet.nft
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/wgfleet/wgfleet.nft
+Restart=no
+
+[Install]
+WantedBy=sysinit.target
+`
+
 const systemdUnitTemplate = `[Unit]
 Description=wgfleet node agent
 After=network-online.target

@@ -244,10 +244,34 @@ NoNewPrivileges=yes
 WantedBy=multi-user.target
 UNIT
 
+# Replays the last rendered firewall at boot. The ruleset persists on disk; only
+# the kernel state is lost on a reboot, and nothing put it back until the agent had
+# started, registered and completed a pass — so a node rebooted while the controller
+# was unreachable came up with no wgfleet table at all. A no-op before the agent has
+# ever rendered one (ConditionPathExists).
+cat > "$UNITDIR/wgfleet-nft.service" <<'UNIT'
+[Unit]
+Description=wgfleet firewall (replay the last rendered ruleset)
+DefaultDependencies=no
+After=nftables.service
+Before=network-pre.target
+Wants=network-pre.target
+ConditionPathExists=/etc/wgfleet/wgfleet.nft
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/wgfleet/wgfleet.nft
+Restart=no
+
+[Install]
+WantedBy=sysinit.target
+UNIT
+
 # Non-fatal: containers/WSL have the unit files but no running systemd, and there
 # is no reason to abort the rest of the install (configs, next steps) over it.
 systemctl daemon-reload 2>/dev/null \
-  && log "installed systemd units (disabled): wgfleet-controller, wgfleet-agent" \
+  && log "installed systemd units (disabled): wgfleet-controller, wgfleet-agent, wgfleet-nft" \
   || warn "systemd not available here — units written to $UNITDIR but not reloaded"
 
 # ---------------------------------------------------------------------------

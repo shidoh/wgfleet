@@ -63,6 +63,7 @@ const (
 	// being upgraded, so a dead agent never blocks its own recovery.
 	remoteAgentBinPrev = remoteAgentBin + ".prev"
 	remoteUnit         = "/etc/systemd/system/wgfleet-agent.service"
+	remoteNFTUnit      = "/etc/systemd/system/wgfleet-nft.service"
 	remoteAgentYAML    = "/etc/wgfleet/agent.yaml"
 	remoteNodeCert     = "/etc/wgfleet/node.crt"
 	remoteNodeKey      = "/etc/wgfleet/node.key"
@@ -192,7 +193,10 @@ func BuildPlan(in BootstrapInput) Plan {
 	unit := renderSystemdUnit(in)
 	steps = append(steps,
 		uploadStep("install systemd unit", remoteUnit, []byte(unit), 0o644, unit),
+		uploadStep("install boot-time firewall unit", remoteNFTUnit,
+			[]byte(nftUnitTemplate), 0o644, nftUnitTemplate),
 		runStep("reload systemd", "systemctl daemon-reload"),
+		runStep("enable boot-time firewall replay", "systemctl enable wgfleet-nft"),
 		// restart (not `enable --now`): on a re-provision the agent is already
 		// running, and `enable --now` would NOT restart it, so the freshly uploaded
 		// binary/config would never be picked up. restart starts it if stopped.
