@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
@@ -52,5 +53,31 @@ func TestPlanSkipsNodesThatNeverReported(t *testing.T) {
 	}
 	if len(p.Skipped) != 1 {
 		t.Fatalf("skipped = %+v, want one entry accounting for it", p.Skipped)
+	}
+}
+
+// reconcile_interval is operator-configurable up to an hour. A fixed 90s staleness
+// bound made any node on a slower cadence permanently and silently ineligible for
+// every fleet-wide rollout — healthy, reporting exactly on schedule, and skipped.
+func TestFreshnessBoundFollowsTheReconcileCadence(t *testing.T) {
+	var f config.FleetSection
+	if got := FreshWithinFor(f); got != DefaultFreshWithin {
+		t.Errorf("default cadence gave %v, want the %v floor", got, DefaultFreshWithin)
+	}
+
+	f.ReconcileInterval = 5 * time.Minute
+	if got := FreshWithinFor(f); got != 10*time.Minute {
+		t.Errorf("5m cadence gave %v, want two intervals", got)
+	}
+
+	// The end-to-end effect: a node reporting on a 5-minute cadence stays a target.
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	nodes := []domain.Node{{
+		ID: "slowpoke", AgentVersion: "v1", State: domain.StateReady,
+		LastSeen: now.Add(-4 * time.Minute),
+	}}
+	p := BuildPlan(fleet(nil, "slowpoke"), nodes, "v2", now, FreshWithinFor(f))
+	if len(p.Targets) != 1 {
+		t.Fatalf("a node on a 5m cadence was skipped: %+v", p.Skipped)
 	}
 }

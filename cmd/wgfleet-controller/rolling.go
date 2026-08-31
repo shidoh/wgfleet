@@ -81,7 +81,7 @@ func rollingUpgrade(cfg *config.ControllerConfig, ca *pki.CA, agentBin string, p
 	if err != nil {
 		return fmt.Errorf("identify agent binary %s: %w", agentBin, err)
 	}
-	rp := rollout.BuildPlan(cfg.Fleet, nodes, want, time.Now(), rollout.DefaultFreshWithin)
+	rp := rollout.BuildPlan(cfg.Fleet, nodes, want, time.Now(), rollout.FreshWithinFor(cfg.Fleet))
 	printRollingPlan(rp, agentBin)
 	if plan {
 		return nil
@@ -167,7 +167,7 @@ func (w *webRoller) Plan() rollout.Plan {
 		w.log.Warn("rollout plan: list nodes failed", "err", err)
 		return rollout.Plan{Want: want}
 	}
-	return rollout.BuildPlan(w.fleet, nodes, want, time.Now(), rollout.DefaultFreshWithin)
+	return rollout.BuildPlan(w.fleet, nodes, want, time.Now(), rollout.FreshWithinFor(w.fleet))
 }
 
 func (w *webRoller) Start() error            { return w.co.Start(w.ctx, w.Plan()) }

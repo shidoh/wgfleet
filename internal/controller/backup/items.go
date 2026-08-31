@@ -237,8 +237,23 @@ func awg3KeyPath(cfg *config.ControllerConfig) string {
 // support bundle, where the scrubber cannot catch it because it arrives as prose
 // with no `key=` anchor. A secret must never be handled as a filename.
 func looksLikePath(raw string) bool {
-	return strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "~") ||
-		strings.HasPrefix(raw, "./") || strings.HasPrefix(raw, "../")
+	if strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "~") ||
+		strings.HasPrefix(raw, "./") || strings.HasPrefix(raw, "../") {
+		return true
+	}
+	// A bare relative name is a legitimate spelling — `awg3_key: awg3.key` is what a
+	// manifest next to its key files looks like, and it used to be backed up. Only an
+	// explicit prefix was accepted at first, which silently stopped carrying such a
+	// key while warning that it was "not a file on this host": true of a reference,
+	// misleading here, and easy to read as boilerplate.
+	//
+	// The thing being excluded is INLINE key material. Base64 of 32+ random bytes is
+	// long, and carries characters a filename would not: whitespace, '+', '/', '='.
+	// A short token with none of those is a filename.
+	if raw == "" || len(raw) > 64 || strings.ContainsAny(raw, " \t\n+=") {
+		return false
+	}
+	return true
 }
 
 // Warnings lists the irreplaceable things this host CANNOT put in an archive.

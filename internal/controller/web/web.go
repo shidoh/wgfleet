@@ -566,9 +566,9 @@ func (h *Handler) handleRecommission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if !h.requireExit(w, r, id, "cancel decommission") {
-		return
-	}
+	// Deliberately NOT role-gated — see requireExit. This is the only console action
+	// that clears a decommission, so refusing it for a non-exit would strand a master
+	// that carries the flag with no way back short of editing the database.
 	if err := h.store.SetNodeDecommission(r.Context(), id, false); err != nil {
 		h.redirectErr(w, r, "/nodes/"+id, "cancel decommission", err)
 		return
@@ -585,7 +585,10 @@ func (h *Handler) handleDrain(drain bool) http.HandlerFunc {
 			return
 		}
 		id := r.PathValue("id")
-		if !h.requireExit(w, r, id, "routing change") {
+		// Only the forward direction is gated. Returning a node TO routing must stay
+		// available whatever its role, and must not depend on a store read that can
+		// fail — undrain is what an operator reaches for mid-incident.
+		if drain && !h.requireExit(w, r, id, "take out of routing") {
 			return
 		}
 		if err := h.store.SetNodeDrain(r.Context(), id, drain); err != nil {
@@ -751,8 +754,17 @@ func (h *Handler) setCSRFCookie(w http.ResponseWriter) {
 // short-lived flash cookie with the message and 303-redirects there. The next
 // render reads-and-clears the flash into the page's styled .error-note, so a
 // failure no longer replaces the whole console with a bare http.Error text page.
-// requireExit refuses a routing-lifecycle action on anything but an exit, and
-// reports whether the caller may proceed.
+// requireExit refuses a FORWARD routing-lifecycle action on anything but an exit,
+// and reports whether the caller may proceed.
+//
+// Forward only, deliberately. The undo directions — undrain and recommission — are
+// never gated: gating them would mean that a master which somehow carries
+// Decommission=true (a build before this gate existed could set one with a plain
+// POST, and nothing outside the console is role-scoped — the agent tears down any
+// node whose spec says so, and cert renewal refuses any decommissioned node) could
+// not be recovered from the console at all. There is no CLI equivalent, so the only
+// way back would be raw SQL against the store. A guard that blocks the escape hatch
+// is worse than the thing it guards against.
 //
 // The lifecycle is exit-only for a reason the node template states: the master IS
 // the client gateway and load balancer, and this controller runs beside it. The

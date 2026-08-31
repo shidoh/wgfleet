@@ -50,3 +50,27 @@ func TestRestoreKeepsTheManifestOwnerOnly(t *testing.T) {
 		}
 	}
 }
+
+// A bare relative filename is a legitimate spelling and must keep travelling; only
+// inline key material must be refused. The first cut required an explicit path
+// prefix, which quietly stopped backing up `awg3_key: awg3.key`.
+func TestBareFilenameIsStillTreatedAsAPath(t *testing.T) {
+	for _, raw := range []string{"awg3.key", "keys/awg3.key", "/etc/wgfleet/awg3.key", "~/awg3.key", "./awg3.key"} {
+		cfg := &config.ControllerConfig{}
+		cfg.Fleet.AWG3Key = config.Secret(raw)
+		if awg3KeyPath(cfg) == "" {
+			t.Errorf("%q was not recognised as a path, so it would stop being backed up", raw)
+		}
+	}
+	// ...while inline key material still is not.
+	for _, raw := range []string{
+		"S3cr3tHeaderProtectionKeyMaterialAAAABBBBCCCC==",
+		"kQ8v+2mZ3xR7yT1uV5wX9aB0cD4eF6gH8iJ0kL2mN4o=",
+	} {
+		cfg := &config.ControllerConfig{}
+		cfg.Fleet.AWG3Key = config.Secret(raw)
+		if p := awg3KeyPath(cfg); p != "" {
+			t.Errorf("inline secret treated as a path: %q", p)
+		}
+	}
+}

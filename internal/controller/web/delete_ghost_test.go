@@ -218,7 +218,7 @@ func TestSecondDeleteOnAStaleCardIsNotAnError(t *testing.T) {
 // field pins the old public key, and a re-provision mints a new one — so it is the
 // awg3 `full` flag day, with no warning and no key handed out in advance.
 func TestMasterLifecycleActionsAreRefusedServerSide(t *testing.T) {
-	for _, action := range []string{"drain", "undrain", "decommission"} {
+	for _, action := range []string{"drain", "decommission"} {
 		t.Run(action, func(t *testing.T) {
 			h, st := newTestHandler(t, nil)
 			seed(t, st, domain.Node{
@@ -235,9 +235,35 @@ func TestMasterLifecycleActionsAreRefusedServerSide(t *testing.T) {
 			if n.Decommission {
 				t.Error("a plain POST decommissioned the MASTER — its teardown wipes the client-facing keys")
 			}
-			if action == "undrain" && !n.Drain {
-				t.Error("a plain POST changed the master's routing state")
+			if action == "drain" && !n.Drain {
+				t.Error("the pre-set drain flag was cleared by a refused action")
 			}
 		})
+	}
+}
+
+// The UNDO directions must never be role-gated. A master that somehow carries
+// Decommission=true — a build before the gate existed could set one with a plain
+// POST — has no other way back: there is no CLI equivalent, so a gate here would
+// leave raw SQL against the store as the only recovery.
+func TestUndoActionsStayAvailableForAMaster(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{
+		ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster,
+		State: domain.StateReady, Drain: true, Decommission: true,
+	})
+
+	postWith(t, h, "/nodes/master-xa-1/recommission", url.Values{"confirm": {"1"}})
+	postWith(t, h, "/nodes/master-xa-1/undrain", url.Values{"confirm": {"1"}})
+
+	n, err := st.GetNode(context.Background(), "master-xa-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Decommission {
+		t.Error("recommission was refused for a master — the console cannot undo a decommission it did not prevent")
+	}
+	if n.Drain {
+		t.Error("undrain was refused for a master — a node cannot be returned to routing")
 	}
 }

@@ -55,7 +55,17 @@ ConditionPathExists=/etc/wgfleet/wgfleet.nft
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/sbin/nft -f /etc/wgfleet/wgfleet.nft
+# A master renders THREE rulesets, not one: the input firewall (both roles), its
+# NAT table, and the client-facing IPv6 table. Replaying only the first would put
+# the firewall back while leaving clients with no egress — a node that looks
+# protected and does not work, which is worse than one that is plainly down.
+#
+# Applied in a loop over the files that EXIST rather than as three ExecStart lines
+# with a leading dash: on an exit both master files are absent, and the dash form
+# recorded that as a non-zero ExecMainStatus, so systemctl status reported a
+# failure on every healthy exit. A unit whose whole job is to be trustworthy at
+# boot must not cry wolf when it worked.
+ExecStart=/bin/sh -c 'for f in /etc/wgfleet/wgfleet.nft /etc/wgfleet/wgfleet-master.nft /etc/wgfleet/wgfleet-master-v6.nft; do [ -f "$$f" ] && /usr/sbin/nft -f "$$f"; done; exit 0'
 Restart=no
 
 [Install]

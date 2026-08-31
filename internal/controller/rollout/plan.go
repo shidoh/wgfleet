@@ -74,6 +74,20 @@ func (p Plan) Outdated() int { return len(p.Targets) }
 // client traffic, where the blast radius of a crash-looping agent is zero. Within
 // a tier the order is by name, so a plan is reproducible and an operator reading
 // a dry-run knows exactly which node is next.
+// FreshWithinFor derives the staleness bound from the fleet's own reconcile
+// cadence. A fixed bound cannot work: reconcile_interval is operator-configurable
+// (up to an hour), so a node set to report every five minutes is ALWAYS stale
+// against a 90-second window — and would be silently dropped from every fleet-wide
+// rollout while being perfectly healthy and reporting exactly on schedule. Two
+// intervals gives a node room to miss one report without being written off, with
+// the fixed default as a floor for fast cadences.
+func FreshWithinFor(fleet config.FleetSection) time.Duration {
+	if d := 2 * fleet.AgentReconcileInterval(); d > DefaultFreshWithin {
+		return d
+	}
+	return DefaultFreshWithin
+}
+
 // now and freshWithin decide which nodes are up enough to be worth touching. A node
 // that is already down is not a candidate: pushing to it burns the come-back gate's
 // full timeout, ROLLS THE NODE BACK, and halts the rollout at that point — and since
