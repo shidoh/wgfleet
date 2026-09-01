@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"sync"
 
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/config"
@@ -44,6 +45,12 @@ type Broker struct {
 	// one, which config validation permits only while header protection is off
 	// everywhere.
 	awg3Key string
+
+	// warned remembers which addressing complaints have already been logged, so a
+	// standing manifest problem is announced once instead of on every render. See
+	// warnOnce.
+	warnMu sync.Mutex
+	warned map[string]string
 }
 
 // New constructs a Broker over the given store and fleet manifest.
@@ -51,7 +58,7 @@ func New(st store.Store, fleet config.FleetSection, log *slog.Logger, opts ...Op
 	if log == nil {
 		log = slog.Default()
 	}
-	b := &Broker{store: st, fleet: fleet, log: log}
+	b := &Broker{store: st, fleet: fleet, log: log, warned: make(map[string]string)}
 	for _, o := range opts {
 		o(b)
 	}
@@ -504,9 +511,23 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 
 	// Routing intent: client traffic egresses via WARP, but management and the
 	// path back to the master must stay direct (an earlier finding–#5).
+	//
+	// MasterIP resolves from the node record lookupPubKey ALREADY read: a second
+	// store read here would have to swallow its own error, and "the store is
+	// briefly busy" would then render, apply and report a spec with no route back
+	// to the master — the return path silently falling into WARP, which is the
+	// failure an earlier finding exists to prevent. It is also an IP literal or nothing:
+	// routing.Render feeds it to `ip rule add to <X>`, which cannot resolve a name.
 	spec.Routing = domain.RoutingSpec{
-		MasterIP:    masterNode.PublicIP,
 		DirectCIDRs: mergeUnique(b.masterDirectCIDRs(master), mgmtCIDRs),
+	}
+	if ip, ok := masterRoutableIP(master, masterNode); ok {
+		spec.Routing.MasterIP = ip.String()
+	} else {
+		b.warnOnce("master-no-routable-ip:"+master.Name+"/"+exit.Name, master.PublicIP+"|"+masterNode.PublicIP,
+			"master has no usable IP literal (public_ip is unset or a DNS name and the store has none); "+
+				"the exit's direct route back to the master is omitted and its replies will follow the egress",
+			"exit", exit.Name, "master", master.Name, "public_ip", master.PublicIP)
 	}
 	if egress == domain.EgressWARP {
 		spec.Routing.EgressInterface = "wgcf"
@@ -592,6 +613,14 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		MaxFailedTimes:      master.Mihomo.MaxFailedTimes,
 	}
 
+	// The master's own node record, read ONCE for every use below (the /32 guard,
+	// the compose host, and the per-exit AWG-3 gate). Errors propagate: a store
+	// failure must not read as "this master has no address".
+	masterNode, _, err := b.lookupPubKey(ctx, master.Name)
+	if err != nil {
+		return domain.NodeSpec{}, err
+	}
+
 	// Route client traffic to the master's OWN public IP DIRECT, exactly as each
 	// exit's public IP is handled below. Without it the prerouting DNAT catches
 	// client TCP to the master's own address and sends it into mihomo instead of
@@ -600,17 +629,17 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	// Found live 2026-07-20 — the DNAT guard list carried all five exits and not
 	// the master, because the exit-public-IP fix was never applied to the node
 	// that hosts the rule.
-	if ip := b.masterPublicIP(ctx, master); ip != "" {
-		if addr, err := netip.ParseAddr(ip); err == nil {
-			bits := 32
-			if addr.Is6() {
-				bits = 128
-			}
-			ms.DirectCIDRs = append(ms.DirectCIDRs, netip.PrefixFrom(addr, bits).String())
-		} else {
-			b.log.Warn("master has unparseable public IP; omitting from DIRECT cidrs",
-				"master", master.Name, "public_ip", ip)
+	if addr, ok := masterRoutableIP(master, masterNode); ok {
+		bits := 32
+		if addr.Is6() {
+			bits = 128
 		}
+		ms.DirectCIDRs = append(ms.DirectCIDRs, netip.PrefixFrom(addr, bits).String())
+	} else if master.PublicIP != "" || masterNode.PublicIP != "" {
+		b.warnOnce("master-no-ip-literal:"+master.Name, master.PublicIP+"|"+masterNode.PublicIP,
+			"master has no public IP literal; omitting its own /32 from DIRECT cidrs "+
+				"(a DNS name in public_ip is fine for clients but unusable here — set a literal, or leave the store's)",
+			"master", master.Name, "public_ip", master.PublicIP, "stored", masterNode.PublicIP)
 	}
 	// Tier membership is master-scoped (ADR-0029): the same exit may be primary for
 	// one master and reserve for another, so resolve it per master, not per exit.
@@ -624,7 +653,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	if master.MgmtAddr != "" {
 		ms.ExternalController = master.MgmtAddr + ":9090" // Clash API on mgmt only
 	}
-	ms.Compose = b.composeSpec(ctx, master)
+	ms.Compose = b.composeSpec(ctx, master, masterEndpointHost(master, masterNode))
 	// Client-facing VLESS+REALITY+XHTTP inbound (a DPI-resistant alternative to the
 	// client AWG). Its world-facing TCP port opens like any other public service.
 	vlessSpec, verr := b.clientVLESSSpec(ctx, master)
@@ -686,41 +715,73 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			masterAddr = perTunnelAddr
 			keyTunnel = exit.Name
 		}
-		// Resolve the exit's public IP (the WG endpoint the master dials). Prefer the
-		// store value (set by provisioning, preserved across agent Register), but fall
-		// back to the manifest's public_ip / ssh.host. Without this fallback, an exit
-		// that registers without a prior provisioned inventory entry — e.g. re-added
-		// after a store-record delete (the drain→decommission→delete→re-add lifecycle)
-		// — has an empty PublicIP, yielding an empty endpoint that fails the WHOLE
-		// master mihomo render (one bad exit Errors the entire master). Mirrors the
-		// master's manifest fallback below.
-		exitPublicIP := exitNode.PublicIP
-		if exitPublicIP == "" {
-			exitPublicIP = exit.PublicIP
-			if exitPublicIP == "" {
-				exitPublicIP = exit.SSH.Host
-			}
+		// Resolve the exit's public IP (the WG endpoint the master dials): the
+		// manifest's public_ip, else its ssh.host (the documented default), else the
+		// store — first source that is an IP LITERAL, since both the endpoint and the
+		// /32 below go somewhere that cannot resolve a name.
+		//
+		// The MANIFEST decides, in the order docs/manifest.md promises. Nothing
+		// discovers this address — see masterEndpointHost for why the store row is a
+		// copy that only a re-provision refreshes — so reading the store first pinned
+		// the endpoint to whatever the node had on the day it was onboarded: an exit
+		// that changed address stayed unreachable however the manifest was edited, and
+		// the master's tunnel to it stayed down (reported against 0.1.6). Changing a
+		// node's address is an ordinary event, and it must take effect on the next
+		// render.
+		//
+		// The store is still the last resort so an exit the manifest describes by name
+		// only — hand-onboarded, or re-added after a store-record delete in the
+		// drain→decommission→delete→re-add lifecycle — renders SOME endpoint: an empty
+		// one fails the WHOLE master mihomo render, one bad exit Erroring the master.
+		if exit.PublicIP != "" && !isIPLiteral(exit.PublicIP) {
+			b.warnOnce("exit-public-ip-not-literal:"+exit.Name, exit.PublicIP,
+				"exit public_ip is not an IP address; the master cannot dial a name here, "+
+					"falling back to ssh.host and then the stored address",
+				"exit", exit.Name, "public_ip", exit.PublicIP)
 		}
+		exitIP, haveIP := firstIPLiteral(exit.PublicIP, exit.SSH.Host, exitNode.PublicIP)
 		endpoint := ""
-		var exitIP netip.Addr
-		var haveIP bool
-		if addr, err := netip.ParseAddr(exitPublicIP); err == nil {
-			exitIP, haveIP = addr, true
-			endpoint = netip.AddrPortFrom(addr, uint16(exit.WGListenPort())).String()
+		switch {
+		case haveIP:
+			endpoint = netip.AddrPortFrom(exitIP, uint16(exit.WGListenPort())).String()
 			// Route client traffic to this exit's OWN public IP DIRECT (master uplink),
 			// never through mihomo→wg-best→WARP. Without this, SSH/management to an
 			// exit's public IP breaks on a full-tunnel client, and traffic to the exit's
 			// own address would hairpin out WARP back to itself. The master already
 			// reaches exit endpoints directly — that is how the master↔exit tunnel dials.
 			bits := 32
-			if addr.Is6() {
+			if exitIP.Is6() {
 				bits = 128
 			}
-			ms.DirectCIDRs = append(ms.DirectCIDRs, netip.PrefixFrom(addr, bits).String())
-		} else if exitPublicIP != "" {
-			b.log.Warn("exit has unparseable public IP; omitting from master proxies",
-				"exit", exit.Name, "public_ip", exitPublicIP)
+			ms.DirectCIDRs = append(ms.DirectCIDRs, netip.PrefixFrom(exitIP, bits).String())
+		case exit.PublicIP != "" || exit.SSH.Host != "" || exitNode.PublicIP != "":
+			b.warnOnce("exit-no-usable-ip:"+exit.Name,
+				exit.PublicIP+"|"+exit.SSH.Host+"|"+exitNode.PublicIP,
+				"exit has no usable public IP (nothing in public_ip, ssh.host or the stored "+
+					"address parses as one); omitting from master proxies",
+				"exit", exit.Name, "public_ip", exit.PublicIP, "ssh_host", exit.SSH.Host,
+				"stored", exitNode.PublicIP)
 			continue
+		default:
+			// Every source empty. Left to fail the render rather than silently dropping
+			// the exit: this is a node nobody ever gave an address, not a node whose
+			// address went bad, and the master's mihomo render says so loudly.
+			b.warnOnce("exit-no-address:"+exit.Name, "empty",
+				"exit has no public address at all: public_ip, ssh.host and the stored "+
+					"address are all empty; the master render will fail until one is set",
+				"exit", exit.Name)
+		}
+		// An exit dialled over the management overlay is almost always an accident:
+		// ssh.host is repointed there when a node's direct path is black-holed (the
+		// documented workaround), and with public_ip unset that address silently
+		// becomes the tunnel endpoint too — the tunnel comes UP, every check stays
+		// green, and throughput collapses to the overlay's ceiling. an earlier finding.
+		if haveIP && exit.PublicIP == "" && b.inMgmtOverlay(exitIP) {
+			b.warnOnce("exit-endpoint-on-overlay:"+exit.Name, endpoint,
+				"exit endpoint is a management-overlay address (public_ip unset, taken from ssh.host); "+
+					"the master↔exit tunnel will run over the overlay — declare public_ip to make it "+
+					"a decision instead of a default (the same address is fine)",
+				"exit", exit.Name, "endpoint", endpoint)
 		}
 
 		// Dual-transport (ADR-0025): an exit may carry both AWG and REALITY. The
@@ -754,10 +815,6 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			// signatures free of the <c>/<t> tags it cannot parse.
 			seed := wg.TunnelSeed(exit.Name, master.Name, awgSalt)
 			awg := wg.DeriveAWGParamsForEnd(seed, "master", false)
-			masterNode, _, merr := b.lookupPubKey(ctx, master.Name)
-			if merr != nil {
-				return domain.NodeSpec{}, merr
-			}
 			// Mirror of the exit end in renderExitSpec — same gate, same two node
 			// records, so the two ends of this tunnel cannot disagree about the AWG
 			// generation. THIS end is rendered into mihomo by the master's own agent,
@@ -1098,18 +1155,12 @@ func (b *Broker) clientResolvers(ctx context.Context, master config.MasterConfig
 // composeSpec assembles the master's container-stack desired state. Client DNS
 // defaults to the exits' mgmt addresses (where blocky listens) when the operator
 // has not set it explicitly. The master's own public IP seeds wg-easy first run.
-func (b *Broker) composeSpec(ctx context.Context, master config.MasterConfig) domain.ComposeSpec {
+func (b *Broker) composeSpec(ctx context.Context, master config.MasterConfig, publicIP string) domain.ComposeSpec {
 	cc := master.Compose
 	dns := b.clientResolvers(ctx, master)
-	// PublicIP seeds wg-easy's INIT_HOST (the endpoint clients dial) and is needed
-	// for unattended setup to complete. Prefer the discovered address from the
-	// store; fall back to the manifest's public_ip so a co-located master (hand-
-	// onboarded, never SSH-provisioned, so PublicIP may be unset in the store) still
-	// gets a host.
-	publicIP := master.PublicIP
-	if node, err := b.store.GetNode(ctx, master.Name); err == nil && node.PublicIP != "" {
-		publicIP = node.PublicIP
-	}
+	// publicIP seeds wg-easy's INIT_HOST (the endpoint clients dial) and is needed
+	// for unattended setup to complete. Resolved by the caller from the master's
+	// node record it already holds (masterEndpointHost), so a DNS name survives.
 	return domain.ComposeSpec{
 		WGEasyImage:      config.ResolveImage(cc.WGEasyImage, cc.WGEasyTag, compose.DefaultWGEasyImage),
 		MihomoImage:      config.ResolveImage(cc.MihomoImage, cc.MihomoTag, compose.DefaultMihomoImage),
@@ -1252,15 +1303,98 @@ func (b *Broker) masterDirectCIDRs(m config.MasterConfig) []string {
 	return append([]string(nil), m.Routing.DirectCIDRs...)
 }
 
-// masterPublicIP resolves the master's public address the same way the compose
-// spec does: prefer what the store discovered, fall back to the manifest. The
-// co-located master is hand-onboarded and never SSH-provisioned, so its store
-// record can legitimately carry no public IP. Returns "" when neither has one.
-func (b *Broker) masterPublicIP(ctx context.Context, m config.MasterConfig) string {
-	if node, err := b.store.GetNode(ctx, m.Name); err == nil && node.PublicIP != "" {
-		return node.PublicIP
+// masterEndpointHost resolves the host END USERS dial the master at: the
+// manifest's public_ip when the operator declared one, else whatever the store
+// carries. It may be a DNS NAME — docs/master-migration.md recommends exactly
+// that, so a future move of the master is a DNS record change instead of a
+// re-issue of every client profile.
+//
+// The manifest wins because it is the only place this value is ever DECLARED —
+// nothing discovers it. The agent's Register sends a public IP only when started
+// with --public-ip, which no unit we install does, so a store row is a copy of
+// the manifest taken at provisioning time and refreshed only by another one.
+// Preferring it meant an operator could change public_ip, restart the
+// controller, and change nothing: the master kept dialing the address the node
+// had on the day it was onboarded, and the tunnel stayed down (reported against
+// 0.1.6). The store remains the fallback: a co-located master is hand-onboarded
+// and never SSH-provisioned, so its manifest entry may legitimately carry no
+// public_ip while the store does. Returns "" when neither has one.
+//
+// Unlike an exit's, this resolution does NOT fall back to ssh.host. This is the
+// address end users dial, and ssh.host is often the management overlay (the
+// documented workaround for a black-holed direct path) — clientcfg.EndpointHost
+// refuses it for the same reason, and it must not sneak in through here.
+func masterEndpointHost(m config.MasterConfig, node domain.Node) string {
+	if m.PublicIP != "" {
+		return m.PublicIP
 	}
-	return m.PublicIP
+	return node.PublicIP
+}
+
+// masterRoutableIP resolves the master's address for the KERNEL: the exit's
+// "traffic back to the master stays on the main table" ip-rule and
+// the master's own /32 in the DNAT guard list.
+//
+// It is deliberately not masterEndpointHost: that one may hold a DNS name, and
+// `ip rule add to <name>` does not resolve — the step is not best-effort, so a
+// name there fails every WARP exit's routing reconcile on every pass and leaves
+// an earlier finding's rule uninstalled fleet-wide. So take the first source that is an
+// IP LITERAL: a name in public_ip keeps serving clients while the kernel-level
+// guards fall back to the address the store holds.
+func masterRoutableIP(m config.MasterConfig, node domain.Node) (netip.Addr, bool) {
+	return firstIPLiteral(m.PublicIP, node.PublicIP)
+}
+
+// firstIPLiteral returns the first candidate that parses as an IP address.
+// Empty candidates and DNS names are skipped rather than fatal, so one unusable
+// source does not cost a node the address another source has.
+func firstIPLiteral(cands ...string) (netip.Addr, bool) {
+	for _, c := range cands {
+		if addr, err := netip.ParseAddr(c); err == nil {
+			return addr, true
+		}
+	}
+	return netip.Addr{}, false
+}
+
+// inMgmtOverlay reports whether addr falls inside the management overlay — either
+// the declared mgmt_subnet or, when there is none, one of the nodes' own mgmt
+// addresses (MgmtCIDRs renders those as /32s). Used to catch an exit whose tunnel
+// endpoint has quietly become its overlay address; see an earlier finding.
+func (b *Broker) inMgmtOverlay(addr netip.Addr) bool {
+	for _, c := range b.fleet.MgmtCIDRs() {
+		p, err := netip.ParsePrefix(c)
+		if err != nil {
+			continue
+		}
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// warnOnce logs msg the first time this key is seen with this detail, and again
+// only when the detail changes. Every one of its callers reports a manifest the
+// operator has to go and edit — a standing condition, not a transient one — and a
+// spec renders per node every ~30s, so logging on each pass buried the fleet's
+// real events under thousands of identical lines a day. That is the same churn
+// Register was fixed for; do not reintroduce it by warning in a render loop.
+func (b *Broker) warnOnce(key, detail, msg string, args ...any) {
+	b.warnMu.Lock()
+	if prev, seen := b.warned[key]; seen && prev == detail {
+		b.warnMu.Unlock()
+		return
+	}
+	b.warned[key] = detail
+	b.warnMu.Unlock()
+	b.log.Warn(msg, args...)
+}
+
+// isIPLiteral reports whether s is an IP address rather than a DNS name.
+func isIPLiteral(s string) bool {
+	_, err := netip.ParseAddr(s)
+	return err == nil
 }
 
 // mergeUnique concatenates a and b, dropping empties and duplicates while keeping

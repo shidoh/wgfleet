@@ -136,6 +136,123 @@ func TestProvisionClearsDecommissionAndDrain(t *testing.T) {
 	}
 }
 
+// An exit that changes address: the operator edits public_ip in the manifest and
+// re-provisions. The store row must follow, or the console and the support bundle
+// keep reporting the address the node had on the day it was onboarded — nothing
+// else ever writes this field (the agent advertises no public IP).
+func TestReprovisionRefreshesManifestInventory(t *testing.T) {
+	mock := readyMock()
+	m, st := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) { return mock, nil })
+	ctx := context.Background()
+
+	if _, err := m.Provision(ctx, "exit-de-1", provisioner.ModeApply); err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+	// The node moved: new public address, declared in the manifest. A manifest edit
+	// takes effect on controller restart, so the second run is a fresh manager over
+	// the same store — exactly what the operator gets.
+	fleet := testFleet()
+	fleet.Exits[0].PublicIP = "198.51.100.99"
+	fleet.Exits[0].MgmtAddr = "10.20.0.9"
+	fleet.Exits[0].Region = "nl"
+	fleet.Exits[0].SSH.Host = "198.51.100.99"
+	ca, err := pki.NewCA("test-ca")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = New(st, ca, fleet, Options{
+		ControllerEndpoint: "ctl:8443",
+		Dial:               func(domain.SSHTarget) (provisioner.Runner, error) { return mock, nil },
+		AgentBinPath:       writeFakeAgentBin(t),
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if _, err := m.Provision(ctx, "exit-de-1", provisioner.ModeApply); err != nil {
+		t.Fatalf("re-provision: %v", err)
+	}
+	node, gerr := st.GetNode(ctx, "exit-de-1")
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if node.PublicIP != "198.51.100.99" {
+		t.Errorf("PublicIP = %q, want the manifest's new 198.51.100.99", node.PublicIP)
+	}
+	if node.MgmtAddr != "10.20.0.9" {
+		t.Errorf("MgmtAddr = %q, want the manifest's new 10.20.0.9", node.MgmtAddr)
+	}
+	if node.Region != "nl" {
+		t.Errorf("Region = %q, want the manifest's new nl", node.Region)
+	}
+	if node.SSH.Host != "198.51.100.99" {
+		t.Errorf("SSH.Host = %q, want the manifest's new 198.51.100.99", node.SSH.Host)
+	}
+}
+
+// The other half of the refresh rule: a manifest SILENT about a field must not
+// blank what the store already has. Only non-empty manifest values overwrite.
+func TestReprovisionKeepsFieldsTheManifestOmits(t *testing.T) {
+	mock := readyMock()
+	m, st := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) { return mock, nil })
+	ctx := context.Background()
+
+	if _, err := m.Provision(ctx, "exit-de-1", provisioner.ModeApply); err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+	fleet := testFleet()
+	fleet.Exits[0].Region = "" // manifest says nothing about the region any more
+	ca, err := pki.NewCA("test-ca")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = New(st, ca, fleet, Options{
+		ControllerEndpoint: "ctl:8443",
+		Dial:               func(domain.SSHTarget) (provisioner.Runner, error) { return mock, nil },
+		AgentBinPath:       writeFakeAgentBin(t),
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if _, err := m.Provision(ctx, "exit-de-1", provisioner.ModeApply); err != nil {
+		t.Fatalf("re-provision: %v", err)
+	}
+	node, gerr := st.GetNode(ctx, "exit-de-1")
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if node.Region != "de" {
+		t.Errorf("Region = %q, want the stored de kept (manifest is silent)", node.Region)
+	}
+}
+
+// A master's public address is public_ip and nothing else: ssh.host is often the
+// management overlay, and laundering it through the store would put an overlay
+// address in the console's PUBLIC field and in every client profile the keybroker
+// falls back to it for.
+func TestMasterManifestNodeDoesNotBorrowSSHHost(t *testing.T) {
+	mock := readyMock()
+	m, _ := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) { return mock, nil })
+	m.fleet.Masters = []config.MasterConfig{{
+		Name: "master-xa-1", MgmtAddr: "10.20.25.254",
+		SSH: config.SSHConfig{Host: "10.20.25.254", User: "root"}, // overlay address
+	}}
+	m.fleet.Exits[0].SSH.Host = "198.51.100.7"
+
+	nodes := m.ManifestNodes()
+	if len(nodes) != 2 {
+		t.Fatalf("ManifestNodes() = %d nodes, want the master and the exit", len(nodes))
+	}
+	for _, n := range nodes {
+		switch n.Role {
+		case domain.RoleMaster:
+			if n.PublicIP != "" {
+				t.Errorf("master PublicIP = %q, want empty (public_ip unset; ssh.host must not stand in)", n.PublicIP)
+			}
+		case domain.RoleExit:
+			// An exit's endpoint is dialled by the MASTER, so ssh.host is a sane default.
+			if n.PublicIP != "198.51.100.7" {
+				t.Errorf("exit PublicIP = %q, want the ssh.host default", n.PublicIP)
+			}
+		}
+	}
+}
+
 func TestProvisionPlanModeDoesNotPersist(t *testing.T) {
 	mock := readyMock()
 	m, st := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) { return mock, nil })

@@ -538,16 +538,16 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// endpointHost resolves the public host clients dial the master at: the stored
-// public IP, falling back to the compose spec's (manifest public_ip).
+// endpointHost resolves the public host clients dial the master at: the spec's
+// public IP (manifest-then-store, resolved by the controller), falling back to
+// whatever the store registered. Same order as clientcfg.EndpointHost, and for
+// the same reason — the manifest is where the address is declared, the store row
+// is a stale copy from first provisioning.
 func endpointHost(node domain.Node, spec domain.NodeSpec) string {
-	if node.PublicIP != "" {
-		return node.PublicIP
-	}
-	if spec.Master != nil {
+	if spec.Master != nil && spec.Master.Compose.PublicIP != "" {
 		return spec.Master.Compose.PublicIP
 	}
-	return ""
+	return node.PublicIP
 }
 
 // validClientName bounds the operator-supplied label so it is safe as a store key

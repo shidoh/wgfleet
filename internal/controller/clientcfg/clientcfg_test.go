@@ -150,16 +150,23 @@ func TestFindByID(t *testing.T) {
 }
 
 // The endpoint falls back through the sources in the order an operator would
-// expect: the registered public IP first, then what the manifest declared, then
-// the address we provisioned the node through.
+// expect: the address the manifest declares (carried in the spec) first, then
+// whatever the store registered, and never the address we provisioned through.
+// The declared address wins because a master that moves is an ordinary event and
+// the store row is never refreshed — see EndpointHost.
 func TestEndpointHostFallback(t *testing.T) {
 	spec := managedSpec()
 	spec.Master.Compose.PublicIP = "198.51.100.4"
 	node := domain.Node{PublicIP: "203.0.113.1", SSH: domain.SSHTarget{Host: "192.0.2.9"}}
 
+	if got := EndpointHost(node, spec); got != "198.51.100.4" {
+		t.Errorf("EndpointHost() = %q, want the declared public IP", got)
+	}
+	spec.Master.Compose.PublicIP = ""
 	if got := EndpointHost(node, spec); got != "203.0.113.1" {
 		t.Errorf("EndpointHost() = %q, want the registered public IP", got)
 	}
+	spec.Master.Compose.PublicIP = "198.51.100.4"
 	node.PublicIP = ""
 	if got := EndpointHost(node, spec); got != "198.51.100.4" {
 		t.Errorf("EndpointHost() = %q, want the manifest's public IP", got)
@@ -167,6 +174,7 @@ func TestEndpointHostFallback(t *testing.T) {
 	// The SSH host is deliberately NOT a fallback: it is often the management
 	// overlay, and a client profile must never point end users there.
 	spec.Master.Compose.PublicIP = ""
+	node.PublicIP = ""
 	if got := EndpointHost(node, spec); got != "" {
 		t.Errorf("EndpointHost() = %q, want empty — the SSH host must not reach a client config", got)
 	}

@@ -108,8 +108,16 @@ func FindByID(ctx context.Context, src Source, masters []string, clientID string
 	return "", store.ErrNotFound
 }
 
-// EndpointHost resolves the address clients dial: the node's registered public
-// IP, else the one the manifest declares.
+// EndpointHost resolves the address clients dial: the spec's public IP — which
+// the controller already resolved as manifest-then-store, and which may be a DNS
+// name — else the node's registered one. The fallback covers both a spec with no
+// master section and, the case that actually happens, a master section whose own
+// resolution came up empty.
+//
+// The spec comes first because the manifest is where this address is DECLARED and
+// the store row is a copy taken at provisioning time that only another provisioning
+// run refreshes. Reading the store first meant a master that changed address kept
+// handing out profiles pointing at the old one.
 //
 // It deliberately does NOT fall back to the SSH host. That address is often the
 // management overlay (the documented workaround when direct SSH is black-holed),
@@ -118,13 +126,10 @@ func FindByID(ctx context.Context, src Source, masters []string, clientID string
 // the same two sources — a third fallback here meant the page said "no endpoint"
 // while the download quietly produced one.
 func EndpointHost(node domain.Node, spec domain.NodeSpec) string {
-	if node.PublicIP != "" {
-		return node.PublicIP
-	}
 	if spec.Master != nil && spec.Master.Compose.PublicIP != "" {
 		return spec.Master.Compose.PublicIP
 	}
-	return ""
+	return node.PublicIP
 }
 
 // ConfigFileName is the filename a downloaded config is offered under.

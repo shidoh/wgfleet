@@ -127,6 +127,47 @@ In practice:
     controller that answers and refuses — a deleted node, a revoked certificate, a
     wire-version mismatch — is obeyed. A node you deleted does not rebuild itself.
 
+## A node changed its public address
+
+A node moves — the provider reassigns it, or you migrate it. The address the
+fleet dials is declared in the manifest, and nowhere else: no agent discovers or
+reports it. So a move is a manifest edit plus a controller restart.
+
+1. Edit the node's entry.
+   - **An exit:** `public_ip` when it is set, otherwise `ssh.host` — that is what
+     `public_ip` defaults to. Set both if SSH and the tunnel should go to
+     different addresses; that is exactly what `public_ip` is for.
+   - **A master:** `public_ip`, and only that. It does not fall back to
+     `ssh.host` (which is often the management overlay, and must never reach a
+     client profile), so a master with no `public_ip` has no endpoint to hand out
+     and the client pages say so.
+2. Restart the controller. It reads the manifest once at startup and never
+   reloads it, so nothing changes until you do.
+3. Wait for two reconcile passes (~60s with the default 30s interval). They are
+   not synchronised: the master's next pass re-renders the tunnel at the new
+   endpoint and re-dials, then the exit's own next pass sees the fresh handshake
+   and leaves **Degraded**. No re-provisioning, no touching the node itself.
+
+Re-provisioning is not required. It is what refreshes the node's stored copy of
+the address, which is otherwise only visible as the value the console falls back
+to for a node the manifest does not declare. The console shows the manifest's
+value either way.
+
+An exit's address must be an IP literal: the master dials `ip:port` and the
+kernel gets a `/32`, so a DNS name there is skipped and the next source is used.
+A master's `public_ip` may be a DNS name — `docs/master-migration.md` recommends
+one, so a future move is a record change — and the routing rules that need a
+literal fall back to the provisioned address.
+
+If it was the **master** that moved, client profiles already handed out still
+carry the old endpoint: re-issue them and have each device re-import. Nothing on
+the fleet side rewrites a config a user already has.
+
+> Up to and including 0.1.7 this did not work: the endpoint came from a copy of the address
+> taken at first provisioning, and nothing ever refreshed it. Editing the
+> manifest and restarting changed nothing, the master kept dialing the old
+> address, and the exit sat in **Degraded** with a dead `wg-handshake`.
+
 ## Support bundle
 
 A read-only diagnostic archive, for handing a broken fleet to someone who has no

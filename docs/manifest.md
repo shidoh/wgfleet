@@ -69,7 +69,13 @@ fleet:
       public_ip: 203.0.113.10               # the endpoint clients dial, written into every
                                             # client config. NOT a description of the box:
                                             # see the note under exits[] below, where the
-                                            # distinction has bitten us.
+                                            # distinction has bitten us. May be a DNS name, so
+                                            # a future move of the master is a record change
+                                            # (docs/master-migration.md); the kernel-level
+                                            # guards then use the provisioned address instead.
+                                            # Unlike an exit's, this does NOT fall back to
+                                            # ssh.host: that is often the mgmt overlay, and it
+                                            # must never reach a client profile.
       client_awg:
         managed: true                       # the AGENT owns the client interface: credentials
                                             # live in the controller's store, and issue / pause
@@ -156,9 +162,12 @@ fleet:
                                             # explicitly whenever ssh and the tunnel should go
                                             # different ways. It also seeds a /32 DIRECT route
                                             # so full-tunnel clients can still reach the node.
-                                            # For a PROVISIONED node the store's value wins
-                                            # over this key: editing it here does not move a
-                                            # live endpoint.
+                                            # This key wins over the address the store copied
+                                            # at provisioning time: edit it, restart the
+                                            # controller, and the endpoint moves (see
+                                            # docs/operations.md, "A node changed its public
+                                            # address"). Must be an IP literal — a DNS name
+                                            # here is skipped and the next source is used.
       transports:                           # master↔exit transport(s); omit ⇒ AWG-only
         awg: { enabled: true, listen_port: 0 }       # primary transport. WG UDP port; 0 ⇒ stable-random derived
         reality:                            # fallback transport (VLESS+REALITY+XHTTP, xray) for when AWG is DPI-blocked

@@ -29,9 +29,9 @@ func provisionNode(cfg *config.ControllerConfig, ca *pki.CA, opts provisionOpts)
 	}
 
 	// Open the store so apply-mode provisioning persists the node's inventory
-	// (mgmt_addr, public_ip) — the keybroker renders the master↔exit endpoint from
-	// it. Plan mode does not write, but opening is cheap and keeps both paths the
-	// same. (If a controller is already serving, sqlite WAL handles the brief
+	// (mgmt_addr, public_ip) — the console reads it, and the keybroker falls back to
+	// it for a node the manifest declares no address for. Plan mode does not write,
+	// but opening is cheap and keeps both paths the same. (If a controller is already serving, sqlite WAL handles the brief
 	// concurrent open of this one-shot.)
 	st, err := store.Open(cfg.Controller.Store)
 	if err != nil {

@@ -456,6 +456,30 @@ func (m *Manager) ensureNode(ctx context.Context, node domain.Node, state domain
 		existing.LastError = ""
 		existing.Decommission = false
 		existing.Drain = false
+		// Refresh the fields the MANIFEST owns. Keeping the existing row wholesale
+		// pinned public_ip to whatever the node had when it was first onboarded: a node
+		// that changed address kept the old one in the console, because nothing else
+		// ever writes it (the agent advertises a public IP only under --public-ip,
+		// which no installed unit passes). Only non-empty manifest values overwrite —
+		// except Role, which the manifest always states and Register rewrites on every
+		// pass anyway — so a node the manifest is silent about keeps what it has.
+		//
+		// mgmt_addr is refreshed too even though Register keeps it fresh on its own:
+		// provisioning is about to write this very value into the node's agent.yaml,
+		// so the manifest is what the agent will report from here on.
+		if node.PublicIP != "" {
+			existing.PublicIP = node.PublicIP
+		}
+		if node.MgmtAddr != "" {
+			existing.MgmtAddr = node.MgmtAddr
+		}
+		if node.Region != "" {
+			existing.Region = node.Region
+		}
+		existing.Role = node.Role
+		if node.SSH.Host != "" {
+			existing.SSH = node.SSH
+		}
 		return m.store.UpsertNode(ctx, existing)
 	}
 	node.State = state
@@ -489,7 +513,15 @@ func (m *Manager) findNodeLocked(name string) (domain.Node, config.SSHConfig, bo
 		if mm.Name == name {
 			return domain.Node{
 				ID: mm.Name, Name: mm.Name, Role: domain.RoleMaster,
-				MgmtAddr: mm.MgmtAddr, PublicIP: publicIP(mm.PublicIP, mm.SSH.Host),
+				// A master's public address is public_ip and nothing else. Unlike an
+				// exit's — which the MASTER dials, so ssh.host is a sane default — this
+				// one is what END USERS dial, and ssh.host is often the management
+				// overlay. Defaulting it here laundered the overlay address into the
+				// store, where the console displays it as PUBLIC and the keybroker's
+				// fallback would hand it to every client profile — right past
+				// clientcfg.EndpointHost, which refuses ssh.host on purpose. Empty is
+				// the honest answer; the client pages say "no public endpoint (public_ip)".
+				MgmtAddr: mm.MgmtAddr, PublicIP: mm.PublicIP,
 				SSH: toSSHTarget(mm.SSH),
 			}, mm.SSH, true
 		}

@@ -1111,7 +1111,8 @@ func (h *Handler) nodeRows(ctx context.Context) ([]nodeRow, error) {
 // inventory the agent may not report (mgmt addr, region, public IP): the manifest
 // is authoritative there, so a blank store value is backfilled from it — otherwise
 // a node that registered without a seeded inventory (auto-created, or its agent.yaml
-// lacks mgmt_addr) shows "—" for fields the operator did configure.
+// lacks mgmt_addr) shows "—" for fields the operator did configure. public_ip goes
+// further and overrides a non-blank store value; backfillFromManifest says why.
 func (h *Handler) nodes(ctx context.Context) ([]domain.Node, error) {
 	stored, err := h.store.ListNodes(ctx)
 	if err != nil {
@@ -1145,6 +1146,13 @@ func (h *Handler) nodes(ctx context.Context) ([]domain.Node, error) {
 // backfillFromManifest fills inventory fields the agent does not report (and that
 // the manifest owns) when the store row left them blank. Display-only — it never
 // changes the persisted node.
+//
+// public_ip is the exception: the manifest OVERRIDES the store row rather than
+// merely filling it. Nothing discovers that address (the agent advertises one only
+// under --public-ip, which no installed unit passes), so the store row is a copy
+// taken at provisioning time and refreshed by nothing short of another one.
+// Showing it after the operator changed the manifest told them the fleet was on
+// the old address when the tunnels had already moved to the new one.
 func backfillFromManifest(n, mn domain.Node) domain.Node {
 	if n.MgmtAddr == "" {
 		n.MgmtAddr = mn.MgmtAddr
@@ -1152,7 +1160,7 @@ func backfillFromManifest(n, mn domain.Node) domain.Node {
 	if n.Region == "" {
 		n.Region = mn.Region
 	}
-	if n.PublicIP == "" {
+	if mn.PublicIP != "" {
 		n.PublicIP = mn.PublicIP
 	}
 	return n

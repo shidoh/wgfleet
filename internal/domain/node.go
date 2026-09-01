@@ -43,9 +43,15 @@ type Node struct {
 	ID       string // stable, controller-assigned identifier
 	Name     string // human-friendly, e.g. "exit-de-1"
 	Role     Role
-	Region   string    // free-form: "de", "nl", "fi"...
-	MgmtAddr string    // address controller/agent talk over (ZT overlay)
-	PublicIP string    // discovered; used as the endpoint for WG peers
+	Region   string // free-form: "de", "nl", "fi"...
+	MgmtAddr string // address controller/agent talk over (ZT overlay)
+	// PublicIP is a COPY of the manifest's public_ip, taken at provisioning time.
+	// Nothing discovers it (the agent advertises one only under --public-ip, which
+	// no installed unit passes), so it is not a live fact about the node: the
+	// manifest is what peers and clients are dialled at, and this is only the
+	// fallback for a node the manifest declares no address for. See
+	// keybroker.masterEndpointHost.
+	PublicIP string
 	SSH      SSHTarget // bootstrap only
 	State    NodeState
 
