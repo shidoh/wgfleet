@@ -12,6 +12,16 @@ good configuration instead of stalling on a delivery it never got.
 | **Build version** | `internal/version`, stamped from git by the Makefile | Human/observability. Shown by `--version`, in the UI, and in `wgfleet_node_agent_info`. |
 | **Wire-contract version** | `internal/api.WireContractVersion` (a constant) | The compatibility key. Controller and agent must agree within `[MinSupportedWire .. WireContractVersion]`. |
 
+> **`git fetch --tags` before you build for a deployment.** The build version is
+> `git describe --tags --always`, which counts from the newest tag **your clone
+> knows about** — and `git push` does not fetch tags. A clone that missed the last
+> two releases stamps something like `v0.1.7-210-g8d27696`: the commit is right,
+> the release it claims to descend from is two tags stale, and the fleet then
+> reports a version that exists nowhere. Nothing breaks (compatibility rides on
+> the wire contract, not this string), but `--version`, the UI and
+> `wgfleet_node_agent_info` all lie in the same direction, which is exactly where
+> you look first during an incident.
+
 A new release that only changes behaviour the agent already understands keeps the
 same wire version. **Bump `WireContractVersion` whenever an agent must understand
 something new to converge correctly** (a new `NodeSpec` field's semantics, a
