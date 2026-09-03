@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"sort"
 	"strings"
@@ -80,7 +81,23 @@ func (p awgHoldPlanner) Plan(ctx context.Context, _ domain.NodeSpec) ([]reconcil
 		"amneziawg apt pin",
 		fmt.Sprintf("%d AmneziaWG package(s) unpinned — an automatic upgrade could split the tools/module generation", len(pkgs)),
 		"apt-mark hold "+strings.Join(pkgs, " "),
-		func(ctx context.Context) error { return apply(ctx, pkgs) },
+		func(ctx context.Context) error {
+			err := apply(ctx, pkgs)
+			// A dpkg lock held by someone else is "not now", not a failure. The
+			// hold is convergent by construction — every pass re-reads the state
+			// and re-applies — so the next pass 30s later sets it, by which time
+			// unattended-upgrades has long finished. Failing here instead cost us
+			// four spurious Error states in a week (vn1/vn2, 2026-09-03): the node
+			// went Error, the alert fired, and the pass after it was already green.
+			// Any OTHER failure still fails the pass: a hold that silently stops
+			// being applied is exactly the drift this planner exists to prevent.
+			if err != nil && (errors.Is(err, errDpkgLockBusy) || isDpkgLockBusy(err.Error())) {
+				slog.Warn("amneziawg apt pin deferred: the dpkg lock is held by another process (likely unattended-upgrades); the next reconcile pass will retry",
+					"packages", strings.Join(pkgs, " "), "err", err)
+				return nil
+			}
+			return err
+		},
 	)}, nil
 }
 
@@ -127,12 +144,53 @@ func aptPackageState(ctx context.Context) (installed, held map[string]bool, err 
 	return installed, held, nil
 }
 
+// errDpkgLockBusy marks a hold that could not run because another process holds
+// the dpkg/apt lock. Distinct from every other failure so the caller can defer
+// rather than fail the pass.
+var errDpkgLockBusy = errors.New("dpkg lock is held by another process")
+
+// dpkgLockWaitSeconds is how long apt itself waits for the frontend lock before
+// giving up. Short on purpose: most collisions are with unattended-upgrades and
+// resolve in seconds, while the reconcile pass must not sit here — the pass
+// repeats every 30s anyway, so waiting longer buys nothing and delays every
+// other step behind it.
+const dpkgLockWaitSeconds = 10
+
 func aptMarkHold(ctx context.Context, pkgs []string) error {
-	out, err := exec.CommandContext(ctx, "apt-mark", append([]string{"hold"}, pkgs...)...).CombinedOutput()
+	args := append([]string{fmt.Sprintf("-o=DPkg::Lock::Timeout=%d", dpkgLockWaitSeconds), "hold"}, pkgs...)
+	out, err := exec.CommandContext(ctx, "apt-mark", args...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("apt-mark hold %s: %w: %s", strings.Join(pkgs, " "), err, strings.TrimSpace(string(out)))
+		text := strings.TrimSpace(string(out))
+		if isDpkgLockBusy(text) {
+			return fmt.Errorf("apt-mark hold %s: %w: %s", strings.Join(pkgs, " "), errDpkgLockBusy, text)
+		}
+		return fmt.Errorf("apt-mark hold %s: %w: %s", strings.Join(pkgs, " "), err, text)
 	}
 	return nil
+}
+
+// isDpkgLockBusy recognises the several shapes apt and dpkg use to say the same
+// thing. Matching on text is unpleasant but unavoidable: both exit 100 for this
+// and for a genuinely broken package operation, so the exit code cannot tell
+// "come back later" apart from "this will never work".
+func isDpkgLockBusy(out string) bool {
+	l := strings.ToLower(out)
+	if !strings.Contains(l, "lock") {
+		return false
+	}
+	for _, marker := range []string{
+		"frontend lock",
+		"could not get lock",
+		"unable to acquire the dpkg frontend lock",
+		"lock-frontend",
+		"/var/lib/dpkg/lock",
+		"/var/lib/apt/lists/lock",
+	} {
+		if strings.Contains(l, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func isMissingBinary(err error) bool {

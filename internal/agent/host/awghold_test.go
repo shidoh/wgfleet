@@ -133,3 +133,59 @@ func TestAWGHoldPlannerSurfacesStateError(t *testing.T) {
 		t.Fatal("expected the probe failure to surface")
 	}
 }
+
+// TestAWGHoldPlannerSurvivesBusyDpkgLock is the vn1/vn2 failure of 2026-09-03:
+// `apt-mark hold` collided with unattended-upgrades holding the dpkg frontend
+// lock, the action returned that error, and the WHOLE reconcile pass failed —
+// node Error, alert fired, and the next pass 30s later fixed it by itself. The
+// hold is convergent by construction (every pass re-checks and re-applies), so a
+// lock held by someone else is "not now", not a failure worth failing a pass for.
+func TestAWGHoldPlannerSurvivesBusyDpkgLock(t *testing.T) {
+	busy := errors.New(`apt-mark hold amneziawg-dkms: exit status 100: dpkg: error: ` +
+		`dpkg frontend lock was locked by another process with pid 15154`)
+	p := awgHoldPlanner{
+		state: stateFn(awgAptPackages, nil),
+		hold:  func(context.Context, []string) error { return busy },
+	}
+	// Must NOT fail the pass.
+	applyHold(t, p)
+}
+
+// TestAWGHoldPlannerStillFailsOnRealError guards the other half: swallowing a
+// busy lock must not turn into swallowing everything. A hold that fails for any
+// other reason (no permission, apt broken) still has to surface, or the pin
+// silently stops existing and an automatic upgrade splits the AWG generation.
+func TestAWGHoldPlannerStillFailsOnRealError(t *testing.T) {
+	p := awgHoldPlanner{
+		state: stateFn(awgAptPackages, nil),
+		hold:  func(context.Context, []string) error { return errors.New("permission denied") },
+	}
+	_, err := reconcile.NewEngine(nil, p).Reconcile(context.Background(), domain.NodeSpec{}, reconcile.ModeApply)
+	if err == nil {
+		t.Fatal("a non-lock hold failure must fail the pass")
+	}
+	if !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("want the underlying error surfaced, got: %v", err)
+	}
+}
+
+// TestIsDpkgLockBusy pins the classifier to the exact strings apt/dpkg emit, in
+// both the frontend-lock and the lock-file-open forms.
+func TestIsDpkgLockBusy(t *testing.T) {
+	busy := []string{
+		"dpkg: error: dpkg frontend lock was locked by another process with pid 15154",
+		"E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 999",
+		"Could not get lock /var/lib/apt/lists/lock",
+		"E: Unable to acquire the dpkg frontend lock (/var/lib/dpkg/lock-frontend), is another process using it?",
+	}
+	for _, s := range busy {
+		if !isDpkgLockBusy(s) {
+			t.Errorf("should be recognised as a busy lock: %q", s)
+		}
+	}
+	for _, s := range []string{"permission denied", "E: Unable to locate package amneziawg", ""} {
+		if isDpkgLockBusy(s) {
+			t.Errorf("must NOT be treated as a busy lock: %q", s)
+		}
+	}
+}
