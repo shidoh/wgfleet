@@ -68,6 +68,11 @@ fleet:
   # otherwise be black-holed → "handshake deadline exceeded"). 1240 matches a 1280
   # overlay MTU. The clamp only lowers an MSS, so it is a no-op when the MTU is already
   # correct. The real fix is still a correct ZeroTier MTU; this just survives a reset.
+  #
+  # It is also what makes TRANSIT into the overlay work: a client reaching a host that
+  # sits behind a ZeroTier member. Neither end can see the narrow middle — the client
+  # announces its own tunnel leg, the far host its Ethernet — so without this the path
+  # pings fine and stalls on the first full-size segment. Clamped in both directions.
   mgmt_overlay_mss: 1240
   # min_egress_throughput_kbytes: egress throughput floor in KB/s. mihomo's
   # url-test is latency-only and cannot see a throttled exit (a node with 88ms latency

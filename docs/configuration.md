@@ -110,7 +110,7 @@ provisioning time, which means **changing them requires re-provisioning the node
 |---|---|---|---|
 | `fleet.zerotier_network` | string | — | ZeroTier network ID (exactly 16 hex chars) every node joins during bootstrap. Validated strictly: it is interpolated into a root shell command |
 | `fleet.mgmt_subnet` | CIDR | derived | The management overlay's CIDR. When set, this is the authoritative trust scope: exits route it DIRECT (never through WARP) and accept it in the firewall, without you listing it per node. Empty ⇒ derived from each node's `mgmt_addr` as /32s |
-| `fleet.mgmt_overlay_mss` | int | `0` (off) | **baked.** TCP MSS clamp on the ZeroTier interface. Control-plane insurance: keeps the agent↔controller TLS handshake alive if the overlay MTU is larger than the real path. Recommended `1240`; valid `536`–`1460` |
+| `fleet.mgmt_overlay_mss` | int | `0` (off) | **baked.** TCP MSS clamp on the ZeroTier interface, **both directions**. Two jobs: control-plane insurance (keeps the agent↔controller TLS handshake alive if the overlay MTU is larger than the real path) and the clamp for traffic a node FORWARDS into the overlay — a client reaching a host behind a ZeroTier member, where neither end can see the narrow middle. ZeroTier cannot do this itself: it pushes interface MTU, and MTU governs only locally-originated flows. Recommended `1240` (a 1280 overlay); valid `536`–`1460` |
 | `fleet.reconcile_interval` | duration | `30s` | **baked.** How often every agent reconciles — governs drift repair and self-heal latency. Valid `5s`–`1h`. A node's own `agent.reconcile_interval` still wins |
 | `fleet.min_egress_throughput_kbytes` | int | `250` | Egress throughput floor in KiB/s below which an exit is pulled from the load balancer. mihomo's latency-only health check cannot see a throttled-but-responsive exit. Negative disables the watchdog fleet-wide |
 | `fleet.egress_throughput_probe_url` | URL | Cloudflare speed endpoint | What each exit downloads to measure its own throughput |
@@ -420,7 +420,7 @@ controller is; everything else arrives in the spec it pulls.
 | `agent.identity.cert` | string | **required** | Node client certificate |
 | `agent.identity.key` | string | **required** | Node private key, mode `0600`, generated on the node and never transmitted |
 | `agent.identity.ca` | string | **required** | CA certificate used to verify the controller |
-| `agent.mgmt_overlay_mss` | int | `0` (off) | TCP MSS clamp on the overlay interface. Agent-local by design: it must not depend on the channel it protects. Valid `536`–`1460` |
+| `agent.mgmt_overlay_mss` | int | `0` (off) | TCP MSS clamp on the overlay interface, both directions (see `fleet.mgmt_overlay_mss`). Agent-local by design: it must not depend on the channel it protects. Valid `536`–`1460` |
 | `agent.mgmt_ignore_cidrs` | []CIDR | none | Management scopes fail2ban must never ban (loopback always included). **Empty leaves the jail unmanaged**, so a node provisioned before this key existed is never regressed to a narrower `ignoreip` |
 | `agent.as_blacklist_v4_url` | URL | C24Be v4 | Scanner-ASN feed source |
 | `agent.as_blacklist_v6_url` | URL | C24Be v6 | IPv6 half of the feed |

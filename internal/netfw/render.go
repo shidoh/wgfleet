@@ -68,8 +68,9 @@ type RenderInput struct {
 	// §4.10's `clamp-mss-to-pmtu`).
 	EgressInterface string
 	// OverlayMSS, when > 0, renders a postrouting MSS clamp on the management overlay
-	// interface (`zt*`): every TCP SYN leaving over ZeroTier has its MSS capped to
-	// this fixed value. It is insurance for the control plane (the agent↔controller
+	// interface (`zt*`), in BOTH directions: every TCP SYN crossing ZeroTier — leaving
+	// over it or arriving on it and forwarded onward — has its MSS capped to this
+	// fixed value. It is insurance for the control plane (the agent↔controller
 	// mTLS channel rides the overlay): if the ZeroTier MTU is left/reset at its 2800
 	// default while the underlay path is smaller, large TLS-handshake records (the
 	// server certificate) get black-holed and `register` fails with a handshake
@@ -78,6 +79,12 @@ type RenderInput struct {
 	// clamp only lowers an MSS, so it is a no-op when the overlay MTU is already
 	// correct. Agent-local (not from the wire) so it cannot depend on the very
 	// channel it protects.
+	//
+	// It is equally the clamp for TRANSIT into the overlay — a client reaching a host
+	// that sits behind a ZeroTier member. Neither end knows about the 1280-byte
+	// middle (the client sees its own tunnel leg, the far host its Ethernet), and the
+	// node forwarding between them is the only place that does, so the clamp has to
+	// live here rather than come from the ZeroTier controller, which pushes MTU only.
 	OverlayMSS int
 	// RedirMark identifies the master's client→mihomo redirect for the input chain.
 	// On the master, client TCP is DNAT'd in prerouting to the mihomo redir port at
@@ -413,10 +420,23 @@ func RenderRuleset(in RenderInput) (string, error) {
 	// controller) as well as any forwarded traffic. A FIXED size, not `rt mtu`: the
 	// whole point is to survive a too-large ZeroTier interface MTU, so reading the
 	// interface MTU would defeat it.
+	//
+	// BOTH directions across the overlay, for the same reason the client clamp is
+	// two-sided (see ClientMSS). `oifname` bounds what the FAR host sends: it rewrites
+	// the SYN heading into the overlay, so the host behind a ZeroTier member answers
+	// with segments that fit. `iifname` bounds what the NEAR side sends: the far
+	// host's SYN-ACK arrives over the overlay and leaves on another interface, where
+	// the client-facing clamp would otherwise write the client-leg MSS (1320 on the
+	// master) — and the client then pushes 1320-byte segments back into a 1280-byte
+	// overlay. That asymmetry reads as a working link that stalls only on the first
+	// full-size upload: pings fine, small requests fine, a POST or a push hangs.
+	// ZeroTier itself cannot do this: the controller pushes interface MTU, which the
+	// kernel applies to locally-originated flows only, never to what we forward.
 	if in.OverlayMSS > 0 {
 		b.WriteString("\n\tchain mgmt_overlay_mss {\n")
 		b.WriteString("\t\ttype filter hook postrouting priority mangle; policy accept;\n")
 		fmt.Fprintf(&b, "\t\toifname %q %s\n", mgmtOverlayIface, mssClampExpr(in.OverlayMSS))
+		fmt.Fprintf(&b, "\t\tiifname %q %s\n", mgmtOverlayIface, mssClampExpr(in.OverlayMSS))
 		b.WriteString("\t}\n")
 	}
 

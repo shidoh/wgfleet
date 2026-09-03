@@ -11,10 +11,13 @@ agent:
   # uses it for other off-public surfaces. Baked in at provisioning. The --metrics
   # flag overrides the bind; --metrics off disables it.
   mgmt_addr: "10.20.3.22"
-  # mgmt_overlay_mss: clamp TCP MSS on the ZeroTier interface (control-plane
-  # insurance; keeps the mTLS handshake working if the overlay MTU is left at 2800).
-  # Usually baked in from the controller's fleet.mgmt_overlay_mss at provisioning;
-  # 1240 matches a 1280 overlay MTU. Omit / 0 to disable.
+  # mgmt_overlay_mss: clamp TCP MSS on the ZeroTier interface, both directions
+  # (control-plane insurance — keeps the mTLS handshake working if the overlay MTU is
+  # left at 2800 — and the clamp for traffic this node forwards INTO the overlay,
+  # which the ZeroTier controller cannot do: it pushes MTU, and MTU only governs
+  # locally-originated flows). Usually baked in from the controller's
+  # fleet.mgmt_overlay_mss at provisioning; 1240 matches a 1280 overlay MTU.
+  # Omit / 0 to disable.
   # mgmt_overlay_mss: 1240
   identity:
     cert: "/etc/wgfleet/node.crt" # issued at bootstrap

@@ -314,6 +314,13 @@ func TestRenderOverlayMSSClamp(t *testing.T) {
 	for _, want := range []string{
 		"type filter hook postrouting priority mangle",
 		`oifname "zt*" tcp flags syn / syn,rst tcp option maxseg size > 1240 tcp option maxseg size set 1240`,
+		// Paired rule for traffic ARRIVING over the overlay and leaving elsewhere
+		// (master forwarding a client's flow to a host behind a ZeroTier member).
+		// Without it only the far host is bounded: the near side's SYN-ACK keeps
+		// whatever MSS the client-facing clamp wrote (1320 on the master) and the
+		// CLIENT then sends 1320-byte segments into a 1280-byte overlay. Small
+		// requests pass, the first full-size upload black-holes.
+		`iifname "zt*" tcp flags syn / syn,rst tcp option maxseg size > 1240 tcp option maxseg size set 1240`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("overlay MSS clamp missing %q:\n%s", want, out)
