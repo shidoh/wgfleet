@@ -102,6 +102,10 @@ need the agent `/metrics` (step 1).
 | `wgfleet_node_drain` / `wgfleet_node_decommission` | `node` | admin intent (0/1) |
 | `wgfleet_node_client_vless_clients` | `node` | VLESS/REALITY clients issued for a master's client-facing inbound; masters only |
 | `wgfleet_build_info` | `component,version,commit` | controller build (=1) |
+| `wgfleet_exit_tunnel_alive` | `node,exit` | 1 when the master's mihomo has this master↔exit tunnel up, 0 when it is out of the load-balance rotation. `node` is the MASTER holding the tunnel, `exit` the far end |
+| `wgfleet_exit_tunnel_selected` | `node,exit` | 1 when this exit currently carries traffic for wg-best |
+| `wgfleet_exit_tunnel_delay_seconds` | `node,exit` | last url-test delay; **absent when the measurement failed** — a failed probe is not a fast one and must never read as 0 |
+| `wgfleet_exit_tunnel_last_test_age_seconds` | `node,exit` | age of that measurement. mihomo's alive flag is sticky, so a stale age means the reading is frozen, not that the tunnel is fine |
 
 **Agent** (`wgfleet_agent_*`, every series carries `node` + `role`):
 
@@ -157,6 +161,9 @@ refresh (`as_blacklist_feed`):
 | `wgfleet_controller_ca_expiry_timestamp_seconds` | — | unix time the fleet CA expires. Every node certificate chains to it, so its lapse cannot be repaired over the control plane |
 | `wgfleet_controller_config_drift` | — | 1 when the manifest on disk differs from the one the controller loaded, 0 when they match, **absent when it cannot be read** — which is what `WgfleetConfigUnreadable` watches |
 | `wgfleet_agent_transport_active` | `transport` | which master↔exit transport this exit is serving (exit-only) |
+| `wgfleet_agent_exit_held_out` | `exit` | 1 while the master's multi-destination probe holds this exit out of wg-best (master-only). The CAUSE behind `wgfleet_exit_tunnel_alive == 0` |
+| `wgfleet_agent_reserve_tier_active` | — | 1 when wg-best routes to the second-choice (reserve) exit tier instead of the primary one (master-only) |
+| `wgfleet_agent_standby_tier_usable` / `_total` | — | members of the INACTIVE tier the last warm probe found usable, out of those it could sample (master-only) |
 | `wgfleet_fw_as_blacklist_size` | `family` | size of the scanner-ASN blacklist set actually loaded in nftables |
 
 A probe that has never even attempted to run on a node (feature disabled, or
@@ -171,9 +178,22 @@ reported `Ready`, so auto-MTU discovery was dead and a real PMTU
 regression would have gone unnoticed. These two timestamps make "attempting on
 schedule, never succeeding" a visible state.
 
+The `wgfleet_exit_tunnel_*` family is the **only** view of the master↔exit tunnels.
+They are userspace mihomo proxies, not kernel WireGuard, so no `wgfleet_wg_*` series
+covers them — and until 2026-09-04 nothing else did either. Three exits had been
+dropping out of the load balancer for two weeks and the sole record was the master
+agent's journal, which is why an exit falling out of rotation could not be seen on a
+dashboard at all.
+
+Read it together with `wgfleet_agent_exit_held_out`. Two health criteria write
+mihomo's alive flag: mihomo's own group check (one lightweight URL, every interval)
+and the master agent's multi-destination probe (four independent destinations, which
+is what catches a censored-but-"healthy" exit). `alive` shows the effect; the
+held-out gauge says which criterion caused it.
+
 ## 4. Alerts
 
-**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 28 alerts,
+**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 33 alerts,
 already applied by step 2 above. Earlier revisions of this file printed two of them
 as a snippet to paste; the copies drifted from the shipped rules (different group
 name, different `for`, a different expression on one), so pasting produced a second,
@@ -187,6 +207,7 @@ What ships, by severity:
 | `WgfleetClientPathDown` | critical |
 | `WgfleetControllerDown` | critical |
 | `WgfleetNoClientPeers` | critical |
+| `WgfleetNoExitInRotation` | critical |
 | `WgfleetNoReadyExit` | critical |
 | `WgfleetNodeCertExpired` | critical |
 | `WgfleetNodeError` | critical |
@@ -198,6 +219,10 @@ What ships, by severity:
 | `WgfleetAgentUnscraped` | warning |
 | `WgfleetAgentVersionSkew` | warning |
 | `WgfleetConfigDrift` | warning |
+| `WgfleetExitOutOfRotation` | warning |
+| `WgfleetExitTunnelHealthStale` | warning |
+| `WgfleetReserveTierActive` | warning |
+| `WgfleetStandbyTierUnusable` | warning |
 | `WgfleetCAExpiringSoon` | critical |
 | `WgfleetConfigUnreadable` | warning |
 | `WgfleetHealthCheckFailing` | warning |

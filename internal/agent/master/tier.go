@@ -86,6 +86,9 @@ type TierSelector struct {
 	// consecutive passes have since found them usable again. They are re-probed
 	// EVERY pass — see tierUsable for why that is the whole fix and not a detail.
 	heldOut map[string]int
+	// inRotation is the tier whose members wg-best actually routes through, as of
+	// the last decision. Kept so Rotation() can answer without probing.
+	inRotation []string
 
 	// state carried across reconcile passes
 	reserveActive bool
@@ -122,6 +125,31 @@ func (s *TierSelector) StandbyHealth() (usable, total int) {
 	return s.standbyUsable, s.standbyTotal
 }
 
+// ReserveIsActive reads the last tier decision. It takes no decision and runs no
+// probe — the reconcile pass owns that; this is for reporting.
+func (s *TierSelector) ReserveIsActive() bool { return s.reserveActive }
+
+// Rotation reports, for each exit in the tier that currently carries traffic,
+// whether our multi-destination verdict is holding it out of the load balancer.
+// Empty before the first decision.
+//
+// It covers the ACTIVE tier only. An idle reserve member is not in the group at
+// all, so "held out" says nothing about it, and publishing one would invite an
+// alert on an exit that carries no traffic by design.
+//
+// This is the only place the verdict is legible from outside. mihomo's own view —
+// exported by the controller as wgfleet_exit_tunnel_alive — shows the effect, an
+// exit gone from the balancer, but never which of the two health criteria put it
+// there.
+func (s *TierSelector) Rotation() map[string]bool {
+	out := make(map[string]bool, len(s.inRotation))
+	for _, m := range s.inRotation {
+		_, held := s.heldOut[m]
+		out[m] = held
+	}
+	return out
+}
+
 // warmStandby probes the currently INACTIVE tier so its tunnels stay established
 // and its health is known. Its result never feeds the tier decision — that would
 // couple "should we leave the active tier" to the standby's condition, which is a
@@ -152,8 +180,18 @@ func (s *TierSelector) warmStandby(ctx context.Context, probe memberProbe, membe
 // ReserveActive returns the tier decision for this pass: true routes wg-best to
 // the reserve tier. With no reserve configured it always returns false — there is
 // nowhere to fail over to, so probing would burn API calls for no decision.
-func (s *TierSelector) ReserveActive(ctx context.Context, probe memberProbe, primary, reserve []string) bool {
+func (s *TierSelector) ReserveActive(ctx context.Context, probe memberProbe, primary, reserve []string) (active bool) {
 	s.pass++
+	// Record which tier this decision puts in front of client traffic, at whichever
+	// of the several exits below we leave by. Rotation() then answers without
+	// probing — a metrics read must never burn Clash API calls or move hysteresis.
+	defer func() {
+		if active {
+			s.inRotation = reserve
+			return
+		}
+		s.inRotation = primary
+	}()
 	if len(reserve) == 0 {
 		// Nowhere to fail over to. Reset the streaks so a reserve tier added later
 		// starts from a clean slate rather than inheriting a stale count.

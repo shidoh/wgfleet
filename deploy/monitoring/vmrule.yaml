@@ -273,6 +273,97 @@ spec:
       annotations:
         summary: Fleet is running mixed agent versions
         description: More than one agent_version has been live for 6h — a rollout was never finished.
+  - name: wgfleet.rotation
+    interval: 30s
+    rules:
+    # The master↔exit tunnels are userspace mihomo proxies, not kernel WireGuard,
+    # so no wg_* series covers them and nothing here watched them at all. On
+    # 2026-09-04 three exits had been dropping out of the load balancer for two
+    # weeks — 27 recorded verdicts — and the only record was the master agent's
+    # journal. These rules exist so that never has to be reconstructed by hand
+    # again.
+    - alert: WgfleetExitOutOfRotation
+      # Two health criteria write mihomo's alive flag: its own group check (one
+      # lightweight URL) and the master agent's multi-destination probe. When this
+      # fires, wgfleet_agent_exit_held_out{exit=...} says which one did it — 1 means
+      # our stricter probe took the exit out, i.e. it could not reach enough
+      # independent destinations, the censored-but-"healthy" signature.
+      expr: wgfleet_exit_tunnel_alive == 0
+      for: 5m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Exit {{ $labels.exit }} is out of the load balancer on {{ $labels.node }}
+        description: mihomo on {{ $labels.node }} has {{ $labels.exit }} marked down, so wg-best is
+          not routing client traffic to it. Check wgfleet_agent_exit_held_out{exit="{{ $labels.exit }}"}
+          to tell our multi-destination verdict from mihomo's own check.
+    - alert: WgfleetNoExitInRotation
+      # `or vector(0)` makes the empty case reachable, exactly as in
+      # WgfleetNoReadyExit — count() over an empty selector returns no series, so
+      # without it the comparison can never be true in the condition it names.
+      #
+      # The `and on() (count(...) > 0)` guard is the other half, and it is NOT
+      # symmetric with that alert: these series are brand new, so before the
+      # controller carrying them is deployed the selector is empty for a reason that
+      # has nothing to do with the data plane — and `or vector(0)` alone would page
+      # critical on every fleet that has not upgraded yet. Requiring the family to
+      # exist makes the rule silent until it has real data, which for a new alert is
+      # the right way round; WgfleetNoReadyExit still covers the same outage.
+      expr: ((count(wgfleet_exit_tunnel_alive == 1) or vector(0)) < 1)
+        and on() (count(wgfleet_exit_tunnel_alive) > 0)
+        unless on() (wgfleet_controller_store_up == 0)
+      for: 2m
+      labels:
+        severity: critical
+        service: wgfleet
+      annotations:
+        summary: No exit left in the master's load balancer
+        description: Every master↔exit tunnel is marked down. Client traffic has nothing to egress
+          through even though the exits themselves may be Ready.
+    - alert: WgfleetExitTunnelHealthStale
+      # mihomo's alive flag is STICKY: it holds whatever the last probe wrote. A
+      # master that stopped probing therefore reports every tunnel confidently alive
+      # forever, and WgfleetExitOutOfRotation above goes quiet for the best possible
+      # reason and the worst possible cause. The age is what separates a fresh
+      # reading from a frozen one.
+      expr: wgfleet_exit_tunnel_last_test_age_seconds > 300
+      for: 5m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Tunnel health for {{ $labels.exit }} is frozen on {{ $labels.node }}
+        description: The last delay measurement of {{ $labels.exit }} is {{ $value | humanizeDuration }}
+          old, so its alive/selected state is stale rather than healthy. The master's mihomo probe or
+          its Clash API has stopped answering.
+    - alert: WgfleetReserveTierActive
+      # Not an outage — the failover worked — but the fleet is running on the tier
+      # it keeps for emergencies, and nothing else says so out loud.
+      expr: wgfleet_agent_reserve_tier_active == 1
+      for: 10m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: '{{ $labels.node }} is routing through the RESERVE exit tier'
+        description: Every primary exit failed the multi-destination probe, so wg-best failed over
+          to the second-choice tier. Client traffic is served, but there is nothing left to fail
+          over to.
+    - alert: WgfleetStandbyTierUnusable
+      # The half of a failover decision that is normally invisible: not "is the
+      # active tier dying" but "can the tier we would move every client onto reach
+      # the internet at all". total == 0 means it was never sampled, which is a
+      # different fault and is left to WgfleetExitTunnelHealthStale.
+      expr: wgfleet_agent_standby_tier_total > 0 and wgfleet_agent_standby_tier_usable == 0
+      for: 15m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: The standby exit tier on {{ $labels.node }} has no usable member
+        description: The warm probe found no reachable exit in the INACTIVE tier. A failover right
+          now would land every client on a tier that cannot reach the internet.
   - name: wgfleet.dataplane
     interval: 1m
     rules:

@@ -21,10 +21,19 @@ type AgentMetrics struct {
 	egressReach       *prometheus.GaugeVec   // info: current egress reachability as a label
 	egressActive      *prometheus.GaugeVec   // info: currently active egress method as a label
 	transportActive   *prometheus.GaugeVec   // info: active master↔exit transport as a label (ADR-0025)
-	egressThroughput  prometheus.Gauge       // last measured egress throughput, bytes/sec
-	reconcileChanges  prometheus.Gauge       // resources changed in the last pass
-	checkLatency      *prometheus.GaugeVec   // per self-check: probe latency, seconds
-	startTime         prometheus.Gauge
+	// Exit-tier state, master-only (see the role gate in NewAgentMetrics). These
+	// are the only record of WHY an exit is or is not carrying traffic: the
+	// multi-destination verdict lives in the agent's memory, and mihomo's own view
+	// (exported by the controller as wgfleet_exit_tunnel_*) shows the effect
+	// without the cause.
+	exitHeldOut      *prometheus.GaugeVec // per exit: 1 while our verdict holds it out of wg-best
+	reserveTier      prometheus.Gauge     // 1 when wg-best routes to the reserve tier
+	standbyUsable    prometheus.Gauge     // inactive tier: members the warm probe found usable
+	standbyTotal     prometheus.Gauge     // inactive tier: members the warm probe could sample
+	egressThroughput prometheus.Gauge     // last measured egress throughput, bytes/sec
+	reconcileChanges prometheus.Gauge     // resources changed in the last pass
+	checkLatency     *prometheus.GaugeVec // per self-check: probe latency, seconds
+	startTime        prometheus.Gauge
 
 	node string
 	role domain.Role
@@ -97,6 +106,27 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Help: "Active master↔exit transport as a label (awg|reality-xhttp); value is always 1 (ADR-0025). Exit nodes only.", ConstLabels: cl,
 		}, []string{"transport"})
 	}
+	// The tier series are the mirror image: only a master has a tier decision, and
+	// registering them on every exit would leave empty series that absent()-based
+	// rules read as a fleet-wide fault.
+	if role == domain.RoleMaster {
+		m.exitHeldOut = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "exit_held_out",
+			Help: "1 while the master's multi-destination probe is holding this exit out of the wg-best rotation, else 0. Master nodes only.", ConstLabels: cl,
+		}, []string{"exit"})
+		m.reserveTier = prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "reserve_tier_active",
+			Help: "1 when wg-best routes to the reserve exit tier (ADR-0029), else 0. Master nodes only.", ConstLabels: cl,
+		})
+		m.standbyUsable = prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "standby_tier_usable",
+			Help: "Exits of the INACTIVE tier that the last warm probe found usable. Master nodes only.", ConstLabels: cl,
+		})
+		m.standbyTotal = prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "standby_tier_total",
+			Help: "Exits of the INACTIVE tier that the last warm probe could sample. 0 means the standby has not been measured — a failover would be blind. Master nodes only.", ConstLabels: cl,
+		})
+	}
 
 	m.startTime.Set(float64(now.Unix()))
 	// Create both children up front. A CounterVec materialises a child only on its
@@ -114,6 +144,9 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 		m.egressThroughput, m.startTime)
 	if m.transportActive != nil {
 		reg.MustRegister(m.transportActive)
+	}
+	if m.exitHeldOut != nil {
+		reg.MustRegister(m.exitHeldOut, m.reserveTier, m.standbyUsable, m.standbyTotal)
 	}
 	return m
 }
@@ -172,6 +205,27 @@ func (m *AgentMetrics) ObserveTransport(t domain.MasterTransport) {
 	}
 	m.transportActive.Reset()
 	m.transportActive.WithLabelValues(string(t)).Set(1)
+}
+
+// ObserveTier records the master's exit-tier state for this pass: which tier
+// carries traffic, which of its exits our multi-destination verdict is holding
+// out of the load balancer, and how the inactive tier looked to the last warm
+// probe. A no-op on a non-master (the series are never registered there).
+//
+// rotation is REPLACED, not merged: an exit that left the active tier — drained,
+// or the tier flipped — must stop reporting rather than freeze at its last value,
+// because a stale 1 reads as an outage nothing will ever clear.
+func (m *AgentMetrics) ObserveTier(reserveActive bool, rotation map[string]bool, standbyUsable, standbyTotal int) {
+	if m.exitHeldOut == nil {
+		return
+	}
+	m.exitHeldOut.Reset()
+	for exit, held := range rotation {
+		m.exitHeldOut.WithLabelValues(exit).Set(boolToFloat(held))
+	}
+	m.reserveTier.Set(boolToFloat(reserveActive))
+	m.standbyUsable.Set(float64(standbyUsable))
+	m.standbyTotal.Set(float64(standbyTotal))
 }
 
 // ObserveEgressThroughput records the last measured egress throughput (bytes/sec).

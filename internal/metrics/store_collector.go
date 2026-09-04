@@ -37,6 +37,16 @@ type StoreCollector struct {
 	nodeDrain        *prometheus.Desc
 	nodeDecommission *prometheus.Desc
 	nodeVLESSClients *prometheus.Desc
+	// The master's view of each master↔exit tunnel. These tunnels are userspace
+	// mihomo proxies, not kernel WireGuard, so NO wg_* series covers them — this is
+	// their only representation in metrics. Their absence is what made an exit
+	// dropping out of the load balancer invisible on every dashboard: the
+	// 2026-09-04 investigation had to be reconstructed from the master agent's
+	// journal because nothing recorded which exits were in rotation when.
+	exitTunnelAlive    *prometheus.Desc
+	exitTunnelDelay    *prometheus.Desc
+	exitTunnelSelected *prometheus.Desc
+	exitTunnelTestAge  *prometheus.Desc
 	// storeUp is 1 when this scrape read the store, 0 when it could not. Without it
 	// a read error made the WHOLE fleet surface vanish while /metrics still answered
 	// 200 — so `up` stayed 1 and the fleet-wide rules read the silence as fact:
@@ -98,6 +108,22 @@ func NewStoreCollector(reg *prometheus.Registry, st store.Store) *StoreCollector
 			prometheus.BuildFQName(namespace, "node", "client_vless_clients"),
 			"Number of VLESS/REALITY clients issued for a master's client-facing inbound (ADR-0031).",
 			[]string{"node"}, nil),
+		exitTunnelAlive: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "exit_tunnel", "alive"),
+			"1 when the master's mihomo reports this master↔exit tunnel up, 0 when it is out of the load-balance rotation.",
+			[]string{"node", "exit"}, nil),
+		exitTunnelDelay: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "exit_tunnel", "delay_seconds"),
+			"Last url-test delay of this master↔exit tunnel, in seconds. Absent when the last measurement failed — a failed probe is not a fast one, so it must never read as 0.",
+			[]string{"node", "exit"}, nil),
+		exitTunnelSelected: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "exit_tunnel", "selected"),
+			"1 when this exit currently carries traffic for the master's wg-best group, else 0.",
+			[]string{"node", "exit"}, nil),
+		exitTunnelTestAge: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "exit_tunnel", "last_test_age_seconds"),
+			"Seconds since the last delay measurement of this tunnel. mihomo's alive flag is sticky, so a stale age means the reading is frozen, not that the tunnel is fine.",
+			[]string{"node", "exit"}, nil),
 	}
 	reg.MustRegister(c)
 	return c
@@ -115,6 +141,10 @@ func (c *StoreCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.nodeDrain
 	ch <- c.nodeDecommission
 	ch <- c.nodeVLESSClients
+	ch <- c.exitTunnelAlive
+	ch <- c.exitTunnelDelay
+	ch <- c.exitTunnelSelected
+	ch <- c.exitTunnelTestAge
 	ch <- c.storeUp
 }
 
@@ -186,6 +216,25 @@ func (c *StoreCollector) collectStatus(ctx context.Context, ch chan<- prometheus
 	}
 	if st.EgressIP != "" {
 		ch <- prometheus.MustNewConstMetric(c.nodeEgressInfo, prometheus.GaugeValue, 1, node, st.EgressIP)
+	}
+	// Only a master reports ExitHealth, so exits contribute nothing here and the
+	// series stays scoped to the node that actually holds the tunnels.
+	for _, h := range st.ExitHealth {
+		ch <- prometheus.MustNewConstMetric(c.exitTunnelAlive, prometheus.GaugeValue,
+			boolToFloat(h.Alive), node, h.Name)
+		ch <- prometheus.MustNewConstMetric(c.exitTunnelSelected, prometheus.GaugeValue,
+			boolToFloat(h.Selected), node, h.Name)
+		// Delay 0 is "not measured / probe failed", never "answered instantly".
+		// Reporting it as zero seconds would put a dead tunnel at the top of every
+		// latency panel and under every url-test threshold; alive carries that case.
+		if h.Delay > 0 {
+			ch <- prometheus.MustNewConstMetric(c.exitTunnelDelay, prometheus.GaugeValue,
+				h.Delay.Seconds(), node, h.Name)
+		}
+		if !h.LastTest.IsZero() {
+			ch <- prometheus.MustNewConstMetric(c.exitTunnelTestAge, prometheus.GaugeValue,
+				c.now().Sub(h.LastTest).Seconds(), node, h.Name)
+		}
 	}
 }
 

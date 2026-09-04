@@ -467,3 +467,75 @@ func TestBlindProbeNeitherHoldsNorReleases(t *testing.T) {
 		t.Fatalf("blind passes must not release a held-out exit, held = %v", s.heldOut)
 	}
 }
+
+// The held-out verdict lives only in this selector's memory. mihomo's own view
+// (exported by the controller as wgfleet_exit_tunnel_alive) shows the EFFECT — an
+// exit out of the load balancer — but never the cause, and the cause is what an
+// operator needs at 4am. Rotation() is what the agent turns into a metric.
+func TestRotationReportsTheActiveTierAndItsHeldOutMembers(t *testing.T) {
+	table := map[string][2]int{"vn1": {4, 4}, "vn2": {0, 4}, "1cnode004": {4, 4}}
+	s := newTestSelector(fixedProbe(table))
+
+	// Two passes: the first may stop at vn1 by rotation, the second reaches vn2.
+	s.active(primary, reserve)
+	s.active(primary, reserve)
+
+	rot := s.Rotation()
+	if len(rot) != len(primary) {
+		t.Fatalf("rotation must cover exactly the tier carrying traffic, got %v", rot)
+	}
+	if rot["vn2"] != true {
+		t.Errorf("vn2 fails 0/4 destinations and must read as held out, got %v", rot)
+	}
+	if rot["vn1"] != false {
+		t.Errorf("vn1 is healthy and must read as in rotation, got %v", rot)
+	}
+	// A reserve member is not in the group at all, so "held out" is meaningless for
+	// it — reporting one would invite an alert on an exit that carries no traffic
+	// by design.
+	if _, ok := rot["1cnode004"]; ok {
+		t.Errorf("the idle reserve tier must not appear in rotation, got %v", rot)
+	}
+}
+
+// Once traffic moves to the reserve, THAT is the tier in rotation. Reporting the
+// primary would describe a group mihomo is no longer routing through.
+func TestRotationFollowsTheTierThatCarriesTraffic(t *testing.T) {
+	table := map[string][2]int{"vn1": {0, 4}, "vn2": {0, 4}, "1cnode004": {4, 4}}
+	s := newTestSelector(fixedProbe(table))
+	s.minHold = 0
+	for range defaultTierFailStreak {
+		s.active(primary, reserve)
+	}
+	if !s.ReserveIsActive() {
+		t.Fatal("expected failover to the reserve tier")
+	}
+	rot := s.Rotation()
+	if _, ok := rot["1cnode004"]; !ok {
+		t.Fatalf("the reserve tier now carries traffic and must be the reported rotation, got %v", rot)
+	}
+	if _, ok := rot["vn1"]; ok {
+		t.Fatalf("the idle primary must not be reported as in rotation, got %v", rot)
+	}
+}
+
+// ReserveIsActive must READ the decision, never take one: a metrics call has no
+// business burning Clash API probes or advancing the hysteresis.
+func TestReserveIsActiveDoesNotProbe(t *testing.T) {
+	hits := map[string]int{}
+	table := map[string][2]int{"vn1": {4, 4}, "vn2": {4, 4}, "1cnode004": {4, 4}}
+	s := newTestSelector(countingProbe(table, hits))
+	s.active(primary, reserve)
+	before, pass := hits["vn1"]+hits["vn2"]+hits["1cnode004"], s.pass
+
+	for range 5 {
+		s.ReserveIsActive()
+		s.Rotation()
+	}
+	if after := hits["vn1"] + hits["vn2"] + hits["1cnode004"]; after != before {
+		t.Errorf("reading the tier state probed %d extra times", after-before)
+	}
+	if s.pass != pass {
+		t.Errorf("reading the tier state advanced the pass counter to %d, want %d", s.pass, pass)
+	}
+}

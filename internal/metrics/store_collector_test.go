@@ -236,3 +236,85 @@ var errContext = errString("nft failed")
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+// The master's view of each master↔exit tunnel is the ONLY record of whether an
+// exit is carrying traffic: the tunnels are userspace mihomo proxies, not kernel
+// WireGuard, so no wg_* series covers them. It reached the store already (the
+// agent has reported ExitHealth since the exit-tunnel work) but was never
+// exported, which is why an exit dropping out of the load balancer could not be
+// seen on a dashboard at all — the 2026-09-04 investigation had to be
+// reconstructed from the master agent's journal.
+func TestStoreCollectorExitTunnelHealth(t *testing.T) {
+	reg, st, c := newCollectorWithStore(t)
+	ctx := context.Background()
+	_ = st.UpsertNode(ctx, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+	_ = st.RecordStatus(ctx, domain.NodeStatus{
+		NodeID: "master-xa-1", State: domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{
+			{Name: "vn0", Alive: true, Delay: 92 * time.Millisecond, Selected: true,
+				LastTest: c.now().Add(-15 * time.Second)},
+			{Name: "vn1", Alive: false, Selected: false,
+				LastTest: c.now().Add(-45 * time.Second)},
+		},
+	})
+
+	wantAlive := `
+# HELP wgfleet_exit_tunnel_alive 1 when the master's mihomo reports this master↔exit tunnel up, 0 when it is out of the load-balance rotation.
+# TYPE wgfleet_exit_tunnel_alive gauge
+wgfleet_exit_tunnel_alive{exit="vn0",node="master-xa-1"} 1
+wgfleet_exit_tunnel_alive{exit="vn1",node="master-xa-1"} 0
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(wantAlive), "wgfleet_exit_tunnel_alive"); err != nil {
+		t.Error(err)
+	}
+
+	wantSelected := `
+# HELP wgfleet_exit_tunnel_selected 1 when this exit currently carries traffic for the master's wg-best group, else 0.
+# TYPE wgfleet_exit_tunnel_selected gauge
+wgfleet_exit_tunnel_selected{exit="vn0",node="master-xa-1"} 1
+wgfleet_exit_tunnel_selected{exit="vn1",node="master-xa-1"} 0
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(wantSelected), "wgfleet_exit_tunnel_selected"); err != nil {
+		t.Error(err)
+	}
+
+	// A measurement's AGE is half the signal. mihomo's alive flag is sticky: it
+	// keeps whatever the last probe wrote, so a master whose agent stopped probing
+	// reports a confidently "alive" tunnel forever. Without the age, a frozen view
+	// and a healthy one are the same series.
+	wantAge := `
+# HELP wgfleet_exit_tunnel_last_test_age_seconds Seconds since the last delay measurement of this tunnel. mihomo's alive flag is sticky, so a stale age means the reading is frozen, not that the tunnel is fine.
+# TYPE wgfleet_exit_tunnel_last_test_age_seconds gauge
+wgfleet_exit_tunnel_last_test_age_seconds{exit="vn0",node="master-xa-1"} 15
+wgfleet_exit_tunnel_last_test_age_seconds{exit="vn1",node="master-xa-1"} 45
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(wantAge), "wgfleet_exit_tunnel_last_test_age_seconds"); err != nil {
+		t.Error(err)
+	}
+}
+
+// Delay 0 means "no measurement / the probe failed", not "answered instantly".
+// Emitting it as 0 seconds would make a dead tunnel the best-looking one on any
+// latency panel or url-test alert, so the series is omitted and `alive` carries
+// the failure instead.
+func TestStoreCollectorOmitsDelayWhenUnmeasured(t *testing.T) {
+	reg, st, _ := newCollectorWithStore(t)
+	ctx := context.Background()
+	_ = st.UpsertNode(ctx, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+	_ = st.RecordStatus(ctx, domain.NodeStatus{
+		NodeID: "master-xa-1", State: domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{
+			{Name: "vn0", Alive: true, Delay: 92 * time.Millisecond},
+			{Name: "vn1", Alive: false, Delay: 0},
+		},
+	})
+
+	want := `
+# HELP wgfleet_exit_tunnel_delay_seconds Last url-test delay of this master↔exit tunnel, in seconds. Absent when the last measurement failed — a failed probe is not a fast one, so it must never read as 0.
+# TYPE wgfleet_exit_tunnel_delay_seconds gauge
+wgfleet_exit_tunnel_delay_seconds{exit="vn0",node="master-xa-1"} 0.092
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "wgfleet_exit_tunnel_delay_seconds"); err != nil {
+		t.Error(err)
+	}
+}

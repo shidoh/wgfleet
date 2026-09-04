@@ -1469,13 +1469,374 @@
   },
   {
    "type": "row",
-   "title": "Reconcile",
+   "title": "Exit rotation (master↔exit tunnels)",
    "collapsed": false,
    "gridPos": {
     "h": 1,
     "w": 24,
     "x": 0,
     "y": 42
+   },
+   "id": 90,
+   "panels": []
+  },
+  {
+   "type": "stat",
+   "title": "Exits out of rotation",
+   "description": "Master↔exit tunnels mihomo currently has marked down. These tunnels are userspace mihomo proxies, not kernel WireGuard, so no wg_* panel covers them — this is their only view. Non-zero means wg-best is not routing client traffic to that exit.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 4,
+    "x": 0,
+    "y": 43
+   },
+   "id": 91,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum(wgfleet_exit_tunnel_alive == 0) or vector(0)",
+     "refId": "A",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "type": "stat",
+   "title": "Held out by our probe",
+   "description": "Of the exits above, how many the master agent's own multi-destination probe took out — it requires reachability across four independent destinations, so it catches a censored-but-\"healthy\" exit that answers mihomo's single lightweight check. The rest were dropped by mihomo's own group check.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 4,
+    "x": 4,
+    "y": 43
+   },
+   "id": 92,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum(wgfleet_agent_exit_held_out) or vector(0)",
+     "refId": "A",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "type": "state-timeline",
+   "title": "Exit in rotation, over time",
+   "description": "When each exit was actually carrying client traffic. This is the panel that answers \"why did it drop out and when\" — before it existed that had to be reconstructed from the master agent's journal.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 16,
+    "x": 8,
+    "y": 43
+   },
+   "id": 93,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "text"
+     },
+     "custom": {
+      "fillOpacity": 85,
+      "lineWidth": 0,
+      "spanNulls": true
+     },
+     "mappings": [
+      {
+       "type": "value",
+       "options": {
+        "0": {
+         "text": "out",
+         "color": "red",
+         "index": 0
+        },
+        "1": {
+         "text": "in",
+         "color": "green",
+         "index": 1
+        }
+       }
+      }
+     ],
+     "min": 0,
+     "max": 1
+    },
+    "overrides": []
+   },
+   "options": {
+    "alignValue": "left",
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": false
+    },
+    "mergeValues": true,
+    "rowHeight": 0.85,
+    "showValue": "auto",
+    "tooltip": {
+     "mode": "single",
+     "sort": "none"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "wgfleet_exit_tunnel_alive{exit=~\"$node\"}",
+     "refId": "A",
+     "legendFormat": "{{exit}}"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "master↔exit tunnel delay",
+   "description": "Last url-test delay per tunnel, as mihomo measured it. A failed measurement is ABSENT, not zero — a dead tunnel must never render as the fastest one.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 51
+   },
+   "id": 94,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisCenteredZero": false,
+      "axisColorMode": "text",
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "gradientMode": "opacity",
+      "lineInterpolation": "smooth",
+      "lineWidth": 2,
+      "pointSize": 5,
+      "scaleDistribution": {
+       "type": "linear"
+      },
+      "showPoints": "never",
+      "spanNulls": false,
+      "stacking": {
+       "group": "A",
+       "mode": "none"
+      },
+      "thresholdsStyle": {
+       "mode": "off"
+      }
+     },
+     "mappings": [],
+     "min": 0,
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "lastNotNull",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "wgfleet_exit_tunnel_delay_seconds{exit=~\"$node\"}",
+     "refId": "A",
+     "legendFormat": "{{exit}}"
+    }
+   ]
+  },
+  {
+   "type": "state-timeline",
+   "title": "Held out by the multi-destination probe",
+   "description": "The CAUSE behind the rotation panel: red means the master agent's probe judged this exit unable to reach enough independent destinations and is holding it out. mihomo's own weaker check would put such an exit straight back, so the agent re-probes every held-out member each pass to keep the stricter verdict in force.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 51
+   },
+   "id": 95,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "text"
+     },
+     "custom": {
+      "fillOpacity": 85,
+      "lineWidth": 0,
+      "spanNulls": true
+     },
+     "mappings": [
+      {
+       "type": "value",
+       "options": {
+        "0": {
+         "text": "in rotation",
+         "color": "green",
+         "index": 0
+        },
+        "1": {
+         "text": "held out",
+         "color": "red",
+         "index": 1
+        }
+       }
+      }
+     ],
+     "min": 0,
+     "max": 1
+    },
+    "overrides": []
+   },
+   "options": {
+    "alignValue": "left",
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": false
+    },
+    "mergeValues": true,
+    "rowHeight": 0.85,
+    "showValue": "auto",
+    "tooltip": {
+     "mode": "single",
+     "sort": "none"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "wgfleet_agent_exit_held_out{exit=~\"$node\"}",
+     "refId": "A",
+     "legendFormat": "{{exit}}"
+    }
+   ]
+  },
+  {
+   "type": "row",
+   "title": "Reconcile",
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 59
    },
    "id": 50,
    "panels": []
@@ -1491,7 +1852,7 @@
     "h": 8,
     "w": 8,
     "x": 0,
-    "y": 43
+    "y": 60
    },
    "id": 51,
    "fieldConfig": {
@@ -1568,7 +1929,7 @@
     "h": 8,
     "w": 8,
     "x": 8,
-    "y": 43
+    "y": 60
    },
    "id": 52,
    "fieldConfig": {
@@ -1627,7 +1988,7 @@
     "h": 8,
     "w": 8,
     "x": 16,
-    "y": 43
+    "y": 60
    },
    "id": 53,
    "fieldConfig": {
@@ -1680,7 +2041,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 51
+    "y": 68
    },
    "id": 60,
    "panels": []
@@ -1697,7 +2058,7 @@
     "h": 8,
     "w": 12,
     "x": 0,
-    "y": 52
+    "y": 69
    },
    "id": 61,
    "fieldConfig": {
@@ -1798,7 +2159,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 60
+    "y": 77
    },
    "id": 70,
    "panels": []
@@ -1815,7 +2176,7 @@
     "h": 8,
     "w": 4,
     "x": 0,
-    "y": 61
+    "y": 78
    },
    "id": 71,
    "fieldConfig": {
@@ -1876,7 +2237,7 @@
     "h": 8,
     "w": 4,
     "x": 4,
-    "y": 61
+    "y": 78
    },
    "id": 72,
    "fieldConfig": {
@@ -1934,7 +2295,7 @@
     "h": 8,
     "w": 16,
     "x": 8,
-    "y": 61
+    "y": 78
    },
    "id": 73,
    "fieldConfig": {
@@ -2013,7 +2374,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 69
+    "y": 86
    },
    "id": 80,
    "panels": []
@@ -2030,7 +2391,7 @@
     "h": 8,
     "w": 5,
     "x": 0,
-    "y": 70
+    "y": 87
    },
    "id": 81,
    "fieldConfig": {
@@ -2091,7 +2452,7 @@
     "h": 8,
     "w": 5,
     "x": 5,
-    "y": 70
+    "y": 87
    },
    "id": 82,
    "fieldConfig": {
@@ -2152,7 +2513,7 @@
     "h": 8,
     "w": 14,
     "x": 10,
-    "y": 70
+    "y": 87
    },
    "id": 83,
    "fieldConfig": {

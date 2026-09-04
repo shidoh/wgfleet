@@ -732,6 +732,12 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		if a.role == domain.RoleExit {
 			a.metrics.ObserveTransport(spec.ActiveTransport.OrDefault())
 		}
+		// Read AFTER the pass: the mihomo planner takes the tier decision during
+		// reconcile, so before it these would report the previous pass's state.
+		if a.tier != nil {
+			usable, total := a.tier.StandbyHealth()
+			a.metrics.ObserveTier(a.tier.ReserveIsActive(), a.tier.Rotation(), usable, total)
+		}
 	}
 	a.log.Info("reconcile applied",
 		"changes", report.ChangeCount(), "drift", len(drifted),
