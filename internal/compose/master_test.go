@@ -201,3 +201,22 @@ func TestRenderMasterComposeDropsWGEasyWhenManaged(t *testing.T) {
 		t.Fatalf("wg-easy admin password rendered without wg-easy:\n%s", out)
 	}
 }
+
+// The noisiest container on the master must not write an unbounded log.
+//
+// Docker's json-file driver does not rotate by default. Measured on the live
+// master 2026-09-04: 97787 error lines in 18 days, all of one kind, in a file
+// nothing truncates — a slow disk leak on a 2 vCPU box, and the reason reading
+// recent lines is expensive (json-file has no index, so `--since` scans from the
+// start of the file).
+func TestMihomoLogIsRotated(t *testing.T) {
+	out, err := RenderMasterCompose(sampleInput())
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{"logging:", "max-size", "10m", "max-file"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the mihomo service has no log bound (%q missing):\n%s", want, out)
+		}
+	}
+}

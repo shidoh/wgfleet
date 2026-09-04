@@ -161,6 +161,16 @@ func RenderMasterCompose(in RenderInput) (string, error) {
 		"cap_add":        []any{"NET_ADMIN", "SYS_PTRACE"},
 		"volumes":        []any{mihomoDir + ":/etc/mihomo"},
 		"command":        "-d /etc/mihomo",
+		// Bound the log. Docker's default json-file driver has NO rotation, and this
+		// container is the noisiest thing on the master: measured 2026-09-04 it had
+		// written 97787 error lines in 18 days, all of one kind, into a file nothing
+		// ever truncates. That is a disk leak on a 2 vCPU box, and it also makes
+		// `docker logs --since` expensive — json-file has no index, so every read
+		// scans from the beginning of the file.
+		"logging": map[string]any{
+			"driver":  "json-file",
+			"options": map[string]any{"max-size": "10m", "max-file": "3"},
+		},
 	}
 	services := map[string]any{"mihomo": mihomo}
 
