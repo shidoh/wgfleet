@@ -107,6 +107,12 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 		wipe = append(wipe, struct{ path, what string }{
 			reconcile.NFTAppliedMarker(path), "applied-marker for " + path,
 		})
+		// The rollback copy goes with it. It is a ruleset for a node that no longer
+		// exists in this role, and leaving it behind hands a re-provision — or an
+		// operator following the rollback runbook — a firewall from a previous life.
+		wipe = append(wipe, struct{ path, what string }{
+			reconcile.NFTPreviousRuleset(path), "rollback ruleset for " + path,
+		})
 	}
 	for _, w := range wipe {
 		if w.path == "" {
