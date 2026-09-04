@@ -48,6 +48,24 @@ const (
 	// health data about the tier we would fail over TO — without it that decision
 	// is made blind.
 	defaultWarmEvery = 2
+	// defaultStandbyEvery is how often (in reconcile passes) the STANDBY TRANSPORTS
+	// are probed — the inactive half of a dual-transport exit (ADR-0025), which is
+	// drained on purpose and therefore in no tier, so nothing else ever dials it.
+	//
+	// Much rarer than defaultWarmEvery, and for a different reason. Warming the
+	// standby TIER is about keeping tunnels hot for a failover that happens on its
+	// own; this is about knowing whether the transport an operator would switch to
+	// works at all. Once every 10 passes (5 minutes at the 30s cadence) answers that
+	// while keeping a path we deliberately keep quiet quiet: it carries no traffic,
+	// so every probe on it is pure cost.
+	//
+	// Measured live 2026-09-04: five of six exits had a standby transport and none
+	// had ever been health-checked. Four reported alive=1 — mihomo's default for an
+	// untested proxy, not a measurement — so the fleet showed a confident green on
+	// no evidence at all, and the fifth was frozen on an 82-minute-old verdict.
+	// ADR-0025's plan item 6 promised "per-transport reachability"; the
+	// active-transport metric shipped and this half did not.
+	defaultStandbyEvery = 10
 	// defaultHoldRecover is how many consecutive clean probes return a held-out
 	// member to the normal rotating scan. It is a WATCH window, not a quarantine:
 	// a clean probe has already told mihomo the member is alive again (see
@@ -89,6 +107,10 @@ type TierSelector struct {
 	// inRotation is the tier whose members wg-best actually routes through, as of
 	// the last decision. Kept so Rotation() can answer without probing.
 	inRotation []string
+	// standbyTransport is the last verdict per standby-transport proxy: can it
+	// reach enough destinations. Absent ⇒ never sampled.
+	standbyTransport map[string]bool
+	standbyEvery     int
 
 	// state carried across reconcile passes
 	reserveActive bool
@@ -113,6 +135,7 @@ func NewTierSelector(log *slog.Logger) *TierSelector {
 		minReachable:  defaultMinReachable,
 		warmEvery:     defaultWarmEvery,
 		holdRecover:   defaultHoldRecover,
+		standbyEvery:  defaultStandbyEvery,
 		now:           time.Now,
 		heldOut:       map[string]int{},
 	}
@@ -128,6 +151,72 @@ func (s *TierSelector) StandbyHealth() (usable, total int) {
 // ReserveIsActive reads the last tier decision. It takes no decision and runs no
 // probe — the reconcile pass owns that; this is for reporting.
 func (s *TierSelector) ReserveIsActive() bool { return s.reserveActive }
+
+// ProbeStandbyTransports keeps a verdict on each STANDBY transport: the inactive
+// half of a dual-transport exit, drained on purpose and therefore in no tier, so
+// no other probe in this file ever reaches it (see defaultStandbyEvery for what
+// that cost on the live fleet).
+//
+// It is deliberately NOT part of any decision. Nothing here fails over on a
+// standby's condition — the switch is the operator's, by explicit design
+// (ADR-0025: "no auto-failover") — so this only answers the question that
+// decision needs and that nothing else could answer: does the path we would move
+// this exit onto work.
+//
+// Writing mihomo's `alive` as a side effect of probing, which is what made a
+// failing exit flap out of the load balancer, is harmless here for the one reason
+// that matters: a standby proxy is in no group, so its alive flag steers nothing.
+//
+// members is the CURRENT standby set (mihomo.StandbyProxies); anything absent
+// from it is forgotten rather than left frozen at its last verdict.
+func (s *TierSelector) ProbeStandbyTransports(ctx context.Context, probe memberProbe, members []string) {
+	if len(members) == 0 {
+		s.standbyTransport = nil
+		return
+	}
+	// Drop exits that no longer have a standby before the cadence check, so a
+	// vanished one stops being reported immediately rather than at the next probe.
+	kept := make(map[string]bool, len(members))
+	for _, m := range members {
+		if v, ok := s.standbyTransport[m]; ok {
+			kept[m] = v
+		}
+	}
+	s.standbyTransport = kept
+
+	if s.standbyEvery <= 0 || s.pass%s.standbyEvery != 0 {
+		return
+	}
+	for _, m := range members {
+		ok, total, err := probe(ctx, m)
+		if err != nil {
+			continue // blind: keep whatever we last knew rather than inventing a failure
+		}
+		usable := total > 0 && ok >= min(s.minReachable, total)
+		if was, seen := s.standbyTransport[m]; s.log != nil && (!seen || was != usable) {
+			if usable {
+				s.log.Info("standby transport usable", "exit", m, "reachable", ok, "probed", total)
+			} else {
+				// Worth a warning on its own: the fallback this exit is supposed to have
+				// is not there, and the switch that needs it is an emergency action.
+				s.log.Warn("standby transport unusable — switching to it would not restore this exit",
+					"exit", m, "reachable", ok, "probed", total)
+			}
+		}
+		s.standbyTransport[m] = usable
+	}
+}
+
+// StandbyTransportHealth reports the last verdict per standby-transport proxy.
+// An absent entry means never sampled, which is NOT the same as healthy — the
+// distinction the live fleet lost when four untested proxies reported alive=1.
+func (s *TierSelector) StandbyTransportHealth() map[string]bool {
+	out := make(map[string]bool, len(s.standbyTransport))
+	for k, v := range s.standbyTransport {
+		out[k] = v
+	}
+	return out
+}
 
 // Rotation reports, for each exit in the tier that currently carries traffic,
 // whether our multi-destination verdict is holding it out of the load balancer.

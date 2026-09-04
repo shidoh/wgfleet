@@ -539,3 +539,97 @@ func TestReserveIsActiveDoesNotProbe(t *testing.T) {
 		t.Errorf("reading the tier state advanced the pass counter to %d, want %d", s.pass, pass)
 	}
 }
+
+// A standby transport is in no tier, so nothing here dials it: not the tier
+// decision (it probes the active tier), not warmStandby (it probes the inactive
+// TIER). Measured live 2026-09-04 — five of six exits had a standby transport and
+// none had ever been health-checked; four reported alive=1, which is mihomo's
+// default for an untested proxy rather than a measurement.
+//
+// The cost of not knowing is paid at the worst moment: switching transport is an
+// emergency move made precisely when the active path is blocked, and it is not
+// the time to discover the other one is dead too.
+func TestStandbyTransportsAreProbedOnTheirOwnCadence(t *testing.T) {
+	hits := map[string]int{}
+	table := map[string][2]int{"vn1": {4, 4}, "vn2": {4, 4}, "1cnode004": {4, 4}, "vn1-reality": {4, 4}}
+	s := newTestSelector(countingProbe(table, hits))
+	s.warmEvery = 0 // isolate this from the reserve-tier warm probe
+
+	standby := []string{"vn1-reality"}
+	for range defaultStandbyEvery * 2 {
+		s.active(primary, reserve)
+		s.ProbeStandbyTransports(context.Background(), s.probe, standby)
+	}
+	if hits["vn1-reality"] == 0 {
+		t.Fatal("a standby transport must be probed, or its health is never known until the switch")
+	}
+	// Rarely, though: it carries no traffic, and a heartbeat on a path we keep in
+	// reserve is a cost with no matching benefit.
+	if hits["vn1-reality"] > 3 {
+		t.Errorf("standby probed %d times in %d passes, want a slow cadence",
+			hits["vn1-reality"], defaultStandbyEvery*2)
+	}
+	if usable, ok := s.StandbyTransportHealth()["vn1-reality"]; !ok || !usable {
+		t.Errorf("a reachable standby must record usable, got %v", s.StandbyTransportHealth())
+	}
+}
+
+func TestStandbyTransportRecordsUnusable(t *testing.T) {
+	table := map[string][2]int{"vn1": {4, 4}, "vn2": {4, 4}, "vn1-reality": {0, 4}}
+	s := newTestSelector(fixedProbe(table))
+	for range defaultStandbyEvery {
+		s.active(primary, reserve)
+		s.ProbeStandbyTransports(context.Background(), s.probe, []string{"vn1-reality"})
+	}
+	usable, ok := s.StandbyTransportHealth()["vn1-reality"]
+	if !ok {
+		t.Fatal("the standby must be recorded even when it fails — silence reads as healthy")
+	}
+	if usable {
+		t.Error("a standby reaching 0 of 4 destinations must record unusable")
+	}
+}
+
+// An unreachable Clash API says nothing about the standby. Recording a failure
+// there would turn a control-plane hiccup into "your fallback is gone".
+func TestStandbyTransportBlindProbeKeepsTheLastVerdict(t *testing.T) {
+	table := map[string][2]int{"vn1": {4, 4}, "vn2": {4, 4}, "vn1-reality": {4, 4}}
+	s := newTestSelector(fixedProbe(table))
+	for range defaultStandbyEvery {
+		s.active(primary, reserve)
+		s.ProbeStandbyTransports(context.Background(), s.probe, []string{"vn1-reality"})
+	}
+	if !s.StandbyTransportHealth()["vn1-reality"] {
+		t.Fatal("setup: expected a usable standby")
+	}
+
+	blind := fixedProbe(map[string][2]int{"vn1": {4, 4}, "vn2": {4, 4}}) // vn1-reality errors
+	for range defaultStandbyEvery * 2 {
+		s.active(primary, reserve)
+		s.ProbeStandbyTransports(context.Background(), blind, []string{"vn1-reality"})
+	}
+	if !s.StandbyTransportHealth()["vn1-reality"] {
+		t.Error("a blind sample must not overwrite the last real verdict")
+	}
+}
+
+// An exit that stops having a standby — its second transport disabled, or the
+// whole node drained — must stop reporting one, not freeze on its last value.
+func TestStandbyTransportForgetsExitsThatNoLongerHaveOne(t *testing.T) {
+	table := map[string][2]int{"vn1": {4, 4}, "vn2": {4, 4}, "vn1-reality": {0, 4}}
+	s := newTestSelector(fixedProbe(table))
+	for range defaultStandbyEvery {
+		s.active(primary, reserve)
+		s.ProbeStandbyTransports(context.Background(), s.probe, []string{"vn1-reality"})
+	}
+	if len(s.StandbyTransportHealth()) != 1 {
+		t.Fatalf("setup: expected one standby, got %v", s.StandbyTransportHealth())
+	}
+	for range defaultStandbyEvery {
+		s.active(primary, reserve)
+		s.ProbeStandbyTransports(context.Background(), s.probe, nil)
+	}
+	if got := s.StandbyTransportHealth(); len(got) != 0 {
+		t.Errorf("a vanished standby must stop being reported, got %v", got)
+	}
+}

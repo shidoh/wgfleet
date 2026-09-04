@@ -130,3 +130,62 @@ wgfleet_agent_standby_tier_usable{node="master-xa-1",role="master"} 1
 		t.Error(err)
 	}
 }
+
+// The standby transport is the path an operator switches an exit onto when the
+// active one is blocked — an emergency move. Nothing measured it: on the live
+// fleet 2026-09-04 five of six exits had one and none had ever been checked,
+// four of them reporting mihomo's untested default of alive=1. This series is
+// the difference between "we tested it and it works" and "nobody has ever asked".
+func TestStandbyTransportMetricIsMasterOnly(t *testing.T) {
+	t.Run("master registers and observes", func(t *testing.T) {
+		reg := prometheus.NewRegistry()
+		m := NewAgentMetrics(reg, "master-xa-1", domain.RoleMaster, time.Unix(1_700_000_000, 0))
+		m.ObserveStandbyTransports(map[StandbyTransport]bool{
+			{Exit: "vn0", Transport: "reality-xhttp"}: true,
+			{Exit: "1cnode004", Transport: "awg"}:     false,
+		})
+
+		want := `
+# HELP wgfleet_agent_standby_transport_usable 1 when the last probe found this exit's INACTIVE transport able to reach the internet, 0 when it could not. Absent means never measured, which is not the same as healthy. Master nodes only.
+# TYPE wgfleet_agent_standby_transport_usable gauge
+wgfleet_agent_standby_transport_usable{exit="1cnode004",node="master-xa-1",role="master",transport="awg"} 0
+wgfleet_agent_standby_transport_usable{exit="vn0",node="master-xa-1",role="master",transport="reality-xhttp"} 1
+`
+		if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "wgfleet_agent_standby_transport_usable"); err != nil {
+			t.Error(err)
+		}
+	})
+
+	t.Run("exit never registers the series", func(t *testing.T) {
+		reg := prometheus.NewRegistry()
+		m := NewAgentMetrics(reg, "exit-de-1", domain.RoleExit, time.Unix(1_700_000_000, 0))
+		m.ObserveStandbyTransports(map[StandbyTransport]bool{{Exit: "vn0", Transport: "awg"}: false})
+		if n := testutil.CollectAndCount(reg, "wgfleet_agent_standby_transport_usable"); n != 0 {
+			t.Errorf("exit must expose no standby_transport series, got %d", n)
+		}
+	})
+}
+
+// An exit that stops having a standby — second transport disabled, or the node
+// drained — must drop out of the series. A frozen 0 reads as a fallback that is
+// still broken and still needed, and would page forever.
+func TestStandbyTransportMetricDropsVanishedExits(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewAgentMetrics(reg, "master-xa-1", domain.RoleMaster, time.Unix(1_700_000_000, 0))
+	m.ObserveStandbyTransports(map[StandbyTransport]bool{
+		{Exit: "vn0", Transport: "reality-xhttp"}: false,
+		{Exit: "vn1", Transport: "reality-xhttp"}: true,
+	})
+	m.ObserveStandbyTransports(map[StandbyTransport]bool{
+		{Exit: "vn1", Transport: "reality-xhttp"}: true,
+	})
+
+	want := `
+# HELP wgfleet_agent_standby_transport_usable 1 when the last probe found this exit's INACTIVE transport able to reach the internet, 0 when it could not. Absent means never measured, which is not the same as healthy. Master nodes only.
+# TYPE wgfleet_agent_standby_transport_usable gauge
+wgfleet_agent_standby_transport_usable{exit="vn1",node="master-xa-1",role="master",transport="reality-xhttp"} 1
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "wgfleet_agent_standby_transport_usable"); err != nil {
+		t.Error(err)
+	}
+}

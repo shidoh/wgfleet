@@ -2152,6 +2152,82 @@
    ]
   },
   {
+   "type": "state-timeline",
+   "title": "Standby transport usable",
+   "description": "Whether each dual-transport exit's INACTIVE transport — the one an operator would switch it onto — can actually reach the internet. Absent means never measured, which is not the same as healthy: an untested mihomo proxy reports alive=1 by default, so before this was probed the fleet showed a confident green on no evidence. The switch is an emergency move, made exactly when the active path is blocked.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 69
+   },
+   "id": 62,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "text"
+     },
+     "custom": {
+      "fillOpacity": 85,
+      "lineWidth": 0,
+      "spanNulls": true
+     },
+     "mappings": [
+      {
+       "type": "value",
+       "options": {
+        "0": {
+         "text": "no fallback",
+         "color": "red",
+         "index": 0
+        },
+        "1": {
+         "text": "usable",
+         "color": "green",
+         "index": 1
+        }
+       }
+      }
+     ],
+     "min": 0,
+     "max": 1,
+     "noValue": "no dual-transport exit has been measured yet"
+    },
+    "overrides": []
+   },
+   "options": {
+    "alignValue": "left",
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": false
+    },
+    "mergeValues": true,
+    "rowHeight": 0.85,
+    "showValue": "auto",
+    "tooltip": {
+     "mode": "single",
+     "sort": "none"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "wgfleet_agent_standby_transport_usable{exit=~\"$node\"}",
+     "legendFormat": "{{exit}} → {{transport}}",
+     "refId": "A"
+    }
+   ]
+  },
+  {
    "type": "row",
    "title": "Client-facing VLESS",
    "collapsed": false,

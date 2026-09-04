@@ -380,6 +380,33 @@ spec:
         summary: The standby exit tier on {{ $labels.node }} has no usable member
         description: The warm probe found no reachable exit in the INACTIVE tier. A failover right
           now would land every client on a tier that cannot reach the internet.
+    - alert: WgfleetStandbyTransportUnusable
+      # A dual-transport exit keeps its inactive transport configured but out of
+      # the load-balance group, so nothing dials it and — until the probe behind
+      # this rule existed — nothing knew whether it worked. Measured on the live
+      # fleet 2026-09-04: five of six exits had a standby transport, none had ever
+      # been health-checked, and four of them reported mihomo's untested default
+      # of alive=1. A confident green on no evidence.
+      #
+      # This is not an outage: the exit is serving over its active transport. It is
+      # a MISSING FALLBACK, and the switch that needs it is an emergency move made
+      # exactly when the active path has been blocked — the worst moment to find
+      # out the other one is dead too. Warning, not critical, for that reason.
+      #
+      # No active-tier gate here (unlike the rotation alerts): the standby is out of
+      # rotation BY DESIGN, so gating on rotation membership would silence the rule
+      # in every case it exists for. The series is only emitted for an exit that
+      # actually has a standby, which is the scoping this needs.
+      expr: wgfleet_agent_standby_transport_usable == 0
+      for: 15m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: 'Exit {{ $labels.exit }} has no working fallback: its {{ $labels.transport }} standby is unusable'
+        description: The standby {{ $labels.transport }} transport on {{ $labels.exit }} could not reach
+          enough independent destinations. The exit is still serving over its active transport, but
+          switching it over would not restore anything — so it currently has no fallback.
   - name: wgfleet.dataplane
     interval: 1m
     rules:

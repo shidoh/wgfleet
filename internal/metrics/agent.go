@@ -30,6 +30,7 @@ type AgentMetrics struct {
 	reserveTier      prometheus.Gauge     // 1 when wg-best routes to the reserve tier
 	standbyUsable    prometheus.Gauge     // inactive tier: members the warm probe found usable
 	standbyTotal     prometheus.Gauge     // inactive tier: members the warm probe could sample
+	standbyTransport *prometheus.GaugeVec // per exit: is its INACTIVE transport usable
 	egressThroughput prometheus.Gauge     // last measured egress throughput, bytes/sec
 	reconcileChanges prometheus.Gauge     // resources changed in the last pass
 	checkLatency     *prometheus.GaugeVec // per self-check: probe latency, seconds
@@ -126,6 +127,10 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Namespace: namespace, Subsystem: "agent", Name: "standby_tier_total",
 			Help: "Exits of the INACTIVE tier that the last warm probe could sample. 0 means the standby has not been measured — a failover would be blind. Master nodes only.", ConstLabels: cl,
 		})
+		m.standbyTransport = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "standby_transport_usable",
+			Help: "1 when the last probe found this exit's INACTIVE transport able to reach the internet, 0 when it could not. Absent means never measured, which is not the same as healthy. Master nodes only.", ConstLabels: cl,
+		}, []string{"exit", "transport"})
 	}
 
 	m.startTime.Set(float64(now.Unix()))
@@ -146,7 +151,7 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 		reg.MustRegister(m.transportActive)
 	}
 	if m.exitHeldOut != nil {
-		reg.MustRegister(m.exitHeldOut, m.reserveTier, m.standbyUsable, m.standbyTotal)
+		reg.MustRegister(m.exitHeldOut, m.reserveTier, m.standbyUsable, m.standbyTotal, m.standbyTransport)
 	}
 	return m
 }
@@ -226,6 +231,32 @@ func (m *AgentMetrics) ObserveTier(reserveActive bool, rotation map[string]bool,
 	m.reserveTier.Set(boolToFloat(reserveActive))
 	m.standbyUsable.Set(float64(standbyUsable))
 	m.standbyTotal.Set(float64(standbyTotal))
+}
+
+// StandbyTransport identifies one exit's inactive transport — the path an
+// operator would switch that exit onto (ADR-0025). The transport is a label
+// because "vn0's standby is broken" and "which of the two is it" are the same
+// question at 4am.
+type StandbyTransport struct {
+	Exit      string
+	Transport string
+}
+
+// ObserveStandbyTransports records, per exit, whether its INACTIVE transport
+// could reach the internet on the last probe. A no-op on a non-master.
+//
+// The set is REPLACED, not merged: an exit that stops having a standby — its
+// second transport disabled, or the node drained — must leave the series rather
+// than freeze at its last value, or a stale 0 pages forever about a fallback
+// nobody is waiting on.
+func (m *AgentMetrics) ObserveStandbyTransports(usable map[StandbyTransport]bool) {
+	if m.standbyTransport == nil {
+		return
+	}
+	m.standbyTransport.Reset()
+	for t, ok := range usable {
+		m.standbyTransport.WithLabelValues(t.Exit, t.Transport).Set(boolToFloat(ok))
+	}
 }
 
 // ObserveEgressThroughput records the last measured egress throughput (bytes/sec).

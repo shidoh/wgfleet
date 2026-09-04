@@ -1,5 +1,7 @@
 package domain
 
+import "strings"
+
 // MasterSpec is the master node's data-plane desired state. The master fronts
 // clients (client-facing AmneziaWG via WGServerSpec) and routes/load-balances
 // their traffic across exit nodes using mihomo. Each exit is a mihomo WireGuard
@@ -128,6 +130,26 @@ type ExitTunnel struct {
 	// traffic only when every primary tunnel is down (ADR-0029). Orthogonal to
 	// Drained — a drained reserve tunnel is excluded from its tier like any other.
 	Reserve bool
+}
+
+// RealityProxySuffix is what the controller appends to an exit's name to form the
+// proxy name of its REALITY transport, so a dual-transport exit contributes two
+// proxies under distinct names. It is the ONLY thing tying the two back together
+// on the master, which is why it is a constant rather than a literal repeated at
+// each site: getting the pairing wrong silently splits one exit into two.
+//
+// The collision this implies — an exit literally named "<something>-reality" —
+// is refused at render time (see mihomo.renderProxies), so the mapping below is
+// total rather than best-effort.
+const RealityProxySuffix = "-reality"
+
+// ExitNode returns the exit node this tunnel terminates on. For the AWG transport
+// the proxy name IS the node name; the REALITY proxy carries the suffix above.
+func (t ExitTunnel) ExitNode() string {
+	if t.Transport == TransportRealityXHTTP {
+		return strings.TrimSuffix(t.Name, RealityProxySuffix)
+	}
+	return t.Name
 }
 
 // CustomConfig is the generic config-customization mechanism: operator-supplied

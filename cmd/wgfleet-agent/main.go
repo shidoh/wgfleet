@@ -737,6 +737,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		if a.tier != nil {
 			usable, total := a.tier.StandbyHealth()
 			a.metrics.ObserveTier(a.tier.ReserveIsActive(), a.tier.Rotation(), usable, total)
+			a.metrics.ObserveStandbyTransports(standbyTransportHealth(a.tier, spec))
 		}
 	}
 	a.log.Info("reconcile applied",
@@ -1278,6 +1279,29 @@ func (a *agent) latestHandshake(ctx context.Context) time.Time {
 // wgBestGroupName is the mihomo load-balance group the master routes through; its
 // current selection marks the exit carrying traffic.
 const wgBestGroupName = "wg-best"
+
+// standbyTransportHealth relabels the tier selector's standby verdicts from the
+// mihomo PROXY name it probes ("vn0-reality") to the exit node plus transport an
+// operator actually reasons about ("vn0", "reality-xhttp"). The selector keeps
+// proxy names because that is what a Clash probe addresses; the metric wants the
+// node, because a series keyed by a proxy name reads as an exit that does not
+// exist. Returns nil for a non-master or an exit with no standby transport.
+func standbyTransportHealth(tier *master.TierSelector, spec domain.NodeSpec) map[metrics.StandbyTransport]bool {
+	if spec.Master == nil {
+		return nil
+	}
+	verdicts := tier.StandbyTransportHealth()
+	if len(verdicts) == 0 {
+		return nil
+	}
+	out := make(map[metrics.StandbyTransport]bool, len(verdicts))
+	for _, st := range mihomo.StandbyTransports(*spec.Master) {
+		if usable, ok := verdicts[st.Proxy]; ok {
+			out[metrics.StandbyTransport{Exit: st.Exit, Transport: string(st.Transport)}] = usable
+		}
+	}
+	return out
+}
 
 // exitHealthForMaster parses per-exit tunnel health from a Clash /proxies payload
 // using the master spec's exit names. It returns nil for a non-master or when the

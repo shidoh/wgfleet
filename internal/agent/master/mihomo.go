@@ -73,6 +73,11 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 			return mihomo.ProbeMember(ctx, addr, secret, name, nil)
 		}
 		reserveActive = p.tier.ReserveActive(ctx, probe, primary, reserve)
+		// The standby transports are drained on purpose, so they are in neither tier
+		// and nothing above reaches them. Probing them changes no decision here — the
+		// transport switch is the operator's — it only makes the answer available
+		// BEFORE the switch instead of after it.
+		p.tier.ProbeStandbyTransports(ctx, probe, mihomo.StandbyProxies(*spec.Master))
 	}
 	cfg, err := mihomo.RenderConfig(mihomo.RenderInput{
 		Spec: *spec.Master, PrivateKey: p.privateKey, ReserveActive: reserveActive,

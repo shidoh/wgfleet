@@ -190,6 +190,7 @@ refresh (`as_blacklist_feed`):
 | `wgfleet_agent_exit_held_out` | `exit` | 1 while the master's multi-destination probe holds this exit out of wg-best (master-only). The CAUSE behind `wgfleet_exit_tunnel_alive == 0` |
 | `wgfleet_agent_reserve_tier_active` | — | 1 when wg-best routes to the second-choice (reserve) exit tier instead of the primary one (master-only) |
 | `wgfleet_agent_standby_tier_usable` / `_total` | — | members of the INACTIVE tier the last warm probe found usable, out of those it could sample (master-only) |
+| `wgfleet_agent_standby_transport_usable` | `exit,transport` | 1 when this exit's INACTIVE transport — the one an operator would switch it onto — reached the internet on the last probe, 0 when it did not (master-only). **Absent means never measured**, which is not the same as healthy |
 | `wgfleet_fw_as_blacklist_size` | `family` | size of the scanner-ASN blacklist set actually loaded in nftables |
 
 A probe that has never even attempted to run on a node (feature disabled, or
@@ -217,9 +218,22 @@ and the master agent's multi-destination probe (four independent destinations, w
 is what catches a censored-but-"healthy" exit). `alive` shows the effect; the
 held-out gauge says which criterion caused it.
 
+Two different "standby" ideas live next to each other, and mixing them up costs an
+outage. `standby_tier_*` is about a whole TIER of exits the master fails over to on
+its own. `standby_transport_usable` is about the second TRANSPORT of one exit
+(AWG ↔ REALITY), which nothing fails over to automatically — an operator switches
+it by hand, in an emergency, precisely when the active path has been blocked.
+
+The distinction matters because the second one is invisible by construction: a
+standby transport is deliberately drained, so it sits in no proxy group, so
+neither mihomo's own health check nor the tier probe ever dials it. Measured on
+the live fleet 2026-09-04, five of six exits had a standby transport and none had
+ever been health-checked — four reported `alive=1`, which is mihomo's default for
+an untested proxy rather than a measurement.
+
 ## 4. Alerts
 
-**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 33 alerts,
+**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 34 alerts,
 already applied by step 2 above. Earlier revisions of this file printed two of them
 as a snippet to paste; the copies drifted from the shipped rules (different group
 name, different `for`, a different expression on one), so pasting produced a second,
@@ -249,6 +263,7 @@ What ships, by severity:
 | `WgfleetExitTunnelHealthStale` | warning |
 | `WgfleetReserveTierActive` | warning |
 | `WgfleetStandbyTierUnusable` | warning |
+| `WgfleetStandbyTransportUnusable` | warning |
 | `WgfleetCAExpiringSoon` | critical |
 | `WgfleetConfigUnreadable` | warning |
 | `WgfleetHealthCheckFailing` | warning |
