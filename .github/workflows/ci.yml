@@ -40,3 +40,11 @@ jobs:
 
       - name: Test (race)
         run: go test -race ./...
+
+      # The data-path rehearsal needs CAP_NET_ADMIN: it opens the IP_TRANSPARENT
+      # reply socket mihomo opens, which is the one call the August 2026 outage
+      # turned on. Unprivileged it skips itself, and a test that always skips is a
+      # test nobody has, so it is run deliberately under sudo rather than left to
+      # the ordinary suite.
+      - name: Data-path rehearsal (privileged)
+        run: sudo -E env "PATH=$PATH" go test -count=1 -v ./test/datapath/...
