@@ -366,3 +366,57 @@ func clientV6Address(spec domain.ClientWGSpec, v4 string) (string, error) {
 	}
 	return v6.String() + "/128", nil
 }
+
+// SyntheticPeerName is how the master's own path prober appears on the client
+// interface. It is a real peer with a real address, and it is named so that an
+// operator reading `awg show wg0` can tell it from an end user at a glance.
+const SyntheticPeerName = "wgfleet-synthetic-probe"
+
+// SyntheticClient builds the master's own client — the peer it uses to measure
+// whether a packet entering the client interface comes back.
+//
+// It is an ordinary client in every respect, and that is the point: a prober that
+// takes a shortcut measures the shortcut. It handshakes with the same obfuscation,
+// gets the same MTU, traverses the same nftables chains and the same proxy as the
+// people this fleet exists for. The only thing special about it is the address,
+// which is reserved out of the allocator's reach (domain.SyntheticClientAddress).
+//
+// The keypair is generated and kept on the node. The controller never sees it and
+// has no reason to: nobody has to be able to re-issue this config, and a private
+// key that never leaves is one fewer thing to leak.
+func SyntheticClient(address, privateKey, publicKey string) domain.WGClient {
+	return domain.WGClient{
+		ID:         SyntheticPeerName,
+		Name:       SyntheticPeerName,
+		Address:    address,
+		PrivateKey: privateKey,
+		PublicKey:  publicKey,
+		Enabled:    true,
+	}
+}
+
+// WithSyntheticPeer returns spec with the prober added to its peer list. A spec
+// that already carries it is returned unchanged, so the function is safe to apply
+// on every pass.
+//
+// The peer is added by the AGENT rather than sent by the controller because the
+// key is node-local. That has a consequence worth stating: the live interface then
+// carries one peer the controller did not describe, so anything comparing live
+// peers against the spec must compare against THIS spec, not the one off the wire.
+func WithSyntheticPeer(spec domain.ClientWGSpec, peer domain.WGClient) domain.ClientWGSpec {
+	if peer.PublicKey == "" || peer.Address == "" {
+		return spec
+	}
+	for _, c := range spec.Clients {
+		if c.PublicKey == peer.PublicKey {
+			return spec
+		}
+	}
+	out := spec
+	out.Clients = append(append([]domain.WGClientPeer(nil), spec.Clients...), domain.WGClientPeer{
+		Name:      peer.Name,
+		PublicKey: peer.PublicKey,
+		Address:   peer.Address,
+	})
+	return out
+}

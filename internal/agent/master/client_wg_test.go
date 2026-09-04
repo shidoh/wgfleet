@@ -661,3 +661,48 @@ func mustPlan(t *testing.T, p clientWGPlanner, spec domain.NodeSpec) []reconcile
 	}
 	return a
 }
+
+// The prober must be on the live interface AND in the peer-match check.
+//
+// Those are two halves of one requirement. The agent adds this peer locally, so
+// the controller's spec does not describe it — and servesDesiredPeers compares the
+// LIVE interface against a spec. Comparing against the un-augmented one would see
+// an extra peer it cannot explain, decide the interface has drifted, and re-apply
+// the config on every single pass: a client interface rewritten once a minute
+// because it is carrying the thing that measures it.
+func TestClientInterfaceCarriesTheProberAndDoesNotCallItDrift(t *testing.T) {
+	dir := t.TempDir()
+	conf := filepath.Join(dir, "wg0.conf")
+	spec := managedSpec(t)
+	clientPub := spec.Master.ClientWG.Clients[0].PublicKey
+
+	p := clientWGPlanner{
+		confPath: conf, privateKey: "serverkey", synthKey: wg.KeyPair{PrivateKey: "synthpriv", PublicKey: "SYNTHPUB"},
+		up:               func(string) bool { return true },
+		ifacePeers:       func(string) ([]string, error) { return []string{clientPub, "SYNTHPUB"}, nil },
+		containerPresent: func(string) bool { return false },
+		lookPath:         func(string) (string, error) { return "", errors.New("absent") },
+	}
+	// applyPlan, not applyNonExec: the interface config is rendered with a redactor,
+	// so its Display is the REDACTED text. Writing that back would leave a file that
+	// never matches the render and an interface that is "changed" on every pass.
+	applyPlan(t, p, spec)
+	rendered, err := os.ReadFile(conf)
+	if err != nil {
+		t.Fatalf("read rendered config: %v", err)
+	}
+	if !strings.Contains(string(rendered), "SYNTHPUB") {
+		t.Errorf("the prober is not on the interface:\n%s", rendered)
+	}
+
+	// Second pass over the same converged state must not re-apply.
+	acts, perr := p.Plan(context.Background(), spec)
+	if perr != nil {
+		t.Fatalf("second Plan: %v", perr)
+	}
+	for _, a := range acts {
+		if a.Kind == reconcile.ActionExec && strings.Contains(a.Summary, "config changed") {
+			t.Errorf("the interface was re-applied although nothing changed: %q", a.Summary)
+		}
+	}
+}

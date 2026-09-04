@@ -16,6 +16,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/mihomo"
 	"github.com/shidoh/wgfleet/internal/netfw"
+	"github.com/shidoh/wgfleet/internal/wg"
 	"github.com/shidoh/wgfleet/internal/wgeasy"
 )
 
@@ -35,6 +36,12 @@ type Input struct {
 	// (adopted from wg-easy's database on handover, else generated), never on the
 	// wire. Empty ⇒ the client-interface planner defers, like the vless one.
 	ClientWGPrivateKey string
+	// SyntheticKey is the keypair of the master's OWN client — the peer it sends
+	// traffic through to measure whether a packet entering the client interface
+	// comes back. The ADDRESS is derived from the pool at plan time rather than
+	// passed here, so a pool the operator resizes moves the prober with it. Zero
+	// value ⇒ no prober, and everything renders as it did before it existed.
+	SyntheticKey wg.KeyPair
 	// ClientInterface is the client WG interface the NAT/forward rules reference.
 	// Default is applied when empty. (The master masquerades on every egress except
 	// this interface, so a separate egress iface no longer needs detecting.)
@@ -97,7 +104,8 @@ func Planners(in Input) []reconcile.Planner {
 		// The handover direction is unaffected: claiming wg0 does not require
 		// wg-easy to be stopped first (we take the interface from it either way),
 		// and the compose planner in the same pass retires the container.
-		clientWGPlanner{confPath: in.Paths.ClientWGConf, privateKey: in.ClientWGPrivateKey},
+		clientWGPlanner{confPath: in.Paths.ClientWGConf, privateKey: in.ClientWGPrivateKey,
+			synthKey: in.SyntheticKey},
 		composePlanner{path: in.Paths.Compose, adminUser: in.AdminUsername, adminPass: in.AdminPassword},
 		// The client leg has exactly one owner. While wg-easy holds it these three
 		// keep its database converged; once the operator hands the leg to the agent

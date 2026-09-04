@@ -331,8 +331,10 @@ type agent struct {
 	// Kept here rather than in a planner: planners are rebuilt every pass and would
 	// re-count the same window forever.
 	mihomoLogCursor time.Time
-	client          *client.Client
-	log             *slog.Logger
+	// synthKP is the master's own client keypair, minted once and kept on the node.
+	synthKP wg.KeyPair
+	client  *client.Client
+	log     *slog.Logger
 	// tier carries the master's exit-tier failover decision for the PROCESS
 	// lifetime. It must not live in the planner list: planners() is called on every
 	// reconcile pass (the engine is rebuilt each time), so a per-pass selector has
@@ -927,6 +929,7 @@ func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, admi
 			PrivateKey:         privateKey,
 			RealityPrivateKey:  realityPrivateKey,
 			ClientWGPrivateKey: clientWGPrivateKey,
+			SyntheticKey:       a.ensureSynthKeyQuiet(),
 			AdminUsername:      adminUser,
 			AdminPassword:      adminPass,
 			OverlayMSS:         a.cfg.Agent.MgmtOverlayMSS,
@@ -1717,4 +1720,50 @@ func udpReturnObservations(spec domain.NodeSpec) (bindable, known map[int]bool) 
 		known[p] = declared[p]
 	}
 	return bindable, known
+}
+
+// ensureSynthKeyQuiet resolves the prober's keypair, logging rather than failing
+// when it cannot: a master that cannot mint this key must still serve clients, it
+// simply goes unmeasured.
+func (a *agent) ensureSynthKeyQuiet() wg.KeyPair {
+	if a.synthKP.PrivateKey != "" {
+		return a.synthKP
+	}
+	kp, err := a.ensureSynthKey()
+	if err != nil {
+		a.log.Warn("no synthetic client key; the client path will not be measured", "err", err)
+		return wg.KeyPair{}
+	}
+	a.synthKP = kp
+	return kp
+}
+
+// ensureSynthKey reads the prober's key or mints it. Unlike the client-facing
+// interface key there is no adoption path and no field to invalidate: losing this
+// key costs one restarted measurement, so minting a fresh one is always safe.
+func (a *agent) ensureSynthKey() (wg.KeyPair, error) {
+	path := a.masterPaths().SynthKey
+	data, err := os.ReadFile(path)
+	if err == nil {
+		priv := strings.TrimSpace(string(data))
+		pub, perr := wg.PublicKeyOf(priv)
+		if perr != nil {
+			return wg.KeyPair{}, fmt.Errorf("stored synthetic client key invalid: %w", perr)
+		}
+		return wg.KeyPair{PrivateKey: priv, PublicKey: pub}, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return wg.KeyPair{}, fmt.Errorf("read synthetic client key %q: %w", path, err)
+	}
+	kp, err := wg.GenerateKeyPair()
+	if err != nil {
+		return wg.KeyPair{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return wg.KeyPair{}, err
+	}
+	if err := os.WriteFile(path, []byte(kp.PrivateKey+"\n"), 0o600); err != nil {
+		return wg.KeyPair{}, err
+	}
+	return kp, nil
 }

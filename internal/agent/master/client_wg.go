@@ -26,10 +26,14 @@ import (
 
 // clientWGPlanner renders and raises the master's client-facing interface.
 type clientWGPlanner struct {
-	confPath   string                 // awg-quick config for the client interface
-	privateKey string                 // the master's client-interface private key (node-local)
-	up         func(name string) bool // nil ⇒ real `ip link` probe
-	awgGen     func() (int, error)    // nil ⇒ real modinfo probe (tests inject)
+	confPath   string // awg-quick config for the client interface
+	privateKey string // the master's client-interface private key (node-local)
+	// synthKey is the keypair of the master's OWN client: the peer it sends traffic
+	// through to measure whether a packet entering this interface comes back. Zero
+	// value ⇒ no prober, and the interface renders exactly as it did before.
+	synthKey wg.KeyPair
+	up       func(name string) bool // nil ⇒ real `ip link` probe
+	awgGen   func() (int, error)    // nil ⇒ real modinfo probe (tests inject)
 	// ifacePeers lists the live interface's peer public keys. nil ⇒ real `awg show`.
 	ifacePeers func(name string) ([]string, error)
 	// containerPresent reports whether a container exists. nil ⇒ real `docker ps`.
@@ -97,7 +101,12 @@ func (p clientWGPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 		}
 	}
 
-	cfg, err := wg.RenderClientInterface(wg.ClientInterfaceInput{Spec: *cw, PrivateKey: p.privateKey})
+	// The prober joins the peer list here rather than upstream, because its key is
+	// node-local and the controller has never seen it. Everything downstream that
+	// compares live peers against "the spec" therefore has to compare against THIS
+	// one — see servesDesiredPeers, which takes the same augmented value.
+	rendered := wg.WithSyntheticPeer(*cw, p.syntheticPeer(*cw))
+	cfg, err := wg.RenderClientInterface(wg.ClientInterfaceInput{Spec: rendered, PrivateKey: p.privateKey})
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +159,7 @@ func (p clientWGPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	// Past every deferral: whatever the last pass declined to do, it is doing it now.
 	actions = append(actions, p.clearDeferred())
 
-	peersMatch, peersKnown := p.servesDesiredPeers(cw)
+	peersMatch, peersKnown := p.servesDesiredPeers(&rendered)
 	switch {
 	case file.Changes():
 		return append(actions, p.applyActions(backend, "config changed")...), nil
@@ -476,4 +485,21 @@ func clientIfaceName(path string) string {
 // ipLinkUp reports whether an interface exists (awg-quick creates it on `up`).
 func ipLinkUp(name string) bool {
 	return exec.Command("ip", "link", "show", name).Run() == nil
+}
+
+// syntheticPeer builds the master's own client peer for this spec, or the zero
+// value when there is no key or the pool has no room for one. The address comes
+// from the pool rather than from configuration so an operator resizing the pool
+// moves the prober with it instead of stranding it outside.
+func (p clientWGPlanner) syntheticPeer(cw domain.ClientWGSpec) domain.WGClient {
+	if p.synthKey.PublicKey == "" {
+		return domain.WGClient{}
+	}
+	addr, err := domain.SyntheticClientAddress(cw.AddressPool)
+	if err != nil {
+		// A pool too small to seat a prober still serves clients; it simply gets no
+		// measurement. Refusing here would trade the thing for the thing that watches it.
+		return domain.WGClient{}
+	}
+	return wg.SyntheticClient(addr, p.synthKey.PrivateKey, p.synthKey.PublicKey)
 }

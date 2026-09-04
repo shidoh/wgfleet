@@ -31,6 +31,11 @@ type Paths struct {
 	ClientVLESSKey string // master's client-facing REALITY x25519 private key (0600); wiped on teardown
 	ClientWGConf   string // client-facing AmneziaWG interface config (0600); the interface name comes from this filename
 	ClientWGKey    string // master's client-facing WireGuard private key (0600); adopted from wg-easy on handover
+	// SynthKey is the private key of the master's OWN client — the peer it uses to
+	// measure whether a packet entering the client interface comes back. Node-local
+	// and never published: nobody has to re-issue this config, so a key that never
+	// leaves is one fewer thing to leak.
+	SynthKey string
 }
 
 // DefaultPaths returns the production-default file locations.
@@ -59,6 +64,7 @@ func DefaultPaths() Paths {
 		// when the leg changes hands.
 		ClientWGConf: "/etc/amnezia/amneziawg/wg0.conf",
 		ClientWGKey:  "/etc/wgfleet/client-wg.key",
+		SynthKey:     "/etc/wgfleet/client-wg-synth.key",
 	}
 }
 
@@ -82,5 +88,6 @@ func PathsUnder(dir string) Paths {
 		ClientVLESSKey: filepath.Join(dir, "client-vless.key"),
 		ClientWGConf:   filepath.Join(dir, "wg0.conf"),
 		ClientWGKey:    filepath.Join(dir, "client-wg.key"),
+		SynthKey:       filepath.Join(dir, "client-wg-synth.key"),
 	}
 }
