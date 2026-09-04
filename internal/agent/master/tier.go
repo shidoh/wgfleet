@@ -194,13 +194,16 @@ func (s *TierSelector) ProbeStandbyTransports(ctx context.Context, probe memberP
 		}
 		usable := total > 0 && ok >= min(s.minReachable, total)
 		if was, seen := s.standbyTransport[m]; s.log != nil && (!seen || was != usable) {
+			// Logged as "proxy", not "exit": a standby's proxy name always carries the
+			// transport suffix, so calling it an exit prints a node that does not exist.
+			// The metric does the join and labels the real node.
 			if usable {
-				s.log.Info("standby transport usable", "exit", m, "reachable", ok, "probed", total)
+				s.log.Info("standby transport usable", "proxy", m, "reachable", ok, "probed", total)
 			} else {
 				// Worth a warning on its own: the fallback this exit is supposed to have
 				// is not there, and the switch that needs it is an emergency action.
 				s.log.Warn("standby transport unusable — switching to it would not restore this exit",
-					"exit", m, "reachable", ok, "probed", total)
+					"proxy", m, "reachable", ok, "probed", total)
 			}
 		}
 		s.standbyTransport[m] = usable
