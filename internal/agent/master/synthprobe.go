@@ -38,11 +38,17 @@ const clientPathTimeout = 5 * time.Second
 // (health.UDPReturnBindable), which asserts a reply socket is possible for that
 // port; between them, "UDP works through the tunnel" and "no port black-holes"
 // cover the failure this exists for.
-func MeasureClientPath(ctx context.Context, run netns.Runner) []ClientPathProbe {
+func MeasureClientPath(ctx context.Context, gateway string, run netns.Runner) []ClientPathProbe {
 	if run == nil {
 		run = netns.Exec
 	}
-	ctx, cancel := context.WithTimeout(ctx, 3*clientPathTimeout)
+	if gateway == "" {
+		// Without the client gateway there is no tunnel-only probe, and the remaining
+		// two cannot be told apart from an upstream failure. Report nothing rather
+		// than something ambiguous.
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 4*clientPathTimeout)
 	defer cancel()
 
 	timeout := fmt.Sprint(int(clientPathTimeout.Seconds()))
@@ -50,6 +56,13 @@ func MeasureClientPath(ctx context.Context, run netns.Runner) []ClientPathProbe 
 		name string
 		argv []string
 	}{
+		// The gateway first, and it earns its place by being the discriminator. It
+		// proves the tunnel itself — encrypt, cross the client interface, decrypt —
+		// without depending on the resolver, the proxy or an exit. When this passes
+		// and the others fail, the client leg is fine and something beyond it is not;
+		// when this fails, nothing further is worth reading. Working that out by hand
+		// took a stand session, which is a good reason for the metric to say it.
+		{"icmp/gateway", []string{"ping", "-c", "2", "-W", "2", "-q", gateway}},
 		// TCP through the tunnel, through mihomo, to an exit and out. The same URL
 		// the tier prober uses, so a failure here and a failure there are comparable.
 		{"tcp/443", []string{"curl", "-sS", "-o", "/dev/null", "--max-time", timeout,
@@ -86,15 +99,16 @@ func ClientPathOK(probes []ClientPathProbe) bool {
 	return true
 }
 
-// trimProbeError keeps a probe failure readable in a log line: the command's own
-// output matters, the shell plumbing around it does not.
+// trimProbeError keeps a probe failure readable in a log line.
+//
+// It caps the length and nothing else. An earlier version kept only the text
+// after the last ": ", which on a real failure left the single word
+// "cp.cloudflare.com" — the host name, with the actual error ("Could not resolve
+// host") discarded. A message that drops the reason is worse than a long one.
 func trimProbeError(err error) string {
 	msg := strings.TrimSpace(err.Error())
-	if i := strings.LastIndex(msg, ": "); i > 0 && i < len(msg)-2 {
-		msg = msg[i+2:]
-	}
-	if len(msg) > 160 {
-		msg = msg[:160] + "…"
+	if len(msg) > 200 {
+		msg = msg[:200] + "…"
 	}
 	return msg
 }

@@ -16,7 +16,7 @@ func TestClientPathProbesRunInsideTheProberNamespace(t *testing.T) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		return "", nil
 	}
-	probes := MeasureClientPath(context.Background(), run)
+	probes := MeasureClientPath(context.Background(), "10.80.0.1", run)
 	if len(probes) == 0 {
 		t.Fatal("nothing was measured")
 	}
@@ -38,7 +38,7 @@ func TestClientPathReportsWhichProbeFailed(t *testing.T) {
 		}
 		return "", nil
 	}
-	probes := MeasureClientPath(context.Background(), run)
+	probes := MeasureClientPath(context.Background(), "10.80.0.1", run)
 	if ClientPathOK(probes) {
 		t.Fatal("a failed probe was reported as a healthy path")
 	}
@@ -62,5 +62,16 @@ func TestClientPathReportsWhichProbeFailed(t *testing.T) {
 func TestNoProbesIsNotHealthy(t *testing.T) {
 	if ClientPathOK(nil) {
 		t.Error("an empty probe set reported the client path healthy")
+	}
+}
+
+// Without a gateway the probes cannot be told apart from an upstream failure, so
+// nothing is reported rather than something ambiguous.
+func TestNoGatewayMeasuresNothing(t *testing.T) {
+	if got := MeasureClientPath(context.Background(), "", func(context.Context, string, ...string) (string, error) {
+		t.Fatal("probed without a gateway to compare against")
+		return "", nil
+	}); len(got) != 0 {
+		t.Errorf("measured %d probes with no gateway", len(got))
 	}
 }

@@ -758,7 +758,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			// The client path, measured from the master's own client. Taken AFTER the
 			// pass: the prober's interface may have been created by it.
 			results := map[string]bool{}
-			for _, pr := range master.MeasureClientPath(ctx, nil) {
+			for _, pr := range master.MeasureClientPath(ctx, clientGatewayOf(spec), nil) {
 				results[pr.Name] = pr.OK
 				if !pr.OK {
 					a.log.Warn("client path probe failed", "probe", pr.Name, "err", pr.Why)
@@ -1791,4 +1791,13 @@ func publicKeyOrEmpty(privateKey string) string {
 		return ""
 	}
 	return pub
+}
+
+// clientGatewayOf is the master's own address in the client pool: what a client
+// sends its DNS to, and what the prober pings to prove the tunnel itself.
+func clientGatewayOf(spec domain.NodeSpec) string {
+	if spec.Master == nil || spec.Master.ClientWG == nil {
+		return ""
+	}
+	return spec.Master.ClientWG.ServerAddress
 }

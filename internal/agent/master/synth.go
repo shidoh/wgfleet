@@ -16,7 +16,19 @@ import (
 const (
 	synthNetns = "wgfleet-synth"
 	synthIface = "wgs0"
+	// synthResolvConf is where `ip netns exec` looks for the namespace's own
+	// /etc/resolv.conf: it bind-mounts /etc/netns/<name>/* over /etc/*.
+	synthResolvConf = "/etc/netns/" + synthNetns + "/resolv.conf"
 )
+
+// clientGateway is the master's own address in the client pool — what a client
+// sends its DNS to.
+func clientGateway(cw domain.ClientWGSpec) string {
+	if cw.ServerAddress != "" {
+		return cw.ServerAddress
+	}
+	return ""
+}
 
 // synthPlanner builds the master's own client: a real AmneziaWG peer whose
 // decrypted side lives in an isolated namespace.
@@ -35,6 +47,7 @@ const (
 // client interface comes back.
 type synthPlanner struct {
 	confPath   string     // setconf file for the prober's device
+	resolvPath string     // the namespace's own resolv.conf; "" ⇒ the canonical path
 	synthKey   wg.KeyPair // the prober's identity; zero ⇒ no prober
 	serverPub  string     // the master's client-interface public key
 	run        netns.Runner
@@ -79,6 +92,32 @@ func (p synthPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 		return nil, err
 	}
 	actions := []reconcile.Action{file}
+
+	// The prober's resolver, and it must be the CLIENT's resolver.
+	//
+	// `ip netns exec` bind-mounts /etc/netns/<name>/* over /etc/*, which is how a
+	// namespace gets its own resolv.conf. Without one the prober inherits the host's
+	// — on a systemd box that is 127.0.0.53, a stub resolver that does not exist
+	// inside the namespace — and every probe fails on name resolution while the
+	// tunnel underneath is perfectly healthy. That is a prober that reports the path
+	// broken when it is fine, which is worse than no prober at all.
+	//
+	// Pointing it at the client gateway is not a workaround but the point: a real
+	// client resolves through the master's own blocky at that address, so this
+	// measures the DNS path users actually take.
+	if gw := clientGateway(*cw); gw != "" {
+		resolvPath := p.resolvPath
+		if resolvPath == "" {
+			resolvPath = synthResolvConf
+		}
+		resolv, rerr := reconcile.FileAction(resolvPath,
+			[]byte("# Rendered by wgfleet — the prober resolves where clients resolve.\nnameserver "+gw+"\n"),
+			0o644, nil)
+		if rerr != nil {
+			return nil, rerr
+		}
+		actions = append(actions, resolv)
+	}
 
 	run := p.run
 	if run == nil {

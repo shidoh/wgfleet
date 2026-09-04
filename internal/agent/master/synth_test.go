@@ -67,7 +67,7 @@ func TestProberIsCreatedInTheHostNamespaceThenMoved(t *testing.T) {
 func TestProberIsQuietOnceUp(t *testing.T) {
 	dir := t.TempDir()
 	p := synthPlanner{
-		confPath: dir + "/synth.conf", serverPub: "SRV",
+		confPath: dir + "/synth.conf", resolvPath: dir + "/resolv.conf", serverPub: "SRV",
 		synthKey: wg.KeyPair{PrivateKey: "priv", PublicKey: "PUB"},
 		run: func(_ context.Context, _ string, args ...string) (string, error) {
 			if strings.Contains(strings.Join(args, " "), "netns list") {
@@ -98,7 +98,7 @@ func TestProberIsQuietOnceUp(t *testing.T) {
 // No key, no prober — and no failure either. A master that cannot mint the key
 // must still serve clients; it simply goes unmeasured.
 func TestProberIsAbsentWithoutAKey(t *testing.T) {
-	p := synthPlanner{confPath: t.TempDir() + "/synth.conf", serverPub: "SRV"}
+	p := synthPlanner{confPath: t.TempDir() + "/synth.conf", resolvPath: t.TempDir() + "/resolv.conf", serverPub: "SRV"}
 	acts, err := p.Plan(context.Background(), synthPlannerSpec())
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
@@ -115,7 +115,7 @@ func TestProberStandsDownOnATinyPool(t *testing.T) {
 	spec := synthPlannerSpec()
 	spec.Master.ClientWG.AddressPool = "10.80.0.0/30"
 	p := synthPlanner{
-		confPath: t.TempDir() + "/synth.conf", serverPub: "SRV",
+		confPath: t.TempDir() + "/synth.conf", resolvPath: t.TempDir() + "/resolv.conf", serverPub: "SRV",
 		synthKey: wg.KeyPair{PrivateKey: "priv", PublicKey: "PUB"},
 	}
 	acts, err := p.Plan(context.Background(), spec)
