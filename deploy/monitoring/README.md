@@ -265,6 +265,7 @@ What ships, by severity:
 | `WgfleetStandbyTierUnusable` | warning |
 | `WgfleetStandbyTransportUnusable` | warning |
 | `WgfleetClientUDPBlackHole` | critical |
+| `WgfleetMihomoComplaining` | warning |
 | `WgfleetCAExpiringSoon` | critical |
 | `WgfleetConfigUnreadable` | warning |
 | `WgfleetHealthCheckFailing` | warning |

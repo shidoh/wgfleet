@@ -35,6 +35,7 @@ type AgentMetrics struct {
 	egressThroughput prometheus.Gauge     // last measured egress throughput, bytes/sec
 	udpReturnSocket  *prometheus.GaugeVec // per UDP port: can a TPROXY reply socket still be opened
 	udpReturnKnown   *prometheus.GaugeVec // per UDP port: is a blocked port one we have decided about
+	mihomoErrors     prometheus.Counter   // error lines mihomo wrote about itself
 	reconcileChanges prometheus.Gauge     // resources changed in the last pass
 	checkLatency     *prometheus.GaugeVec // per self-check: probe latency, seconds
 	startTime        prometheus.Gauge
@@ -104,6 +105,10 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Namespace: namespace, Subsystem: "agent", Name: "udp_return_socket",
 			Help: "1 when a TPROXY reply socket can still be opened for this destination port; 0 when a socket this namespace already holds makes it impossible, so client traffic to that port gets no replies.", ConstLabels: cl,
 		}, []string{"port"}),
+		mihomoErrors: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "mihomo_errors_total",
+			Help: "Error lines mihomo has written about itself. Deliberately unclassified: the next failure of this kind will have a different message, and the signal is that the data plane is complaining at all.", ConstLabels: cl,
+		}),
 		udpReturnKnown: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "udp_return_known",
 			Help: "1 when a port whose replies cannot come back is one we have decided about (refused by rule, or a declared loss); 0 marks a silent black hole.", ConstLabels: cl,
@@ -157,7 +162,7 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 
 	reg.MustRegister(m.reconcileTotal, m.reconcileDuration, m.stateInfo, m.checkUp, m.checkLatency,
 		m.driftTotal, m.driftResources, m.reconcileChanges, m.egressReach, m.egressActive,
-		m.egressThroughput, m.startTime, m.udpReturnSocket, m.udpReturnKnown)
+		m.egressThroughput, m.startTime, m.udpReturnSocket, m.udpReturnKnown, m.mihomoErrors)
 	if m.transportActive != nil {
 		reg.MustRegister(m.transportActive)
 	}
@@ -304,5 +309,18 @@ func (m *AgentMetrics) ObserveUDPReturn(bindable, known map[int]bool) {
 		label := strconv.Itoa(port)
 		m.udpReturnSocket.WithLabelValues(label).Set(boolToFloat(ok))
 		m.udpReturnKnown.WithLabelValues(label).Set(boolToFloat(known[port]))
+	}
+}
+
+// ObserveMihomoErrors adds the error lines mihomo wrote since the last look.
+//
+// Unclassified on purpose. Alerting on a specific message ("listenLocalConn")
+// catches only the failure already understood and fixed; the next one of this
+// class will say something else. What generalises is that the data plane is
+// complaining at all — 97787 lines over eight days with no metric is what let a
+// dead protocol look healthy.
+func (m *AgentMetrics) ObserveMihomoErrors(n int) {
+	if n > 0 {
+		m.mihomoErrors.Add(float64(n))
 	}
 }

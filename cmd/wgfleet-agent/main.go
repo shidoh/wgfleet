@@ -326,8 +326,12 @@ type agent struct {
 	stateDir string // non-empty roots managed files outside /etc (non-root/dev)
 	paths    exit.Paths
 	metrics  *metrics.AgentMetrics // nil when /metrics is disabled
-	client   *client.Client
-	log      *slog.Logger
+	// mihomoLogCursor is how far into mihomo's log the error counter has read.
+	// Kept here rather than in a planner: planners are rebuilt every pass and would
+	// re-count the same window forever.
+	mihomoLogCursor time.Time
+	client          *client.Client
+	log             *slog.Logger
 	// tier carries the master's exit-tier failover decision for the PROCESS
 	// lifetime. It must not live in the planner list: planners() is called on every
 	// reconcile pass (the engine is rebuilt each time), so a per-pass selector has
@@ -742,6 +746,12 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		if a.role == domain.RoleMaster {
 			bindable, known := udpReturnObservations()
 			a.metrics.ObserveUDPReturn(bindable, known)
+			// mihomo's own complaints. The cursor lives on the agent, not in a planner:
+			// planners are rebuilt every pass and would forget where they got to.
+			if n, cursor, lerr := mihomo.ScanErrors(ctx, "mihomo", a.mihomoLogCursor); lerr == nil {
+				a.metrics.ObserveMihomoErrors(n)
+				a.mihomoLogCursor = cursor
+			}
 		}
 	}
 	a.log.Info("reconcile applied",

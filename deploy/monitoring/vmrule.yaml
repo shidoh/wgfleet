@@ -459,6 +459,24 @@ spec:
         summary: No client has a live handshake on {{ $labels.node }}
         description: The client-facing interface on {{ $labels.node }} has had zero active peers for
           10m. Either every client is offline at once, or the interface is serving an empty peer set.
+    - alert: WgfleetMihomoComplaining
+      # mihomo writes its own failures to the container log and nothing read them.
+      # The TPROXY reply failure that killed every client QUIC flow from 2026-08-28
+      # announced itself 97787 times over eight days while every other metric stayed
+      # green. Deliberately unclassified: the next failure of this class will carry a
+      # different message, and what generalises is that the data plane is complaining.
+      expr: rate(wgfleet_agent_mihomo_errors_total[15m]) > 0
+      for: 15m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: "mihomo is logging errors on {{ $labels.node }}"
+        description: >-
+          mihomo has been writing error lines steadily for 15 minutes. Read them
+          with `docker logs mihomo --since 15m | grep level=error`. A steady rate
+          usually means a per-packet or per-connection failure rather than a
+          one-off.
     - alert: WgfleetClientUDPBlackHole
       # mihomo's TPROXY reply path binds the SERVER's address:port to send a reply
       # back with the right source. Any UDP port this host already holds a socket
