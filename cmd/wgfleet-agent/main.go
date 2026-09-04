@@ -739,6 +739,10 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			a.metrics.ObserveTier(a.tier.ReserveIsActive(), a.tier.Rotation(), usable, total)
 			a.metrics.ObserveStandbyTransports(standbyTransportHealth(a.tier, spec))
 		}
+		if a.role == domain.RoleMaster {
+			bindable, known := udpReturnObservations()
+			a.metrics.ObserveUDPReturn(bindable, known)
+		}
 	}
 	a.log.Info("reconcile applied",
 		"changes", report.ChangeCount(), "drift", len(drifted),
@@ -794,6 +798,7 @@ func (a *agent) healthChecks(spec domain.NodeSpec) []health.Check {
 		mp := a.masterPaths()
 		probes.ClientWGOwned = health.ClientWGOwnedProbe(
 			master.ClaimPathFor(mp.ClientWGConf), clientIfaceName(mp.ClientWGConf))
+		probes.ClientUDPReturn = clientUDPReturnProbe(spec)
 		return health.MasterChecks(spec, probes)
 	}
 	return health.ExitChecks(spec, health.DefaultExitProbes(spec))
@@ -1630,4 +1635,60 @@ func (a *agent) pullSpecOrCache(ctx, base context.Context, plan bool, fromCache 
 		}
 	}
 	return domain.NodeSpec{}, fmt.Errorf("pull spec: %w", err)
+}
+
+// knownUDPBlackHoles are the destination ports whose client traffic we already
+// know cannot get a reply on this master, with the reason.
+//
+// Declaring them is what makes the check useful rather than either permanently
+// red or a lie. mihomo's TPROXY reply path binds the SERVER's address:port, so any
+// port this host holds a socket on is unreachable for clients — and today two
+// services hold such ports on purpose. Listing them here means the check goes red
+// only when a NEW one appears, which is the whole point: the next service that
+// binds a UDP port must not be able to break client traffic in silence.
+//
+// This list SHRINKS as the ports are actually fixed. 443 leaves it when mihomo
+// moves into its own network namespace and the collision stops existing.
+var knownUDPBlackHoles = map[int]string{
+	443:  "the client AmneziaWG interface listens here; mihomo cannot bind a reply socket on it",
+	9993: "zerotier-one holds this port",
+	9994: "the ZeroTier controller's own member holds this port",
+}
+
+// clientUDPReturnProbe builds the master's UDP-return check over the ports the
+// kernel actually reports, not a list in the code — the first draft guessed the
+// ports and would have missed exactly the case it was written to catch.
+func clientUDPReturnProbe(spec domain.NodeSpec) health.Probe {
+	ports, err := health.HeldUDPPorts()
+	if err != nil {
+		// Cannot read the socket table: probe the one port we know by construction
+		// rather than nothing, and let the probe report itself blind if that fails too.
+		ports = []int{spec.WGServer.ListenPort}
+	}
+	return health.ClientUDPReturnProbe(ports, health.UDPReturnBindable, func(p int) bool {
+		_, known := knownUDPBlackHoles[p]
+		return known
+	})
+}
+
+// udpReturnObservations samples, for every UDP port this host holds, whether a
+// TPROXY reply socket is still possible there and whether we have already decided
+// about it. It is the metric behind the udp-return-path check; a port the probe
+// cannot answer for is simply left out rather than reported as either state.
+func udpReturnObservations() (bindable, known map[int]bool) {
+	ports, err := health.HeldUDPPorts()
+	if err != nil {
+		return nil, nil
+	}
+	bindable, known = map[int]bool{}, map[int]bool{}
+	for _, p := range ports {
+		ok, perr := health.UDPReturnBindable(p)
+		if perr != nil {
+			continue
+		}
+		bindable[p] = ok
+		_, declared := knownUDPBlackHoles[p]
+		known[p] = declared
+	}
+	return bindable, known
 }

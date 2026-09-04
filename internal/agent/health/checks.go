@@ -29,6 +29,10 @@ type MasterProbes struct {
 	// merely that an interface of that name exists (wg-easy's does too). nil when
 	// the agent does not manage the leg.
 	ClientWGOwned Probe
+	// ClientUDPReturn asserts that no UDP port this node holds silently black-holes
+	// client traffic to it. nil when the agent does not manage the client leg —
+	// the ports that collide are the ones WE put on the wire.
+	ClientUDPReturn Probe
 }
 
 // ExitChecks builds an exit node's check set from spec + probes. Checks that are
@@ -90,6 +94,13 @@ func MasterChecks(spec domain.NodeSpec, p MasterProbes) []Check {
 	// a line in a plan nobody is reading at 3am.
 	if spec.Master != nil && spec.Master.ClientWG != nil && p.ClientWGOwned != nil {
 		checks = append(checks, Check{Name: "client-wg-owned", Probe: p.ClientWGOwned})
+	}
+	// The client UDP return path. Deliberately NOT named `client-…`: the alert
+	// WgfleetClientPathDown matches `check=~"client-wg.*|client-vless"` and is
+	// critical for 5m, and a name that drifted into that regexp would turn a
+	// port-inventory finding into a paging outage.
+	if spec.Master != nil && spec.Master.ClientWG != nil && p.ClientUDPReturn != nil {
+		checks = append(checks, Check{Name: "udp-return-path", Probe: p.ClientUDPReturn})
 	}
 	return checks
 }

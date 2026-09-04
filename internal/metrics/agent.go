@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -32,6 +33,8 @@ type AgentMetrics struct {
 	standbyTotal     prometheus.Gauge     // inactive tier: members the warm probe could sample
 	standbyTransport *prometheus.GaugeVec // per exit: is its INACTIVE transport usable
 	egressThroughput prometheus.Gauge     // last measured egress throughput, bytes/sec
+	udpReturnSocket  *prometheus.GaugeVec // per UDP port: can a TPROXY reply socket still be opened
+	udpReturnKnown   *prometheus.GaugeVec // per UDP port: is a blocked port one we have decided about
 	reconcileChanges prometheus.Gauge     // resources changed in the last pass
 	checkLatency     *prometheus.GaugeVec // per self-check: probe latency, seconds
 	startTime        prometheus.Gauge
@@ -97,6 +100,14 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Namespace: namespace, Subsystem: "agent", Name: "start_time_seconds",
 			Help: "Unix time the agent process started.", ConstLabels: cl,
 		}),
+		udpReturnSocket: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "udp_return_socket",
+			Help: "1 when a TPROXY reply socket can still be opened for this destination port; 0 when a socket this namespace already holds makes it impossible, so client traffic to that port gets no replies.", ConstLabels: cl,
+		}, []string{"port"}),
+		udpReturnKnown: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "udp_return_known",
+			Help: "1 when a port whose replies cannot come back is one we have decided about (refused by rule, or a declared loss); 0 marks a silent black hole.", ConstLabels: cl,
+		}, []string{"port"}),
 	}
 	// transport_active is exit-only (the active master↔exit transport, ADR-0025).
 	// Registering it on a master would expose an empty series, so absent()-based
@@ -146,7 +157,7 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 
 	reg.MustRegister(m.reconcileTotal, m.reconcileDuration, m.stateInfo, m.checkUp, m.checkLatency,
 		m.driftTotal, m.driftResources, m.reconcileChanges, m.egressReach, m.egressActive,
-		m.egressThroughput, m.startTime)
+		m.egressThroughput, m.startTime, m.udpReturnSocket, m.udpReturnKnown)
 	if m.transportActive != nil {
 		reg.MustRegister(m.transportActive)
 	}
@@ -272,5 +283,26 @@ func (m *AgentMetrics) ObserveDrift(components []string) {
 	m.driftResources.Set(float64(len(components)))
 	for _, c := range components {
 		m.driftTotal.WithLabelValues(c).Inc()
+	}
+}
+
+// ObserveUDPReturn records, per destination port, whether a TPROXY reply socket is
+// still possible and whether a port that blocks one is a decision rather than an
+// accident.
+//
+// It is the raw observation behind the udp-return-path check, and both series are
+// needed: the check answers "is this safe", the metric answers "what is actually
+// true". Without the second an operator cannot tell a black hole we have fixed
+// from one that was never there, and the alert has nothing to compare against.
+//
+// Reset first: a port that no longer has a socket must stop being reported rather
+// than freeze at its last value.
+func (m *AgentMetrics) ObserveUDPReturn(bindable, known map[int]bool) {
+	m.udpReturnSocket.Reset()
+	m.udpReturnKnown.Reset()
+	for port, ok := range bindable {
+		label := strconv.Itoa(port)
+		m.udpReturnSocket.WithLabelValues(label).Set(boolToFloat(ok))
+		m.udpReturnKnown.WithLabelValues(label).Set(boolToFloat(known[port]))
 	}
 }

@@ -395,3 +395,43 @@ func ClientWGOwnedProbe(claimPath, iface string) Probe {
 func deferredPathFor(claimPath string) string {
 	return strings.TrimSuffix(claimPath, ".claim") + ".deferred"
 }
+
+// ClientUDPReturnProbe watches ONE invariant: every UDP port this namespace holds
+// either leaves the transparent return path intact, or is a port we have already
+// decided about.
+//
+// The two halves fail differently and only one of them is an outage. A port that
+// is blocked and ACCEPTED is a known, declared state — the ruleset refuses client
+// traffic to it, or the operator has taken the loss knowingly. A port that is
+// blocked and NOT accepted is a silent black hole: the client sends and sends and
+// nothing ever comes back, which ran for eight days on the live master before
+// anyone asked (97787 dropped replies, all on the client WG port).
+//
+// bindable and accepted are injected so the decision logic is testable off Linux;
+// production passes UDPReturnBindable and the rendered refusal set.
+func ClientUDPReturnProbe(ports []int, bindable func(int) (bool, error), accepted func(int) bool) Probe {
+	return func(context.Context) Result {
+		start := now()
+		var blind, holes []string
+		for _, p := range ports {
+			if p <= 0 {
+				continue
+			}
+			ok, err := bindable(p)
+			switch {
+			case err != nil:
+				blind = append(blind, fmt.Sprintf("%d (%v)", p, err))
+			case !ok && (accepted == nil || !accepted(p)):
+				holes = append(holes, strconv.Itoa(p))
+			}
+		}
+		if len(holes) > 0 {
+			return fail("client UDP black-holes on port(s) " + strings.Join(holes, ", ") +
+				": no transparent return socket is possible there and nothing refuses them")
+		}
+		if len(blind) > 0 {
+			return fail("could not check the client UDP return path on port(s) " + strings.Join(blind, ", "))
+		}
+		return ok("every UDP port this namespace holds either returns or is refused", since(start))
+	}
+}

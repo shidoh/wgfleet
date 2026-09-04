@@ -459,6 +459,33 @@ spec:
         summary: No client has a live handshake on {{ $labels.node }}
         description: The client-facing interface on {{ $labels.node }} has had zero active peers for
           10m. Either every client is offline at once, or the interface is serving an empty peer set.
+    - alert: WgfleetClientUDPBlackHole
+      # mihomo's TPROXY reply path binds the SERVER's address:port to send a reply
+      # back with the right source. Any UDP port this host already holds a socket
+      # on therefore cannot get one — the bind fails with EADDRINUSE and every
+      # reply packet is dropped inside mihomo, silently. Clients see requests leave
+      # and nothing return, which reads as video stalling and apps hanging on
+      # "connecting", not as an outage.
+      #
+      # Firing only on ports we have NOT decided about is what keeps this alert
+      # meaningful: the ones we know about carry udp_return_known=1 and are listed
+      # in the agent with a reason. This goes off when a NEW service binds a UDP
+      # port and breaks client traffic to it — the class of failure that ran for
+      # eight days on the live master in August 2026 with every other metric green.
+      expr: wgfleet_agent_udp_return_socket == 0 and on(node, port) wgfleet_agent_udp_return_known == 0
+      for: 10m
+      labels:
+        severity: critical
+        service: wgfleet
+      annotations:
+        summary: "client UDP to port {{ $labels.port }} black-holes on {{ $labels.node }}"
+        description: >-
+          A socket this node holds makes it impossible for mihomo to open a
+          transparent reply socket for destination port {{ $labels.port }}, and no
+          rule refuses that traffic. Client flows to that port send and never
+          receive. Find the holder with `ss -lunp | grep :{{ $labels.port }}`;
+          either free the port, refuse the traffic, or declare it in
+          knownUDPBlackHoles with the reason.
     - alert: WgfleetCAExpiringSoon
       # The CA is issued for ten years, so this fires once — and the one time it
       # does, it is the most important alert in the file. Every node certificate

@@ -1754,6 +1754,142 @@
    ]
   },
   {
+   "type": "stat",
+   "title": "Client UDP black holes",
+   "description": "UDP ports this master holds a socket on that are NOT declared, so mihomo cannot open a transparent reply socket for them and client traffic to those ports gets no replies. Anything above zero is a silent outage for that port: requests leave, nothing returns.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 4,
+    "x": 0,
+    "y": 59
+   },
+   "id": 96,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "count(wgfleet_agent_udp_return_socket == 0 and on(node, port) wgfleet_agent_udp_return_known == 0) or vector(0)",
+     "refId": "A",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "type": "state-timeline",
+   "title": "UDP reply socket possible, by port",
+   "description": "1 = a TPROXY reply socket can still be opened for that destination port; 0 = a socket this host already holds makes it impossible. Port 443 sitting at 0 is the client AmneziaWG interface holding it, which is why client QUIC had no return path from 2026-08-28.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 4,
+    "y": 59
+   },
+   "id": 97,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "text"
+     },
+     "custom": {
+      "fillOpacity": 85,
+      "lineWidth": 0,
+      "spanNulls": true
+     },
+     "mappings": [
+      {
+       "type": "value",
+       "options": {
+        "0": {
+         "text": "out",
+         "color": "red",
+         "index": 0
+        },
+        "1": {
+         "text": "in",
+         "color": "green",
+         "index": 1
+        }
+       }
+      }
+     ],
+     "min": 0,
+     "max": 1
+    },
+    "overrides": []
+   },
+   "options": {
+    "alignValue": "left",
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": false
+    },
+    "mergeValues": true,
+    "rowHeight": 0.85,
+    "showValue": "auto",
+    "tooltip": {
+     "mode": "single",
+     "sort": "none"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "wgfleet_agent_udp_return_socket",
+     "refId": "A",
+     "legendFormat": "{{node}} :{{port}}"
+    }
+   ]
+  },
+  {
    "type": "state-timeline",
    "title": "Held out by the multi-destination probe",
    "description": "The CAUSE behind the rotation panel: red means the master agent's probe judged this exit unable to reach enough independent destinations and is holding it out. mihomo's own weaker check would put such an exit straight back, so the agent re-probes every held-out member each pass to keep the stricter verdict in force.",
@@ -1836,7 +1972,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 59
+    "y": 67
    },
    "id": 50,
    "panels": []
@@ -1852,7 +1988,7 @@
     "h": 8,
     "w": 8,
     "x": 0,
-    "y": 60
+    "y": 68
    },
    "id": 51,
    "fieldConfig": {
@@ -1929,7 +2065,7 @@
     "h": 8,
     "w": 8,
     "x": 8,
-    "y": 60
+    "y": 68
    },
    "id": 52,
    "fieldConfig": {
@@ -1988,7 +2124,7 @@
     "h": 8,
     "w": 8,
     "x": 16,
-    "y": 60
+    "y": 68
    },
    "id": 53,
    "fieldConfig": {
@@ -2041,7 +2177,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 68
+    "y": 76
    },
    "id": 60,
    "panels": []
@@ -2058,7 +2194,7 @@
     "h": 8,
     "w": 12,
     "x": 0,
-    "y": 69
+    "y": 77
    },
    "id": 61,
    "fieldConfig": {
@@ -2163,7 +2299,7 @@
     "h": 8,
     "w": 12,
     "x": 12,
-    "y": 69
+    "y": 77
    },
    "id": 62,
    "fieldConfig": {
@@ -2235,7 +2371,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 77
+    "y": 85
    },
    "id": 70,
    "panels": []
@@ -2252,7 +2388,7 @@
     "h": 8,
     "w": 4,
     "x": 0,
-    "y": 78
+    "y": 86
    },
    "id": 71,
    "fieldConfig": {
@@ -2313,7 +2449,7 @@
     "h": 8,
     "w": 4,
     "x": 4,
-    "y": 78
+    "y": 86
    },
    "id": 72,
    "fieldConfig": {
@@ -2371,7 +2507,7 @@
     "h": 8,
     "w": 16,
     "x": 8,
-    "y": 78
+    "y": 86
    },
    "id": 73,
    "fieldConfig": {
@@ -2450,7 +2586,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 86
+    "y": 94
    },
    "id": 80,
    "panels": []
@@ -2467,7 +2603,7 @@
     "h": 8,
     "w": 5,
     "x": 0,
-    "y": 87
+    "y": 95
    },
    "id": 81,
    "fieldConfig": {
@@ -2528,7 +2664,7 @@
     "h": 8,
     "w": 5,
     "x": 5,
-    "y": 87
+    "y": 95
    },
    "id": 82,
    "fieldConfig": {
@@ -2589,7 +2725,7 @@
     "h": 8,
     "w": 14,
     "x": 10,
-    "y": 87
+    "y": 95
    },
    "id": 83,
    "fieldConfig": {
