@@ -52,6 +52,20 @@ const TProxyMark = 0x2
 // marked packet on this host so the transparent socket can accept it.
 const TProxyTable = 51821
 
+// NetnsRouteTable carries the default route into mihomo's namespace once client
+// interception lives there. Numbered next to its siblings — 51820 is the exits'
+// egress table, 51821 the master's TPROXY table — rather than something low like
+// 100, which is already an ip-rule PRIORITY on every exit and would be read as
+// one at a glance.
+const NetnsRouteTable = 51822
+
+// NetnsRulePref is the ip-rule priority that sends client traffic to
+// NetnsRouteTable. Explicit, unlike the master's existing TPROXY rule, which was
+// added without one and landed at 32765 by accident of insertion order: a second
+// unnumbered rule would sit at 32764 and their relative order would then change
+// across a re-apply.
+const NetnsRulePref = 400
+
 // RenderMasterNAT renders the master's nft NAT ruleset: drop client QUIC, DNAT
 // non-private client TCP to mihomo, and MASQUERADE client traffic outbound.
 func RenderMasterNAT(in MasterNATInput) (string, error) {

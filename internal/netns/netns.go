@@ -197,6 +197,13 @@ func (in Input) validate() error {
 	return nil
 }
 
+// LinkAddrs derives the host and namespace addresses from a link prefix, so a
+// caller that needs to name the namespace end (to point rules or routes at it)
+// does not have to reimplement the split.
+func LinkAddrs(cidr string) (host, peer string, err error) {
+	return Input{CIDR: cidr}.addrs()
+}
+
 // addrs derives the two ends from the link prefix: host .1, namespace .2. A /30
 // is the natural shape — two usable addresses, no room for a third party.
 func (in Input) addrs() (host, peer string, err error) {

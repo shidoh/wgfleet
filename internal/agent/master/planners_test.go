@@ -345,7 +345,7 @@ func TestMasterExtraFilesWritten(t *testing.T) {
 // would and writes it to disk, so a follow-up Plan sees an unchanged file.
 func writeMasterCompose(t *testing.T, path string, spec domain.NodeSpec) {
 	t.Helper()
-	yamlText, err := compose.RenderMasterCompose(masterComposeInput(spec, "", ""))
+	yamlText, err := compose.RenderMasterCompose(masterComposeInput(spec, "", "", nil))
 	if err != nil {
 		t.Fatal(err)
 	}

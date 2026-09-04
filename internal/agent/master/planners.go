@@ -16,6 +16,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/mihomo"
 	"github.com/shidoh/wgfleet/internal/netfw"
+	"github.com/shidoh/wgfleet/internal/netns"
 	"github.com/shidoh/wgfleet/internal/wg"
 	"github.com/shidoh/wgfleet/internal/wgeasy"
 )
@@ -46,6 +47,13 @@ type Input struct {
 	// prober dials. Derived from the private key by the caller so this package
 	// never has to.
 	ClientWGPublicKey string
+	// NetnsAttached reports the CURRENT decision about where client traffic is
+	// intercepted. Read, never taken, here: the decision needs evidence a planner
+	// cannot cheaply gather (can the namespace resolve, does the client path still
+	// work), so the agent takes it once per pass with the probes it already runs
+	// and the planners render whatever it decided. Deciding a pass later than the
+	// evidence is the safe direction — it means nothing moves on a guess.
+	NetnsAttached func() bool
 	// ClientInterface is the client WG interface the NAT/forward rules reference.
 	// Default is applied when empty. (The master masquerades on every egress except
 	// this interface, so a separate egress iface no longer needs detecting.)
@@ -113,7 +121,8 @@ func Planners(in Input) []reconcile.Planner {
 		// After the client interface: the prober dials it, so it has to exist first.
 		synthPlanner{confPath: in.Paths.SynthConf, synthKey: in.SyntheticKey,
 			serverPub: in.ClientWGPublicKey},
-		composePlanner{path: in.Paths.Compose, adminUser: in.AdminUsername, adminPass: in.AdminPassword},
+		composePlanner{path: in.Paths.Compose, adminUser: in.AdminUsername, adminPass: in.AdminPassword,
+			netnsAttached: in.NetnsAttached},
 		// The client leg has exactly one owner. While wg-easy holds it these three
 		// keep its database converged; once the operator hands the leg to the agent
 		// they all no-op (see handedOver) and clientWGPlanner takes over. Writing to
@@ -133,9 +142,10 @@ func Planners(in Input) []reconcile.Planner {
 		// After the compose planner (which creates the holder) and BEFORE mihomo and
 		// the master NAT: the namespace has to exist before anything can be asked to
 		// live in it, but nothing routes into it yet.
-		netnsPlanner{},
+		netnsPlanner{attached: in.NetnsAttached},
 		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey, tier: in.Tier},
-		masterNATPlanner{path: in.Paths.NFT, v6Path: in.Paths.V6NFT, clientIface: in.ClientInterface},
+		masterNATPlanner{path: in.Paths.NFT, v6Path: in.Paths.V6NFT, clientIface: in.ClientInterface,
+			netnsAttached: in.NetnsAttached},
 		dockerfw.NewForwardPlanner(
 			"master forwarding (ip_forward + DOCKER-USER)",
 			in.ClientInterface, defaultClientInterface,
@@ -183,10 +193,12 @@ func composeRestart(file, service string) reconcile.Action {
 // --- container stack (docker-compose.yml + up -d) ---
 
 type composePlanner struct {
-	path      string
-	adminUser string                 // wg-easy unattended-setup admin user (INIT_USERNAME)
-	adminPass string                 // wg-easy unattended-setup admin password (INIT_PASSWORD); agent-local
-	up        func(file string) bool // nil ⇒ real `docker compose ps` probe
+	// netnsAttached reports whether mihomo should join the namespace holder.
+	netnsAttached func() bool
+	path          string
+	adminUser     string                 // wg-easy unattended-setup admin user (INIT_USERNAME)
+	adminPass     string                 // wg-easy unattended-setup admin password (INIT_PASSWORD); agent-local
+	up            func(file string) bool // nil ⇒ real `docker compose ps` probe
 }
 
 func (composePlanner) Component() string { return "container stack (docker compose)" }
@@ -195,7 +207,7 @@ func (p composePlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]recon
 	if spec.Master == nil {
 		return nil, fmt.Errorf("compose: node has no master spec")
 	}
-	yamlText, err := compose.RenderMasterCompose(masterComposeInput(spec, p.adminUser, p.adminPass))
+	yamlText, err := compose.RenderMasterCompose(masterComposeInput(spec, p.adminUser, p.adminPass, p.netnsAttached))
 	if err != nil {
 		return nil, err
 	}
@@ -552,6 +564,10 @@ type masterNATPlanner struct {
 	// tproxyReady reports whether the kernel still carries the policy routing the
 	// TPROXY rules depend on. nil ⇒ a real `ip rule`/`ip route` probe.
 	tproxyReady func() bool
+	// netnsAttached reports whether the interception has moved into mihomo's
+	// namespace. When it has, this ruleset must stop intercepting and start routing
+	// instead — leaving both in place would feed listeners that are no longer here.
+	netnsAttached func() bool
 }
 
 func (masterNATPlanner) Component() string { return "master NAT (nftables)" }
@@ -573,12 +589,28 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 	if spec.Master.BindAddress != "" {
 		tproxyAddr = fmt.Sprintf("%s:%d", spec.Master.BindAddress, mihomo.TProxyPortFor(redir))
 	}
+	// Once the interception has moved, this ruleset stops intercepting and the veth
+	// exemptions appear. Both follow from the same flag because they are one change:
+	// routing client traffic into the namespace without exempting it from the
+	// masquerade would rewrite its source — and mihomo, which works precisely
+	// because TPROXY does not rewrite the packet, could not answer the right client.
+	// Exempting only the masquerade then leaves the source in the client pool and
+	// the leak guard drops it one hook later.
+	netnsGW, netnsIface := "", ""
+	if p.netnsAttached != nil && p.netnsAttached() {
+		if _, peer, aerr := netns.LinkAddrs(spec.Master.NetnsLinkCIDR()); aerr == nil {
+			netnsGW, _, _ = strings.Cut(peer, "/")
+			netnsIface = domain.NetnsHostIface
+		}
+	}
 	ruleset, err := netfw.RenderMasterNAT(netfw.MasterNATInput{
 		ClientInterface: p.clientIface,
 		ClientCIDR:      spec.WGServer.AddressPool,
 		RedirAddr:       fmt.Sprintf("%s:%d", spec.Master.BindAddress, redir),
 		TProxyAddr:      tproxyAddr,
 		PrivateCIDRs:    spec.Master.DirectCIDRs,
+		NetnsGateway:    netnsGW,
+		NetnsHostIface:  netnsIface,
 	})
 	if err != nil {
 		return nil, err
@@ -819,7 +851,7 @@ func handedOver(spec domain.NodeSpec) bool {
 // field added to the render (the namespace holder) made the fixture and the
 // planner disagree and the idempotency test failed for a reason that had nothing
 // to do with idempotency.
-func masterComposeInput(spec domain.NodeSpec, adminUser, adminPass string) compose.RenderInput {
+func masterComposeInput(spec domain.NodeSpec, adminUser, adminPass string, attached func() bool) compose.RenderInput {
 	return compose.RenderInput{
 		Compose:          spec.Master.Compose,
 		ClientListenPort: spec.WGServer.ListenPort,
@@ -831,13 +863,16 @@ func masterComposeInput(spec domain.NodeSpec, adminUser, adminPass string) compo
 		NetnsHolderImage: netnsHolderImage(spec),
 		// Phase A renders the holder but does NOT move mihomo: the namespace stays
 		// inert until the interception rules move with it (see netnsAttach).
-		NetnsAttachMihomo: netnsAttach(spec),
+		NetnsAttachMihomo: netnsAttach(attached),
 	}
 }
 
-// netnsAttach reports whether mihomo should live in the namespace yet. False
-// until the move actually happens; the holder existing is not the same decision.
-func netnsAttach(spec domain.NodeSpec) bool { return false }
+// netnsAttach reports whether mihomo should live in the namespace yet.
+//
+// The holder existing and mihomo living in it are two different decisions, and
+// keeping them apart is what makes the plumbing inspectable on a live master at
+// no risk. This one is taken by the agent, from evidence, once per pass.
+func netnsAttach(attached func() bool) bool { return attached != nil && attached() }
 
 // netnsHolderImage returns the image that should own mihomo's network namespace,
 // or "" to leave mihomo on host networking.

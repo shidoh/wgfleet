@@ -225,6 +225,9 @@ func run() error {
 	a.restarts = restart.New(a.log)
 	if role == domain.RoleMaster {
 		a.tier = master.NewTierSelector(a.log)
+		// One per process, like the tier selector and for the same reason: it has to
+		// remember how many times it has already tried and failed.
+		a.netnsMove = master.NewNetnsMove()
 	}
 
 	// Agent /metrics (own reconcile/health counters). Defaults to mgmt:9301 so the
@@ -333,8 +336,13 @@ type agent struct {
 	mihomoLogCursor time.Time
 	// synthKP is the master's own client keypair, minted once and kept on the node.
 	synthKP wg.KeyPair
-	client  *client.Client
-	log     *slog.Logger
+	// netnsMove decides, pass by pass, whether client interception lives in
+	// mihomo's namespace. On the agent rather than in a planner because planners
+	// are rebuilt every pass and would forget every attempt they ever made — the
+	// same mistake that once silently disabled tier failover.
+	netnsMove *netnsMoveState
+	client    *client.Client
+	log       *slog.Logger
 	// tier carries the master's exit-tier failover decision for the PROCESS
 	// lifetime. It must not live in the planner list: planners() is called on every
 	// reconcile pass (the engine is rebuilt each time), so a per-pass selector has
@@ -757,14 +765,16 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			}
 			// The client path, measured from the master's own client. Taken AFTER the
 			// pass: the prober's interface may have been created by it.
+			probes := master.MeasureClientPath(ctx, clientGatewayOf(spec), nil)
 			results := map[string]bool{}
-			for _, pr := range master.MeasureClientPath(ctx, clientGatewayOf(spec), nil) {
+			for _, pr := range probes {
 				results[pr.Name] = pr.OK
 				if !pr.OK {
 					a.log.Warn("client path probe failed", "probe", pr.Name, "err", pr.Why)
 				}
 			}
 			a.metrics.ObserveClientPath(results)
+			a.decideNetnsMove(ctx, spec, probes)
 		}
 	}
 	a.log.Info("reconcile applied",
@@ -941,6 +951,7 @@ func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, admi
 			ClientWGPrivateKey: clientWGPrivateKey,
 			SyntheticKey:       a.ensureSynthKeyQuiet(),
 			ClientWGPublicKey:  publicKeyOrEmpty(clientWGPrivateKey),
+			NetnsAttached:      a.netnsMove.Attached,
 			AdminUsername:      adminUser,
 			AdminPassword:      adminPass,
 			OverlayMSS:         a.cfg.Agent.MgmtOverlayMSS,
@@ -1800,4 +1811,35 @@ func clientGatewayOf(spec domain.NodeSpec) string {
 		return ""
 	}
 	return spec.Master.ClientWG.ServerAddress
+}
+
+// netnsMoveState is the agent-side handle on the namespace migration decision.
+// A thin alias so main.go does not have to name the master package's internals.
+type netnsMoveState = master.NetnsMove
+
+// decideNetnsMove advances the migration decision using the evidence this pass
+// already gathered.
+//
+// The decision is taken here, once per pass, rather than inside a planner: it
+// needs the namespace's own readiness AND the client-path probes, neither of
+// which a planner should be running, and it has to remember its attempts across
+// passes — which a planner cannot, because they are rebuilt every time.
+//
+// It runs AFTER the pass on purpose. The evidence is about the state the pass
+// just produced, and rendering on the next pass means nothing ever moves on a
+// guess.
+func (a *agent) decideNetnsMove(ctx context.Context, spec domain.NodeSpec, probes []master.ClientPathProbe) {
+	if a.role != domain.RoleMaster || spec.Master == nil {
+		return
+	}
+	wanted, _ := spec.Master.NetnsWanted()
+	before := a.netnsMove.Attached()
+	after := a.netnsMove.Decide(wanted,
+		func() error { return master.NamespaceReady(ctx, spec) },
+		func() bool { return master.ClientPathOK(probes) })
+	if before != after {
+		a.log.Warn("client interception moved", "in_namespace", after, "why", a.netnsMove.Reason())
+		return
+	}
+	a.log.Debug("client interception unchanged", "in_namespace", after, "why", a.netnsMove.Reason())
 }

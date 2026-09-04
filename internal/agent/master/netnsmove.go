@@ -52,6 +52,9 @@ const (
 // so going back needs nothing but this node.
 //
 // Not safe for concurrent use; the reconcile loop is single-threaded per pass.
+// NetnsMove is the exported name of the decision machine; the agent owns one.
+type NetnsMove = netnsMover
+
 type netnsMover struct {
 	state    moveState
 	attempts int
@@ -62,7 +65,11 @@ type netnsMover struct {
 	now      func() time.Time
 }
 
-func newNetnsMover() *netnsMover { return &netnsMover{now: time.Now} }
+// NewNetnsMove builds the decision machine in its initial state: waiting, with
+// no attempts spent.
+func NewNetnsMove() *NetnsMove { return &netnsMover{now: time.Now} }
+
+func newNetnsMover() *netnsMover { return NewNetnsMove() }
 
 // Attached reports the current decision without taking a new one.
 func (m *netnsMover) Attached() bool { return m.state == moveAttached }
