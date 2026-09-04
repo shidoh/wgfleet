@@ -220,3 +220,67 @@ func TestMihomoLogIsRotated(t *testing.T) {
 		}
 	}
 }
+
+// The namespace holder must be a SEPARATE container that mihomo joins, not a
+// property of mihomo itself. mihomo restarts several times a day; a namespace it
+// owned would take the veth and the interception rules with it every time.
+func TestNetnsHolderOwnsTheNamespaceAndMihomoJoinsIt(t *testing.T) {
+	in := sampleInput()
+	in.ClientWGManaged = true // the agent owns the client leg; wg-easy is gone
+	in.NetnsHolderImage = "busybox:1.36"
+	in.NetnsAttachMihomo = true
+
+	out, err := RenderMasterCompose(in)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{"wgfleet-netns:", "network_mode: none", "network_mode: container:wgfleet-netns"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "network_mode: host") {
+		t.Errorf("something is still on host networking, so the collision remains:\n%s", out)
+	}
+}
+
+// With no holder image the stack must render exactly as before: this is the path
+// every existing node takes until it is ready to move.
+func TestWithoutAHolderMihomoStaysOnHostNetworking(t *testing.T) {
+	in := sampleInput()
+	in.ClientWGManaged = true
+	out, err := RenderMasterCompose(in)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(out, "wgfleet-netns") {
+		t.Errorf("a namespace holder was rendered without being asked for:\n%s", out)
+	}
+	if !strings.Contains(out, "network_mode: host") {
+		t.Errorf("mihomo left host networking without a namespace to join:\n%s", out)
+	}
+}
+
+// Phase A: the holder exists, mihomo does not move. This is what makes the
+// namespace inspectable on a live master at no risk — the container and its veth
+// are inert until the interception rules move, and mihomo keeps serving clients
+// from the host namespace the whole time.
+func TestHolderAloneDoesNotMoveMihomo(t *testing.T) {
+	in := sampleInput()
+	in.ClientWGManaged = true
+	in.NetnsHolderImage = "busybox:1.36"
+
+	out, err := RenderMasterCompose(in)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(out, "wgfleet-netns:") {
+		t.Errorf("the holder was not rendered:\n%s", out)
+	}
+	if strings.Contains(out, "network_mode: container:wgfleet-netns") {
+		t.Errorf("mihomo was moved into the namespace before anything routes there:\n%s", out)
+	}
+	if !strings.Contains(out, "network_mode: host") {
+		t.Errorf("mihomo left host networking during phase A:\n%s", out)
+	}
+}

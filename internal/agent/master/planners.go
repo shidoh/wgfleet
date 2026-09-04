@@ -115,6 +115,10 @@ func Planners(in Input) []reconcile.Planner {
 		// Dashboard before mihomo too: the agent populates the external-ui dir (mihomo
 		// only serves it, never downloads — see dashboardPlanner).
 		dashboardPlanner{uiDir: in.Paths.UIDir},
+		// After the compose planner (which creates the holder) and BEFORE mihomo and
+		// the master NAT: the namespace has to exist before anything can be asked to
+		// live in it, but nothing routes into it yet.
+		netnsPlanner{},
 		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey, tier: in.Tier},
 		masterNATPlanner{path: in.Paths.NFT, v6Path: in.Paths.V6NFT, clientIface: in.ClientInterface},
 		dockerfw.NewForwardPlanner(
@@ -176,15 +180,7 @@ func (p composePlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]recon
 	if spec.Master == nil {
 		return nil, fmt.Errorf("compose: node has no master spec")
 	}
-	yamlText, err := compose.RenderMasterCompose(compose.RenderInput{
-		Compose:          spec.Master.Compose,
-		ClientListenPort: spec.WGServer.ListenPort,
-		ClientPool:       spec.WGServer.AddressPool,
-		MgmtAddr:         masterMgmtAddr(spec),
-		AdminUsername:    p.adminUser,
-		AdminPassword:    p.adminPass,
-		ClientWGManaged:  handedOver(spec),
-	})
+	yamlText, err := compose.RenderMasterCompose(masterComposeInput(spec, p.adminUser, p.adminPass))
 	if err != nil {
 		return nil, err
 	}
@@ -801,4 +797,50 @@ const wgEasyHandedOver = "the agent owns the client interface; wg-easy is no lon
 // handedOver reports whether this master's client leg belongs to the agent.
 func handedOver(spec domain.NodeSpec) bool {
 	return spec.Master != nil && spec.Master.ClientWG != nil
+}
+
+// masterComposeInput builds the compose render input from a spec. One function
+// rather than two call sites: the test helper used to assemble its own copy, so a
+// field added to the render (the namespace holder) made the fixture and the
+// planner disagree and the idempotency test failed for a reason that had nothing
+// to do with idempotency.
+func masterComposeInput(spec domain.NodeSpec, adminUser, adminPass string) compose.RenderInput {
+	return compose.RenderInput{
+		Compose:          spec.Master.Compose,
+		ClientListenPort: spec.WGServer.ListenPort,
+		ClientPool:       spec.WGServer.AddressPool,
+		MgmtAddr:         masterMgmtAddr(spec),
+		AdminUsername:    adminUser,
+		AdminPassword:    adminPass,
+		ClientWGManaged:  handedOver(spec),
+		NetnsHolderImage: netnsHolderImage(spec),
+		// Phase A renders the holder but does NOT move mihomo: the namespace stays
+		// inert until the interception rules move with it (see netnsAttach).
+		NetnsAttachMihomo: netnsAttach(spec),
+	}
+}
+
+// netnsAttach reports whether mihomo should live in the namespace yet. False
+// until the move actually happens; the holder existing is not the same decision.
+func netnsAttach(spec domain.NodeSpec) bool { return false }
+
+// netnsHolderImage returns the image that should own mihomo's network namespace,
+// or "" to leave mihomo on host networking.
+//
+// The holder is rendered as soon as the master wants the namespace at all —
+// BEFORE anything is switched over. That is deliberate: the container and its veth
+// are inert until the interception rules move, so building them early turns the
+// riskiest part of the migration into something that can be inspected on a live
+// node with no consequence if it is wrong.
+func netnsHolderImage(spec domain.NodeSpec) string {
+	if spec.Master == nil {
+		return ""
+	}
+	if wanted, _ := spec.Master.NetnsWanted(); !wanted {
+		return ""
+	}
+	if img := spec.Master.Compose.NetnsHolderImage; img != "" {
+		return img
+	}
+	return compose.DefaultNetnsHolderImage
 }

@@ -15,6 +15,26 @@ type MasterSpec struct {
 	BindAddress string
 	// RedirPort is mihomo's redir-port (clients DNAT'd here by nftables).
 	RedirPort int
+	// NetnsCIDR is the point-to-point link between the host and the namespace
+	// mihomo runs in — a /30, host .1, namespace .2. Empty ⇒ NetnsDefaultCIDR.
+	//
+	// It is CGNAT (RFC 6598) by default rather than anything from 10/8: on this
+	// fleet 10/8 is routed into the corporate tunnel, listed in direct_cidrs, and
+	// pulled into the tunnel by every client's route_through_cidrs — and each exit
+	// already owns a /24 there. RFC 6598 exists for exactly this: provider
+	// infrastructure that must not collide with the customer's private space.
+	NetnsCIDR string
+	// ClientViaNetns decides where client traffic is intercepted (ADR pending):
+	//
+	//	""/"auto"       — move to the namespace once the preconditions hold
+	//	"off"           — stay on the host path
+	//	"<CIDR>"        — canary: only these client sources take the new path
+	//
+	// Default is to move, because a switch nobody flips is a fix nobody gets. What
+	// makes that safe is not optimism: the agent checks the namespace can resolve
+	// DNS and reach an exit BEFORE touching anything, verifies the client path
+	// after the switch, and reverts itself if the verification fails.
+	ClientViaNetns string
 	// ExternalController is the Clash API bind (mgmt/ZT address only).
 	ExternalController string
 	// ExitTunnels is one mihomo WireGuard proxy per exit.
@@ -86,6 +106,11 @@ type ComposeSpec struct {
 	WGEasyWebPort    int      // wg-easy web UI port (mgmt overlay)
 	ClientDNS        []string // DNS handed to clients (exit blocky addrs)
 	ClientAllowedIPs string   // AllowedIPs handed to clients (inverted RFC1918; operator-set)
+	// NetnsHolderImage overrides the image that owns mihomo's network namespace.
+	// Worth overriding on a node that cannot pull the default: the holder must be
+	// fetchable from behind the filtering this fleet exists to get around, and any
+	// image with a shell and a sleep will do — including one the node already has.
+	NetnsHolderImage string
 }
 
 // Enabled reports whether the compose stack should be rendered (images set).
@@ -178,4 +203,46 @@ type ManagedFile struct {
 // HasOverrides reports whether any customization is present.
 func (c CustomConfig) HasOverrides() bool {
 	return len(c.Overrides) > 0 || len(c.Files) > 0
+}
+
+// Namespace defaults for the master's mihomo. Exported so the renderer, the
+// planner and the config validator all name the same thing.
+const (
+	// NetnsHolder is the container that owns the namespace. A separate container
+	// on purpose, the same role Kubernetes gives `pause`: mihomo restarts several
+	// times a day, and a namespace owned by mihomo would take the veth and the
+	// interception rules with it on every restart.
+	NetnsHolder = "wgfleet-netns"
+	// NetnsHostIface / NetnsPeerIface are the two ends of the veth.
+	NetnsHostIface = "mih-host"
+	NetnsPeerIface = "mih0"
+	// NetnsDefaultCIDR is the default point-to-point link. Top of RFC 6598, as far
+	// as possible from anything a provider would hand out.
+	NetnsDefaultCIDR = "100.127.255.0/30"
+)
+
+// NetnsLinkCIDR is the link prefix this master uses, spec value or default.
+func (m MasterSpec) NetnsLinkCIDR() string {
+	if m.NetnsCIDR != "" {
+		return m.NetnsCIDR
+	}
+	return NetnsDefaultCIDR
+}
+
+// NetnsWanted reports whether client traffic should be intercepted inside
+// mihomo's namespace, and the client sources it applies to ("" ⇒ all of them).
+//
+// "off" is the only way to decline. An unset value means yes: the whole point of
+// the default is that a tester who swaps the binary gets the fix, and the safety
+// comes from the preconditions and the automatic revert rather than from leaving
+// the feature switched off.
+func (m MasterSpec) NetnsWanted() (wanted bool, canary string) {
+	switch v := m.ClientViaNetns; v {
+	case "off":
+		return false, ""
+	case "", "auto":
+		return true, ""
+	default:
+		return true, v
+	}
 }

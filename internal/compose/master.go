@@ -58,6 +58,11 @@ const (
 	// how the fleet's AWG 2.0 tunnels are built. Enabling `version: 3` is a separate
 	// decision gated by tools/check-awg3-status.sh.
 	DefaultMihomoImage = "metacubex/mihomo:v1.19.30"
+	// DefaultNetnsHolderImage owns mihomo's network namespace and does nothing
+	// else. Small and ubiquitous on purpose: it has to be pullable from a master
+	// that sits behind the filtering this fleet exists to get around, and a node
+	// that cannot fetch it must simply not move rather than half-move.
+	DefaultNetnsHolderImage = "busybox:1.36"
 	// DefaultWGEasyWebPort is the wg-easy admin UI port when the spec leaves it
 	// unset. Exported so the controller UI can build a link to it.
 	DefaultWGEasyWebPort = 44423
@@ -85,6 +90,22 @@ type RenderInput struct {
 	// interface and raises it directly, so the container would only fight it for the
 	// same UDP port and the same /etc/wireguard directory.
 	ClientWGManaged bool
+	// NetnsAttachMihomo moves mihomo INTO the holder's namespace. Separate from
+	// NetnsHolderImage on purpose, and the separation is the whole safety property
+	// of phase A: the holder and its veth can be created, inspected and repaired on
+	// a live master while mihomo keeps serving clients from the host namespace.
+	// Attaching is the irreversible-feeling half — mihomo's listeners bind an
+	// address that only exists inside the namespace — and it belongs with the
+	// interception rules that move at the same moment, not before them.
+	NetnsAttachMihomo bool
+	// NetnsHolderImage, when set, adds the container that OWNS mihomo's network
+	// namespace. It does nothing but hold the namespace open — the role Kubernetes
+	// gives `pause` — and it exists as a separate container precisely because
+	// mihomo does not stay up: a proxy definition changes, the duplicate-device
+	// self-heal fires, and each restart would otherwise take the veth and the
+	// interception rules with it, leaving clients with no path until the next
+	// reconcile pass noticed. Empty ⇒ no holder, mihomo stays on host networking.
+	NetnsHolderImage string
 }
 
 // RenderMasterCompose renders docker-compose.yml for the master stack. The
@@ -198,6 +219,37 @@ func RenderMasterCompose(in RenderInput) (string, error) {
 			"environment": wgEasyEnv,
 		}
 		mihomo["depends_on"] = []any{"wg-easy"}
+	}
+
+	// The namespace holder, and mihomo joining it. `network_mode: "container:X"` is
+	// the same kernel operation Kubernetes performs for a pod — setns(CLONE_NEWNET)
+	// onto a namespace someone else owns — so mihomo's transparent reply sockets no
+	// longer compete with whatever the HOST happens to bind. That competition is the
+	// whole bug: on the live master the client AmneziaWG interface holds
+	// 0.0.0.0:443 without SO_REUSEADDR, so every reply socket mihomo opened for a
+	// client's QUIC flow failed with EADDRINUSE and the packet was dropped in
+	// silence.
+	//
+	// Placed after the wg-easy block so the dependency is APPENDED: while wg-easy
+	// still owns the client leg mihomo waits for both, and overwriting would drop
+	// the ordering that keeps wg0 present before mihomo binds it.
+	if in.NetnsHolderImage != "" {
+		services[domain.NetnsHolder] = map[string]any{
+			"image":          in.NetnsHolderImage,
+			"container_name": domain.NetnsHolder,
+			"command":        []any{"sleep", "infinity"},
+			"network_mode":   "none",
+			"restart":        "unless-stopped",
+			"logging": map[string]any{
+				"driver":  "json-file",
+				"options": map[string]any{"max-size": "1m", "max-file": "1"},
+			},
+		}
+		if in.NetnsAttachMihomo {
+			mihomo["network_mode"] = "container:" + domain.NetnsHolder
+			deps, _ := mihomo["depends_on"].([]any)
+			mihomo["depends_on"] = append(deps, domain.NetnsHolder)
+		}
 	}
 
 	doc := map[string]any{"services": services}
