@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"google.golang.org/grpc/peer"
 	"io"
 	"log/slog"
+	"reflect"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -137,7 +140,21 @@ func (s *Service) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Re
 	if err := s.store.UpsertNode(ctx, node); err != nil {
 		return nil, status.Errorf(codes.Internal, "persist node %q: %v", nodeID, err)
 	}
-	s.log.Info("node registered", "node", nodeID, "role", role, "public_ip", node.PublicIP)
+	// Say WHAT changed, and who asked.
+	//
+	// The guard above is supposed to make this line rare: in steady state a
+	// re-registration carries nothing new, so there is nothing to persist and
+	// nothing to announce. Measured on the live master 2026-09-04 it fired 721
+	// times in three hours — 97% of the controller's entire journal, for one node,
+	// while not a single exit appeared — which means the guard never holds there and
+	// the row is rewritten every ~15 seconds forever. It also buried the events an
+	// operator actually needs: the reason mihomo bounced twice in 36 seconds that
+	// morning could not be reconstructed from this log at all.
+	//
+	// Naming the differing fields and the caller turns "it happens" into "this field,
+	// from this peer", which is the difference between a mystery and a fix.
+	s.log.Info("node registered", "node", nodeID, "role", role, "public_ip", node.PublicIP,
+		"changed", changedNodeFields(before, node, known), "peer", peerAddr(ctx))
 	return &pb.RegisterResponse{NodeId: nodeID, State: string(node.State)}, nil
 }
 
@@ -240,4 +257,40 @@ func (s *Service) ReportStatus(stream pb.NodeService_ReportStatusServer) error {
 		}
 		received++
 	}
+}
+
+// changedNodeFields names the fields that differ between the stored node and the
+// one this registration would write. A first registration reports "new" rather
+// than every field, which would be noise on the one occasion the write is
+// expected.
+func changedNodeFields(before, after domain.Node, known bool) string {
+	if !known {
+		return "new"
+	}
+	var changed []string
+	bv, av := reflect.ValueOf(before), reflect.ValueOf(after)
+	t := bv.Type()
+	for i := 0; i < t.NumField(); i++ {
+		if !t.Field(i).IsExported() {
+			continue
+		}
+		if !reflect.DeepEqual(bv.Field(i).Interface(), av.Field(i).Interface()) {
+			changed = append(changed, t.Field(i).Name)
+		}
+	}
+	if len(changed) == 0 {
+		return "nothing"
+	}
+	return strings.Join(changed, ",")
+}
+
+// peerAddr reports the caller's address, or "unknown" when the transport does not
+// carry one. Two registrations arriving 1.5 seconds apart every 30 seconds is a
+// different problem depending on whether they come from one peer or two, and the
+// journal could not tell.
+func peerAddr(ctx context.Context) string {
+	if p, ok := peer.FromContext(ctx); ok && p.Addr != nil {
+		return p.Addr.String()
+	}
+	return "unknown"
 }
