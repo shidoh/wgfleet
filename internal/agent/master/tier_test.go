@@ -379,3 +379,91 @@ func TestTierRecoveryFromStarvationUsesHysteresis(t *testing.T) {
 		t.Fatal("must fail back once the recovery streak is met")
 	}
 }
+
+// The whole point of the multi-destination probe is that it is stricter than the
+// check mihomo's own group runs (one lightweight URL, every `interval`). Both
+// write the SAME state: `GET /proxies/{name}/delay` is not a read — it records the
+// result and flips the proxy's `alive` flag, which is what removes a member from a
+// load-balance group. Verified on the live master 2026-09-04.
+//
+// So the two criteria fight over one flag. Ours evicts a censored or dead exit;
+// mihomo's weaker check puts it straight back within the interval. Measured on the
+// live fleet: 27 "failed multi-destination probe" verdicts in 13 days (vn2 x13,
+// vn0 x9, vn1 x5) — and every one of them was undone rather than sustained,
+// because the early exit below meant we often did not probe that member again for
+// several passes. A broken exit therefore MIGRATED in and out of rotation instead
+// of staying out of it.
+//
+// Re-probing every held-out member on every pass is what makes our verdict stick:
+// a failing probe re-writes the flag, so mihomo's revival survives at most one
+// interval instead of half the time.
+func TestHeldOutExitIsReprobedEveryPass(t *testing.T) {
+	hits := map[string]int{}
+	table := map[string][2]int{"vn1": {4, 4}, "vn2": {0, 4}}
+	s := newTestSelector(countingProbe(table, hits))
+	s.warmEvery = 0 // isolate the decision probe from the warm probe
+
+	const passes = 6
+	for range passes {
+		s.active(primary, reserve)
+	}
+
+	// vn2 cannot be probed on the very first pass if rotation started at vn1 and
+	// vn1 answered, so allow one pass of slack — but no more.
+	if hits["vn2"] < passes-1 {
+		t.Fatalf("a held-out exit was probed %d times in %d passes; it must be re-probed "+
+			"EVERY pass, or mihomo's own weaker check revives it and the exit flaps",
+			hits["vn2"], passes)
+	}
+}
+
+// The hold is a watch window, not a quarantine: once the exit answers again our
+// probe writes `alive` back itself, so recovery must not need an operator. What
+// the window buys is that we keep sampling it every pass for a little longer,
+// rather than dropping it back into the rotating scan on its first good answer.
+func TestHeldOutExitReturnsToRotationAfterCleanPasses(t *testing.T) {
+	table := map[string][2]int{"vn1": {0, 4}, "vn2": {0, 4}}
+	s := newTestSelector(fixedProbe(table))
+	s.minHold = 0
+
+	s.active(primary, reserve)
+	if len(s.heldOut) != len(primary) {
+		t.Fatalf("every failing member must be held out, held = %v", s.heldOut)
+	}
+
+	table["vn1"] = [2]int{4, 4}
+	table["vn2"] = [2]int{4, 4}
+	for range defaultHoldRecover {
+		s.active(primary, reserve)
+	}
+	if len(s.heldOut) != 0 {
+		t.Fatalf("a recovered exit must return to the normal rotation, still held: %v", s.heldOut)
+	}
+}
+
+// An unreachable Clash API is not evidence about the exit. It must neither hold a
+// member out nor release one that is already held — the same rule the tier
+// decision already follows, applied to the per-member verdict.
+func TestBlindProbeNeitherHoldsNorReleases(t *testing.T) {
+	table := map[string][2]int{"vn1": {0, 4}, "vn2": {0, 4}}
+	s := newTestSelector(fixedProbe(table))
+	s.active(primary, reserve)
+	if len(s.heldOut) != len(primary) {
+		t.Fatalf("setup: expected both members held, got %v", s.heldOut)
+	}
+
+	blind := newTestSelector(fixedProbe(nil))
+	blind.active(primary, reserve)
+	if len(blind.heldOut) != 0 {
+		t.Fatalf("a blind probe must not hold anything out, got %v", blind.heldOut)
+	}
+
+	// Now make every probe blind for the selector that IS holding members.
+	s.probe = fixedProbe(nil)
+	for range defaultHoldRecover + 2 {
+		s.active(primary, reserve)
+	}
+	if len(s.heldOut) != len(primary) {
+		t.Fatalf("blind passes must not release a held-out exit, held = %v", s.heldOut)
+	}
+}

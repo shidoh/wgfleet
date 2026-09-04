@@ -48,6 +48,11 @@ const (
 	// health data about the tier we would fail over TO — without it that decision
 	// is made blind.
 	defaultWarmEvery = 2
+	// defaultHoldRecover is how many consecutive clean probes return a held-out
+	// member to the normal rotating scan. It is a WATCH window, not a quarantine:
+	// a clean probe has already told mihomo the member is alive again (see
+	// tierUsable), so this only decides how long we keep sampling it every pass.
+	defaultHoldRecover = 2
 )
 
 // memberProbe reports how many of the probe destinations `name` could reach, and
@@ -74,7 +79,13 @@ type TierSelector struct {
 	minHold       time.Duration
 	minReachable  int
 	warmEvery     int
+	holdRecover   int
 	now           func() time.Time
+
+	// heldOut are the members our probe last judged unusable, mapped to how many
+	// consecutive passes have since found them usable again. They are re-probed
+	// EVERY pass — see tierUsable for why that is the whole fix and not a detail.
+	heldOut map[string]int
 
 	// state carried across reconcile passes
 	reserveActive bool
@@ -98,7 +109,9 @@ func NewTierSelector(log *slog.Logger) *TierSelector {
 		minHold:       defaultTierMinHold,
 		minReachable:  defaultMinReachable,
 		warmEvery:     defaultWarmEvery,
+		holdRecover:   defaultHoldRecover,
 		now:           time.Now,
+		heldOut:       map[string]int{},
 	}
 }
 
@@ -233,22 +246,109 @@ func (s *TierSelector) flip(toReserve bool, why string) {
 // the same datacentre off the same floor. The "vn1/vn2 latency spike" chased all
 // evening as a network fault was substantially self-inflicted probe contention.
 // Rotating spreads the load without giving up the early exit.
+// A verdict here is not just an observation, and that is the part the original
+// version of this function missed. `GET /proxies/{name}/delay` — how ProbeMember
+// asks the question — RECORDS its result in mihomo and flips the proxy's `alive`
+// flag, which is exactly what removes a member from a load-balance group.
+// Verified against the live master 2026-09-04: probing a reserve proxy at an
+// unroutable address turned alive false, probing it at cp.cloudflare.com turned it
+// back true.
+//
+// So this probe and the group's own health check write the SAME flag under
+// DIFFERENT criteria — ours across four independent destinations, mihomo's against
+// one lightweight URL every `interval`. Ours evicts a censored or dead exit;
+// mihomo's revives it on the weaker test. Whoever wrote last wins, and the early
+// exit meant a failing member often went several passes unprobed, so mihomo won
+// almost every time: measured on the live fleet, 27 failed verdicts in 13 days
+// (vn2 x13, vn0 x9, vn1 x5) and a broken exit that flapped in and out of rotation
+// instead of leaving it.
+//
+// Held-out members are therefore re-probed FIRST and ALL of them, every pass. A
+// still-failing member has its verdict re-written before mihomo's next interval,
+// so our stricter judgement is the one that sticks. On a healthy tier the set is
+// empty and this costs nothing — the early exit below is untouched.
 func (s *TierSelector) tierUsable(ctx context.Context, probe memberProbe, members []string) (usable, known bool) {
-	anyKnown := false
+	anyKnown, anyUsable := false, false
+	for _, m := range members {
+		if _, held := s.heldOut[m]; !held {
+			continue
+		}
+		ok, total, err := probe(ctx, m)
+		if err != nil {
+			continue // blind: neither hold nor release on a sample we cannot trust
+		}
+		anyKnown = true
+		if s.judge(m, ok, total) {
+			anyUsable = true
+		}
+	}
+	if anyUsable {
+		return true, true
+	}
+
 	for i := range members {
 		m := members[(s.pass+i)%len(members)]
+		if _, held := s.heldOut[m]; held {
+			continue // already re-probed above this pass
+		}
 		ok, total, err := probe(ctx, m)
 		if err != nil {
 			continue // this sample is blind; try the other members
 		}
 		anyKnown = true
-		need := min(s.minReachable, total)
-		if total > 0 && ok >= need {
+		if s.judge(m, ok, total) {
 			return true, true
-		}
-		if s.log != nil {
-			s.log.Info("exit failed multi-destination probe", "exit", m, "reachable", ok, "probed", total)
 		}
 	}
 	return false, anyKnown
+}
+
+// judge turns one member's probe result into a usable/unusable verdict and keeps
+// the held-out set in step with it. Callers must not invoke it on a blind sample.
+func (s *TierSelector) judge(member string, ok, total int) bool {
+	need := min(s.minReachable, total)
+	if total > 0 && ok >= need {
+		s.release(member)
+		return true
+	}
+	s.hold(member, ok, total)
+	return false
+}
+
+// hold records that the member is out of rotation. The first pass of a spell is a
+// WARNING because it is a data-plane change — this exit stops carrying client
+// traffic — and nothing else in the system says so out loud.
+func (s *TierSelector) hold(member string, ok, total int) {
+	if s.heldOut == nil {
+		s.heldOut = map[string]int{}
+	}
+	_, already := s.heldOut[member]
+	s.heldOut[member] = 0
+	if s.log == nil {
+		return
+	}
+	if already {
+		s.log.Info("held-out exit still failing", "exit", member, "reachable", ok, "probed", total)
+		return
+	}
+	s.log.Warn("exit held out of rotation", "exit", member, "reachable", ok, "probed", total)
+}
+
+// release walks a recovering member back to the normal rotating scan once it has
+// answered cleanly holdRecover times running. It does NOT gate the member's return
+// to traffic: the clean probe that got us here already told mihomo it is alive.
+func (s *TierSelector) release(member string) {
+	clean, held := s.heldOut[member]
+	if !held {
+		return
+	}
+	clean++
+	if clean < s.holdRecover {
+		s.heldOut[member] = clean
+		return
+	}
+	delete(s.heldOut, member)
+	if s.log != nil {
+		s.log.Warn("exit returned to rotation", "exit", member, "clean_passes", clean)
+	}
 }
