@@ -74,3 +74,38 @@ func TestSyntheticClientConfigUsesTheClientRenderer(t *testing.T) {
 		}
 	}
 }
+
+// setconf understands the device and rejects what awg-quick owns. Getting this
+// wrong means the prober's interface never comes up and the path goes unmeasured
+// while everything reports fine — the failure mode this whole feature exists to
+// end, reproduced in the thing that watches for it.
+func TestSyntheticSetConfIsDeviceOnlyAndCarriesTheObfuscation(t *testing.T) {
+	spec := synthSpec()
+	spec.AWG = &domain.AWGParams{
+		Shared: domain.AWGShared{
+			S1: 39, S2: 61,
+			H1: domain.AWGHeader{Min: 1, Max: 2}, H2: domain.AWGHeader{Min: 3, Max: 4},
+			H3: domain.AWGHeader{Min: 5, Max: 6}, H4: domain.AWGHeader{Min: 7, Max: 8},
+		},
+	}
+	out, err := RenderSyntheticSetConf(SyntheticSetConfInput{
+		Spec:            spec,
+		Client:          SyntheticClient("10.73.0.254/32", "privkey", "PUB"),
+		ServerPublicKey: "SRV",
+		Endpoint:        "127.0.0.1:443",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{"PrivateKey = privkey", "PublicKey = SRV", "Endpoint = 127.0.0.1:443", "S1 = 39", "H1 = "} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	// awg-quick's own directives must NOT be here: setconf rejects the file if they are.
+	for _, forbidden := range []string{"Address =", "DNS =", "MTU ="} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("setconf form carries %q, which awg setconf rejects:\n%s", forbidden, out)
+		}
+	}
+}

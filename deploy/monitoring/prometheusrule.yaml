@@ -450,6 +450,26 @@ spec:
         summary: No client has a live handshake on {{ $labels.node }}
         description: The client-facing interface on {{ $labels.node }} has had zero active peers for
           10m. Either every client is offline at once, or the interface is serving an empty peer set.
+    - alert: WgfleetClientPathDead
+      # The master's own client cannot get traffic through the path its users take.
+      # This is the only alert that measures the whole sentence rather than a
+      # component: during the eight days client QUIC was dead in August 2026, the
+      # master<->exit link was at 0% loss, exit egress at 30 MB/s, every proxy alive
+      # and no unit failed — because each of those measured a component and every
+      # component was fine.
+      expr: wgfleet_agent_client_path_ok == 0
+      for: 5m
+      labels:
+        severity: critical
+        service: wgfleet
+      annotations:
+        summary: "the client path is dead for {{ $labels.probe }} on {{ $labels.node }}"
+        description: >-
+          The master's own synthetic client could not complete a
+          {{ $labels.probe }} exchange through the client interface, the firewall,
+          mihomo and an exit. Real clients take the same path. Reproduce with
+          `ip netns exec wgfleet-synth curl -v https://cp.cloudflare.com/generate_204`
+          on the master.
     - alert: WgfleetMihomoComplaining
       # mihomo writes its own failures to the container log and nothing read them.
       # The TPROXY reply failure that killed every client QUIC flow from 2026-08-28

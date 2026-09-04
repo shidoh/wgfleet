@@ -36,6 +36,7 @@ type AgentMetrics struct {
 	udpReturnSocket  *prometheus.GaugeVec // per UDP port: can a TPROXY reply socket still be opened
 	udpReturnKnown   *prometheus.GaugeVec // per UDP port: is a blocked port one we have decided about
 	mihomoErrors     prometheus.Counter   // error lines mihomo wrote about itself
+	clientPathOK     *prometheus.GaugeVec // per probe: does the client path work end to end
 	reconcileChanges prometheus.Gauge     // resources changed in the last pass
 	checkLatency     *prometheus.GaugeVec // per self-check: probe latency, seconds
 	startTime        prometheus.Gauge
@@ -105,6 +106,10 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Namespace: namespace, Subsystem: "agent", Name: "udp_return_socket",
 			Help: "1 when a TPROXY reply socket can still be opened for this destination port; 0 when a socket this namespace already holds makes it impossible, so client traffic to that port gets no replies.", ConstLabels: cl,
 		}, []string{"port"}),
+		clientPathOK: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "client_path_ok",
+			Help: "1 when the master's own client can send and receive over this protocol through the full client path (interface, firewall, proxy, exit); 0 when it cannot. The only signal that measures the sentence every component metric misses.", ConstLabels: cl,
+		}, []string{"probe"}),
 		mihomoErrors: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "mihomo_errors_total",
 			Help: "Error lines mihomo has written about itself. Deliberately unclassified: the next failure of this kind will have a different message, and the signal is that the data plane is complaining at all.", ConstLabels: cl,
@@ -162,7 +167,7 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 
 	reg.MustRegister(m.reconcileTotal, m.reconcileDuration, m.stateInfo, m.checkUp, m.checkLatency,
 		m.driftTotal, m.driftResources, m.reconcileChanges, m.egressReach, m.egressActive,
-		m.egressThroughput, m.startTime, m.udpReturnSocket, m.udpReturnKnown, m.mihomoErrors)
+		m.egressThroughput, m.startTime, m.udpReturnSocket, m.udpReturnKnown, m.mihomoErrors, m.clientPathOK)
 	if m.transportActive != nil {
 		reg.MustRegister(m.transportActive)
 	}
@@ -322,5 +327,20 @@ func (m *AgentMetrics) ObserveUDPReturn(bindable, known map[int]bool) {
 func (m *AgentMetrics) ObserveMihomoErrors(n int) {
 	if n > 0 {
 		m.mihomoErrors.Add(float64(n))
+	}
+}
+
+// ObserveClientPath records, per probe, whether the master's own client could
+// send and receive through the full client path.
+//
+// Reset first: a probe that stops being taken must stop being reported rather
+// than freeze at its last value. A frozen green is exactly the shape of the
+// failure this metric exists to catch — every other signal was green for eight
+// days while client QUIC was dead, because each of them was measuring something
+// that was genuinely fine.
+func (m *AgentMetrics) ObserveClientPath(results map[string]bool) {
+	m.clientPathOK.Reset()
+	for probe, ok := range results {
+		m.clientPathOK.WithLabelValues(probe).Set(boolToFloat(ok))
 	}
 }

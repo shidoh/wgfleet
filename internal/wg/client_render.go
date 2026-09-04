@@ -420,3 +420,58 @@ func WithSyntheticPeer(spec domain.ClientWGSpec, peer domain.WGClient) domain.Cl
 	})
 	return out
 }
+
+// SyntheticSetConfInput is what the master's own prober needs to configure its
+// interface with `awg setconf`.
+type SyntheticSetConfInput struct {
+	Spec            domain.ClientWGSpec
+	Client          domain.WGClient
+	ServerPublicKey string
+	Endpoint        string // where the prober dials the master's client interface
+	ListenPort      int    // the prober's own source port; 0 ⇒ kernel picks
+}
+
+// RenderSyntheticSetConf renders the prober's interface in `awg setconf` form.
+//
+// It is a different shape from RenderClientConfig, not a different configuration:
+// setconf understands the device (keys, obfuscation, peers) and rejects the lines
+// awg-quick owns (Address, DNS, MTU), which are applied with `ip` instead. The
+// split exists because the prober's interface has to be created in ONE network
+// namespace and moved into another — WireGuard keeps its UDP socket in the
+// namespace where the device was created, which is what lets the prober dial the
+// master's own loopback while its decrypted side lives somewhere isolated — and
+// awg-quick has no way to express that.
+//
+// The obfuscation is copied verbatim from the client spec. A prober configured
+// with anything else would be measuring a tunnel no real client has.
+func RenderSyntheticSetConf(in SyntheticSetConfInput) (string, error) {
+	switch {
+	case in.Client.PrivateKey == "":
+		return "", fmt.Errorf("wg render: synthetic client has no private key")
+	case in.ServerPublicKey == "":
+		return "", fmt.Errorf("wg render: server public key is required")
+	case in.Endpoint == "":
+		return "", fmt.Errorf("wg render: endpoint is required")
+	}
+
+	var b strings.Builder
+	b.WriteString("[Interface]\n")
+	fmt.Fprintf(&b, "PrivateKey = %s\n", in.Client.PrivateKey)
+	if in.ListenPort > 0 {
+		fmt.Fprintf(&b, "ListenPort = %d\n", in.ListenPort)
+	}
+	if in.Spec.AWG != nil {
+		params := *in.Spec.AWG
+		// The same per-credential decoy an end user gets: the junk profile is derived
+		// from the credential, so a prober using the master's profile would present a
+		// fingerprint no client presents.
+		params.Local = clientDecoy(in.Spec, in.Client)
+		writeAWG(&b, params)
+	}
+	b.WriteString("\n[Peer]\n")
+	fmt.Fprintf(&b, "PublicKey = %s\n", in.ServerPublicKey)
+	fmt.Fprintf(&b, "Endpoint = %s\n", in.Endpoint)
+	b.WriteString("AllowedIPs = 0.0.0.0/0\n")
+	fmt.Fprintf(&b, "PersistentKeepalive = %d\n", ClientKeepaliveSeconds)
+	return b.String(), nil
+}

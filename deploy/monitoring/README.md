@@ -264,6 +264,7 @@ What ships, by severity:
 | `WgfleetReserveTierActive` | warning |
 | `WgfleetStandbyTierUnusable` | warning |
 | `WgfleetStandbyTransportUnusable` | warning |
+| `WgfleetClientPathDead` | critical |
 | `WgfleetClientUDPBlackHole` | critical |
 | `WgfleetMihomoComplaining` | warning |
 | `WgfleetCAExpiringSoon` | critical |

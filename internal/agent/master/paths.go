@@ -36,6 +36,8 @@ type Paths struct {
 	// and never published: nobody has to re-issue this config, so a key that never
 	// leaves is one fewer thing to leak.
 	SynthKey string
+	// SynthConf is the prober's device config, in `awg setconf` form.
+	SynthConf string
 }
 
 // DefaultPaths returns the production-default file locations.
@@ -65,6 +67,7 @@ func DefaultPaths() Paths {
 		ClientWGConf: "/etc/amnezia/amneziawg/wg0.conf",
 		ClientWGKey:  "/etc/wgfleet/client-wg.key",
 		SynthKey:     "/etc/wgfleet/client-wg-synth.key",
+		SynthConf:    "/etc/wgfleet/client-wg-synth.conf",
 	}
 }
 
@@ -89,5 +92,6 @@ func PathsUnder(dir string) Paths {
 		ClientWGConf:   filepath.Join(dir, "wg0.conf"),
 		ClientWGKey:    filepath.Join(dir, "client-wg.key"),
 		SynthKey:       filepath.Join(dir, "client-wg-synth.key"),
+		SynthConf:      filepath.Join(dir, "client-wg-synth.conf"),
 	}
 }

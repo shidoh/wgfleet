@@ -755,6 +755,16 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 				a.metrics.ObserveMihomoErrors(n)
 				a.mihomoLogCursor = cursor
 			}
+			// The client path, measured from the master's own client. Taken AFTER the
+			// pass: the prober's interface may have been created by it.
+			results := map[string]bool{}
+			for _, pr := range master.MeasureClientPath(ctx, nil) {
+				results[pr.Name] = pr.OK
+				if !pr.OK {
+					a.log.Warn("client path probe failed", "probe", pr.Name, "err", pr.Why)
+				}
+			}
+			a.metrics.ObserveClientPath(results)
 		}
 	}
 	a.log.Info("reconcile applied",
@@ -930,6 +940,7 @@ func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, admi
 			RealityPrivateKey:  realityPrivateKey,
 			ClientWGPrivateKey: clientWGPrivateKey,
 			SyntheticKey:       a.ensureSynthKeyQuiet(),
+			ClientWGPublicKey:  publicKeyOrEmpty(clientWGPrivateKey),
 			AdminUsername:      adminUser,
 			AdminPassword:      adminPass,
 			OverlayMSS:         a.cfg.Agent.MgmtOverlayMSS,
@@ -1766,4 +1777,18 @@ func (a *agent) ensureSynthKey() (wg.KeyPair, error) {
 		return wg.KeyPair{}, err
 	}
 	return kp, nil
+}
+
+// publicKeyOrEmpty derives a public key, or returns "" when there is no private
+// key to derive one from. Used where a missing key means "this feature is simply
+// not configured" rather than an error worth failing a pass over.
+func publicKeyOrEmpty(privateKey string) string {
+	if privateKey == "" {
+		return ""
+	}
+	pub, err := wg.PublicKeyOf(privateKey)
+	if err != nil {
+		return ""
+	}
+	return pub
 }

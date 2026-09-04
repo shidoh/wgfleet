@@ -42,6 +42,10 @@ type Input struct {
 	// passed here, so a pool the operator resizes moves the prober with it. Zero
 	// value ⇒ no prober, and everything renders as it did before it existed.
 	SyntheticKey wg.KeyPair
+	// ClientWGPublicKey is the master's client-interface public key — what the
+	// prober dials. Derived from the private key by the caller so this package
+	// never has to.
+	ClientWGPublicKey string
 	// ClientInterface is the client WG interface the NAT/forward rules reference.
 	// Default is applied when empty. (The master masquerades on every egress except
 	// this interface, so a separate egress iface no longer needs detecting.)
@@ -106,6 +110,9 @@ func Planners(in Input) []reconcile.Planner {
 		// and the compose planner in the same pass retires the container.
 		clientWGPlanner{confPath: in.Paths.ClientWGConf, privateKey: in.ClientWGPrivateKey,
 			synthKey: in.SyntheticKey},
+		// After the client interface: the prober dials it, so it has to exist first.
+		synthPlanner{confPath: in.Paths.SynthConf, synthKey: in.SyntheticKey,
+			serverPub: in.ClientWGPublicKey},
 		composePlanner{path: in.Paths.Compose, adminUser: in.AdminUsername, adminPass: in.AdminPassword},
 		// The client leg has exactly one owner. While wg-easy holds it these three
 		// keep its database converged; once the operator hands the leg to the agent
