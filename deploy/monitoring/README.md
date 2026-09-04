@@ -8,7 +8,9 @@ the public interface — the code refuses a public bind).
 
 | File | What |
 |---|---|
-| `grafana-dashboard.json` | Grafana dashboard — import it. |
+| `grafana-dashboard.json` | Grafana dashboard, **classic schema** (`schemaVersion: 39`) — import it into Grafana 12 and older. Source of truth: edit this one. |
+| `grafana-dashboard-v2.json` | The same dashboard in the **Grafana 13 schema** (`dashboard.grafana.app/v2`) — paste it into the JSON editor of an existing dashboard to replace it in place. Generated; do not hand-edit. |
+| `dashboard-to-v2.py` | Regenerates the v2 file from the classic one. |
 | `servicemonitor.yaml` | Prometheus-Operator `ServiceMonitor` + headless `Service`/`Endpoints` for the controller and the agents. Edit the ZT addresses. |
 | `scrapeconfig.yaml` | Prometheus-Operator `ScrapeConfig` CRD (operator ≥ v0.65) — static targets, no Service plumbing. |
 | `vmstaticscrape.yaml` | VictoriaMetrics-Operator `VMStaticScrape` CRD — for a `vmagent`. Edit the ZT addresses. |
@@ -80,11 +82,35 @@ Verify targets are `UP` under Prometheus → Status → Targets.
 
 ## 3. Import the dashboard
 
-Grafana → Dashboards → New → Import → upload `grafana-dashboard.json`, pick your
-Prometheus data source. The dashboard variable `$node` is populated from
-`wgfleet_node_info` (controller metrics), so the controller alone already drives
-the overview, inventory and health rows; the egress-throughput and reconcile rows
-need the agent `/metrics` (step 1).
+**Which file depends on your Grafana.** Grafana 13 replaced the dashboard wire
+format, and the two are not interchangeable — each version rejects the other's
+file, so shipping only one strands whoever runs the other.
+
+- **Grafana 12 and older:** Dashboards → New → Import → upload
+  `grafana-dashboard.json`.
+- **Grafana 13+:** open the dashboard → Edit → JSON model, and paste
+  `grafana-dashboard-v2.json` over what is there. Its `metadata.name` matches the
+  classic `uid` (`wgfleet-fleet`), so this REPLACES the existing dashboard rather
+  than leaving a second copy beside it.
+
+Then pick your Prometheus data source. The dashboard variable `$node` is
+populated from `wgfleet_node_info` (controller metrics), so the controller alone
+already drives the overview, inventory and health rows; the egress-throughput,
+exit-rotation and reconcile rows need the agent `/metrics` (step 1).
+
+### Editing it
+
+`grafana-dashboard.json` is the source of truth. After changing it:
+
+```bash
+python3 deploy/monitoring/dashboard-to-v2.py
+```
+
+`TestDashboardV2MatchesClassic` fails if the two drift, so a forgotten
+regeneration is a red build rather than a dashboard whose halves disagree about
+which panels exist. What actually differs between the formats — a flat panel list
+with absolute coordinates versus elements plus a row layout with **row-relative**
+ones — is documented at the top of that script.
 
 ## Metric reference
 

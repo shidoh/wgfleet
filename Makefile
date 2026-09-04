@@ -159,7 +159,10 @@ release-archive: agent-linux controller-linux
 	# a tester to copy, so the dead link is on the path they are being walked down.
 	@cd $(DIST)/$(PKG) && for f in *.md; do $(call fixlinks,$$f,); done
 	@cd $(DIST)/$(PKG) && for f in examples/*.md; do $(call fixlinks,$$f,../); done
-	cp deploy/monitoring/grafana-dashboard.json deploy/monitoring/README.md $(DIST)/$(PKG)/monitoring/
+	# Both dashboard formats ship: Grafana 13 cannot import the classic file and
+	# older Grafana cannot read the v2 one, so leaving either out strands a tester
+	# on whichever version they happen to run.
+	cp deploy/monitoring/grafana-dashboard.json deploy/monitoring/grafana-dashboard-v2.json deploy/monitoring/README.md $(DIST)/$(PKG)/monitoring/
 	cp deploy/monitoring/servicemonitor.yaml deploy/monitoring/scrapeconfig.yaml deploy/monitoring/vmstaticscrape.yaml $(DIST)/$(PKG)/monitoring/
 	cp deploy/monitoring/vmrule.yaml deploy/monitoring/prometheusrule.yaml $(DIST)/$(PKG)/monitoring/
 	@echo "$(VERSION) $(COMMIT) $(DATE) linux/$(ARCH)" > $(DIST)/$(PKG)/VERSION
