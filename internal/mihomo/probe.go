@@ -31,10 +31,32 @@ var DefaultProbeURLs = []string{
 	"http://detectportal.firefox.com/success.txt",
 }
 
+// ProbePhaseBudget bounds the WHOLE probing phase of a reconcile pass, not one
+// member.
+//
+// It exists because the phases stack. Every 10th pass the tier decision, the warm
+// probe of the inactive tier and the standby-transport sweep all run together: on
+// the live fleet that is 3 primary + 3 reserve + 5 standby = 11 members probed
+// back to back. Each member is bounded by one probeTimeout, so a fleet where a
+// probe destination is blocked costs 11 x 8s = 88s — three times the 30s reconcile
+// interval, and past it the status report that feeds WgfleetNodeReportStale
+// (critical at 180s) starts sliding. A per-member bound is not a bound on the pass.
+//
+// Deliberately well under the interval: the phase gives up rather than making the
+// pass late, and a phase that ran out of budget simply leaves the previous verdicts
+// standing, which is what every probe path here already does on a blind sample.
+const ProbePhaseBudget = 20 * time.Second
+
 // probeTimeout bounds one member×URL probe. Generous enough that a slow-but-usable
 // exit is not failed for latency alone (that is the throughput watchdog's job), tight
 // enough that a full sweep stays well inside a reconcile pass.
 const probeTimeout = 6 * time.Second
+
+// enough is the reachable count at which a member is considered proven usable. It
+// mirrors the tier selector's threshold; the selector re-checks what it got, so
+// keeping the two in step is a convenience rather than a correctness requirement.
+// It does NOT stop the probe early — see the comment on the result loop.
+const enough = 2
 
 // ProbeMember reports how many of urls the named proxy could reach, by asking
 // mihomo to dial each one THROUGH that proxy (Clash API `GET /proxies/{name}/delay`).
@@ -44,12 +66,6 @@ const probeTimeout = 6 * time.Second
 // egress, instead of the master's own connectivity. Returns the reachable count and
 // the number attempted; a transport error talking to the API is returned as an error
 // so the caller can hold its current decision rather than act on a blind sample.
-// enough is the reachable count at which a member is considered proven usable, so
-// probing can stop early. It mirrors the tier selector's threshold; keeping the two
-// in step matters only for latency, never for correctness (the selector re-checks
-// what it got).
-const enough = 2
-
 func ProbeMember(ctx context.Context, controllerAddr, secret, name string, urls []string) (ok, total int, err error) {
 	if controllerAddr == "" {
 		return 0, 0, fmt.Errorf("%w: no external-controller configured", ErrUnreachable)
@@ -67,8 +83,10 @@ func ProbeMember(ctx context.Context, controllerAddr, secret, name string, urls 
 		err     error
 	}
 	results := make(chan result, len(urls))
-	// Cancelled as soon as the outcome is decided, so the remaining in-flight probes
-	// stop rather than running out their timeouts.
+	// Cancelled on the way out, once every result is in. It releases whatever is
+	// still held by a goroutine whose send already completed; it must NOT be used to
+	// abandon a probe mid-flight, because a cancelled delay test writes alive=false
+	// on the proxy (see the result loop below).
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -79,6 +97,23 @@ func ProbeMember(ctx context.Context, controllerAddr, secret, name string, urls 
 		}(target)
 	}
 
+	// Read EVERY result before deciding. The obvious optimisation — return as soon
+	// as `enough` destinations answered — is what made this probe lie to mihomo.
+	//
+	// `GET /proxies/{name}/delay` is not a read: adapter.Proxy.URLTest stores
+	// `alive = (err == nil)` in a defer, unconditionally, for every call. Returning
+	// early runs the deferred cancel() above, which cancels the in-flight HTTP
+	// requests, which cancels the dials on mihomo's side — so each abandoned probe
+	// writes alive=false on the proxy this call is about to report HEALTHY. In a
+	// load-balance group that is an eviction, and under consistent-hashing the
+	// destinations pinned to that exit move to another one with a different egress
+	// address until the group's own check (30s) puts it back.
+	//
+	// It also bought almost nothing. The probes run concurrently, so waiting for all
+	// of them is still bounded by ONE timeout rather than len(urls) of them, and on
+	// a healthy member they all answer within a few milliseconds of each other. The
+	// cost is paid only on a member that is genuinely failing — where being slow is
+	// the correct behaviour anyway.
 	var firstErr error
 	for range urls {
 		r := <-results
@@ -94,10 +129,6 @@ func ProbeMember(ctx context.Context, controllerAddr, secret, name string, urls 
 		total++
 		if r.reached {
 			ok++
-			if ok >= enough {
-				// Already proven usable; the rest cannot change the verdict.
-				return ok, total, nil
-			}
 		}
 	}
 	if firstErr != nil && ok == 0 {

@@ -2,8 +2,10 @@ package master
 
 import (
 	"context"
+	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/domain"
 )
@@ -82,5 +84,65 @@ func TestMihomoPlannerDefersInsteadOfAbortingThePass(t *testing.T) {
 	}
 	if !strings.Contains(dump, "keeping the last-good config") {
 		t.Errorf("the deferral does not say why:\n%s", dump)
+	}
+}
+
+// The probing phase must be bounded as a WHOLE, not per member.
+//
+// Every 10th pass three phases coincide — the tier decision, the warm probe of the
+// inactive tier and the standby-transport sweep — which on the live fleet is 11
+// members probed back to back. Each is bounded only by its own 8s timeout, so a
+// blocked probe destination costs 88s against a 30s reconcile interval, and the
+// status report that feeds WgfleetNodeReportStale (critical at 180s) starts
+// sliding behind. A member-sized bound is not a bound on the pass.
+func TestMihomoPlannerBoundsTheWholeProbingPhase(t *testing.T) {
+	// A Clash API that accepts and never answers: every probe runs its full timeout.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c // held open, never answered
+		}
+	}()
+
+	p := mihomoPlanner{
+		paths:       PathsUnder(t.TempDir()),
+		privateKey:  "k",
+		tier:        NewTierSelector(nil),
+		probeBudget: 100 * time.Millisecond,
+	}
+	spec := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{
+		BindAddress:        "10.80.0.1",
+		ExternalController: ln.Addr().String(),
+		ExitTunnels: []domain.ExitTunnel{
+			{Name: "e1", Endpoint: "203.0.113.1:51820", ServerPublicKey: "k1", TunnelIP: "10.81.0.2", MTU: 1360},
+			{Name: "e2", Endpoint: "203.0.113.2:51820", ServerPublicKey: "k2", TunnelIP: "10.82.0.2", MTU: 1360},
+			{Name: "e3", Endpoint: "203.0.113.3:51820", ServerPublicKey: "k3", TunnelIP: "10.83.0.2", MTU: 1360, Reserve: true},
+		},
+	}}
+
+	start := time.Now()
+	if _, err := p.Plan(context.Background(), spec); err != nil {
+		t.Fatalf("Plan() = %v", err)
+	}
+	elapsed := time.Since(start)
+	// The phase must actually have RUN. Without this the test passes when the spec
+	// happens to skip probing entirely, which is how a test that cannot fail looks.
+	if elapsed < p.probeBudget {
+		t.Fatalf("the probing phase finished in %v, under its own %v budget — it never ran",
+			elapsed.Truncate(time.Millisecond), p.probeBudget)
+	}
+	// Generous ceiling: the assertion is "bounded by the budget", not "fast". Without
+	// a phase budget this takes one probeTimeout (8s) per member.
+	if elapsed > 3*time.Second {
+		t.Errorf("the probing phase ran %v with a %v budget — it is not bounded as a phase",
+			elapsed.Truncate(time.Millisecond), p.probeBudget)
 	}
 }

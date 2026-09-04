@@ -63,18 +63,52 @@ func TestProbeMemberReportsPartialReachability(t *testing.T) {
 // Once the usable threshold is met the verdict cannot change, so the remaining
 // probes must not be waited on — that bound is what keeps a reconcile pass inside
 // its interval when destinations are timing out.
-func TestProbeMemberStopsOnceProvenUsable(t *testing.T) {
+// Every delay test that was STARTED must be waited on.
+//
+// mihomo writes the proxy's alive flag from the result of every URLTest
+// (adapter.Proxy.URLTest stores `alive = err == nil` in a defer, unconditionally),
+// and a request the client cancels cancels the dial on mihomo's side too — so an
+// abandoned probe stamps alive=false on the very proxy this call is about to
+// report healthy. In a load-balance group that takes the exit out of rotation
+// until the group's own 30s check puts it back, and consistent-hashing then moves
+// live destinations to a different exit with a different egress IP.
+//
+// The early exit it replaces bought almost nothing: the probes run CONCURRENTLY,
+// so waiting for all of them is still bounded by one timeout, and on a healthy
+// tier they all answer in about the same 100ms.
+func TestProbeMemberWaitsForEveryTestItStarted(t *testing.T) {
 	addr, calls := clashStub(t, func(string) bool { return true })
 	urls := []string{"http://a", "http://b", "http://c", "http://d"}
-	ok, _, err := ProbeMember(context.Background(), addr, "", "vn1", urls)
+
+	ok, total, err := ProbeMember(context.Background(), addr, "", "vn1", urls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != len(urls) {
+		t.Errorf("total = %d, want every one of the %d tests counted", total, len(urls))
+	}
+	if ok != len(urls) {
+		t.Errorf("ok = %d, want %d — a result was abandoned rather than read", ok, len(urls))
+	}
+	if got := calls.Load(); got != int32(len(urls)) {
+		t.Fatalf("issued %d calls for %d urls", got, len(urls))
+	}
+}
+
+// The verdict itself is unchanged: enough reachable destinations still means
+// usable, it is just decided after every answer is in.
+func TestProbeMemberStillReportsUsableOnAPartialSet(t *testing.T) {
+	addr, _ := clashStub(t, func(u string) bool { return u == "http://a" || u == "http://b" })
+	ok, total, err := ProbeMember(context.Background(), addr, "", "vn1",
+		[]string{"http://a", "http://b", "http://c", "http://d"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ok < enough {
 		t.Fatalf("ok = %d, want at least %d", ok, enough)
 	}
-	if got := calls.Load(); got > int32(len(urls)) {
-		t.Fatalf("issued %d calls for %d urls", got, len(urls))
+	if total != 4 {
+		t.Errorf("total = %d, want all four attempted", total)
 	}
 }
 

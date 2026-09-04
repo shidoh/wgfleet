@@ -34,6 +34,9 @@ type mihomoPlanner struct {
 	// injected in tests. Preferred over a container restart so a routine change like
 	// draining one exit does not drop every client's connection.
 	reload func(ctx context.Context, controllerAddr, secret string, cfgYAML []byte) error
+	// probeBudget bounds the whole probing phase (0 ⇒ mihomo.ProbePhaseBudget).
+	// Injected in tests so the bound can be asserted without waiting out the real one.
+	probeBudget time.Duration
 	// restart bounces the container (nil ⇒ real `docker compose restart mihomo`);
 	// injected in tests. Used when a wireguard-proxy change can't be hot-reloaded.
 	restart func(ctx context.Context) error
@@ -69,15 +72,27 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 	if p.tier != nil {
 		primary, reserve := mihomo.TierMembers(*spec.Master)
 		addr, secret := spec.Master.ExternalController, clashSecret(spec.Master)
+		// One budget for the WHOLE phase, not per member. The three probe phases below
+		// coincide every 10th pass — 11 members on the live fleet — and each member is
+		// bounded only by its own timeout, so a blocked destination could push the pass
+		// far past the 30s interval and slide the status report toward the staleness
+		// alert. Running out of budget is safe by construction: every probe path here
+		// treats an unanswerable sample as "hold the current verdict".
+		budget := p.probeBudget
+		if budget == 0 {
+			budget = mihomo.ProbePhaseBudget
+		}
+		probeCtx, cancelProbes := context.WithTimeout(ctx, budget)
+		defer cancelProbes()
 		probe := func(ctx context.Context, name string) (int, int, error) {
 			return mihomo.ProbeMember(ctx, addr, secret, name, nil)
 		}
-		reserveActive = p.tier.ReserveActive(ctx, probe, primary, reserve)
+		reserveActive = p.tier.ReserveActive(probeCtx, probe, primary, reserve)
 		// The standby transports are drained on purpose, so they are in neither tier
 		// and nothing above reaches them. Probing them changes no decision here — the
 		// transport switch is the operator's — it only makes the answer available
 		// BEFORE the switch instead of after it.
-		p.tier.ProbeStandbyTransports(ctx, probe, mihomo.StandbyProxies(*spec.Master))
+		p.tier.ProbeStandbyTransports(probeCtx, probe, mihomo.StandbyProxies(*spec.Master))
 	}
 	cfg, err := mihomo.RenderConfig(mihomo.RenderInput{
 		Spec: *spec.Master, PrivateKey: p.privateKey, ReserveActive: reserveActive,
