@@ -27,6 +27,18 @@ type MasterNATInput struct {
 	// PrivateCIDRs are destinations that bypass the DNAT (kept DIRECT): RFC1918,
 	// CGNAT, mgmt overlay. Rendered as `ip daddr != <cidr>` guards.
 	PrivateCIDRs []string
+	// NetnsGateway, when set, moves the interception OUT of this ruleset: client
+	// traffic is routed to mihomo's namespace instead, and the rules that catch it
+	// are rendered there (RenderNetnsNAT).
+	//
+	// The two cannot both be present. `tproxy` hands the packet to a socket in the
+	// current namespace, so leaving the host rule in place would intercept into
+	// listeners that have moved — TCP to a refused connection and UDP into the
+	// fail-closed drop, which is every client's traffic gone.
+	NetnsGateway string
+	// NetnsHostIface is the veth end the routed traffic leaves by. Required with
+	// NetnsGateway; the masquerade and the leak guard must both exempt it.
+	NetnsHostIface string
 }
 
 // TProxyMark is the fwmark TPROXY'd client packets carry so policy routing can
@@ -104,7 +116,9 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 		fmt.Fprintf(&b, "\t\tiifname %q%s udp dport 443 drop\n", in.ClientInterface, guards)
 	}
 	// DNAT non-private client TCP to mihomo's redir-port.
-	fmt.Fprintf(&b, "\t\tiifname %q%s%s ip protocol tcp dnat to %s\n", in.ClientInterface, guards, gatewayGuard, in.RedirAddr)
+	if in.NetnsGateway == "" {
+		fmt.Fprintf(&b, "\t\tiifname %q%s%s ip protocol tcp dnat to %s\n", in.ClientInterface, guards, gatewayGuard, in.RedirAddr)
+	}
 	b.WriteString("\t}\n\n")
 
 	// Client UDP, intercepted rather than NAT'd.
@@ -140,7 +154,7 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// packet anyway. What it DID match was client datagrams addressed to mihomo's own
 	// listeners, which the guard below deliberately excludes and the input drop policy
 	// would otherwise eat; accepting those is the an earlier finding self-dial shape.
-	if in.TProxyAddr != "" {
+	if in.TProxyAddr != "" && in.NetnsGateway == "" {
 		b.WriteString("\tchain client_udp_tproxy {\n")
 		b.WriteString("\t\ttype filter hook prerouting priority mangle; policy accept;\n")
 		fmt.Fprintf(&b, "\t\tiifname %q%s%s meta l4proto udp tproxy ip to %s meta mark set %#x accept\n",
@@ -170,7 +184,14 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// nets). Pinning a single egress iface (e.g. ens3) silently breaks the overlay
 	// path — DNS dies because blocky sees the un-NAT'd client source and can't
 	// route the reply back (the reference deployment §3.12 masquerades both ens3 and the ZT iface).
-	fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q masquerade\n", clientCIDR, in.ClientInterface)
+	// The veth to mihomo's namespace is exempted for a reason that is not obvious
+	// and is fatal to miss: TPROXY works precisely because it does NOT rewrite the
+	// packet — mihomo reads the original (client, server) pair off the transparent
+	// socket to know who to answer. Masquerading on the way in would present every
+	// client as the host end of the veth, and mihomo could not return a single
+	// reply to the right one.
+	fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q%s masquerade\n",
+		clientCIDR, in.ClientInterface, netnsIfaceGuard(in.NetnsHostIface))
 	b.WriteString("\t}\n")
 
 	// Enforce what the masquerade above promises: no client-pool source ever reaches
@@ -206,8 +227,15 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	//     the master ORIGINATES from it is caught by a rule meant for traffic it
 	//     FORWARDS on a client's behalf. On the exit, counting those made a healthy
 	//     node report half a million leaks.
-	fmt.Fprintf(&b, "\t\tip saddr %s%s oifname != %q oifname != \"lo\" counter drop\n",
-		clientCIDR, gatewaySourceGuard(in.ClientCIDR), in.ClientInterface)
+	//   - `oifname != <veth>` once the interception moved. This chain runs AFTER
+	//     srcnat, so today it never fires on client traffic only because the
+	//     masquerade above already rewrote the source. Exempting the veth there and
+	//     not here turns a partial failure into a total one: the source stays in the
+	//     client pool, the guard matches, and every client packet routed to the
+	//     namespace is dropped one hook later.
+	fmt.Fprintf(&b, "\t\tip saddr %s%s oifname != %q oifname != \"lo\"%s counter drop\n",
+		clientCIDR, gatewaySourceGuard(in.ClientCIDR), in.ClientInterface,
+		netnsIfaceGuard(in.NetnsHostIface))
 	b.WriteString("\t}\n")
 
 	b.WriteString("}\n")
@@ -258,4 +286,13 @@ func gatewaySourceGuard(clientCIDR string) string {
 		return ""
 	}
 	return fmt.Sprintf(" ip saddr != %s", gw)
+}
+
+// netnsIfaceGuard renders the exemption for the veth to mihomo's namespace, or
+// nothing when the interception still lives on this host.
+func netnsIfaceGuard(iface string) string {
+	if iface == "" {
+		return ""
+	}
+	return fmt.Sprintf(" oifname != %q", iface)
 }
