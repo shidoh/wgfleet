@@ -142,7 +142,7 @@ func Planners(in Input) []reconcile.Planner {
 		// After the compose planner (which creates the holder) and BEFORE mihomo and
 		// the master NAT: the namespace has to exist before anything can be asked to
 		// live in it, but nothing routes into it yet.
-		netnsPlanner{attached: in.NetnsAttached},
+		netnsPlanner{attached: in.NetnsAttached, clientIface: in.ClientInterface},
 		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey, tier: in.Tier},
 		masterNATPlanner{path: in.Paths.NFT, v6Path: in.Paths.V6NFT, clientIface: in.ClientInterface,
 			netnsAttached: in.NetnsAttached},
@@ -522,7 +522,7 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	// the SSH accept and the mark accept every intercepted datagram depends on — the
 	// one where a rule someone added by hand should not outlive the next pass.
 	p.lastRendered = ruleset
-	actions, err := reconcile.NFTApply(p.path, []byte(ruleset), p.isLoaded, "apply master firewall atomically")
+	actions, err := reconcile.NFTApply(p.path, []byte(ruleset), p.isLoaded, nil, "apply master firewall atomically")
 	if err != nil {
 		return nil, err
 	}
@@ -621,7 +621,7 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 	// unchanged file plus a present table and reports "already loaded" forever. It
 	// also re-applies when the kernel has lost the table, which is what a reboot does.
 	p.lastRendered = ruleset
-	actions, err := reconcile.NFTApply(p.path, []byte(ruleset), p.isLoaded, "apply master NAT atomically")
+	actions, err := reconcile.NFTApply(p.path, []byte(ruleset), p.isLoaded, nil, "apply master NAT atomically")
 	if err != nil {
 		return nil, err
 	}
@@ -649,7 +649,7 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 			// exists to replace. NFTApply's kernel probe is what notices; gating on the
 			// file alone re-created the hazard on the first reboot.
 			p.lastV6Rendered = v6
-			v6Actions, verr := reconcile.NFTApply(p.v6Path, []byte(v6), p.isV6Loaded,
+			v6Actions, verr := reconcile.NFTApply(p.v6Path, []byte(v6), p.isV6Loaded, nil,
 				"apply the client-facing IPv6 refusal atomically")
 			if verr != nil {
 				return nil, verr

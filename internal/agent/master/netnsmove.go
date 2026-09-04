@@ -101,11 +101,16 @@ func (m *netnsMover) Decide(wanted bool, ready func() error, pathOK func() bool)
 		return false
 
 	case moveWaiting:
-		if err := ready(); err != nil {
-			m.reason = "waiting: " + err.Error()
+		// The hold is checked BEFORE the readiness probe, and the order is not
+		// cosmetic: ready() shells into the namespace and can take seconds, and
+		// during the five minutes after a revert its answer is discarded anyway.
+		// Ten wasted probes per hold window, each able to stretch a 30-second pass.
+		if !m.held() {
+			m.reason = "waiting out the min-hold before trying again"
 			return false
 		}
-		if !m.held() {
+		if err := ready(); err != nil {
+			m.reason = "waiting: " + err.Error()
 			return false
 		}
 		m.state, m.confirm, m.fail = moveAttached, 0, 0

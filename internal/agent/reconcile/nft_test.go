@@ -49,7 +49,7 @@ func TestNFTApplyRetriesAfterAFailedApply(t *testing.T) {
 	// A table IS present in the kernel — the stale one the failed apply did not replace.
 	loaded := func() bool { return true }
 
-	first, err := NFTApply(path, ruleset, loaded, "apply")
+	first, err := NFTApply(path, ruleset, loaded, nil, "apply")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestNFTApplyRetriesAfterAFailedApply(t *testing.T) {
 		t.Fatal("a failed apply recorded itself as successful")
 	}
 
-	second, err := NFTApply(path, ruleset, loaded, "apply")
+	second, err := NFTApply(path, ruleset, loaded, nil, "apply")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestNFTApplyIsQuietOnceAppliedAndPresent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rules.nft")
 	ruleset := []byte("table ip x {}\n")
 
-	first, err := NFTApply(path, ruleset, func() bool { return true }, "apply")
+	first, err := NFTApply(path, ruleset, func() bool { return true }, nil, "apply")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestNFTApplyIsQuietOnceAppliedAndPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	second, err := NFTApply(path, ruleset, func() bool { return true }, "apply")
+	second, err := NFTApply(path, ruleset, func() bool { return true }, nil, "apply")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestNFTApplyRepairsAMissingKernelTable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	actions, err := NFTApply(path, ruleset, func() bool { return false }, "apply")
+	actions, err := NFTApply(path, ruleset, func() bool { return false }, nil, "apply")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,15 +123,12 @@ func TestNFTApplyRepairsAMissingKernelTable(t *testing.T) {
 
 // --- Task 1: check the ruleset before writing it, and keep a way back ---
 
-// withNFTCheck swaps the ruleset checker for the duration of a test. The real one
-// shells out to `nft -c`, which exists on a Linux node and not on a dev laptop, so
-// a test that used it would render a different verdict per machine — the exact
-// defect runAllButTheExec was written to remove.
-func withNFTCheck(t *testing.T, f func(ruleset []byte) error) {
-	t.Helper()
-	prev := nftCheckRuleset
-	nftCheckRuleset = f
-	t.Cleanup(func() { nftCheckRuleset = prev })
+// checkerFor returns a stub ruleset checker. The real one shells out to `nft -c`,
+// which exists on a Linux node and not on a dev laptop, so a test that used it
+// would render a different verdict per machine — the exact defect
+// runAllButTheExec was written to remove.
+func checkerFor(err error) func([]byte) error {
+	return func([]byte) error { return err }
 }
 
 // A ruleset the kernel would refuse must never reach the disk.
@@ -144,9 +141,9 @@ func withNFTCheck(t *testing.T, f func(ruleset []byte) error) {
 func TestNFTApplyRefusesToWriteARulesetTheKernelWouldReject(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "rules.nft")
-	withNFTCheck(t, func([]byte) error { return errors.New("syntax error, unexpected junk") })
+	checker := checkerFor(errors.New("syntax error, unexpected junk"))
 
-	actions, err := NFTApply(path, []byte("table ip x { junk }\n"), func() bool { return true }, "apply")
+	actions, err := NFTApply(path, []byte("table ip x { junk }\n"), func() bool { return true }, checker, "apply")
 	if err != nil {
 		t.Fatalf("an invalid ruleset must not abort the pass, got: %v", err)
 	}
@@ -165,9 +162,9 @@ func TestNFTApplyRefusesToWriteARulesetTheKernelWouldReject(t *testing.T) {
 // A valid ruleset must behave exactly as before the check existed.
 func TestNFTApplyStillAppliesAValidRuleset(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rules.nft")
-	withNFTCheck(t, func([]byte) error { return nil })
+	checker := checkerFor(nil)
 
-	actions, err := NFTApply(path, []byte("table ip x {}\n"), func() bool { return true }, "apply")
+	actions, err := NFTApply(path, []byte("table ip x {}\n"), func() bool { return true }, checker, "apply")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,9 +179,9 @@ func TestNFTApplyStillAppliesAValidRuleset(t *testing.T) {
 // Same rule the drift probe follows: an unanswerable question changes nothing.
 func TestNFTApplyProceedsWhenItCannotCheck(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rules.nft")
-	withNFTCheck(t, func([]byte) error { return ErrNFTCheckUnavailable })
+	checker := checkerFor(ErrNFTCheckUnavailable)
 
-	actions, err := NFTApply(path, []byte("table ip x {}\n"), func() bool { return true }, "apply")
+	actions, err := NFTApply(path, []byte("table ip x {}\n"), func() bool { return true }, checker, "apply")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,12 +201,12 @@ func TestNFTApplyProceedsWhenItCannotCheck(t *testing.T) {
 // actually succeeded.
 func TestNFTApplyKeepsTheLastGoodRulesetAsPrev(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rules.nft")
-	withNFTCheck(t, func([]byte) error { return nil })
+	checker := checkerFor(nil)
 	first := []byte("table ip x {}\n")
 	second := []byte("table ip x { chain c {} }\n")
 
 	// Pass 1: write `first` and record it as successfully applied.
-	a1, err := NFTApply(path, first, func() bool { return false }, "apply")
+	a1, err := NFTApply(path, first, func() bool { return false }, checker, "apply")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +216,7 @@ func TestNFTApplyKeepsTheLastGoodRulesetAsPrev(t *testing.T) {
 	}
 
 	// Pass 2: a different ruleset replaces it.
-	a2, err := NFTApply(path, second, func() bool { return true }, "apply")
+	a2, err := NFTApply(path, second, func() bool { return true }, checker, "apply")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,13 +234,13 @@ func TestNFTApplyKeepsTheLastGoodRulesetAsPrev(t *testing.T) {
 // Bytes that were never confirmed applied must NOT become the way back.
 func TestNFTApplyDoesNotPreserveAnUnappliedRulesetAsPrev(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rules.nft")
-	withNFTCheck(t, func([]byte) error { return nil })
+	checker := checkerFor(nil)
 	// On disk but never applied: no marker beside it.
 	if err := os.WriteFile(path, []byte("table ip stale {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	actions, err := NFTApply(path, []byte("table ip x {}\n"), func() bool { return true }, "apply")
+	actions, err := NFTApply(path, []byte("table ip x {}\n"), func() bool { return true }, checker, "apply")
 	if err != nil {
 		t.Fatal(err)
 	}

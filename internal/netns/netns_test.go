@@ -189,3 +189,43 @@ func TestReadyChecksDNSEgressAndSourceAddress(t *testing.T) {
 		}
 	})
 }
+
+// The probe target is formatted into a shell word, so it must be an IP address
+// and nothing else.
+//
+// /dev/tcp is a bash builtin, so the shell cannot be avoided without depending on
+// a netcat that may not be installed — which means the STRING has to be made safe
+// rather than the mechanism. This field is currently set nowhere in production and
+// is plainly intended to carry an exit's address later; validating now closes the
+// hole before anything is wired to it.
+func TestReadyRefusesAProbeHostThatIsNotAnAddress(t *testing.T) {
+	base := map[string]string{"docker inspect -f {{.State.Pid}} wgfleet-netns": "4242\n"}
+	for _, bad := range []string{
+		"203.0.113.9; rm -rf /",
+		"$(id)",
+		"`id`",
+		"exit.example.com",
+	} {
+		in := testInput()
+		in.ProbeHost, in.ProbePort = bad, 443
+		r := &recorder{out: base}
+		if err := Ready(context.Background(), in, r.run); err == nil {
+			t.Errorf("probe host %q was accepted", bad)
+		}
+		for _, c := range r.calls {
+			if strings.Contains(c, "/dev/tcp") {
+				t.Errorf("probe host %q reached the shell: %q", bad, c)
+			}
+		}
+	}
+}
+
+// A port outside the range must be refused for the same reason.
+func TestReadyRefusesAProbePortOutOfRange(t *testing.T) {
+	in := testInput()
+	in.ProbeHost, in.ProbePort = "203.0.113.9", 70000
+	r := &recorder{out: map[string]string{"docker inspect -f {{.State.Pid}} wgfleet-netns": "4242\n"}}
+	if err := Ready(context.Background(), in, r.run); err == nil {
+		t.Error("an out-of-range probe port was accepted")
+	}
+}

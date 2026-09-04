@@ -189,7 +189,7 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	// `ct state invalid drop` and the egress leak guard; a rule quietly removed from
 	// it is exactly what nothing else in the system would notice.
 	p.lastRendered = ruleset
-	actions, err := reconcile.NFTApply(p.path, []byte(ruleset), p.isLoaded, "apply ruleset atomically")
+	actions, err := reconcile.NFTApply(p.path, []byte(ruleset), p.isLoaded, nil, "apply ruleset atomically")
 	if err != nil {
 		return nil, err
 	}

@@ -89,3 +89,60 @@ func TestNetnsPlannerDefersWhenTheHolderIsNotUpYet(t *testing.T) {
 		t.Errorf("the deferral does not say it is waiting:\n%s", dump)
 	}
 }
+
+// The routing rule must name the REAL client interface.
+//
+// An earlier version derived it from an empty path and produced ".", a name no
+// interface has: the rule installed cleanly and matched nothing, while the host
+// ruleset had already been told to stop intercepting. That is every client's
+// traffic unintercepted — the exact outage this change exists to prevent, caused
+// by the change itself. Nothing caught it because no test set attached=true.
+func TestAttachedNamespaceRoutesTheRealClientInterface(t *testing.T) {
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		if strings.Contains(line, "docker inspect") {
+			return "4242\n", nil
+		}
+		return "", errors.New("absent: " + line)
+	}
+	p := netnsPlanner{
+		run:         run,
+		attached:    func() bool { return true },
+		clientIface: "wg0",
+		nftPath:     t.TempDir() + "/netns.nft",
+	}
+	acts, err := p.Plan(context.Background(), netnsSpec())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	var dump string
+	for _, a := range acts {
+		dump += a.Display + "\n"
+	}
+	if !strings.Contains(dump, "ip rule add iif wg0 lookup 51822 pref 400") {
+		t.Errorf("the routing rule does not name the client interface:\n%s", dump)
+	}
+	if strings.Contains(dump, `iif .`) || strings.Contains(dump, "iif  ") {
+		t.Errorf("the routing rule names an interface that cannot exist:\n%s", dump)
+	}
+	for _, want := range []string{"nft -f", "ip route replace default via 100.127.255.2"} {
+		if !strings.Contains(dump, want) {
+			t.Errorf("missing %q:\n%s", want, dump)
+		}
+	}
+}
+
+// Without a name there must be NO rule. Installing one with an empty iif applies
+// cleanly and matches nothing, and by then the host has stopped intercepting.
+func TestAttachedNamespaceRefusesWithoutAClientInterface(t *testing.T) {
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		if strings.Contains(name+" "+strings.Join(args, " "), "docker inspect") {
+			return "4242\n", nil
+		}
+		return "", errors.New("absent")
+	}
+	p := netnsPlanner{run: run, attached: func() bool { return true }, nftPath: t.TempDir() + "/n.nft"}
+	if _, err := p.Plan(context.Background(), netnsSpec()); err == nil {
+		t.Fatal("rendered a routing rule with no client interface to match")
+	}
+}

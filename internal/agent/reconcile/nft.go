@@ -20,12 +20,6 @@ import (
 // not installed nftables yet.
 var ErrNFTCheckUnavailable = errors.New("nft check unavailable")
 
-// nftCheckRuleset validates a rendered ruleset without touching the kernel.
-// Package-level so tests can swap it: the real one shells out to `nft -c`, which
-// exists on a node and not on a laptop, and a test that called it would render a
-// different verdict per machine.
-var nftCheckRuleset = checkRulesetWithNFT
-
 // checkRulesetWithNFT runs `nft -c -f` on the bytes. `-c` parses and resolves the
 // ruleset and does NOT talk to the kernel, so it is safe to run during planning
 // alongside the other read-only probes (`nft list table`, `ip rule list`).
@@ -93,7 +87,15 @@ func NFTPreviousRuleset(rulesetPath string) string { return rulesetPath + ".prev
 // cleared on reboot, and a reboot must re-apply because the KERNEL lost the table,
 // not because the marker vanished. Those are different reasons and only the second
 // one is observable from the marker.
-func NFTApply(path string, ruleset []byte, loaded func() bool, summary string) ([]Action, error) {
+// check validates the ruleset without touching the kernel; nil ⇒
+// checkRulesetWithNFT. A parameter rather than a package variable, matching
+// `loaded` beside it and every other injection point in this codebase: a mutable
+// package var is invisible to `go vet`, and the first parallel test or concurrent
+// caller would turn it into a silent data race.
+func NFTApply(path string, ruleset []byte, loaded func() bool, check func([]byte) error, summary string) ([]Action, error) {
+	if check == nil {
+		check = checkRulesetWithNFT
+	}
 	// CHECK BEFORE WRITING. The old order — write, then `nft -f` — put bad bytes on
 	// disk and returned an error that aborts the whole reconcile pass. On the master
 	// masterNATPlanner sits near the end of the planner list, so its failure also
@@ -104,7 +106,7 @@ func NFTApply(path string, ruleset []byte, loaded func() bool, summary string) (
 	// A ruleset we cannot check is applied as before (see ErrNFTCheckUnavailable);
 	// only one the checker actively REJECTS is refused, and refusing is a plan
 	// entry rather than an error so the rest of the pass still runs.
-	if err := nftCheckRuleset(ruleset); err != nil && !errors.Is(err, ErrNFTCheckUnavailable) {
+	if err := check(ruleset); err != nil && !errors.Is(err, ErrNFTCheckUnavailable) {
 		return []Action{NoChangeAction(filepath.Base(path),
 			fmt.Sprintf("refusing to write a ruleset nft rejects: %v", err))}, nil
 	}

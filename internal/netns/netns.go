@@ -152,11 +152,30 @@ func Ready(ctx context.Context, in Input, run Runner) error {
 		return fmt.Errorf("namespace %s cannot resolve DNS: %w", in.Holder, err)
 	}
 	// A real connection to an exit. Reachability of the wire, not of a route table.
+	//
+	// The target is PARSED as an IP address before it is formatted into a shell
+	// word. bash is unavoidable here — /dev/tcp is a bash builtin and nothing else
+	// on a stock node opens a TCP connection without a helper that may not be
+	// installed — so the string is what has to be made safe rather than the
+	// mechanism. An address that survives netip.ParseAddr cannot contain a shell
+	// metacharacter, which closes the hole rather than documenting it.
+	//
+	// The alternative, refusing the shell and calling `nc`, trades an injection this
+	// validation removes for a dependency on a package that is not guaranteed to be
+	// there — and a readiness probe that fails because netcat is missing would hold
+	// the migration back on a healthy node.
 	if in.ProbeHost != "" && in.ProbePort > 0 {
-		target := fmt.Sprintf("%s/%d", in.ProbeHost, in.ProbePort)
+		addr, perr := netip.ParseAddr(in.ProbeHost)
+		if perr != nil {
+			return fmt.Errorf("netns: probe host %q is not an IP address: %w", in.ProbeHost, perr)
+		}
+		if in.ProbePort < 1 || in.ProbePort > 65535 {
+			return fmt.Errorf("netns: probe port %d out of range", in.ProbePort)
+		}
+		target := fmt.Sprintf("%s/%d", addr, in.ProbePort)
 		if _, err := run(ctx, "nsenter", "--net="+nsPath, "timeout", "5",
 			"bash", "-c", "exec 3<>/dev/tcp/"+target); err != nil {
-			return fmt.Errorf("namespace %s cannot reach %s:%d: %w", in.Holder, in.ProbeHost, in.ProbePort, err)
+			return fmt.Errorf("namespace %s cannot reach %s:%d: %w", in.Holder, addr, in.ProbePort, err)
 		}
 	}
 	return nil

@@ -33,6 +33,13 @@ type netnsPlanner struct {
 	attached func() bool
 	// nftPath is where the in-namespace ruleset is written; "" ⇒ the canonical path.
 	nftPath string
+	// clientIface is the interface client traffic arrives on — the `iif` the
+	// routing rule matches. Passed in like every other planner's copy of it rather
+	// than derived here: an earlier version derived it from an empty path and got
+	// ".", a name no interface has, so the rule installed cleanly and matched
+	// nothing. The host had already stopped intercepting by then, which is the
+	// outage this whole change exists to prevent.
+	clientIface string
 }
 
 func (netnsPlanner) Component() string { return "mihomo network namespace" }
@@ -137,6 +144,12 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 	if ferr != nil {
 		return nil, ferr
 	}
+	if p.clientIface == "" {
+		// No interface, no rule. Installing one with an empty or invented `iif` is
+		// worse than installing none: it applies cleanly, matches nothing, and the
+		// host has already been told to stop intercepting.
+		return nil, fmt.Errorf("mihomo network namespace: client interface is unknown")
+	}
 	table := fmt.Sprintf("%d", netfw.NetnsRouteTable)
 	pref := fmt.Sprintf("%d", netfw.NetnsRulePref)
 	return []reconcile.Action{
@@ -146,17 +159,10 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 		reconcile.BestEffortExecAction("clear any stale rule at the namespace priority",
 			"ip", "rule", "del", "pref", pref),
 		reconcile.ExecAction("send client traffic to mihomo's namespace",
-			"ip", "rule", "add", "iif", p.clientIface(spec), "lookup", table, "pref", pref),
+			"ip", "rule", "add", "iif", p.clientIface, "lookup", table, "pref", pref),
 		reconcile.ExecAction("route the namespace table through the veth",
 			"ip", "route", "replace", "default", "via", peerIP, "dev", in.HostIface, "table", table),
 	}, nil
-}
-
-func (p netnsPlanner) clientIface(spec domain.NodeSpec) string {
-	if spec.Master != nil && spec.Master.ClientWG != nil {
-		return clientIfaceName("")
-	}
-	return clientIfaceName("")
 }
 
 // NamespaceReady reports whether mihomo's namespace is fit to carry client
