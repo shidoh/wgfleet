@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -104,5 +105,37 @@ func TestAllocateClientAddressAcceptsBothAddressForms(t *testing.T) {
 func TestAllocateClientAddressRejectsMalformedPool(t *testing.T) {
 	if _, err := AllocateClientAddress("10.8.0.0/33", nil, nil); err == nil {
 		t.Fatal("AllocateClientAddress() with a malformed pool = nil error, want an error")
+	}
+}
+
+// The synthetic client takes the top of the pool and must never be handed to a
+// real one. Collision here would give two peers the same address on the client
+// interface — the failure the store's UNIQUE constraint exists to prevent, arrived
+// at from the one direction the store cannot see.
+func TestSyntheticClientAddressIsReservedAndAtTheTop(t *testing.T) {
+	const pool = "10.73.0.0/24"
+	synth, err := SyntheticClientAddress(pool)
+	if err != nil {
+		t.Fatalf("SyntheticClientAddress: %v", err)
+	}
+	if synth != "10.73.0.254/32" {
+		t.Errorf("synthetic address = %q, want the last usable address 10.73.0.254/32", synth)
+	}
+
+	// Reserved: the allocator must skip it even when everything below is taken.
+	var taken []string
+	for i := 2; i < 254; i++ {
+		taken = append(taken, fmt.Sprintf("10.73.0.%d/32", i))
+	}
+	_, err = AllocateClientAddress(pool, []string{"10.73.0.1/32", synth}, taken)
+	if !errors.Is(err, ErrPoolExhausted) {
+		t.Errorf("the allocator handed out the synthetic address instead of reporting the pool full: %v", err)
+	}
+}
+
+// A pool with no room must say so rather than return the gateway's own address.
+func TestSyntheticClientAddressRefusesATinyPool(t *testing.T) {
+	if _, err := SyntheticClientAddress("10.73.0.0/30"); !errors.Is(err, ErrPoolExhausted) {
+		t.Errorf("a /30 pool yielded a synthetic address: %v", err)
 	}
 }

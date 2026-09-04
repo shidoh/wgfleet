@@ -86,3 +86,47 @@ func isBroadcast(prefix netip.Prefix, addr netip.Addr) bool {
 	}
 	return addr.As4() == last
 }
+
+// SyntheticClientAddress is the address the master's own synthetic client takes
+// in the client pool — the LAST usable one, furthest from where the allocator
+// starts handing addresses out.
+//
+// The synthetic client exists to measure the one fact no other metric covers:
+// that a packet entering on the client interface comes back. Every component
+// signal was green for the eight days client QUIC was dead, because each measured
+// a component and all the components were fine.
+//
+// It needs a real address in the pool, which makes collision with a real client
+// the obvious hazard. Two things prevent it: this address is passed to
+// AllocateClientAddress as RESERVED, so the allocator skips it; and taking it from
+// the top rather than the bottom means an operator reading the pool sees the
+// issued addresses in one contiguous run with this one visibly apart. A pool with
+// no usable host range yields an error rather than an address that overlaps the
+// gateway.
+func SyntheticClientAddress(pool string) (string, error) {
+	prefix, err := netip.ParsePrefix(pool)
+	if err != nil {
+		return "", fmt.Errorf("client address pool %q: %w", pool, err)
+	}
+	prefix = prefix.Masked()
+
+	// Walk to the last address before the broadcast one, counting as we go. Linear
+	// rather than arithmetic because netip has no "last address in prefix", and a
+	// client pool is a /24-ish thing where this costs nothing.
+	var last netip.Addr
+	usable := 0
+	for addr := prefix.Addr().Next(); prefix.Contains(addr); addr = addr.Next() {
+		if isBroadcast(prefix, addr) {
+			break
+		}
+		last = addr
+		usable++
+	}
+	// Three is the floor: the gateway, at least one real client, and this. A pool
+	// that cannot seat all three has no business giving one away to a prober —
+	// measuring the path is worth less than being able to use it.
+	if usable < 3 {
+		return "", fmt.Errorf("client address pool %q has no room for a synthetic client: %w", pool, ErrPoolExhausted)
+	}
+	return netip.PrefixFrom(last, last.BitLen()).String(), nil
+}

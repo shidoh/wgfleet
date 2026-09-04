@@ -149,14 +149,33 @@ func TestIssueWGClientPoolExhausted(t *testing.T) {
 	setWireVersion(t, st, "master-xa-1", api.WireClientWG)
 	ctx := context.Background()
 
-	for i := range 5 {
-		if _, err := b.IssueWGClient(ctx, "master-xa-1", string(rune('a'+i))); err != nil {
+	// FOUR, not five. The pool has five usable addresses (.2-.6) and the top one is
+	// held for the master's synthetic client, which measures whether a packet
+	// entering the client interface comes back — the one fact every component
+	// metric missed while client QUIC was dead for eight days. Reserving it costs
+	// exactly one client address, and that cost belongs in a test rather than in a
+	// surprise on a full pool.
+	var issued []string
+	for i := range 4 {
+		c, err := b.IssueWGClient(ctx, "master-xa-1", string(rune('a'+i)))
+		if err != nil {
 			t.Fatalf("issue %d: %v", i, err)
 		}
+		issued = append(issued, c.Address)
 	}
 	_, err := b.IssueWGClient(ctx, "master-xa-1", "overflow")
 	if !errors.Is(err, domain.ErrPoolExhausted) {
 		t.Fatalf("issue into a full pool = %v, want ErrPoolExhausted", err)
+	}
+
+	synth, err := domain.SyntheticClientAddress("10.80.0.0/29")
+	if err != nil {
+		t.Fatalf("SyntheticClientAddress: %v", err)
+	}
+	for _, a := range issued {
+		if a == synth {
+			t.Errorf("a real client was issued the synthetic address %s", synth)
+		}
 	}
 }
 
@@ -608,5 +627,34 @@ func TestClientWGSpecOmitsIPv6WhenOff(t *testing.T) {
 	cw := spec.Master.ClientWG
 	if cw.IPv6Prefix != "" || slices.Contains(cw.AllowedIPs, "::/0") {
 		t.Errorf("IPv6 leaked into the default render: prefix=%q allowed=%v", cw.IPv6Prefix, cw.AllowedIPs)
+	}
+}
+
+// The address the master's synthetic client holds must never be handed to a real
+// one. It is reserved at issue time rather than checked afterwards: the store's
+// UNIQUE constraint catches two clients colliding with each other, and cannot see
+// a collision with a peer the agent adds locally.
+func TestIssuedClientsNeverGetTheSyntheticAddress(t *testing.T) {
+	pool := "10.73.0.0/29" // gateway .1, usable .1-.6, synthetic .6
+	synth, err := domain.SyntheticClientAddress(pool)
+	if err != nil {
+		t.Fatalf("SyntheticClientAddress: %v", err)
+	}
+	var taken []string
+	for {
+		addr, aerr := domain.AllocateClientAddress(pool, []string{"10.73.0.1/32", synth}, taken)
+		if aerr != nil {
+			break
+		}
+		if addr == synth {
+			t.Fatalf("the allocator issued the synthetic address %s to a client", synth)
+		}
+		taken = append(taken, addr)
+		if len(taken) > 16 {
+			t.Fatal("allocator did not terminate")
+		}
+	}
+	if len(taken) == 0 {
+		t.Fatal("no addresses were issuable at all")
 	}
 }

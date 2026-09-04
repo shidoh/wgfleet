@@ -65,7 +65,17 @@ func (b *Broker) IssueWGClient(ctx context.Context, masterID, name string) (doma
 	if err != nil {
 		return domain.WGClient{}, err
 	}
-	address, err := domain.AllocateClientAddress(pool, []string{serverAddr}, taken)
+	// The master's synthetic client holds the top of the pool and must never be
+	// issued to a real one: two peers on the same address is exactly the collision
+	// the store's UNIQUE(master_id, address) exists to prevent, arrived at from the
+	// direction the store cannot see. A pool too small to seat it returns an error
+	// there, which is deliberately NOT fatal here — a tiny pool should still be able
+	// to issue clients, it simply gets no path measurement.
+	reserved := []string{serverAddr}
+	if synth, serr := domain.SyntheticClientAddress(pool); serr == nil {
+		reserved = append(reserved, synth)
+	}
+	address, err := domain.AllocateClientAddress(pool, reserved, taken)
 	if err != nil {
 		return domain.WGClient{}, err
 	}
