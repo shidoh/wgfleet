@@ -138,8 +138,8 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 		// container restart — a Clash API hot reload does not re-init the proxy's
 		// device. Routine changes (drain, rules, DNS, direct-networks) hot-reload so
 		// existing client connections survive.
-		forceRestart := mihomo.ProxiesChanged(oldCfg, []byte(cfg))
-		actions = append(actions, p.applyConfigAction(spec, []byte(cfg), oldCfg, forceRestart))
+		changed := mihomo.ChangedProxies(oldCfg, []byte(cfg))
+		actions = append(actions, p.applyConfigAction(spec, []byte(cfg), oldCfg, changed))
 	} else {
 		actions = append(actions, reconcile.NoChangeAction("mihomo", "config already current"))
 	}
@@ -159,7 +159,7 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 // rebind self-heal, mihomoWGDupPlanner) loads the bad file and drops the data plane
 // far from the change that caused it. prevCfg empty (first ever write) ⇒ nothing to
 // roll back to, so the file is left as-is and only the rejection is reported.
-func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML, prevCfg []byte, forceRestart bool) reconcile.Action {
+func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML, prevCfg []byte, changedProxies []string) reconcile.Action {
 	reload := p.reload
 	if reload == nil {
 		reload = mihomo.Reload
@@ -175,9 +175,14 @@ func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML, prevCfg 
 
 	// A wireguard-proxy change must restart the container: a hot reload cannot
 	// re-init an existing AmneziaWG device, so new S/H params silently never apply.
-	if forceRestart {
+	//
+	// The summary NAMES the proxies. A restart drops every client connection and
+	// every UDP NAT entry, so "why" belongs in the record: on 2026-09-04 the master
+	// bounced twice in 36 seconds and nothing on the box could say which proxy moved.
+	if len(changedProxies) > 0 {
 		return reconcile.CustomAction(reconcile.ActionUpdate, "mihomo",
-			"restart mihomo (wireguard-proxy AmneziaWG params changed — hot reload can't re-init the device)",
+			"restart mihomo (proxy definitions changed, hot reload can't re-init the device): "+
+				strings.Join(changedProxies, ", "),
 			"docker compose restart mihomo", restart)
 	}
 

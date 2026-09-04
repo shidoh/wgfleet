@@ -65,3 +65,64 @@ func TestReloadNoControllerIsUnreachable(t *testing.T) {
 		t.Errorf("empty controller addr must be ErrUnreachable, got %v", err)
 	}
 }
+
+// A restart drops every client's connection, so the plan must say which proxy
+// forced it. On 2026-09-04 the master bounced twice in 36 seconds and the reason
+// could not be reconstructed from anything left on the box.
+func TestChangedProxiesNamesWhatMoved(t *testing.T) {
+	oldCfg := []byte("proxies:\n  - name: vn0\n    mtu: 1360\n  - name: vn1\n    mtu: 1360\n")
+	newCfg := []byte("proxies:\n  - name: vn0\n    mtu: 1280\n  - name: vn1\n    mtu: 1360\n")
+
+	got := ChangedProxies(oldCfg, newCfg)
+	if len(got) != 1 || got[0] != "vn0" {
+		t.Errorf("changed = %v, want [vn0] — an operator cannot tell why the data plane bounced", got)
+	}
+	if n := len(ChangedProxies(oldCfg, oldCfg)); n != 0 {
+		t.Errorf("identical configs reported %d changes", n)
+	}
+	if !ProxiesChanged(oldCfg, newCfg) || ProxiesChanged(oldCfg, oldCfg) {
+		t.Error("the bool predicate disagrees with the list it is built on")
+	}
+}
+
+// Added and removed proxies count too: an exit joining or leaving changes the
+// wireguard outbounds, which a hot reload cannot re-initialise.
+func TestChangedProxiesNoticesAdditionsAndRemovals(t *testing.T) {
+	one := []byte("proxies:\n  - name: vn0\n")
+	two := []byte("proxies:\n  - name: vn0\n  - name: vn1\n")
+
+	if got := ChangedProxies(one, two); len(got) != 1 || got[0] != "vn1" {
+		t.Errorf("adding a proxy: changed = %v, want [vn1]", got)
+	}
+	if got := ChangedProxies(two, one); len(got) != 1 || got[0] != "vn1" {
+		t.Errorf("removing a proxy: changed = %v, want [vn1]", got)
+	}
+}
+
+// Reordering the list is not a change: the rendered order is deterministic, and
+// treating a permutation as a change would restart mihomo for nothing.
+func TestChangedProxiesIgnoresOrder(t *testing.T) {
+	a := []byte("proxies:\n  - name: vn0\n    mtu: 1360\n  - name: vn1\n    mtu: 1360\n")
+	b := []byte("proxies:\n  - name: vn1\n    mtu: 1360\n  - name: vn0\n    mtu: 1360\n")
+	if got := ChangedProxies(a, b); len(got) != 0 {
+		t.Errorf("a permutation reported %v as changed", got)
+	}
+}
+
+// The asymmetry that matters: an unparseable NEW config must force a restart, but
+// two consecutively unparseable ones must not — that is a restart every pass, an
+// outage on repeat rather than a safety measure.
+func TestChangedProxiesHandlesUnparseableConfigs(t *testing.T) {
+	good := []byte("proxies:\n  - name: vn0\n")
+	bad := []byte("{{ not yaml")
+
+	if got := ChangedProxies(good, bad); len(got) != 1 || got[0] != "<unparseable>" {
+		t.Errorf("an unparseable new config reported %v, want a forced restart", got)
+	}
+	if got := ChangedProxies(bad, good); len(got) != 1 || got[0] != "<unparseable>" {
+		t.Errorf("recovering from an unparseable config reported %v, want a forced restart", got)
+	}
+	if got := ChangedProxies(bad, bad); len(got) != 0 {
+		t.Errorf("two unparseable configs reported %v — this restarts mihomo every 30 seconds", got)
+	}
+}

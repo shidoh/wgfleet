@@ -8,40 +8,90 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"time"
 
 	yaml "go.yaml.in/yaml/v3"
 )
 
-// ProxiesChanged reports whether the `proxies:` section differs between two
-// rendered mihomo configs. A Clash API hot reload (PUT /configs) updates rules,
-// DNS, the sniffer and proxy-GROUP membership in place, but it does NOT
-// re-initialise an existing wireguard outbound's underlying device — so a change
-// to a proxy's AmneziaWG params (S1-S4 / H / keys / endpoint / MTU) silently does
-// NOT take effect until the container is fully restarted (verified live: a hot
-// reload left stale S4 on the proxies; only `docker compose restart mihomo`
-// applied them). The mihomo planner uses this to force a restart on a proxy
-// change while still hot-reloading routine changes (drain, rules) that keep every
-// client's connection alive. When either side is unparseable (e.g. first run, no
-// prior config) it returns true so the agent restarts to be safe.
-func ProxiesChanged(oldCfg, newCfg []byte) bool {
-	return proxiesYAML(oldCfg) != proxiesYAML(newCfg)
+// ChangedProxies names the proxies whose definition differs between two rendered
+// mihomo configs — added, removed, or altered.
+//
+// A Clash API hot reload (PUT /configs) updates rules, DNS, the sniffer and proxy-
+// GROUP membership in place, but it does NOT re-initialise an existing wireguard
+// outbound's underlying device, so a change to a proxy's AmneziaWG params
+// (S1-S4 / H / keys / endpoint / MTU) silently does not take effect until the
+// container is fully restarted (verified live: a hot reload left stale S4 on the
+// proxies; only `docker compose restart mihomo` applied them).
+//
+// It returns NAMES rather than a bare bool because a restart drops every client's
+// connection, and "why" is not a nicety. On 2026-09-04 the master bounced twice in
+// 36 seconds and the reason could not be reconstructed afterwards from anything on
+// the box — the rendered config is not kept, and the controller's journal in that
+// window was 97% one unrelated line.
+//
+// Unparseable input is deliberately asymmetric. A NEW config we cannot parse, or a
+// pair that disagree about parseability, forces a restart: we cannot tell what
+// changed, so we assume the worst. Two CONSECUTIVELY unparseable configs do not —
+// they are equal, and calling that a change would restart mihomo on every pass,
+// which is a repeating data-plane outage rather than a safety measure.
+func ChangedProxies(oldCfg, newCfg []byte) []string {
+	oldP, oldOK := proxiesByName(oldCfg)
+	newP, newOK := proxiesByName(newCfg)
+	if !oldOK || !newOK {
+		if oldOK == newOK {
+			return nil
+		}
+		return []string{"<unparseable>"}
+	}
+	var changed []string
+	for name, want := range newP {
+		if got, ok := oldP[name]; !ok || got != want {
+			changed = append(changed, name)
+		}
+	}
+	for name := range oldP {
+		if _, ok := newP[name]; !ok {
+			changed = append(changed, name)
+		}
+	}
+	sort.Strings(changed)
+	return changed
 }
 
-func proxiesYAML(cfg []byte) string {
-	var doc map[string]any
+// ProxiesChanged reports whether the `proxies:` section differs at all. Kept as the
+// predicate most callers want; ChangedProxies is what a caller uses when it has to
+// say WHICH.
+func ProxiesChanged(oldCfg, newCfg []byte) bool {
+	return len(ChangedProxies(oldCfg, newCfg)) > 0
+}
+
+// proxiesByName indexes the rendered `proxies:` list by proxy name, each value the
+// canonical YAML of that one entry. ok is false when the document cannot be parsed
+// at all; a document with no proxies parses fine and yields an empty map, which is
+// a legitimate state (every exit drained) rather than an error.
+func proxiesByName(cfg []byte) (map[string]string, bool) {
+	var doc struct {
+		Proxies []map[string]any `yaml:"proxies"`
+	}
 	if err := yaml.Unmarshal(cfg, &doc); err != nil {
-		return "<unparseable>"
+		return nil, false
 	}
-	p, ok := doc["proxies"]
-	if !ok {
-		return "<no-proxies>"
+	out := make(map[string]string, len(doc.Proxies))
+	for i, p := range doc.Proxies {
+		name, _ := p["name"].(string)
+		if name == "" {
+			// Nameless entry: key it by position so it still takes part in the
+			// comparison instead of silently collapsing with its siblings.
+			name = fmt.Sprintf("<unnamed-%d>", i)
+		}
+		b, err := yaml.Marshal(p)
+		if err != nil {
+			return nil, false
+		}
+		out[name] = string(b)
 	}
-	b, err := yaml.Marshal(p)
-	if err != nil {
-		return "<unmarshalable>"
-	}
-	return string(b)
+	return out, true
 }
 
 // reloadTimeout bounds the Clash API call so a wedged controller never blocks a
