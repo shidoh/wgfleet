@@ -16,7 +16,7 @@ import (
 // Well-known ports kept open on every managed node's input chain.
 const (
 	sshPort      = 22
-	zeroTierPort = 9993 // ZeroTier control/data (UDP)
+	ZeroTierPort = 9993 // ZeroTier control/data (UDP)
 )
 
 // mgmtOverlayIface is the nft iifname glob matching the management-overlay
@@ -305,7 +305,7 @@ func RenderRuleset(in RenderInput) (string, error) {
 		b.WriteString("\t\tip6 saddr @as_blacklist_v6 drop\n")
 	}
 	fmt.Fprintf(&b, "\t\ttcp dport %d accept\n", sshPort)
-	fmt.Fprintf(&b, "\t\tudp dport %d accept\n", zeroTierPort)
+	fmt.Fprintf(&b, "\t\tudp dport %d accept\n", ZeroTierPort)
 	fmt.Fprintf(&b, "\t\tudp dport %d accept\n", in.Firewall.WGPort)
 	// REALITY/XHTTP inbound (xray) listens on TCP, not UDP (ADR-0025). Open it so the
 	// master can dial the reality transport; 0 ⇒ the exit does not run reality.
@@ -320,7 +320,7 @@ func RenderRuleset(in RenderInput) (string, error) {
 	}
 	// World-facing UDP services (FirewallSpec.PublicUDPPorts) — the UDP sibling of
 	// the loop above, same rationale: no iifname scope, role-agnostic. Note this
-	// deliberately does NOT cross-check WGPort or zeroTierPort above: a duplicate
+	// deliberately does NOT cross-check WGPort or ZeroTierPort above: a duplicate
 	// accept is harmless in nft, and special-casing would make the render depend on
 	// which knob a port arrived through.
 	for _, port := range normalizePorts(in.Firewall.PublicUDPPorts) {

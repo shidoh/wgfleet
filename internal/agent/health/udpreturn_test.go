@@ -100,3 +100,21 @@ func TestParseHeldUDPPortsSkipsJunk(t *testing.T) {
 		t.Errorf("junk produced ports: %v", got)
 	}
 }
+
+// A node whose client interface is NOT on 443 must not be told it has a black
+// hole. This is the upgrade path for every other fleet: they swap the binary, the
+// probe runs, and the port their own interface holds has to be recognised as
+// theirs. An earlier version listed 443 in source and would have driven any such
+// node to Degraded on its first pass after the upgrade — the same mistake as the
+// bug it was written to catch.
+func TestClientUDPReturnProbeAcceptsWhateverPortThisNodeHolds(t *testing.T) {
+	// This node's client interface is on 51820, not 443.
+	const ours = 51820
+	blocked := func(p int) (bool, error) { return p != ours, nil }
+	accepted := func(p int) bool { return p == ours }
+
+	r := ClientUDPReturnProbe([]int{ours, 443, 4433}, blocked, accepted)(context.Background())
+	if !r.OK {
+		t.Errorf("a node on port %d was reported broken: %q", ours, r.Detail)
+	}
+}
