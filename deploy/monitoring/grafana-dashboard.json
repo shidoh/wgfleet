@@ -1483,7 +1483,7 @@
   {
    "type": "stat",
    "title": "Exits out of rotation",
-   "description": "Master↔exit tunnels mihomo currently has marked down. These tunnels are userspace mihomo proxies, not kernel WireGuard, so no wg_* panel covers them — this is their only view. Non-zero means wg-best is not routing client traffic to that exit.",
+   "description": "Master↔exit tunnels mihomo currently has marked down. These tunnels are userspace mihomo proxies, not kernel WireGuard, so no wg_* panel covers them — this is their only view. Non-zero means wg-best is not routing client traffic to that exit. Counts only the tier that carries traffic: a dual-transport exit also renders a standby proxy that is in no group and never probed, so its reading is meaningless here and would sit permanently non-zero.",
    "datasource": {
     "type": "prometheus",
     "uid": "${datasource}"
@@ -1535,7 +1535,7 @@
       "type": "prometheus",
       "uid": "${datasource}"
      },
-     "expr": "sum(wgfleet_exit_tunnel_alive == 0) or vector(0)",
+     "expr": "sum(wgfleet_exit_tunnel_alive == 0 and on(exit) wgfleet_agent_exit_held_out) or vector(0)",
      "refId": "A",
      "instant": true
     }
@@ -1605,7 +1605,7 @@
   {
    "type": "state-timeline",
    "title": "Exit in rotation, over time",
-   "description": "When each exit was actually carrying client traffic. This is the panel that answers \"why did it drop out and when\" — before it existed that had to be reconstructed from the master agent's journal.",
+   "description": "When each exit was actually carrying client traffic. This is the panel that answers \"why did it drop out and when\" — before it existed that had to be reconstructed from the master agent's journal. Standby-transport proxies are excluded — they are configured but in no group, so \"in rotation\" does not apply to them.",
    "datasource": {
     "type": "prometheus",
     "uid": "${datasource}"
@@ -1671,7 +1671,7 @@
       "type": "prometheus",
       "uid": "${datasource}"
      },
-     "expr": "wgfleet_exit_tunnel_alive{exit=~\"$node\"}",
+     "expr": "wgfleet_exit_tunnel_alive{exit=~\"$node\"} and on(exit) wgfleet_agent_exit_held_out",
      "refId": "A",
      "legendFormat": "{{exit}}"
     }

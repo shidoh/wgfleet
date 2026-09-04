@@ -288,7 +288,20 @@ spec:
       # fires, wgfleet_agent_exit_held_out{exit=...} says which one did it — 1 means
       # our stricter probe took the exit out, i.e. it could not reach enough
       # independent destinations, the censored-but-"healthy" signature.
-      expr: wgfleet_exit_tunnel_alive == 0
+      # Scoped to the tier that actually carries traffic. A dual-transport exit
+      # renders BOTH an AWG and a "<exit>-reality" proxy, but only one of them is in
+      # a group — the other is configured, routed through by nobody, and never
+      # probed, so its alive/age readings drift forever. Live check the hour this
+      # rule was written: 1cnode004's AWG proxy sat alive=0 with a 55-minute-old
+      # measurement while its reality proxy was fresh, i.e. this alert would have
+      # paged permanently on a tunnel with no traffic on it by design.
+      #
+      # wgfleet_agent_exit_held_out enumerates exactly the active tier's members, so
+      # it is the gate. The coupling is deliberate but worth knowing: it comes from
+      # the master AGENT scrape while the gated series comes from the CONTROLLER, so
+      # if the agent stops being scraped these go quiet — WgfleetAgentScrapeDown is
+      # what covers that.
+      expr: wgfleet_exit_tunnel_alive == 0 and on(exit) wgfleet_agent_exit_held_out
       for: 5m
       labels:
         severity: warning
@@ -310,8 +323,8 @@ spec:
       # critical on every fleet that has not upgraded yet. Requiring the family to
       # exist makes the rule silent until it has real data, which for a new alert is
       # the right way round; WgfleetNoReadyExit still covers the same outage.
-      expr: ((count(wgfleet_exit_tunnel_alive == 1) or vector(0)) < 1)
-        and on() (count(wgfleet_exit_tunnel_alive) > 0)
+      expr: ((count(wgfleet_exit_tunnel_alive == 1 and on(exit) wgfleet_agent_exit_held_out) or vector(0)) < 1)
+        and on() (count(wgfleet_agent_exit_held_out) > 0)
         unless on() (wgfleet_controller_store_up == 0)
       for: 2m
       labels:
@@ -327,7 +340,10 @@ spec:
       # forever, and WgfleetExitOutOfRotation above goes quiet for the best possible
       # reason and the worst possible cause. The age is what separates a fresh
       # reading from a frozen one.
-      expr: wgfleet_exit_tunnel_last_test_age_seconds > 300
+      # Same active-tier gate as WgfleetExitOutOfRotation, for the same reason: an
+      # unrouted standby-transport proxy is never probed, so its age grows without
+      # bound and means nothing.
+      expr: wgfleet_exit_tunnel_last_test_age_seconds > 300 and on(exit) wgfleet_agent_exit_held_out
       for: 5m
       labels:
         severity: warning
