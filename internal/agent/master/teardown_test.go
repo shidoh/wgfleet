@@ -131,3 +131,35 @@ func TestMasterTeardownReversesEverythingItInstalled(t *testing.T) {
 		}
 	}
 }
+
+// Decommission must leave nothing of the namespaces behind.
+//
+// The routing rule and its table outlive both nft tables — a stray
+// `iif wg0 lookup 51822` on a repurposed host sends client traffic to a route
+// that means nothing there — and the prober is a real peer with a real private
+// key on the client interface, so it dies with the node exactly as an end user's
+// credential does.
+func TestTeardownRemovesBothNamespacesAndTheProber(t *testing.T) {
+	paths := PathsUnder(t.TempDir())
+	acts, err := TeardownPlanners(paths)[0].Plan(context.Background(), domain.NodeSpec{
+		Role: domain.RoleMaster, Master: &domain.MasterSpec{},
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	var dump string
+	for _, a := range acts {
+		dump += a.Display + " | " + a.Target + "\n"
+	}
+	for _, want := range []string{
+		"ip rule del pref 400",
+		"ip route flush table 51822",
+		"ip link del mih-host",
+		"ip netns del wgfleet-synth",
+		"client-wg-synth.key",
+	} {
+		if !strings.Contains(dump, want) {
+			t.Errorf("teardown leaves %q behind:\n%s", want, dump)
+		}
+	}
+}

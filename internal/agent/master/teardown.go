@@ -55,6 +55,21 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 			"lookup", fmt.Sprintf("%d", netfw.TProxyTable)),
 		reconcile.BestEffortExecAction("flush the TPROXY route table",
 			"ip", "route", "flush", "table", fmt.Sprintf("%d", netfw.TProxyTable)),
+		// mihomo's namespace and everything that pointed into it. The rule and the
+		// table outlive both nft tables, and a stray `iif wg0 lookup 51822` on a
+		// repurposed host sends client traffic to a route that means nothing there.
+		reconcile.BestEffortExecAction("remove the namespace routing rule",
+			"ip", "rule", "del", "pref", fmt.Sprintf("%d", netfw.NetnsRulePref)),
+		reconcile.BestEffortExecAction("flush the namespace route table",
+			"ip", "route", "flush", "table", fmt.Sprintf("%d", netfw.NetnsRouteTable)),
+		reconcile.BestEffortExecAction("remove the veth to mihomo's namespace",
+			"ip", "link", "del", domain.NetnsHostIface),
+		// The prober's namespace, its interface and its resolver. The interface goes
+		// with the namespace; the resolv.conf does not, and a left-behind
+		// /etc/netns/<name>/resolv.conf would be picked up by any future namespace of
+		// the same name.
+		reconcile.BestEffortExecAction("remove the client-path prober's namespace",
+			"ip", "netns", "del", synthNetns),
 	}
 	// Master-tier blocky runs as its own compose project (ADR-0024); bring it down too.
 	if p.paths.DNSCompose != "" {
@@ -94,6 +109,12 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 		// above does — a decommissioned VPS goes back to its provider.
 		{p.paths.ClientWGConf, "client interface config (interface key + client preshared keys)"},
 		{p.paths.ClientWGKey, "client-facing WireGuard private key"},
+		// The prober's identity and its rendered device config. It is a real peer on
+		// the client interface with a real key, so it dies with the node exactly as an
+		// end user's credential does.
+		{p.paths.SynthKey, "client-path prober private key"},
+		{p.paths.SynthConf, "client-path prober device config"},
+		{synthResolvConf, "client-path prober resolver"},
 		{ClaimPathFor(p.paths.ClientWGConf), "client interface claim"},
 	}
 	// The applied-markers beside each ruleset. Wiping the ruleset and leaving its
