@@ -151,6 +151,16 @@ func (p netnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 // before "is this client traffic".
 const netnsDirectRulePref = 390
 
+// netnsFloorMetric is the metric of the blackhole default that sits under the
+// namespace table. High enough that the real route always wins while the veth is
+// up, and present so that a table which has lost that route drops client traffic
+// instead of letting it fall through to `main` and out the uplink.
+//
+// A number rather than a name in the rule because `ip route` takes it as one; the
+// value only has to be worse than the veth route's (metric 0) and stable, so a
+// re-apply replaces the same route rather than stacking a second one.
+const netnsFloorMetric = "1000"
+
 // interceptionActions renders the in-namespace ruleset and the host-side policy
 // routing that sends client traffic into it.
 //
@@ -265,13 +275,40 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 	// takes the main table, leaves by the master's uplink and is masqueraded — the
 	// precise leak the fail-closed drop exists to prevent, opened twice a minute by
 	// the code that installs it. It also made every report show changes forever.
+	//
+	// ORDER MATTERS, and it is the reverse of the obvious one. `ip rule ... lookup`
+	// is not terminal: a lookup that misses falls through to the next rule and ends
+	// in `main`, whose default is the uplink — so between adding the rule and
+	// filling the table, every client packet leaves by the master's public address.
+	// The table is therefore populated FIRST and the rule that points at it last.
+	//
+	// The blackhole is the same argument taken one step further. The window above
+	// is ours to close by ordering; this one is not: the holder is
+	// `restart: unless-stopped`, and when it comes back the veth dies with the old
+	// namespace, the kernel withdraws the route that used it, and the rule stays.
+	// Until the next pass — up to 30s — the table is empty again and clients are on
+	// the uplink. A blackhole at a worse metric turns "the namespace is not there"
+	// from a silent leak into dropped packets, which is what the interception is
+	// fail-closed about everywhere else.
+	// The floor is gated separately from the rule and the route, and installed
+	// before them. Separately, because a node that converged under an older build
+	// already has the rule and the route: folding the floor into that gate would
+	// make the first pass after an upgrade delete and re-add a working rule, which
+	// is the window this whole block exists to avoid. Before them, because a floor
+	// that arrives after the rule is a floor that was missing exactly when it was
+	// needed.
+	if !p.floorLive(ctx, run, table) {
+		actions = append(actions, reconcile.BestEffortExecAction(
+			"floor the namespace table so a miss cannot fall through to the uplink",
+			"ip", "route", "replace", "blackhole", "default", "metric", netnsFloorMetric, "table", table))
+	}
 	if !p.routingLive(ctx, run, pref, table, peerIP, in.HostIface) {
 		actions = append(actions,
+			reconcile.BestEffortExecAction("route the namespace table through the veth",
+				"ip", "route", "replace", "default", "via", peerIP, "dev", in.HostIface, "table", table),
 			reconcile.BestEffortExecAction("clear any stale rule at the namespace priority",
 				"ip", "rule", "del", "pref", pref),
-			reconcile.BestEffortExecAction(summary, rule...),
-			reconcile.BestEffortExecAction("route the namespace table through the veth",
-				"ip", "route", "replace", "default", "via", peerIP, "dev", in.HostIface, "table", table))
+			reconcile.BestEffortExecAction(summary, rule...))
 	} else {
 		actions = append(actions, reconcile.NoChangeAction("namespace routing",
 			"client traffic already routed into the namespace"))
@@ -463,6 +500,16 @@ func (p netnsPlanner) ruleLive(ctx context.Context, run netns.Runner, pref strin
 // routingLive reports whether the kernel already carries BOTH halves of the move:
 // the rule at our priority naming the client interface and the right table, and
 // that table's default route through the veth.
+// floorLive reports whether the namespace table already holds the blackhole that
+// stops a lookup miss from falling through to `main`.
+func (p netnsPlanner) floorLive(ctx context.Context, run netns.Runner, table string) bool {
+	route, err := run(ctx, "ip", "route", "show", "table", table)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(route, "blackhole default")
+}
+
 func (p netnsPlanner) routingLive(ctx context.Context, run netns.Runner, pref, table, peerIP, hostIface string) bool {
 	text, err := run(ctx, "ip", "rule", "list")
 	if err != nil {

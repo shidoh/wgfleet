@@ -676,3 +676,123 @@ func TestVethMTUIsPinnedToTheUplinkNotTheClientTunnel(t *testing.T) {
 		t.Errorf("the veth was sized to the client tunnel; mihomo's own tunnel packets do not fit:\n%s", dump)
 	}
 }
+
+// The rule that sends clients into the namespace must never exist before the table
+// it points at is usable.
+//
+// `ip rule ... lookup` is not terminal: a lookup that finds nothing falls through
+// to the next rule and ends in `main`, whose default is the uplink. So a rule
+// installed ahead of its route does not fail — it quietly routes every client out
+// of the master's public address until the route lands. The two used to be
+// rendered in exactly that order.
+//
+// The blackhole is the same argument for the window we cannot order our way out
+// of: the namespace holder is `restart: unless-stopped`, and when it is recreated
+// the veth dies, the kernel withdraws the route that used it, and the rule remains.
+// Until the next pass the table is empty again. A floor makes that state drop
+// packets instead of leaking them.
+func TestTheNamespaceTableIsFilledAndFlooredBeforeTheRulePointsAtIt(t *testing.T) {
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		if strings.Contains(line, "docker inspect") {
+			return "4242\n", nil
+		}
+		return "", errors.New("absent: " + line)
+	}
+	p := netnsPlanner{
+		run: run, attached: func() bool { return true }, clientIface: "wg0",
+		nftPath: t.TempDir() + "/netns.nft",
+	}
+	acts, err := p.Plan(context.Background(), netnsSpec())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+
+	floor, route, rule := -1, -1, -1
+	for i, a := range acts {
+		switch {
+		case strings.Contains(a.Display, "route replace blackhole default"):
+			floor = i
+		case strings.Contains(a.Display, "ip route replace default via 100.127.255.2"):
+			route = i
+		case strings.Contains(a.Display, "ip rule add iif wg0 lookup 51822"):
+			rule = i
+		}
+	}
+	if floor < 0 {
+		t.Fatalf("the namespace table has no floor, so a miss falls through to the uplink:\n%s", displays(acts))
+	}
+	if route < 0 || rule < 0 {
+		t.Fatalf("the plan does not both route and rule:\n%s", displays(acts))
+	}
+	if !(floor < route && route < rule) {
+		t.Errorf("order must be floor → route → rule, got floor=%d route=%d rule=%d:\n%s",
+			floor, route, rule, displays(acts))
+	}
+	if !strings.Contains(acts[floor].Display, "table 51822") {
+		t.Errorf("the floor is not in the namespace table:\n%s", acts[floor].Display)
+	}
+}
+
+// A node that converged under an older build already has the rule and the route,
+// and only the floor is missing. Installing it must not cost that node a delete
+// and re-add of a working rule — the gap between those two calls is the leak this
+// whole block exists to avoid, and it would be opened by the code that closes it.
+func TestAMissingFloorDoesNotTearDownAWorkingRule(t *testing.T) {
+	// A world where the veth, the rule and the route are all already right, and the
+	// floor is the only thing an older build did not install.
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.Contains(line, "docker inspect -f {{.State.Pid}}"):
+			return "4242\n", nil
+		case strings.Contains(line, "readlink"):
+			return "net:[4026532999]\n", nil
+		case strings.Contains(line, "-br link show mih-host"):
+			return "mih-host UP 100.127.255.1/30\n", nil
+		case strings.Contains(line, "-br link show mih0"):
+			return "mih0 UP 100.127.255.2/30\n", nil
+		case strings.Contains(line, "-br addr show mih-host"):
+			return "mih-host UP 100.127.255.1/30\n", nil
+		case strings.Contains(line, "-br addr show mih0"):
+			return "mih0 UP 100.127.255.2/30\n", nil
+		case strings.Contains(line, "link show mih-host"), strings.Contains(line, "link show mih0"):
+			return "1: x: <BROADCAST> mtu 1500 qdisc noqueue\n", nil
+		case strings.Contains(line, "ip_forward"), strings.Contains(line, "rp_filter"):
+			return "1\n", nil
+		case line == "ip rule list":
+			return "400:\tfrom all iif wg0 lookup 51822\n", nil
+		case strings.Contains(line, "route show table 51822"):
+			return "default via 100.127.255.2 dev mih-host\n", nil // no floor
+		}
+		return "", errors.New("absent: " + line)
+	}
+	p := netnsPlanner{
+		run: run, attached: func() bool { return true }, clientIface: "wg0",
+		nftPath: t.TempDir() + "/netns.nft", nftCheck: func([]byte) error { return nil },
+	}
+	acts, err := p.Plan(context.Background(), netnsSpec())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	dump := displays(acts)
+	if !strings.Contains(dump, "route replace blackhole default") {
+		t.Errorf("the missing floor was not installed:\n%s", dump)
+	}
+	for _, a := range acts {
+		// Only the rule that moves clients: the 390 exemptions and the in-namespace
+		// tproxy rule are a different question, and this world does not model them.
+		if a.Changes() && strings.Contains(a.Display, "ip rule ") &&
+			(strings.Contains(a.Display, "pref 400") || strings.Contains(a.Display, "lookup 51822")) {
+			t.Errorf("installing the floor tore down a working rule: %s", a.Display)
+		}
+	}
+}
+
+func displays(acts []reconcile.Action) string {
+	var b strings.Builder
+	for _, a := range acts {
+		b.WriteString(a.Display + "\n")
+	}
+	return b.String()
+}
