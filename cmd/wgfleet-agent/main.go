@@ -1433,7 +1433,12 @@ func (a *agent) collectExitHealth(ctx context.Context, spec domain.NodeSpec) []d
 	}
 	// domain.MasterSpec.Custom is a VALUE (domain.CustomConfig), not a pointer — a
 	// nil Overrides map is fine, the lookup just yields "".
-	js, err := mihomo.FetchProxies(ctx, spec.Master.ExternalController, clashAPISecret(spec.Master.Custom.Overrides))
+	// Through ClashAPIAddr, never the spec address: once mihomo has moved into its
+	// namespace the management address is not one it can bind, and a fetch that
+	// keeps dialling it logs "could not fetch mihomo proxy health" on every pass
+	// while the API is answering perfectly one hop away.
+	js, err := mihomo.FetchProxies(ctx, master.ClashAPIAddr(spec, a.netnsMove != nil && a.netnsMove.Attached()),
+		clashAPISecret(spec.Master.Custom.Overrides))
 	if err != nil {
 		a.log.Warn("could not fetch mihomo proxy health", "err", err)
 		return nil

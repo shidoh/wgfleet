@@ -2,6 +2,7 @@ package master
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -264,4 +265,116 @@ func testKey(t *testing.T) string {
 		t.Fatalf("keypair: %v", err)
 	}
 	return kp.PrivateKey
+}
+
+// After the move, the redirect self-heal must find mihomo where it now is.
+//
+// This is the defect that reached production on 2026-09-05. The probe read the
+// HOST's socket table for the HOST's bind address; mihomo was in a namespace
+// binding another one, so the answer was always "listener down" and the planner
+// restarted the container every pass. Each restart re-initialised mihomo's
+// userspace WireGuard devices and three exits fell out of the balancer within
+// three minutes.
+func TestRedirectSelfHealLooksInsideTheNamespaceOnceMoved(t *testing.T) {
+	var asked []string
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		asked = append(asked, line)
+		switch {
+		case strings.Contains(line, "docker inspect"):
+			return "4242\n", nil
+		case strings.Contains(line, "ip -br addr"):
+			return "mih0@if8 UP 100.127.255.2/30\n", nil
+		case strings.Contains(line, "ss -ltnH"):
+			return "LISTEN 0 4096 100.127.255.2:7895 0.0.0.0:*\n", nil
+		case strings.Contains(line, "ss -lunH"):
+			return "UNCONN 0 0 100.127.255.2:7896 0.0.0.0:*\n", nil
+		}
+		return "", errors.New("absent: " + line)
+	}
+	p := mihomoRedirPlanner{
+		compose:       "/etc/wgfleet/docker-compose.yml",
+		netnsAttached: func() bool { return true },
+		run:           run,
+	}
+	spec := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{
+		BindAddress: "10.73.0.1", NetnsCIDR: "100.127.255.0/30",
+	}}
+	acts, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	for _, a := range acts {
+		if a.Changes() {
+			t.Fatalf("a healthy moved mihomo was restarted anyway: %q", a.Summary)
+		}
+	}
+	joined := strings.Join(asked, "\n")
+	if !strings.Contains(joined, "nsenter") {
+		t.Errorf("the probe never entered the namespace:\n%s", joined)
+	}
+	if strings.Contains(joined, "10.73.0.1:7895") {
+		t.Errorf("the probe still asks about the host address:\n%s", joined)
+	}
+}
+
+// And when the listener really is gone in there, it still restarts — the self-heal
+// must not be traded away for namespace-awareness.
+func TestRedirectSelfHealStillRestartsWhenTheNamespaceListenerIsGone(t *testing.T) {
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.Contains(line, "docker inspect"):
+			return "4242\n", nil
+		case strings.Contains(line, "ip -br addr"):
+			return "mih0@if8 UP 100.127.255.2/30\n", nil
+		case strings.Contains(line, "ss -"):
+			return "", nil // nothing listening
+		}
+		return "", errors.New("absent")
+	}
+	p := mihomoRedirPlanner{
+		compose:       "/etc/wgfleet/docker-compose.yml",
+		netnsAttached: func() bool { return true },
+		run:           run,
+	}
+	spec := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{
+		BindAddress: "10.73.0.1", NetnsCIDR: "100.127.255.0/30",
+	}}
+	acts, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	var restarts int
+	for _, a := range acts {
+		if a.Changes() {
+			restarts++
+		}
+	}
+	if restarts == 0 {
+		t.Error("a genuinely lost listener in the namespace went unrepaired")
+	}
+}
+
+// A holder that is not up cannot host a listener, and restarting mihomo will not
+// change that — defer instead of thrashing.
+func TestRedirectSelfHealDefersWhenTheHolderIsDown(t *testing.T) {
+	run := func(context.Context, string, ...string) (string, error) {
+		return "", errors.New("No such object: wgfleet-netns")
+	}
+	p := mihomoRedirPlanner{
+		compose: "/x.yml", netnsAttached: func() bool { return true }, run: run,
+	}
+	spec := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{
+		BindAddress: "10.73.0.1", NetnsCIDR: "100.127.255.0/30",
+	}}
+	acts, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	for _, a := range acts {
+		if a.Changes() {
+			t.Errorf("thrashed mihomo while its namespace holder was down: %q", a.Summary)
+		}
+	}
 }

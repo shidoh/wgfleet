@@ -16,6 +16,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/restart"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/mihomo"
+	"github.com/shidoh/wgfleet/internal/netns"
 	"github.com/shidoh/wgfleet/internal/wg"
 )
 
@@ -303,15 +304,50 @@ type mihomoRedirPlanner struct {
 	// gov throttles this SELF-HEAL restart; nil ⇒ unthrottled. Shares mihomo's
 	// budget with mihomoWGDupPlanner — both bounce the same container.
 	gov *restart.Governor
+	// netnsAttached reports whether mihomo has moved into its own network
+	// namespace, and run executes the command that looks in there (nil ⇒ netns.Exec).
+	//
+	// Without these this planner asks the HOST's socket table about a listener that
+	// is in another namespace, gets "not there", and restarts mihomo — every pass.
+	// Each restart re-initialises mihomo's userspace WireGuard devices, and on the
+	// live master 2026-09-05 that took three exits out of the balancer within three
+	// minutes of the migration. The config, the API address and the health check had
+	// all been made namespace-aware; this probe had not, and it is the one that
+	// ACTS on its answer.
+	netnsAttached func() bool
+	run           netns.Runner
 }
 
 func (mihomoRedirPlanner) Component() string { return "mihomo redirect listener" }
 
-func (p mihomoRedirPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
+func (p mihomoRedirPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
 	if spec.Master == nil {
 		return nil, fmt.Errorf("mihomo redir: node has no master spec")
 	}
+	attached := p.netnsAttached != nil && p.netnsAttached()
+	// Where mihomo actually is. Both the address it binds and the socket table that
+	// can see it move together; asking the right question at the wrong address, or
+	// the right address in the wrong namespace, both come back "listener down".
 	bindHost := strings.TrimSpace(spec.Master.BindAddress)
+	nsPath := ""
+	if attached {
+		peer := NetnsPeerIP(spec, true)
+		if peer == "" {
+			return []reconcile.Action{reconcile.NoChangeAction("mihomo redirect listener",
+				"deferred: the namespace link has no address yet")}, nil
+		}
+		run := p.run
+		if run == nil {
+			run = netns.Exec
+		}
+		path, err := netns.Path(ctx, domain.NetnsHolder, run)
+		if err != nil {
+			// The holder is not up. Restarting mihomo cannot fix that and would loop.
+			return []reconcile.Action{reconcile.NoChangeAction("mihomo redirect listener",
+				"deferred: mihomo's namespace holder is not up")}, nil
+		}
+		bindHost, nsPath = peer, path
+	}
 	if bindHost == "" {
 		return []reconcile.Action{reconcile.NoChangeAction("mihomo redirect listener",
 			"no bind address in spec")}, nil
@@ -325,6 +361,10 @@ func (p mihomoRedirPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]rec
 	localUp := p.localUp
 	if localUp == nil {
 		localUp = localAddrPresent
+	}
+	if nsPath != "" {
+		// The namespace end of the veth is local IN THERE, never out here.
+		localUp = func(host string) bool { return nsAddrPresent(ctx, p.runner(), nsPath, host) }
 	}
 	// If the bind address isn't up on a local interface yet (wg0/wg-easy down or
 	// mid-recreate), restarting mihomo can't bind it and would loop — defer to the
@@ -341,6 +381,10 @@ func (p mihomoRedirPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]rec
 	udpListening := p.udpListening
 	if udpListening == nil {
 		udpListening = udpSocketListening
+	}
+	if nsPath != "" {
+		listening = func(a string) bool { return nsSocketListening(ctx, p.runner(), nsPath, a, "-ltnH") }
+		udpListening = func(a string) bool { return nsSocketListening(ctx, p.runner(), nsPath, a, "-lunH") }
 	}
 	tproxyAddr := net.JoinHostPort(bindHost, strconv.Itoa(mihomo.TProxyPortFor(redir)))
 	tcpUp, udpUp := listening(addr), udpListening(tproxyAddr)
@@ -511,11 +555,17 @@ func socketListeningOn(addr, ssFlags string) bool {
 	if err != nil {
 		return true // can't tell → assume up; never falsely restart mihomo
 	}
+	return ssOutputHasPort(string(out), addr)
+}
+
+// ssOutputHasPort scans `ss` output for a listener on addr's port. Shared by the
+// host and namespace readers so the two cannot answer the same output differently.
+func ssOutputHasPort(out, addr string) bool {
 	_, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return true
 	}
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
 		if len(f) < 4 {
 			continue
@@ -610,4 +660,34 @@ func ClashAPIAddr(spec domain.NodeSpec, attached bool) string {
 		return ec
 	}
 	return net.JoinHostPort(peer, port)
+}
+
+// runner is this planner's command runner, defaulting to the real one.
+func (p mihomoRedirPlanner) runner() netns.Runner {
+	if p.run != nil {
+		return p.run
+	}
+	return netns.Exec
+}
+
+// nsSocketListening asks the socket table INSIDE a namespace whether anything is
+// listening on addr's port. Same question and same failure posture as its host
+// sibling: a read we cannot take answers "yes", because this planner's action is a
+// restart and a false negative is an outage.
+func nsSocketListening(ctx context.Context, run netns.Runner, nsPath, addr, ssFlags string) bool {
+	out, err := run(ctx, "nsenter", "--net="+nsPath, "ss", ssFlags)
+	if err != nil {
+		return true
+	}
+	return ssOutputHasPort(out, addr)
+}
+
+// nsAddrPresent reports whether host is assigned to an interface inside the
+// namespace. Unreadable answers "no", which DEFERS rather than restarts.
+func nsAddrPresent(ctx context.Context, run netns.Runner, nsPath, host string) bool {
+	out, err := run(ctx, "nsenter", "--net="+nsPath, "ip", "-br", "addr")
+	if err != nil {
+		return false
+	}
+	return strings.Contains(out, host+"/")
 }

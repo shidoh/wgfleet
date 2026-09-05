@@ -184,7 +184,8 @@ func Planners(in Input) []reconcile.Planner {
 		// stack is up and wg0 exists, and self-heals the case where mihomo silently
 		// lost its redir bind (the client iface was recreated under it, e.g. a wg-easy
 		// restart flapped the bind address) — DNAT'd client TCP black-holes otherwise.
-		mihomoRedirPlanner{compose: in.Paths.Compose, gov: in.Restart},
+		mihomoRedirPlanner{compose: in.Paths.Compose, gov: in.Restart,
+			netnsAttached: in.NetnsAttached},
 		// Also last: clear mihomo's leaked userspace AmneziaWG devices. A hot reload
 		// can leave a second device alive per AWG exit, and because every exit tunnel
 		// shares one master WG identity the exit's single peer slot then flaps between
