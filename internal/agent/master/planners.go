@@ -135,7 +135,8 @@ func Planners(in Input) []reconcile.Planner {
 		// After the compose planner (which creates the holder) and BEFORE mihomo and
 		// the master NAT: the namespace has to exist before anything can be asked to
 		// live in it, but nothing routes into it yet.
-		netnsPlanner{attached: in.NetnsAttached, clientIface: in.ClientInterface},
+		netnsPlanner{attached: in.NetnsAttached, clientIface: in.ClientInterface,
+			composePath: in.Paths.Compose},
 		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey, tier: in.Tier,
 			netnsAttached: in.NetnsAttached},
 		masterNATPlanner{path: in.Paths.NFT, v6Path: in.Paths.V6NFT, clientIface: in.ClientInterface,

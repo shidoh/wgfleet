@@ -110,6 +110,8 @@ func (p clientWGPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	if err != nil {
 		return nil, err
 	}
+	prevRaw, _ := os.ReadFile(p.confPath)
+	prevCfg := string(prevRaw)
 	file, err := reconcile.FileAction(p.confPath, []byte(cfg), 0o600, wg.RedactConfig)
 	if err != nil {
 		return nil, err
@@ -160,6 +162,19 @@ func (p clientWGPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	actions = append(actions, p.clearDeferred())
 
 	peersMatch, peersKnown := p.servesDesiredPeers(&rendered)
+	// Before deciding to recreate the device: can this be done as a peer edit?
+	//
+	// `awg-quick down` + `up` destroys the interface, and with it every established
+	// session on it — all seven devices on the live master lose their tunnel and
+	// re-handshake. That is a fair price for an interface-level change, which cannot
+	// be applied any other way. It is not a fair price for adding one peer, and the
+	// upgrade that introduces the path prober adds exactly one: every client on the
+	// fleet would have paid for a measurement peer.
+	if (file.Changes() || !peersMatch) && p.isUp() {
+		if delta := p.peerDeltaActions(&rendered, prevCfg, cfg); delta != nil {
+			return append(actions, delta...), nil
+		}
+	}
 	switch {
 	case file.Changes():
 		return append(actions, p.applyActions(backend, "config changed")...), nil
@@ -502,4 +517,88 @@ func (p clientWGPlanner) syntheticPeer(cw domain.ClientWGSpec) domain.WGClient {
 		return domain.WGClient{}
 	}
 	return wg.SyntheticClient(addr, p.synthKey.PrivateKey, p.synthKey.PublicKey)
+}
+
+// peerDeltaActions brings the live peer list to the desired one with `awg set`,
+// leaving the device — and every session on it — alone. nil means the difference
+// cannot be applied that way and the caller must fall back to a bring-up.
+//
+// Three conditions, and each is a real limit rather than caution:
+//
+//   - The [Interface] section must be unchanged. Addresses, the listen port, the
+//     MTU and the AmneziaWG obfuscation parameters are fixed when the device is
+//     created; `awg set` cannot move them, and pretending otherwise would leave the
+//     kernel running one configuration while the file on disk claims another.
+//   - No peer being ADDED may carry a preshared key. `awg set` reads one from a
+//     FILE, and the alternatives — a path we would have to create and delete, or
+//     the key on a command line — are worse than a re-handshake.
+//   - The live peer list must be readable, must be a SUBSET of the desired one,
+//     and we must hold the claim.
+//
+// The subset condition is what makes this safe rather than merely cheap. A live
+// interface carrying a peer we do not want is not an interface missing an entry —
+// it is somebody else's peer list, which is how a wg-easy container that recreated
+// wg0 after a reboot presents itself. Its INTERFACE parameters are wg-easy's too,
+// and `awg set` cannot correct those, so patching peers would leave the kernel
+// serving the right people with the wrong obfuscation. That case still recreates
+// the device, which is the only thing that fixes it.
+func (p clientWGPlanner) peerDeltaActions(want *domain.ClientWGSpec, prevCfg, newCfg string) []reconcile.Action {
+	if prevCfg == "" || wg.InterfaceSection(prevCfg) != wg.InterfaceSection(newCfg) {
+		return nil
+	}
+	if !p.claimed() {
+		return nil
+	}
+	read := p.ifacePeers
+	if read == nil {
+		read = interfacePeers
+	}
+	iface := clientIfaceName(p.confPath)
+	livePeers, err := read(iface)
+	if err != nil {
+		return nil
+	}
+	live := make(map[string]bool, len(livePeers))
+	for _, k := range livePeers {
+		live[k] = true
+	}
+
+	var actions []reconcile.Action
+	wanted := map[string]bool{}
+	for _, c := range want.Clients {
+		if c.PublicKey == "" {
+			continue
+		}
+		wanted[c.PublicKey] = true
+		if live[c.PublicKey] {
+			continue
+		}
+		if c.PresharedKey != "" {
+			return nil // cannot hand a secret to `awg set` without writing it somewhere
+		}
+		if c.Address == "" {
+			return nil
+		}
+		actions = append(actions, reconcile.ExecAction(
+			"add peer "+c.Name+" without disturbing the interface",
+			"awg", "set", iface, "peer", c.PublicKey, "allowed-ips", hostPrefix(c.Address)))
+	}
+	for key := range live {
+		if !wanted[key] {
+			return nil // not our peer list; only a rebuild puts this interface right
+		}
+	}
+	if len(actions) == 0 {
+		return nil
+	}
+	return actions
+}
+
+// hostPrefix turns a client address into the single-host prefix the server side
+// allows for it. An address that already carries a prefix is used as written.
+func hostPrefix(addr string) string {
+	if strings.Contains(addr, "/") {
+		return addr
+	}
+	return addr + "/32"
 }

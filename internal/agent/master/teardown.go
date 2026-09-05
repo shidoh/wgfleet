@@ -62,6 +62,12 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 			"ip", "rule", "del", "pref", fmt.Sprintf("%d", netfw.NetnsRulePref)),
 		reconcile.BestEffortExecAction("flush the namespace route table",
 			"ip", "route", "flush", "table", fmt.Sprintf("%d", netfw.NetnsRouteTable)),
+		// The destination exemptions that kept the corporate networks, the management
+		// overlay and the exits' own addresses out of the namespace. They sit at their
+		// own priority and outlive every table here; on a repurposed host they would
+		// go on diverting those destinations to a policy nobody set.
+		reconcile.BestEffortExecAction("remove the direct-destination exemptions",
+			"sh", "-c", fmt.Sprintf("while ip rule del pref %d 2>/dev/null; do :; done", netnsDirectRulePref)),
 		reconcile.BestEffortExecAction("remove the veth to mihomo's namespace",
 			"ip", "link", "del", domain.NetnsHostIface),
 		// The prober's namespace, its interface and its resolver. The interface goes
@@ -116,6 +122,14 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 		{p.paths.SynthConf, "client-path prober device config"},
 		{synthResolvConf, "client-path prober resolver"},
 		{ClaimPathFor(p.paths.ClientWGConf), "client interface claim"},
+		// The in-namespace ruleset and its bookkeeping, alongside the host's. Left
+		// behind, a re-provision of this host would find an applied marker vouching
+		// for a table in a namespace that no longer exists.
+		{netnsNFTPath, "in-namespace interception ruleset"},
+		{reconcile.NFTAppliedMarker(netnsNFTPath), "in-namespace ruleset applied marker"},
+		// The migration's memory: attempts spent and whether this node was judged
+		// unfit. It is a verdict about a node that is going away.
+		{p.paths.NetnsMoveState, "namespace migration state"},
 	}
 	// The applied-markers beside each ruleset. Wiping the ruleset and leaving its
 	// marker means a re-provision that renders byte-identical bytes finds a marker

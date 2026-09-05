@@ -706,3 +706,80 @@ func TestClientInterfaceCarriesTheProberAndDoesNotCallItDrift(t *testing.T) {
 		}
 	}
 }
+
+// Adding a peer must not cost every established session on the interface.
+//
+// `awg-quick down` + `up` destroys the device, and the upgrade that introduces
+// the client-path prober adds exactly one peer: without this, every client on the
+// live master re-handshakes so the master can measure itself. The same applies to
+// an operator issuing a new credential.
+func TestAddingAPeerDoesNotRecreateTheInterface(t *testing.T) {
+	p := clientPlanner(t, true)
+	spec := managedSpec(t)
+	applyPlan(t, p, spec)
+	claimIt(t, p)
+
+	// The interface is up and serves exactly today's peers. The next pass adds one.
+	existing := spec.Master.ClientWG.Clients[0].PublicKey
+	p.ifacePeers = func(string) ([]string, error) { return []string{existing}, nil }
+
+	kp, err := wg.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("keypair: %v", err)
+	}
+	grown := spec
+	cw := *spec.Master.ClientWG
+	ms := *spec.Master
+	ms.ClientWG = &cw
+	grown.Master = &ms
+	cw.Clients = append(append([]domain.WGClientPeer(nil), cw.Clients...), domain.WGClientPeer{
+		Name: "phone", PublicKey: kp.PublicKey, Address: "10.80.0.9/32",
+	})
+
+	got := summaries(mustPlan(t, p, grown))
+	if strings.Contains(got, "bring the client interface down") {
+		t.Fatalf("adding one peer took the whole interface down:\n%s", got)
+	}
+	if !strings.Contains(got, "add peer phone") {
+		t.Fatalf("the new peer never reaches the live interface:\n%s", got)
+	}
+}
+
+// A live interface carrying somebody else's peer is not an interface missing an
+// entry — its INTERFACE parameters are somebody else's too, and `awg set` cannot
+// correct those. That case must still recreate the device.
+func TestAForeignPeerListStillRecreatesTheInterface(t *testing.T) {
+	p := clientPlanner(t, true)
+	spec := managedSpec(t)
+	applyPlan(t, p, spec)
+	claimIt(t, p)
+	p.ifacePeers = func(string) ([]string, error) {
+		return []string{"c29tZWJvZHktZWxzZXMtcGVlci0wMDAwMDAwMDAw"}, nil
+	}
+	got := summaries(mustPlan(t, p, spec))
+	if !strings.Contains(got, "bring the client interface up") {
+		t.Fatalf("a foreign peer list was patched instead of rebuilt:\n%s", got)
+	}
+}
+
+// An interface-level change — the listen port, the MTU, the AmneziaWG parameters —
+// is fixed when the device is created and cannot be applied with `awg set`.
+func TestAnInterfaceChangeStillRecreatesTheInterface(t *testing.T) {
+	p := clientPlanner(t, true)
+	spec := managedSpec(t)
+	applyPlan(t, p, spec)
+	claimIt(t, p)
+	existing := spec.Master.ClientWG.Clients[0].PublicKey
+	p.ifacePeers = func(string) ([]string, error) { return []string{existing}, nil }
+
+	moved := spec
+	cw := *spec.Master.ClientWG
+	ms := *spec.Master
+	ms.ClientWG = &cw
+	moved.Master = &ms
+	cw.MTU = 1280
+	got := summaries(mustPlan(t, p, moved))
+	if !strings.Contains(got, "bring the client interface up") {
+		t.Fatalf("an MTU change was applied as a peer edit:\n%s", got)
+	}
+}

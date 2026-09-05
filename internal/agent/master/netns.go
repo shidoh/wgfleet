@@ -36,6 +36,9 @@ type netnsPlanner struct {
 	attached func() bool
 	// nftPath is where the in-namespace ruleset is written; "" ⇒ the canonical path.
 	nftPath string
+	// composePath is the master's compose file, needed to recreate mihomo when it
+	// has been left behind in a namespace the holder no longer owns.
+	composePath string
 	// nftCheck validates a ruleset before it is written; nil ⇒ the real `nft -c`.
 	// A parameter rather than a package variable for the reason the host's copy
 	// became one: a package-level hook is a data race the first time two tests run
@@ -257,6 +260,20 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 	} else {
 		actions = append(actions, reconcile.NoChangeAction("namespace routing",
 			"client traffic already routed into the namespace"))
+	}
+
+	// mihomo in the RIGHT namespace, not merely in one.
+	//
+	// `network_mode: container:X` is resolved when the container is created, so a
+	// holder that restarts — an OOM kill, a `docker restart`, a daemon reload —
+	// comes back with a NEW namespace while mihomo stays in the old one. The old
+	// namespace has no veth (it died with the holder's last interface) and holds no
+	// ruleset, so mihomo is alive, healthy by every container check, and reachable
+	// by nothing. `depends_on` does not help: it orders startup, not restarts.
+	if !p.mihomoIsInTheNamespace(ctx, nsPath, run) {
+		actions = append(actions, reconcile.ExecAction(
+			"put mihomo back in the holder's namespace (the holder restarted without it)",
+			"docker", "compose", "-f", p.composePath, "up", "-d", "--force-recreate", "mihomo"))
 	}
 
 	// TPROXY's other half, inside the namespace. `tproxy` only assigns the socket;
@@ -550,4 +567,35 @@ func netnsLinkMTU(spec domain.NodeSpec) int {
 		return 0
 	}
 	return spec.Master.ClientWG.MTU
+}
+
+// mihomoIsInTheNamespace compares the network namespace mihomo is in with the
+// holder's. Read from /proc rather than from Docker's own view: `docker inspect`
+// reports the network mode that was ASKED for, which is exactly what stays true
+// while the namespace behind it goes away.
+//
+// Unknown counts as correct. A mihomo that is not running, or a /proc we cannot
+// read, is not evidence that it is in the wrong place, and recreating a container
+// on a guess costs every client connection it holds.
+func (p netnsPlanner) mihomoIsInTheNamespace(ctx context.Context, nsPath string, run netns.Runner) bool {
+	if p.composePath == "" {
+		return true // nothing to recreate it with; do not render an action we cannot take
+	}
+	out, err := run(ctx, "docker", "inspect", "-f", "{{.State.Pid}}", "mihomo")
+	if err != nil {
+		return true
+	}
+	pid := strings.TrimSpace(out)
+	if pid == "" || pid == "0" {
+		return true // not running: compose will start it, in the right place
+	}
+	mine, err := run(ctx, "readlink", "/proc/"+pid+"/ns/net")
+	if err != nil {
+		return true
+	}
+	theirs, err := run(ctx, "readlink", nsPath)
+	if err != nil {
+		return true
+	}
+	return strings.TrimSpace(mine) == strings.TrimSpace(theirs)
 }

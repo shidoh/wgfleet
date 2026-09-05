@@ -430,3 +430,71 @@ func TestDetachIsSilentWhenNothingWasInstalled(t *testing.T) {
 		}
 	}
 }
+
+// `network_mode: container:X` is resolved when the container is created, so a
+// holder that restarts comes back with a NEW namespace while mihomo stays in the
+// old one — alive, healthy by every container check, and reachable by nothing.
+// `depends_on` orders startup, not restarts, and nothing was watching.
+func TestMihomoIsPutBackWhenTheHolderRestartedWithoutIt(t *testing.T) {
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.Contains(line, "docker inspect -f {{.State.Pid}} wgfleet-netns"):
+			return "4242\n", nil
+		case strings.Contains(line, "docker inspect -f {{.State.Pid}} mihomo"):
+			return "5150\n", nil
+		case line == "readlink /proc/5150/ns/net":
+			return "net:[4026532000]\n", nil // the namespace the holder used to own
+		case line == "readlink /proc/4242/ns/net":
+			return "net:[4026532999]\n", nil
+		}
+		return "", errors.New("absent: " + line)
+	}
+	p := netnsPlanner{
+		run: run, attached: func() bool { return true }, clientIface: "wg0",
+		nftPath: t.TempDir() + "/netns.nft", nftCheck: func([]byte) error { return nil },
+		composePath: "/etc/wgfleet/docker-compose.yml",
+	}
+	acts, err := p.Plan(context.Background(), netnsSpec())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	var dump string
+	for _, a := range acts {
+		dump += a.Display + "\n"
+	}
+	if !strings.Contains(dump, "--force-recreate mihomo") {
+		t.Errorf("mihomo was left in a namespace nothing routes into:\n%s", dump)
+	}
+}
+
+// And when the two agree, nothing is recreated: bouncing mihomo costs every client
+// connection it holds.
+func TestMihomoIsLeftAloneWhenItIsInTheRightNamespace(t *testing.T) {
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.Contains(line, "docker inspect -f {{.State.Pid}} wgfleet-netns"):
+			return "4242\n", nil
+		case strings.Contains(line, "docker inspect -f {{.State.Pid}} mihomo"):
+			return "5150\n", nil
+		case line == "readlink /proc/5150/ns/net", line == "readlink /proc/4242/ns/net":
+			return "net:[4026532999]\n", nil
+		}
+		return "", errors.New("absent: " + line)
+	}
+	p := netnsPlanner{
+		run: run, attached: func() bool { return true }, clientIface: "wg0",
+		nftPath: t.TempDir() + "/netns.nft", nftCheck: func([]byte) error { return nil },
+		composePath: "/etc/wgfleet/docker-compose.yml",
+	}
+	acts, err := p.Plan(context.Background(), netnsSpec())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	for _, a := range acts {
+		if strings.Contains(a.Display, "force-recreate") {
+			t.Errorf("a correctly placed mihomo was bounced anyway: %q", a.Display)
+		}
+	}
+}

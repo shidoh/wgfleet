@@ -475,3 +475,18 @@ func RenderSyntheticSetConf(in SyntheticSetConfInput) (string, error) {
 	fmt.Fprintf(&b, "PersistentKeepalive = %d\n", ClientKeepaliveSeconds)
 	return b.String(), nil
 }
+
+// InterfaceSection returns the [Interface] half of a rendered client config —
+// everything before the first [Peer].
+//
+// It exists so a caller can ask the one question that decides whether a change
+// can be applied without recreating the device: did anything about the INTERFACE
+// move? Addresses, the listen port, the MTU and the AmneziaWG obfuscation
+// parameters are all set when the device is created and cannot be changed on a
+// live one. Peers can.
+func InterfaceSection(cfg string) string {
+	if i := strings.Index(cfg, "[Peer]"); i >= 0 {
+		return strings.TrimSpace(cfg[:i])
+	}
+	return strings.TrimSpace(cfg)
+}

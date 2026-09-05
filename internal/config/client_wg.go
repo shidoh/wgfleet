@@ -218,6 +218,13 @@ func validateAddressPoolsDisjoint(f FleetSection) []error {
 	}
 	for _, m := range f.Masters {
 		add(fmt.Sprintf("masters[%s].client_awg.address_pool", m.Name), m.ClientAWG.AddressPool)
+		// The link to mihomo's network namespace is an address pool like any other,
+		// and the one an operator is most likely to pick badly: it is a /30 that
+		// exists only on the master, so nothing else in the fleet ever mentions it and
+		// the collision is invisible until traffic to that range disappears into a
+		// namespace. The default (RFC 6598) cannot collide with anything here; an
+		// override can land in the middle of a live tunnel.
+		add(fmt.Sprintf("masters[%s].mihomo.netns_cidr", m.Name), m.Mihomo.NetnsCIDR)
 	}
 	for _, e := range f.Exits {
 		add(fmt.Sprintf("exits[%s].address_pool", e.Name), e.AddressPool)

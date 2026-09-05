@@ -47,4 +47,9 @@ jobs:
       # test nobody has, so it is run deliberately under sudo rather than left to
       # the ordinary suite.
       - name: Data-path rehearsal (privileged)
-        run: sudo -E env "PATH=$PATH" go test -count=1 -v ./test/datapath/...
+        # internal/agent/health is in the same list on purpose. It carries the
+        # IP_TRANSPARENT bind tests — the ones that reproduce the actual August
+        # outage — and unprivileged they Skip, so leaving them out of this step meant
+        # the same illusion of coverage this step was added to end, one directory
+        # over.
+        run: sudo -E env "PATH=$PATH" go test -count=1 -v ./test/datapath/... ./internal/agent/health/...

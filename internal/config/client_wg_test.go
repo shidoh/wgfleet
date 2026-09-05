@@ -431,3 +431,39 @@ func TestTunnelReachesItselfAcceptsTheMasterGateway(t *testing.T) {
 		t.Errorf("the master gateway was reported unreachable from its own tunnel: %v", errs)
 	}
 }
+
+// The namespace link is an address pool like any other, and the one an operator is
+// most likely to pick badly: it is a /30 that exists only on the master, so nothing
+// else in the fleet mentions it and a collision stays invisible until traffic to
+// that range disappears into a namespace.
+func TestNetnsCIDRMustNotOverlapAnyPool(t *testing.T) {
+	f := FleetSection{
+		Masters: []MasterConfig{{
+			Name:      "m0",
+			ClientAWG: ClientAWGConfig{AddressPool: "10.73.0.0/24"},
+			Mihomo:    MihomoConfig{NetnsCIDR: "10.73.0.0/30"},
+		}},
+	}
+	errs := validateAddressPoolsDisjoint(f)
+	if len(errs) == 0 {
+		t.Fatal("a namespace link inside the client pool was accepted")
+	}
+	if !strings.Contains(errs[0].Error(), "netns_cidr") {
+		t.Errorf("the error does not name the knob: %v", errs[0])
+	}
+}
+
+// The default is RFC 6598 and collides with nothing this fleet uses.
+func TestDefaultNetnsCIDRIsAccepted(t *testing.T) {
+	f := FleetSection{
+		Masters: []MasterConfig{{
+			Name:      "m0",
+			ClientAWG: ClientAWGConfig{AddressPool: "10.73.0.0/24"},
+			Mihomo:    MihomoConfig{NetnsCIDR: "100.127.255.0/30"},
+		}},
+		Exits: []ExitConfig{{Name: "e0", AddressPool: "10.81.0.0/24"}},
+	}
+	if errs := validateAddressPoolsDisjoint(f); len(errs) != 0 {
+		t.Fatalf("a healthy fleet was rejected: %v", errs)
+	}
+}
