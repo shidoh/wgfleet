@@ -431,3 +431,66 @@ func TestNamespaceGatewayWithoutTheVethIsRefused(t *testing.T) {
 		t.Fatal("a namespace gateway with no veth name was rendered")
 	}
 }
+
+// The control API keeps its address across the move.
+//
+// mihomo binds the far end of a /30 that exists on the master and is advertised
+// nowhere, so without this the dashboard and every API client simply lose it. On
+// 2026-09-05 that was the first thing an operator saw after the switch, and it
+// reads as "the exits are down" rather than "the page moved".
+func TestClashAPIKeepsItsAddressAcrossTheMove(t *testing.T) {
+	in := MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+		TProxyAddr:      "10.80.0.1:7896",
+		NetnsGateway:    "100.127.255.2",
+		NetnsHostIface:  "mih-host",
+		NetnsLinkCIDR:   "100.127.255.0/30",
+		ClashAPI:        "172.29.3.10:9090",
+	}
+	out, err := RenderMasterNAT(in)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	want := `iifname "zt*" ip daddr 172.29.3.10 tcp dport 9090 dnat to 100.127.255.2:9090`
+	if !strings.Contains(out, want) {
+		t.Errorf("missing %q — the dashboard disappears when the interception moves:\n%s", want, out)
+	}
+}
+
+// Before the move there is nothing to redirect to, and the rule must not appear:
+// mihomo is on the mgmt address itself.
+func TestClashAPIIsNotRedirectedBeforeTheMove(t *testing.T) {
+	in := MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+		TProxyAddr:      "10.80.0.1:7896",
+		ClashAPI:        "172.29.3.10:9090",
+	}
+	out, err := RenderMasterNAT(in)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(out, "dport 9090") {
+		t.Errorf("an unmoved master redirects its own API:\n%s", out)
+	}
+}
+
+// The API redirect is an ADMIN surface: the client pool must not reach it. Scoped
+// to the management overlay, the same posture the input chain takes.
+func TestClashAPIRedirectIsMgmtOnly(t *testing.T) {
+	in := MasterNATInput{
+		ClientInterface: "wg0", ClientCIDR: "10.80.0.0/24", RedirAddr: "10.80.0.1:7895",
+		TProxyAddr: "10.80.0.1:7896", NetnsGateway: "100.127.255.2",
+		NetnsHostIface: "mih-host", NetnsLinkCIDR: "100.127.255.0/30",
+		ClashAPI: "172.29.3.10:9090",
+	}
+	out, _ := RenderMasterNAT(in)
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "dport 9090") && !strings.Contains(line, `iifname "zt*"`) {
+			t.Errorf("the API redirect is not scoped to the mgmt overlay:\n  %s", line)
+		}
+	}
+}

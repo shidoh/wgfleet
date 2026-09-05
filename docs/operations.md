@@ -414,18 +414,30 @@ restarting mihomo on every pass. Each restart re-initialises mihomo's userspace
 WireGuard devices; three exits fell out of the balancer within three minutes, and
 the first thing anybody noticed was traffic moving to the reserve tier.
 
-A restart is invisible to a snapshot. Run the watcher for three minutes after the
-switch, on the master:
+Two live attempts failed in ways no snapshot could see. The first: a self-heal
+probe still aimed at the host restarted mihomo every pass, and each restart
+re-initialised its userspace WireGuard devices — three exits gone in three
+minutes. The second: the veth was narrower than the uplink, so mihomo's own
+tunnel packets did not fit; WireGuard handshakes are 148 bytes and passed, every
+tunnel reported UP while carrying nothing, and four exits died. One needs
+WATCHING, the other needs a BIG packet.
+
+So take a baseline first, then watch:
 
 ```bash
-./netns-move-check.sh 180
+./netns-move-check.sh --baseline     # BEFORE the flip
+# ... set client_via_netns: auto, restart the controller ...
+./netns-move-check.sh 180            # AFTER
 ```
 
-It fails on a mihomo that restarts, on a self-heal that is being throttled (the
-same defect with the symptom suppressed), on mihomo landing in an orphaned
-namespace, and on a Clash API the agent can no longer reach. Then check the exit
-tunnels in the dashboard: a wedged WireGuard device does not always come back on
-its own.
+It fails on a mihomo that restarts, on a self-heal being throttled (the same
+defect with the symptom suppressed), on a packet the size of the uplink not
+leaving the namespace, on mihomo in an orphaned namespace, on an unreachable
+control API, and — compared against the baseline rather than eyeballed — on any
+tunnel that was alive before the move and is not after.
+
+The control API keeps its address across the move: a redirect on the management
+overlay sends it into the namespace, so `http://<mgmt>:9090/ui` works either way.
 
 ### How to tell where a master is
 

@@ -683,6 +683,7 @@ func NATInput(spec domain.NodeSpec, clientIface string, netnsAttached bool) netf
 		NetnsGateway:    netnsGW,
 		NetnsHostIface:  netnsIface,
 		NetnsLinkCIDR:   spec.Master.NetnsLinkCIDR(),
+		ClashAPI:        spec.Master.ExternalController,
 	}
 }
 

@@ -2,7 +2,9 @@ package netfw
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 )
 
@@ -39,6 +41,17 @@ type MasterNATInput struct {
 	// NetnsHostIface is the veth end the routed traffic leaves by. Required with
 	// NetnsGateway; the masquerade and the leak guard must both exempt it.
 	NetnsHostIface string
+	// ClashAPI is the address the OPERATOR knows mihomo's control API by — the
+	// management-overlay host:port from the spec. Set together with NetnsGateway it
+	// renders a redirect from that address into the namespace, so the dashboard and
+	// every API client keep the URL they had.
+	//
+	// Without it the move takes the dashboard with it: mihomo binds the far end of a
+	// /30 that exists on this host and is advertised nowhere, so from anywhere else
+	// the API is simply gone. On 2026-09-05 that was the first thing an operator saw
+	// after the switch, and it reads as "the exits are down" rather than "the page
+	// moved".
+	ClashAPI string
 	// NetnsLinkCIDR is the point-to-point link to the namespace. Required with
 	// NetnsGateway: everything mihomo sends — exit endpoints, WARP, the management
 	// overlay, geo databases — now leaves with the namespace's address as its
@@ -219,6 +232,23 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	if hostIntercepts {
 		fmt.Fprintf(&b, "\t\tiifname %q%s%s ip protocol tcp dnat to %s\n",
 			in.ClientInterface, guards, gatewayGuard, in.RedirAddr)
+	}
+	// The control API, kept at the address it has always had.
+	//
+	// Scoped to the management overlay: this is an admin surface, and the client
+	// pool has no business reaching it (the master input chain says the same thing
+	// with its drop policy). The agent does not need this rule — it dials the
+	// namespace directly — so it exists purely so a human's bookmark, and anything
+	// else pointed at the mgmt address, survives the move.
+	if in.NetnsGateway != "" && in.ClashAPI != "" {
+		if host, port, err := net.SplitHostPort(in.ClashAPI); err == nil {
+			if addr, aerr := netip.ParseAddr(host); aerr == nil {
+				if p, perr := strconv.Atoi(port); perr == nil && p > 0 && p <= 65535 {
+					fmt.Fprintf(&b, "\t\tiifname %q ip daddr %s tcp dport %d dnat to %s:%d\n",
+						mgmtOverlayIface, addr, p, in.NetnsGateway, p)
+				}
+			}
+		}
 	}
 	b.WriteString("\t}\n\n")
 
