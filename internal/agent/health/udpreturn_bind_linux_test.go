@@ -4,6 +4,7 @@ package health
 
 import (
 	"net"
+	"strconv"
 	"testing"
 )
 
@@ -47,25 +48,59 @@ func TestUDPReturnBindableSeesAWildcardHolder(t *testing.T) {
 	}
 }
 
-// The port list must come from the kernel. On a real Linux box this must return
-// something — a machine with no UDP sockets at all does not exist in practice —
-// and it must include a port we have just taken.
-func TestHeldUDPPortsReadsTheLiveSocketTable(t *testing.T) {
-	held, err := net.ListenPacket("udp", "0.0.0.0:0")
+// The port list must come from the kernel, and it must be the list of SERVICES
+// rather than the list of sockets.
+//
+// Both halves are asserted against a live /proc/net/udp because both are about
+// what the kernel actually prints. A service port has to appear: that is the
+// whole mechanism, and a list that misses one is a black hole nobody is told
+// about. An ephemeral port must NOT appear: every outbound datagram this master
+// sends takes one, and counting them would mint a fresh `port` label on the gauge
+// every pass and flap the check between healthy and broken on whichever high port
+// happened to be open when it looked.
+func TestHeldUDPPortsListsServicesAndNotEphemeralSockets(t *testing.T) {
+	lo, hi := ephemeralRange()
+
+	// A service: a port below the kernel's ephemeral range, so it reads as something
+	// deliberately bound rather than something handed out.
+	service, err := net.ListenPacket("udp", "0.0.0.0:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = held.Close() }()
-	taken := held.LocalAddr().(*net.UDPAddr).Port
+	_ = service.Close()
+	const servicePort = 10053
+	svc, err := net.ListenPacket("udp", net.JoinHostPort("0.0.0.0", strconv.Itoa(servicePort)))
+	if err != nil {
+		t.Skipf("cannot take :%d on this machine (%v); nothing to assert", servicePort, err)
+	}
+	defer func() { _ = svc.Close() }()
+	if servicePort >= lo && servicePort <= hi {
+		t.Skipf("this kernel hands out :%d (range %d-%d), so it is not a service port here",
+			servicePort, lo, hi)
+	}
+
+	// And an ephemeral one, taken the way an outbound socket takes it.
+	ephemeral, err := net.ListenPacket("udp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ephemeral.Close() }()
+	taken := ephemeral.LocalAddr().(*net.UDPAddr).Port
 
 	ports, err := HeldUDPPorts()
 	if err != nil {
 		t.Fatalf("read the socket table: %v", err)
 	}
+	seen := map[int]bool{}
 	for _, p := range ports {
-		if p == taken {
-			return
-		}
+		seen[p] = true
 	}
-	t.Errorf("port %d is open but not in the %d ports read from /proc/net/udp", taken, len(ports))
+	if !seen[servicePort] {
+		t.Errorf("port %d is bound and outside the ephemeral range, but is not among the %d ports read: "+
+			"a service that black-holes client traffic would go unreported", servicePort, len(ports))
+	}
+	if taken >= lo && taken <= hi && seen[taken] {
+		t.Errorf("ephemeral port %d was counted as a service; every outbound datagram would mint a metric series",
+			taken)
+	}
 }
