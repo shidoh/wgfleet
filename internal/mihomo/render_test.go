@@ -1107,3 +1107,81 @@ func TestTProxyPortFollowsAnOverriddenRedirPort(t *testing.T) {
 		t.Errorf("tproxy-port = %v, want 9101 (redir+1) so an operator override moves both", got)
 	}
 }
+
+// An operator override pinning a loopback resolver must not survive the move.
+//
+// The base config already points mihomo's resolvers somewhere reachable, but an
+// override replaces the value wholesale — and this fleet's manifest pins
+// `dns.nameserver: [127.0.0.1:53]`, meaning "the resolver on this host". Inside a
+// namespace that is a loopback of its own with nothing on it.
+//
+// The blast radius is not uniform, which is what made it hard to read: a VLESS
+// proxy hands the hostname to the far end and kept working, while every WireGuard
+// proxy — L3, so mihomo must resolve before it can send a packet — went dead.
+// Measured on the live master 2026-09-05.
+func TestLoopbackResolverIsTranslatedWhenMihomoMoves(t *testing.T) {
+	spec := domain.MasterSpec{
+		BindAddress: "10.73.0.1",
+		ExitTunnels: []domain.ExitTunnel{{
+			Name: "e1", Endpoint: "198.51.100.7:51820",
+			ServerPublicKey: "PUB==", TunnelIP: "10.81.0.2", MTU: 1360,
+		}},
+		Custom: domain.CustomConfig{Overrides: map[string]any{
+			"dns": map[string]any{"nameserver": []any{"127.0.0.1:53"}},
+		}},
+	}
+	cfg, err := RenderConfig(RenderInput{
+		Spec: spec, PrivateKey: "MASTERPRIVKEYbase64ExampleValueForTestingABC=", NetnsPeerAddr: "100.127.255.2",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(cfg, "127.0.0.1:53") {
+		t.Errorf("a loopback resolver survived the move; every name mihomo resolves itself will fail:\n%s", cfg)
+	}
+	if !strings.Contains(cfg, "10.73.0.1:53") {
+		t.Errorf("the resolver was not pointed at where it now lives:\n%s", cfg)
+	}
+	// mihomo's OWN listener is a loopback on purpose and must be left alone.
+	if !strings.Contains(cfg, "listen: 127.0.0.1:1053") {
+		t.Errorf("mihomo's own DNS listener was rewritten:\n%s", cfg)
+	}
+}
+
+// On the host nothing is translated: 127.0.0.1 means what the operator meant.
+func TestLoopbackResolverIsKeptWhenMihomoHasNotMoved(t *testing.T) {
+	spec := domain.MasterSpec{
+		BindAddress: "10.73.0.1",
+		ExitTunnels: []domain.ExitTunnel{{
+			Name: "e1", Endpoint: "198.51.100.7:51820",
+			ServerPublicKey: "PUB==", TunnelIP: "10.81.0.2", MTU: 1360,
+		}},
+		Custom: domain.CustomConfig{Overrides: map[string]any{
+			"dns": map[string]any{"nameserver": []any{"127.0.0.1:53"}},
+		}},
+	}
+	cfg, err := RenderConfig(RenderInput{Spec: spec, PrivateKey: "MASTERPRIVKEYbase64ExampleValueForTestingABC="})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(cfg, "127.0.0.1:53") {
+		t.Errorf("an unmoved master had its resolver rewritten:\n%s", cfg)
+	}
+}
+
+// A resolver that is not loopback is never touched, whatever shape it comes in.
+func TestNonLoopbackResolversAreUntouched(t *testing.T) {
+	for _, entry := range []string{
+		"1.1.1.1:53", "tls://8.8.8.8:853", "https://dns.google/dns-query", "10.20.0.5",
+	} {
+		if got := swapLoopbackHost(entry, "10.73.0.1"); got != entry {
+			t.Errorf("%q was rewritten to %q", entry, got)
+		}
+	}
+	// And loopback in every shape IS.
+	for _, entry := range []string{"127.0.0.1:53", "127.0.0.53:53", "udp://127.0.0.1:53"} {
+		if got := swapLoopbackHost(entry, "10.73.0.1"); got == entry {
+			t.Errorf("%q was left pointing at a loopback that is not there", entry)
+		}
+	}
+}

@@ -13,6 +13,7 @@ package mihomo
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -322,11 +323,86 @@ func RenderConfig(in RenderInput) (string, error) {
 		merged["rules"] = append([]any{reject}, existing...)
 	}
 
+	// A loopback resolver means something ELSE inside the namespace, so it is
+	// translated rather than carried across.
+	//
+	// This runs AFTER the override merge on purpose. The base config already points
+	// mihomo's resolvers at an address it can reach from in there, but an operator
+	// override replaces the value wholesale — and this fleet's manifest pins
+	// `dns.nameserver: [127.0.0.1:53]`, meaning "the resolver on this host". Moved
+	// into a namespace, 127.0.0.1 is a loopback of its own with nothing on it, and
+	// every name mihomo has to resolve ITSELF fails.
+	//
+	// Which is not every name: a VLESS proxy can hand the hostname to the far end,
+	// so those kept working, while every WireGuard proxy — L3, so mihomo must
+	// resolve before it can send a packet — went dead. Measured on the live master
+	// 2026-09-05: four AmneziaWG exits down, all reality exits up, and
+	// "can't resolve ip: read udp 127.0.0.1:...->127.0.0.1:53: connection refused"
+	// in the log.
+	//
+	// The operator's intent is preserved rather than overridden: they asked for the
+	// resolver that was local, and this is where it now lives.
+	if in.NetnsPeerAddr != "" {
+		rewriteLoopbackResolvers(merged, in.Spec.BindAddress)
+	}
+
 	out, err := marshalYAML(merged)
 	if err != nil {
 		return "", fmt.Errorf("mihomo render: %w", err)
 	}
 	return out, nil
+}
+
+// resolverKeys are the `dns:` lists that name servers mihomo DIALS. `listen` is
+// deliberately absent: that is mihomo's own socket, and its loopback is the one it
+// is supposed to be on.
+var resolverKeys = []string{
+	"nameserver", "default-nameserver", "fallback",
+	"proxy-server-nameserver", "direct-nameserver",
+}
+
+// rewriteLoopbackResolvers replaces a loopback host in mihomo's resolver lists
+// with the address that WAS local before the move. Anything else is left alone.
+func rewriteLoopbackResolvers(merged map[string]any, wasLocal string) {
+	if wasLocal == "" {
+		return
+	}
+	dns, ok := merged["dns"].(map[string]any)
+	if !ok {
+		return
+	}
+	for _, key := range resolverKeys {
+		list, ok := dns[key].([]any)
+		if !ok {
+			continue
+		}
+		for i, entry := range list {
+			str, ok := entry.(string)
+			if !ok {
+				continue
+			}
+			list[i] = swapLoopbackHost(str, wasLocal)
+		}
+	}
+}
+
+// swapLoopbackHost rewrites the host of a resolver entry when it is a loopback
+// address, preserving any scheme and port. A value that is not a loopback — a real
+// address, a hostname, a DoH URL elsewhere — is returned untouched.
+func swapLoopbackHost(entry, wasLocal string) string {
+	scheme, rest := "", entry
+	if i := strings.Index(entry, "://"); i >= 0 {
+		scheme, rest = entry[:i+3], entry[i+3:]
+	}
+	hostPart, portPart := rest, ""
+	if h, p, err := net.SplitHostPort(rest); err == nil {
+		hostPart, portPart = h, ":"+p
+	}
+	addr, err := netip.ParseAddr(strings.Trim(hostPart, "[]"))
+	if err != nil || !addr.IsLoopback() {
+		return entry
+	}
+	return scheme + wasLocal + portPart
 }
 
 // RenderDirectNetworks renders the included direct-networks.yaml from the spec's
