@@ -304,24 +304,39 @@ func TestDisablingClearsTheHoldSoReEnablingIsImmediate(t *testing.T) {
 
 // Disabling is also the documented way out of a terminal verdict: "staying on the
 // host path until someone looks" — this is someone looking.
-func TestDisablingClearsATerminalVerdict(t *testing.T) {
-	m, clock := testMover()
+//
+// Asserted THROUGH THE FILE, not just in memory. The first version of this test
+// checked the machine and passed while the on-disk record still said `gave_up:
+// true` — save() serialises the current state and was being called before the
+// state was cleared. In memory the node was free; every agent restart put it back
+// in the corner, which on the stand meant a node that could never move again.
+func TestDisablingClearsATerminalVerdictOnDiskToo(t *testing.T) {
+	path := t.TempDir() + "/netns-move.json"
+	now := time.Now()
+	m := NewNetnsMove(path)
+	m.now = func() time.Time { return now }
 	for range moveMaxAttempts {
 		m.Decide(true, isReady, pathUp)
 		settleOut(m)
 		for range moveFailPasses {
 			m.Decide(true, isReady, pathDown)
 		}
-		*clock = clock.Add(moveRetryHold + time.Second)
+		now = now.Add(moveRetryHold + time.Second)
 	}
 	if m.Decide(true, isReady, pathUp) {
 		t.Fatal("test premise: it should have given up")
 	}
+
 	m.Decide(false, isReady, pathUp) // the operator intervenes
-	if !m.Decide(true, isReady, pathUp) {
-		t.Fatalf("a node that gave up could not be revived by the knob: %q", m.Reason())
+
+	// The machine that comes back after a restart is the one that matters.
+	restarted := NewNetnsMove(path)
+	restarted.now = func() time.Time { return now.Add(time.Hour) }
+	if !restarted.Decide(true, isReady, pathUp) {
+		t.Fatalf("a restart put the node back in the corner the operator freed it from: %q",
+			restarted.Reason())
 	}
-	if m.Attempts() != 0 {
-		t.Errorf("spent attempts survived the operator's intervention: %d", m.Attempts())
+	if restarted.Attempts() != 0 {
+		t.Errorf("spent attempts survived on disk: %d", restarted.Attempts())
 	}
 }

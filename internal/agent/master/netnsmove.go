@@ -162,12 +162,16 @@ func (m *netnsMover) Decide(wanted bool, ready func() error, pathOK func() bool)
 		//
 		// It also clears a terminal verdict, and that is the documented way out of one:
 		// "staying on the host path until someone looks" — this is someone looking.
-		if m.state == moveGaveUp || m.attempts > 0 {
-			m.attempts = 0
+		// Clear FIRST, then record. save() serialises the CURRENT state, so calling it
+		// before the mutation persists the verdict it was meant to erase: on the stand
+		// 2026-09-05 the file kept `gave_up: true` with `attempts: 0`, the machine
+		// looked reset in memory, and every agent restart loaded the verdict back.
+		wasStuck := m.state == moveGaveUp || m.attempts > 0
+		m.state, m.reason = moveWaiting, "disabled by master.client_via_netns"
+		m.attempts, m.lastFlip, m.fail, m.confirm, m.settle = 0, time.Time{}, 0, 0, 0
+		if wasStuck {
 			m.save()
 		}
-		m.state, m.reason = moveWaiting, "disabled by master.client_via_netns"
-		m.lastFlip, m.fail, m.confirm, m.settle = time.Time{}, 0, 0, 0
 		return false
 	}
 	switch m.state {
