@@ -161,8 +161,24 @@ func run() error {
 		showVersion   = flag.Bool("version", false, "print build version and exit")
 		supportBundle = flag.Bool("support-bundle", false, "write a read-only diagnostic archive (no secrets, not encrypted) and exit")
 		supportNote   = flag.String("note", "", "with --support-bundle: describe what went wrong, embedded in the archive")
+		dnsProbe      = flag.String(strings.TrimPrefix(master.DNSProbeFlag, "-"), "",
+			"take one UDP DNS query against <host:port> and exit 0/1; used by the client-path prober inside a namespace")
 	)
 	flag.Parse()
+
+	// The UDP probe, and it exits before anything else runs. This process was
+	// started by `ip netns exec` from the agent's own reconcile loop purely to send
+	// one datagram from inside another namespace: it must not load a config, dial a
+	// controller or write a file. It exists because no tool on a stock node sends a
+	// DNS query to a NAMED server without reading resolv.conf first, and reading
+	// resolv.conf is exactly what made the previous probe miss the outage.
+	if *dnsProbe != "" {
+		if err := health.QueryDNSOverUDP(context.Background(), *dnsProbe); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return nil
+	}
 
 	if *showVersion {
 		fmt.Println("wgfleet-agent", version.String())
@@ -765,7 +781,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			}
 			// The client path, measured from the master's own client. Taken AFTER the
 			// pass: the prober's interface may have been created by it.
-			probes := master.MeasureClientPath(ctx, clientGatewayOf(spec), nil)
+			probes := master.MeasureClientPath(ctx, a.clientPathTargets(spec), nil)
 			results := map[string]bool{}
 			for _, pr := range probes {
 				results[pr.Name] = pr.OK
@@ -1808,6 +1824,31 @@ func clientGatewayOf(spec domain.NodeSpec) string {
 		return ""
 	}
 	return spec.Master.ClientWG.ServerAddress
+}
+
+// clientPathTargets aims the prober at everything a client is supposed to reach,
+// not only at what happens to be easy to reach.
+//
+// The list grew because the first one could not fail on the failures this branch
+// introduces: two of its three probes never went through mihomo at all, and none
+// of them touched a destination that is supposed to BYPASS the interception. A
+// prober that stays green while the thing it guards is broken is worse than no
+// prober, because it is also the judge of the automatic revert.
+func (a *agent) clientPathTargets(spec domain.NodeSpec) master.ClientPathTargets {
+	t := master.ClientPathTargets{
+		Gateway:  clientGatewayOf(spec),
+		MgmtAddr: a.mgmtAddr,
+	}
+	if spec.Master != nil {
+		t.Direct = spec.Master.DirectCIDRs
+	}
+	// The UDP probe re-executes this binary inside the prober's namespace. If we
+	// cannot name our own path we simply take one fewer probe: a missing probe is
+	// an honest gap, a fabricated one is not.
+	if self, err := os.Executable(); err == nil {
+		t.SelfExec = self
+	}
+	return t
 }
 
 // netnsMoveState is the agent-side handle on the namespace migration decision.

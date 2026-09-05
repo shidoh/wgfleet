@@ -3,6 +3,9 @@ package master
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/netip"
+	"strconv"
 	"strings"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
@@ -181,11 +184,52 @@ func NamespaceReady(ctx context.Context, spec domain.NodeSpec) error {
 	if wanted, _ := spec.Master.NetnsWanted(); !wanted {
 		return fmt.Errorf("disabled by master.client_via_netns")
 	}
+	host, port := exitProbeTarget(spec)
 	return netns.Ready(ctx, netns.Input{
 		Holder:     domain.NetnsHolder,
 		HostIface:  domain.NetnsHostIface,
 		PeerIface:  domain.NetnsPeerIface,
 		CIDR:       spec.Master.NetnsLinkCIDR(),
 		ClientCIDR: spec.WGServer.AddressPool,
+		ProbeHost:  host,
+		ProbePort:  port,
 	}, netns.Exec)
+}
+
+// exitProbeTarget picks an exit endpoint the namespace can dial to prove it has a
+// path to the wire, not merely a route table that says it does.
+//
+// It was the missing half of the readiness gate: netns.Ready has carried this
+// check since it was written, validated the address against injection, and was
+// never once called with a target — so "ready" meant "DNS resolves", and DNS
+// resolves through the HOST namespace, which this migration does not touch. The
+// gate could pass on a namespace with no path out at all.
+//
+// Only literal addresses are used. A hostname would need the namespace's resolver
+// to answer before the probe can run, which makes a reachability check depend on
+// the thing it is meant to be independent of; and netns.Ready refuses anything
+// that is not an address anyway, because the target is formatted into a bash word.
+func exitProbeTarget(spec domain.NodeSpec) (string, int) {
+	if spec.Master == nil {
+		return "", 0
+	}
+	for _, t := range spec.Master.ExitTunnels {
+		if t.Drained || t.Endpoint == "" {
+			continue
+		}
+		host, portStr, err := net.SplitHostPort(t.Endpoint)
+		if err != nil {
+			continue
+		}
+		addr, aerr := netip.ParseAddr(host)
+		if aerr != nil {
+			continue
+		}
+		port, perr := strconv.Atoi(portStr)
+		if perr != nil || port < 1 || port > 65535 {
+			continue
+		}
+		return addr.String(), port
+	}
+	return "", 0
 }

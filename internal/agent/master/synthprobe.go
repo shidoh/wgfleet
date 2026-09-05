@@ -3,6 +3,7 @@ package master
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -16,12 +17,61 @@ type ClientPathProbe struct {
 	Name string // what was measured, e.g. "tcp/443"
 	OK   bool
 	Why  string // empty when OK
+	// Decisive says whether this probe is allowed to revert a migration on its own.
+	//
+	// The distinction is not bureaucracy. The automatic revert is driven by this
+	// set, and a probe that depends on somebody else's uptime — an exit that may be
+	// draining, a public endpoint that may be having a bad hour — would spend one of
+	// three attempts every time a third party sneezed, and a node that spends all
+	// three is terminal until a human looks. Decisive probes are the ones whose
+	// failure can only mean THIS node broke.
+	Decisive bool
 }
 
 // clientPathTimeout bounds one probe. Short: this runs inside a reconcile pass
 // whose whole budget is 30 seconds, and a path that needs longer than this to
 // answer is already failing from a user's point of view.
 const clientPathTimeout = 5 * time.Second
+
+// DNSProbeFlag is the agent flag that turns the binary into a one-shot UDP DNS
+// probe. Declared here, next to the code that builds the command line, so the
+// flag and its only caller cannot drift apart.
+const DNSProbeFlag = "-dns-probe"
+
+// defaultResolvers are the external resolvers the UDP probe may use, tried in
+// order. Two operators rather than one: a probe that reverts a migration because
+// a single provider had an outage is a probe that manufactures outages.
+var defaultResolvers = []string{"1.1.1.1:53", "8.8.8.8:53"}
+
+// defaultProbeURLs are the TCP targets, likewise two.
+var defaultProbeURLs = []string{
+	"https://cp.cloudflare.com/generate_204",
+	"https://www.gstatic.com/generate_204",
+}
+
+// ClientPathTargets is what the prober aims at. Every field is optional except
+// the gateway; a missing target means one fewer probe, never a failing one.
+type ClientPathTargets struct {
+	// Gateway is the master's own address in the client pool — what a client sends
+	// its DNS to, and what proves the tunnel itself.
+	Gateway string
+	// MgmtAddr is the master's management-overlay address. It is on this host, so
+	// it always answers when the path to it is right — which makes it the one
+	// destination that can tell "traffic that must BYPASS the interception still
+	// does" without depending on anything outside this node.
+	MgmtAddr string
+	// Direct are destinations the client is supposed to reach without going through
+	// an exit: exit public IPs, corporate networks. They are probed because moving
+	// interception into a namespace takes the whole client interface with it, and
+	// the destination-based exemptions that keep these direct live somewhere the
+	// move does not automatically carry.
+	Direct []string
+	// SelfExec is this agent's own binary. It is re-executed inside the prober's
+	// namespace to take the UDP probe, because nothing installed on a stock node
+	// can send a DNS query to a NAMED server without reading resolv.conf first —
+	// and reading resolv.conf is precisely what makes the probe miss.
+	SelfExec string
+}
 
 // MeasureClientPath runs the probes that answer the one question no component
 // metric answers: does a packet entering the client interface come back.
@@ -38,65 +88,122 @@ const clientPathTimeout = 5 * time.Second
 // (health.UDPReturnBindable), which asserts a reply socket is possible for that
 // port; between them, "UDP works through the tunnel" and "no port black-holes"
 // cover the failure this exists for.
-func MeasureClientPath(ctx context.Context, gateway string, run netns.Runner) []ClientPathProbe {
+func MeasureClientPath(ctx context.Context, t ClientPathTargets, run netns.Runner) []ClientPathProbe {
 	if run == nil {
 		run = netns.Exec
 	}
-	if gateway == "" {
+	if t.Gateway == "" {
 		// Without the client gateway there is no tunnel-only probe, and the remaining
-		// two cannot be told apart from an upstream failure. Report nothing rather
+		// ones cannot be told apart from an upstream failure. Report nothing rather
 		// than something ambiguous.
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, 4*clientPathTimeout)
+	ctx, cancel := context.WithTimeout(ctx, 8*clientPathTimeout)
 	defer cancel()
 
 	timeout := fmt.Sprint(int(clientPathTimeout.Seconds()))
-	checks := []struct {
-		name string
-		argv []string
-	}{
-		// The gateway first, and it earns its place by being the discriminator. It
-		// proves the tunnel itself — encrypt, cross the client interface, decrypt —
-		// without depending on the resolver, the proxy or an exit. When this passes
-		// and the others fail, the client leg is fine and something beyond it is not;
-		// when this fails, nothing further is worth reading. Working that out by hand
-		// took a stand session, which is a good reason for the metric to say it.
-		{"icmp/gateway", []string{"ping", "-c", "2", "-W", "2", "-q", gateway}},
-		// TCP through the tunnel, through mihomo, to an exit and out. The same URL
-		// the tier prober uses, so a failure here and a failure there are comparable.
-		{"tcp/443", []string{"curl", "-sS", "-o", "/dev/null", "--max-time", timeout,
-			"https://cp.cloudflare.com/generate_204"}},
-		// UDP through the tunnel. DNS on 53 rather than QUIC on 443 for the reason in
-		// the doc comment: something has to answer, and a resolver does.
-		{"udp/53", []string{"timeout", timeout, "getent", "ahostsv4", "cloudflare.com"}},
+	var out []ClientPathProbe
+	// try runs the attempts in order and passes on the first that works. Several
+	// targets per probe, one verdict: what is being measured is this node's path,
+	// and a single unreachable third party is not evidence about it.
+	try := func(name string, decisive bool, attempts [][]string) {
+		var last string
+		for _, argv := range attempts {
+			full := append([]string{"netns", "exec", synthNetns}, argv...)
+			_, err := run(ctx, "ip", full...)
+			if err == nil {
+				out = append(out, ClientPathProbe{Name: name, OK: true, Decisive: decisive})
+				return
+			}
+			last = trimProbeError(err)
+		}
+		out = append(out, ClientPathProbe{Name: name, Why: last, Decisive: decisive})
 	}
 
-	out := make([]ClientPathProbe, 0, len(checks))
-	for _, c := range checks {
-		argv := append([]string{"netns", "exec", synthNetns}, c.argv...)
-		if _, err := run(ctx, "ip", argv...); err != nil {
-			out = append(out, ClientPathProbe{Name: c.name, Why: trimProbeError(err)})
-			continue
+	// The gateway first, and it earns its place by being the discriminator. It
+	// proves the tunnel itself — encrypt, cross the client interface, decrypt —
+	// without depending on the resolver, the proxy or an exit. When this passes
+	// and the others fail, the client leg is fine and something beyond it is not;
+	// when this fails, nothing further is worth reading. Working that out by hand
+	// took a stand session, which is a good reason for the metric to say it.
+	try("icmp/gateway", true, [][]string{{"ping", "-c", "2", "-W", "2", "-q", t.Gateway}})
+
+	// TCP through the tunnel, through mihomo, to an exit and out. Two targets:
+	// the same URL the tier prober uses, and a second operator's, so one provider's
+	// bad hour cannot spend an attempt of the migration's three.
+	var tcpAttempts [][]string
+	for _, u := range defaultProbeURLs {
+		tcpAttempts = append(tcpAttempts, []string{"curl", "-sS", "-o", "/dev/null", "--max-time", timeout, u})
+	}
+	try("tcp/443", true, tcpAttempts)
+
+	// UDP through the tunnel, through mihomo's TPROXY path, and BACK. This is the
+	// probe the August outage would have failed, and the reason it is not `getent`:
+	// getent reads resolv.conf, where the fleet's resolver is the client gateway,
+	// so the query never left the tunnel and the probe was green throughout.
+	if t.SelfExec != "" {
+		var dnsAttempts [][]string
+		for _, s := range defaultResolvers {
+			dnsAttempts = append(dnsAttempts, []string{"timeout", timeout, t.SelfExec, DNSProbeFlag, s})
 		}
-		out = append(out, ClientPathProbe{Name: c.name, OK: true})
+		try("udp/53", true, dnsAttempts)
+	}
+
+	// Destinations that must NOT be swallowed by the interception. The management
+	// address is this host's own, so it answers whenever the path to it is right —
+	// which makes it the one exemption we can assert without depending on anybody
+	// else being up, and therefore the one that is allowed to revert a move.
+	if ip, err := netip.ParseAddr(strings.TrimSpace(t.MgmtAddr)); err == nil {
+		try("icmp/mgmt", true, [][]string{{"ping", "-c", "2", "-W", "2", "-q", ip.String()}})
+	}
+	// The rest of the direct set is probed for the record, not for the decision: an
+	// exit can be drained, rebooting or simply refusing ICMP, and none of that is a
+	// reason to move every client back.
+	if targets := hostAddrs(t.Direct); len(targets) > 0 {
+		var attempts [][]string
+		for _, ip := range targets {
+			attempts = append(attempts, []string{"ping", "-c", "2", "-W", "2", "-q", ip})
+		}
+		try("icmp/direct", false, attempts)
 	}
 	return out
 }
 
-// ClientPathOK reports whether every probe passed. An empty set is NOT ok: it
-// means nothing was measured, and reporting that as healthy is how a prober
-// becomes a source of false confidence.
-func ClientPathOK(probes []ClientPathProbe) bool {
-	if len(probes) == 0 {
-		return false
+// hostAddrs keeps the single-host entries of a CIDR list — the exit public IPs
+// and pinned hosts that are pingable as written. A network prefix has no address
+// worth probing, so it is skipped rather than guessed at.
+func hostAddrs(cidrs []string) []string {
+	var out []string
+	for _, c := range cidrs {
+		c = strings.TrimSpace(c)
+		p, err := netip.ParsePrefix(c)
+		if err != nil || !p.Addr().Is4() || p.Bits() != 32 {
+			continue
+		}
+		out = append(out, p.Addr().String())
+		if len(out) == 2 {
+			break // two is a sample; the whole direct list is not an uptime board
+		}
 	}
+	return out
+}
+
+// ClientPathOK reports whether the path is healthy enough to keep a migration in
+// place. Only DECISIVE probes count, and an empty set is NOT ok: it means nothing
+// was measured, and reporting that as healthy is how a prober becomes a source of
+// false confidence.
+func ClientPathOK(probes []ClientPathProbe) bool {
+	decisive := 0
 	for _, p := range probes {
+		if !p.Decisive {
+			continue
+		}
+		decisive++
 		if !p.OK {
 			return false
 		}
 	}
-	return true
+	return decisive > 0
 }
 
 // trimProbeError keeps a probe failure readable in a log line.
