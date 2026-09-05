@@ -99,7 +99,6 @@ func (p netnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 		PeerIface:  domain.NetnsPeerIface,
 		CIDR:       spec.Master.NetnsLinkCIDR(),
 		ClientCIDR: spec.WGServer.AddressPool,
-		MTU:        netnsLinkMTU(spec),
 	}
 
 	steps, err := netns.Plan(ctx, in, run)
@@ -626,26 +625,31 @@ func NetnsHostIP(spec domain.NodeSpec) string {
 	return ip
 }
 
-// netnsLinkMTU is what both ends of the veth are set to.
+// netnsLinkMTU is what both ends of the veth are set to: NOTHING.
 //
-// The client interface's own MTU, because that is the size of the packets this
-// link will carry: a client datagram arrives on wg0 already fragmented to fit the
-// tunnel, is routed across the veth, and leaves again over another tunnel. A veth
-// left at the default 1500 claims it can carry more than either neighbour can,
-// and the leg it now carries changed character with the move — mihomo-to-exit
-// used to be a locally originated connection, where the kernel knows the path
-// MTU, and is a FORWARDED one afterwards, where correctness rests on ICMP
-// fragmentation-needed coming back. an earlier finding and #18 are both about paths where
-// that did not hold.
+// The first version set it to the client interface's MTU, and the reasoning was
+// backwards in a way that only production showed. What crosses this veth is not
+// one kind of packet but two, and they are sized by opposite ends:
 //
-// 0 when the client interface has no MTU of its own: better to leave the kernel
-// default than to invent a number.
-func netnsLinkMTU(spec domain.NodeSpec) int {
-	if spec.Master == nil || spec.Master.ClientWG == nil {
-		return 0
-	}
-	return spec.Master.ClientWG.MTU
-}
+//   - a CLIENT's packet, already cut down to fit the client tunnel, arriving to be
+//     intercepted. Small. Never the constraint.
+//   - mihomo's OWN tunnel traffic to an exit — a WireGuard datagram sized for the
+//     host's uplink, with its payload already fitted to the tunnel MTU and 60-80
+//     bytes of encapsulation added on top. That is the biggest thing on the link,
+//     and it is generated INSIDE the namespace, so it must leave through the veth
+//     whole.
+//
+// Sizing the veth to the inner leg therefore strangles the outer one. Measured on
+// the live master 2026-09-05: veth at 1360 against a 1500 uplink, ICMP with DF
+// passed at 1332 bytes and failed at 1400; WireGuard handshakes (148 bytes) got
+// through so every tunnel looked UP, while every health check through them failed.
+// Four exits' AmneziaWG proxies went dead within two minutes and the tier selector
+// failed over to the reserve — which survived only because it is TCP, where MSS
+// clamping does the fitting that UDP has nobody to do.
+//
+// The kernel default (1500) is right, and anything derived from a client tunnel is
+// wrong. A host whose uplink is smaller fragments at the uplink exactly as it did
+// before the move — the veth is not where that decision belongs.
 
 // mihomoIsInTheNamespace compares the network namespace mihomo is in with the
 // holder's. Read from /proc rather than from Docker's own view: `docker inspect`

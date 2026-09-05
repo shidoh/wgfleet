@@ -75,11 +75,12 @@ type Input struct {
 	// there, the question has no answer worth acting on.
 	ProbeResolver string
 	ProbeBin      string
-	// MTU is set on BOTH ends of the veth. A veth defaults to 1500, and the leg it
-	// now carries — mihomo to an exit — used to be a locally originated connection
-	// and is a FORWARDED one after the move, so it lives or dies on ICMP
-	// fragmentation-needed getting back. an earlier finding and #18 are both about paths
-	// where that assumption did not hold. 0 ⇒ leave the kernel default.
+	// MTU is set on BOTH ends of the veth when non-zero. Production says leave it
+	// at zero: mihomo's tunnel traffic to the exits is generated INSIDE the
+	// namespace and must leave through this veth whole, so a veth sized to the
+	// CLIENT tunnel silently drops every full-size tunnel packet while letting the
+	// small handshakes through — tunnels that look up and carry nothing (see
+	// netnsLinkMTU in internal/agent/master).
 	MTU int
 }
 

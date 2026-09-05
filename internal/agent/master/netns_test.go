@@ -660,3 +660,26 @@ func TestExemptionFailuresDoNotAbortThePass(t *testing.T) {
 		t.Error("the exemption was never planned at all")
 	}
 }
+
+// The veth must never be narrowed to a client tunnel's size.
+//
+// What crosses it is two kinds of packet sized by opposite ends: a client's,
+// already cut to fit the client tunnel, and mihomo's OWN WireGuard traffic to an
+// exit — generated inside the namespace, sized for the host uplink, plus
+// encapsulation. Sizing the link to the first strangles the second.
+//
+// Measured on the live master 2026-09-05: veth 1360 against a 1500 uplink, ICMP
+// with DF passed at 1332 and failed at 1400. Handshakes are 148 bytes, so every
+// tunnel reported UP while every health check through it failed; four exits'
+// AmneziaWG proxies died in two minutes and the tier failed over to the reserve.
+func TestVethIsNotNarrowedToTheClientTunnel(t *testing.T) {
+	spec := netnsSpec()
+	spec.Master.ClientWG = &domain.ClientWGSpec{MTU: 1360}
+	dump := attachedPlan(t, spec, nil)
+	if strings.Contains(dump, "mtu 1360") {
+		t.Errorf("the veth was sized to the client tunnel; mihomo's own tunnel packets do not fit:\n%s", dump)
+	}
+	if strings.Contains(dump, "link set mih-host mtu") || strings.Contains(dump, "link set mih0 mtu") {
+		t.Errorf("the veth MTU is being set at all; the kernel default is the correct answer:\n%s", dump)
+	}
+}
