@@ -149,22 +149,30 @@ func TestAttachedNamespaceRefusesWithoutAClientInterface(t *testing.T) {
 	}
 }
 
-// An unset knob is the same as "off" for now: the fleet that swaps a binary must
-// keep the path it had until the migration has been exercised end to end.
-func TestNetnsPlannerIsInertWhenTheKnobIsUnset(t *testing.T) {
+// An unset knob builds the link, exactly as "auto" does: the fix ships on, and an
+// operator who wants the old path sets "off".
+func TestNetnsPlannerBuildsTheLinkWhenTheKnobIsUnset(t *testing.T) {
 	spec := netnsSpec()
 	spec.Master.ClientViaNetns = ""
-	acts, err := netnsPlanner{run: func(context.Context, string, ...string) (string, error) {
-		t.Fatal("an unconfigured master probed the box for a namespace")
-		return "", nil
-	}}.Plan(context.Background(), spec)
-	if err != nil {
-		t.Fatal(err)
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		if strings.Contains(line, "docker inspect") {
+			return "777\n", nil
+		}
+		return "", errors.New("absent: " + line)
 	}
+	acts, err := netnsPlanner{run: run}.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	changing := 0
 	for _, a := range acts {
 		if a.Changes() {
-			t.Errorf("an unconfigured master would change %q", a.Summary)
+			changing++
 		}
+	}
+	if changing == 0 {
+		t.Error("an unconfigured master built nothing; the migration ships on by default")
 	}
 }
 

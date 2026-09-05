@@ -5,19 +5,31 @@ import (
 	"testing"
 )
 
-// An unset knob must not move anything. The default is a rollout decision, not a
-// design one: the automatic revert it would rely on has not been exercised end to
-// end, and until it has, a fleet that swaps the binary must keep the path it had.
-func TestNetnsWantedDefaultsToTheHostPath(t *testing.T) {
+// An unset knob moves. The failure this migration removes is not something an
+// operator can be expected to know they have — every UDP port the host holds is a
+// silent black hole for client traffic to that port — so shipping it off by
+// default ships the outage by default.
+//
+// What makes that defensible is the sequence the agent performs on its own:
+// prove the namespace works, measure the client path after, revert if it breaks.
+func TestNetnsWantedDefaultsToMoving(t *testing.T) {
 	wanted, canary, err := MasterSpec{}.NetnsWanted()
 	if err != nil {
 		t.Fatalf("an unset knob is not an error: %v", err)
 	}
-	if wanted {
-		t.Error("an unset client_via_netns moved client interception on its own")
+	if !wanted {
+		t.Error("an unset client_via_netns left the master on the host path; the fix ships off by default")
 	}
 	if canary != "" {
-		t.Errorf("an unset knob produced a canary %q", canary)
+		t.Errorf("an unset knob produced a canary %q; it must move every client", canary)
+	}
+}
+
+// And "off" is still the whole way out: an operator who wants the old path says so.
+func TestNetnsWantedOffIsTheWayBack(t *testing.T) {
+	wanted, _, err := MasterSpec{ClientViaNetns: "off"}.NetnsWanted()
+	if err != nil || wanted {
+		t.Fatalf("off did not decline the move (wanted=%v, err=%v)", wanted, err)
 	}
 }
 

@@ -236,14 +236,23 @@ func (m MasterSpec) NetnsLinkCIDR() string {
 
 // NetnsDefaultMode is what an unset master.client_via_netns means.
 //
-// "off" for now, and the reason is a date rather than a principle. The design
-// argument for defaulting ON is real — a switch nobody flips is a fix nobody gets
-// — and the safety it relies on is real too: the agent proves the namespace works
-// before moving anything and reverts itself if the client path breaks after. What
-// was NOT real, at the time this constant was written, was any of that having been
-// exercised end to end on a stand. Flipping this to "auto" is a one-line change
-// and it is the last step of the rollout, not the first.
-const NetnsDefaultMode = "off"
+// "auto": a switch nobody flips is a fix nobody gets. The failure this migration
+// removes — every UDP port the host holds being a silent black hole for client
+// traffic to that port — is not something an operator can be expected to know
+// they have, so shipping it off by default ships the outage by default.
+//
+// What makes that defensible is not optimism but a sequence the agent performs on
+// its own: it proves the namespace can resolve and reach an exit BEFORE moving
+// anything, measures the client path from its own synthetic client after, and
+// reverts itself if that path breaks. All of it was exercised end to end on a
+// two-VM stand on 2026-09-05, with the client interface on the production port —
+// canary, full move, induced failure, automatic revert, reboot in the moved state.
+// The rehearsal found eight blockers that review had not; this constant was "off"
+// until they were closed.
+//
+// An operator who wants the old path sets "off"; one who wants to try it on a
+// single device sets that device's CIDR.
+const NetnsDefaultMode = "auto"
 
 // NetnsWanted reports whether client traffic should be intercepted inside
 // mihomo's namespace, and the client sources it applies to ("" ⇒ all of them).
