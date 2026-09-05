@@ -1,24 +1,30 @@
 #!/usr/bin/env bash
-# Announce a wgfleet release in a Telegram channel.
+# Announce a wgfleet release in a Telegram channel — as ONE message.
 #
 #   TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... \
 #     .github/telegram-notify.sh <tag> <release-notes.md> <dist-dir>
 #
-# Sends the build archives (tar.gz + SHA256SUMS) as one document album, captioned
-# with an HTML header plus the release highlights (the annotated tag's message,
-# put there by release-notes.sh), and then posts the changelog itself as
-# follow-up messages. Without highlights the caption is just the header — the
-# name and the version — never an empty bubble.
+# Sends one document album: the build archives, SHA256SUMS, and the release notes
+# as CHANGELOG-<tag>.md. The caption — on the FIRST item, which is where clients
+# render an album caption — carries the version, the highlights, and a count of
+# what is in the attached changelog.
 #
-# Why two steps: a Telegram caption is capped at 1024 characters, a message at
-# 4096. A whole changelog does not fit in a caption, and anything that does not
-# fit used to be dropped — the channel saw the first ten commits of the Features
-# section and nothing else. The highlights (short by construction) ride along
-# with the files; the changelog is chunked across as many messages as it needs,
-# split on line boundaries so a **bold** or `code` marker is never cut in half.
+# The layout is dictated by three hard limits. A caption is 1024 characters, a
+# message 4096, and a full changelog is neither: v0.2.2's was 5.9 KB. That leaves
+# exactly three options — cut it, hide it, or attach it. This attaches it.
 #
-# TELEGRAM_DRY_RUN=1 prints every message that would be sent and calls no API.
-# No repository links — the repo is private.
+# The two that were tried first are worth naming, because both look reasonable
+# until you see them in a channel:
+#   * splitting the changelog across messages produced a second bubble opening
+#     mid-list, which reads as debris;
+#   * <blockquote expandable> collapses to THREE LINES, so a quote that began
+#     with "Changelog" + a blank line + "Features" showed the reader one word.
+# Telegram has no list markup either, hence "•" — bullets are a convention here,
+# not a feature.
+#
+# TELEGRAM_DRY_RUN=1 prints the message that would be sent and calls no API.
+# No repository links — the repo is private, so a "full changelog" link would be
+# useless to every subscriber; the file is the link.
 #
 # Requires: curl, jq. Both are preinstalled on ubuntu-latest runners.
 
@@ -35,53 +41,34 @@ if [ -z "$DRY_RUN" ]; then
 fi
 
 API="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN:-dry-run}"
-MAX_BYTES=$((50 * 1024 * 1024))   # Telegram bot sendDocument upload ceiling
-CAPTION_BUDGET=900                # caption ceiling is 1024; leave headroom
-MESSAGE_BUDGET=3500               # message ceiling is 4096; leave headroom
+MAX_BYTES=$((50 * 1024 * 1024))   # Telegram bot upload ceiling, per file
+CAPTION_BUDGET=950                # the ceiling is 1024; leave room for the header
 
 # --- Markdown -> Telegram HTML ------------------------------------------------
 # escape_html: neutralize &, <, > so they don't collide with our own HTML tags.
 escape_html() { sed -E -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
 
-# to_html: escape first, then map markers to tags so the tags we add are never
-# re-escaped. Section headers (## / ###) become bold lines. Runs of blank lines
-# collapse to one, and a bullet wrapped across source lines is rejoined so it
-# reads as a single line in Telegram.
+# to_html renders the highlights the way a channel post reads best: one bullet per
+# line (Telegram wraps for us, so a hard-wrapped source line must be rejoined),
+# a blank line BETWEEN bullets so they do not run together into a wall of text,
+# "•" instead of "-", and headings as bold lines.
 to_html() {
   awk '
-    /^[[:space:]]*$/ { if (buf != "") { print buf; buf = "" } blank++; next }
-    /^[-*] / || /^#/ {
-      if (buf != "") print buf
-      if (blank && NR > 1) print ""
-      blank = 0; buf = $0; next
-    }
-    {
-      sub(/^[[:space:]]+/, "")
-      if (buf != "") buf = buf " " $0; else buf = $0
-      blank = 0
-    }
-    END { if (buf != "") print buf }
+    function flush() { if (buf != "") { if (out++) print ""; print buf; buf = "" } }
+    /^[[:space:]]*$/ { flush(); next }
+    /^[-*][[:space:]]/ { flush(); sub(/^[-*][[:space:]]+/, "• "); buf = $0; next }
+    /^#/ { flush(); buf = $0; next }
+    { sub(/^[[:space:]]+/, ""); buf = (buf == "" ? $0 : buf " " $0) }
+    END { flush() }
   ' | escape_html | sed -E \
     -e 's|^#+[[:space:]]*(.*)$|<b>\1</b>|' \
     -e 's|\*\*([^*]+)\*\*|<b>\1</b>|g' \
     -e 's|`([^`]+)`|<code>\1</code>|g'
 }
 
-# --- Split the notes: highlights ride with the files, changelog follows --------
-NOTES="$(grep -vE '^\*\*Full Changelog\*\*:' "$NOTES_FILE")"
-LEAD="$(awk '/^## Changelog/ { exit } { print }' <<<"$NOTES")"
-REST="$(awk '/^## Changelog/ { f = 1 } f' <<<"$NOTES")"
-# Notes without a "## Changelog" heading: everything is changelog, no highlights.
-if [ -z "$(tr -d '[:space:]' <<<"$REST")" ]; then
-  LEAD=""
-  REST="$NOTES"
-fi
-
-LEAD_HTML="$(to_html <<<"$LEAD")"
-REST_HTML="$(to_html <<<"$REST")"
-
-# fit: keep whole lines while they fit the budget; mark a cut with an ellipsis.
-# Only the caption is ever cut — the changelog is chunked, never truncated.
+# fit keeps whole lines while they fit the budget, marking a cut with an ellipsis.
+# Only the caption is ever cut, and never at the cost of information: the full
+# notes ride along as a file.
 fit() {
   local budget="$1" out="" line
   while IFS= read -r line; do
@@ -94,99 +81,109 @@ fit() {
   printf '%s' "$out"
 }
 
+# --- Split the notes: highlights go in the caption, the rest is the file -------
+NOTES="$(grep -vE '^\*\*Full Changelog\*\*:' "$NOTES_FILE")"
+LEAD="$(awk '/^## Changelog/ { exit } { print }' <<<"$NOTES")"
+REST="$(awk '/^## Changelog/ { f = 1 } f' <<<"$NOTES")"
+# Notes without a "## Changelog" heading: it is all changelog, and there are no
+# highlights to lift into the caption.
+if [ -z "$(tr -d '[:space:]' <<<"$REST")" ]; then
+  LEAD=""
+  REST="$NOTES"
+fi
+# Drop the "Highlights" heading itself: the caption is short enough that a section
+# title only takes space from the thing it titles.
+LEAD_HTML="$(sed -E '/^##[[:space:]]*Highlights[[:space:]]*$/d' <<<"$LEAD" | to_html)"
+
+# summary_line counts what the attached changelog holds, per section, so the
+# reader can tell at a glance whether opening it is worth it.
+summary_line() {
+  awk '
+    /^###[[:space:]]/ {
+      name = $0
+      sub(/^###[[:space:]]*/, "", name)
+      order[++n] = name
+      next
+    }
+    /^-[[:space:]]/ { count[order[n]]++; total++ }
+    END {
+      # Section titles read as headings, not as counted nouns: "4 documentation"
+      # is not a sentence. Anything unmapped falls back to its lowercased title.
+      label["Breaking Changes"] = "breaking"; label["Features"] = "features"
+      label["Bug Fixes"] = "fixes";           label["Performance"] = "perf"
+      label["Refactoring"] = "refactors";     label["Documentation"] = "docs"
+      label["Build System"] = "build";        label["Other Changes"] = "other"
+
+      if (total == 0) exit
+      printf "%d change%s: ", total, (total == 1 ? "" : "s")
+      for (i = 1; i <= n; i++) {
+        name = order[i]
+        if (count[name] == 0) continue
+        printf "%s%d %s", (shown++ ? ", " : ""), count[name],
+          (name in label ? label[name] : tolower(name))
+      }
+      printf "\n"
+    }
+  ' <<<"$REST"
+}
+
 TAG_HTML="$(printf '%s' "$TAG" | escape_html)"
-# Header layout: the app name on its own line, then the release version alone on
-# a dedicated bold line so it reads as the most prominent token. Telegram bot
-# messages have no font-size control, so "bigger" comes from weight + a line to
-# itself + a distinct emoji, not an actual larger font.
-CAPTION="$(printf '🚀 <b>wgfleet</b>\n\n🏷 <b>%s</b>' "$TAG_HTML")"
+NOTES_NAME="CHANGELOG-${TAG}.md"
+
+# The header is one line: the product and the version, which is what a reader
+# scrolling a channel needs to identify the post. Telegram bot messages have no
+# font-size control, so prominence comes from weight, position and an emoji.
+CAPTION="$(printf '🚀 <b>wgfleet %s</b>' "$TAG_HTML")"
 if [ -n "$(tr -d '[:space:]' <<<"$LEAD_HTML")" ]; then
   CAPTION+="$(printf '\n\n%s' "$(fit "$CAPTION_BUDGET" <<<"$LEAD_HTML")")"
 fi
+SUMMARY="$(summary_line)"
+if [ -n "$SUMMARY" ]; then
+  CAPTION+="$(printf '\n\n%s — full changelog in <code>%s</code>' \
+    "$(printf '%s' "$SUMMARY" | escape_html)" "$(printf '%s' "$NOTES_NAME" | escape_html)")"
+fi
 
-# --- Senders ------------------------------------------------------------------
+# --- Collect what the album carries -------------------------------------------
+# The notes go in as a file of their own, named for the tag so it is still
+# identifiable once it is sitting in somebody's downloads.
+NOTES_DOC="$(mktemp -d)/${NOTES_NAME}"
+cp "$NOTES_FILE" "$NOTES_DOC"
+
+FILES=()
+for f in "$DIST_DIR"/*.tar.gz "$DIST_DIR"/SHA256SUMS; do
+  [ -f "$f" ] || continue
+  if [ "$(wc -c < "$f")" -gt "$MAX_BYTES" ]; then
+    echo "skipping $(basename "$f"): over the 50 MB Telegram limit"
+    continue
+  fi
+  FILES+=("$f")
+done
+FILES+=("$NOTES_DOC")
+
 send_message() {
-  local text="$1"
   if [ -n "$DRY_RUN" ]; then
-    printf '\n----- sendMessage (%d chars) -----\n%s\n' "${#text}" "$text"
+    printf '\n----- sendMessage (%d chars) -----\n%s\n' "${#1}" "$1"
     return 0
   fi
   curl -fsS -X POST "$API/sendMessage" \
     --form-string "chat_id=${TELEGRAM_CHAT_ID}" \
-    --form-string "text=${text}" \
+    --form-string "text=$1" \
     --form-string "parse_mode=HTML" \
     --form-string "disable_web_page_preview=true" \
     >/dev/null
 }
 
-# send_changelog: the whole changelog, in as many messages as it takes. Each
-# chunk is its own expandable blockquote so a long list stays collapsed.
-send_changelog() {
-  [ -n "$(tr -d '[:space:]' <<<"$REST_HTML")" ] || return 0
-  local chunk="" line part=0
-  flush_chunk() {
-    [ -n "$(tr -d '[:space:]' <<<"$chunk")" ] || return 0
-    part=$((part + 1))
-    local head=""
-    [ "$part" -gt 1 ] && head=$'<b>Changelog (cont.)</b>\n'
-    send_message "$(printf '%s<blockquote expandable>%s</blockquote>' "$head" "$chunk")"
-    chunk=""
-  }
-  while IFS= read -r line; do
-    if [ $(( ${#chunk} + ${#line} + 1 )) -gt "$MESSAGE_BUDGET" ]; then
-      flush_chunk
-    fi
-    chunk+="${line}"$'\n'
-  done <<<"$REST_HTML"
-  flush_chunk
-}
-
-send_caption_only() {
-  echo "Posting header-only message (reason: $1)"
-  send_message "$CAPTION"
-}
-
-# --- Collect build archives ---------------------------------------------------
-FILES=()
-for f in "$DIST_DIR"/*.tar.gz "$DIST_DIR"/SHA256SUMS; do
-  [ -f "$f" ] && FILES+=("$f")
-done
-
-# Fall back to a message without attachments when there is nothing (small
-# enough) to attach: no files, or any file over the 50 MB bot-upload limit.
-oversized=""
-for f in "${FILES[@]:-}"; do
-  [ -n "$f" ] || continue
-  if [ "$(wc -c < "$f")" -gt "$MAX_BYTES" ]; then
-    oversized="$(basename "$f")"
-    break
-  fi
-done
-
-if [ "${#FILES[@]}" -eq 0 ]; then
-  send_caption_only "no archives found in ${DIST_DIR}"
-  send_changelog
-  echo "Telegram announcement complete."
-  exit 0
-fi
-if [ -n "$oversized" ]; then
-  send_caption_only "${oversized} exceeds the 50 MB Telegram limit"
-  send_changelog
-  echo "Telegram announcement complete."
-  exit 0
-fi
-
-# --- Archives + captioned header, then the changelog --------------------------
-if [ -n "$(tr -d '[:space:]' <<<"$LEAD_HTML")" ]; then
-  echo "Sending ${#FILES[@]} archive(s) with the highlights, then the changelog"
-else
-  echo "Sending ${#FILES[@]} archive(s) (no highlights), then the changelog"
-fi
-
 if [ -n "$DRY_RUN" ]; then
-  printf '\n----- album caption (%d chars, %d file(s)) -----\n%s\n' \
-    "${#CAPTION}" "${#FILES[@]}" "$CAPTION"
-elif [ "${#FILES[@]}" -eq 1 ]; then
+  printf '\n----- album: %d file(s), caption %d chars -----\n' "${#FILES[@]}" "${#CAPTION}"
+  for f in "${FILES[@]}"; do printf '  %s\n' "$(basename "$f")"; done
+  printf -- '-----\n%s\n' "$CAPTION"
+  echo "Telegram announcement complete (dry run)."
+  exit 0
+fi
+
+echo "Sending ${#FILES[@]} file(s) as one album with the release caption"
+
+if [ "${#FILES[@]}" -eq 1 ]; then
   # sendMediaGroup requires 2..10 items; a lone file goes via sendDocument.
   # --form-string keeps curl from reading a leading "@" (as in "@channel") or
   # "<" value as a local file (curl error 26); only real files use -F "@path".
@@ -197,15 +194,15 @@ elif [ "${#FILES[@]}" -eq 1 ]; then
     -F "document=@${FILES[0]}" \
     >/dev/null
 else
-  # The caption rides on the LAST album item: in a document album each file is
-  # its own bubble, so a caption on the first item renders text sandwiched
-  # between the files. Anchoring it to the last item puts it below all files.
-  # jq builds the media array so the multi-line HTML caption is JSON-escaped.
+  # The caption goes on the FIRST item: that is the one clients render as the
+  # album's caption. It rode on the last item once, to put the text below the
+  # files; what that actually produced was a wall of text wedged under three
+  # download rows. There is no show_caption_above_media for documents.
   media_json="$(jq -cn --arg cap "$CAPTION" '
     [ $ARGS.positional | to_entries[]
       | { type: "document", media: ("attach://file" + (.key | tostring)) } ]
-    | .[-1].caption = $cap
-    | .[-1].parse_mode = "HTML"
+    | .[0].caption = $cap
+    | .[0].parse_mode = "HTML"
   ' --args "${FILES[@]}")"
 
   curl_args=(--form-string "chat_id=${TELEGRAM_CHAT_ID}" --form-string "media=${media_json}")
@@ -216,5 +213,4 @@ else
   curl -fsS -X POST "$API/sendMediaGroup" "${curl_args[@]}" >/dev/null
 fi
 
-send_changelog
 echo "Telegram announcement complete."
