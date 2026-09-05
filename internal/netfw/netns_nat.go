@@ -2,6 +2,7 @@ package netfw
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
 	"strings"
 )
@@ -77,6 +78,16 @@ type NetnsNATInput struct {
 // holds 0.0.0.0:443 without SO_REUSEADDR, so every reply socket mihomo opened for
 // a client's QUIC flow failed with EADDRINUSE and the datagram was dropped in
 // silence for eight days. In here nothing else binds anything.
+// portOf returns the port half of a host:port, so a rule can name it without the
+// address that would make it a different rule.
+func portOf(addr string) (string, error) {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", err
+	}
+	return port, nil
+}
+
 func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	if in.PeerIface == "" || in.RedirAddr == "" || in.TProxyAddr == "" {
 		return "", fmt.Errorf("netfw netns NAT: peer interface, redir and tproxy addresses are required")
@@ -186,6 +197,22 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	// end to end on an exit 2026-07-27, fixed there with this rule, and the reason
 	// it belongs in every namespace that forwards client traffic.
 	b.WriteString("\t\tct state invalid drop\n")
+	// A client may reach exactly one thing on this namespace's own address: the
+	// port its intercepted TCP was redirected to. Everything else mihomo binds here
+	// is for the HOST — the SOCKS bridge xray dials, the control API the agent
+	// steers mihomo through — and the host is not in the client pool, so it is not
+	// affected by either rule below.
+	//
+	// Without this the rule at pref 400 hands every client a route to this address
+	// and the chain's accept policy does the rest: from a client namespace,
+	// `curl -x socks5h://<ns>:7893` proxies, with no authentication, and the API
+	// answers on 9090 (a secret is all that stands there). The clients are the party
+	// this whole interception exists to serve; they are also the least trusted one
+	// on the box.
+	if redirPort, perr := portOf(in.RedirAddr); perr == nil && in.SelfAddr != "" {
+		fmt.Fprintf(&b, "\t\t%s ip daddr %s tcp dport != %s counter drop\n", scope, in.SelfAddr, redirPort)
+		fmt.Fprintf(&b, "\t\t%s ip daddr %s meta l4proto != tcp counter drop\n", scope, in.SelfAddr)
+	}
 	b.WriteString("\t}\n\n")
 
 	// Everything that is NOT TCP or UDP. ICMP, GRE, ESP: the prerouting rules above

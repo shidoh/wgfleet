@@ -326,3 +326,40 @@ func TestForwardedClientTrafficLeavesTheNamespaceWithTheNamespacesAddress(t *tes
 		t.Error("mihomo's own traffic must not be masqueraded here: it already leaves with this address")
 	}
 }
+
+// The rule at pref 400 hands every client a route to this namespace, and the
+// input chain's accept policy used to hand them everything mihomo binds on it.
+// Measured from a client-position namespace on the stand: the SOCKS bridge xray
+// dials proxied for anyone, with no authentication, and the control API answered.
+//
+// A client has one legitimate destination here — the port its own intercepted TCP
+// was redirected to. The host, which is what the bridge and the API are for, is
+// not in the client pool and so is untouched by the rules that close this.
+func TestAClientReachesOnlyTheRedirectOnTheNamespaceAddress(t *testing.T) {
+	out, err := RenderNetnsNAT(NetnsNATInput{
+		PeerIface:  "mih0",
+		ClientCIDR: "10.73.0.0/24",
+		RedirAddr:  "100.127.255.2:7895",
+		TProxyAddr: "100.127.255.2:7896",
+		SelfAddr:   "100.127.255.2",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	in, ok := chainBody(out, "chain input {")
+	if !ok {
+		t.Fatalf("the namespace has no input chain:\n%s", out)
+	}
+	for _, want := range []string{
+		"ip saddr 10.73.0.0/24 ip saddr != 10.73.0.1 ip daddr 100.127.255.2 tcp dport != 7895 counter drop",
+		"ip saddr 10.73.0.0/24 ip saddr != 10.73.0.1 ip daddr 100.127.255.2 meta l4proto != tcp counter drop",
+	} {
+		if !strings.Contains(in, want) {
+			t.Errorf("a client can still reach mihomo's own listeners; missing %q:\n%s", want, in)
+		}
+	}
+	// And the host still can: nothing here names its address, which is the point.
+	if strings.Contains(in, "100.127.255.1") {
+		t.Errorf("the host end of the link is named in a client rule:\n%s", in)
+	}
+}

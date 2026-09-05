@@ -788,11 +788,16 @@ func TestMasterInputHasNoTProxyAcceptWhenUnused(t *testing.T) {
 }
 
 // A drop-policy input chain with nothing accepting the veth isolates mihomo's
-// namespace from this host: no fleet resolver, no local services. It also broke
-// the readiness gate itself — `nsenter --net` changes only the network namespace,
-// so `getent` inside still reads the HOST's resolv.conf, sends the query to the
-// gateway, and had it dropped right here.
-func TestInputChainTrustsTheNamespaceVeth(t *testing.T) {
+// namespace from this host: no fleet resolver. It also broke the readiness gate
+// itself — `nsenter --net` changes only the network namespace, so `getent` inside
+// still reads the HOST's resolv.conf, sends the query to the gateway, and had it
+// dropped right here.
+//
+// What it must NOT do is trust the interface wholesale. The rule at pref 400 routes
+// client traffic into that namespace, and whatever it forwards back arrives here on
+// this interface: a bare accept offers every client a path to sshd, to the
+// controller's API and web panel, and to ztnet.
+func TestInputChainOpensTheResolverToTheNamespaceAndNothingElse(t *testing.T) {
 	out, err := RenderRuleset(RenderInput{
 		Firewall:       domain.FirewallSpec{WGPort: 51820},
 		Role:           domain.RoleMaster,
@@ -801,8 +806,16 @@ func TestInputChainTrustsTheNamespaceVeth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	if !strings.Contains(out, `iifname "mih-host" accept`) {
-		t.Errorf("the namespace cannot reach anything on this host:\n%s", out)
+	for _, want := range []string{
+		`iifname "mih-host" udp dport 53 accept`,
+		`iifname "mih-host" tcp dport 53 accept`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the namespace cannot reach the fleet resolver; missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, `iifname "mih-host" accept`) {
+		t.Errorf("the veth is trusted wholesale, so a client can reach this host's own services through it:\n%s", out)
 	}
 }
 

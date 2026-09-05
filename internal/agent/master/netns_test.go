@@ -850,3 +850,68 @@ func TestTheMoveRuleRefusesAnUnusableTable(t *testing.T) {
 		t.Error("a table with both the route and the floor was refused")
 	}
 }
+
+// A stopped mihomo is usually nothing to worry about: compose starts it, and it
+// joins the holder's namespace on the way up. That is true only while the ID
+// compose stored still belongs to the live holder.
+//
+// `network_mode: container:X` is resolved at CREATE time, so a holder that was
+// removed and recreated leaves mihomo pointing at an ID that no longer exists.
+// `docker compose up -d` then STARTS the existing container instead of recreating
+// it, the start fails with "cannot join network of a non running container", and
+// it fails that way forever — the only command that fixes it is the
+// --force-recreate this gate decides on.
+func TestAStoppedMihomoPointingAtADeadHolderIsRecreated(t *testing.T) {
+	const liveHolder = "9fb7f48a1528fbabd3a3a614c61686c80515a8bbbe437060a1ca58ba005077f7"
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.Contains(line, "{{.State.Pid}} mihomo"):
+			return "0\n", nil // stopped
+		case strings.Contains(line, "{{.Id}} wgfleet-netns"):
+			return liveHolder + "\n", nil
+		case strings.Contains(line, "{{.HostConfig.NetworkMode}} mihomo"):
+			return "container:0000000000000000000000000000000000000000000000000000000000000000\n", nil
+		}
+		return "", errors.New("absent: " + line)
+	}
+	p := netnsPlanner{run: run, composePath: "/etc/wgfleet/docker-compose.yml"}
+	if p.mihomoIsInTheNamespace(context.Background(), "/proc/4242/ns/net", run) {
+		t.Error("a mihomo bound to a holder that no longer exists was reported as fine, " +
+			"so the only command that could fix it is never rendered")
+	}
+}
+
+// And a stopped mihomo that still names the live holder is left alone: recreating
+// it costs every client connection it holds.
+func TestAStoppedMihomoPointingAtTheLiveHolderIsLeftAlone(t *testing.T) {
+	const liveHolder = "9fb7f48a1528fbabd3a3a614c61686c80515a8bbbe437060a1ca58ba005077f7"
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.Contains(line, "{{.State.Pid}} mihomo"):
+			return "0\n", nil
+		case strings.Contains(line, "{{.Id}} wgfleet-netns"):
+			return liveHolder + "\n", nil
+		case strings.Contains(line, "{{.HostConfig.NetworkMode}} mihomo"):
+			return "container:" + liveHolder + "\n", nil
+		}
+		return "", errors.New("absent: " + line)
+	}
+	p := netnsPlanner{run: run, composePath: "/etc/wgfleet/docker-compose.yml"}
+	if !p.mihomoIsInTheNamespace(context.Background(), "/proc/4242/ns/net", run) {
+		t.Error("a stopped mihomo that still names the live holder was bounced for no reason")
+	}
+}
+
+// A question we could not ask stays "yes". The cost of a wrong "no" here is every
+// client connection mihomo holds, and an unreadable docker is not evidence.
+func TestAnUnreadableDockerDoesNotBounceMihomo(t *testing.T) {
+	run := func(context.Context, string, ...string) (string, error) {
+		return "", errors.New("docker daemon is not answering")
+	}
+	p := netnsPlanner{run: run, composePath: "/etc/wgfleet/docker-compose.yml"}
+	if !p.mihomoIsInTheNamespace(context.Background(), "/proc/4242/ns/net", run) {
+		t.Error("an unanswerable question was read as a fault")
+	}
+}

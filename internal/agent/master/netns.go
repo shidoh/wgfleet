@@ -743,6 +743,31 @@ func NetnsHostIP(spec domain.NodeSpec) string {
 	return ip
 }
 
+// mihomoTargetsTheLiveHolder answers, for a mihomo that is NOT running, whether the
+// namespace it was created against is still the holder's. Compose stores the
+// resolved container ID, so the two can disagree silently.
+//
+// An unreadable answer is still "yes": this decides whether to recreate mihomo,
+// and recreating it costs every client connection it holds. A question we could
+// not ask is not evidence that something is wrong — but a question we asked and
+// that came back "no" is.
+func (p netnsPlanner) mihomoTargetsTheLiveHolder(ctx context.Context, run netns.Runner) bool {
+	want, err := run(ctx, "docker", "inspect", "-f", "{{.Id}}", domain.NetnsHolder)
+	if err != nil {
+		return true
+	}
+	got, err := run(ctx, "docker", "inspect", "-f", "{{.HostConfig.NetworkMode}}", "mihomo")
+	if err != nil {
+		return true
+	}
+	mode := strings.TrimSpace(got)
+	id := strings.TrimSpace(want)
+	if id == "" || !strings.HasPrefix(mode, "container:") {
+		return true
+	}
+	return strings.TrimPrefix(mode, "container:") == id
+}
+
 // netnsLinkMTU is what both ends of the veth are set to: the HOST UPLINK's MTU.
 //
 // The first version set it to the client interface's MTU, and the reasoning was
@@ -817,7 +842,16 @@ func (p netnsPlanner) mihomoIsInTheNamespace(ctx context.Context, nsPath string,
 	}
 	pid := strings.TrimSpace(out)
 	if pid == "" || pid == "0" {
-		return true // not running: compose will start it, in the right place
+		// Not running — and "compose will start it in the right place" is true only
+		// while the holder is the one mihomo was created against. `network_mode:
+		// container:X` is resolved to an ID at CREATE time, so a holder that was
+		// removed and recreated leaves mihomo pointing at an ID that no longer exists.
+		// `docker compose up -d` then STARTS the existing container rather than
+		// recreating it, and the start fails with "cannot join network of a non
+		// running container", forever: the only command that fixes it is the
+		// --force-recreate this function is the gate for, and answering "all is well"
+		// here is what holds that gate shut.
+		return p.mihomoTargetsTheLiveHolder(ctx, run)
 	}
 	mine, err := run(ctx, "readlink", "/proc/"+pid+"/ns/net")
 	if err != nil {

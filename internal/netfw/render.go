@@ -305,13 +305,24 @@ func RenderRuleset(in RenderInput) (string, error) {
 	b.WriteString("\t\tiif \"lo\" accept\n")
 	// Trust the management overlay wholesale (fail-safe; see mgmtOverlayIface).
 	fmt.Fprintf(&b, "\t\tiifname %q accept\n", mgmtOverlayIface)
-	// And the veth to mihomo's namespace, on the same argument. What is on the far
-	// end is a container this agent created, holding a namespace this agent built,
-	// on a /30 that exists nowhere else — there is no third party to keep out. What
-	// IS on this side is the fleet resolver and the services mihomo needs to reach
-	// to do its job at all.
+	// And the veth to mihomo's namespace — but only for what mihomo needs from this
+	// host, which is the resolver.
+	//
+	// It used to be a wholesale accept, on the argument that the far end is a
+	// container this agent created on a /30 that exists nowhere else, so there is no
+	// third party to keep out. The argument holds for the container and not for what
+	// passes THROUGH it: the rule at pref 400 routes client traffic into that
+	// namespace, and whatever it forwards back arrives here on this interface. A
+	// wholesale accept therefore offered every client a path to sshd, to the
+	// controller's API and web panel, and to ztnet — services whose own exposure was
+	// decided very deliberately elsewhere.
+	//
+	// Replies to connections this host opened INTO the namespace (the agent steering
+	// mihomo's control API, the health probes) are not affected: they are matched by
+	// the established/related rule above, before this one.
 	if in.NetnsHostIface != "" {
-		fmt.Fprintf(&b, "\t\tiifname %q accept\n", in.NetnsHostIface)
+		fmt.Fprintf(&b, "\t\tiifname %q udp dport 53 accept\n", in.NetnsHostIface)
+		fmt.Fprintf(&b, "\t\tiifname %q tcp dport 53 accept\n", in.NetnsHostIface)
 	}
 	b.WriteString("\t\tip saddr @whitelist accept\n")
 	// Whitelist accept precedes the blacklist drop, so an explicitly trusted source
