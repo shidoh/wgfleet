@@ -5,8 +5,11 @@
 // dead. That rehearsal drove client UDP through the tunnel on ports 5353 and
 // 4433 and never touched 443 — the port the client interface itself listens on —
 // so the collision it was meant to find could not appear. These tests drive the
-// SAME port the node holds, which is the only version of the question worth
-// asking.
+// SAME port the node holds — 443 — which is the only version of the question
+// worth asking, and they assert both halves of it: that the collision is real on
+// a namespace holding that port, and that it is GONE in a namespace that does
+// not. The second half is the whole claim this migration rests on, and it is the
+// half that can go red.
 //
 // The tests are Linux-only and need CAP_NET_ADMIN (IP_TRANSPARENT); unprivileged
 // they skip. CI runs them deliberately under sudo, because a test that always

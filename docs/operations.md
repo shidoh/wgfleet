@@ -355,3 +355,88 @@ If an agent goes silent, the controller's **staleness sweep** demotes its node
 (default 3m; `<0` disables) so the dashboard and metrics reflect a dead agent.
 `Error` nodes are left as-is (they keep their failure reason); when the agent
 recovers, its next report restores the state.
+
+## Client interception in mihomo's network namespace
+
+mihomo's TPROXY reply path binds the **server's** address:port for every
+intercepted flow, so any UDP port the host already holds is a silent black hole
+for client traffic to that port. On this fleet the client AmneziaWG interface
+holds `0.0.0.0:443`, and client QUIC was one-way for eight days with every
+component metric green. Moving mihomo into a network namespace of its own removes
+the collision as a category rather than fixing one port.
+
+### The knob
+
+`fleet.masters[].mihomo.client_via_netns`:
+
+| value | meaning |
+|---|---|
+| unset / `off` | interception stays on the host — the way it has always worked |
+| `10.80.0.7/32` | **canary**: only that client source takes the new path |
+| `auto` | every client moves, once the agent has proved the namespace works |
+
+Anything else is refused with an error naming the knob, so a typo cannot enable
+the migration. Start with a canary; `auto` is the last step, not the first.
+
+### How to tell where a master is
+
+```bash
+# The decision machine, from the agent's metrics.
+curl -s <mgmt>:9301/metrics | grep netns_move
+#   wgfleet_agent_netns_move_state{state="attached"} 1
+#   wgfleet_agent_netns_move_attempts 0
+
+# The kernel's version of the same question.
+ip rule list | grep -E '^(390|400):'      # exemptions, then the move itself
+ip route show table 51822                 # default via the veth
+nsenter --net=$(docker inspect -f '{{.State.Pid}}' wgfleet-netns | sed 's|^|/proc/|;s|$|/ns/net|') nft list table ip wgfleet_netns
+
+# Where mihomo actually is (not where compose says it should be).
+readlink /proc/$(docker inspect -f '{{.State.Pid}}' mihomo)/ns/net
+readlink /proc/$(docker inspect -f '{{.State.Pid}}' wgfleet-netns)/ns/net
+```
+
+Clash API moves with mihomo: once attached it is on the namespace end of the
+veth (`100.127.255.2:9090` by default), not on the management address.
+
+### How to go back
+
+Set `client_via_netns: off` and let the agent converge — it withdraws the routing
+rule, the destination exemptions and the namespace route table, and mihomo returns
+to host networking. The agent also reverts **itself** if the client path breaks
+after a move, without needing the controller.
+
+By hand, on the master, when the agent is not running:
+
+```bash
+ip rule del pref 400                       # stop routing clients into the namespace
+while ip rule del pref 390 2>/dev/null; do :; done   # the direct exemptions
+ip route flush table 51822
+docker compose -f /etc/wgfleet/docker-compose.yml up -d --force-recreate mihomo
+nft -f /etc/wgfleet/wgfleet-master.nft     # re-arm the host interception
+```
+
+The rule at priority 400 sorts ahead of the TPROXY mark rule, so leaving it in
+place after mihomo has moved back is worse than the move was: marked client
+packets go into an empty namespace. Remove it first.
+
+### Downgrading the binary after a move
+
+An agent old enough not to know about the namespace does not know about any of
+the above either: it will not remove the ip rules, and `docker compose up -d`
+leaves the holder running as an orphan. **Revert with the knob and let the current
+agent converge before rolling the binary back.**
+
+### The alert that will be standing
+
+`WgfleetClientUDPBlackHole` is a warning, not a page, and on a master that still
+intercepts on the host it is true and standing for every UDP port the host holds.
+That is the finding, not an incident: it clears when the interception moves (or
+when the port is freed or the traffic refused). The user-visible outage has its
+own critical alert, `WgfleetClientPathDead`.
+
+Before rolling this out to a master, take the inventory the check will read:
+
+```bash
+ss -lunp        # every UDP port this host holds is a black hole today
+```

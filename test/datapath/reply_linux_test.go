@@ -3,7 +3,6 @@
 package datapath
 
 import (
-	"errors"
 	"net"
 	"os"
 	"syscall"
@@ -59,33 +58,11 @@ func TestReplySocketOpensForAFreePort(t *testing.T) {
 	_ = syscall.Close(fd)
 }
 
-// And it must NOT work for a port this host already holds — that is the bug,
-// stated as an assertion. A wildcard UDP socket without SO_REUSEADDR is exactly
-// what a kernel WireGuard interface is.
-//
-// This is the case the 2026-08-27 rehearsal could not see, because it drove ports
-// the node did not hold.
-func TestReplySocketIsRefusedForAPortTheHostHolds(t *testing.T) {
-	requirePrivileges(t)
-
-	held, err := net.ListenPacket("udp", "0.0.0.0:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = held.Close() }()
-	port := held.LocalAddr().(*net.UDPAddr).Port
-	server := &net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: port}
-
-	fd, err := replySocket(t, server)
-	if err == nil {
-		_ = syscall.Close(fd)
-		t.Fatalf("a reply socket opened on port %d while the host holds it — "+
-			"the collision this test exists to catch is not being caught", port)
-	}
-	if !errors.Is(err, syscall.EADDRINUSE) {
-		t.Errorf("refused with %v, want EADDRINUSE — the failure mode differs from production", err)
-	}
-}
+// The collision itself, and the namespace that removes it, are asserted on the
+// REAL port in namespace_linux_test.go. An earlier version of this file made that
+// claim on an ephemeral port instead — a port nothing in production holds — which
+// meant it was asserting that the BUG exists: true before the fix, true after it,
+// green forever.
 
 // The full loop, on a real kernel: a client sends to a foreign address, something
 // transparent picks the datagram up, and the reply comes back bearing the
