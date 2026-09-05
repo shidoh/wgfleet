@@ -168,8 +168,22 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	b.WriteString("\t}\n\n")
 
 	// Everything that is NOT TCP or UDP. ICMP, GRE, ESP: the prerouting rules above
-	// never see them, so they reach the forward hook and go on to the host, which
-	// masquerades them exactly as it did before the move.
+	// never see them, so they reach the forward hook and go back out to the host.
+	//
+	// What happens to them THERE is not what this comment used to claim. It said the
+	// host masquerades them exactly as before the move; it does not. The host's
+	// masquerade is scoped `oifname != <veth>`, so the first postrouting pass — the
+	// one that sends the packet INTO this namespace — is exempt, and conntrack
+	// records that decision for the whole connection. The second pass, out of the
+	// namespace and onto the uplink, is the same connection: NAT will not fire, the
+	// source is still the client's, and the host's egress_leak_guard eats it.
+	//
+	// Measured on the live master 2026-09-05: 201 packets counted in here, 200
+	// counted by that guard on the way out. Client ping and traceroute have been
+	// black-holed since the move, in silence, and this counter is the only place the
+	// two halves can be compared. Whether that traffic should leave at all — masked
+	// as the master, which is what a masquerade in this namespace would produce — is
+	// an open question for the operator, not one to settle in a comment.
 	//
 	// The chain exists to make that sentence checkable. Before it, "client ICMP
 	// still works" was an assumption with nothing behind it — and the client-path

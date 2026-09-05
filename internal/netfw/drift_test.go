@@ -24,7 +24,9 @@ func TestRenderedChainCountsIgnoresEverythingTheKernelIgnores(t *testing.T) {
 		"client_udp_tproxy": 2, // intercept, then drop what was not intercepted
 		"postrouting":       1,
 		"egress_leak_guard": 1, // "the masquerade fired"
-		"egress_path_guard": 1, // "and the packet left by a door we opened"
+		// egress_path_guard is absent on purpose: this input is a master whose
+		// interception still lives on the host, and that chain guards a fall-through
+		// out of a namespace table it does not have.
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("chain counts = %v, want %v", got, want)

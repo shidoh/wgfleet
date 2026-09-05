@@ -438,16 +438,35 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	//     and the only thing that separates them is that we declared them.
 	//
 	// Everything else with a client address on it is on a path nobody chose.
-	b.WriteString("\n\tchain egress_path_guard {\n")
-	b.WriteString("\t\ttype filter hook postrouting priority srcnat - 10; policy accept;\n")
-	// Rendered through privateGuards, the same canonicalising, injection-safe
-	// helper the DNAT exceptions use — and from the same field, so a destination
-	// the operator exempts from interception is exempt here too. A list that drifts
-	// in one direction drops the split tunnel; in the other it opens the leak.
-	fmt.Fprintf(&b, "\t\tip saddr %s%s%s oifname != %q oifname != \"lo\"%s counter drop\n",
-		clientCIDR, gatewaySourceGuard(in.ClientCIDR), guards,
-		in.ClientInterface, netnsIfaceGuard(in.NetnsHostIface))
-	b.WriteString("\t}\n")
+	// Rendered only where the failure it guards can happen. The fall-through into
+	// `main` requires a namespace table to fall out of, so on a master that has not
+	// moved — and on one that moved back — this chain would close nothing and could
+	// only take something away. `client_via_netns: off` has to be a way back, not a
+	// different set of risks.
+	if in.NetnsGateway != "" {
+		b.WriteString("\n\tchain egress_path_guard {\n")
+		b.WriteString("\t\ttype filter hook postrouting priority srcnat - 10; policy accept;\n")
+		// TCP and UDP only, and the limit is not an optimisation.
+		//
+		// Those two are the protocols the interception claims: everything else —
+		// ICMP, GRE, ESP — is forwarded through the namespace and back out here by
+		// design. Dropping them as "a path nobody chose" would take away client ping
+		// and traceroute, which is a regression this chain has no business causing;
+		// whether that traffic should leave at all is a separate question, and one
+		// with an owner.
+		//
+		// The destination exemptions are rendered through privateGuards, the same
+		// canonicalising, injection-safe helper the DNAT exceptions use, from the
+		// same manifest field — so a destination the operator exempts from
+		// interception is exempt here too. Note they are matched AFTER dnat: a
+		// service published through docker arrives here with the container's address,
+		// not the one the operator wrote, which is why the list has to cover the
+		// translated addresses too (on this fleet 172.16/12 covers docker's).
+		fmt.Fprintf(&b, "\t\tip saddr %s%s%s meta l4proto { tcp, udp } oifname != %q oifname != \"lo\"%s counter drop\n",
+			clientCIDR, gatewaySourceGuard(in.ClientCIDR), guards,
+			in.ClientInterface, netnsIfaceGuard(in.NetnsHostIface))
+		b.WriteString("\t}\n")
+	}
 
 	b.WriteString("}\n")
 	return b.String(), nil

@@ -596,6 +596,9 @@ func TestThePathGuardRunsBeforeNATAndTheLeakGuardAfter(t *testing.T) {
 		ClientCIDR:      "10.80.0.0/24",
 		RedirAddr:       "10.80.0.1:7895",
 		PrivateCIDRs:    []string{"192.168.0.0/16"},
+		NetnsGateway:    "100.127.255.2",
+		NetnsHostIface:  "mih-host",
+		NetnsLinkCIDR:   "100.127.255.0/30",
 	})
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -675,4 +678,54 @@ func guardChain(t *testing.T, ruleset, name string) string {
 		t.Fatalf("ruleset has no chain %q:\n%s", name, ruleset)
 	}
 	return body
+}
+
+// The guard must not take client ping with it.
+//
+// TCP and UDP are the protocols the interception claims. ICMP, GRE and ESP are
+// forwarded through the namespace and back out by design, so a guard that asks
+// only "did this leave by a door we opened" would drop every one of them — client
+// ping and traceroute — as a leak. That is a regression this chain has no business
+// causing, and it was the first thing a live-kernel rehearsal caught.
+func TestThePathGuardLeavesEverythingThatIsNotTCPOrUDPAlone(t *testing.T) {
+	out, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+		PrivateCIDRs:    []string{"192.168.0.0/16"},
+		NetnsGateway:    "100.127.255.2",
+		NetnsHostIface:  "mih-host",
+		NetnsLinkCIDR:   "100.127.255.0/30",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	path := guardChain(t, out, "egress_path_guard")
+	if !strings.Contains(path, "meta l4proto { tcp, udp }") {
+		t.Errorf("the path guard drops protocols the interception never claimed:\n%s", path)
+	}
+}
+
+// And it is rendered only where the failure it guards exists.
+//
+// The fall-through into `main` needs a namespace table to fall out of. On a master
+// that has not moved — and on one that moved back — the chain closes nothing and
+// can only take something away, which would make `client_via_netns: off` a
+// different set of risks instead of a way back.
+func TestThePathGuardIsAbsentUntilTheInterceptionMoves(t *testing.T) {
+	onHost, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+		PrivateCIDRs:    []string{"192.168.0.0/16"},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(onHost, "egress_path_guard") {
+		t.Errorf("a master that never moved carries a guard for a failure it cannot have:\n%s", onHost)
+	}
+	if !strings.Contains(onHost, "egress_leak_guard") {
+		t.Error("the un-NATed egress guard belongs on every master, moved or not")
+	}
 }

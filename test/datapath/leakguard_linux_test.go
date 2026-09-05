@@ -61,6 +61,17 @@ func TestThePathGuardDropsTrafficThatEscapesTheNamespaceTable(t *testing.T) {
 		}
 	})
 
+	t.Run("client ping is not a leak", func(t *testing.T) {
+		// ICMP is forwarded through the namespace and back out by design — the
+		// interception never claimed it. A guard that asked only "did this leave by a
+		// door we opened" would take client ping and traceroute with it, and that is
+		// what the first draft of this chain did.
+		got := runGuardProbeProto(t, ruleset, guardLeakDst, syscall.IPPROTO_ICMP)
+		if got["egress_path_guard"] != 0 {
+			t.Errorf("client ICMP was dropped as a leak (counted %d)", got["egress_path_guard"])
+		}
+	})
+
 	t.Run("the declared split tunnel still passes", func(t *testing.T) {
 		// A direct destination leaves by the same uplink with the same client source
 		// and is masqueraded the same way. The only thing separating it from a leak is
@@ -86,7 +97,8 @@ func TestGuardProbeSender(t *testing.T) {
 	// of the two outcomes under test, and it is not the verdict — the chain counter
 	// is, because a forwarded client packet gets no such report and a test that read
 	// the send result would be measuring the wrong thing in the real case.
-	if err := sendSpoofed(src, dst); err != nil && !errors.Is(err, syscall.EPERM) {
+	proto, _ := strconv.Atoi(os.Getenv("WGF_GUARD_PROTO"))
+	if err := sendSpoofed(src, dst, proto); err != nil && !errors.Is(err, syscall.EPERM) {
 		t.Fatalf("send %s -> %s: %v", src, dst, err)
 	}
 }
@@ -102,6 +114,13 @@ func renderGuardRuleset(t *testing.T) string {
 		RedirAddr:       "10.73.0.1:7895",
 		TProxyAddr:      "10.73.0.1:7896",
 		PrivateCIDRs:    []string{guardDirect},
+		// A moved master: the guard exists only where the fall-through it catches
+		// can happen. "mih-host" is not created in this rehearsal — the packet under
+		// test leaves by the uplink, which is the case being asserted — it is here so
+		// the rendered ruleset is the one a moved master actually applies.
+		NetnsGateway:   "100.127.255.2",
+		NetnsHostIface: "mih-host",
+		NetnsLinkCIDR:  "100.127.255.0/30",
 	})
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -112,6 +131,11 @@ func renderGuardRuleset(t *testing.T) string {
 // runGuardProbe builds a namespace holding the ruleset, sends ONE spoofed packet
 // from a client address to dst, and returns each guard chain's packet counter.
 func runGuardProbe(t *testing.T, ruleset, dst string) map[string]int {
+	t.Helper()
+	return runGuardProbeProto(t, ruleset, dst, syscall.IPPROTO_UDP)
+}
+
+func runGuardProbeProto(t *testing.T, ruleset, dst string, proto int) map[string]int {
 	t.Helper()
 	newGuardNS(t)
 
@@ -138,8 +162,11 @@ func runGuardProbe(t *testing.T, ruleset, dst string) map[string]int {
 
 	// The sender runs INSIDE the namespace: `ip netns exec` re-executes this binary,
 	// which opens the raw socket where the ruleset is.
-	inGuardNS(t, []string{"WGF_GUARD_SRC=" + guardClient, "WGF_GUARD_DST=" + dst},
-		os.Args[0], "-test.run", "^TestGuardProbeSender$")
+	inGuardNS(t, []string{
+		"WGF_GUARD_SRC=" + guardClient,
+		"WGF_GUARD_DST=" + dst,
+		"WGF_GUARD_PROTO=" + strconv.Itoa(proto),
+	}, os.Args[0], "-test.run", "^TestGuardProbeSender$")
 
 	return map[string]int{
 		"egress_leak_guard": chainCounter(t, "egress_leak_guard"),
@@ -151,7 +178,7 @@ func runGuardProbe(t *testing.T, ruleset, dst string) map[string]int {
 // SOURCE is ours to choose. That is the point: a forwarded client packet has exactly
 // that shape, and a locally generated one would be exempt for the wrong reason. The
 // kernel fills the IP id and checksum; a zero UDP checksum is legal on IPv4.
-func sendSpoofed(src, dst string) error {
+func sendSpoofed(src, dst string, proto int) error {
 	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_RAW)
 	if err != nil {
 		return err
@@ -159,16 +186,22 @@ func sendSpoofed(src, dst string) error {
 	defer func() { _ = syscall.Close(fd) }()
 
 	s, d := parse4(src), parse4(dst)
-	pkt := make([]byte, 28) // 20 IP + 8 UDP
+	pkt := make([]byte, 28) // 20 IP + 8 of payload: a UDP header, or an ICMP echo
 	pkt[0] = 0x45
 	pkt[3] = byte(len(pkt))
 	pkt[8] = 64
-	pkt[9] = syscall.IPPROTO_UDP
+	pkt[9] = byte(proto)
 	copy(pkt[12:16], s[:])
 	copy(pkt[16:20], d[:])
-	pkt[20], pkt[21] = 0x30, 0x39 // source port 12345
-	pkt[22], pkt[23] = 0x00, 0x35 // destination port 53
-	pkt[25] = 0x08                // UDP length
+	switch proto {
+	case syscall.IPPROTO_ICMP:
+		pkt[20] = 8 // echo request; the kernel does not fill an ICMP checksum for us,
+		pkt[21] = 0 // and nothing on this path verifies one — the verdict is the counter
+	default:
+		pkt[20], pkt[21] = 0x30, 0x39 // source port 12345
+		pkt[22], pkt[23] = 0x00, 0x35 // destination port 53
+		pkt[25] = 0x08                // UDP length
+	}
 
 	return syscall.Sendto(fd, pkt, 0, &syscall.SockaddrInet4{Addr: d})
 }
