@@ -200,9 +200,18 @@ func Plan(ctx context.Context, in Input, run Runner) ([]Step, error) {
 	// for want of a route — the same silent one-way failure in a new place.
 	gw := hostIP(hostAddr)
 	routes, _ := run(ctx, "nsenter", nsArgs("route", "show")...)
+	// The pool in the form the KERNEL prints it. `ip route show` canonicalises, so
+	// a manifest that says `10.80.0.1/24` would never match the `10.80.0.0/24` in
+	// the output and the route would be replaced on every pass — a change reported
+	// forever over a route that was already right. master_nat.go canonicalises for
+	// the same reason.
+	clientCIDR := in.ClientCIDR
+	if p, perr := netip.ParsePrefix(clientCIDR); perr == nil {
+		clientCIDR = p.Masked().String()
+	}
 	for _, want := range []struct{ dst, match, why string }{
 		{"default", "default via " + gw, "reach the exits"},
-		{in.ClientCIDR, in.ClientCIDR + " via " + gw, "return traffic to clients"},
+		{clientCIDR, clientCIDR + " via " + gw, "return traffic to clients"},
 	} {
 		if strings.Contains(routes, want.match) {
 			continue

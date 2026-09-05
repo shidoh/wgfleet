@@ -233,3 +233,76 @@ func TestReadyRefusesAProbePortOutOfRange(t *testing.T) {
 		t.Error("an out-of-range probe port was accepted")
 	}
 }
+
+// `ip route show` canonicalises a prefix, so a manifest that names the pool by a
+// host address inside it would never match the output and the route would be
+// replaced on every pass — a change reported forever over a route that was
+// already right.
+func TestConvergedRouteIsNotReplacedForANonCanonicalPool(t *testing.T) {
+	r := &recorder{out: map[string]string{
+		"docker inspect -f {{.State.Pid}} wgfleet-netns":                        "4242\n",
+		"ip -br link show mih-host":                                             "mih-host@if9 UP 100.127.255.1/30\n",
+		"ip -br addr show mih-host":                                             "mih-host@if9 UP 100.127.255.1/30\n",
+		"nsenter --net=/proc/4242/ns/net ip -br addr show mih0":                 "mih0@if8 UP 100.127.255.2/30\n",
+		"nsenter --net=/proc/4242/ns/net ip -br link show mih0":                 "mih0@if8 UP 100.127.255.2/30\n",
+		"nsenter --net=/proc/4242/ns/net ip route show":                         "default via 100.127.255.1 dev mih0\n10.73.0.0/24 via 100.127.255.1 dev mih0\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.ip_forward":         "1\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.all.rp_filter": "0\n",
+	}}
+	in := testInput()
+	in.ClientCIDR = "10.73.0.1/24" // the gateway address, not the network address
+
+	steps, err := Plan(context.Background(), in, r.run)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(steps) != 0 {
+		t.Errorf("a converged route was replaced because of how the pool was spelled:\n  %s",
+			strings.Join(argvs(steps), "\n  "))
+	}
+}
+
+// A half-built veth — the pair was created and the agent died before moving the
+// far end in — must be rebuilt. Checking only the host side reports it healthy
+// while every `nsenter … dev mih0` fails forever.
+func TestHalfBuiltVethIsRebuilt(t *testing.T) {
+	r := &recorder{out: map[string]string{
+		"docker inspect -f {{.State.Pid}} wgfleet-netns": "4242\n",
+		"ip -br link show mih-host":                      "mih-host@if9 DOWN 100.127.255.1/30\n",
+		// The far end is NOT in the namespace: the read fails (default behaviour).
+	}}
+	steps, err := Plan(context.Background(), testInput(), r.run)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	joined := strings.Join(argvs(steps), "\n")
+	if !strings.Contains(joined, "ip link del mih-host") {
+		t.Errorf("the half-built pair was left in place:\n%s", joined)
+	}
+	if !strings.Contains(joined, "ip link add mih-host type veth") {
+		t.Errorf("the veth was never rebuilt:\n%s", joined)
+	}
+}
+
+// A link that is DOWN but carries the UP flag inside its flag list — which is what
+// `<NO-CARRIER,BROADCAST,MULTICAST,UP>` is — must still be brought up. Matching
+// "UP" anywhere in the line was right by accident.
+func TestADownLinkWithTheUPFlagIsStillBroughtUp(t *testing.T) {
+	r := &recorder{out: map[string]string{
+		"docker inspect -f {{.State.Pid}} wgfleet-netns":                        "4242\n",
+		"ip -br link show mih-host":                                             "mih-host@if9 DOWN <NO-CARRIER,BROADCAST,MULTICAST,UP>\n",
+		"ip -br addr show mih-host":                                             "mih-host@if9 DOWN 100.127.255.1/30\n",
+		"nsenter --net=/proc/4242/ns/net ip -br link show mih0":                 "mih0@if8 UP\n",
+		"nsenter --net=/proc/4242/ns/net ip -br addr show mih0":                 "mih0@if8 UP 100.127.255.2/30\n",
+		"nsenter --net=/proc/4242/ns/net ip route show":                         "default via 100.127.255.1 dev mih0\n10.73.0.0/24 via 100.127.255.1 dev mih0\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.ip_forward":         "1\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.all.rp_filter": "0\n",
+	}}
+	steps, err := Plan(context.Background(), testInput(), r.run)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if !strings.Contains(strings.Join(argvs(steps), "\n"), "ip link set mih-host up") {
+		t.Errorf("a down link was left down:\n  %s", strings.Join(argvs(steps), "\n  "))
+	}
+}
