@@ -12,12 +12,16 @@ import (
 	"strings"
 )
 
-// ErrNFTCheckUnavailable means the ruleset could not be CHECKED at all — there is
-// no `nft` on this box (a dev laptop, a non-Linux build). It is deliberately not
-// the same as "the ruleset is bad": an unanswerable question must change nothing,
-// the same rule the drift probe follows with its `known` bool. Refusing to write
-// on a box that cannot check would break every dev run and every stand that has
-// not installed nftables yet.
+// ErrNFTCheckUnavailable means the ruleset could not be CHECKED at all: there is
+// no `nft` on this box (a dev laptop, a non-Linux build), or there is one that
+// cannot answer — `nft -c` still opens a netlink socket to resolve a ruleset, so
+// without CAP_NET_ADMIN it fails with "cache initialization failed: Operation not
+// permitted" on EVERY input, valid or not. It is deliberately not the same as
+// "the ruleset is bad": an unanswerable question must change nothing, the same
+// rule the drift probe follows with its `known` bool. Refusing to write on a box
+// that cannot check would break every dev run, every stand that has not installed
+// nftables yet, and every unprivileged container — silently, since the refusal is
+// a no-change entry and the pass stays green while the firewall never converges.
 var ErrNFTCheckUnavailable = errors.New("nft check unavailable")
 
 // checkRulesetWithNFT runs `nft -c -f` on the bytes. `-c` parses and resolves the
@@ -50,12 +54,43 @@ func checkRulesetWithNFT(ruleset []byte) error {
 	if err == nil {
 		return nil
 	}
+	// A verdict is only worth having from a checker that can also return the other
+	// answer. Before believing a rejection, hand nft a ruleset it must accept
+	// anywhere: if THAT is rejected too, what failed is the check, not the bytes.
+	// Matching the failure by its message was the alternative and it is worse —
+	// the wording is nft's to change, and getting it wrong turns every ruleset on
+	// the node into a silent no-change.
+	if !nftCanReturnBothAnswers() {
+		return ErrNFTCheckUnavailable
+	}
 	// Do not leak the temp path into an operator-facing message.
 	msg := strings.ReplaceAll(string(bytes.TrimSpace(out)), name, "<rendered ruleset>")
 	if msg == "" {
 		msg = err.Error()
 	}
 	return errors.New(msg)
+}
+
+// nftCanReturnBothAnswers reports whether `nft -c` accepts a ruleset that is
+// valid by construction. It runs only after a rejection, so the extra process is
+// paid on the rare path, never on a converged pass.
+func nftCanReturnBothAnswers() bool {
+	f, err := os.CreateTemp("", "wgfleet-nftprobe-*.nft")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	defer func() { _ = os.Remove(name) }()
+	// An empty table of a name nothing else uses: valid everywhere, and `-c` never
+	// commits it, so nothing reaches the kernel even where the check does work.
+	if _, err := f.WriteString("table inet wgfleet_nft_check_probe {\n}\n"); err != nil {
+		_ = f.Close()
+		return false
+	}
+	if err := f.Close(); err != nil {
+		return false
+	}
+	return exec.Command("nft", "-c", "-f", name).Run() == nil
 }
 
 // NFTPreviousRuleset is where NFTApply keeps the last ruleset that was BOTH on

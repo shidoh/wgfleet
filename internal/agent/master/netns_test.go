@@ -30,7 +30,7 @@ func TestNetnsPlannerBuildsTheLinkWhenAsked(t *testing.T) {
 		}
 		return "", errors.New("absent: " + line)
 	}
-	acts, err := netnsPlanner{run: run}.Plan(context.Background(), netnsSpec())
+	acts, err := netnsPlanner{nftPath: t.TempDir() + "/netns.nft", run: run}.Plan(context.Background(), netnsSpec())
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestNetnsPlannerRespectsOff(t *testing.T) {
 		}
 		return "", errors.New("absent")
 	}
-	acts, err := netnsPlanner{run: run, clientIface: "wg0"}.Plan(context.Background(), spec)
+	acts, err := netnsPlanner{nftPath: t.TempDir() + "/netns.nft", run: run, clientIface: "wg0"}.Plan(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestNetnsPlannerDefersWhenTheHolderIsNotUpYet(t *testing.T) {
 	run := func(context.Context, string, ...string) (string, error) {
 		return "", errors.New("No such object: wgfleet-netns")
 	}
-	acts, err := netnsPlanner{run: run}.Plan(context.Background(), netnsSpec())
+	acts, err := netnsPlanner{nftPath: t.TempDir() + "/netns.nft", run: run}.Plan(context.Background(), netnsSpec())
 	if err != nil {
 		t.Fatalf("a missing holder failed the pass: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestNetnsPlannerBuildsTheLinkWhenTheKnobIsUnset(t *testing.T) {
 		}
 		return "", errors.New("absent: " + line)
 	}
-	acts, err := netnsPlanner{run: run}.Plan(context.Background(), spec)
+	acts, err := netnsPlanner{nftPath: t.TempDir() + "/netns.nft", run: run}.Plan(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestNetnsPlannerBuildsTheLinkWhenTheKnobIsUnset(t *testing.T) {
 func TestNetnsPlannerRefusesAKnobItCannotRead(t *testing.T) {
 	spec := netnsSpec()
 	spec.Master.ClientViaNetns = "of"
-	_, err := netnsPlanner{run: func(context.Context, string, ...string) (string, error) {
+	_, err := netnsPlanner{nftPath: t.TempDir() + "/netns.nft", run: func(context.Context, string, ...string) (string, error) {
 		return "", nil
 	}}.Plan(context.Background(), spec)
 	if err == nil {
@@ -216,7 +216,7 @@ func TestNetnsPlannerRefusesAKnobItCannotRead(t *testing.T) {
 func TestPerClientSelectionIsRefused(t *testing.T) {
 	spec := netnsSpec()
 	spec.Master.ClientViaNetns = "10.73.0.7/32"
-	_, err := netnsPlanner{run: func(context.Context, string, ...string) (string, error) {
+	_, err := netnsPlanner{nftPath: t.TempDir() + "/netns.nft", run: func(context.Context, string, ...string) (string, error) {
 		return "", nil
 	}}.Plan(context.Background(), spec)
 	if err == nil {
@@ -398,7 +398,7 @@ func TestDetachRemovesEverythingTheMoveInstalled(t *testing.T) {
 		}
 		return "", errors.New("absent")
 	}
-	p := netnsPlanner{run: run, attached: func() bool { return false }, clientIface: "wg0"}
+	p := netnsPlanner{nftPath: t.TempDir() + "/netns.nft", run: run, attached: func() bool { return false }, clientIface: "wg0"}
 	acts, err := p.Plan(context.Background(), netnsSpec())
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
@@ -438,7 +438,7 @@ func TestDetachRemovesTheInNamespaceRuleset(t *testing.T) {
 		}
 		return "", errors.New("absent")
 	}
-	p := netnsPlanner{run: run, attached: func() bool { return false }, clientIface: "wg0"}
+	p := netnsPlanner{nftPath: t.TempDir() + "/netns.nft", run: run, attached: func() bool { return false }, clientIface: "wg0"}
 	acts, err := p.Plan(context.Background(), netnsSpec())
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
@@ -467,7 +467,7 @@ func TestDetachIsSilentWhenNothingWasInstalled(t *testing.T) {
 		}
 		return "", errors.New("absent")
 	}
-	p := netnsPlanner{run: run, attached: func() bool { return false }, clientIface: "wg0"}
+	p := netnsPlanner{nftPath: t.TempDir() + "/netns.nft", run: run, attached: func() bool { return false }, clientIface: "wg0"}
 	acts, err := p.Plan(context.Background(), netnsSpec())
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
@@ -573,7 +573,7 @@ func TestDisablingTheKnobCleansUpWhatTheMoveInstalled(t *testing.T) {
 	spec := netnsSpec()
 	spec.Master.ClientViaNetns = "off"
 
-	acts, err := netnsPlanner{run: run, clientIface: "wg0"}.Plan(context.Background(), spec)
+	acts, err := netnsPlanner{nftPath: t.TempDir() + "/netns.nft", run: run, clientIface: "wg0"}.Plan(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}

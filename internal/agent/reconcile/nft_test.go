@@ -250,3 +250,76 @@ func TestNFTApplyDoesNotPreserveAnUnappliedRulesetAsPrev(t *testing.T) {
 		t.Error("a ruleset that was never applied was preserved as the rollback target")
 	}
 }
+
+// fakeNFT puts an `nft` of our own on PATH. Without it this whole class is
+// unprovable on a dev Mac, which is exactly how it shipped: the check calls a
+// real `nft`, macOS has none, so the branch under test never runs and the suite
+// is green while the same code refuses every ruleset on a Linux runner.
+func fakeNFT(t *testing.T, script string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "nft"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// An `nft` that cannot answer must not be read as "the ruleset is bad".
+//
+// `nft -c` opens a netlink socket to resolve a ruleset, so without CAP_NET_ADMIN
+// it fails on EVERY input with "cache initialization failed". Taking that for a
+// rejection stops the agent writing any ruleset at all — and quietly, because a
+// refusal is a no-change entry: the pass stays green, drift stays zero, and the
+// firewall never converges. Seen on the v0.2.2 release runner, where it failed
+// 20 tests across four packages.
+func TestARulesetIsWrittenWhenNFTCannotCheckAnything(t *testing.T) {
+	fakeNFT(t, "#!/bin/sh\necho 'netlink: Error: cache initialization failed: Operation not permitted' >&2\nexit 1\n")
+
+	path := filepath.Join(t.TempDir(), "rules.nft")
+	actions, err := NFTApply(path, []byte("table ip x {}\n"), func() bool { return false }, nil, "apply")
+	if err != nil {
+		t.Fatal(err)
+	}
+	summaries := nftSummaries(actions)
+	if strings.Contains(summaries, "refusing") {
+		t.Fatalf("an unusable checker was mistaken for a verdict:\n%s", summaries)
+	}
+	var writes, execs bool
+	for _, a := range actions {
+		if !a.Changes() {
+			continue
+		}
+		if a.Kind == ActionExec {
+			execs = true
+		} else {
+			writes = true
+		}
+	}
+	if !writes || !execs {
+		t.Fatalf("the ruleset must still be written and applied:\n%s", summaries)
+	}
+}
+
+// The other half of the same question: a checker that CAN answer is still obeyed.
+// Without this, "treat a failure as unavailable" would pass by refusing nothing,
+// ever — and the pre-check would be decoration.
+func TestARulesetNFTActuallyRejectsIsStillRefused(t *testing.T) {
+	fakeNFT(t, "#!/bin/sh\nfor a in \"$@\"; do f=\"$a\"; done\n"+
+		"grep -q wgfleet_nft_check_probe \"$f\" && exit 0\n"+
+		"echo 'ruleset:1:1-5: Error: syntax error, unexpected junk' >&2\nexit 1\n")
+
+	path := filepath.Join(t.TempDir(), "rules.nft")
+	actions, err := NFTApply(path, []byte("junk\n"), func() bool { return false }, nil, "apply")
+	if err != nil {
+		t.Fatal(err)
+	}
+	summaries := nftSummaries(actions)
+	if !strings.Contains(summaries, "refusing") {
+		t.Fatalf("a ruleset nft rejects must not be written:\n%s", summaries)
+	}
+	for _, a := range actions {
+		if a.Changes() {
+			t.Fatalf("a refused ruleset must change nothing:\n%s", summaries)
+		}
+	}
+}

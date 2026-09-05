@@ -51,6 +51,13 @@ func managedSpec(t *testing.T) domain.NodeSpec {
 
 func clientPlanner(t *testing.T, up bool) clientWGPlanner {
 	t.Helper()
+	// A PATH with nothing on it. These tests apply their plans, and the plans run
+	// `awg-quick` — which re-execs itself under sudo and really does create an
+	// interface. "awg-quick cannot succeed here" was a property of the machine: true
+	// on a dev Mac, false on any Linux box with amneziawg-tools, so on a deployed
+	// node the suite ran the bring-up for real and recorded a claim the test then
+	// read as a bug. Emptying PATH makes the bring-up fail the same way everywhere.
+	t.Setenv("PATH", t.TempDir())
 	kp, err := wg.GenerateKeyPair()
 	if err != nil {
 		t.Fatal(err)
