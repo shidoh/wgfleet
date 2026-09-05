@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -51,6 +52,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/metrics"
 	"github.com/shidoh/wgfleet/internal/mihomo"
 	"github.com/shidoh/wgfleet/internal/netfw"
+	"github.com/shidoh/wgfleet/internal/netns"
 	"github.com/shidoh/wgfleet/internal/version"
 	"github.com/shidoh/wgfleet/internal/wg"
 	"github.com/shidoh/wgfleet/internal/wgeasy"
@@ -163,6 +165,8 @@ func run() error {
 		supportNote   = flag.String("note", "", "with --support-bundle: describe what went wrong, embedded in the archive")
 		dnsProbe      = flag.String(strings.TrimPrefix(master.DNSProbeFlag, "-"), "",
 			"take one UDP DNS query against <host:port> and exit 0/1; used by the client-path prober inside a namespace")
+		udpReturnScan = flag.Bool(strings.TrimPrefix(master.UDPReturnScanFlag, "-"), false,
+			"print `<port> <0|1>` for every UDP service port this namespace holds and exit; used to run the check inside mihomo's namespace")
 	)
 	flag.Parse()
 
@@ -176,6 +180,26 @@ func run() error {
 		if err := health.QueryDNSOverUDP(context.Background(), *dnsProbe); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
+		}
+		return nil
+	}
+
+	// The UDP-return scan, and it exits before anything else runs, for the same
+	// reason the DNS probe does: this process was started by `nsenter` purely to ask
+	// a question about the namespace it is in.
+	if *udpReturnScan {
+		res, err := health.ScanUDPReturn()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		ports := make([]int, 0, len(res))
+		for p := range res {
+			ports = append(ports, p)
+		}
+		sort.Ints(ports)
+		for _, p := range ports {
+			fmt.Printf("%d %d\n", p, boolBit(res[p]))
 		}
 		return nil
 	}
@@ -1740,38 +1764,86 @@ func (a *agent) natInputFor(spec domain.NodeSpec) netfw.MasterNATInput {
 // kernel actually reports, not a list in the code — the first draft guessed the
 // ports and would have missed exactly the case it was written to catch.
 func (a *agent) clientUDPReturnProbe(spec domain.NodeSpec) health.Probe {
-	ports, err := health.HeldUDPPorts()
+	bindable, err := a.scanUDPReturn(spec)
+	known := accountedUDPBlackHoles(a.natInputFor(spec))
 	if err != nil {
 		// Cannot read the socket table: probe the one port we know by construction
 		// rather than nothing, and let the probe report itself blind if that fails too.
-		ports = []int{spec.WGServer.ListenPort}
+		return health.ClientUDPReturnProbe([]int{spec.WGServer.ListenPort},
+			health.UDPReturnBindable, func(p int) bool { return known[p] })
 	}
-	known := accountedUDPBlackHoles(a.natInputFor(spec))
-	return health.ClientUDPReturnProbe(ports, health.UDPReturnBindable, func(p int) bool {
-		return known[p]
-	})
+	ports := make([]int, 0, len(bindable))
+	for p := range bindable {
+		ports = append(ports, p)
+	}
+	sort.Ints(ports)
+	return health.ClientUDPReturnProbe(ports,
+		func(p int) (bool, error) { return bindable[p], nil },
+		func(p int) bool { return known[p] })
 }
 
-// udpReturnObservations samples, for every UDP port this host holds, whether a
-// TPROXY reply socket is still possible there and whether a rule refuses client
-// traffic to it. It is the metric behind the udp-return-path check; a port the
-// probe cannot answer for is simply left out rather than reported as either state.
+// udpReturnObservations samples, for every UDP port the namespace mihomo lives in
+// holds, whether a TPROXY reply socket is still possible there and whether a rule
+// refuses client traffic to it.
 func (a *agent) udpReturnObservations(spec domain.NodeSpec) (bindable, known map[int]bool) {
-	ports, err := health.HeldUDPPorts()
+	bindable, err := a.scanUDPReturn(spec)
 	if err != nil {
 		return nil, nil
 	}
 	declared := accountedUDPBlackHoles(a.natInputFor(spec))
-	bindable, known = map[int]bool{}, map[int]bool{}
-	for _, p := range ports {
-		ok, perr := health.UDPReturnBindable(p)
-		if perr != nil {
-			continue
-		}
-		bindable[p] = ok
+	known = make(map[int]bool, len(bindable))
+	for p := range bindable {
 		known[p] = declared[p]
 	}
 	return bindable, known
+}
+
+// scanUDPReturn answers the question in the namespace where mihomo's reply
+// sockets actually live.
+//
+// Once the interception has moved, asking it on the HOST is asking about the
+// wrong machine: the host still holds :443 and reports it as a black hole, while
+// mihomo's sockets are in a namespace where nothing is in their way — the metric
+// would go on reporting the outage the migration has just ended. Measured on the
+// stand 2026-09-05: the host held 443, 53, 5353, 546 and 68; the namespace held
+// 1053, 7895 and 7896, and not one of them collides.
+//
+// It re-executes this binary under `nsenter`, the same mechanism the client-path
+// prober uses, because /proc/net/udp and an IP_TRANSPARENT bind are both answers
+// about the caller's network namespace and there is no way to ask from outside it.
+func (a *agent) scanUDPReturn(spec domain.NodeSpec) (map[int]bool, error) {
+	if a.netnsMove == nil || !a.netnsMove.Attached() {
+		return health.ScanUDPReturn()
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return health.ScanUDPReturn()
+	}
+	nsPath, err := netns.Path(context.Background(), domain.NetnsHolder, netns.Exec)
+	if err != nil {
+		return health.ScanUDPReturn()
+	}
+	out, err := netns.Exec(context.Background(), "nsenter", "--net="+nsPath, self, master.UDPReturnScanFlag)
+	if err != nil {
+		return nil, err
+	}
+	res := map[int]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		var port, bit int
+		if _, serr := fmt.Sscanf(strings.TrimSpace(line), "%d %d", &port, &bit); serr != nil {
+			continue
+		}
+		res[port] = bit == 1
+	}
+	return res, nil
+}
+
+// boolBit renders a bool as the 0/1 the scan prints.
+func boolBit(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // ensureSynthKeyQuiet resolves the prober's keypair, logging rather than failing

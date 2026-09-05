@@ -251,7 +251,7 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 	// takes the main table, leaves by the master's uplink and is masqueraded — the
 	// precise leak the fail-closed drop exists to prevent, opened twice a minute by
 	// the code that installs it. It also made every report show changes forever.
-	if !p.routingLive(ctx, run, pref, table, peerIP, in.HostIface) {
+	if !p.routingLive(ctx, run, pref, table, peerIP, in.HostIface, canary) {
 		actions = append(actions,
 			reconcile.BestEffortExecAction("clear any stale rule at the namespace priority",
 				"ip", "rule", "del", "pref", pref),
@@ -426,10 +426,25 @@ func (p netnsPlanner) ruleLive(ctx context.Context, run netns.Runner, pref strin
 // routingLive reports whether the kernel already carries BOTH halves of the move:
 // the rule at our priority naming the client interface and the right table, and
 // that table's default route through the veth.
-func (p netnsPlanner) routingLive(ctx context.Context, run netns.Runner, pref, table, peerIP, hostIface string) bool {
+func (p netnsPlanner) routingLive(ctx context.Context, run netns.Runner, pref, table, peerIP, hostIface, canary string) bool {
 	text, err := run(ctx, "ip", "rule", "list")
 	if err != nil {
 		return false
+	}
+	// The SOURCE scope is part of the comparison, not decoration.
+	//
+	// `ip rule list` prints the canary rule as `from 10.80.0.7 iif wg0 lookup 51822`
+	// and the full-move rule as `from all iif wg0 lookup 51822`. A gate that looked
+	// only for the interface and the table saw both as the same rule, so widening a
+	// canary to `auto` — the last step of every rollout — changed nothing at all and
+	// said nothing about it. Measured on the stand 2026-09-05.
+	//
+	// The kernel drops a /32's prefix length in this output, so the comparison is
+	// against the address rather than the prefix as written.
+	wantFrom := "from all"
+	if canary != "" {
+		addr, _, _ := strings.Cut(canary, "/")
+		wantFrom = "from " + addr
 	}
 	found := false
 	for _, line := range strings.Split(text, "\n") {
@@ -437,7 +452,9 @@ func (p netnsPlanner) routingLive(ctx context.Context, run netns.Runner, pref, t
 		if !strings.HasPrefix(line, pref+":") {
 			continue
 		}
-		if strings.Contains(line, "iif "+p.clientIface) && strings.Contains(line, "lookup "+table) {
+		if strings.Contains(line, wantFrom) &&
+			strings.Contains(line, "iif "+p.clientIface) &&
+			strings.Contains(line, "lookup "+table) {
 			found = true
 		}
 	}

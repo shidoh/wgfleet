@@ -534,3 +534,36 @@ func TestMihomoIsLeftAloneWhenItIsInTheRightNamespace(t *testing.T) {
 		}
 	}
 }
+
+// Widening a canary to a full move must actually change the rule. `ip rule list`
+// prints the two as `from 10.80.0.7 iif wg0 lookup 51822` and `from all iif wg0
+// lookup 51822`, and a gate that compared only the interface and the table read
+// them as the same rule — so the last step of every rollout changed nothing and
+// said nothing about it. Measured on the stand 2026-09-05.
+func TestWideningACanaryReplacesTheRule(t *testing.T) {
+	live := map[string]string{
+		"ip rule list":              "400:\tfrom 10.80.0.254 iif wg0 lookup 51822\n",
+		"ip route show table 51822": "default via 100.127.255.2 dev mih-host\n",
+	}
+	spec := netnsSpec()
+	spec.Master.ClientViaNetns = "auto"
+	dump := attachedPlan(t, spec, live)
+	if !strings.Contains(dump, "ip rule add iif wg0 lookup 51822 pref 400") {
+		t.Errorf("the canary rule was left in place for a full move:\n%s", dump)
+	}
+
+	// And the reverse: a canary must replace a full-move rule.
+	live["ip rule list"] = "400:\tfrom all iif wg0 lookup 51822\n"
+	spec.Master.ClientViaNetns = "10.80.0.254/32"
+	dump = attachedPlan(t, spec, live)
+	if !strings.Contains(dump, "ip rule add from 10.80.0.254/32 iif wg0 lookup 51822 pref 400") {
+		t.Errorf("a full-move rule was left in place for a canary:\n%s", dump)
+	}
+
+	// A converged canary is still left alone.
+	live["ip rule list"] = "400:\tfrom 10.80.0.254 iif wg0 lookup 51822\n"
+	dump = attachedPlan(t, spec, live)
+	if strings.Contains(dump, "lookup 51822 pref 400") {
+		t.Errorf("a converged canary rule was rebuilt:\n%s", dump)
+	}
+}

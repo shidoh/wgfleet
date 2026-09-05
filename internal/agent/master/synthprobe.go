@@ -38,6 +38,10 @@ const clientPathTimeout = 5 * time.Second
 // flag and its only caller cannot drift apart.
 const DNSProbeFlag = "-dns-probe"
 
+// UDPReturnScanFlag is the agent flag that turns the binary into a one-shot
+// UDP-return scan of the namespace it is started in.
+const UDPReturnScanFlag = "-udp-return-scan"
+
 // defaultResolvers are the external resolvers the UDP probe may use, tried in
 // order. Two operators rather than one: a probe that reverts a migration because
 // a single provider had an outage is a probe that manufactures outages.
