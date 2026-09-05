@@ -49,21 +49,33 @@ func TestNetnsPlannerBuildsTheLinkWhenAsked(t *testing.T) {
 	}
 }
 
-// "off" — and, until the rollout finishes, an unset knob — must be completely
-// inert: not one probe of the box, not one action.
+// A disabled master with nothing installed changes nothing.
+//
+// It does READ the kernel, and that is the point of the read: "off" is a state to
+// converge to, so the planner has to look before it can say there is nothing to
+// undo. What it must not do is act when the answer is "nothing".
 func TestNetnsPlannerRespectsOff(t *testing.T) {
 	spec := netnsSpec()
 	spec.Master.ClientViaNetns = "off"
-	acts, err := netnsPlanner{run: func(context.Context, string, ...string) (string, error) {
-		t.Fatal("a disabled namespace still probed the box")
-		return "", nil
-	}}.Plan(context.Background(), spec)
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.Contains(line, "docker inspect"):
+			return "4242\n", nil
+		case line == "ip rule list":
+			return "0:\tfrom all lookup local\n32766:\tfrom all lookup main\n", nil
+		case strings.Contains(line, "route show table 51822"):
+			return "", nil
+		}
+		return "", errors.New("absent")
+	}
+	acts, err := netnsPlanner{run: run, clientIface: "wg0"}.Plan(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, a := range acts {
 		if a.Changes() {
-			t.Errorf("a disabled namespace would change %q", a.Summary)
+			t.Errorf("a disabled master with nothing installed would change %q", a.Summary)
 		}
 	}
 }
@@ -573,5 +585,51 @@ func TestWideningACanaryReplacesTheRule(t *testing.T) {
 	dump = attachedPlan(t, spec, live)
 	if strings.Contains(dump, "lookup 51822 pref 400") {
 		t.Errorf("a converged canary rule was rebuilt:\n%s", dump)
+	}
+}
+
+// The documented way out of the migration is "set client_via_netns: off and let
+// the agent converge". That has to actually converge.
+//
+// The disabled branch used to return before any cleanup, so the operator's own
+// back-out left the routing rule at priority 400 in place — ahead of the TPROXY
+// mark rule — sending every client packet into a namespace that mihomo had just
+// left. The automatic revert had been cleaning up properly all along, which is
+// why nothing caught this: the path a user takes was the one path not exercised.
+func TestDisablingTheKnobCleansUpWhatTheMoveInstalled(t *testing.T) {
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.Contains(line, "docker inspect"):
+			return "4242\n", nil
+		case strings.Contains(line, "nft list table ip wgfleet_netns"):
+			return "table ip wgfleet_netns {}\n", nil
+		case line == "ip rule list":
+			return "390:\tfrom all to 10.0.0.0/8 lookup main\n400:\tfrom all iif wg0 lookup 51822\n", nil
+		case strings.Contains(line, "route show table 51822"):
+			return "default via 100.127.255.2 dev mih-host\n", nil
+		}
+		return "", errors.New("absent")
+	}
+	spec := netnsSpec()
+	spec.Master.ClientViaNetns = "off"
+
+	acts, err := netnsPlanner{run: run, clientIface: "wg0"}.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	var dump string
+	for _, a := range acts {
+		dump += a.Display + "\n"
+	}
+	for _, want := range []string{
+		"ip rule del pref 400",
+		"ip rule del to 10.0.0.0/8 lookup main pref 390",
+		"ip route flush table 51822",
+		"nft delete table ip wgfleet_netns",
+	} {
+		if !strings.Contains(dump, want) {
+			t.Errorf("turning the knob off does not %q:\n%s", want, dump)
+		}
 	}
 }

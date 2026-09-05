@@ -66,7 +66,24 @@ func (p netnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 		// not from the traffic.
 		return nil, fmt.Errorf("mihomo network namespace: %w", werr)
 	}
+	run := p.run
+	if run == nil {
+		run = netns.Exec
+	}
 	if !wanted {
+		// Disabled is a state to CONVERGE TO, not a reason to stop looking.
+		//
+		// This branch used to return here, and that made the documented way out of the
+		// migration — "set client_via_netns: off and let the agent converge" — leave
+		// every rule the migration had installed exactly where it was. The routing rule
+		// at priority 400 sorts ahead of the TPROXY mark rule, so once mihomo moves back
+		// to the host it sends every client packet into a namespace nothing is listening
+		// in: the operator's own back-out is what breaks the clients. Found on the stand
+		// 2026-09-05 by turning the knob off the way a user would; the automatic revert
+		// had been cleaning up properly all along, so nothing else exercised this path.
+		if actions := p.detachActions(ctx, run); len(actions) > 0 {
+			return actions, nil
+		}
 		return []reconcile.Action{reconcile.NoChangeAction("mihomo network namespace",
 			"disabled by master.client_via_netns; mihomo stays on host networking")}, nil
 	}
@@ -75,11 +92,6 @@ func (p netnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 		// whose replies cannot reach clients is worse than none.
 		return []reconcile.Action{reconcile.NoChangeAction("mihomo network namespace",
 			"pending: client pool unknown")}, nil
-	}
-
-	run := p.run
-	if run == nil {
-		run = netns.Exec
 	}
 	in := netns.Input{
 		Holder:     domain.NetnsHolder,
