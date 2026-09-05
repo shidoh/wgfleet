@@ -371,12 +371,23 @@ the collision as a category rather than fixing one port.
 
 | value | meaning |
 |---|---|
-| unset / `off` | interception stays on the host — the way it has always worked |
+| unset | `auto` — the fix ships on, see below |
+| `off` | interception stays on the host — the way it has always worked |
 | `10.80.0.7/32` | **canary**: only that client source takes the new path |
 | `auto` | every client moves, once the agent has proved the namespace works |
 
 Anything else is refused with an error naming the knob, so a typo cannot enable
-the migration. Start with a canary; `auto` is the last step, not the first.
+the migration.
+
+**It ships on.** An operator cannot be expected to know their master black-holes
+client UDP to every port it happens to hold, so shipping the fix off by default
+ships the outage by default. The agent proves the namespace resolves and reaches
+an exit before moving anything, measures the client path from its own synthetic
+client after, and reverts itself if that path breaks — and `off` is a full,
+converging way back, not just a switch that stops future moves.
+
+On a master carrying traffic you care about, set the CIDR of one device first and
+watch it for a day; `auto` after that is the same code with a wider rule.
 
 The whole cycle was rehearsed on a two-VM stand on 2026-09-05, with the client
 interface on the production port: canary → full move → break the namespace's path
