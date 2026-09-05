@@ -114,6 +114,10 @@ type Plan struct {
 	// sets it from a planner that implements ScheduledPlanner.
 	Scheduled bool
 	Actions   []Action
+	// Err is why this component did not converge, when it did not. It is per-plan
+	// rather than per-pass because the pass no longer stops at the first failure:
+	// see Engine.Reconcile.
+	Err error
 }
 
 // HasChanges reports whether any action in the plan mutates state.
