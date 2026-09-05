@@ -675,15 +675,16 @@ func NATInput(spec domain.NodeSpec, clientIface string, netnsAttached bool) netf
 		}
 	}
 	return netfw.MasterNATInput{
-		ClientInterface: clientIface,
-		ClientCIDR:      spec.WGServer.AddressPool,
-		RedirAddr:       fmt.Sprintf("%s:%d", spec.Master.BindAddress, redir),
-		TProxyAddr:      tproxyAddr,
-		PrivateCIDRs:    spec.Master.DirectCIDRs,
-		NetnsGateway:    netnsGW,
-		NetnsHostIface:  netnsIface,
-		NetnsLinkCIDR:   spec.Master.NetnsLinkCIDR(),
-		ClashAPI:        spec.Master.ExternalController,
+		ClientInterface:  clientIface,
+		ClientCIDR:       spec.WGServer.AddressPool,
+		RedirAddr:        fmt.Sprintf("%s:%d", spec.Master.BindAddress, redir),
+		TProxyAddr:       tproxyAddr,
+		PrivateCIDRs:     spec.Master.DirectCIDRs,
+		NetnsGateway:     netnsGW,
+		NetnsHostIface:   netnsIface,
+		NetnsLinkCIDR:    spec.Master.NetnsLinkCIDR(),
+		ClashAPI:         spec.Master.ExternalController,
+		ClientAdminPorts: spec.Master.ClientAdminPorts,
 	}
 }
 

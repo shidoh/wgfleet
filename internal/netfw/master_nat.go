@@ -52,6 +52,12 @@ type MasterNATInput struct {
 	// after the switch, and it reads as "the exits are down" rather than "the page
 	// moved".
 	ClashAPI string
+	// ClientAdminPorts are the admin ports the operator has opened to the CLIENT
+	// pool (masters[].client_admin_ports). The API redirect follows them: an
+	// operator who reaches the dashboard over the client tunnel must keep reaching
+	// it, and on this fleet that is how they reach it — the mgmt overlay is not the
+	// only door, it is just the one the code assumed.
+	ClientAdminPorts []int
 	// NetnsLinkCIDR is the point-to-point link to the namespace. Required with
 	// NetnsGateway: everything mihomo sends — exit endpoints, WARP, the management
 	// overlay, geo databases — now leaves with the namespace's address as its
@@ -248,6 +254,19 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 					apiAddr, apiPort = addr.String(), p
 					fmt.Fprintf(&b, "\t\tiifname %q ip daddr %s tcp dport %d dnat to %s:%d\n",
 						mgmtOverlayIface, apiAddr, apiPort, in.NetnsGateway, apiPort)
+					// And from the client tunnel, when the operator has opened this port to
+					// it. That opt-in already exists and already means "I reach the admin UI
+					// this way"; the redirect has to honour the same list or the move takes
+					// the dashboard away from whoever uses that door. Measured on the live
+					// master 2026-09-05: the mgmt-only rule looked right, the check run ON
+					// the master passed through the output chain, and the operator — coming
+					// over the client tunnel — got nothing.
+					for _, ap := range in.ClientAdminPorts {
+						if ap == apiPort && in.ClientInterface != "" {
+							fmt.Fprintf(&b, "\t\tiifname %q ip daddr %s tcp dport %d dnat to %s:%d\n",
+								in.ClientInterface, apiAddr, apiPort, in.NetnsGateway, apiPort)
+						}
+					}
 				}
 			}
 		}

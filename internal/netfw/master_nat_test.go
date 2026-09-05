@@ -528,3 +528,50 @@ func TestClashAPIRedirectAlsoCoversTheMasterItself(t *testing.T) {
 		t.Errorf("the output redirect does not point into the namespace:\n%s", out)
 	}
 }
+
+// The redirect must follow the door the operator actually uses.
+//
+// On this fleet the dashboard is reached over the CLIENT tunnel — the manifest
+// opens 9090 in client_admin_ports for exactly that — not over the management
+// overlay. A redirect scoped to the mgmt overlay alone therefore takes the
+// dashboard away at the moment of the move, which is what happened on the live
+// master 2026-09-05: the rule looked right, the check running ON the master passed
+// through the output chain, and the operator got nothing.
+func TestAPIRedirectFollowsTheClientAdminPorts(t *testing.T) {
+	in := MasterNATInput{
+		ClientInterface: "wg0", ClientCIDR: "10.73.0.0/24", RedirAddr: "10.73.0.1:7895",
+		TProxyAddr: "10.73.0.1:7896", NetnsGateway: "100.127.255.2",
+		NetnsHostIface: "mih-host", NetnsLinkCIDR: "100.127.255.0/30",
+		ClashAPI: "172.29.3.10:9090", ClientAdminPorts: []int{9000, 9090, 51821},
+	}
+	out, err := RenderMasterNAT(in)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{
+		`iifname "zt*" ip daddr 172.29.3.10 tcp dport 9090 dnat to 100.127.255.2:9090`,
+		`iifname "wg0" ip daddr 172.29.3.10 tcp dport 9090 dnat to 100.127.255.2:9090`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q — the dashboard is unreachable from that door:\n%s", want, out)
+		}
+	}
+}
+
+// A port the operator has NOT opened to clients stays closed to them: the redirect
+// widens nothing, it only preserves what was already reachable.
+func TestAPIRedirectDoesNotOpenTheAPIToClients(t *testing.T) {
+	in := MasterNATInput{
+		ClientInterface: "wg0", ClientCIDR: "10.73.0.0/24", RedirAddr: "10.73.0.1:7895",
+		TProxyAddr: "10.73.0.1:7896", NetnsGateway: "100.127.255.2",
+		NetnsHostIface: "mih-host", NetnsLinkCIDR: "100.127.255.0/30",
+		ClashAPI: "172.29.3.10:9090", ClientAdminPorts: []int{51821},
+	}
+	out, err := RenderMasterNAT(in)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(out, `iifname "wg0" ip daddr 172.29.3.10 tcp dport 9090`) {
+		t.Errorf("the API was opened to the client pool without the operator asking:\n%s", out)
+	}
+}
