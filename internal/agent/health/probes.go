@@ -46,11 +46,20 @@ func DefaultExitProbes(spec domain.NodeSpec) ExitProbes {
 }
 
 // DefaultMasterProbes wires the real probes for a master node.
-func DefaultMasterProbes(spec domain.NodeSpec) MasterProbes {
+//
+// controllerAddr overrides where mihomo's Clash API is reached; empty ⇒ the
+// address in the spec. Only the agent knows whether mihomo has been moved into
+// its own network namespace, and once it has, the management-overlay address in
+// the spec is not one mihomo can bind — a probe still dialling it would report a
+// healthy master as dead every pass.
+func DefaultMasterProbes(spec domain.NodeSpec, controllerAddr string) MasterProbes {
 	var controller, secret string
 	var clientVLESSPort int
 	if spec.Master != nil {
 		controller = spec.Master.ExternalController
+		if controllerAddr != "" {
+			controller = controllerAddr
+		}
 		secret = clashSecret(spec.Master.Custom.Overrides)
 		if spec.Master.ClientVLESS != nil {
 			clientVLESSPort = spec.Master.ClientVLESS.ListenPort

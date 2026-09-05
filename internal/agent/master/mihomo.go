@@ -46,6 +46,11 @@ type mihomoPlanner struct {
 	// selector built here would reset every 30s and silently never fail over.
 	// nil ⇒ never fail over (the correct degenerate behaviour with no reserve).
 	tier *TierSelector
+	// netnsAttached reports whether mihomo has been moved into its own network
+	// namespace. Everything mihomo binds and everything the agent dials depends on
+	// the answer, so it is threaded here rather than re-derived: the config and the
+	// namespace disagreeing is the whole failure mode.
+	netnsAttached func() bool
 }
 
 func (mihomoPlanner) Component() string { return "mihomo (data plane)" }
@@ -71,7 +76,7 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 	reserveActive := false
 	if p.tier != nil {
 		primary, reserve := mihomo.TierMembers(*spec.Master)
-		addr, secret := spec.Master.ExternalController, clashSecret(spec.Master)
+		addr, secret := ClashAPIAddr(spec, p.netnsAttached != nil && p.netnsAttached()), clashSecret(spec.Master)
 		// One budget for the WHOLE phase, not per member. The three probe phases below
 		// coincide every 10th pass — 11 members on the live fleet — and each member is
 		// bounded only by its own timeout, so a blocked destination could push the pass
@@ -94,9 +99,12 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 		// BEFORE the switch instead of after it.
 		p.tier.ProbeStandbyTransports(probeCtx, probe, mihomo.StandbyProxies(*spec.Master))
 	}
+	attached := p.netnsAttached != nil && p.netnsAttached()
+	peerIP := NetnsPeerIP(spec, attached)
 	cfg, err := mihomo.RenderConfig(mihomo.RenderInput{
 		Spec: *spec.Master, PrivateKey: p.privateKey, ReserveActive: reserveActive,
-		TunnelPrivateKey: p.tunnelKey, Resolvers: mihomoResolvers(spec),
+		TunnelPrivateKey: p.tunnelKey, Resolvers: mihomoResolvers(spec, attached),
+		NetnsPeerAddr: peerIP,
 	})
 	if err != nil {
 		// Defer this component; do NOT fail the pass.
@@ -138,7 +146,12 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 		// container restart — a Clash API hot reload does not re-init the proxy's
 		// device. Routine changes (drain, rules, DNS, direct-networks) hot-reload so
 		// existing client connections survive.
+		// Listeners count as "cannot be hot-reloaded" for a stronger reason than
+		// proxies do: a reload accepts a moved bind-address, reports success and
+		// re-opens nothing, so mihomo goes on listening where it was while the rules
+		// point at where it is supposed to be.
 		changed := mihomo.ChangedProxies(oldCfg, []byte(cfg))
+		changed = append(changed, mihomo.ChangedListeners(oldCfg, []byte(cfg))...)
 		actions = append(actions, p.applyConfigAction(spec, []byte(cfg), oldCfg, changed))
 	} else {
 		actions = append(actions, reconcile.NoChangeAction("mihomo", "config already current"))
@@ -164,7 +177,7 @@ func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML, prevCfg 
 	if reload == nil {
 		reload = mihomo.Reload
 	}
-	addr := spec.Master.ExternalController
+	addr := ClashAPIAddr(spec, p.netnsAttached != nil && p.netnsAttached())
 	secret := clashSecret(spec.Master)
 	compose := p.paths.Compose
 
@@ -555,12 +568,46 @@ func localAddrPresent(host string) bool {
 // back to encrypted public resolvers. Pointing at blocky costs nothing in
 // availability: blocky is already the clients' ONLY resolver, so a blocky that is
 // down has taken their DNS with it whatever mihomo does.
-func mihomoResolvers(spec domain.NodeSpec) []string {
+func mihomoResolvers(spec domain.NodeSpec, inNetns bool) []string {
 	if spec.DNS.Enabled {
+		if inNetns {
+			// Loopback inside the namespace is the NAMESPACE's loopback, with nothing on
+			// it. blocky is on the host and binds the client gateway, which the namespace
+			// reaches over its route back to the client pool — so that address, not this
+			// node's idea of "local". Pointing at 127.0.0.1 from in there is the specific
+			// trap the readiness gate was written to catch, and the one that would have
+			// taken every client's DNS down while looking like a working migration.
+			if gw := strings.TrimSpace(spec.Master.BindAddress); gw != "" {
+				return []string{gw}
+			}
+		}
 		return []string{"127.0.0.1"}
 	}
 	if spec.Master != nil && len(spec.Master.Compose.ClientDNS) > 0 {
 		return append([]string(nil), spec.Master.Compose.ClientDNS...)
 	}
 	return nil
+}
+
+// ClashAPIAddr is where the agent reaches mihomo's control API.
+//
+// The management-overlay address the controller hands down is on the HOST, and
+// once mihomo lives in its own namespace it cannot bind it — so the API moves to
+// the veth and the agent has to follow. Everything the agent does to mihomo goes
+// through here: tier probing, hot reloads, the mihomo-api health check, the
+// dashboard link.
+func ClashAPIAddr(spec domain.NodeSpec, attached bool) string {
+	if spec.Master == nil {
+		return ""
+	}
+	ec := spec.Master.ExternalController
+	peer := NetnsPeerIP(spec, attached)
+	if peer == "" || ec == "" {
+		return ec
+	}
+	_, port, err := net.SplitHostPort(ec)
+	if err != nil {
+		return ec
+	}
+	return net.JoinHostPort(peer, port)
 }

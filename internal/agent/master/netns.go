@@ -252,3 +252,37 @@ func exitProbeTarget(spec domain.NodeSpec) (string, int) {
 	}
 	return "", 0
 }
+
+// NetnsPeerIP is mihomo's address inside its namespace — the veth's far end.
+// Empty when the interception has not moved, which every caller reads as "mihomo
+// is on host networking".
+//
+// One function, because four places need the same answer and each one deriving it
+// from the link CIDR by hand is how they come to disagree: the ruleset would
+// point at one address, mihomo would bind another, and the difference is every
+// client's traffic.
+func NetnsPeerIP(spec domain.NodeSpec, attached bool) string {
+	if !attached || spec.Master == nil {
+		return ""
+	}
+	_, peer, err := netns.LinkAddrs(spec.Master.NetnsLinkCIDR())
+	if err != nil {
+		return ""
+	}
+	ip, _, _ := strings.Cut(peer, "/")
+	return ip
+}
+
+// NetnsHostIP is the host end of the same link: what the namespace routes through
+// and what mihomo's replies come back over.
+func NetnsHostIP(spec domain.NodeSpec) string {
+	if spec.Master == nil {
+		return ""
+	}
+	host, _, err := netns.LinkAddrs(spec.Master.NetnsLinkCIDR())
+	if err != nil {
+		return ""
+	}
+	ip, _, _ := strings.Cut(host, "/")
+	return ip
+}

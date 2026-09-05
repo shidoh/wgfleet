@@ -116,6 +116,19 @@ type RenderInput struct {
 	// rewrites config.yaml and reloads mihomo, so a flapping exit would otherwise
 	// churn the whole data plane.
 	ReserveActive bool
+	// NetnsPeerAddr is mihomo's address INSIDE the network namespace it has been
+	// moved into. Empty ⇒ mihomo is on host networking and binds the client
+	// gateway, which is how it has always worked.
+	//
+	// It has to be a render input rather than something the controller sets,
+	// because whether the move has happened is decided by the agent from evidence
+	// on the node. And it has to exist at all because everything mihomo binds is an
+	// address on the HOST: the client gateway for its listeners, the management
+	// overlay for its API. Neither exists inside the namespace, so a mihomo moved
+	// there without this fails every listener with EADDRNOTAVAIL, while the rules
+	// in the namespace point at ports nobody is on — TCP refused, UDP into the
+	// fail-closed drop, which is every client's traffic.
+	NetnsPeerAddr string
 	// Resolvers is where mihomo sends its OWN lookups. The agent supplies it, for
 	// the same reason ReserveActive is a render input: the answer depends on what is
 	// actually running on the node (does this master run blocky?), which the
@@ -194,7 +207,7 @@ func RenderConfig(in RenderInput) (string, error) {
 		"log-level":    "info",
 		"ipv6":         false,
 		"allow-lan":    true,
-		"bind-address": in.Spec.BindAddress,
+		"bind-address": in.listenAddr(),
 		"redir-port":   redir,
 		// Transparent UDP. Redirect cannot carry UDP, so without this every client
 		// datagram that was not QUIC-on-443 left the master's own uplink instead of an
@@ -261,7 +274,7 @@ func RenderConfig(in RenderInput) (string, error) {
 		}}
 	}
 	if in.Spec.ExternalController != "" {
-		base["external-controller"] = in.Spec.ExternalController
+		base["external-controller"] = in.controllerAddr()
 		// Serve the web dashboard alongside the API unless the operator disabled it.
 		// Set an API `secret` via mihomo overrides to authenticate it — the controller
 		// binds the mgmt/ZT overlay, but the RESTful API is otherwise unauthenticated.
@@ -299,7 +312,7 @@ func RenderConfig(in RenderInput) (string, error) {
 	// straight back into the redir port — a self-amplifying connection storm that pins
 	// the master's CPU. Reject it as the FIRST rule, injected AFTER the override merge
 	// so an operator `rules` override (which replaces the list) cannot drop the guard.
-	if bindHost := strings.TrimSpace(in.Spec.BindAddress); bindHost != "" {
+	if bindHost := strings.TrimSpace(in.listenAddr()); bindHost != "" {
 		bits := 32
 		if ip := net.ParseIP(bindHost); ip != nil && ip.To4() == nil {
 			bits = 128
@@ -797,3 +810,32 @@ func hasAnyPrefix(s string, prefixes []string) bool {
 // Cloudflare rather than the operator's own upstreams, which are a manifest concern
 // and may themselves be unreachable in exactly this state.
 var fallbackResolvers = []string{"tls://9.9.9.9", "tls://1.1.1.1"}
+
+// listenAddr is the address mihomo binds its client-facing listeners on: the
+// client gateway on the host, its own end of the veth inside the namespace.
+func (in RenderInput) listenAddr() string {
+	if in.NetnsPeerAddr != "" {
+		return in.NetnsPeerAddr
+	}
+	return in.Spec.BindAddress
+}
+
+// controllerAddr is where the Clash API listens. Inside the namespace the
+// management-overlay address does not exist, so the API moves to the veth with
+// everything else — the agent reaches it over the link, which is the same path
+// its own traffic takes.
+//
+// Losing this was not a cosmetic failure: the API is how the agent probes tier
+// members, hot-reloads config, answers the mihomo-api health check and serves the
+// dashboard. A mihomo that cannot bind it is a mihomo the master cannot steer.
+func (in RenderInput) controllerAddr() string {
+	ec := in.Spec.ExternalController
+	if in.NetnsPeerAddr == "" || ec == "" {
+		return ec
+	}
+	_, port, err := net.SplitHostPort(ec)
+	if err != nil {
+		return ec
+	}
+	return net.JoinHostPort(in.NetnsPeerAddr, port)
+}

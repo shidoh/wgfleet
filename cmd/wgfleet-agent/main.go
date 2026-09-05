@@ -853,7 +853,8 @@ func specFingerprint(spec domain.NodeSpec) string {
 // healthChecks builds the role-appropriate self-check set from the spec.
 func (a *agent) healthChecks(spec domain.NodeSpec) []health.Check {
 	if a.role == domain.RoleMaster {
-		probes := health.DefaultMasterProbes(spec)
+		probes := health.DefaultMasterProbes(spec,
+			master.ClashAPIAddr(spec, a.netnsMove != nil && a.netnsMove.Attached()))
 		// Only the agent knows where it records its claim on the client interface,
 		// so the probe is wired here rather than derived from the spec.
 		mp := a.masterPaths()

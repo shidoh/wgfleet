@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/mihomo"
+	"github.com/shidoh/wgfleet/internal/wg"
 )
 
 // The TPROXY listener needs the same self-heal the redirect listener has.
@@ -145,4 +147,121 @@ func TestMihomoPlannerBoundsTheWholeProbingPhase(t *testing.T) {
 		t.Errorf("the probing phase ran %v with a %v budget — it is not bounded as a phase",
 			elapsed.Truncate(time.Millisecond), p.probeBudget)
 	}
+}
+
+// Everything mihomo binds is an address on the HOST. Moved into its own namespace
+// without re-pointing them, every listener fails with EADDRNOTAVAIL while the
+// rules in the namespace point at ports nobody is on: TCP refused, UDP into the
+// fail-closed drop. That is every client's traffic, and the branch shipped with
+// internal/mihomo/render.go untouched.
+func TestMihomoBindsTheNamespaceWhenItLivesThere(t *testing.T) {
+	spec := domain.MasterSpec{
+		BindAddress:        "10.73.0.1",
+		ExternalController: "172.29.3.10:9090",
+		NetnsCIDR:          "100.127.255.0/30",
+		ExitTunnels: []domain.ExitTunnel{{
+			Name: "exit-de-1", Endpoint: "198.51.100.7:51820",
+			ServerPublicKey: "EXITPUB==", TunnelIP: "10.81.0.2", MTU: 1360,
+		}},
+	}
+	cfg, err := mihomo.RenderConfig(mihomo.RenderInput{
+		Spec: spec, PrivateKey: testKey(t), NetnsPeerAddr: "100.127.255.2",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{
+		"bind-address: 100.127.255.2",
+		"external-controller: 100.127.255.2:9090",
+	} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("missing %q in the rendered config", want)
+		}
+	}
+	// The host addresses must be gone, not merely joined: a listener on an address
+	// that does not exist in this namespace fails the whole start-up.
+	for _, unwanted := range []string{"bind-address: 10.73.0.1", "external-controller: 172.29.3.10:9090"} {
+		if strings.Contains(cfg, unwanted) {
+			t.Errorf("still binding a host address: %q", unwanted)
+		}
+	}
+	// And the self-dial guard has to follow the bind address, or mihomo will happily
+	// proxy a connection to its own redirect port.
+	if !strings.Contains(cfg, "IP-CIDR,100.127.255.2/32,REJECT,no-resolve") {
+		t.Error("the self-dial reject rule still names the host address")
+	}
+}
+
+// On host networking nothing changes: this is the state every master is in today.
+func TestMihomoKeepsHostAddressesWhenItHasNotMoved(t *testing.T) {
+	spec := domain.MasterSpec{BindAddress: "10.73.0.1", ExternalController: "172.29.3.10:9090",
+		ExitTunnels: []domain.ExitTunnel{{
+			Name: "exit-de-1", Endpoint: "198.51.100.7:51820",
+			ServerPublicKey: "EXITPUB==", TunnelIP: "10.81.0.2", MTU: 1360,
+		}},
+	}
+	cfg, err := mihomo.RenderConfig(mihomo.RenderInput{Spec: spec, PrivateKey: testKey(t)})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(cfg, "bind-address: 10.73.0.1") ||
+		!strings.Contains(cfg, "external-controller: 172.29.3.10:9090") {
+		t.Errorf("an unmoved mihomo lost its host addresses:\n%s", cfg)
+	}
+}
+
+// A moved bind address cannot be applied in place: a hot reload accepts it,
+// reports success and re-opens nothing, so mihomo goes on listening where it was
+// while the rules point at where it should be.
+func TestChangedListenersForcesARestart(t *testing.T) {
+	old := []byte("bind-address: 10.73.0.1\nexternal-controller: 172.29.3.10:9090\nredir-port: 7895\n")
+	newer := []byte("bind-address: 100.127.255.2\nexternal-controller: 100.127.255.2:9090\nredir-port: 7895\n")
+	changed := mihomo.ChangedListeners(old, newer)
+	if len(changed) != 2 {
+		t.Fatalf("got %v, want both the bind address and the controller", changed)
+	}
+	if len(mihomo.ChangedListeners(old, old)) != 0 {
+		t.Error("an unchanged config was reported as needing a restart")
+	}
+}
+
+// Inside the namespace, 127.0.0.1 is the NAMESPACE's loopback with nothing on it.
+// blocky is on the host and binds the client gateway, which the namespace reaches
+// over its route back to the client pool.
+func TestResolversFollowMihomoIntoTheNamespace(t *testing.T) {
+	spec := domain.NodeSpec{
+		DNS:    domain.DNSFilterSpec{Enabled: true},
+		Master: &domain.MasterSpec{BindAddress: "10.73.0.1"},
+	}
+	if got := mihomoResolvers(spec, false); len(got) != 1 || got[0] != "127.0.0.1" {
+		t.Errorf("on the host the resolver should be loopback, got %v", got)
+	}
+	if got := mihomoResolvers(spec, true); len(got) != 1 || got[0] != "10.73.0.1" {
+		t.Errorf("in the namespace the resolver must be reachable, got %v", got)
+	}
+}
+
+// The agent has to follow the API. Everything it does to mihomo goes through it:
+// tier probing, hot reloads, the mihomo-api health check, the dashboard link.
+func TestClashAPIAddrFollowsTheMove(t *testing.T) {
+	spec := domain.NodeSpec{Master: &domain.MasterSpec{
+		ExternalController: "172.29.3.10:9090",
+		NetnsCIDR:          "100.127.255.0/30",
+	}}
+	if got := ClashAPIAddr(spec, false); got != "172.29.3.10:9090" {
+		t.Errorf("unmoved: got %q", got)
+	}
+	if got := ClashAPIAddr(spec, true); got != "100.127.255.2:9090" {
+		t.Errorf("moved: got %q, want the namespace end of the veth", got)
+	}
+}
+
+// testKey mints a throwaway WireGuard private key for a render.
+func testKey(t *testing.T) string {
+	t.Helper()
+	kp, err := wg.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("keypair: %v", err)
+	}
+	return kp.PrivateKey
 }

@@ -143,7 +143,8 @@ func Planners(in Input) []reconcile.Planner {
 		// the master NAT: the namespace has to exist before anything can be asked to
 		// live in it, but nothing routes into it yet.
 		netnsPlanner{attached: in.NetnsAttached, clientIface: in.ClientInterface},
-		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey, tier: in.Tier},
+		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey, tier: in.Tier,
+			netnsAttached: in.NetnsAttached},
 		masterNATPlanner{path: in.Paths.NFT, v6Path: in.Paths.V6NFT, clientIface: in.ClientInterface,
 			netnsAttached: in.NetnsAttached},
 		dockerfw.NewForwardPlanner(

@@ -152,3 +152,55 @@ func Reload(ctx context.Context, controllerAddr, secret string, cfgYAML []byte) 
 	return fmt.Errorf("mihomo reload: controller rejected config (HTTP %d): %s",
 		resp.StatusCode, bytes.TrimSpace(msg))
 }
+
+// listenerKeys are the config keys that decide what mihomo BINDS. A change to any
+// of them cannot be applied in place.
+var listenerKeys = []string{"bind-address", "external-controller", "redir-port", "tproxy-port"}
+
+// ChangedListeners names the listener keys whose value moved between two configs.
+//
+// It exists for the same reason ChangedProxies does, and for a failure that is one
+// step worse. A Clash API hot reload re-reads rules and proxies; it does not
+// re-open sockets. So a config whose bind-address moved is accepted, reported as
+// applied, and changes nothing — mihomo goes on listening where it was. When the
+// address it moved to is in another network namespace, that means the interception
+// rules point at listeners that are not there: TCP to a refused connection, UDP
+// into the fail-closed drop. Every client's traffic, silently, with the API
+// answering 200.
+//
+// The caller restarts the container instead, exactly as it does for a proxy
+// change, and for the same underlying reason: some things are decided at startup.
+func ChangedListeners(oldCfg, newCfg []byte) []string {
+	oldL, oldOK := listenersOf(oldCfg)
+	newL, newOK := listenersOf(newCfg)
+	if !oldOK || !newOK {
+		if oldOK == newOK {
+			return nil
+		}
+		return []string{"<unparseable>"}
+	}
+	var changed []string
+	for _, k := range listenerKeys {
+		if oldL[k] != newL[k] {
+			changed = append(changed, k)
+		}
+	}
+	return changed
+}
+
+// listenersOf reads the listener keys as strings. Values are formatted rather than
+// compared as typed values so an int port and a string port do not read as a
+// change; ok is false only when the document will not parse at all.
+func listenersOf(cfg []byte) (map[string]string, bool) {
+	var doc map[string]any
+	if err := yaml.Unmarshal(cfg, &doc); err != nil {
+		return nil, false
+	}
+	out := make(map[string]string, len(listenerKeys))
+	for _, k := range listenerKeys {
+		if v, ok := doc[k]; ok {
+			out[k] = fmt.Sprint(v)
+		}
+	}
+	return out, true
+}
