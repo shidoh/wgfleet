@@ -1148,6 +1148,13 @@ func (a *agent) ensureClientWGKey(persist bool) (kp wg.KeyPair, ephemeral bool, 
 	switch {
 	case rerr == nil:
 		priv := strings.TrimSpace(string(data))
+		// Deliberately NOT the "empty file is the same as no file" rule that
+		// wg.LoadOrCreateKey, the REALITY key and the prober's key all follow. This
+		// key is the one every issued client config pins as the server's public half:
+		// minting a fresh one silently would leave every device on the fleet unable
+		// to connect, and reissuing them is an operator action with a support cost.
+		// An unreadable key here is a loud stop on purpose — a node that will not come
+		// up is cheaper than a fleet whose clients all have to be re-imported.
 		pub, perr := wg.PublicKeyOf(priv)
 		if perr != nil {
 			return wg.KeyPair{}, false, fmt.Errorf("stored client wg key invalid: %w", perr)
@@ -1879,13 +1886,19 @@ func (a *agent) ensureSynthKey() (wg.KeyPair, error) {
 	data, err := os.ReadFile(path)
 	if err == nil {
 		priv := strings.TrimSpace(string(data))
-		pub, perr := wg.PublicKeyOf(priv)
-		if perr != nil {
-			return wg.KeyPair{}, fmt.Errorf("stored synthetic client key invalid: %w", perr)
+		// Empty is the same fact as absent, for the reason spelled out in
+		// wg.LoadOrCreateKey: a torn write leaves zero bytes, and a zero-byte file
+		// that still EXISTS stops the key ever being generated again. Here the trade
+		// is the easiest on the node — this comment's own paragraph says losing this
+		// key costs one restarted measurement.
+		if priv != "" {
+			pub, perr := wg.PublicKeyOf(priv)
+			if perr != nil {
+				return wg.KeyPair{}, fmt.Errorf("stored synthetic client key invalid: %w", perr)
+			}
+			return wg.KeyPair{PrivateKey: priv, PublicKey: pub}, nil
 		}
-		return wg.KeyPair{PrivateKey: priv, PublicKey: pub}, nil
-	}
-	if !errors.Is(err, fs.ErrNotExist) {
+	} else if !errors.Is(err, fs.ErrNotExist) {
 		return wg.KeyPair{}, fmt.Errorf("read synthetic client key %q: %w", path, err)
 	}
 	kp, err := wg.GenerateKeyPair()
@@ -1980,7 +1993,7 @@ func (a *agent) decideNetnsMove(ctx context.Context, spec domain.NodeSpec, probe
 	// interception actually is. Without it the agent starts in "waiting" while the
 	// world is "attached", tears the move down on the first pass and rebuilds it on
 	// the second — two mihomo recreations and a broken client path per restart.
-	a.netnsMove.AdoptWorld(func() bool {
+	a.netnsMove.AdoptWorld(func() (bool, error) {
 		return master.InterceptionInPlace(ctx, spec, master.ClientWGInterface)
 	})
 	before := a.netnsMove.Attached()

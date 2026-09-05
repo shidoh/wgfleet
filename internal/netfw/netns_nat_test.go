@@ -7,7 +7,10 @@ import (
 
 func netnsInput() NetnsNATInput {
 	return NetnsNATInput{PeerIface: "mih0", RedirAddr: "100.127.255.2:7895",
-		TProxyAddr: "100.127.255.2:7896", ClientCIDR: "10.80.0.0/24"}
+		TProxyAddr: "100.127.255.2:7896", ClientCIDR: "10.80.0.0/24",
+		// Required: without it the rules that close mihomo's own listeners to clients
+		// are the one thing that would silently not be rendered.
+		SelfAddr: "100.127.255.2"}
 }
 
 // The interception must arrive in the namespace intact: TCP redirected, UDP
@@ -21,7 +24,7 @@ func TestNetnsNATInterceptsBothProtocols(t *testing.T) {
 	for _, want := range []string{
 		"dnat to 100.127.255.2:7895",
 		"tproxy ip to 100.127.255.2:7896",
-		`iifname "mih0" ip saddr 10.80.0.0/24 ip saddr != 10.80.0.1 meta l4proto udp counter drop`,
+		`iifname "mih0" ip saddr 10.80.0.0/24 ip saddr != 10.80.0.1 ip daddr != 100.127.255.2 meta l4proto udp counter drop`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
@@ -157,6 +160,7 @@ func TestNetnsNATGuardsDirectDestinations(t *testing.T) {
 		PeerIface:   "mih0",
 		RedirAddr:   "100.127.255.2:7895",
 		TProxyAddr:  "100.127.255.2:7896",
+		SelfAddr:    "100.127.255.2",
 		ClientCIDR:  "10.80.0.0/24",
 		DirectCIDRs: []string{"10.0.0.0/8", "172.29.0.0/16"},
 	})
@@ -164,9 +168,11 @@ func TestNetnsNATGuardsDirectDestinations(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	for _, want := range []string{
-		`iifname "mih0" ip saddr 10.80.0.0/24 ip saddr != 10.80.0.1 ip daddr != 10.0.0.0/8 ip daddr != 172.29.0.0/16 ip protocol tcp dnat to`,
-		`ip daddr != 172.29.0.0/16 meta l4proto udp tproxy ip to`,
-		`ip daddr != 172.29.0.0/16 meta l4proto udp counter drop`,
+		// The namespace's own address joins the operator's list: mihomo answering on
+		// it is a destination, not traffic to intercept.
+		`iifname "mih0" ip saddr 10.80.0.0/24 ip saddr != 10.80.0.1 ip daddr != 10.0.0.0/8 ip daddr != 172.29.0.0/16 ip daddr != 100.127.255.2 ip protocol tcp dnat to`,
+		`ip daddr != 172.29.0.0/16 ip daddr != 100.127.255.2 meta l4proto udp tproxy ip to`,
+		`ip daddr != 172.29.0.0/16 ip daddr != 100.127.255.2 meta l4proto udp counter drop`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
@@ -182,6 +188,7 @@ func TestNetnsNATGuardsDirectDestinations(t *testing.T) {
 func TestNetnsNATCountsWhatItForwards(t *testing.T) {
 	out, err := RenderNetnsNAT(NetnsNATInput{
 		PeerIface: "mih0", RedirAddr: "100.127.255.2:7895", TProxyAddr: "100.127.255.2:7896",
+		SelfAddr:   "100.127.255.2",
 		ClientCIDR: "10.80.0.0/24",
 	})
 	if err != nil {
@@ -199,6 +206,7 @@ func TestNetnsNATCountsWhatItForwards(t *testing.T) {
 func TestNetnsNATRefusesACraftedDirectCIDR(t *testing.T) {
 	_, err := RenderNetnsNAT(NetnsNATInput{
 		PeerIface: "mih0", RedirAddr: "100.127.255.2:7895", TProxyAddr: "100.127.255.2:7896",
+		SelfAddr:    "100.127.255.2",
 		ClientCIDR:  "10.80.0.0/24",
 		DirectCIDRs: []string{"10.0.0.0/8; drop"},
 	})

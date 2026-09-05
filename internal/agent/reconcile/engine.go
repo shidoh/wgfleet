@@ -49,12 +49,12 @@ func NewEngine(log *slog.Logger, planners ...Planner) *Engine {
 //
 // A failing component does NOT stop the pass. It used to: the first error, in
 // planning or in applying, returned immediately, and every planner after it was
-// skipped. On the master that is twenty planners in a fixed order, so a component
+// skipped. The master runs about twenty planners in a fixed order, so a component
 // near the front took down everything behind it — a failure in the namespace
-// interception (position 59 of the list) left the node with no host NAT, no
-// DOCKER-USER accept, no DNS filter and no client VLESS inbound, every thirty
-// seconds, for as long as the cause lasted. The blast radius of a fault had
-// nothing to do with what the fault was about.
+// interception, sixth in that list, left the node with no host NAT, no DOCKER-USER
+// accept, no DNS filter and no client VLESS inbound, every thirty seconds, for as
+// long as the cause lasted. The blast radius of a fault had nothing to do with
+// what the fault was about.
 //
 // So each component's failure is recorded on its own plan and the pass carries on
 // to the components that are unrelated to it. Within a component the remaining

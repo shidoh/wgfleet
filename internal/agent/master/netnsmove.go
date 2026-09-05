@@ -128,12 +128,22 @@ func newNetnsMover() *netnsMover { return &netnsMover{now: time.Now} }
 //
 // A node that has already given up is not adopted: that verdict outlives a restart
 // on purpose, and the reverter is what should act on it.
-func (m *netnsMover) AdoptWorld(inPlace func() bool) {
+func (m *netnsMover) AdoptWorld(inPlace func() (bool, error)) {
 	if m.adopted {
 		return
 	}
+	attached, err := inPlace()
+	if err != nil {
+		// Not an answer. Leaving `adopted` unset costs a repeated question next pass;
+		// setting it would spend the one chance this has on a kernel that happened to
+		// be busy in the second after a restart — and the state machine would then
+		// tear down a working move and rebuild it, which is the exact failure this
+		// function was written to remove.
+		m.reason = "could not tell where the interception is: " + err.Error()
+		return
+	}
 	m.adopted = true
-	if m.state != moveWaiting || !inPlace() {
+	if m.state != moveWaiting || !attached {
 		return
 	}
 	m.state, m.confirm, m.fail = moveAttached, 0, 0

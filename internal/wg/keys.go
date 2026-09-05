@@ -4,12 +4,13 @@ import (
 	"crypto/hkdf"
 	"crypto/sha256"
 	"fmt"
-	"github.com/shidoh/wgfleet/internal/atomicfile"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+
+	"github.com/shidoh/wgfleet/internal/atomicfile"
 )
 
 // KeyPair is a WireGuard private/public key pair, base64-encoded. The private

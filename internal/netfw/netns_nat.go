@@ -89,6 +89,17 @@ func portOf(addr string) (string, error) {
 }
 
 func RenderNetnsNAT(in NetnsNATInput) (string, error) {
+	// SelfAddr and the redirect's port are required, not optional: without them the
+	// two rules that close mihomo's own listeners to clients are the only thing that
+	// silently does not get rendered, and what is left behind is an accept-policy
+	// input chain in a namespace every client has a route to. A half-rendered
+	// firewall must be a failed render.
+	if in.SelfAddr == "" {
+		return "", fmt.Errorf("netfw netns NAT: namespace address is required")
+	}
+	if _, perr := portOf(in.RedirAddr); perr != nil && in.RedirAddr != "" {
+		return "", fmt.Errorf("netfw netns NAT: redirect address %q has no port: %w", in.RedirAddr, perr)
+	}
 	if in.PeerIface == "" || in.RedirAddr == "" || in.TProxyAddr == "" {
 		return "", fmt.Errorf("netfw netns NAT: peer interface, redir and tproxy addresses are required")
 	}
@@ -209,10 +220,12 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	// answers on 9090 (a secret is all that stands there). The clients are the party
 	// this whole interception exists to serve; they are also the least trusted one
 	// on the box.
-	if redirPort, perr := portOf(in.RedirAddr); perr == nil && in.SelfAddr != "" {
-		fmt.Fprintf(&b, "\t\t%s ip daddr %s tcp dport != %s counter drop\n", scope, in.SelfAddr, redirPort)
-		fmt.Fprintf(&b, "\t\t%s ip daddr %s meta l4proto != tcp counter drop\n", scope, in.SelfAddr)
+	redirPort, perr := portOf(in.RedirAddr)
+	if perr != nil {
+		return "", fmt.Errorf("netfw netns NAT: redirect address %q has no port: %w", in.RedirAddr, perr)
 	}
+	fmt.Fprintf(&b, "\t\t%s ip daddr %s tcp dport != %s counter drop\n", scope, in.SelfAddr, redirPort)
+	fmt.Fprintf(&b, "\t\t%s ip daddr %s meta l4proto != tcp counter drop\n", scope, in.SelfAddr)
 	b.WriteString("\t}\n\n")
 
 	// Everything that is NOT TCP or UDP. ICMP, GRE, ESP: the prerouting rules above

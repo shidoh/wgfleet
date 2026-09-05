@@ -351,7 +351,7 @@ func TestDisablingClearsATerminalVerdictOnDiskToo(t *testing.T) {
 // between. Observed six times in one day of deploys.
 func TestARestartAdoptsTheMoveThatIsAlreadyInPlace(t *testing.T) {
 	m := newNetnsMover()
-	m.AdoptWorld(func() bool { return true })
+	m.AdoptWorld(func() (bool, error) { return true, nil })
 
 	if !m.Attached() {
 		t.Fatalf("a converged master started detached: %s", m.Reason())
@@ -367,7 +367,7 @@ func TestARestartAdoptsTheMoveThatIsAlreadyInPlace(t *testing.T) {
 // nothing: the state machine has to earn the move through its own readiness gate.
 func TestAdoptionOfAWorldWithoutTheMoveChangesNothing(t *testing.T) {
 	m := newNetnsMover()
-	m.AdoptWorld(func() bool { return false })
+	m.AdoptWorld(func() (bool, error) { return false, nil })
 	if m.Attached() {
 		t.Fatal("a master with no interception in place claimed to be attached")
 	}
@@ -378,7 +378,7 @@ func TestAdoptionOfAWorldWithoutTheMoveChangesNothing(t *testing.T) {
 func TestAdoptionDoesNotOverturnATerminalVerdict(t *testing.T) {
 	m := newNetnsMover()
 	m.state, m.reason = moveGaveUp, "carried over from a previous run: reverted too often"
-	m.AdoptWorld(func() bool { return true })
+	m.AdoptWorld(func() (bool, error) { return true, nil })
 	if m.Attached() {
 		t.Fatal("a node that had given up adopted the move anyway")
 	}
@@ -388,6 +388,31 @@ func TestAdoptionDoesNotOverturnATerminalVerdict(t *testing.T) {
 // has since decided for itself — that would make every pass a fresh start.
 func TestTheWorldIsAdoptedOnlyOnce(t *testing.T) {
 	m := newNetnsMover()
-	m.AdoptWorld(func() bool { return false })
-	m.AdoptWorld(func() bool { t.Fatal("the world was consulted twice"); return true })
+	m.AdoptWorld(func() (bool, error) { return false, nil })
+	m.AdoptWorld(func() (bool, error) { t.Fatal("the world was consulted twice"); return true, nil })
+}
+
+// A question the kernel would not answer is not an answer.
+//
+// The probe used to return a bare bool, so "netlink was busy for a second after
+// this agent restarted" and "the interception is not in the namespace" were the
+// same value — and the second one makes the state machine tear down a working move
+// and build it again, at the cost of every client connection mihomo holds. The one
+// chance to adopt must not be spent on a failed question either: it stays unspent
+// so the next pass can ask again.
+func TestAnUnanswerableProbeNeitherAdoptsNorGivesUpTheChance(t *testing.T) {
+	m := newNetnsMover()
+	m.AdoptWorld(func() (bool, error) { return false, errors.New("netlink is busy") })
+	if m.Attached() {
+		t.Fatal("a failed probe was read as a move in place")
+	}
+
+	asked := false
+	m.AdoptWorld(func() (bool, error) { asked = true; return true, nil })
+	if !asked {
+		t.Fatal("the failed probe spent the only chance to ask")
+	}
+	if !m.Attached() {
+		t.Fatal("the second, successful probe did not adopt the move it found")
+	}
 }

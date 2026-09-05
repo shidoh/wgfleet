@@ -610,27 +610,36 @@ func (p netnsPlanner) nsTProxyRoutingLive(ctx context.Context, nsPath string, ru
 // The record on disk deliberately does not carry this state — a file claiming the
 // interception is somewhere it is not would be worse than no file — so the honest
 // way to keep it across a restart is to look.
-func InterceptionInPlace(ctx context.Context, spec domain.NodeSpec, clientIface string) bool {
+func InterceptionInPlace(ctx context.Context, spec domain.NodeSpec, clientIface string) (bool, error) {
 	if spec.Master == nil || clientIface == "" {
-		return false
+		return false, fmt.Errorf("no master spec or client interface to ask about")
 	}
 	p := netnsPlanner{run: netns.Exec, clientIface: clientIface}
 	table := fmt.Sprintf("%d", netfw.NetnsRouteTable)
 	pref := fmt.Sprintf("%d", netfw.NetnsRulePref)
 	_, peerIP, err := netns.LinkAddrs(spec.Master.NetnsLinkCIDR())
 	if err != nil {
-		return false
+		return false, fmt.Errorf("link addresses: %w", err)
+	}
+	// A rule that is not there is an answer; a kernel that would not talk to us is
+	// not. The two used to be the same value, which is how a netlink busy for one
+	// second after a restart could cost every client their connection: the mover
+	// would read "not attached", tear down a working move and build it again.
+	if out, err := netns.Exec(ctx, "ip", "rule", "list"); err != nil {
+		return false, fmt.Errorf("ip rule list: %w", err)
+	} else if !strings.Contains(out, "lookup "+table) {
+		return false, nil
 	}
 	if !p.routingLive(ctx, netns.Exec, pref, table, peerIP, domain.NetnsHostIface) {
-		return false
+		return false, nil
 	}
 	// Routed there, and mihomo actually in it: a rule pointing at a namespace mihomo
 	// left is not the move, it is the outage the move's own self-heal exists for.
 	nsPath, err := netns.Path(ctx, domain.NetnsHolder, netns.Exec)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("holder namespace: %w", err)
 	}
-	return p.mihomoIsInTheNamespace(ctx, nsPath, netns.Exec)
+	return p.mihomoIsInTheNamespace(ctx, nsPath, netns.Exec), nil
 }
 
 // NamespaceReady reports whether mihomo's namespace is fit to carry client

@@ -5,10 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"github.com/shidoh/wgfleet/internal/atomicfile"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/shidoh/wgfleet/internal/atomicfile"
 )
 
 // realityKeyEncoding is the base64 alphabet REALITY/xray use for x25519 keys.
@@ -39,11 +40,20 @@ func GenerateKeypair() (privateKey, publicKey string, err error) {
 func LoadOrCreateKey(path string) (privateKey, publicKey string, created bool, err error) {
 	if data, rerr := os.ReadFile(path); rerr == nil {
 		priv := strings.TrimSpace(string(data))
-		pub, perr := PublicKeyFor(priv)
-		if perr != nil {
-			return "", "", false, fmt.Errorf("stored reality key invalid: %w", perr)
+		// An empty file is the same fact as no file — see wg.LoadOrCreateKey, which
+		// this mirrors and where the reasoning is spelled out: a torn write leaves
+		// zero bytes, the file then exists, and the branch that would generate a key
+		// never runs again. A REALITY key is regenerable at will (the client link
+		// carries the public half and is reissued from the controller), so replacing
+		// an empty one costs a reissue and buys back a node that would otherwise be
+		// stuck for good.
+		if priv != "" {
+			pub, perr := PublicKeyFor(priv)
+			if perr != nil {
+				return "", "", false, fmt.Errorf("stored reality key invalid: %w", perr)
+			}
+			return priv, pub, false, nil
 		}
-		return priv, pub, false, nil
 	}
 	priv, pub, err := GenerateKeypair()
 	if err != nil {

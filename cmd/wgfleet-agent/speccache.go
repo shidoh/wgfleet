@@ -4,14 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/shidoh/wgfleet/internal/atomicfile"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"os"
 	"path/filepath"
 	"time"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
+	"github.com/shidoh/wgfleet/internal/atomicfile"
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 

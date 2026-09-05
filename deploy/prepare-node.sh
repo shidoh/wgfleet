@@ -86,6 +86,16 @@ fi
 # Ensure the module is loaded NOW (it may be built but not inserted — e.g. after a
 # kernel change or reboot — which is exactly what trips the provisioner pre-flight)
 # and on every future boot.
+# The kernel is held.
+#
+# Not to avoid updates — unattended-upgrades stays on, and security updates are
+# worth more than the risk here — but to keep the one upgrade that can take the
+# data plane with it out of the unattended path. AmneziaWG is a DKMS module: a
+# kernel that arrives on its own at 06:00, followed by a reboot, can leave a node
+# with no module and therefore no tunnels at all, and nothing the agent can do
+# about it. Kernel upgrades are done deliberately, with the module checked after.
+apt-mark hold linux-image-generic linux-headers-generic >/dev/null 2>&1 || true
+
 # nftables.service is masked, not merely disabled.
 #
 # The ruleset on every node belongs to the agent, which writes it and applies it
