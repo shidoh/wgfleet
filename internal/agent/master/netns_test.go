@@ -796,3 +796,57 @@ func displays(acts []reconcile.Action) string {
 	}
 	return b.String()
 }
+
+// A blackhole at somebody else's metric is not this floor. It would satisfy a
+// substring check and then never be corrected — and the metric is the whole reason
+// the veth route wins while the veth is up.
+func TestAFloorAtTheWrongMetricIsNotTakenForOurs(t *testing.T) {
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		if strings.Contains(line, "route show table 51822") {
+			return "default via 100.127.255.2 dev mih-host\nblackhole default metric 5\n", nil
+		}
+		return "", errors.New("absent: " + line)
+	}
+	p := netnsPlanner{run: run, clientIface: "wg0"}
+	if p.floorLive(context.Background(), run, "51822") {
+		t.Error("a blackhole at metric 5 was accepted as the floor this build installs")
+	}
+}
+
+// The rule that sends clients into the namespace must not be installed over a
+// table its own predecessors failed to fill. Both of those steps are best-effort,
+// so their failure is a warning and the pass continues — which is precisely how a
+// rule ends up pointing at nothing.
+func TestTheMoveRuleRefusesAnUnusableTable(t *testing.T) {
+	cases := map[string]string{
+		"nothing at all":     "",
+		"floor but no route": "blackhole default metric 1000\n",
+		"route but no floor": "default via 100.127.255.2 dev mih-host\n",
+	}
+	for name, table := range cases {
+		t.Run(name, func(t *testing.T) {
+			run := func(_ context.Context, cmd string, args ...string) (string, error) {
+				if strings.Contains(cmd+" "+strings.Join(args, " "), "route show table 51822") {
+					return table, nil
+				}
+				return "", errors.New("absent")
+			}
+			p := netnsPlanner{run: run, clientIface: "wg0"}
+			if p.tableUsable(context.Background(), run, "51822", "100.127.255.2", "mih-host") {
+				t.Errorf("the rule would have been installed over a table that reads %q", table)
+			}
+		})
+	}
+	full := "default via 100.127.255.2 dev mih-host\nblackhole default metric 1000\n"
+	run := func(_ context.Context, cmd string, args ...string) (string, error) {
+		if strings.Contains(cmd+" "+strings.Join(args, " "), "route show table 51822") {
+			return full, nil
+		}
+		return "", errors.New("absent")
+	}
+	p := netnsPlanner{run: run, clientIface: "wg0"}
+	if !p.tableUsable(context.Background(), run, "51822", "100.127.255.2", "mih-host") {
+		t.Error("a table with both the route and the floor was refused")
+	}
+}

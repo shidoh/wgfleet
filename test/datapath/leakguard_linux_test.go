@@ -187,6 +187,10 @@ func parse4(s string) [4]byte {
 
 // chainCounter reads one chain's packet counter. A chain the ruleset does not have
 // counts nothing, which is a fact about that ruleset rather than a failure.
+//
+// Scope: it returns the FIRST counter in the chain. Both guard chains hold exactly
+// one rule, so that is the whole answer here — but a chain with two counted rules
+// would silently report only the first, so do not reuse this for one.
 func chainCounter(t *testing.T, chain string) int {
 	t.Helper()
 	out, err := exec.Command("ip", "netns", "exec", guardNS,

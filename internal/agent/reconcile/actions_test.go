@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -87,5 +88,49 @@ func TestFileActionNoChangeWhenContentAndModeMatch(t *testing.T) {
 	}
 	if a.Changes() {
 		t.Fatalf("expected no-change, got %+v", a)
+	}
+}
+
+// A plan is a snapshot, and by the time an action runs the world may no longer be
+// the one that justified it. OnlyIf is how an action asks again.
+//
+// The case it was written for: the rule that sends clients into mihomo's namespace
+// is preceded by the two best-effort commands that fill the table it points at. A
+// best-effort failure is logged and the pass continues — so without a second look,
+// the rule gets installed over a table nothing filled, and a rule pointing at an
+// empty table does not fail. It routes every client out of the uplink.
+func TestAnActionAsksAgainBeforeItActs(t *testing.T) {
+	ran := false
+	act := CustomAction(ActionExec, "target", "do the thing", "cmd",
+		func(context.Context) error { ran = true; return nil })
+
+	skipped := act.OnlyIf("the world moved", func(context.Context) bool { return false })
+	err := skipped.run(context.Background())
+	if ran {
+		t.Fatal("the action ran although its precondition no longer held")
+	}
+	if err == nil || !strings.Contains(err.Error(), "the world moved") {
+		t.Fatalf("a skip must say why, got %v", err)
+	}
+
+	ran = false
+	allowed := act.OnlyIf("the world moved", func(context.Context) bool { return true })
+	if err := allowed.run(context.Background()); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !ran {
+		t.Fatal("the action did not run although its precondition held")
+	}
+}
+
+// And under BestEffort the skip must be a warning, not a failed pass: this runs on
+// the master ahead of half its planners.
+func TestASkippedActionDoesNotFailThePass(t *testing.T) {
+	act := CustomAction(ActionExec, "target", "do the thing", "cmd",
+		func(context.Context) error { return nil }).
+		OnlyIf("not yet", func(context.Context) bool { return false }).
+		BestEffort()
+	if err := act.run(context.Background()); err != nil {
+		t.Fatalf("a skipped best-effort action failed the pass: %v", err)
 	}
 }

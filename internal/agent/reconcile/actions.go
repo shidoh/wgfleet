@@ -157,6 +157,34 @@ func (a Action) BestEffort() Action {
 	return a
 }
 
+// OnlyIf re-asks, at APPLY time, a question the plan answered from a snapshot.
+//
+// A plan is computed from the world as it was at the start of the pass, and every
+// action in it is then applied in order — so an action can run against a world its
+// own predecessors failed to build. That is not hypothetical: the rule that sends
+// clients into mihomo's namespace is preceded by the two commands that make the
+// table it points at usable, and all three are best-effort. Both of them failing
+// and the third one running anyway is exactly the state the ordering exists to
+// prevent, because a rule pointing at an empty table does not fail — it routes
+// every client out of the uplink until the next pass.
+//
+// The skip is an error rather than a silent no-op: composed under BestEffort it
+// becomes a warning naming the reason, and a step that quietly did not happen is
+// the hardest kind to find.
+func (a Action) OnlyIf(because string, cond func(ctx context.Context) bool) Action {
+	inner := a.apply
+	a.apply = func(ctx context.Context) error {
+		if !cond(ctx) {
+			return fmt.Errorf("skipped: %s", because)
+		}
+		if inner == nil {
+			return nil
+		}
+		return inner(ctx)
+	}
+	return a
+}
+
 // RemoveFileAction deletes target. It classifies by reading current state — a
 // delete when the file exists, a no-change when it is already gone — so plan
 // output is honest and the wipe is idempotent. Apply is best-effort: a file that

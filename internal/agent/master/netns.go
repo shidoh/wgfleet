@@ -308,7 +308,15 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 				"ip", "route", "replace", "default", "via", peerIP, "dev", in.HostIface, "table", table),
 			reconcile.BestEffortExecAction("clear any stale rule at the namespace priority",
 				"ip", "rule", "del", "pref", pref),
-			reconcile.BestEffortExecAction(summary, rule...))
+			// Ordering alone is not enough. All three steps are best-effort, so a floor
+			// or a route that genuinely failed — a veth that went away between the plan
+			// and the apply, a busy netlink — is logged and the pass continues, and the
+			// rule would then be installed over a table nothing filled. The rule asks
+			// again, immediately before it acts.
+			reconcile.ExecAction(summary, rule...).
+				OnlyIf("the namespace table is not usable yet", func(ctx context.Context) bool {
+					return p.tableUsable(ctx, run, table, peerIP, in.HostIface)
+				}).BestEffort())
 	} else {
 		actions = append(actions, reconcile.NoChangeAction("namespace routing",
 			"client traffic already routed into the namespace"))
@@ -502,12 +510,35 @@ func (p netnsPlanner) ruleLive(ctx context.Context, run netns.Runner, pref strin
 // that table's default route through the veth.
 // floorLive reports whether the namespace table already holds the blackhole that
 // stops a lookup miss from falling through to `main`.
+//
+// The metric is part of the question, not decoration: a blackhole at some other
+// metric — left by an older build, or added by hand — would satisfy a substring
+// check and then never be corrected, and the metric is the whole reason the real
+// route wins while the veth is up.
 func (p netnsPlanner) floorLive(ctx context.Context, run netns.Runner, table string) bool {
 	route, err := run(ctx, "ip", "route", "show", "table", table)
 	if err != nil {
 		return false
 	}
-	return strings.Contains(route, "blackhole default")
+	for _, line := range strings.Split(route, "\n") {
+		if strings.Contains(line, "blackhole default") && strings.Contains(line, "metric "+netnsFloorMetric) {
+			return true
+		}
+	}
+	return false
+}
+
+// tableUsable reports whether the namespace table can carry client traffic RIGHT
+// NOW: it has the route through the veth, and it has the floor under it. The rule
+// that sends clients there is gated on this at apply time — see Action.OnlyIf.
+func (p netnsPlanner) tableUsable(ctx context.Context, run netns.Runner, table, peerIP, hostIface string) bool {
+	route, err := run(ctx, "ip", "route", "show", "table", table)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(route, "default via "+peerIP) &&
+		strings.Contains(route, "dev "+hostIface) &&
+		strings.Contains(route, "blackhole default")
 }
 
 func (p netnsPlanner) routingLive(ctx context.Context, run netns.Runner, pref, table, peerIP, hostIface string) bool {
