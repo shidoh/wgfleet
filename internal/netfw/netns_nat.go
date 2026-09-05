@@ -151,6 +151,27 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	// Client traffic leaves this namespace as mihomo's own connections, so it needs
 	// no masquerade here — mihomo dials the exits from the namespace address, and
 	// the host masquerades that on the way out.
+	// Client traffic that the interception never claimed — ICMP, GRE, ESP — is
+	// forwarded straight back out to the host, and it has to leave this namespace
+	// wearing the namespace's address.
+	//
+	// Without this it wears the client's, and then it dies: the host's masquerade is
+	// scoped `oifname != <veth>`, so the first postrouting pass (host → namespace)
+	// is exempt and conntrack records "no NAT" for the whole connection. The second
+	// pass, namespace → uplink, is the same connection: NAT will not fire, the source
+	// is still a client's, and the host's egress_leak_guard eats it. Measured on the
+	// live master 2026-09-05: 201 packets forwarded in here, 200 dropped there —
+	// client ping and traceroute black-holed since the move, in silence.
+	//
+	// The consequence is worth stating plainly, because it is a choice: these
+	// packets leave by the MASTER's address, not through an exit, so a traceroute
+	// from a client ends at the master. The operator asked for a working ping over a
+	// silent hole, and this is what that costs.
+	fmt.Fprintf(&b, "\tchain postrouting {\n")
+	b.WriteString("\t\ttype nat hook postrouting priority srcnat; policy accept;\n")
+	fmt.Fprintf(&b, "\t\toifname %q %s counter masquerade\n", in.PeerIface, scope)
+	b.WriteString("\t}\n\n")
+
 	b.WriteString("\tchain input {\n")
 	b.WriteString("\t\ttype filter hook input priority filter; policy accept;\n")
 	// A permissive policy is right here and nowhere else: the only thing that can

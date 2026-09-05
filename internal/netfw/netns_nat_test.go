@@ -288,3 +288,41 @@ func TestNetnsNATDoesNotInterceptTrafficAddressedToMihomoItself(t *testing.T) {
 		}
 	}
 }
+
+// Client ping has to survive the move, and surviving it means changing address on
+// the way out of this namespace.
+//
+// What made it die was invisible: the host's masquerade is scoped away from the
+// veth, so the pass that carries a packet INTO the namespace takes the "no NAT"
+// decision for the whole connection, and the pass that carries it back out cannot
+// undo that. The source stays a client's, and the host's own leak guard drops it
+// one hook later. 201 packets in, 200 dropped, measured on the live master.
+func TestForwardedClientTrafficLeavesTheNamespaceWithTheNamespacesAddress(t *testing.T) {
+	out, err := RenderNetnsNAT(NetnsNATInput{
+		PeerIface:  "mih0",
+		ClientCIDR: "10.73.0.0/24",
+		RedirAddr:  "100.127.255.2:7895",
+		TProxyAddr: "100.127.255.2:7896",
+		SelfAddr:   "100.127.255.2",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	post, ok := chainBody(out, "chain postrouting {")
+	if !ok {
+		t.Fatalf("the namespace masquerades nothing, so forwarded client traffic keeps a source the host will drop:\n%s", out)
+	}
+	for _, want := range []string{
+		`oifname "mih0"`,        // on the way out, and only there
+		"ip saddr 10.73.0.0/24", // a client's traffic
+		"ip saddr != 10.73.0.1", // not the gateway's own
+		"masquerade",
+	} {
+		if !strings.Contains(post, want) {
+			t.Errorf("the namespace postrouting is missing %q:\n%s", want, post)
+		}
+	}
+	if strings.Contains(post, "100.127.255.2 ") && !strings.Contains(post, "ip saddr 10.73.0.0/24") {
+		t.Error("mihomo's own traffic must not be masqueraded here: it already leaves with this address")
+	}
+}
