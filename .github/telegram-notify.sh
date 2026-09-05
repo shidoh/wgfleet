@@ -4,14 +4,21 @@
 #   TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... \
 #     .github/telegram-notify.sh <tag> <release-notes.md> <dist-dir>
 #
-# Sends one document album: the build archives, SHA256SUMS, and the release notes
-# as CHANGELOG-<tag>.md. The caption — on the FIRST item, which is where clients
-# render an album caption — carries the version, the highlights, and a count of
-# what is in the attached changelog.
+# Sends the announcement as a text message — version, highlights, and a count of
+# what the changelog holds — and then the files right behind it: the build
+# archives, SHA256SUMS, and the release notes as CHANGELOG-<tag>.md. The album is
+# sent silently, so the pair costs the channel ONE notification.
 #
-# The layout is dictated by three hard limits. A caption is 1024 characters, a
-# message 4096, and a full changelog is neither: v0.2.2's was 5.9 KB. That leaves
-# exactly three options — cut it, hide it, or attach it. This attaches it.
+# Text first, files second, and not as a caption, because a document album has no
+# single caption to speak of: each file is its own bubble and a caption belongs to
+# the bubble it is attached to. On the first item it renders BETWEEN the files, on
+# the last one it lands under four download rows, and either way the channel
+# preview shows a file name instead of the announcement. There is no
+# show_caption_above_media for documents.
+#
+# The changelog is attached rather than posted because a message is 4096
+# characters and a full changelog is not: v0.2.2's was 5.9 KB. That leaves exactly
+# three options — cut it, hide it, or attach it. This attaches it.
 #
 # The two that were tried first are worth naming, because both look reasonable
 # until you see them in a channel:
@@ -42,7 +49,7 @@ fi
 
 API="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN:-dry-run}"
 MAX_BYTES=$((50 * 1024 * 1024))   # Telegram bot upload ceiling, per file
-CAPTION_BUDGET=950                # the ceiling is 1024; leave room for the header
+TEXT_BUDGET=3500                  # the ceiling is 4096; the highlights use a fraction
 
 # --- Markdown -> Telegram HTML ------------------------------------------------
 # escape_html: neutralize &, <, > so they don't collide with our own HTML tags.
@@ -67,8 +74,8 @@ to_html() {
 }
 
 # fit keeps whole lines while they fit the budget, marking a cut with an ellipsis.
-# Only the caption is ever cut, and never at the cost of information: the full
-# notes ride along as a file.
+# Only the announcement is ever cut, and never at the cost of information: the
+# full notes ride along as a file.
 fit() {
   local budget="$1" out="" line
   while IFS= read -r line; do
@@ -133,13 +140,13 @@ NOTES_NAME="CHANGELOG-${TAG}.md"
 # The header is one line: the product and the version, which is what a reader
 # scrolling a channel needs to identify the post. Telegram bot messages have no
 # font-size control, so prominence comes from weight, position and an emoji.
-CAPTION="$(printf '🚀 <b>wgfleet %s</b>' "$TAG_HTML")"
+ANNOUNCEMENT="$(printf '🚀 <b>wgfleet %s</b>' "$TAG_HTML")"
 if [ -n "$(tr -d '[:space:]' <<<"$LEAD_HTML")" ]; then
-  CAPTION+="$(printf '\n\n%s' "$(fit "$CAPTION_BUDGET" <<<"$LEAD_HTML")")"
+  ANNOUNCEMENT+="$(printf '\n\n%s' "$(fit "$TEXT_BUDGET" <<<"$LEAD_HTML")")"
 fi
 SUMMARY="$(summary_line)"
 if [ -n "$SUMMARY" ]; then
-  CAPTION+="$(printf '\n\n%s — full changelog in <code>%s</code>' \
+  ANNOUNCEMENT+="$(printf '\n\n%s — full changelog in <code>%s</code>' \
     "$(printf '%s' "$SUMMARY" | escape_html)" "$(printf '%s' "$NOTES_NAME" | escape_html)")"
 fi
 
@@ -174,14 +181,15 @@ send_message() {
 }
 
 if [ -n "$DRY_RUN" ]; then
-  printf '\n----- album: %d file(s), caption %d chars -----\n' "${#FILES[@]}" "${#CAPTION}"
+  printf '\n----- sendMessage (%d chars) -----\n%s\n' "${#ANNOUNCEMENT}" "$ANNOUNCEMENT"
+  printf '\n----- album, silent: %d file(s), no caption -----\n' "${#FILES[@]}"
   for f in "${FILES[@]}"; do printf '  %s\n' "$(basename "$f")"; done
-  printf -- '-----\n%s\n' "$CAPTION"
   echo "Telegram announcement complete (dry run)."
   exit 0
 fi
 
-echo "Sending ${#FILES[@]} file(s) as one album with the release caption"
+echo "Posting the announcement, then ${#FILES[@]} file(s) silently behind it"
+send_message "$ANNOUNCEMENT"
 
 if [ "${#FILES[@]}" -eq 1 ]; then
   # sendMediaGroup requires 2..10 items; a lone file goes via sendDocument.
@@ -189,23 +197,18 @@ if [ "${#FILES[@]}" -eq 1 ]; then
   # "<" value as a local file (curl error 26); only real files use -F "@path".
   curl -fsS -X POST "$API/sendDocument" \
     --form-string "chat_id=${TELEGRAM_CHAT_ID}" \
-    --form-string "caption=${CAPTION}" \
-    --form-string "parse_mode=HTML" \
+    --form-string "disable_notification=true" \
     -F "document=@${FILES[0]}" \
     >/dev/null
 else
-  # The caption goes on the FIRST item: that is the one clients render as the
-  # album's caption. It rode on the last item once, to put the text below the
-  # files; what that actually produced was a wall of text wedged under three
-  # download rows. There is no show_caption_above_media for documents.
-  media_json="$(jq -cn --arg cap "$CAPTION" '
+  media_json="$(jq -cn '
     [ $ARGS.positional | to_entries[]
       | { type: "document", media: ("attach://file" + (.key | tostring)) } ]
-    | .[0].caption = $cap
-    | .[0].parse_mode = "HTML"
   ' --args "${FILES[@]}")"
 
-  curl_args=(--form-string "chat_id=${TELEGRAM_CHAT_ID}" --form-string "media=${media_json}")
+  curl_args=(--form-string "chat_id=${TELEGRAM_CHAT_ID}"
+             --form-string "media=${media_json}"
+             --form-string "disable_notification=true")
   for i in "${!FILES[@]}"; do
     curl_args+=(-F "file${i}=@${FILES[$i]}")
   done
