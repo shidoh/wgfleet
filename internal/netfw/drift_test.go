@@ -23,7 +23,8 @@ func TestRenderedChainCountsIgnoresEverythingTheKernelIgnores(t *testing.T) {
 		"prerouting":        1, // the tcp dnat; the QUIC drop is gone once UDP is proxied
 		"client_udp_tproxy": 2, // intercept, then drop what was not intercepted
 		"postrouting":       1,
-		"egress_leak_guard": 1,
+		"egress_leak_guard": 1, // "the masquerade fired"
+		"egress_path_guard": 1, // "and the packet left by a door we opened"
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("chain counts = %v, want %v", got, want)

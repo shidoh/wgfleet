@@ -414,6 +414,41 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 		netnsIfaceGuard(in.NetnsHostIface))
 	b.WriteString("\t}\n")
 
+	// The other half of the question, and the half the chain above cannot ask.
+	//
+	// That one runs AFTER srcnat, so it sees a client address only when NAT did not
+	// translate it — "the masquerade did not fire" is a real failure and it catches
+	// it. What it cannot catch is the failure where NAT works perfectly and the
+	// PATH is wrong: client traffic that fell out of the namespace table into
+	// `main`, left by the uplink and was masqueraded on the way, is by then indis-
+	// tinguishable from the master's own traffic. That is not hypothetical — it is
+	// what an empty routing table produces, and the routing table is empty every
+	// time the namespace holder is recreated.
+	//
+	// So this chain runs BEFORE srcnat, where the source is still the client's, and
+	// asks the question the other one cannot: did this packet leave by a door we
+	// meant to open?
+	//
+	//   - the client interface — traffic between clients, and back to them;
+	//   - loopback — not leaving the box at all;
+	//   - the veth — the namespace, which is where interception lives once moved;
+	//   - the declared direct destinations — the operator's split-tunnel: the mgmt
+	//     overlay, RFC1918, the exits' own public addresses. These leave by the
+	//     uplink WITH a client source and are then masqueraded, exactly like a leak,
+	//     and the only thing that separates them is that we declared them.
+	//
+	// Everything else with a client address on it is on a path nobody chose.
+	b.WriteString("\n\tchain egress_path_guard {\n")
+	b.WriteString("\t\ttype filter hook postrouting priority srcnat - 10; policy accept;\n")
+	// Rendered through privateGuards, the same canonicalising, injection-safe
+	// helper the DNAT exceptions use — and from the same field, so a destination
+	// the operator exempts from interception is exempt here too. A list that drifts
+	// in one direction drops the split tunnel; in the other it opens the leak.
+	fmt.Fprintf(&b, "\t\tip saddr %s%s%s oifname != %q oifname != \"lo\"%s counter drop\n",
+		clientCIDR, gatewaySourceGuard(in.ClientCIDR), guards,
+		in.ClientInterface, netnsIfaceGuard(in.NetnsHostIface))
+	b.WriteString("\t}\n")
+
 	b.WriteString("}\n")
 	return b.String(), nil
 }

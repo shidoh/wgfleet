@@ -575,3 +575,104 @@ func TestAPIRedirectDoesNotOpenTheAPIToClients(t *testing.T) {
 		t.Errorf("the API was opened to the client pool without the operator asking:\n%s", out)
 	}
 }
+
+// Two guards, two questions, and the second one is the one that matters when the
+// routing breaks.
+//
+// egress_leak_guard runs after srcnat, so it only ever sees a client address that
+// NAT did not translate — it asserts "the masquerade fired". It cannot see the
+// other failure: a packet that fell out of the namespace table into `main`, left
+// by the uplink and WAS masqueraded on the way is, by the time that chain runs,
+// indistinguishable from the master's own traffic. That failure is not exotic —
+// an empty namespace table produces it, and the table is empty every time the
+// holder container is recreated.
+//
+// So the path guard runs BEFORE srcnat, where the source is still the client's.
+// A chain at the same priority as the other one would be the same blind rule
+// twice.
+func TestThePathGuardRunsBeforeNATAndTheLeakGuardAfter(t *testing.T) {
+	out, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+		PrivateCIDRs:    []string{"192.168.0.0/16"},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	leak := guardChain(t, out, "egress_leak_guard")
+	path := guardChain(t, out, "egress_path_guard")
+
+	if !strings.Contains(leak, "priority srcnat + 10") {
+		t.Errorf("the leak guard must run after NAT, or it cannot tell a missed translation from a normal one:\n%s", leak)
+	}
+	if !strings.Contains(path, "priority srcnat - 10") {
+		t.Errorf("the path guard must run before NAT, or the source is no longer the client's:\n%s", path)
+	}
+}
+
+// The split tunnel leaves by the uplink with a client source, is masqueraded, and
+// is indistinguishable from a leak by every property except one: we declared it.
+// The guard therefore has to carry the same destinations the routing exempts — and
+// carry them from the same field, because two lists edited by different people at
+// different times drift, and this pair drifts into either a dropped split tunnel
+// or an open leak.
+func TestThePathGuardExemptsEveryDeclaredDirectDestination(t *testing.T) {
+	direct := []string{"10.0.0.0/8", "172.16.0.0/12", "198.51.100.220/32"}
+	out, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+		PrivateCIDRs:    direct,
+		NetnsGateway:    "100.127.255.2",
+		NetnsHostIface:  "mih-host",
+		NetnsLinkCIDR:   "100.127.255.0/30",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	path := guardChain(t, out, "egress_path_guard")
+	for _, c := range direct {
+		if !strings.Contains(path, "ip daddr != "+c) {
+			t.Errorf("a declared direct destination is not exempt, so the guard drops the split tunnel: %s\n%s", c, path)
+		}
+	}
+	for _, want := range []string{
+		`ip saddr 10.80.0.0/24`, // client traffic only
+		`ip saddr != 10.80.0.1`, // not the master's own address inside the pool
+		`oifname != "wg0"`,      // back to the clients is not egress
+		`oifname != "lo"`,       // not leaving the box at all
+		`oifname != "mih-host"`, // the namespace is where interception lives
+		`counter drop`,
+	} {
+		if !strings.Contains(path, want) {
+			t.Errorf("the path guard is missing %q:\n%s", want, path)
+		}
+	}
+}
+
+// A destination the operator wrote by hand goes into a root-applied ruleset, so it
+// is canonicalised rather than pasted. Without this the guard is an injection point
+// the DNAT exceptions above it do not have.
+func TestThePathGuardRefusesAMalformedDirectDestination(t *testing.T) {
+	_, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+		PrivateCIDRs:    []string{"10.0.0.0/8; drop; #"},
+	})
+	if err == nil {
+		t.Fatal("a malformed direct destination was rendered into the ruleset instead of failing the render")
+	}
+}
+
+// guardChain is chainBody with the failure spelled out: a chain that is missing
+// entirely must fail the test that asserts about it, not silently assert about "".
+func guardChain(t *testing.T, ruleset, name string) string {
+	t.Helper()
+	body, ok := chainBody(ruleset, "chain "+name+" {")
+	if !ok {
+		t.Fatalf("ruleset has no chain %q:\n%s", name, ruleset)
+	}
+	return body
+}
