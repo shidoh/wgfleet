@@ -2,6 +2,7 @@ package netfw
 
 import (
 	"fmt"
+	"net/netip"
 	"strings"
 )
 
@@ -49,6 +50,18 @@ type NetnsNATInput struct {
 	// change exists to end: partial, one-way, and invisible to every component
 	// metric.
 	DirectCIDRs []string
+	// SelfAddr is the namespace's own address — where mihomo listens. Traffic
+	// addressed to it is FOR mihomo, never traffic to be pushed THROUGH it.
+	//
+	// This is the exact sibling of the host ruleset's `ip daddr != <gateway>` guard,
+	// and it was missing. It matters the moment anything on the host redirects an
+	// admin connection in here: the host rewrites the destination to this address,
+	// the packet arrives with a destination no direct-CIDR guard covers any more,
+	// the interception below claims it and sends it to the redirect port — and
+	// mihomo, asked to proxy a connection to itself, closes it. Measured on the live
+	// master 2026-09-05: the dashboard's TCP handshake completed and was immediately
+	// FIN'd, from the client tunnel only.
+	SelfAddr string
 }
 
 // RenderNetnsNAT renders the interception that used to live on the host.
@@ -97,6 +110,13 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	guards, gerr := privateGuards(in.DirectCIDRs)
 	if gerr != nil {
 		return "", gerr
+	}
+	if in.SelfAddr != "" {
+		addr, aerr := netip.ParseAddr(in.SelfAddr)
+		if aerr != nil {
+			return "", fmt.Errorf("netfw netns NAT: invalid namespace address %q: %w", in.SelfAddr, aerr)
+		}
+		guards += fmt.Sprintf(" ip daddr != %s", addr)
 	}
 
 	var b strings.Builder

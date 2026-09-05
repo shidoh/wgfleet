@@ -261,3 +261,30 @@ func TestNetnsNATDoesNotInterceptRepliesFromTheGateway(t *testing.T) {
 		}
 	}
 }
+
+// Traffic addressed to the namespace itself is FOR mihomo, never traffic to push
+// THROUGH it.
+//
+// The sibling of the host's `ip daddr != <gateway>` guard, and it was missing. It
+// matters the moment anything on the host redirects an admin connection in here:
+// the host rewrites the destination to this address, the packet arrives with a
+// destination no direct-CIDR guard covers, the interception claims it and sends it
+// to the redirect port — and mihomo, asked to proxy a connection to itself, closes
+// it. Measured on the live master 2026-09-05: the dashboard's TCP handshake
+// completed and was immediately FIN'd, from the client tunnel only.
+func TestNetnsNATDoesNotInterceptTrafficAddressedToMihomoItself(t *testing.T) {
+	in := netnsInput()
+	in.SelfAddr = "100.127.255.2"
+	out, err := RenderNetnsNAT(in)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "dnat to") && !strings.Contains(line, "tproxy ip to") {
+			continue
+		}
+		if !strings.Contains(line, "ip daddr != 100.127.255.2") {
+			t.Errorf("a rule would intercept traffic aimed at mihomo itself:\n  %s", line)
+		}
+	}
+}

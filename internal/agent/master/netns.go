@@ -179,6 +179,7 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 		RedirAddr:   fmt.Sprintf("%s:%d", peerIP, redir),
 		TProxyAddr:  fmt.Sprintf("%s:%d", peerIP, mihomo.TProxyPortFor(redir)),
 		ClientCIDR:  in.ClientCIDR,
+		SelfAddr:    peerIP,
 		DirectCIDRs: direct,
 	})
 	if err != nil {
