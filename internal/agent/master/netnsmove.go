@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/shidoh/wgfleet/internal/atomicfile"
 )
 
 // Defaults for the move into mihomo's namespace. Asymmetric on purpose, the same
@@ -346,5 +348,5 @@ func (m *netnsMover) save() {
 		return
 	}
 	_ = os.MkdirAll(filepath.Dir(m.statePath), 0o700)
-	_ = os.WriteFile(m.statePath, b, 0o600)
+	_ = atomicfile.Write(m.statePath, b, 0o600)
 }

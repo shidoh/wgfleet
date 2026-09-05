@@ -4,6 +4,7 @@ import (
 	"crypto/hkdf"
 	"crypto/sha256"
 	"fmt"
+	"github.com/shidoh/wgfleet/internal/atomicfile"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,13 +114,20 @@ func LoadOrCreateKey(path string) (KeyPair, bool, error) {
 	data, err := os.ReadFile(path)
 	if err == nil {
 		priv := strings.TrimSpace(string(data))
-		pub, perr := PublicKeyOf(priv)
-		if perr != nil {
-			return KeyPair{}, false, fmt.Errorf("stored key %q invalid: %w", path, perr)
+		// An EMPTY file is the same fact as no file, and treating it otherwise is how
+		// a node gets stuck for good: a torn write leaves zero bytes, the file then
+		// EXISTS, so the branch that generates a key never runs again, and every pass
+		// fails on a key that cannot be parsed until somebody deletes it by hand.
+		// Anything else that will not parse is still a loud error — a key with content
+		// we do not understand may be one somebody meant to put there.
+		if priv != "" {
+			pub, perr := PublicKeyOf(priv)
+			if perr != nil {
+				return KeyPair{}, false, fmt.Errorf("stored key %q invalid: %w", path, perr)
+			}
+			return KeyPair{PrivateKey: priv, PublicKey: pub}, false, nil
 		}
-		return KeyPair{PrivateKey: priv, PublicKey: pub}, false, nil
-	}
-	if !os.IsNotExist(err) {
+	} else if !os.IsNotExist(err) {
 		return KeyPair{}, false, fmt.Errorf("read key %q: %w", path, err)
 	}
 
@@ -132,7 +140,7 @@ func LoadOrCreateKey(path string) (KeyPair, bool, error) {
 			return KeyPair{}, false, fmt.Errorf("mkdir %q: %w", dir, err)
 		}
 	}
-	if err := os.WriteFile(path, []byte(kp.PrivateKey+"\n"), 0o600); err != nil {
+	if err := atomicfile.Write(path, []byte(kp.PrivateKey+"\n"), 0o600); err != nil {
 		return KeyPair{}, false, fmt.Errorf("persist key %q: %w", path, err)
 	}
 	return kp, true, nil

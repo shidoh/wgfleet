@@ -44,6 +44,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/agent/restart"
 	"github.com/shidoh/wgfleet/internal/api"
+	"github.com/shidoh/wgfleet/internal/atomicfile"
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/pki"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -1320,7 +1321,7 @@ func writeKeyFile(path, key string) error {
 			return fmt.Errorf("mkdir %q: %w", dir, err)
 		}
 	}
-	if err := os.WriteFile(path, []byte(key+"\n"), 0o600); err != nil {
+	if err := atomicfile.Write(path, []byte(key+"\n"), 0o600); err != nil {
 		return fmt.Errorf("persist key %q: %w", path, err)
 	}
 	return nil
@@ -1894,7 +1895,7 @@ func (a *agent) ensureSynthKey() (wg.KeyPair, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return wg.KeyPair{}, err
 	}
-	if err := os.WriteFile(path, []byte(kp.PrivateKey+"\n"), 0o600); err != nil {
+	if err := atomicfile.Write(path, []byte(kp.PrivateKey+"\n"), 0o600); err != nil {
 		return wg.KeyPair{}, err
 	}
 	return kp, nil

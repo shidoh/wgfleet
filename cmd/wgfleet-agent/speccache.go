@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/shidoh/wgfleet/internal/atomicfile"
 	"os"
 	"path/filepath"
 	"time"
@@ -40,24 +41,12 @@ func saveSpec(path string, spec domain.NodeSpec) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create spec cache dir: %w", err)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".last-spec-*.json")
-	if err != nil {
-		return fmt.Errorf("create temp spec cache: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }() // no-op once renamed
-	if _, err := tmp.Write(blob); err != nil {
-		_ = tmp.Close()
+	// Through the shared atomic writer: the same tmp+rename as before, plus the fsync
+	// it was missing. Without that a power cut can land the rename ahead of the bytes
+	// and leave a zero-length cache — breaking it in exactly the case it exists for,
+	// a node coming up without its controller.
+	if err := atomicfile.Write(path, blob, 0o600); err != nil {
 		return fmt.Errorf("write spec cache: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close spec cache: %w", err)
-	}
-	if err := os.Chmod(tmpName, 0o600); err != nil {
-		return fmt.Errorf("chmod spec cache: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("rename spec cache into place: %w", err)
 	}
 	return nil
 }

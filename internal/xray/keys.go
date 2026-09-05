@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"github.com/shidoh/wgfleet/internal/atomicfile"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,7 +52,7 @@ func LoadOrCreateKey(path string) (privateKey, publicKey string, created bool, e
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", "", false, fmt.Errorf("create reality key dir: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(priv+"\n"), 0o600); err != nil {
+	if err := atomicfile.Write(path, []byte(priv+"\n"), 0o600); err != nil {
 		return "", "", false, fmt.Errorf("persist reality key: %w", err)
 	}
 	return priv, pub, true, nil
