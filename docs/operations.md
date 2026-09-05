@@ -358,31 +358,49 @@ recovers, its next report restores the state.
 
 ## Kernel upgrades (your call, not ours)
 
-AmneziaWG is a DKMS module: it is compiled against the running kernel. A kernel
-that arrives on its own and is followed by a reboot leaves the node with no
-module, therefore no tunnels, and nothing wgfleet can do about it — the agent
-cannot build a module for a kernel that is already running.
+AmneziaWG is a DKMS module: it is compiled against a specific kernel. If a node
+boots a kernel the module was never built for, it has no AmneziaWG — therefore no
+tunnels — and the agent cannot fix that, because it cannot build a module for a
+kernel that is already running.
 
-wgfleet does **not** touch your package policy. It does not hold packages, does
-not enable or disable unattended upgrades, and does not decide when your nodes
-reboot. That is your machine and your maintenance window. What it does is tell you
-the constraint:
+What Ubuntu actually does by default (checked against the Ubuntu Server docs, not
+from memory): `unattended-upgrades` is installed and enabled, it takes the release
+and `-security` pockets only, and **automatic reboot is off**. Kernel security
+updates do come through `-security`, so a new kernel can be INSTALLED on its own —
+but it is not booted until somebody reboots, and DKMS builds the module at install
+time as long as matching headers are there. `prepare-node.sh` installs
+`linux-headers-generic` for exactly that reason.
 
-- if unattended upgrades are on, hold the kernel metapackage so upgrades stay
-  deliberate: `apt-mark hold linux-image-generic linux-headers-generic` (check the
-  name first — `linux-image-virtual` and `linux-image-kvm` exist on other images,
-  and `apt-mark hold` on a package that is not installed succeeds and shows up in
-  `apt-mark showhold` while holding nothing);
-- upgrade the kernel in a window, and after the reboot check the module is back:
-  `modinfo amneziawg` and `wgfleet-agent --version` on the node, or simply that
-  the node returns to Ready;
-- `linux-headers-generic` matters as much as the image: without matching headers
-  DKMS cannot rebuild, and `prepare-node.sh` installs it for exactly that reason.
+So the failure needs three things at once: a kernel upgrade lands, DKMS fails to
+build for it (missing headers, a kernel API change), and the node reboots. That is
+rare and it is not silent — but it takes out the data plane completely when it
+happens.
 
-Nodes with no kernel metapackage installed at all (some provider images ship only
-a versioned `linux-image-6.x`) will not receive kernel upgrades on their own. That
-is safe for the module and means those nodes get no kernel security updates —
-worth knowing, and again yours to decide.
+wgfleet does **not** touch your package policy. It does not hold packages, does not
+enable or disable unattended upgrades, and does not decide when your nodes reboot.
+That is your machine and your maintenance window. What we do is name the
+constraint:
+
+- after any reboot, check the module came back: `modinfo amneziawg` on the node, or
+  simply that it returns to Ready;
+- keep `linux-headers-generic` installed alongside the kernel metapackage — without
+  matching headers DKMS cannot rebuild;
+- if you would rather kernel upgrades be deliberate, hold the metapackage:
+  `apt-mark hold linux-image-generic linux-headers-generic`. Check the name first —
+  `linux-image-virtual` and `linux-image-kvm` exist on other images, and `apt-mark
+  hold` on a package that is not installed succeeds and appears in `apt-mark
+  showhold` while holding nothing.
+
+Some provider images ship no kernel metapackage at all, only a versioned
+`linux-image-6.x`. Those nodes will not receive kernel upgrades on their own: safe
+for the module, and no kernel security updates either. Worth knowing; still yours
+to decide.
+
+The one apt hold wgfleet does keep is on `amneziawg`, `amneziawg-dkms` and
+`amneziawg-tools` — our own component, pinned because the userspace tools and the
+kernel module must stay on the same AmneziaWG generation. It blocks
+automatic upgrades only; `apt-mark unhold && apt install` still works, and the
+agent re-establishes the hold at whatever version you chose.
 
 ## Client interception in mihomo's network namespace
 
