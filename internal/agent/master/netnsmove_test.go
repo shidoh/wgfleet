@@ -278,3 +278,50 @@ func TestSettlingDoesNotDelayConfirmationForever(t *testing.T) {
 		t.Errorf("a settled, healthy move never reached confirmation: %q", m.Reason())
 	}
 }
+
+// Turning the feature off and on again must try at once.
+//
+// The retry hold exists to stop a node oscillating on its own. An operator
+// disabling the migration is not an oscillation, and neither is the flip that
+// disabling undid — nothing failed. Left in place, the hold outlives the decision
+// that caused it. Measured on the stand 2026-09-05: the knob went on and the node
+// sat still for four minutes waiting out a hold for a flip it had been told to
+// reverse.
+func TestDisablingClearsTheHoldSoReEnablingIsImmediate(t *testing.T) {
+	m, _ := testMover()
+	if !m.Decide(true, isReady, pathUp) {
+		t.Fatal("did not move")
+	}
+	// The operator turns it off — no clock advance at all.
+	if m.Decide(false, isReady, pathUp) {
+		t.Fatal("stayed attached while disabled")
+	}
+	// ...and straight back on.
+	if !m.Decide(true, isReady, pathUp) {
+		t.Fatalf("re-enabling waited out a hold for a flip the operator reversed: %q", m.Reason())
+	}
+}
+
+// Disabling is also the documented way out of a terminal verdict: "staying on the
+// host path until someone looks" — this is someone looking.
+func TestDisablingClearsATerminalVerdict(t *testing.T) {
+	m, clock := testMover()
+	for range moveMaxAttempts {
+		m.Decide(true, isReady, pathUp)
+		settleOut(m)
+		for range moveFailPasses {
+			m.Decide(true, isReady, pathDown)
+		}
+		*clock = clock.Add(moveRetryHold + time.Second)
+	}
+	if m.Decide(true, isReady, pathUp) {
+		t.Fatal("test premise: it should have given up")
+	}
+	m.Decide(false, isReady, pathUp) // the operator intervenes
+	if !m.Decide(true, isReady, pathUp) {
+		t.Fatalf("a node that gave up could not be revived by the knob: %q", m.Reason())
+	}
+	if m.Attempts() != 0 {
+		t.Errorf("spent attempts survived the operator's intervention: %d", m.Attempts())
+	}
+}

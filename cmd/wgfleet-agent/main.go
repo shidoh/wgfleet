@@ -381,8 +381,11 @@ type agent struct {
 	// are rebuilt every pass and would forget every attempt they ever made — the
 	// same mistake that once silently disabled tier failover.
 	netnsMove *netnsMoveState
-	client    *client.Client
-	log       *slog.Logger
+	// netnsMoveReason is the last reason logged, so a reason that has not changed
+	// does not reprint every pass.
+	netnsMoveReason string
+	client          *client.Client
+	log             *slog.Logger
 	// tier carries the master's exit-tier failover decision for the PROCESS
 	// lifetime. It must not live in the planner list: planners() is called on every
 	// reconcile pass (the engine is rebuilt each time), so a per-pass selector has
@@ -1972,7 +1975,20 @@ func (a *agent) decideNetnsMove(ctx context.Context, spec domain.NodeSpec, probe
 		func() error { return master.NamespaceReady(ctx, spec) },
 		func() bool { return master.ClientPathOK(probes) })
 	if before != after {
+		a.netnsMoveReason = a.netnsMove.Reason()
 		a.log.Warn("client interception moved", "in_namespace", after, "why", a.netnsMove.Reason())
+		return
+	}
+	// A CHANGED reason is news; the same reason thirty seconds later is not.
+	//
+	// Everything about why the migration is not happening used to live at Debug,
+	// which nobody runs the agent at. An operator who turned the knob on and watched
+	// nothing happen had no way to tell "waiting out a hold" — wait — from "the
+	// namespace cannot resolve" — act. Those need different responses and looked
+	// identical from outside.
+	if reason := a.netnsMove.Reason(); reason != a.netnsMoveReason {
+		a.netnsMoveReason = reason
+		a.log.Info("client interception not moving", "in_namespace", after, "why", reason)
 		return
 	}
 	a.log.Debug("client interception unchanged", "in_namespace", after, "why", a.netnsMove.Reason())

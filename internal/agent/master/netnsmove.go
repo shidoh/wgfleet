@@ -147,7 +147,27 @@ func (m *netnsMover) Attempts() int { return m.attempts }
 // not pay for them.
 func (m *netnsMover) Decide(wanted bool, ready func() error, pathOK func() bool) bool {
 	if !wanted {
+		// Turning the feature OFF clears the churn bookkeeping, and that is not
+		// housekeeping — it is the difference between a knob that works and one that
+		// looks broken.
+		//
+		// The retry hold and the attempt counter exist to stop a node oscillating on
+		// its own. An operator disabling the migration is not an oscillation, and
+		// neither is the flip that disabling undid: nothing failed. Left in place, the
+		// hold outlives the decision that caused it, so the next `auto` waits out five
+		// minutes for a flip that was deliberately reversed. Measured on the stand
+		// 2026-09-05: the knob went on at 11:51:02 and the node moved at 11:55:16 —
+		// four minutes of a feature that had already been asked for and was not
+		// happening, with the reason nowhere but a Debug log.
+		//
+		// It also clears a terminal verdict, and that is the documented way out of one:
+		// "staying on the host path until someone looks" — this is someone looking.
+		if m.state == moveGaveUp || m.attempts > 0 {
+			m.attempts = 0
+			m.save()
+		}
 		m.state, m.reason = moveWaiting, "disabled by master.client_via_netns"
+		m.lastFlip, m.fail, m.confirm, m.settle = time.Time{}, 0, 0, 0
 		return false
 	}
 	switch m.state {
