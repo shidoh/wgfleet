@@ -176,9 +176,10 @@ func Planners(in Input) []reconcile.Planner {
 		// listener. Renders config (holding the master's REALITY private key) + its own
 		// compose, restarts on change, self-heals when down, tears down when disabled.
 		clientVlessPlanner{
-			configPath:  in.Paths.ClientVLESS,
-			composePath: in.Paths.ClientVLESSYML,
-			privateKey:  in.RealityPrivateKey,
+			configPath:    in.Paths.ClientVLESS,
+			composePath:   in.Paths.ClientVLESSYML,
+			privateKey:    in.RealityPrivateKey,
+			netnsAttached: in.NetnsAttached,
 		},
 		// Last: ensure mihomo's redirect listener is actually bound. It runs after the
 		// stack is up and wg0 exists, and self-heals the case where mihomo silently

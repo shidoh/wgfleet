@@ -47,6 +47,11 @@ type RenderInput struct {
 type ClientRenderInput struct {
 	Spec       domain.ClientVLESSServerSpec
 	PrivateKey string // REALITY x25519 private key (master-local; redacted in plans)
+	// SocksHost is where mihomo's client-VLESS bridge listens; "" ⇒ the loopback.
+	// It stops being the loopback the moment mihomo moves into its own network
+	// namespace: xray stays on the host, so "127.0.0.1" then names a socket in a
+	// namespace xray cannot see, and every client is accepted and then dropped.
+	SocksHost string
 }
 
 // config mirrors the subset of xray's config.json we emit. Typed structs keep the
@@ -256,6 +261,15 @@ func RenderConfig(in RenderInput) (string, error) {
 // RenderClientConfig renders xray's config.json for the master's client-facing
 // inbound: a VLESS+REALITY+XHTTP inbound with one entry per issued client, whose
 // decrypted traffic is forwarded to the master's mihomo loopback SOCKS listener.
+// socksHost defaults the bridge address to the loopback, which is where mihomo
+// listens whenever it shares this host's network namespace.
+func socksHost(addr string) string {
+	if addr == "" {
+		return "127.0.0.1"
+	}
+	return addr
+}
+
 func RenderClientConfig(in ClientRenderInput) (string, error) {
 	s := in.Spec
 	switch {
@@ -290,7 +304,7 @@ func RenderClientConfig(in ClientRenderInput) (string, error) {
 	out := outbound{
 		Protocol: "socks",
 		Tag:      "mihomo",
-		Settings: &socksSettings{Servers: []socksServer{{Address: "127.0.0.1", Port: s.ResolvedSocksPort()}}},
+		Settings: &socksSettings{Servers: []socksServer{{Address: socksHost(in.SocksHost), Port: s.ResolvedSocksPort()}}},
 	}
 	// Pin the REALITY steal's resolution to IPv4 on the IPv4-only data plane (#20).
 	// The proxied traffic itself is resolved by mihomo (downstream of the socks hop),

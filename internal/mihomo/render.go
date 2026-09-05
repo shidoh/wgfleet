@@ -269,7 +269,7 @@ func RenderConfig(in RenderInput) (string, error) {
 		base["listeners"] = []any{map[string]any{
 			"name":   "client-vless-in",
 			"type":   "socks",
-			"listen": "127.0.0.1",
+			"listen": in.clientVLESSBridgeAddr(),
 			"port":   cv.ResolvedSocksPort(),
 			"udp":    true,
 		}}
@@ -894,6 +894,33 @@ func (in RenderInput) listenAddr() string {
 		return in.NetnsPeerAddr
 	}
 	return in.Spec.BindAddress
+}
+
+// ClientVLESSBridgeAddr is the address of the loopback SOCKS bridge between the
+// master's client-facing xray inbound and mihomo — the one hop that carries every
+// REALITY client's traffic after xray decrypts it.
+//
+// It is NOT listenAddr: outside the namespace this listener binds the loopback
+// rather than the client gateway, because xray sits on the same host and the
+// bridge must not be reachable from the client pool. Inside the namespace the
+// loopback is a DIFFERENT loopback — xray stayed on the host — so the bridge has
+// to move to the veth, where xray can still reach it.
+//
+// Both ends render from this one function on purpose (xray's outbound takes it as
+// input): an address that two configs have to agree on must have one source, or
+// the next move breaks the half nobody edited. That is exactly what happened here
+// — mihomo moved, the listener followed, and xray kept dialling 127.0.0.1 into a
+// namespace it does not share. Every REALITY client was accepted and then dropped
+// on the outbound, for three hours.
+func (in RenderInput) clientVLESSBridgeAddr() string { return ClientVLESSBridgeAddr(in.NetnsPeerAddr) }
+
+// ClientVLESSBridgeAddr is clientVLESSBridgeAddr for callers outside the render:
+// the agent hands the same answer to the xray renderer.
+func ClientVLESSBridgeAddr(netnsPeerAddr string) string {
+	if netnsPeerAddr != "" {
+		return netnsPeerAddr
+	}
+	return "127.0.0.1"
 }
 
 // controllerAddr is where the Clash API listens. Inside the namespace the

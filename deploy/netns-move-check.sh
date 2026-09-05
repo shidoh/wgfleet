@@ -143,6 +143,32 @@ else
   bad "no baseline: run '$0 --baseline' BEFORE flipping, or this check is blind"
 fi
 
+# 5. The one hop every REALITY client's traffic takes after xray decrypts it.
+#    xray stays on the HOST when mihomo moves, so the bridge address in xray's
+#    config has to name a socket the host can open. It named "127.0.0.1" through
+#    the first move: inside the namespace that is a different loopback, so xray
+#    accepted every client and dropped it on the outbound — three hours, with the
+#    controller green, mihomo healthy and the tunnels up. Nothing else here looks
+#    at this path, because nothing else here leaves the host's own traffic.
+bridge=$(python3 -c 'import json
+c = json.load(open("/etc/wgfleet/client-vless/config.json"))
+for o in c.get("outbounds", []):
+    if o.get("protocol") == "socks":
+        s = (o.get("settings") or {}).get("servers") or []
+        if s:
+            print("%s %s" % (s[0]["address"], s[0]["port"]))
+            break' 2>/dev/null)
+if [ -z "$bridge" ]; then
+  ok "no client VLESS inbound on this master — no bridge to check"
+else
+  set -- $bridge
+  if timeout 5 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null; then
+    ok "the client VLESS bridge answers at $1:$2, from the host where xray runs"
+  else
+    bad "xray dials $1:$2 and nothing answers there — every REALITY client is accepted and then dropped"
+  fi
+fi
+
 [ "$start_holder" = "$(docker inspect -f '{{.State.StartedAt}}' wgfleet-netns 2>/dev/null)" ] \
   && ok "the namespace holder did not restart" \
   || bad "the holder restarted — mihomo is now in an orphaned namespace"

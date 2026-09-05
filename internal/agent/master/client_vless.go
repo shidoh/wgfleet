@@ -7,6 +7,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/mihomo"
 	"github.com/shidoh/wgfleet/internal/xray"
 )
 
@@ -23,6 +24,11 @@ type clientVlessPlanner struct {
 	composePath string
 	privateKey  string                 // master's client-facing REALITY x25519 private key
 	up          func(file string) bool // nil ⇒ real `docker compose ps` probe
+	// netnsAttached reports whether mihomo is serving from its own network
+	// namespace. xray stays on the host either way, so this decides only ONE
+	// thing — the address of the SOCKS bridge it dials — and that one thing is
+	// every REALITY client's traffic.
+	netnsAttached func() bool
 }
 
 func (clientVlessPlanner) Component() string { return "client vless inbound (xray)" }
@@ -58,9 +64,11 @@ func (p clientVlessPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]r
 		return []reconcile.Action{reconcile.NoChangeAction("client vless inbound",
 			"pending: REALITY private key not yet available")}, nil
 	}
+	attached := p.netnsAttached != nil && p.netnsAttached()
 	cfg, err := xray.RenderClientConfig(xray.ClientRenderInput{
 		Spec:       *cv,
 		PrivateKey: p.privateKey,
+		SocksHost:  mihomo.ClientVLESSBridgeAddr(NetnsPeerIP(spec, attached)),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("render client vless inbound: %w", err)
