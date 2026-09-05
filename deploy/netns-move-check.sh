@@ -21,14 +21,31 @@
 #     netns-move-check.sh 180
 set -u
 STATE=/run/netns-move-check.before.json
+APISTATE=/run/netns-move-check.api
 WINDOW="${1:-180}"
 fail=0
 ok()  { printf '  ok    %s\n' "$*"; }
 bad() { printf '  FAIL  %s\n' "$*"; fail=1; }
 
+# api_addr is the address the OPERATOR knows the API by, captured at baseline time.
+#
+# Read from the config it would be wrong after the move: mihomo rewrites that to
+# the namespace address, so asserting it proves only that mihomo is up — not that
+# the bookmark still works, which is the thing the redirect exists for.
 api_addr() {
-  # The operator-facing address keeps working across the move (a DNAT redirects it),
-  # so it is the right one to ask from here either way.
+  [ -s "$APISTATE" ] && { cat "$APISTATE"; return; }
+  # From the SPEC, not the rendered config. The controller sends the management
+  # address and never changes it; mihomo's config is rewritten to the namespace
+  # address the moment the move lands, so a baseline read from there is whatever
+  # the last pass happened to write — which on the stand captured the namespace
+  # address and made the check pass for the wrong reason.
+  local fromspec
+  fromspec=$(python3 -c 'import json,sys
+try:
+    print(json.load(open("/var/lib/wgfleet/last-spec.json"))["spec"]["Master"]["ExternalController"])
+except Exception:
+    sys.exit(1)' 2>/dev/null)
+  [ -n "$fromspec" ] && { printf '%s\n' "$fromspec"; return; }
   grep -oE '^external-controller:.*' /etc/mihomo/config.yaml 2>/dev/null |
     sed 's/.*external-controller:[[:space:]]*//;s/"//g'
 }
@@ -51,7 +68,10 @@ for k, v in sorted(d.items()):
 }
 
 if [ "$WINDOW" = "--baseline" ]; then
+  rm -f "$APISTATE"
+  api_addr > "$APISTATE"
   live_tunnels > "$STATE" || { echo "cannot read the proxy list — is mihomo up?"; exit 1; }
+  printf 'baseline: API at %s\n' "$(cat "$APISTATE")"
   printf 'baseline: %s tunnel(s), %s alive → %s\n' \
     "$(wc -l < "$STATE")" "$(grep -c ' 1$' "$STATE")" "$STATE"
   exit 0
@@ -104,7 +124,7 @@ fi
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$(api_addr)/" 2>/dev/null)
 case "$code" in
   200|401|404) ok "the control API still answers at $(api_addr)" ;;
-  *) bad "the control API is unreachable at $(api_addr) (http=$code) — the dashboard moved with mihomo" ;;
+  *) bad "the control API is unreachable at $(api_addr) (http=$code) — the address the operator uses did not survive the move" ;;
 esac
 
 # 4. The failure BOTH attempts ended in: exits dropping out of the balancer.
