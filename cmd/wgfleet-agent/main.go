@@ -1962,7 +1962,7 @@ func (a *agent) decideNetnsMove(ctx context.Context, spec domain.NodeSpec, probe
 	if a.role != domain.RoleMaster || spec.Master == nil {
 		return
 	}
-	wanted, _, werr := spec.Master.NetnsWanted()
+	wanted, werr := spec.Master.NetnsWanted()
 	if werr != nil {
 		// The knob was mistyped. Refuse to move rather than guess at what was meant:
 		// an unrecognised value used to be read as a canary CIDR, so `"of"` instead of

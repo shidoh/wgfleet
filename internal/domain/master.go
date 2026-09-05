@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -30,15 +31,19 @@ type MasterSpec struct {
 	NetnsCIDR string
 	// ClientViaNetns decides where client traffic is intercepted (ADR pending):
 	//
-	//	""              — NetnsDefaultMode
-	//	"off"           — stay on the host path
-	//	"auto"          — move to the namespace once the preconditions hold
-	//	"<CIDR>"        — canary: only these client sources take the new path
+	//	""      — NetnsDefaultMode
+	//	"off"   — stay on the host path
+	//	"auto"  — move to the namespace once the preconditions hold
 	//
-	// Anything else is an error rather than a canary; see NetnsWanted. What makes
-	// "auto" defensible is not optimism: the agent checks the namespace can resolve
-	// DNS and reach an exit BEFORE touching anything, verifies the client path
-	// after the switch, and reverts itself if the verification fails.
+	// There is no per-client mode, and that is a fact about the kernel rather than a
+	// missing feature: `tproxy` hands a packet to a socket in the CURRENT network
+	// namespace, and there is one mihomo. Moving it serves whoever is routed into
+	// the namespace and nobody else — so a rule that moved SOME clients would leave
+	// the rest steered at listeners that are no longer there. See NetnsWanted.
+	//
+	// What makes "auto" defensible is not optimism: the agent checks the namespace
+	// can resolve DNS and reach an exit BEFORE touching anything, verifies the
+	// client path after the switch, and reverts itself if the verification fails.
 	ClientViaNetns string
 	// ExternalController is the Clash API bind (mgmt/ZT address only).
 	ExternalController string
@@ -255,33 +260,34 @@ func (m MasterSpec) NetnsLinkCIDR() string {
 const NetnsDefaultMode = "auto"
 
 // NetnsWanted reports whether client traffic should be intercepted inside
-// mihomo's namespace, and the client sources it applies to ("" ⇒ all of them).
+// mihomo's namespace.
 //
-// A value that is neither a mode nor a CIDR is an ERROR, not a canary. The first
-// version treated anything unrecognised as a canary prefix, so `client_via_netns:
-// "of"` — one keystroke short of "off" — silently switched the feature ON for a
-// prefix that matches nothing. A typo in a manifest must never be the thing that
-// enables a data-plane migration.
-func (m MasterSpec) NetnsWanted() (wanted bool, canary string, err error) {
+// A value that is neither mode is an ERROR, never a guess. The first version
+// treated anything unrecognised as a per-client CIDR, so `client_via_netns: "of"`
+// — one keystroke short of "off" — silently switched the feature ON.
+//
+// A CIDR is refused explicitly, and the message says why rather than just "no".
+// The mode existed, was implemented, and was measured on the stand 2026-09-05
+// doing the opposite of what its name promises: mihomo moves as a whole, so the
+// host goes on steering every client OUTSIDE the named prefix at listeners that
+// have left, and the blast radius is everyone except the one device that was
+// supposed to be the only one at risk. `tproxy` can only reach a socket in its own
+// namespace and there is one mihomo — so this is not a bug to fix later.
+func (m MasterSpec) NetnsWanted() (wanted bool, err error) {
 	v := strings.TrimSpace(m.ClientViaNetns)
 	if v == "" {
 		v = NetnsDefaultMode
 	}
 	switch v {
 	case "off":
-		return false, "", nil
+		return false, nil
 	case "auto":
-		return true, "", nil
+		return true, nil
 	}
-	p, perr := netip.ParsePrefix(v)
-	if perr != nil {
-		return false, "", fmt.Errorf("master.client_via_netns: %q is not \"off\", \"auto\" or a client CIDR: %w", v, perr)
+	if _, perr := netip.ParsePrefix(v); perr == nil {
+		return false, fmt.Errorf("master.client_via_netns: %q selects clients, and this migration cannot be taken per client: "+
+			"mihomo moves as a whole and tproxy only reaches sockets in its own namespace, so everyone outside the prefix "+
+			"would be steered at listeners that have moved. Use \"auto\" or \"off\"", v)
 	}
-	if !p.Addr().Is4() {
-		return false, "", fmt.Errorf("master.client_via_netns: canary %q must be IPv4; the client interception it scopes is IPv4-only", v)
-	}
-	// Canonical form, always. The value is formatted into an `ip rule` argument and
-	// compared against the rendered ruleset, and "10.80.0.5/24" and "10.80.0.0/24"
-	// must not be able to describe the same rule under two names.
-	return true, p.Masked().String(), nil
+	return false, fmt.Errorf("master.client_via_netns: %q is not \"off\" or \"auto\": %w", v, errors.New("unknown mode"))
 }

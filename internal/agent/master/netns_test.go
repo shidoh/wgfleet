@@ -205,34 +205,25 @@ func TestNetnsPlannerRefusesAKnobItCannotRead(t *testing.T) {
 	}
 }
 
-// The canary was documented, returned by NetnsWanted and then discarded at every
-// call site: an operator who set a /32 in the belief that one device was moving
-// got the full move. This is the rule that makes the blast radius one device.
-func TestCanaryMovesOnlyTheNamedSources(t *testing.T) {
-	run := func(_ context.Context, name string, args ...string) (string, error) {
-		if strings.Contains(name+" "+strings.Join(args, " "), "docker inspect") {
-			return "4242\n", nil
-		}
-		return "", errors.New("absent")
-	}
+// A per-client selection is refused, and the refusal explains itself.
+//
+// It was implemented, documented, and measured on the stand 2026-09-05 doing the
+// opposite of what its name promised: mihomo moves as a whole, so the host went on
+// steering every client OUTSIDE the prefix at listeners that had left — the blast
+// radius of a "canary" was everyone except the canary. `tproxy` can only reach a
+// socket in its own namespace and there is one mihomo, so this is not deferred
+// work.
+func TestPerClientSelectionIsRefused(t *testing.T) {
 	spec := netnsSpec()
 	spec.Master.ClientViaNetns = "10.73.0.7/32"
-	p := netnsPlanner{
-		run:         run,
-		attached:    func() bool { return true },
-		clientIface: "wg0",
-		nftPath:     t.TempDir() + "/netns.nft",
+	_, err := netnsPlanner{run: func(context.Context, string, ...string) (string, error) {
+		return "", nil
+	}}.Plan(context.Background(), spec)
+	if err == nil {
+		t.Fatal("a per-client selection was accepted; it breaks every client outside the prefix")
 	}
-	acts, err := p.Plan(context.Background(), spec)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
-	var dump string
-	for _, a := range acts {
-		dump += a.Display + "\n"
-	}
-	if !strings.Contains(dump, "ip rule add from 10.73.0.7/32 iif wg0 lookup 51822 pref 400") {
-		t.Fatalf("the canary moved every client instead of the named source:\n%s", dump)
+	if !strings.Contains(err.Error(), "cannot be taken per client") {
+		t.Errorf("the refusal does not explain itself: %v", err)
 	}
 }
 
@@ -553,39 +544,6 @@ func TestMihomoIsLeftAloneWhenItIsInTheRightNamespace(t *testing.T) {
 		if strings.Contains(a.Display, "force-recreate") {
 			t.Errorf("a correctly placed mihomo was bounced anyway: %q", a.Display)
 		}
-	}
-}
-
-// Widening a canary to a full move must actually change the rule. `ip rule list`
-// prints the two as `from 10.80.0.7 iif wg0 lookup 51822` and `from all iif wg0
-// lookup 51822`, and a gate that compared only the interface and the table read
-// them as the same rule — so the last step of every rollout changed nothing and
-// said nothing about it. Measured on the stand 2026-09-05.
-func TestWideningACanaryReplacesTheRule(t *testing.T) {
-	live := map[string]string{
-		"ip rule list":              "400:\tfrom 10.80.0.254 iif wg0 lookup 51822\n",
-		"ip route show table 51822": "default via 100.127.255.2 dev mih-host\n",
-	}
-	spec := netnsSpec()
-	spec.Master.ClientViaNetns = "auto"
-	dump := attachedPlan(t, spec, live)
-	if !strings.Contains(dump, "ip rule add iif wg0 lookup 51822 pref 400") {
-		t.Errorf("the canary rule was left in place for a full move:\n%s", dump)
-	}
-
-	// And the reverse: a canary must replace a full-move rule.
-	live["ip rule list"] = "400:\tfrom all iif wg0 lookup 51822\n"
-	spec.Master.ClientViaNetns = "10.80.0.254/32"
-	dump = attachedPlan(t, spec, live)
-	if !strings.Contains(dump, "ip rule add from 10.80.0.254/32 iif wg0 lookup 51822 pref 400") {
-		t.Errorf("a full-move rule was left in place for a canary:\n%s", dump)
-	}
-
-	// A converged canary is still left alone.
-	live["ip rule list"] = "400:\tfrom 10.80.0.254 iif wg0 lookup 51822\n"
-	dump = attachedPlan(t, spec, live)
-	if strings.Contains(dump, "lookup 51822 pref 400") {
-		t.Errorf("a converged canary rule was rebuilt:\n%s", dump)
 	}
 }
 

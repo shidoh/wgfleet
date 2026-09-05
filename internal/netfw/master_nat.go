@@ -51,18 +51,6 @@ type MasterNATInput struct {
 	// have come up — which is also why the namespace never passed its readiness
 	// gate and why this never reached a client.
 	NetnsLinkCIDR string
-	// NetnsCanary narrows the move to a subset of client SOURCES. Empty with a
-	// gateway set ⇒ every client moves; a prefix ⇒ only those addresses do, and the
-	// host keeps intercepting everyone else.
-	//
-	// The exclusion has to happen HERE and not only in the routing rule, and the
-	// order of the hooks is why. TPROXY runs at mangle-prerouting, before any
-	// routing decision, so a canary client's datagram would be intercepted by the
-	// host's own rule and marked — and the mark is consumed two hooks later by a
-	// policy route the namespace rule would already have overridden. The packet
-	// would belong to a socket on the host and be routed into the namespace. The
-	// canary is only real once the host stops claiming those sources.
-	NetnsCanary string
 }
 
 // TProxyMark is the fwmark TPROXY'd client packets carry so policy routing can
@@ -197,15 +185,15 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 		return "", fmt.Errorf("netfw master NAT: the namespace gateway needs the veth name")
 	}
 
-	hostIntercepts := in.NetnsGateway == "" || in.NetnsCanary != ""
-	canaryGuard := ""
-	if in.NetnsGateway != "" && in.NetnsCanary != "" {
-		canon, cerr := canonicalPrefix(in.NetnsCanary)
-		if cerr != nil {
-			return "", fmt.Errorf("netfw master NAT: invalid canary CIDR %q: %w", in.NetnsCanary, cerr)
-		}
-		canaryGuard = fmt.Sprintf(" ip saddr != %s", canon)
-	}
+	// Who the HOST still intercepts: everyone, or nobody. There is no third answer.
+	//
+	// A per-client split was tried and removed. mihomo moves as a whole, so once the
+	// gateway is set its listeners are in the namespace, and rules kept here for the
+	// remaining clients would steer them at an address nothing is on. Measured on
+	// the stand 2026-09-05: the non-selected client's TCP and UDP probes both at
+	// zero while the selected one was fine — the blast radius of a "canary" was
+	// everyone except the canary.
+	hostIntercepts := in.NetnsGateway == ""
 
 	b.WriteString("\tchain prerouting {\n")
 	b.WriteString("\t\ttype nat hook prerouting priority dstnat; policy accept;\n")
@@ -229,8 +217,8 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	}
 	// DNAT non-private client TCP to mihomo's redir-port.
 	if hostIntercepts {
-		fmt.Fprintf(&b, "\t\tiifname %q%s%s%s ip protocol tcp dnat to %s\n",
-			in.ClientInterface, guards, gatewayGuard, canaryGuard, in.RedirAddr)
+		fmt.Fprintf(&b, "\t\tiifname %q%s%s ip protocol tcp dnat to %s\n",
+			in.ClientInterface, guards, gatewayGuard, in.RedirAddr)
 	}
 	b.WriteString("\t}\n\n")
 
@@ -270,8 +258,8 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	if in.TProxyAddr != "" && hostIntercepts {
 		b.WriteString("\tchain client_udp_tproxy {\n")
 		b.WriteString("\t\ttype filter hook prerouting priority mangle; policy accept;\n")
-		fmt.Fprintf(&b, "\t\tiifname %q%s%s%s meta l4proto udp tproxy ip to %s meta mark set %#x accept\n",
-			in.ClientInterface, guards, gatewayGuard, canaryGuard, in.TProxyAddr, TProxyMark)
+		fmt.Fprintf(&b, "\t\tiifname %q%s%s meta l4proto udp tproxy ip to %s meta mark set %#x accept\n",
+			in.ClientInterface, guards, gatewayGuard, in.TProxyAddr, TProxyMark)
 		// FAIL CLOSED. The rule above ends at NFT_BREAK when no transparent socket is
 		// listening — every mihomo restart — and without this second rule the datagram
 		// simply falls through to the forward chain and the masquerade, i.e. it leaves
@@ -284,8 +272,8 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 		// Scoped identically to the rule above, so it can only ever catch traffic that
 		// rule was meant to take: the private-destination and gateway exemptions still
 		// go DIRECT, and everything the master itself sends is on another interface.
-		fmt.Fprintf(&b, "\t\tiifname %q%s%s%s meta l4proto udp counter drop\n",
-			in.ClientInterface, guards, gatewayGuard, canaryGuard)
+		fmt.Fprintf(&b, "\t\tiifname %q%s%s meta l4proto udp counter drop\n",
+			in.ClientInterface, guards, gatewayGuard)
 		b.WriteString("\t}\n\n")
 	}
 

@@ -373,8 +373,15 @@ the collision as a category rather than fixing one port.
 |---|---|
 | unset | `auto` — the fix ships on, see below |
 | `off` | interception stays on the host — the way it has always worked |
-| `10.80.0.7/32` | **canary**: only that client source takes the new path |
 | `auto` | every client moves, once the agent has proved the namespace works |
+
+There is no per-client mode. It existed, and the stand showed it doing the
+opposite of what its name promised: mihomo moves as a whole, so the host went on
+steering every client OUTSIDE the chosen prefix at listeners that had left — the
+blast radius of a "canary" was everyone except the canary. `tproxy` can only hand
+a packet to a socket in its own namespace and there is one mihomo, so a CIDR here
+is refused with that explanation rather than quietly half-working. The unit of
+staging is the NODE.
 
 Anything else is refused with an error naming the knob, so a typo cannot enable
 the migration.
@@ -386,8 +393,9 @@ an exit before moving anything, measures the client path from its own synthetic
 client after, and reverts itself if that path breaks — and `off` is a full,
 converging way back, not just a switch that stops future moves.
 
-On a master carrying traffic you care about, set the CIDR of one device first and
-watch it for a day; `auto` after that is the same code with a wider rule.
+On a fleet with more than one master, move them one at a time and watch the first
+for a day before the next. On a single-master fleet the staging you have is the
+automatic revert, plus `off` as a converging way back.
 
 The whole cycle was rehearsed on a two-VM stand on 2026-09-05, with the client
 interface on the production port: canary → full move → break the namespace's path

@@ -613,7 +613,7 @@ func netnsVethIface(spec domain.NodeSpec) string {
 	// readiness probe runs from in there before anything is switched over, and a
 	// drop-policy input chain that does not trust the veth makes the namespace
 	// unable to resolve — which is one of the two things the probe checks.
-	if wanted, _, err := spec.Master.NetnsWanted(); err != nil || !wanted {
+	if wanted, err := spec.Master.NetnsWanted(); err != nil || !wanted {
 		return ""
 	}
 	return domain.NetnsHostIface
@@ -662,8 +662,8 @@ func NATInput(spec domain.NodeSpec, clientIface string, netnsAttached bool) netf
 	// could not ping the exit, the gate never passed, and the migration never
 	// started. Before the move nothing but the probe sources traffic from this link,
 	// so arming it early costs nothing.
-	netnsGW, netnsIface, canary := "", "", ""
-	wanted, canaryCIDR, werr := spec.Master.NetnsWanted()
+	netnsGW, netnsIface := "", ""
+	wanted, werr := spec.Master.NetnsWanted()
 	if werr == nil && wanted {
 		netnsIface = domain.NetnsHostIface
 	}
@@ -671,12 +671,6 @@ func NATInput(spec domain.NodeSpec, clientIface string, netnsAttached bool) netf
 		if _, peer, aerr := netns.LinkAddrs(spec.Master.NetnsLinkCIDR()); aerr == nil {
 			netnsGW, _, _ = strings.Cut(peer, "/")
 			netnsIface = domain.NetnsHostIface
-			// A canary narrows the move to a few client sources, so the host must go on
-			// intercepting the rest. Read from the same knob the routing rule reads, or
-			// the two disagree about who moved and those clients get neither path.
-			if werr == nil {
-				canary = canaryCIDR
-			}
 		}
 	}
 	return netfw.MasterNATInput{
@@ -688,7 +682,6 @@ func NATInput(spec domain.NodeSpec, clientIface string, netnsAttached bool) netf
 		NetnsGateway:    netnsGW,
 		NetnsHostIface:  netnsIface,
 		NetnsLinkCIDR:   spec.Master.NetnsLinkCIDR(),
-		NetnsCanary:     canary,
 	}
 }
 
@@ -976,7 +969,7 @@ func netnsHolderImage(spec domain.NodeSpec) string {
 	if spec.Master == nil {
 		return ""
 	}
-	if wanted, _, err := spec.Master.NetnsWanted(); err != nil || !wanted {
+	if wanted, err := spec.Master.NetnsWanted(); err != nil || !wanted {
 		return ""
 	}
 	if img := spec.Master.Compose.NetnsHolderImage; img != "" {
