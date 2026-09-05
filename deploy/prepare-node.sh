@@ -86,35 +86,6 @@ fi
 # Ensure the module is loaded NOW (it may be built but not inserted — e.g. after a
 # kernel change or reboot — which is exactly what trips the provisioner pre-flight)
 # and on every future boot.
-# The kernel is held.
-#
-# Not to avoid updates — unattended-upgrades stays on, and security updates are
-# worth more than the risk here — but to keep the one upgrade that can take the
-# data plane with it out of the unattended path. AmneziaWG is a DKMS module: a
-# kernel that arrives on its own at 06:00, followed by a reboot, can leave a node
-# with no module and therefore no tunnels at all, and nothing the agent can do
-# about it. Kernel upgrades are done deliberately, with the module checked after.
-# Hold what is actually installed. `apt-mark hold` on an absent package returns 0
-# and shows up in `showhold`, so holding a guessed name reads exactly like a hold
-# that works — measured on a stand where the kernel metapackage is
-# linux-image-virtual and the script was holding linux-image-generic. Whether a
-# node even HAS a metapackage differs across providers: on this fleet the master
-# does and the exits do not (their kernel is pinned to a version, so nothing pulls
-# a new one — which is its own trade-off, and one for the operator to know about).
-held=""
-for pkg in linux-image-generic linux-headers-generic \
-           linux-image-virtual linux-headers-virtual \
-           linux-image-kvm linux-image-cloud-amd64; do
-  if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
-    apt-mark hold "$pkg" >/dev/null 2>&1 && held="$held $pkg"
-  fi
-done
-if [ -n "$held" ]; then
-  log "kernel held:$held (DKMS builds AmneziaWG; an unattended kernel would leave the node without it)"
-else
-  warn "no kernel metapackage installed — nothing to hold, and nothing pulls a new kernel here either"
-fi
-
 # nftables.service is masked, not merely disabled.
 #
 # The ruleset on every node belongs to the agent, which writes it and applies it

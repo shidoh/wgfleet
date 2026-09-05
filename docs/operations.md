@@ -356,6 +356,34 @@ If an agent goes silent, the controller's **staleness sweep** demotes its node
 `Error` nodes are left as-is (they keep their failure reason); when the agent
 recovers, its next report restores the state.
 
+## Kernel upgrades (your call, not ours)
+
+AmneziaWG is a DKMS module: it is compiled against the running kernel. A kernel
+that arrives on its own and is followed by a reboot leaves the node with no
+module, therefore no tunnels, and nothing wgfleet can do about it — the agent
+cannot build a module for a kernel that is already running.
+
+wgfleet does **not** touch your package policy. It does not hold packages, does
+not enable or disable unattended upgrades, and does not decide when your nodes
+reboot. That is your machine and your maintenance window. What it does is tell you
+the constraint:
+
+- if unattended upgrades are on, hold the kernel metapackage so upgrades stay
+  deliberate: `apt-mark hold linux-image-generic linux-headers-generic` (check the
+  name first — `linux-image-virtual` and `linux-image-kvm` exist on other images,
+  and `apt-mark hold` on a package that is not installed succeeds and shows up in
+  `apt-mark showhold` while holding nothing);
+- upgrade the kernel in a window, and after the reboot check the module is back:
+  `modinfo amneziawg` and `wgfleet-agent --version` on the node, or simply that
+  the node returns to Ready;
+- `linux-headers-generic` matters as much as the image: without matching headers
+  DKMS cannot rebuild, and `prepare-node.sh` installs it for exactly that reason.
+
+Nodes with no kernel metapackage installed at all (some provider images ship only
+a versioned `linux-image-6.x`) will not receive kernel upgrades on their own. That
+is safe for the module and means those nodes get no kernel security updates —
+worth knowing, and again yours to decide.
+
 ## Client interception in mihomo's network namespace
 
 mihomo's TPROXY reply path binds the **server's** address:port for every
