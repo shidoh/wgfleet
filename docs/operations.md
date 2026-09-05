@@ -378,6 +378,14 @@ the collision as a category rather than fixing one port.
 Anything else is refused with an error naming the knob, so a typo cannot enable
 the migration. Start with a canary; `auto` is the last step, not the first.
 
+The whole cycle was rehearsed on a two-VM stand on 2026-09-05, with the client
+interface on the production port: canary → full move → break the namespace's path
+→ automatic revert → clients back, plus a reboot in the moved state. Eight
+blockers came out of that rehearsal and none of them were visible in review; the
+write-up is in `obsidian/claude/wgfleet/2026-09-05-netns-move-lima-rehearsal.md`.
+What it did NOT cover is real clients under load, so the first live master should
+run as a canary on one device for a day before `auto`.
+
 ### How to tell where a master is
 
 ```bash
