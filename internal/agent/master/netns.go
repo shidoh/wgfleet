@@ -55,7 +55,12 @@ type netnsPlanner struct {
 	clientIface string
 }
 
-func (netnsPlanner) Component() string { return "mihomo network namespace" }
+// NetnsComponent is the namespace planner's name. Exported because another
+// planner declares a dependency on it, and a dependency written as a string
+// literal in two files is one typo away from silently never firing.
+const NetnsComponent = "mihomo network namespace"
+
+func (netnsPlanner) Component() string { return NetnsComponent }
 
 func (p netnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
 	if spec.Master == nil {
@@ -847,15 +852,26 @@ func netnsLinkMTU() int {
 	if err != nil || mtu <= 0 {
 		return 0
 	}
-	// Never below the ethernet default, whatever the uplink says today.
-	//
-	// Reading the uplink is right for the case this was written for — an uplink
-	// LARGER than 1500 carries mihomo's tunnel datagrams, and the veth has to pass
-	// them whole. It is wrong for the mirror case: the master's default route can
-	// legitimately point at a tunnel (wgt0 at 1420, the lifeline AWG at less), and
-	// then this would quietly narrow an internal link that carries no encapsulation
-	// of its own — the same 1360-shaped failure the uplink reading was introduced to
-	// cure, arriving from the other side.
+	return mtuWithFloor(mtu)
+}
+
+// mtuWithFloor keeps the veth at or above the ethernet default, whatever the
+// uplink says today.
+//
+// Reading the uplink is right for the case that reading was introduced for — an
+// uplink LARGER than 1500 carries mihomo's tunnel datagrams, and the veth has to
+// pass them whole. It is wrong for the mirror case: the master's default route can
+// legitimately point at a tunnel (wgt0 at 1420, the lifeline AWG at less), and
+// then it would quietly narrow an internal link that carries no encapsulation of
+// its own — the same 1360-shaped failure, arriving from the other side.
+//
+// Zero stays zero: that is "could not read the uplink", and the answer to an
+// unreadable question is to leave the kernel's own default alone, not to assert
+// a number.
+func mtuWithFloor(mtu int) int {
+	if mtu <= 0 {
+		return 0
+	}
 	if mtu < netnsMinLinkMTU {
 		return netnsMinLinkMTU
 	}

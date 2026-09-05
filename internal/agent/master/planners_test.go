@@ -990,3 +990,66 @@ func TestAWithdrawnTProxyRoutingIsNotWithdrawnAgain(t *testing.T) {
 		}
 	}
 }
+
+// The dependency is only worth anything if the planner that needs it declares it.
+//
+// The mechanism was built, tested at the engine level and left unwired: the
+// interface existed, the engine honoured it, and the one pair it was written for
+// never used it — so the failure it describes was still available in production
+// while a passing test suite said otherwise.
+func TestTheMasterNATDeclaresItsDependencyOnlyWhileTheInterceptionHasMoved(t *testing.T) {
+	moved := masterNATPlanner{netnsAttached: func() bool { return true }}
+	if got := moved.DependsOn(); got != NetnsComponent {
+		t.Errorf("a moved master's NAT does not wait for the namespace: DependsOn() = %q", got)
+	}
+	onHost := masterNATPlanner{netnsAttached: func() bool { return false }}
+	if got := onHost.DependsOn(); got != "" {
+		t.Errorf("a master that never moved waits for a namespace it does not use: DependsOn() = %q", got)
+	}
+	undecided := masterNATPlanner{}
+	if got := undecided.DependsOn(); got != "" {
+		t.Errorf("an undecided master must not depend on anything: DependsOn() = %q", got)
+	}
+}
+
+// And the name has to match the component that actually runs, or the dependency is
+// inert: the engine looks it up by string.
+func TestTheDependencyNamesAComponentThisAgentRuns(t *testing.T) {
+	ns := netnsPlanner{}
+	if ns.Component() != NetnsComponent {
+		t.Fatalf("the namespace planner calls itself %q while others depend on %q",
+			ns.Component(), NetnsComponent)
+	}
+}
+
+// The floor on the veth MTU, including the case it must NOT touch: an unreadable
+// uplink stays zero, which means "leave the kernel's default alone".
+func TestTheVethMTUIsFlooredButAnUnreadableUplinkIsNotInvented(t *testing.T) {
+	for in, want := range map[int]int{
+		0:    0,    // could not read
+		-1:   0,    // nor this
+		1360: 1500, // the client tunnel's MTU, which strangled mihomo's own
+		1420: 1500, // a master whose default route is a tunnel
+		1500: 1500,
+		9000: 9000, // jumbo: the reason the uplink is read at all
+	} {
+		if got := mtuWithFloor(in); got != want {
+			t.Errorf("mtuWithFloor(%d) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+// A probe that could not run is not a probe reporting "already gone" — and here a
+// wrong "gone" leaves a second interception armed beside the first.
+func TestTProxyTeardownActsWhenTheKernelWillNotAnswer(t *testing.T) {
+	silent := func(string, ...string) (string, error) { return "", errors.New("netlink is busy") }
+	var changing int
+	for _, a := range tproxyRouteTeardown(silent) {
+		if a.Changes() {
+			changing++
+		}
+	}
+	if changing == 0 {
+		t.Error("an unanswered probe was read as 'already withdrawn', leaving the host rules in place")
+	}
+}

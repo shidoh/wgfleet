@@ -115,13 +115,6 @@ func (a Action) GuardHoldsForTest(ctx context.Context) (guarded, holds bool) {
 	return true, a.guard(ctx)
 }
 
-// ApplyForTest runs one action's effect from a test in another package. The
-// engine is the only production caller of `run`, and keeping it unexported is
-// right; but a property like "this action refuses when the world moved" can only
-// be asserted by applying the action itself, and asserting it on a copy of the
-// action built by the test would assert nothing about the one that ships.
-func (a Action) ApplyForTest(ctx context.Context) error { return a.run(ctx) }
-
 // run executes the action's effect, or is a no-op when there is nothing to do.
 func (a Action) run(ctx context.Context) error {
 	if a.apply == nil || !a.Changes() {

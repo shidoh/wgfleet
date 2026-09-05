@@ -699,6 +699,22 @@ func NATInput(spec domain.NodeSpec, clientIface string, netnsAttached bool) netf
 
 func (masterNATPlanner) Component() string { return "master NAT (nftables)" }
 
+// DependsOn ties this planner to the namespace one, but only while the
+// interception is supposed to live there.
+//
+// The moved ruleset removes the host's own DNAT and TPROXY; applying it after the
+// namespace failed to arm leaves client traffic with nowhere to go at all. While
+// the pass aborted on the first error that could not happen — the namespace took
+// the NAT down with it. Now the pass continues, so the dependency has to be said
+// out loud. When the interception is on the host this planner builds the whole
+// path itself and depends on nobody.
+func (p masterNATPlanner) DependsOn() string {
+	if p.netnsAttached != nil && p.netnsAttached() {
+		return NetnsComponent
+	}
+	return ""
+}
+
 func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
 	if spec.Master == nil {
 		return nil, fmt.Errorf("master NAT: node has no master spec")
@@ -858,8 +874,13 @@ func tproxyRouteTeardown(run func(name string, args ...string) (string, error)) 
 	}
 	rules, rerr := run("ip", "rule", "list")
 	routes, terr := run("ip", "route", "show", "table", table)
-	ruleLive := rerr == nil && strings.Contains(rules, "lookup "+table)
-	routeLive := terr == nil && strings.TrimSpace(routes) != ""
+	// A kernel that would not answer is not a kernel saying "already gone" — the
+	// same distinction this round drew in interceptionInPlace, and it matters more
+	// here: what is left behind on a wrong "gone" is a second interception armed
+	// beside the first. Unknown means do it anyway; both deletes are idempotent and
+	// best-effort, so acting on a question we could not ask costs nothing.
+	ruleLive := rerr != nil || strings.Contains(rules, "lookup "+table)
+	routeLive := terr != nil || strings.TrimSpace(routes) != ""
 	if !ruleLive && !routeLive {
 		return []reconcile.Action{reconcile.NoChangeAction("tproxy policy routing",
 			"gone, as it should be while the interception lives in the namespace")}

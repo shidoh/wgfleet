@@ -59,6 +59,31 @@ func NewEngine(log *slog.Logger, planners ...Planner) *Engine {
 	if log == nil {
 		log = slog.Default()
 	}
+	// A dependency naming a component that is not in this engine — a typo, a
+	// renamed component — would be silently inert: the lookup misses, nothing is
+	// ever skipped, and the guarantee the caller thinks it has does not exist. Say
+	// so at construction, where it is a programming error and not a 3am mystery.
+	// A component depending on itself is the same class and deadlocks nothing, but
+	// it can never be satisfied, so it is refused too.
+	known := map[string]bool{}
+	for _, p := range planners {
+		known[p.Component()] = true
+	}
+	for _, p := range planners {
+		dep, ok := p.(DependentPlanner)
+		if !ok {
+			continue
+		}
+		on := dep.DependsOn()
+		switch {
+		case on == "":
+		case on == p.Component():
+			log.Error("planner depends on itself; the dependency is ignored", "component", on)
+		case !known[on]:
+			log.Error("planner depends on a component this engine does not run; the dependency is ignored",
+				"component", p.Component(), "depends_on", on)
+		}
+	}
 	return &Engine{planners: planners, log: log}
 }
 
@@ -97,6 +122,10 @@ func (e *Engine) Reconcile(ctx context.Context, spec domain.NodeSpec, mode Mode)
 					Actions: []Action{NoChangeAction(p.Component(),
 						"skipped: "+on+" did not converge, and this would act on what it was supposed to build")},
 				})
+				// A component that was skipped did not converge either, so anything
+				// standing on IT is in the same position. Without this the chain stops
+				// at one link and a third component acts on a second one that never ran.
+				broken[p.Component()] = true
 				continue
 			}
 		}

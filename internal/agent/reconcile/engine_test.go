@@ -194,3 +194,32 @@ func TestTheReportNamesTheComponentThatFailed(t *testing.T) {
 		t.Errorf("the report does not say why the component failed:\n%s", out)
 	}
 }
+
+// A skip propagates. C stands on B, B stands on A, and A failed: B is skipped, so
+// B did not converge either, so C must not act on what B was supposed to build.
+// Stopping the chain at one link would let the third component act on a second one
+// that never ran.
+func TestASkipPropagatesDownTheChain(t *testing.T) {
+	var ran []string
+	note := func(name string) func() ([]Action, error) {
+		return func() ([]Action, error) {
+			ran = append(ran, name)
+			return []Action{NoChangeAction(name, "fine")}, nil
+		}
+	}
+	eng := NewEngine(quietLogger(),
+		fakePlanner{component: "A", plan: func() ([]Action, error) {
+			ran = append(ran, "A")
+			return nil, errors.New("A is broken")
+		}},
+		dependentPlanner{fakePlanner{component: "B", plan: note("B")}, "A"},
+		dependentPlanner{fakePlanner{component: "C", plan: note("C")}, "B"},
+		fakePlanner{component: "D", plan: note("D")},
+	)
+	if _, err := eng.Reconcile(context.Background(), domain.NodeSpec{}, ModeApply); err == nil {
+		t.Fatal("a failed component reported a clean pass")
+	}
+	if got := strings.Join(ran, ","); got != "A,D" {
+		t.Errorf("ran %s: B and C both stand on A, D stands on nobody", got)
+	}
+}
