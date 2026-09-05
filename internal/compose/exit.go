@@ -44,6 +44,15 @@ func RenderBlockyCompose(in BlockyInput) (string, error) {
 		"network_mode":   "host",
 		"cap_add":        []any{"NET_BIND_SERVICE"},
 		"volumes":        volumes,
+		// Bound the log, for the reason the master's own stack learned it: docker's
+		// json-file driver has no rotation at all, so a container that starts writing
+		// errors in a loop fills the disk of a node whose whole job is to keep running.
+		// Measured across the fleet 2026-09-05: two containers out of eighteen had a
+		// limit, and this one had reached 45 MB on an exit nobody had looked at.
+		"logging": map[string]any{
+			"driver":  "json-file",
+			"options": map[string]any{"max-size": "10m", "max-file": "3"},
+		},
 	}
 	if len(env) > 0 {
 		svc["environment"] = env

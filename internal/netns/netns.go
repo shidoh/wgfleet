@@ -198,9 +198,21 @@ func Plan(ctx context.Context, in Input, run Runner) ([]Step, error) {
 	// hardening drop-in left it as. Strict mode here would drop client traffic
 	// outright: it arrives on the veth with a client-pool source, and the route back
 	// to that pool is over the same veth only because we put it there.
-	if out, err := run(ctx, "nsenter", "--net="+nsPath, "sysctl", "-n", "net.ipv4.conf.all.rp_filter"); err != nil || strings.TrimSpace(out) != "0" {
-		add("stop the namespace reverse-path filtering client traffic",
-			"nsenter", "--net="+nsPath, "sysctl", "-w", "net.ipv4.conf.all.rp_filter=0")
+	//
+	// All three keys, because the kernel takes the MAXIMUM of `all` and the
+	// interface's own value — setting `all` to 0 while the interface sits at 2 leaves
+	// loose filtering in force, which is what this namespace actually had: `all=0`,
+	// `mih0=2`, `default=2`. Harmless while the namespace has one interface and one
+	// route back, and a silent one-way drop the day it has two.
+	for _, key := range []string{
+		"net.ipv4.conf.all.rp_filter",
+		"net.ipv4.conf.default.rp_filter",
+		"net.ipv4.conf." + in.PeerIface + ".rp_filter",
+	} {
+		if out, err := run(ctx, "nsenter", "--net="+nsPath, "sysctl", "-n", key); err != nil || strings.TrimSpace(out) != "0" {
+			add("stop the namespace reverse-path filtering client traffic ("+key+")",
+				"nsenter", "--net="+nsPath, "sysctl", "-w", key+"=0")
+		}
 	}
 
 	// Two routes, and both are load-bearing: out to the world so mihomo can reach

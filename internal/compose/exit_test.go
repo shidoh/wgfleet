@@ -60,3 +60,25 @@ func TestRenderBlockyComposeRequiresConfigPath(t *testing.T) {
 		t.Fatal("expected error without config path")
 	}
 }
+
+// Every container this platform renders has a bounded log.
+//
+// Docker's json-file driver has no rotation, so an unbounded container is a disk
+// leak waiting for a loop to start. Measured across the fleet 2026-09-05: two
+// containers out of eighteen had a limit, and the biggest unbounded one had
+// reached 74 MB in six weeks of nothing going wrong.
+func TestEveryRenderedContainerBoundsItsLog(t *testing.T) {
+	dns, err := RenderBlockyCompose(BlockyInput{ConfigPath: "/etc/wgfleet/blocky/config.yml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	xray, err := RenderXrayCompose(XrayInput{ConfigPath: "/etc/wgfleet/client-vless/config.json", ListenPort: 49443})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, out := range map[string]string{"blocky": dns, "xray": xray} {
+		if !strings.Contains(out, "max-size") || !strings.Contains(out, "max-file") {
+			t.Errorf("%s renders an unbounded log:\n%s", name, out)
+		}
+	}
+}

@@ -33,6 +33,7 @@ type AgentMetrics struct {
 	standbyTotal     prometheus.Gauge     // inactive tier: members the warm probe could sample
 	standbyTransport *prometheus.GaugeVec // per exit: is its INACTIVE transport usable
 	egressThroughput prometheus.Gauge     // last measured egress throughput, bytes/sec
+	guardDrops       *prometheus.GaugeVec // per nft guard chain: packets it has dropped
 	udpReturnSocket  *prometheus.GaugeVec // per UDP port: can a TPROXY reply socket still be opened
 	udpReturnKnown   *prometheus.GaugeVec // per UDP port: is a blocked port one we have decided about
 	mihomoErrors     prometheus.Counter   // error lines mihomo wrote about itself
@@ -124,6 +125,10 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Namespace: namespace, Subsystem: "agent", Name: "mihomo_errors_total",
 			Help: "Error lines mihomo has written about itself. Deliberately unclassified: the next failure of this kind will have a different message, and the signal is that the data plane is complaining at all.", ConstLabels: cl,
 		}),
+		guardDrops: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "guard_drops_packets",
+			Help: "Packets each firewall guard chain has dropped since its ruleset was applied. These chains assert what must never happen — a client address on the wire, a client packet on a path nobody chose — so any value above zero is a fact somebody has to explain. Until this existed the counters were readable only by hand, and 200 dropped client packets on the live master were found by somebody looking.", ConstLabels: cl,
+		}, []string{"chain"}),
 		udpReturnKnown: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "udp_return_known",
 			Help: "1 when a port whose replies cannot come back is one we have decided about (refused by rule, or a declared loss); 0 marks a silent black hole.", ConstLabels: cl,
@@ -178,6 +183,7 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 	reg.MustRegister(m.reconcileTotal, m.reconcileDuration, m.stateInfo, m.checkUp, m.checkLatency,
 		m.driftTotal, m.driftResources, m.reconcileChanges, m.egressReach, m.egressActive,
 		m.egressThroughput, m.startTime, m.udpReturnSocket, m.udpReturnKnown, m.mihomoErrors, m.clientPathOK,
+		m.guardDrops,
 		m.netnsMoveState, m.netnsMoveTries)
 	if m.transportActive != nil {
 		reg.MustRegister(m.transportActive)
@@ -304,6 +310,21 @@ func (m *AgentMetrics) ObserveDrift(components []string) {
 	m.driftResources.Set(float64(len(components)))
 	for _, c := range components {
 		m.driftTotal.WithLabelValues(c).Inc()
+	}
+}
+
+// ObserveGuardDrops records what each guard chain has caught.
+//
+// A guard chain is an assertion written in nftables: "no client address reaches
+// the wire", "no client packet leaves by a path nobody chose". A counter above
+// zero means the assertion fired, which is either a fault somewhere else or a
+// mistake in the guard — and both need looking at. Reported as a gauge rather than
+// a counter because the value belongs to the RULESET: a re-apply starts it at zero
+// again, and a counter that goes backwards is worse than a gauge that steps down.
+func (m *AgentMetrics) ObserveGuardDrops(drops map[string]int) {
+	m.guardDrops.Reset()
+	for chain, n := range drops {
+		m.guardDrops.WithLabelValues(chain).Set(float64(n))
 	}
 }
 

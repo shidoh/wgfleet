@@ -56,8 +56,19 @@ func TestNATInputForMatchesTheRenderedRuleset(t *testing.T) {
 	if in.TProxyAddr == "" {
 		t.Error("a master with a resolved bind address renders a TPROXY listener; the probe thinks it does not")
 	}
-	if len(in.PrivateCIDRs) != len(spec.Master.DirectCIDRs) {
-		t.Errorf("direct CIDRs lost on the way to the probe: %v", in.PrivateCIDRs)
+	// Every declared direct destination reaches the probe. Not an equal count: the
+	// list now also carries the client pool, because the routing exemptions and the
+	// firewall's are rendered from one function and the pool belongs in both.
+	for _, want := range spec.Master.DirectCIDRs {
+		var found bool
+		for _, got := range in.PrivateCIDRs {
+			if got == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("direct CIDR %q lost on the way to the probe: %v", want, in.PrivateCIDRs)
+		}
 	}
 	if _, err := netfw.RenderMasterNAT(in); err != nil {
 		t.Fatalf("the probe built an input the renderer rejects: %v", err)

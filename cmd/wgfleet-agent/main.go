@@ -807,6 +807,10 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		if a.role == domain.RoleMaster {
 			bindable, known := a.udpReturnObservations(spec)
 			a.metrics.ObserveUDPReturn(bindable, known)
+			// What the firewall's own assertions have caught. These chains exist to be
+			// empty; a value above zero is a fact somebody has to explain, and until
+			// this line it was a fact only `nft list chain` could tell them.
+			a.metrics.ObserveGuardDrops(netfw.GuardDrops(ctx, nil))
 			// mihomo's own complaints. The cursor lives on the agent, not in a planner:
 			// planners are rebuilt every pass and would forget where they got to.
 			if n, cursor, lerr := mihomo.ScanErrors(ctx, "mihomo", a.mihomoLogCursor); lerr == nil {

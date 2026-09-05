@@ -847,8 +847,25 @@ func netnsLinkMTU() int {
 	if err != nil || mtu <= 0 {
 		return 0
 	}
+	// Never below the ethernet default, whatever the uplink says today.
+	//
+	// Reading the uplink is right for the case this was written for — an uplink
+	// LARGER than 1500 carries mihomo's tunnel datagrams, and the veth has to pass
+	// them whole. It is wrong for the mirror case: the master's default route can
+	// legitimately point at a tunnel (wgt0 at 1420, the lifeline AWG at less), and
+	// then this would quietly narrow an internal link that carries no encapsulation
+	// of its own — the same 1360-shaped failure the uplink reading was introduced to
+	// cure, arriving from the other side.
+	if mtu < netnsMinLinkMTU {
+		return netnsMinLinkMTU
+	}
 	return mtu
 }
+
+// netnsMinLinkMTU is the floor for the veth: the ethernet default. The link is
+// point-to-point between two namespaces on one host and adds no headers, so there
+// is no reason for it to be smaller than the smallest thing either side expects.
+const netnsMinLinkMTU = 1500
 
 // mihomoIsInTheNamespace compares the network namespace mihomo is in with the
 // holder's. Read from /proc rather than from Docker's own view: `docker inspect`

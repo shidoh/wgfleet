@@ -582,6 +582,27 @@ spec:
         summary: AS blacklist is empty on {{ $labels.node }}
         description: The nftables AS blacklist ({{ $labels.family }}) on {{ $labels.node }} exists with 0
           entries — the feed probe is failing and abuse filtering is off.
+    - alert: WgfleetGuardIsCatchingPackets
+      # A guard chain exists to be empty. egress_leak_guard asserts that no client
+      # address reaches the wire un-NATed; egress_path_guard asserts that no client
+      # packet leaves by a path nobody chose. Either one counting means something
+      # upstream is broken — an empty namespace routing table, a masquerade that did
+      # not fire — and both of those are silent otherwise: the client simply has no
+      # internet, and every component metric stays green.
+      #
+      # On increase rather than on value: the counter belongs to the ruleset and
+      # resets when it is re-applied, so a node that caught something last week and
+      # has been clean since must not page anybody today.
+      expr: increase(wgfleet_agent_guard_drops_packets[15m]) > 0
+      for: 5m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Firewall guard {{ $labels.chain }} is dropping packets on {{ $labels.node }}
+        description: The {{ $labels.chain }} chain on {{ $labels.node }} has dropped packets in the
+          last 15 minutes. These chains assert what must never happen, so this is client traffic
+          taking a path it should not — check the namespace routing table and the masquerade.
     - alert: WgfleetNodeCertExpiring
       # Node certificates are issued for a year and the agent renews its own between
       # 70% and 90% of that, in place, over the control plane. So this rule no longer

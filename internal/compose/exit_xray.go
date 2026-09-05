@@ -72,6 +72,15 @@ func RenderXrayCompose(in XrayInput) (string, error) {
 		// the exit's WARP egress adds NET_ADMIN below.
 		"cap_drop":     []any{"ALL"},
 		"security_opt": []any{"no-new-privileges:true"},
+		// Bound the log, for the reason the master's own stack learned it: docker's
+		// json-file driver has no rotation at all, so a container that starts writing
+		// errors in a loop fills the disk of a node whose whole job is to keep running.
+		// Measured 2026-09-05: this one had reached 74 MB in six weeks of ordinary
+		// operation, on a fleet where only two containers out of eighteen had a limit.
+		"logging": map[string]any{
+			"driver":  "json-file",
+			"options": map[string]any{"max-size": "10m", "max-file": "3"},
+		},
 	}
 	// Add back only the capabilities this leg actually needs, in a fixed order so the
 	// rendered YAML stays byte-stable (a non-deterministic list would drift-loop the

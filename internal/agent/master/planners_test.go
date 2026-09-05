@@ -914,3 +914,79 @@ func TestTProxyRuleCarriesAnExplicitPriority(t *testing.T) {
 			netfw.TProxyRulePref, netnsDirectRulePref)
 	}
 }
+
+// The destinations that bypass the interception are expressed twice — as an
+// `ip rule` that routes them around the namespace, and as `ip daddr !=` exemptions
+// in the ruleset that would otherwise read them as a leak. They must come from one
+// place: a destination in one list and not the other is a dropped split tunnel if
+// it drifted one way, and an open leak if it drifted the other.
+func TestTheRoutingAndTheFirewallExemptTheSameDestinations(t *testing.T) {
+	spec := netnsSpec()
+	spec.Master.DirectCIDRs = []string{"10.0.0.0/8", "198.51.100.220/32"}
+
+	routed := directDestinations(spec)
+	guarded := NATInput(spec, "wg0", true).PrivateCIDRs
+
+	if len(routed) != len(guarded) {
+		t.Fatalf("the two lists have different lengths:\nrouted  %v\nguarded %v", routed, guarded)
+	}
+	for i := range routed {
+		if routed[i] != guarded[i] {
+			t.Errorf("entry %d differs: routed %q, guarded %q", i, routed[i], guarded[i])
+		}
+	}
+	// And the client pool is in both: it is a destination clients reach over their
+	// own interface, not something to intercept or to call a leak.
+	var hasPool bool
+	for _, c := range guarded {
+		if c == spec.WGServer.AddressPool {
+			hasPool = true
+		}
+	}
+	if !hasPool {
+		t.Errorf("the client pool is not among the exempt destinations: %v", guarded)
+	}
+}
+
+// Once the interception lives in the namespace, the host's TPROXY policy routing
+// is not merely unused — it is a second configuration armed alongside the first.
+//
+// Its rule sits at a LOWER priority than both the direct-destination exemptions and
+// the rule that routes clients into the namespace, so anything that ever carried
+// the mark again would be taken locally, past the whole scheme. On the live master
+// the rule and its table outlived the move with nothing referencing them.
+func TestTheHostTProxyRoutingIsWithdrawnOnceTheInterceptionMoves(t *testing.T) {
+	live := func(name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		switch {
+		case line == "ip rule list":
+			return "380:\tfrom all fwmark 0x2 lookup 51821\n400:\tfrom all iif wg0 lookup 51822\n", nil
+		case strings.Contains(line, "route show table 51821"):
+			return "local default dev lo scope host\n", nil
+		}
+		return "", errors.New("absent")
+	}
+	acts := tproxyRouteTeardown(live)
+	dump := displays(acts)
+	for _, want := range []string{"ip rule del fwmark 0x2 lookup 51821", "ip route flush table 51821"} {
+		if !strings.Contains(dump, want) {
+			t.Errorf("the host keeps a second interception armed; missing %q:\n%s", want, dump)
+		}
+	}
+}
+
+// And a master that has already shed them says so instead of deleting nothing
+// twice a minute.
+func TestAWithdrawnTProxyRoutingIsNotWithdrawnAgain(t *testing.T) {
+	empty := func(name string, args ...string) (string, error) {
+		if name+" "+strings.Join(args, " ") == "ip rule list" {
+			return "400:\tfrom all iif wg0 lookup 51822\n", nil
+		}
+		return "", nil
+	}
+	for _, a := range tproxyRouteTeardown(empty) {
+		if a.Changes() {
+			t.Errorf("a master with no tproxy routing left tried to remove it anyway: %s", a.Display)
+		}
+	}
+}

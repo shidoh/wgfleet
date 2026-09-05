@@ -66,14 +66,16 @@ func testInput() Input {
 // exists to avoid, delivered on a timer.
 func TestEnsureIsIdempotent(t *testing.T) {
 	r := &recorder{out: map[string]string{
-		"docker inspect -f {{.State.Pid}} wgfleet-netns":                        "4242\n",
-		"ip -br link show mih-host":                                             "mih-host@if9 UP 100.127.255.1/30\n",
-		"ip -br addr show mih-host":                                             "mih-host@if9 UP 100.127.255.1/30\n",
-		"nsenter --net=/proc/4242/ns/net ip -br addr show mih0":                 "mih0@if8 UP 100.127.255.2/30\n",
-		"nsenter --net=/proc/4242/ns/net ip -br link show mih0":                 "mih0@if8 UP 100.127.255.2/30\n",
-		"nsenter --net=/proc/4242/ns/net ip route show":                         "default via 100.127.255.1 dev mih0\n10.73.0.0/24 via 100.127.255.1 dev mih0\n",
-		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.ip_forward":         "1\n",
-		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.all.rp_filter": "0\n",
+		"docker inspect -f {{.State.Pid}} wgfleet-netns":                            "4242\n",
+		"ip -br link show mih-host":                                                 "mih-host@if9 UP 100.127.255.1/30\n",
+		"ip -br addr show mih-host":                                                 "mih-host@if9 UP 100.127.255.1/30\n",
+		"nsenter --net=/proc/4242/ns/net ip -br addr show mih0":                     "mih0@if8 UP 100.127.255.2/30\n",
+		"nsenter --net=/proc/4242/ns/net ip -br link show mih0":                     "mih0@if8 UP 100.127.255.2/30\n",
+		"nsenter --net=/proc/4242/ns/net ip route show":                             "default via 100.127.255.1 dev mih0\n10.73.0.0/24 via 100.127.255.1 dev mih0\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.ip_forward":             "1\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.all.rp_filter":     "0\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.default.rp_filter": "0\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.mih0.rp_filter":    "0\n",
 	}}
 
 	steps, err := Plan(context.Background(), testInput(), r.run)
@@ -251,14 +253,16 @@ func TestReadyRefusesAProbeHostThatIsNotAnAddress(t *testing.T) {
 // already right.
 func TestConvergedRouteIsNotReplacedForANonCanonicalPool(t *testing.T) {
 	r := &recorder{out: map[string]string{
-		"docker inspect -f {{.State.Pid}} wgfleet-netns":                        "4242\n",
-		"ip -br link show mih-host":                                             "mih-host@if9 UP 100.127.255.1/30\n",
-		"ip -br addr show mih-host":                                             "mih-host@if9 UP 100.127.255.1/30\n",
-		"nsenter --net=/proc/4242/ns/net ip -br addr show mih0":                 "mih0@if8 UP 100.127.255.2/30\n",
-		"nsenter --net=/proc/4242/ns/net ip -br link show mih0":                 "mih0@if8 UP 100.127.255.2/30\n",
-		"nsenter --net=/proc/4242/ns/net ip route show":                         "default via 100.127.255.1 dev mih0\n10.73.0.0/24 via 100.127.255.1 dev mih0\n",
-		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.ip_forward":         "1\n",
-		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.all.rp_filter": "0\n",
+		"docker inspect -f {{.State.Pid}} wgfleet-netns":                            "4242\n",
+		"ip -br link show mih-host":                                                 "mih-host@if9 UP 100.127.255.1/30\n",
+		"ip -br addr show mih-host":                                                 "mih-host@if9 UP 100.127.255.1/30\n",
+		"nsenter --net=/proc/4242/ns/net ip -br addr show mih0":                     "mih0@if8 UP 100.127.255.2/30\n",
+		"nsenter --net=/proc/4242/ns/net ip -br link show mih0":                     "mih0@if8 UP 100.127.255.2/30\n",
+		"nsenter --net=/proc/4242/ns/net ip route show":                             "default via 100.127.255.1 dev mih0\n10.73.0.0/24 via 100.127.255.1 dev mih0\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.ip_forward":             "1\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.all.rp_filter":     "0\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.default.rp_filter": "0\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.mih0.rp_filter":    "0\n",
 	}}
 	in := testInput()
 	in.ClientCIDR = "10.73.0.1/24" // the gateway address, not the network address
@@ -300,14 +304,16 @@ func TestHalfBuiltVethIsRebuilt(t *testing.T) {
 // "UP" anywhere in the line was right by accident.
 func TestADownLinkWithTheUPFlagIsStillBroughtUp(t *testing.T) {
 	r := &recorder{out: map[string]string{
-		"docker inspect -f {{.State.Pid}} wgfleet-netns":                        "4242\n",
-		"ip -br link show mih-host":                                             "mih-host@if9 DOWN <NO-CARRIER,BROADCAST,MULTICAST,UP>\n",
-		"ip -br addr show mih-host":                                             "mih-host@if9 DOWN 100.127.255.1/30\n",
-		"nsenter --net=/proc/4242/ns/net ip -br link show mih0":                 "mih0@if8 UP\n",
-		"nsenter --net=/proc/4242/ns/net ip -br addr show mih0":                 "mih0@if8 UP 100.127.255.2/30\n",
-		"nsenter --net=/proc/4242/ns/net ip route show":                         "default via 100.127.255.1 dev mih0\n10.73.0.0/24 via 100.127.255.1 dev mih0\n",
-		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.ip_forward":         "1\n",
-		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.all.rp_filter": "0\n",
+		"docker inspect -f {{.State.Pid}} wgfleet-netns":                            "4242\n",
+		"ip -br link show mih-host":                                                 "mih-host@if9 DOWN <NO-CARRIER,BROADCAST,MULTICAST,UP>\n",
+		"ip -br addr show mih-host":                                                 "mih-host@if9 DOWN 100.127.255.1/30\n",
+		"nsenter --net=/proc/4242/ns/net ip -br link show mih0":                     "mih0@if8 UP\n",
+		"nsenter --net=/proc/4242/ns/net ip -br addr show mih0":                     "mih0@if8 UP 100.127.255.2/30\n",
+		"nsenter --net=/proc/4242/ns/net ip route show":                             "default via 100.127.255.1 dev mih0\n10.73.0.0/24 via 100.127.255.1 dev mih0\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.ip_forward":             "1\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.all.rp_filter":     "0\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.default.rp_filter": "0\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.mih0.rp_filter":    "0\n",
 	}}
 	steps, err := Plan(context.Background(), testInput(), r.run)
 	if err != nil {
@@ -351,5 +357,45 @@ func TestReadyFailsWhenTheExitCannotBeReached(t *testing.T) {
 	in.ProbeHost = "203.0.113.9"
 	if err := Ready(context.Background(), in, r.run); err == nil {
 		t.Fatal("a namespace with no path to an exit was declared ready")
+	}
+}
+
+// The kernel takes the MAXIMUM of `all` and the interface's own rp_filter, so
+// setting `all` and stopping there proves nothing.
+//
+// Measured in the live namespace: all=0, mih0=2, default=2 — loose filtering in
+// force while the code believed it had turned filtering off. Harmless with one
+// interface and one route back; a silent one-way drop the day there are two.
+func TestReversePathFilteringIsPinnedOnEveryKeyTheKernelConsults(t *testing.T) {
+	answers := map[string]string{
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.all.rp_filter":     "0\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.default.rp_filter": "2\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.mih0.rp_filter":    "2\n",
+	}
+	base := map[string]string{
+		"docker inspect -f {{.State.Pid}} wgfleet-netns":                "4242\n",
+		"ip -br link show mih-host":                                     "mih-host@if9 UP 100.127.255.1/30\n",
+		"ip -br addr show mih-host":                                     "mih-host@if9 UP 100.127.255.1/30\n",
+		"nsenter --net=/proc/4242/ns/net ip -br addr show mih0":         "mih0@if8 UP 100.127.255.2/30\n",
+		"nsenter --net=/proc/4242/ns/net ip -br link show mih0":         "mih0@if8 UP 100.127.255.2/30\n",
+		"nsenter --net=/proc/4242/ns/net ip route show":                 "default via 100.127.255.1 dev mih0\n10.73.0.0/24 via 100.127.255.1 dev mih0\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.ip_forward": "1\n",
+	}
+	for k, v := range answers {
+		base[k] = v
+	}
+	r := &recorder{out: base}
+	planned, err := Plan(context.Background(), testInput(), r.run)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	steps := strings.Join(argvs(planned), "\n")
+	for _, key := range []string{"net.ipv4.conf.default.rp_filter=0", "net.ipv4.conf.mih0.rp_filter=0"} {
+		if !strings.Contains(steps, key) {
+			t.Errorf("a key the kernel consults is left alone: %s\n%s", key, steps)
+		}
+	}
+	if strings.Contains(steps, "net.ipv4.conf.all.rp_filter=0") {
+		t.Errorf("a key that is already 0 was written again:\n%s", steps)
 	}
 }

@@ -603,6 +603,8 @@ type masterNATPlanner struct {
 	// namespace. When it has, this ruleset must stop intercepting and start routing
 	// instead — leaving both in place would feed listeners that are no longer here.
 	netnsAttached func() bool
+	// run executes a read-only probe; nil ⇒ exec. Injected in tests.
+	run func(name string, args ...string) (string, error)
 }
 
 // netnsVethIface names the veth to mihomo's namespace once interception lives
@@ -676,11 +678,17 @@ func NATInput(spec domain.NodeSpec, clientIface string, netnsAttached bool) netf
 		}
 	}
 	return netfw.MasterNATInput{
-		ClientInterface:  clientIface,
-		ClientCIDR:       spec.WGServer.AddressPool,
-		RedirAddr:        fmt.Sprintf("%s:%d", spec.Master.BindAddress, redir),
-		TProxyAddr:       tproxyAddr,
-		PrivateCIDRs:     spec.Master.DirectCIDRs,
+		ClientInterface: clientIface,
+		ClientCIDR:      spec.WGServer.AddressPool,
+		RedirAddr:       fmt.Sprintf("%s:%d", spec.Master.BindAddress, redir),
+		TProxyAddr:      tproxyAddr,
+		// One source for both. The ip rule at netnsDirectRulePref routes these around
+		// the namespace and the path guard exempts them from being read as a leak, so
+		// a destination present in one list and missing from the other is either a
+		// dropped split tunnel or an open leak — depending which way it drifted. They
+		// were two expressions of the same intent, in two functions, edited at
+		// different times.
+		PrivateCIDRs:     directDestinations(spec),
 		NetnsGateway:     netnsGW,
 		NetnsHostIface:   netnsIface,
 		NetnsLinkCIDR:    spec.Master.NetnsLinkCIDR(),
@@ -797,9 +805,20 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 	// and client UDP is dropped rather than proxied — worse than the leak it
 	// replaces. Repaired on drift for the same reason the nft table is (ADR-0015):
 	// someone flushing `ip rule` must not break every client until the next reboot.
-	if natIn.TProxyAddr != "" && (natChanged || !p.isTProxyReady()) {
+	//
+	// And when the interception has MOVED, this policy routing is not merely unused,
+	// it is a second configuration armed at the same time as the first. The rule sits
+	// at a lower priority than both the direct-destination exemptions and the rule
+	// that routes clients into the namespace, so anything that ever carried the mark
+	// again — a rule somebody else writes, a mark reused — would be taken locally,
+	// past the whole scheme. On the live master these three lines outlived the move
+	// and nothing referenced them.
+	switch {
+	case attached:
+		actions = append(actions, tproxyRouteTeardown(p.run)...)
+	case natIn.TProxyAddr != "" && (natChanged || !p.isTProxyReady()):
 		actions = append(actions, tproxyRouteActions()...)
-	} else if natIn.TProxyAddr != "" {
+	case natIn.TProxyAddr != "":
 		actions = append(actions, reconcile.NoChangeAction("tproxy policy routing", "fwmark rule and local route in place"))
 	}
 	return actions, nil
@@ -823,6 +842,40 @@ func tproxyRouteActions() []reconcile.Action {
 			fmt.Sprintf("keep tproxy-marked packets local (local default in table %s)", table),
 			"ip", "route", "replace", "local", "0.0.0.0/0", "dev", "lo", "table", table),
 	}
+}
+
+// tproxyRouteTeardown removes the host's TPROXY policy routing once interception
+// lives in the namespace, and does it only when the kernel still has it — so a
+// converged master reports no change rather than deleting nothing twice a minute.
+func tproxyRouteTeardown(run func(name string, args ...string) (string, error)) []reconcile.Action {
+	table := fmt.Sprintf("%d", netfw.TProxyTable)
+	mark := fmt.Sprintf("%#x", netfw.TProxyMark)
+	if run == nil {
+		run = func(name string, args ...string) (string, error) {
+			out, err := exec.Command(name, args...).Output()
+			return string(out), err
+		}
+	}
+	rules, rerr := run("ip", "rule", "list")
+	routes, terr := run("ip", "route", "show", "table", table)
+	ruleLive := rerr == nil && strings.Contains(rules, "lookup "+table)
+	routeLive := terr == nil && strings.TrimSpace(routes) != ""
+	if !ruleLive && !routeLive {
+		return []reconcile.Action{reconcile.NoChangeAction("tproxy policy routing",
+			"gone, as it should be while the interception lives in the namespace")}
+	}
+	var out []reconcile.Action
+	if ruleLive {
+		out = append(out, reconcile.BestEffortExecAction(
+			fmt.Sprintf("withdraw the host tproxy rule (fwmark %s), the interception moved", mark),
+			"ip", "rule", "del", "fwmark", mark, "lookup", table))
+	}
+	if routeLive {
+		out = append(out, reconcile.BestEffortExecAction(
+			"empty the host tproxy table, the interception moved",
+			"ip", "route", "flush", "table", table))
+	}
+	return out
 }
 
 func (p masterNATPlanner) isTProxyReady() bool {
