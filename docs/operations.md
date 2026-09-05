@@ -398,7 +398,9 @@ to decide.
 
 The one apt hold wgfleet does keep is on `amneziawg`, `amneziawg-dkms` and
 `amneziawg-tools` — our own component, pinned because the userspace tools and the
-kernel module must stay on the same AmneziaWG generation. It blocks
+kernel module must stay on the same AmneziaWG generation — AmneziaWG 3.0 changed the
+netlink attribute layout between them, so a node whose tools and module disagree fails
+`awg setconf` outright and the interface never comes up. It blocks
 automatic upgrades only; `apt-mark unhold && apt install` still works, and the
 agent re-establishes the hold at whatever version you chose.
 
