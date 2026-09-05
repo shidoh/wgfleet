@@ -2,7 +2,12 @@ name: release
 
 # Build and publish release binaries when a version tag is pushed.
 #
-#   git tag v0.1.0 && git push origin v0.1.0
+#   git tag -a v0.1.0 -m '- **What an operator must not miss.** …'
+#   git push origin v0.1.0
+#
+# The annotated tag's message becomes the "Highlights" section at the top of the
+# release notes and the caption of the Telegram announcement; a lightweight tag
+# just gets the generated changelog.
 #
 # Produces ONE self-contained tarball per architecture (linux/amd64 and
 # linux/arm64) — statically-linked controller + agent binaries, the installer,

@@ -7,6 +7,19 @@
 # type (feat/fix/perf/…) into titled sections. If <previous-ref> is omitted, the
 # nearest tag before <current-ref> is used (and the full history for a first
 # release). Prints Markdown to stdout, suitable for `gh release create --notes-file`.
+#
+# Above the generated list it prints a "Highlights" section, taken verbatim from
+# the message of the ANNOTATED tag being released:
+#
+#   git tag -a v0.2.2 -m '- **Client UDP reaches the client again.** …'
+#   git tag -a v0.2.2 -F /tmp/highlights.md      # or from a file
+#
+# Which changes deserve attention is an editorial call the commit log cannot
+# make, so it is written by hand — but at the moment of release, and nowhere in
+# the working tree. A lightweight tag carries no message (%(contents) would
+# hand back the commit subject instead), so it simply gets no highlights, and
+# says so on stderr. Preview before pushing: create the tag locally, then run
+# this script with it.
 
 set -euo pipefail
 
@@ -23,6 +36,27 @@ if [ -n "$PREV" ]; then
   RANGE="${PREV}..${CUR}"
 else
   RANGE="$CUR"   # first release: everything reachable from CUR
+fi
+
+# highlights_for: the message of an annotated tag, if that is what this tag is.
+# Signed tags carry the signature inside %(contents); drop it.
+highlights_for() {
+  local tag="$1"
+  git rev-parse -q --verify "refs/tags/${tag}" >/dev/null || return 0
+  [ "$(git cat-file -t "refs/tags/${tag}" 2>/dev/null)" = "tag" ] || return 0
+  git tag -l --format='%(contents)' "$tag" \
+    | awk '/^-----BEGIN [A-Z ]*SIGNATURE-----$/ { exit } { print }'
+}
+
+# The tag being released. RELEASE_TAG is set by the workflow, which runs this
+# before the tag ref exists on a manual dispatch; then there is nothing to read.
+HIGHLIGHTS="$(highlights_for "${RELEASE_TAG:-$CUR}" | sed -e '/./,$!d')"
+HIGHLIGHTS="$(printf '%s' "$HIGHLIGHTS" | sed -e :a -e '/^\n*$/{$d;N;};/\n$/ba')"
+
+if printf '%s' "$HIGHLIGHTS" | grep -q '[^[:space:]]'; then
+  printf '## Highlights\n\n%s\n\n' "$HIGHLIGHTS"
+else
+  echo "release-notes: no annotated-tag message for ${RELEASE_TAG:-$CUR}, no highlights section" >&2
 fi
 
 # sha <TAB> subject, one per line, oldest→newest reversed to newest→oldest default.
@@ -78,6 +112,7 @@ END {
 # Fallback: if every commit in the range was filtered out (e.g. a release with
 # only chore/ci/test commits) or there were no commits at all, emit a placeholder
 # line instead of an empty body.
+printf '## Changelog\n\n'
 if printf '%s' "$BODY" | grep -q '[^[:space:]]'; then
   printf '%s\n' "$BODY"
 else
