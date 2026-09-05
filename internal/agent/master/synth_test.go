@@ -3,6 +3,7 @@ package master
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -126,5 +127,52 @@ func TestProberStandsDownOnATinyPool(t *testing.T) {
 		if a.Changes() {
 			t.Errorf("a prober was built into a pool with no room: %q", a.Display)
 		}
+	}
+}
+
+// `awg setconf` applies what the file says and cannot express what it no longer
+// says: a parameter the device already carries and the config has dropped stays
+// on the device. Measured on the stand 2026-09-05 — the prober was built while
+// the spec carried AmneziaWG 3.x parameters, the spec went back to 2.0, setconf
+// re-applied cleanly, and the device kept its header protection key. The server
+// had none, so not one handshake completed and every client-path probe was red,
+// with the config on disk looking exactly right.
+//
+// This device is the judge of the automatic revert, so a prober that cannot
+// handshake makes every migration look broken and reverts it.
+func TestProberIsRebuiltWhenItsParametersChange(t *testing.T) {
+	dir := t.TempDir()
+	p := synthPlanner{
+		confPath:  dir + "/synth.conf",
+		serverPub: "SRV",
+		synthKey:  wg.KeyPair{PrivateKey: "priv", PublicKey: "PUB"},
+		run: func(_ context.Context, name string, args ...string) (string, error) {
+			line := name + " " + strings.Join(args, " ")
+			if strings.Contains(line, "netns list") {
+				return synthNetns + "\n", nil
+			}
+			if strings.Contains(line, "link show "+synthIface) {
+				return synthIface + " UP\n", nil // the device is already there
+			}
+			return "", nil
+		},
+	}
+	// Seed a config that differs from what the next pass renders.
+	if err := os.WriteFile(p.confPath, []byte("[Interface]\nPrivateKey = stale\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	acts, err := p.Plan(context.Background(), synthPlannerSpec())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	var dump string
+	for _, a := range acts {
+		dump += a.Display + "\n"
+	}
+	if !strings.Contains(dump, "ip link del "+synthIface) {
+		t.Errorf("a parameter change was applied in place, so a dropped parameter would survive:\n%s", dump)
+	}
+	if !strings.Contains(dump, "ip link add "+synthIface) {
+		t.Errorf("the prober was removed and never rebuilt:\n%s", dump)
 	}
 }

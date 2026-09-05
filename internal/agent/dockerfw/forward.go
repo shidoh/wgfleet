@@ -28,7 +28,9 @@ import (
 type ForwardPlanner struct {
 	component    string
 	iface        string
-	forwardLabel string // summary for the client→outbound accept rule
+	forwardLabel string
+	// extra are additional interfaces that must be allowed across the FORWARD path.
+	extra []string // summary for the client→outbound accept rule
 	// Probes (nil ⇒ real); injected in tests.
 	forwardOn   func() bool
 	chainExists func() bool
@@ -38,11 +40,11 @@ type ForwardPlanner struct {
 // NewForwardPlanner builds a ForwardPlanner. iface is the client-facing WG
 // interface; if empty it falls back to fallbackIface. component is the reconcile
 // component label; forwardLabel is the summary for the client→outbound accept.
-func NewForwardPlanner(component, iface, fallbackIface, forwardLabel string) ForwardPlanner {
+func NewForwardPlanner(component, iface, fallbackIface, forwardLabel string, extra ...string) ForwardPlanner {
 	if iface == "" {
 		iface = fallbackIface
 	}
-	return ForwardPlanner{component: component, iface: iface, forwardLabel: forwardLabel}
+	return ForwardPlanner{component: component, iface: iface, forwardLabel: forwardLabel, extra: extra}
 }
 
 func (p ForwardPlanner) Component() string { return p.component }
@@ -73,6 +75,30 @@ func (p ForwardPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]reconcile.
 	}{
 		{p.forwardLabel, []string{"-i", p.iface, "-j", "ACCEPT"}},
 		{"accept return traffic to clients (DOCKER-USER)", []string{"-o", p.iface, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"}},
+	}
+	// Any further interface that has to cross this chain — today, the veth to
+	// mihomo's network namespace.
+	//
+	// Docker sets the FORWARD policy to DROP, so everything that is not explicitly
+	// accepted here dies silently between two interfaces the operator never
+	// configured. Measured on the stand 2026-09-05: with the veth
+	// missing from this list the namespace could not reach a single address off the
+	// host, its readiness gate never passed, and the migration never started — while
+	// every rule the agent renders in nftables looked exactly right.
+	for _, iface := range p.extra {
+		if iface == "" || iface == p.iface {
+			continue
+		}
+		rules = append(rules,
+			struct {
+				summary string
+				match   []string
+			}{"accept " + iface + " → uplink forwarding (DOCKER-USER)", []string{"-i", iface, "-j", "ACCEPT"}},
+			struct {
+				summary string
+				match   []string
+			}{"accept return traffic to " + iface + " (DOCKER-USER)", []string{"-o", iface, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"}},
+		)
 	}
 	for _, r := range rules {
 		if p.isRulePresent(r.match) {

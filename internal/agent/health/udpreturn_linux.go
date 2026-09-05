@@ -9,10 +9,16 @@ import (
 )
 
 // probeAddr is the address the bind is attempted on: TEST-NET-1 (RFC 5737),
-// guaranteed never to be a real destination. The address is irrelevant to the
-// answer — IP_TRANSPARENT lets any address be bound and the conflict is decided by
-// the PORT — but a documentation address makes it impossible for this probe to
-// ever collide with real traffic.
+// guaranteed never to be a real destination — so this probe can never collide
+// with traffic of its own.
+//
+// It stands in for "some server address a client dialled", which is what mihomo
+// binds. That makes the answer exact for the case that matters and conservative
+// for the other one: a WILDCARD holder (a kernel WireGuard interface) refuses
+// every address on the port and is caught, while a holder bound to one address
+// only refuses that address, so a port like :53 held by 127.0.0.53 reads as
+// bindable — and it is, for every server a client will actually talk to.
+// Measured on the stand 2026-09-05: :443 refused, :53 allowed, on the same host.
 var probeAddr = [4]byte{192, 0, 2, 1}
 
 // UDPReturnBindable reports whether this network namespace can still open the

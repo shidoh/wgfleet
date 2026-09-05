@@ -381,6 +381,8 @@ func TestDetachRemovesEverythingTheMoveInstalled(t *testing.T) {
 			return "390:\tfrom all to 10.0.0.0/8 lookup main\n400:\tfrom all iif wg0 lookup 51822\n", nil
 		case strings.Contains(line, "route show table 51822"):
 			return "default via 100.127.255.2 dev mih-host\n", nil
+		case strings.Contains(line, "nft list table ip wgfleet_netns"):
+			return "table ip wgfleet_netns {}\n", nil
 		}
 		return "", errors.New("absent")
 	}
@@ -397,10 +399,44 @@ func TestDetachRemovesEverythingTheMoveInstalled(t *testing.T) {
 		"ip rule del pref 400",
 		"ip rule del to 10.0.0.0/8 lookup main pref 390",
 		"ip route flush table 51822",
+		"nft delete table ip wgfleet_netns",
 	} {
 		if !strings.Contains(dump, want) {
 			t.Errorf("the way back does not %q:\n%s", want, dump)
 		}
+	}
+}
+
+// The in-namespace interception is fail-closed: once mihomo has moved back out,
+// `tproxy` finds no transparent socket and the next rule drops the datagram. So a
+// ruleset left behind turns the namespace into a black hole for its OWN UDP —
+// including the DNS query the readiness gate makes before the next attempt, which
+// is a node that can never move again because its last revert broke the check
+// that would have let it. Measured on the stand 2026-09-05: 38 dropped datagrams.
+func TestDetachRemovesTheInNamespaceRuleset(t *testing.T) {
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.Contains(line, "docker inspect"):
+			return "4242\n", nil
+		case strings.Contains(line, "nft list table ip wgfleet_netns"):
+			return "table ip wgfleet_netns {}\n", nil
+		case line == "ip rule list":
+			return "0:\tfrom all lookup local\n", nil
+		}
+		return "", errors.New("absent")
+	}
+	p := netnsPlanner{run: run, attached: func() bool { return false }, clientIface: "wg0"}
+	acts, err := p.Plan(context.Background(), netnsSpec())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	var dump string
+	for _, a := range acts {
+		dump += a.Display + "\n"
+	}
+	if !strings.Contains(dump, "nsenter --net=/proc/4242/ns/net nft delete table ip wgfleet_netns") {
+		t.Fatalf("the namespace keeps dropping its own UDP after the revert:\n%s", dump)
 	}
 }
 

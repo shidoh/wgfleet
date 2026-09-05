@@ -83,6 +83,16 @@ const TProxyTable = 51821
 // one at a glance.
 const NetnsRouteTable = 51822
 
+// TProxyRulePref is the ip-rule priority of the fwmark rule that keeps an
+// intercepted packet on this host.
+//
+// Explicit, because iproute2 assigns an unnumbered rule `lowest existing - 1`.
+// Observed on the stand 2026-09-05: with the namespace exemptions present at 390
+// this rule landed at 389, and without them at 32765 — the same rule, two
+// positions, decided by what else happened to be in the table when it was added.
+// A relative order that changes across a re-apply is not an order.
+const TProxyRulePref = 380
+
 // NetnsRulePref is the ip-rule priority that sends client traffic to
 // NetnsRouteTable. Explicit, unlike the master's existing TPROXY rule, which was
 // added without one and landed at 32765 by accident of insertion order: a second
@@ -169,10 +179,12 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// interception has moved wholesale. With a canary, everyone EXCEPT the canary
 	// sources — the two paths run side by side, which is the whole point of having
 	// a canary at all.
-	// The namespace link, canonicalised for the masquerade below. Only meaningful
-	// once the interception has moved; before that nothing sources traffic from it.
+	// The namespace link, canonicalised for the masquerade below. Rendered as soon
+	// as the veth exists rather than when the interception moves: the readiness
+	// probe sources traffic from this link BEFORE anything is switched over, and
+	// gating the rule on the move made the gate depend on its own outcome.
 	linkCIDR := ""
-	if in.NetnsGateway != "" && in.NetnsLinkCIDR != "" {
+	if in.NetnsHostIface != "" && in.NetnsLinkCIDR != "" {
 		canon, lerr := canonicalPrefix(in.NetnsLinkCIDR)
 		if lerr != nil {
 			return "", fmt.Errorf("netfw master NAT: invalid namespace link CIDR %q: %w", in.NetnsLinkCIDR, lerr)

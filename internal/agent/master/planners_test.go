@@ -893,3 +893,24 @@ func applyNonExec(t *testing.T, acts []reconcile.Action) {
 		}
 	}
 }
+
+// iproute2 assigns an unnumbered rule `lowest existing - 1`, so the same rule
+// lands in different places depending on what else is in the table when it is
+// added. Observed on the stand 2026-09-05: with the namespace exemptions present
+// this rule sat at 389, and without them at 32765.
+func TestTProxyRuleCarriesAnExplicitPriority(t *testing.T) {
+	var dump string
+	for _, a := range tproxyRouteActions() {
+		dump += a.Display + "\n"
+	}
+	want := "ip rule add fwmark 0x2 lookup 51821 pref 380"
+	if !strings.Contains(dump, want) {
+		t.Errorf("missing %q — the rule's position depends on what else is in the table:\n%s", want, dump)
+	}
+	// And it must sort ahead of the namespace exemptions: a packet the host has
+	// already intercepted belongs on this host, whatever its destination.
+	if netfw.TProxyRulePref >= netnsDirectRulePref {
+		t.Errorf("the tproxy rule (%d) no longer precedes the namespace exemptions (%d)",
+			netfw.TProxyRulePref, netnsDirectRulePref)
+	}
+}

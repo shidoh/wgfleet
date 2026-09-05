@@ -86,9 +86,15 @@ func HeldUDPPorts() ([]int, error) {
 
 // parseHeldUDPPorts extracts the local ports of LISTENING sockets from
 // /proc/net/udp[6]. The local address column is `<hex address>:<hex port>`; the
-// address itself is deliberately ignored, because a conflict for the transparent
-// bind is decided by the port alone — a wildcard holder and a specific-address
-// holder collide the same way. The remote column is not ignored: a non-zero peer
+// address is deliberately ignored, and that is a deliberate over-report rather
+// than a claim about the kernel: a WILDCARD holder blocks every address on the
+// port, while a holder bound to one address only blocks that address. Measured on
+// the stand 2026-09-05 — the master holds 127.0.0.53:53 and the probe still opens
+// a transparent socket on :53, while 0.0.0.0:443 refuses it. Which of the two a
+// port is cannot be read from this table without also knowing the address mihomo
+// will bind, which is the address of whichever server a client happened to dial.
+// The bind probe answers the real question; this list only decides what to ask
+// about. The remote column is not ignored: a non-zero peer
 // means a connected socket, which is a conversation and not a service, and whose
 // port is released when it ends.
 func parseHeldUDPPorts(r io.Reader) ([]int, error) {

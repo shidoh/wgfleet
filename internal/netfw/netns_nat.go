@@ -20,6 +20,22 @@ type NetnsNATInput struct {
 	// address.
 	RedirAddr  string
 	TProxyAddr string
+	// ClientCIDR is the client pool, and it scopes the interception to traffic that
+	// came FROM a client.
+	//
+	// Without it the rules match everything arriving on the veth, which includes
+	// every answer mihomo is waiting for: the WireGuard packets coming back from an
+	// exit, its own DNS replies, a geo-database download. Those are addressed to the
+	// namespace itself, no transparent socket matches them, and the fail-closed drop
+	// underneath eats them. Measured on the stand 2026-09-05: client UDP was
+	// intercepted and proxied correctly, and mihomo could not resolve a single name
+	// because its own answers were being dropped one hook before it — 27 datagrams
+	// in a minute, on the rule written to prevent leaks.
+	//
+	// The host ruleset has always been scoped this way, by `iifname <client iface>`.
+	// In here the interface is shared by both directions, so the source is what
+	// separates them.
+	ClientCIDR string
 	// DirectCIDRs are destinations that must NOT be intercepted: the corporate
 	// networks clients route through the master, the management overlay, the exits'
 	// own public addresses (an earlier finding — SSH to an exit from a full-tunnel client).
@@ -52,10 +68,35 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	if in.PeerIface == "" || in.RedirAddr == "" || in.TProxyAddr == "" {
 		return "", fmt.Errorf("netfw netns NAT: peer interface, redir and tproxy addresses are required")
 	}
-
-	guards, err := privateGuards(in.DirectCIDRs)
+	if in.ClientCIDR == "" {
+		return "", fmt.Errorf("netfw netns NAT: the client pool is required to scope the interception")
+	}
+	clientCIDR, err := canonicalPrefix(in.ClientCIDR)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("netfw netns NAT: invalid client CIDR %q: %w", in.ClientCIDR, err)
+	}
+	// From a client, and NOT from the gateway.
+	//
+	// The gateway is the master's own address inside the client pool, so it is where
+	// the fleet resolver answers from — and its replies land on this veth with a
+	// source inside the pool, match a scope written as "from a client", get handed
+	// to a transparent socket that does not exist, and die on the fail-closed drop
+	// underneath. Measured on the stand 2026-09-05: 24 datagrams a minute, mihomo
+	// unable to resolve a single name, and every TCP probe failing with the tunnel
+	// and the interception both working perfectly.
+	//
+	// It is the same exclusion the host ruleset makes with `ip daddr != <gateway>`,
+	// seen from the other end: there the gateway is a destination clients must be
+	// able to reach, here it is a source whose packets are answers rather than
+	// requests.
+	scope := fmt.Sprintf("ip saddr %s", clientCIDR)
+	if gw, gerr := gatewayAddr(clientCIDR); gerr == nil {
+		scope += fmt.Sprintf(" ip saddr != %s", gw)
+	}
+
+	guards, gerr := privateGuards(in.DirectCIDRs)
+	if gerr != nil {
+		return "", gerr
 	}
 
 	var b strings.Builder
@@ -69,7 +110,7 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 
 	b.WriteString("\tchain prerouting {\n")
 	b.WriteString("\t\ttype nat hook prerouting priority dstnat; policy accept;\n")
-	fmt.Fprintf(&b, "\t\tiifname %q%s ip protocol tcp dnat to %s\n", in.PeerIface, guards, in.RedirAddr)
+	fmt.Fprintf(&b, "\t\tiifname %q %s%s ip protocol tcp dnat to %s\n", in.PeerIface, scope, guards, in.RedirAddr)
 	b.WriteString("\t}\n\n")
 
 	b.WriteString("\tchain client_udp_tproxy {\n")
@@ -78,13 +119,13 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	// is on the host: nft_tproxy_eval returns NFT_BREAK when no transparent socket
 	// is listening, which ends the rule — so a mark written first would ride on a
 	// packet that was never intercepted and send it somewhere it does not belong.
-	fmt.Fprintf(&b, "\t\tiifname %q%s meta l4proto udp tproxy ip to %s meta mark set %#x accept\n",
-		in.PeerIface, guards, in.TProxyAddr, TProxyMark)
+	fmt.Fprintf(&b, "\t\tiifname %q %s%s meta l4proto udp tproxy ip to %s meta mark set %#x accept\n",
+		in.PeerIface, scope, guards, in.TProxyAddr, TProxyMark)
 	// FAIL CLOSED, for the same reason as on the host: an interception that did not
 	// happen is a packet that must not travel. Here it matters more, not less —
 	// this namespace has a default route to the host, so an unintercepted datagram
 	// would leave by the master's own uplink with the client's address on it.
-	fmt.Fprintf(&b, "\t\tiifname %q%s meta l4proto udp counter drop\n", in.PeerIface, guards)
+	fmt.Fprintf(&b, "\t\tiifname %q %s%s meta l4proto udp counter drop\n", in.PeerIface, scope, guards)
 	b.WriteString("\t}\n\n")
 
 	// Client traffic leaves this namespace as mihomo's own connections, so it needs
@@ -117,7 +158,7 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	// number that stops moving.
 	b.WriteString("\tchain forward {\n")
 	b.WriteString("\t\ttype filter hook forward priority filter; policy accept;\n")
-	fmt.Fprintf(&b, "\t\tiifname %q counter\n", in.PeerIface)
+	fmt.Fprintf(&b, "\t\tiifname %q %s counter\n", in.PeerIface, scope)
 	b.WriteString("\t}\n")
 	b.WriteString("}\n")
 	return b.String(), nil

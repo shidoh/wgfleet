@@ -161,47 +161,68 @@ func TestEnsureRefusesAStoppedHolder(t *testing.T) {
 
 // Ready is the precondition gate for the move. It must check the three things
 // that actually break: the namespace resolves DNS, it can open a connection to an
-// exit, and its traffic leaves with the host's address rather than a client one.
+// exit. Reachability is ICMP: the exit's endpoint is a WireGuard listener, so
+// there is no TCP service there to dial, and the dial that used to be attempted
+// could only ever time out.
 func TestReadyChecksDNSEgressAndSourceAddress(t *testing.T) {
 	base := map[string]string{
 		"docker inspect -f {{.State.Pid}} wgfleet-netns": "4242\n",
 	}
 	in := testInput()
 	in.ProbeHost = "203.0.113.9"
-	in.ProbePort = 443
+	in.ProbeResolver = "10.80.0.1:53"
+	in.ProbeBin = "/usr/local/bin/wgfleet-agent"
 
-	t.Run("all three pass", func(t *testing.T) {
+	t.Run("both pass", func(t *testing.T) {
 		r := &recorder{out: base}
 		if err := Ready(context.Background(), in, r.run); err != nil {
 			t.Fatalf("Ready: %v", err)
 		}
 		joined := strings.Join(r.calls, "\n")
-		for _, want := range []string{"getent", "203.0.113.9"} {
+		for _, want := range []string{"-dns-probe 10.80.0.1:53", "203.0.113.9"} {
 			if !strings.Contains(joined, want) {
 				t.Errorf("Ready never checked %q:\n%s", want, joined)
 			}
 		}
+		// `getent` reads the HOST's resolv.conf even under `nsenter --net`, so it
+		// answers a question about the wrong namespace. On a systemd box that is
+		// 127.0.0.53, a stub resolver which in here is a loopback with nothing on it.
+		if strings.Contains(joined, "getent") {
+			t.Errorf("the gate still asks the host's resolver configuration:\n%s", joined)
+		}
 	})
 
 	t.Run("a namespace with no DNS is not ready", func(t *testing.T) {
-		r := &recorder{out: base, fail: map[string]bool{}}
-		for _, c := range []string{"nsenter --net=/proc/4242/ns/net getent hosts cloudflare.com"} {
-			r.fail[c] = true
-		}
+		r := &recorder{out: base, fail: map[string]bool{
+			"nsenter --net=/proc/4242/ns/net /usr/local/bin/wgfleet-agent -dns-probe 10.80.0.1:53": true,
+		}}
 		if err := Ready(context.Background(), in, r.run); err == nil {
 			t.Fatal("a namespace that cannot resolve was declared ready")
 		}
 	})
+
+	// Without knowing WHICH resolver mihomo will use in there, the question has no
+	// answer worth acting on, so it is skipped rather than guessed at.
+	t.Run("no resolver named means no DNS check", func(t *testing.T) {
+		bare := in
+		bare.ProbeResolver = ""
+		r := &recorder{out: base}
+		if err := Ready(context.Background(), bare, r.run); err != nil {
+			t.Fatalf("Ready: %v", err)
+		}
+		if strings.Contains(strings.Join(r.calls, "\n"), "dns-probe") {
+			t.Error("a DNS check was taken with no resolver to ask")
+		}
+	})
 }
 
-// The probe target is formatted into a shell word, so it must be an IP address
-// and nothing else.
+// The probe target must be an IP address and nothing else.
 //
-// /dev/tcp is a bash builtin, so the shell cannot be avoided without depending on
-// a netcat that may not be installed — which means the STRING has to be made safe
-// rather than the mechanism. This field is currently set nowhere in production and
-// is plainly intended to carry an exit's address later; validating now closes the
-// hole before anything is wired to it.
+// The shell is gone from this probe — the reachability check is ICMP now, so
+// there is no word to inject into — but the validation stays. A spec that names a
+// hostname here would make a reachability check depend on the resolver it is
+// meant to be independent of, and a spec that names nonsense should be refused
+// rather than silently skipped.
 func TestReadyRefusesAProbeHostThatIsNotAnAddress(t *testing.T) {
 	base := map[string]string{"docker inspect -f {{.State.Pid}} wgfleet-netns": "4242\n"}
 	for _, bad := range []string{
@@ -211,7 +232,7 @@ func TestReadyRefusesAProbeHostThatIsNotAnAddress(t *testing.T) {
 		"exit.example.com",
 	} {
 		in := testInput()
-		in.ProbeHost, in.ProbePort = bad, 443
+		in.ProbeHost = bad
 		r := &recorder{out: base}
 		if err := Ready(context.Background(), in, r.run); err == nil {
 			t.Errorf("probe host %q was accepted", bad)
@@ -221,16 +242,6 @@ func TestReadyRefusesAProbeHostThatIsNotAnAddress(t *testing.T) {
 				t.Errorf("probe host %q reached the shell: %q", bad, c)
 			}
 		}
-	}
-}
-
-// A port outside the range must be refused for the same reason.
-func TestReadyRefusesAProbePortOutOfRange(t *testing.T) {
-	in := testInput()
-	in.ProbeHost, in.ProbePort = "203.0.113.9", 70000
-	r := &recorder{out: map[string]string{"docker inspect -f {{.State.Pid}} wgfleet-netns": "4242\n"}}
-	if err := Ready(context.Background(), in, r.run); err == nil {
-		t.Error("an out-of-range probe port was accepted")
 	}
 }
 
@@ -304,5 +315,41 @@ func TestADownLinkWithTheUPFlagIsStillBroughtUp(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(argvs(steps), "\n"), "ip link set mih-host up") {
 		t.Errorf("a down link was left down:\n  %s", strings.Join(argvs(steps), "\n  "))
+	}
+}
+
+// The reachability check must not be a TCP dial. The endpoint it is given is a
+// WireGuard listener — UDP — so a TCP connection there can only ever time out,
+// and on the stand 2026-09-05 that made the readiness gate impossible to pass and
+// the migration impossible to start.
+func TestReadyDoesNotDialTCPAtAWireGuardEndpoint(t *testing.T) {
+	r := &recorder{out: map[string]string{
+		"docker inspect -f {{.State.Pid}} wgfleet-netns": "4242\n",
+	}}
+	in := testInput()
+	in.ProbeHost = "203.0.113.9"
+	if err := Ready(context.Background(), in, r.run); err != nil {
+		t.Fatalf("Ready: %v", err)
+	}
+	joined := strings.Join(r.calls, "\n")
+	if strings.Contains(joined, "/dev/tcp") || strings.Contains(joined, "bash") {
+		t.Errorf("the gate still opens a TCP connection at a UDP listener:\n%s", joined)
+	}
+	if !strings.Contains(joined, "ping -c 2 -W 2 -q 203.0.113.9") {
+		t.Errorf("the gate never reached for the exit at all:\n%s", joined)
+	}
+}
+
+// An unreachable exit is not ready. The gate exists to stop a move into a
+// namespace with no path out.
+func TestReadyFailsWhenTheExitCannotBeReached(t *testing.T) {
+	r := &recorder{
+		out:  map[string]string{"docker inspect -f {{.State.Pid}} wgfleet-netns": "4242\n"},
+		fail: map[string]bool{"nsenter --net=/proc/4242/ns/net ping -c 2 -W 2 -q 203.0.113.9": true},
+	}
+	in := testInput()
+	in.ProbeHost = "203.0.113.9"
+	if err := Ready(context.Background(), in, r.run); err == nil {
+		t.Fatal("a namespace with no path to an exit was declared ready")
 	}
 }

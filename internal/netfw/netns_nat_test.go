@@ -6,7 +6,8 @@ import (
 )
 
 func netnsInput() NetnsNATInput {
-	return NetnsNATInput{PeerIface: "mih0", RedirAddr: "100.127.255.2:7895", TProxyAddr: "100.127.255.2:7896"}
+	return NetnsNATInput{PeerIface: "mih0", RedirAddr: "100.127.255.2:7895",
+		TProxyAddr: "100.127.255.2:7896", ClientCIDR: "10.80.0.0/24"}
 }
 
 // The interception must arrive in the namespace intact: TCP redirected, UDP
@@ -20,7 +21,7 @@ func TestNetnsNATInterceptsBothProtocols(t *testing.T) {
 	for _, want := range []string{
 		"dnat to 100.127.255.2:7895",
 		"tproxy ip to 100.127.255.2:7896",
-		`iifname "mih0" meta l4proto udp counter drop`,
+		`iifname "mih0" ip saddr 10.80.0.0/24 ip saddr != 10.80.0.1 meta l4proto udp counter drop`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
@@ -156,13 +157,14 @@ func TestNetnsNATGuardsDirectDestinations(t *testing.T) {
 		PeerIface:   "mih0",
 		RedirAddr:   "100.127.255.2:7895",
 		TProxyAddr:  "100.127.255.2:7896",
+		ClientCIDR:  "10.80.0.0/24",
 		DirectCIDRs: []string{"10.0.0.0/8", "172.29.0.0/16"},
 	})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	for _, want := range []string{
-		`iifname "mih0" ip daddr != 10.0.0.0/8 ip daddr != 172.29.0.0/16 ip protocol tcp dnat to`,
+		`iifname "mih0" ip saddr 10.80.0.0/24 ip saddr != 10.80.0.1 ip daddr != 10.0.0.0/8 ip daddr != 172.29.0.0/16 ip protocol tcp dnat to`,
 		`ip daddr != 172.29.0.0/16 meta l4proto udp tproxy ip to`,
 		`ip daddr != 172.29.0.0/16 meta l4proto udp counter drop`,
 	} {
@@ -180,11 +182,12 @@ func TestNetnsNATGuardsDirectDestinations(t *testing.T) {
 func TestNetnsNATCountsWhatItForwards(t *testing.T) {
 	out, err := RenderNetnsNAT(NetnsNATInput{
 		PeerIface: "mih0", RedirAddr: "100.127.255.2:7895", TProxyAddr: "100.127.255.2:7896",
+		ClientCIDR: "10.80.0.0/24",
 	})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	if !strings.Contains(out, "chain forward {") || !strings.Contains(out, `iifname "mih0" counter`) {
+	if !strings.Contains(out, "chain forward {") || !strings.Contains(out, `iifname "mih0" ip saddr 10.80.0.0/24 ip saddr != 10.80.0.1 counter`) {
 		t.Errorf("nothing accounts for the protocols this namespace merely forwards:\n%s", out)
 	}
 	if !strings.Contains(out, "ct state invalid drop") {
@@ -196,9 +199,65 @@ func TestNetnsNATCountsWhatItForwards(t *testing.T) {
 func TestNetnsNATRefusesACraftedDirectCIDR(t *testing.T) {
 	_, err := RenderNetnsNAT(NetnsNATInput{
 		PeerIface: "mih0", RedirAddr: "100.127.255.2:7895", TProxyAddr: "100.127.255.2:7896",
+		ClientCIDR:  "10.80.0.0/24",
 		DirectCIDRs: []string{"10.0.0.0/8; drop"},
 	})
 	if err == nil {
 		t.Fatal("a crafted CIDR was rendered into the ruleset")
+	}
+}
+
+// The interception must catch traffic that came FROM a client and nothing else.
+//
+// The veth carries both directions, so without a source scope the rules also match
+// every answer mihomo is waiting for: WireGuard packets coming back from an exit,
+// its own DNS replies, a geo-database download. Those are addressed to the
+// namespace itself, no transparent socket matches them, and the fail-closed drop
+// underneath eats them. Measured on the stand 2026-09-05: client UDP was
+// intercepted and proxied correctly while mihomo could not resolve a single name,
+// because its own answers died one hook before it reached them.
+func TestNetnsNATOnlyInterceptsTrafficFromClients(t *testing.T) {
+	out, err := RenderNetnsNAT(netnsInput())
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, `iifname "mih0"`) {
+			continue
+		}
+		if !strings.Contains(line, "ip saddr 10.80.0.0/24") {
+			t.Errorf("a rule matches everything arriving on the veth, mihomo's own replies included:\n  %s", line)
+		}
+	}
+}
+
+// A client pool is not optional: without it the rules cannot be scoped, and the
+// unscoped version is a namespace that eats its own traffic.
+func TestNetnsNATRefusesToRenderWithoutTheClientPool(t *testing.T) {
+	in := netnsInput()
+	in.ClientCIDR = ""
+	if _, err := RenderNetnsNAT(in); err == nil {
+		t.Fatal("an unscoped interception was rendered")
+	}
+}
+
+// The gateway is the master's own address in the client pool, so it is where the
+// fleet resolver answers from. Its replies land on this veth with a source inside
+// the pool, and a scope written only as "from a client" hands them to a
+// transparent socket that does not exist and drops them. Measured on the stand
+// 2026-09-05: mihomo could not resolve a single name while the tunnel and the
+// interception both worked.
+func TestNetnsNATDoesNotInterceptRepliesFromTheGateway(t *testing.T) {
+	out, err := RenderNetnsNAT(netnsInput())
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "ip saddr 10.80.0.0/24") {
+			continue
+		}
+		if !strings.Contains(line, "ip saddr != 10.80.0.1") {
+			t.Errorf("a rule swallows the resolver's own replies:\n  %s", line)
+		}
 	}
 }

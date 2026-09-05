@@ -14,6 +14,14 @@ func testMover() (*netnsMover, *time.Time) {
 	return m, &now
 }
 
+// settleOut drives the passes that follow a flip, during which the path is not
+// judged: the container carrying it is being replaced.
+func settleOut(m *netnsMover) {
+	for range moveSettlePasses {
+		m.Decide(true, isReady, pathUp)
+	}
+}
+
 var (
 	notReady = func() error { return errors.New("namespace cannot resolve DNS") }
 	isReady  = func() error { return nil }
@@ -46,6 +54,7 @@ func TestMoveRevertsItselfWhenTheClientPathBreaks(t *testing.T) {
 	if !m.Decide(true, isReady, pathUp) {
 		t.Fatal("did not move")
 	}
+	settleOut(m)
 	*clock = clock.Add(moveRetryHold + time.Second)
 
 	// One bad pass is tolerated: the flip itself disturbs established flows.
@@ -65,6 +74,7 @@ func TestMoveRevertsItselfWhenTheClientPathBreaks(t *testing.T) {
 func TestMoveForgetsAnIsolatedFailure(t *testing.T) {
 	m, clock := testMover()
 	m.Decide(true, isReady, pathUp)
+	settleOut(m)
 	*clock = clock.Add(moveRetryHold + time.Second)
 
 	m.Decide(true, isReady, pathDown) // one bad
@@ -82,6 +92,7 @@ func TestMoveGivesUpRatherThanOscillate(t *testing.T) {
 		if !m.Decide(true, isReady, pathUp) && attempt < moveMaxAttempts {
 			t.Fatalf("attempt %d: did not move", attempt)
 		}
+		settleOut(m)
 		*clock = clock.Add(moveRetryHold + time.Second)
 		for range moveFailPasses {
 			m.Decide(true, isReady, pathDown)
@@ -115,6 +126,7 @@ func TestMoveHoldsBeforeTryingAgain(t *testing.T) {
 	if !m.Decide(true, isReady, pathUp) {
 		t.Fatal("did not move")
 	}
+	settleOut(m)
 	for range moveFailPasses {
 		m.Decide(true, isReady, pathDown)
 	}
@@ -139,7 +151,9 @@ func TestRevertIsNotHeldBack(t *testing.T) {
 	if !m.Decide(true, isReady, pathUp) {
 		t.Fatal("did not move")
 	}
-	// No clock advance at all: the flip has just happened and it has just broken.
+	// No clock advance at all: the flip has just happened, has settled, and has
+	// just broken.
+	settleOut(m)
 	for range moveFailPasses {
 		m.Decide(true, isReady, pathDown)
 	}
@@ -155,6 +169,7 @@ func TestRevertIsNotHeldBack(t *testing.T) {
 func TestConfirmationsClearSpentAttempts(t *testing.T) {
 	m, clock := testMover()
 	m.Decide(true, isReady, pathUp)
+	settleOut(m)
 	for range moveFailPasses {
 		m.Decide(true, isReady, pathDown)
 	}
@@ -165,6 +180,7 @@ func TestConfirmationsClearSpentAttempts(t *testing.T) {
 	if !m.Decide(true, isReady, pathUp) {
 		t.Fatal("did not move again after the hold")
 	}
+	settleOut(m)
 	for range moveConfirmPasses {
 		m.Decide(true, isReady, pathUp)
 	}
@@ -183,6 +199,7 @@ func TestGiveUpSurvivesARestart(t *testing.T) {
 	m.now = func() time.Time { return now }
 	for attempt := 1; attempt <= moveMaxAttempts; attempt++ {
 		m.Decide(true, isReady, pathUp)
+		settleOut(m)
 		for range moveFailPasses {
 			m.Decide(true, isReady, pathDown)
 		}
@@ -207,6 +224,7 @@ func TestGiveUpSurvivesARestart(t *testing.T) {
 func TestMoveWithoutAStatePathWritesNothing(t *testing.T) {
 	m, _ := testMover()
 	m.Decide(true, isReady, pathUp)
+	settleOut(m)
 	for range moveFailPasses {
 		m.Decide(true, isReady, pathDown)
 	}
@@ -214,5 +232,49 @@ func TestMoveWithoutAStatePathWritesNothing(t *testing.T) {
 	// statePath is empty, so save() is a no-op by construction.
 	if m.statePath != "" {
 		t.Fatal("the test mover acquired a state path")
+	}
+}
+
+// The flip is a pass, not an action: compose recreates mihomo into the namespace,
+// the namespace planner arms the rules, the master NAT disarms the host — and the
+// client path is measured at the END of that same pass, against a container
+// Docker has just replaced. Measured on the stand 2026-09-05: every attempt
+// attached, failed its next two probes on exactly that, and reverted, until the
+// node gave up on a migration that was working.
+func TestMoveIsNotJudgedWhileItIsStillHappening(t *testing.T) {
+	m, _ := testMover()
+	if !m.Decide(true, isReady, pathUp) {
+		t.Fatal("did not move")
+	}
+	for i := range moveSettlePasses {
+		if !m.Decide(true, isReady, pathDown) {
+			t.Fatalf("reverted while the move was still settling (pass %d)", i+1)
+		}
+		if !strings.Contains(m.Reason(), "settling") {
+			t.Errorf("the reason does not say it is settling: %q", m.Reason())
+		}
+	}
+	// The grace is over; the ordinary rule applies again.
+	if !m.Decide(true, isReady, pathDown) {
+		t.Error("reverted on the first failing pass after settling")
+	}
+	if m.Decide(true, isReady, pathDown) {
+		t.Fatal("a path that is still broken after settling must be reverted")
+	}
+}
+
+// And the grace is not a way to hide a working path either: a healthy path
+// confirms as before once the settle window has passed.
+func TestSettlingDoesNotDelayConfirmationForever(t *testing.T) {
+	m, _ := testMover()
+	m.Decide(true, isReady, pathUp)
+	for range moveSettlePasses {
+		m.Decide(true, isReady, pathUp)
+	}
+	for range moveConfirmPasses {
+		m.Decide(true, isReady, pathUp)
+	}
+	if !strings.Contains(m.Reason(), "confirmations") {
+		t.Errorf("a settled, healthy move never reached confirmation: %q", m.Reason())
 	}
 }

@@ -799,11 +799,15 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 				a.log.Warn("client path probe failed", "probe", pr.Name, "err", pr.Why)
 			}
 		}
+		a.decideNetnsMove(ctx, spec, probes)
 		if a.metrics != nil {
 			a.metrics.ObserveClientPath(results)
+			// AFTER the decision, not before. Reported first, the gauge showed the
+			// state the pass STARTED in — so a node that had just moved read as
+			// waiting for a full pass, and an operator watching the flip saw the
+			// migration lag its own logs by thirty seconds.
 			a.metrics.ObserveNetnsMove(a.netnsMove.State(), a.netnsMove.Attempts())
 		}
-		a.decideNetnsMove(ctx, spec, probes)
 	}
 	a.log.Info("reconcile applied",
 		"changes", report.ChangeCount(), "drift", len(drifted),

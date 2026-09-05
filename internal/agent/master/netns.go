@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"strconv"
+	"os"
 	"strings"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
@@ -164,6 +164,7 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 		PeerIface:   in.PeerIface,
 		RedirAddr:   fmt.Sprintf("%s:%d", peerIP, redir),
 		TProxyAddr:  fmt.Sprintf("%s:%d", peerIP, mihomo.TProxyPortFor(redir)),
+		ClientCIDR:  in.ClientCIDR,
 		DirectCIDRs: direct,
 	})
 	if err != nil {
@@ -313,6 +314,34 @@ func (p netnsPlanner) detachActions(ctx context.Context, run netns.Runner) []rec
 	pref := fmt.Sprintf("%d", netfw.NetnsRulePref)
 	table := fmt.Sprintf("%d", netfw.NetnsRouteTable)
 	var actions []reconcile.Action
+
+	// The ruleset INSIDE the namespace goes first, and leaving it behind is the
+	// worst of the leftovers rather than the most obscure.
+	//
+	// Its UDP interception is fail-closed: `tproxy` finds no transparent socket
+	// once mihomo has moved back out, and the next rule drops the datagram. So a
+	// namespace that is no longer carrying client traffic silently eats every UDP
+	// packet of its OWN — including the DNS query the readiness gate makes before
+	// the next attempt. Measured on the stand 2026-09-05: 38 dropped datagrams, the
+	// gate failing on DNS, and a node that could never move again because its last
+	// revert had broken the check that would have let it.
+	if nsPath, err := netns.Path(ctx, domain.NetnsHolder, run); err == nil {
+		if _, lerr := run(ctx, "nsenter", "--net="+nsPath, "nft", "list", "table", "ip", netfw.NetnsNATTable); lerr == nil {
+			actions = append(actions, reconcile.ExecAction(
+				"remove the interception from mihomo's namespace",
+				"nsenter", "--net="+nsPath, "nft", "delete", "table", "ip", netfw.NetnsNATTable))
+		}
+	}
+	// And the record that it was applied, so the next attach re-applies from scratch
+	// rather than believing a table that is no longer there.
+	path := p.nftPath
+	if path == "" {
+		path = netnsNFTPath
+	}
+	if forget, ferr := reconcile.RemoveFileAction(reconcile.NFTAppliedMarker(path),
+		"forget the applied in-namespace ruleset"); ferr == nil {
+		actions = append(actions, forget)
+	}
 	if p.ruleLive(ctx, run, pref) {
 		actions = append(actions, reconcile.ExecAction(
 			"stop routing client traffic into the namespace",
@@ -464,15 +493,23 @@ func NamespaceReady(ctx context.Context, spec domain.NodeSpec) error {
 	} else if !wanted {
 		return fmt.Errorf("disabled by master.client_via_netns")
 	}
-	host, port := exitProbeTarget(spec)
+	host := exitProbeTarget(spec)
+	resolver, bin := "", ""
+	if rs := mihomoResolvers(spec, true); len(rs) > 0 {
+		resolver = net.JoinHostPort(rs[0], "53")
+	}
+	if self, err := os.Executable(); err == nil {
+		bin = self
+	}
 	return netns.Ready(ctx, netns.Input{
-		Holder:     domain.NetnsHolder,
-		HostIface:  domain.NetnsHostIface,
-		PeerIface:  domain.NetnsPeerIface,
-		CIDR:       spec.Master.NetnsLinkCIDR(),
-		ClientCIDR: spec.WGServer.AddressPool,
-		ProbeHost:  host,
-		ProbePort:  port,
+		Holder:        domain.NetnsHolder,
+		HostIface:     domain.NetnsHostIface,
+		PeerIface:     domain.NetnsPeerIface,
+		CIDR:          spec.Master.NetnsLinkCIDR(),
+		ClientCIDR:    spec.WGServer.AddressPool,
+		ProbeHost:     host,
+		ProbeResolver: resolver,
+		ProbeBin:      bin,
 	}, netns.Exec)
 }
 
@@ -485,19 +522,23 @@ func NamespaceReady(ctx context.Context, spec domain.NodeSpec) error {
 // resolves through the HOST namespace, which this migration does not touch. The
 // gate could pass on a namespace with no path out at all.
 //
+// The PORT is deliberately dropped: the endpoint is a WireGuard listener, so it
+// is UDP, and the check that used it opened a TCP connection that could only ever
+// time out. What is asked instead is whether a packet from the namespace reaches
+// the far node at all.
+//
 // Only literal addresses are used. A hostname would need the namespace's resolver
 // to answer before the probe can run, which makes a reachability check depend on
-// the thing it is meant to be independent of; and netns.Ready refuses anything
-// that is not an address anyway, because the target is formatted into a bash word.
-func exitProbeTarget(spec domain.NodeSpec) (string, int) {
+// the thing it is meant to be independent of.
+func exitProbeTarget(spec domain.NodeSpec) string {
 	if spec.Master == nil {
-		return "", 0
+		return ""
 	}
 	for _, t := range spec.Master.ExitTunnels {
 		if t.Drained || t.Endpoint == "" {
 			continue
 		}
-		host, portStr, err := net.SplitHostPort(t.Endpoint)
+		host, _, err := net.SplitHostPort(t.Endpoint)
 		if err != nil {
 			continue
 		}
@@ -505,13 +546,9 @@ func exitProbeTarget(spec domain.NodeSpec) (string, int) {
 		if aerr != nil {
 			continue
 		}
-		port, perr := strconv.Atoi(portStr)
-		if perr != nil || port < 1 || port > 65535 {
-			continue
-		}
-		return addr.String(), port
+		return addr.String()
 	}
-	return "", 0
+	return ""
 }
 
 // NetnsPeerIP is mihomo's address inside its namespace — the veth's far end.

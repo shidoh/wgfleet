@@ -132,28 +132,71 @@ func (p synthPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 		return reconcile.ExecAction(summary, append([]string{"ip", "netns", "exec", synthNetns}, argv...)...)
 	}
 	_, ifErr := run(ctx, "ip", "netns", "exec", synthNetns, "ip", "link", "show", synthIface)
+	// Created HERE and moved THERE: the socket stays in this namespace, which is
+	// the only reason the prober can dial 127.0.0.1 at all.
+	build := []reconcile.Action{
+		reconcile.ExecAction("create the prober's interface", "ip", "link", "add", synthIface, "type", "amneziawg"),
+		reconcile.ExecAction("configure the prober's device", "awg", "setconf", synthIface, p.confPath),
+		reconcile.ExecAction("move the prober's interface into its namespace",
+			"ip", "link", "set", synthIface, "netns", synthNetns),
+		nsExec("address the prober", "ip", "addr", "add", addr, "dev", synthIface),
+		nsExec("bring the prober up", "ip", "link", "set", synthIface, "up"),
+		nsExec("bring the prober's loopback up", "ip", "link", "set", "lo", "up"),
+		nsExec("route everything through the prober", "ip", "route", "replace", "default", "dev", synthIface),
+	}
 	switch {
 	case ifErr != nil:
-		// Created HERE and moved THERE: the socket stays in this namespace, which is
-		// the only reason the prober can dial 127.0.0.1 at all.
-		actions = append(actions,
-			reconcile.ExecAction("create the prober's interface", "ip", "link", "add", synthIface, "type", "amneziawg"),
-			reconcile.ExecAction("configure the prober's device", "awg", "setconf", synthIface, p.confPath),
-			reconcile.ExecAction("move the prober's interface into its namespace",
-				"ip", "link", "set", synthIface, "netns", synthNetns),
-			nsExec("address the prober", "ip", "addr", "add", addr, "dev", synthIface),
-			nsExec("bring the prober up", "ip", "link", "set", synthIface, "up"),
-			nsExec("bring the prober's loopback up", "ip", "link", "set", "lo", "up"),
-			nsExec("route everything through the prober", "ip", "route", "replace", "default", "dev", synthIface),
-		)
-	case file.Changes():
-		// The device exists and its configuration moved — re-apply in place rather
-		// than tearing the interface down, so a params change does not cost a
-		// measurement gap.
-		actions = append(actions, nsExec("re-apply the prober's device config",
-			"awg", "setconf", synthIface, p.confPath))
+		actions = append(actions, build...)
+	case file.Changes() || p.deviceHasStaleHeaderProtection(ctx, run, conf):
+		// The device is REBUILT, not re-configured in place.
+		//
+		// `awg setconf` applies what the file says and cannot express what it no
+		// longer says: a parameter the device already carries and the config has
+		// dropped stays on the device. Measured on the stand 2026-09-05 — the prober
+		// was created while the spec carried AmneziaWG 3.x parameters, the spec then
+		// went back to 2.0, `setconf` re-applied cleanly, and the device kept its
+		// header protection key. The server had none, so not one handshake completed
+		// and every client-path probe was red — with the config file on disk looking
+		// exactly right.
+		//
+		// That failure is worse here than anywhere else: this device is the judge of
+		// the automatic revert, so a prober that cannot handshake makes every
+		// migration look broken and reverts it. One pass without a measurement is the
+		// cheaper mistake.
+		//
+		// The trigger is not the config file alone. On the stand the file was already
+		// correct — it had been rewritten by an earlier pass — while the DEVICE still
+		// carried the old key, so `file.Changes()` was false and nothing ever repaired
+		// it. What has to be compared is the kernel against the intent, which is the
+		// same lesson NFTApply learned about `.applied` markers.
+		actions = append(actions, nsExec("remove the prober's interface (its parameters changed)",
+			"ip", "link", "del", synthIface))
+		actions = append(actions, build...)
 	default:
 		actions = append(actions, reconcile.NoChangeAction("client path prober", "prober already up"))
 	}
 	return actions, nil
+}
+
+// deviceHasStaleHeaderProtection reports whether the live prober device carries a
+// header protection key that the rendered config does not set.
+//
+// Only this one parameter, and that is a statement about AmneziaWG rather than a
+// shortcut: of everything 3.x added, the header protection key is the one that
+// breaks the wire outright — two ends disagreeing about it exchange packets
+// neither can parse, and no handshake ever completes. The timers and padding
+// negotiate or are ignored. So this is the parameter whose survival on a device
+// silently kills the prober, and the one worth reading the kernel for.
+//
+// The output holds key material, so it is tested for presence and never kept,
+// logged, or put in an error.
+func (p synthPlanner) deviceHasStaleHeaderProtection(ctx context.Context, run netns.Runner, cfg string) bool {
+	if strings.Contains(cfg, "HeaderProtectionKey") {
+		return false // the config asks for one; whatever the device has is intended
+	}
+	out, err := run(ctx, "ip", "netns", "exec", synthNetns, "awg", "show", synthIface)
+	if err != nil {
+		return false // cannot look; do not rebuild on a guess
+	}
+	return strings.Contains(out, "header protection key:")
 }

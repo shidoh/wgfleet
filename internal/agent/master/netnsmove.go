@@ -21,6 +21,20 @@ const (
 	// before the move is reverted. One is too eager — the flip itself disturbs
 	// established flows — and three is a minute and a half of outage.
 	moveFailPasses = 2
+	// moveSettlePasses is how many passes after the flip are not judged at all.
+	//
+	// The flip is not one action, it is a pass. The compose planner recreates mihomo
+	// into the namespace, the namespace planner arms the rules, the master NAT
+	// disarms the host — and the client path is measured at the END of that same
+	// pass, against a container Docker has just replaced and which may not have
+	// bound its listeners yet. Measured on the stand 2026-09-05: every attempt
+	// attached, failed its next two probes on exactly that, and reverted; three
+	// attempts and the node gave up on a migration that was working.
+	//
+	// So the failure counter starts after the disturbance rather than during it.
+	// This is not a grace period for a broken path: a path that is still broken when
+	// it expires is reverted on the same two-pass rule as before.
+	moveSettlePasses = 2
 	// moveMaxAttempts is how many times a node may try before it stops. A node that
 	// has failed this often is not going to succeed on the next pass either, and a
 	// revert loop is worse than either state: clients would be moved and moved back
@@ -72,6 +86,7 @@ type netnsMover struct {
 	attempts int
 	confirm  int
 	fail     int
+	settle   int
 	lastFlip time.Time
 	reason   string
 	now      func() time.Time
@@ -156,11 +171,19 @@ func (m *netnsMover) Decide(wanted bool, ready func() error, pathOK func() bool)
 			return false
 		}
 		m.state, m.confirm, m.fail = moveAttached, 0, 0
+		m.settle = moveSettlePasses
 		m.lastFlip = m.now()
 		m.reason = "namespace ready; client interception moved in"
 		return true
 
 	case moveAttached:
+		if m.settle > 0 {
+			// Still inside the flip. Nothing is asked of the path yet, and nothing is
+			// counted against it — the container carrying that path is being replaced.
+			m.settle--
+			m.reason = fmt.Sprintf("settling after the move (%d pass(es) to go)", m.settle)
+			return true
+		}
 		if pathOK() {
 			m.fail = 0
 			if m.confirm < moveConfirmPasses {

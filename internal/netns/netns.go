@@ -66,10 +66,15 @@ type Input struct {
 	// ClientCIDR is the client pool, routed from the namespace back through the
 	// host so mihomo's replies reach the client interface.
 	ClientCIDR string
-	// ProbeHost / ProbePort are what Ready dials from inside the namespace to
-	// prove it has a working path to an exit. Empty ⇒ that check is skipped.
+	// ProbeHost is the address Ready reaches for from inside the namespace to prove
+	// it has a working path to an exit. Empty ⇒ that check is skipped.
 	ProbeHost string
-	ProbePort int
+	// ProbeResolver is the resolver Ready queries from inside the namespace, as
+	// host:port, and ProbeBin is the binary that asks it. Both empty ⇒ the DNS check
+	// is skipped, which is honest: without knowing WHICH resolver mihomo will use in
+	// there, the question has no answer worth acting on.
+	ProbeResolver string
+	ProbeBin      string
 	// MTU is set on BOTH ends of the veth. A veth defaults to 1500, and the leg it
 	// now carries — mihomo to an exit — used to be a locally originated connection
 	// and is a FORWARDED one after the move, so it lives or dies on ICMP
@@ -164,10 +169,13 @@ func Plan(ctx context.Context, in Input, run Runner) ([]Step, error) {
 	// kernel reports.
 	if in.MTU > 0 {
 		mtu := strconv.Itoa(in.MTU)
-		if out, err := run(ctx, "ip", "-br", "link", "show", in.HostIface); err != nil || !strings.Contains(out, " mtu "+mtu) {
+		// `ip -br link show` does not print the MTU at all, so a brief read here matched
+		// nothing and re-set the MTU on every pass — a change reported forever over a
+		// value that was already right. Measured on the stand 2026-09-05.
+		if out, err := run(ctx, "ip", "link", "show", in.HostIface); err != nil || !strings.Contains(out, " mtu "+mtu+" ") {
 			add("set the host end MTU to "+mtu, "ip", "link", "set", in.HostIface, "mtu", mtu)
 		}
-		if out, err := run(ctx, "nsenter", nsArgs("-br", "link", "show", in.PeerIface)...); err != nil || !strings.Contains(out, " mtu "+mtu) {
+		if out, err := run(ctx, "nsenter", nsArgs("link", "show", in.PeerIface)...); err != nil || !strings.Contains(out, " mtu "+mtu+" ") {
 			add("set the namespace end MTU to "+mtu, append([]string{"nsenter"}, nsArgs("link", "set", in.PeerIface, "mtu", mtu)...)...)
 		}
 	}
@@ -230,37 +238,47 @@ func Ready(ctx context.Context, in Input, run Runner) error {
 	if err != nil {
 		return err
 	}
-	// DNS. mihomo resolves through the fleet resolver, which lives in the HOST
-	// namespace — so this is the check that catches the `127.0.0.1:53` trap, where
-	// the loopback mihomo asks is its own and nothing is listening on it.
-	if _, err := run(ctx, "nsenter", "--net="+nsPath, "getent", "hosts", "cloudflare.com"); err != nil {
-		return fmt.Errorf("namespace %s cannot resolve DNS: %w", in.Holder, err)
+	// DNS, asked of a NAMED resolver rather than of the system.
+	//
+	// This check used to run `getent hosts` inside the namespace, and that cannot
+	// work: `nsenter --net` changes only the NETWORK namespace, so the lookup still
+	// reads the HOST's /etc/resolv.conf. On a systemd box that names 127.0.0.53, a
+	// stub resolver which inside this namespace is a loopback with nothing on it —
+	// so the gate failed on every master with systemd-resolved, whatever the
+	// namespace could actually do. Measured on the stand 2026-09-05.
+	//
+	// The resolver to ask is the one mihomo will be pointed at once it moves, which
+	// only the agent knows. Asking that specific address is also the stronger
+	// question: it is the trap this check exists for — mihomo's own resolver
+	// configuration pointing at a loopback that is not the one it thinks it is.
+	if in.ProbeResolver != "" && in.ProbeBin != "" {
+		if _, err := run(ctx, "nsenter", "--net="+nsPath, in.ProbeBin, "-dns-probe", in.ProbeResolver); err != nil {
+			return fmt.Errorf("namespace %s cannot resolve through %s: %w", in.Holder, in.ProbeResolver, err)
+		}
 	}
-	// A real connection to an exit. Reachability of the wire, not of a route table.
+	// Reachability of the WIRE, not of a route table — and by ICMP, because there
+	// is nothing else to ask.
 	//
-	// The target is PARSED as an IP address before it is formatted into a shell
-	// word. bash is unavoidable here — /dev/tcp is a bash builtin and nothing else
-	// on a stock node opens a TCP connection without a helper that may not be
-	// installed — so the string is what has to be made safe rather than the
-	// mechanism. An address that survives netip.ParseAddr cannot contain a shell
-	// metacharacter, which closes the hole rather than documenting it.
+	// This check used to open a TCP connection to the exit's endpoint with bash's
+	// /dev/tcp. The endpoint is a WireGuard listener: it is UDP, nothing is on that
+	// port over TCP, and the dial could only ever time out. Measured on the stand
+	// 2026-09-05 — the gate never passed, so the migration never started, and the
+	// three blockers that would have made it fail were being hidden by a fourth.
 	//
-	// The alternative, refusing the shell and calling `nc`, trades an injection this
-	// validation removes for a dependency on a package that is not guaranteed to be
-	// there — and a readiness probe that fails because netcat is missing would hold
-	// the migration back on a healthy node.
-	if in.ProbeHost != "" && in.ProbePort > 0 {
+	// ICMP is the honest question at this layer: before mihomo moves there is no
+	// TCP service of ours out there to talk to, and what the namespace needs to
+	// demonstrate is that a packet it sends reaches the far node and comes back.
+	// It also removes the shell from the probe entirely, and with it the injection
+	// surface that made the address parsing necessary — the parsing stays, because
+	// an address that is not an address is still a spec we should refuse.
+	if in.ProbeHost != "" {
 		addr, perr := netip.ParseAddr(in.ProbeHost)
 		if perr != nil {
 			return fmt.Errorf("netns: probe host %q is not an IP address: %w", in.ProbeHost, perr)
 		}
-		if in.ProbePort < 1 || in.ProbePort > 65535 {
-			return fmt.Errorf("netns: probe port %d out of range", in.ProbePort)
-		}
-		target := fmt.Sprintf("%s/%d", addr, in.ProbePort)
-		if _, err := run(ctx, "nsenter", "--net="+nsPath, "timeout", "5",
-			"bash", "-c", "exec 3<>/dev/tcp/"+target); err != nil {
-			return fmt.Errorf("namespace %s cannot reach %s:%d: %w", in.Holder, addr, in.ProbePort, err)
+		if _, err := run(ctx, "nsenter", "--net="+nsPath,
+			"ping", "-c", "2", "-W", "2", "-q", addr.String()); err != nil {
+			return fmt.Errorf("namespace %s cannot reach %s: %w", in.Holder, addr, err)
 		}
 	}
 	return nil

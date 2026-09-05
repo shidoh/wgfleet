@@ -160,7 +160,13 @@ func Planners(in Input) []reconcile.Planner {
 		dockerfw.NewForwardPlanner(
 			"master forwarding (ip_forward + DOCKER-USER)",
 			in.ClientInterface, defaultClientInterface,
-			"accept client→uplink forwarding (DOCKER-USER)"),
+			"accept client→uplink forwarding (DOCKER-USER)",
+			// The veth to mihomo's namespace crosses the same FORWARD path, and Docker's
+			// policy there is DROP. Listed unconditionally rather than gated on the
+			// migration: the interface only exists once the namespace does, the rule is
+			// inert until then, and the alternative is a rule that arrives after the
+			// traffic it has to carry.
+			domain.NetnsHostIface),
 		// Client-facing blocky resolver (ADR-0024): runs after the stack is up so wg0
 		// (the client gateway it binds) exists. Renders config + its own compose,
 		// restarts blocky on change (no hot-reload for upstreams), self-heals when down.
@@ -534,7 +540,7 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 		// Rendered from the same decision the NAT table reads, so the interception
 		// moving and the host trusting the veth are one change rather than two that
 		// converge at different times.
-		NetnsHostIface: netnsVethIface(spec, p.netnsAttached),
+		NetnsHostIface: netnsVethIface(spec),
 	})
 	if err != nil {
 		return nil, err
@@ -599,8 +605,15 @@ type masterNATPlanner struct {
 
 // netnsVethIface names the veth to mihomo's namespace once interception lives
 // there, and nothing before that.
-func netnsVethIface(spec domain.NodeSpec, attached func() bool) string {
-	if attached == nil || !attached() || spec.Master == nil {
+func netnsVethIface(spec domain.NodeSpec) string {
+	if spec.Master == nil {
+		return ""
+	}
+	// As soon as the namespace is wanted, not when the interception moves: the
+	// readiness probe runs from in there before anything is switched over, and a
+	// drop-policy input chain that does not trust the veth makes the namespace
+	// unable to resolve — which is one of the two things the probe checks.
+	if wanted, _, err := spec.Master.NetnsWanted(); err != nil || !wanted {
 		return ""
 	}
 	return domain.NetnsHostIface
@@ -638,7 +651,22 @@ func NATInput(spec domain.NodeSpec, clientIface string, netnsAttached bool) netf
 	// because TPROXY does not rewrite the packet, could not answer the right client.
 	// Exempting only the masquerade then leaves the source in the client pool and
 	// the leak guard drops it one hook later.
+	// The namespace's own EGRESS is armed as soon as the namespace is wanted, not
+	// when the interception moves — and the two really are separate questions.
+	//
+	// Everything mihomo will send from in there needs a source the world can answer,
+	// and so does the readiness probe that decides whether the move may happen at
+	// all. Gating the masquerade on `attached` made that a circle: the gate asked the
+	// namespace to reach an exit, and the rule that let it do so was only rendered
+	// once the gate had passed. Measured on the stand 2026-09-05 — the namespace
+	// could not ping the exit, the gate never passed, and the migration never
+	// started. Before the move nothing but the probe sources traffic from this link,
+	// so arming it early costs nothing.
 	netnsGW, netnsIface, canary := "", "", ""
+	wanted, canaryCIDR, werr := spec.Master.NetnsWanted()
+	if werr == nil && wanted {
+		netnsIface = domain.NetnsHostIface
+	}
 	if netnsAttached {
 		if _, peer, aerr := netns.LinkAddrs(spec.Master.NetnsLinkCIDR()); aerr == nil {
 			netnsGW, _, _ = strings.Cut(peer, "/")
@@ -646,8 +674,8 @@ func NATInput(spec domain.NodeSpec, clientIface string, netnsAttached bool) netf
 			// A canary narrows the move to a few client sources, so the host must go on
 			// intercepting the rest. Read from the same knob the routing rule reads, or
 			// the two disagree about who moved and those clients get neither path.
-			if _, c, cerr := spec.Master.NetnsWanted(); cerr == nil {
-				canary = c
+			if werr == nil {
+				canary = canaryCIDR
 			}
 		}
 	}
@@ -786,13 +814,14 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 func tproxyRouteActions() []reconcile.Action {
 	table := fmt.Sprintf("%d", netfw.TProxyTable)
 	mark := fmt.Sprintf("%#x", netfw.TProxyMark)
+	pref := fmt.Sprintf("%d", netfw.TProxyRulePref)
 	return []reconcile.Action{
 		reconcile.BestEffortExecAction(
 			fmt.Sprintf("drop any stale tproxy rule (fwmark %s table %s)", mark, table),
 			"ip", "rule", "del", "fwmark", mark, "lookup", table),
 		reconcile.ExecAction(
 			fmt.Sprintf("send tproxy-marked packets (fwmark %s) to table %s", mark, table),
-			"ip", "rule", "add", "fwmark", mark, "lookup", table),
+			"ip", "rule", "add", "fwmark", mark, "lookup", table, "pref", pref),
 		reconcile.ExecAction(
 			fmt.Sprintf("keep tproxy-marked packets local (local default in table %s)", table),
 			"ip", "route", "replace", "local", "0.0.0.0/0", "dev", "lo", "table", table),

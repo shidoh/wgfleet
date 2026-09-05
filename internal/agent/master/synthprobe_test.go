@@ -227,9 +227,8 @@ func TestExitProbeTargetPicksALiveLiteralEndpoint(t *testing.T) {
 		{Name: "hostname", Endpoint: "exit.example.com:443"},
 		{Name: "good", Endpoint: "198.51.100.9:51820"},
 	}}}
-	host, port := exitProbeTarget(spec)
-	if host != "198.51.100.9" || port != 51820 {
-		t.Fatalf("got %s:%d, want the first live literal endpoint", host, port)
+	if host := exitProbeTarget(spec); host != "198.51.100.9" {
+		t.Fatalf("got %q, want the first live literal endpoint", host)
 	}
 }
 
@@ -240,7 +239,7 @@ func TestExitProbeTargetIsEmptyWhenNothingIsDialable(t *testing.T) {
 		{Name: "hostname", Endpoint: "exit.example.com:443"},
 		{Name: "junk", Endpoint: "not-an-endpoint"},
 	}}}
-	if host, port := exitProbeTarget(spec); host != "" || port != 0 {
-		t.Fatalf("got %s:%d, want no target", host, port)
+	if host := exitProbeTarget(spec); host != "" {
+		t.Fatalf("got %q, want no target", host)
 	}
 }
