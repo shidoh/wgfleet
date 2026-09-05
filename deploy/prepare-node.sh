@@ -86,6 +86,19 @@ fi
 # Ensure the module is loaded NOW (it may be built but not inserted — e.g. after a
 # kernel change or reboot — which is exactly what trips the provisioner pre-flight)
 # and on every future boot.
+# nftables.service is masked, not merely disabled.
+#
+# The ruleset on every node belongs to the agent, which writes it and applies it
+# itself. What ships with the distro is /etc/nftables.conf, and its first line is
+# `flush ruleset` — so anything that enables that unit (a hand, a package
+# reconfiguration on upgrade, somebody else's playbook) wipes the fleet's rules on
+# the next boot, before the agent has run. Masking makes enabling it fail loudly
+# instead of succeeding quietly.
+if systemctl list-unit-files nftables.service >/dev/null 2>&1; then
+  systemctl mask nftables.service >/dev/null 2>&1 || true
+  log "nftables.service masked (the agent owns the ruleset)"
+fi
+
 modprobe amneziawg 2>/dev/null || true
 if [ ! -f /etc/modules-load.d/amneziawg.conf ]; then
   echo amneziawg > /etc/modules-load.d/amneziawg.conf
