@@ -101,20 +101,55 @@ func TestParseHeldUDPPortsSkipsJunk(t *testing.T) {
 	}
 }
 
-// A node whose client interface is NOT on 443 must not be told it has a black
-// hole. This is the upgrade path for every other fleet: they swap the binary, the
-// probe runs, and the port their own interface holds has to be recognised as
-// theirs. An earlier version listed 443 in source and would have driven any such
-// node to Degraded on its first pass after the upgrade — the same mistake as the
-// bug it was written to catch.
-func TestClientUDPReturnProbeAcceptsWhateverPortThisNodeHolds(t *testing.T) {
-	// This node's client interface is on 51820, not 443.
-	const ours = 51820
-	blocked := func(p int) (bool, error) { return p != ours, nil }
-	accepted := func(p int) bool { return p == ours }
+// The port the client interface itself listens on must be reported as a black
+// hole, not excused. This is the blocker the review found: while "accounted for"
+// meant "a port this node holds", 443 was accounted for by virtue of BEING the
+// black hole, `accepted(443)` was true forever, and the check could not fail on
+// the one port the August outage was on.
+//
+// A port is excused only when a rule refuses client traffic to it — which is a
+// fact about the ruleset, not about the socket table.
+func TestClientUDPReturnProbeDoesNotExcuseAPortForBeingHeld(t *testing.T) {
+	const clientWGPort = 443
+	blocked := func(p int) (bool, error) { return p != clientWGPort, nil }
+	// Nothing is refused: this is a master with a live TPROXY listener.
+	refused := func(int) bool { return false }
 
-	r := ClientUDPReturnProbe([]int{ours, 443, 4433}, blocked, accepted)(context.Background())
-	if !r.OK {
-		t.Errorf("a node on port %d was reported broken: %q", ours, r.Detail)
+	r := ClientUDPReturnProbe([]int{clientWGPort, 51820}, blocked, refused)(context.Background())
+	if r.OK {
+		t.Fatal("the client WG port black-holes every reply and the check passed anyway")
+	}
+	if !strings.Contains(r.Detail, "443") {
+		t.Errorf("the failure does not name the port the outage was on: %q", r.Detail)
+	}
+}
+
+// A connected socket is one outbound flow, not a service. Counting its local port
+// would put a fresh `port` label on the gauge for every datagram the master sends
+// and flap the check on whatever high port happened to be open when it looked.
+func TestParseHeldUDPPortsIgnoresConnectedSockets(t *testing.T) {
+	const proc = `  sl  local_address rem_address   st tx_queue rx_queue tr tx_when retrnsmt   uid  timeout inode ref pointer drops
+ 2110: 00000000:01BB 00000000:0000 07 00000000:00000000 00:00000000 00000000     0        0 12345 2 0000000000000000 0
+ 2111: 0100460A:C4CF 08080808:0035 07 00000000:00000000 00:00000000 00000000     0        0 12346 2 0000000000000000 0
+`
+	got, err := parseHeldUDPPorts(strings.NewReader(proc))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) != 1 || got[0] != 443 {
+		t.Fatalf("got %v, want only the listening port 443 — a connected socket was counted as a service", got)
+	}
+}
+
+// The ephemeral range is read from the kernel, not assumed, and ports inside it
+// are noise: handed out a second ago, given back a second from now.
+func TestEphemeralRangeFallsBackToTheKernelDefaults(t *testing.T) {
+	lo, hi := ephemeralRange()
+	if lo <= 0 || hi < lo {
+		t.Fatalf("nonsensical ephemeral range %d-%d", lo, hi)
+	}
+	// Whatever the host says, a port range must not swallow the ports services use.
+	if lo <= 1024 {
+		t.Errorf("ephemeral range starts at %d, which would hide well-known service ports from the check", lo)
 	}
 }

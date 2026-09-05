@@ -511,9 +511,16 @@ spec:
       # port and breaks client traffic to it — the class of failure that ran for
       # eight days on the live master in August 2026 with every other metric green.
       expr: wgfleet_agent_udp_return_socket == 0 and on(node, port) wgfleet_agent_udp_return_known == 0
-      for: 10m
+      for: 30m
       labels:
-        severity: critical
+        # Warning, not critical, and the reason is worth stating: on a master that
+        # still intercepts client traffic in the host namespace this condition is
+        # TRUE and STANDING for every port the host holds — that is the finding,
+        # not an incident. A standing critical is a pager that gets silenced, and a
+        # silenced pager is how the next real one is missed. The user-visible
+        # outage has its own critical alert (WgfleetClientPathDead); this one names
+        # the cause and does not stop naming it until the cause is gone.
+        severity: warning
         service: wgfleet
       annotations:
         summary: "client UDP to port {{ $labels.port }} black-holes on {{ $labels.node }}"
@@ -521,9 +528,12 @@ spec:
           A socket this node holds makes it impossible for mihomo to open a
           transparent reply socket for destination port {{ $labels.port }}, and no
           rule refuses that traffic. Client flows to that port send and never
-          receive. Find the holder with `ss -lunp | grep :{{ $labels.port }}`;
-          either free the port, refuse the traffic, or declare it in
-          knownUDPBlackHoles with the reason.
+          receive. Find the holder with `ss -lunp | grep :{{ $labels.port }}`.
+          The durable fix is moving client interception into mihomo's own network
+          namespace, where the host's sockets are not in the way
+          (`master.client_via_netns`); the local ones are to free the port or to
+          refuse the traffic, which makes netfw.RefusedUDPPorts report it and
+          clears this alert.
     - alert: WgfleetCAExpiringSoon
       # The CA is issued for ten years, so this fires once — and the one time it
       # does, it is the most important alert in the file. Every node certificate

@@ -66,6 +66,37 @@ const NetnsRouteTable = 51822
 // across a re-apply.
 const NetnsRulePref = 400
 
+// QUICPort is the UDP port client QUIC uses, and the only port this ruleset has
+// ever refused by number. Named rather than repeated so the render below and
+// RefusedUDPPorts cannot say different things about the same rule.
+const QUICPort = 443
+
+// RefusedUDPPorts reports the destination ports on which this ruleset REFUSES
+// client traffic outright — the ports whose datagrams never reach an interception
+// and therefore never need a reply socket.
+//
+// It exists to keep one word honest. The UDP-return check asks whether a port
+// this node holds can still take mihomo's transparent reply socket, and calls a
+// port that cannot "accounted for" when something has decided about it. The first
+// version answered that question with the ports the node BINDS, which is the set
+// the check is testing — so the client WG port was accounted for by virtue of
+// being the black hole, `accepted(443)` was true forever, and the alert could not
+// fire on the one port the outage was on. "Held" and "refused" are two different
+// facts about a port, and only the second one means a client
+// will not sit there waiting for a reply that cannot come.
+//
+// Derived from the same input the ruleset is rendered from, so a rule that stops
+// being emitted stops being claimed. Today that is a single port under a single
+// condition; the shape matters more than the size.
+func RefusedUDPPorts(in MasterNATInput) []int {
+	// Mirrors the QUIC drop in RenderMasterNAT exactly, including its condition:
+	// the drop is rendered only when there is no TPROXY listener to hand UDP to.
+	if in.TProxyAddr == "" {
+		return []int{QUICPort}
+	}
+	return nil
+}
+
 // RenderMasterNAT renders the master's nft NAT ruleset: drop client QUIC, DNAT
 // non-private client TCP to mihomo, and MASQUERADE client traffic outbound.
 func RenderMasterNAT(in MasterNATInput) (string, error) {
@@ -127,7 +158,7 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// The drop is only correct when there is no UDP path; TProxyAddr is precisely the
 	// statement that there is one.
 	if in.TProxyAddr == "" {
-		fmt.Fprintf(&b, "\t\tiifname %q%s udp dport 443 drop\n", in.ClientInterface, guards)
+		fmt.Fprintf(&b, "\t\tiifname %q%s udp dport %d drop\n", in.ClientInterface, guards, QUICPort)
 	}
 	// DNAT non-private client TCP to mihomo's redir-port.
 	if in.NetnsGateway == "" {

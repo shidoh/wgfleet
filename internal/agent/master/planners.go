@@ -570,11 +570,17 @@ type masterNATPlanner struct {
 	netnsAttached func() bool
 }
 
-func (masterNATPlanner) Component() string { return "master NAT (nftables)" }
-
-func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
+// NATInput builds the input the master's NAT ruleset is rendered from.
+//
+// Exported, and a free function rather than a planner method, because a second
+// caller needs the SAME value: the UDP-return check asks netfw which ports this
+// ruleset refuses, and an answer derived from a differently-built input is an
+// answer about a ruleset that was never applied. Planners are rebuilt every pass
+// and hold no state worth sharing, so passing the two things they know — the
+// client interface and whether the interception has moved — is enough.
+func NATInput(spec domain.NodeSpec, clientIface string, netnsAttached bool) netfw.MasterNATInput {
 	if spec.Master == nil {
-		return nil, fmt.Errorf("master NAT: node has no master spec")
+		return netfw.MasterNATInput{}
 	}
 	redir := spec.Master.RedirPort
 	if redir == 0 {
@@ -597,21 +603,32 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 	// Exempting only the masquerade then leaves the source in the client pool and
 	// the leak guard drops it one hook later.
 	netnsGW, netnsIface := "", ""
-	if p.netnsAttached != nil && p.netnsAttached() {
+	if netnsAttached {
 		if _, peer, aerr := netns.LinkAddrs(spec.Master.NetnsLinkCIDR()); aerr == nil {
 			netnsGW, _, _ = strings.Cut(peer, "/")
 			netnsIface = domain.NetnsHostIface
 		}
 	}
-	ruleset, err := netfw.RenderMasterNAT(netfw.MasterNATInput{
-		ClientInterface: p.clientIface,
+	return netfw.MasterNATInput{
+		ClientInterface: clientIface,
 		ClientCIDR:      spec.WGServer.AddressPool,
 		RedirAddr:       fmt.Sprintf("%s:%d", spec.Master.BindAddress, redir),
 		TProxyAddr:      tproxyAddr,
 		PrivateCIDRs:    spec.Master.DirectCIDRs,
 		NetnsGateway:    netnsGW,
 		NetnsHostIface:  netnsIface,
-	})
+	}
+}
+
+func (masterNATPlanner) Component() string { return "master NAT (nftables)" }
+
+func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
+	if spec.Master == nil {
+		return nil, fmt.Errorf("master NAT: node has no master spec")
+	}
+	attached := p.netnsAttached != nil && p.netnsAttached()
+	natIn := NATInput(spec, p.clientIface, attached)
+	ruleset, err := netfw.RenderMasterNAT(natIn)
 	if err != nil {
 		return nil, err
 	}
@@ -711,9 +728,9 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 	// and client UDP is dropped rather than proxied — worse than the leak it
 	// replaces. Repaired on drift for the same reason the nft table is (ADR-0015):
 	// someone flushing `ip rule` must not break every client until the next reboot.
-	if tproxyAddr != "" && (natChanged || !p.isTProxyReady()) {
+	if natIn.TProxyAddr != "" && (natChanged || !p.isTProxyReady()) {
 		actions = append(actions, tproxyRouteActions()...)
-	} else if tproxyAddr != "" {
+	} else if natIn.TProxyAddr != "" {
 		actions = append(actions, reconcile.NoChangeAction("tproxy policy routing", "fwmark rule and local route in place"))
 	}
 	return actions, nil

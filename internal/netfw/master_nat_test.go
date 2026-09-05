@@ -1,6 +1,7 @@
 package netfw
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -284,5 +285,86 @@ func TestMasterNATStopsDroppingQUICOnceItCanProxyIt(t *testing.T) {
 	}
 	if !strings.Contains(without, "udp dport 443 drop") {
 		t.Errorf("with no UDP path, QUIC must still be dropped rather than leaked:\n%s", without)
+	}
+}
+
+// The refusal set and the ruleset are two statements about the same rule, and the
+// check that reads the first one is only as good as their agreement. This asserts
+// it by reading the rendered text back: a port claimed refused must appear in a
+// drop rule, and a drop rule on a port must be claimed.
+//
+// Written this way rather than as two hardcoded expectations because the failure
+// it guards against is drift — someone deletes the drop and leaves the claim, and
+// the UDP-return check goes on vouching for a port nothing refuses any more.
+func TestRefusedUDPPortsMatchesTheRenderedDrops(t *testing.T) {
+	base := MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+	}
+	for _, tc := range []struct {
+		name string
+		in   MasterNATInput
+	}{
+		{"no tproxy listener: QUIC is dropped", base},
+		{"tproxy listener: QUIC is proxied", func() MasterNATInput {
+			in := base
+			in.TProxyAddr = "10.80.0.1:7896"
+			return in
+		}()},
+		{"interception moved into the namespace", func() MasterNATInput {
+			in := base
+			in.TProxyAddr = "10.80.0.1:7896"
+			in.NetnsGateway = "100.127.255.2"
+			in.NetnsHostIface = "mih-host"
+			return in
+		}()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ruleset, err := RenderMasterNAT(tc.in)
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+			claimed := map[int]bool{}
+			for _, p := range RefusedUDPPorts(tc.in) {
+				claimed[p] = true
+			}
+			rendered := map[int]bool{}
+			for _, line := range strings.Split(ruleset, "\n") {
+				var port int
+				if !strings.Contains(line, "udp dport") || !strings.HasSuffix(strings.TrimSpace(line), "drop") {
+					continue
+				}
+				if _, err := fmt.Sscanf(strings.TrimSpace(line[strings.Index(line, "udp dport"):]), "udp dport %d", &port); err == nil {
+					rendered[port] = true
+				}
+			}
+			for p := range claimed {
+				if !rendered[p] {
+					t.Errorf("port %d is claimed refused but no rule drops it: the UDP-return check would vouch for a black hole", p)
+				}
+			}
+			for p := range rendered {
+				if !claimed[p] {
+					t.Errorf("port %d is dropped by a rule but not claimed refused: the check would report a black hole nobody can act on", p)
+				}
+			}
+		})
+	}
+}
+
+// The port the client interface itself listens on is NOT refused. This is the
+// blocker the review found: while `accepted` meant "a port this node holds", 443
+// was accounted for by virtue of being the black hole and the alert could never
+// fire on it.
+func TestRefusedUDPPortsDoesNotAccountForTheClientWGPort(t *testing.T) {
+	in := MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+		TProxyAddr:      "10.80.0.1:7896",
+	}
+	if got := RefusedUDPPorts(in); len(got) != 0 {
+		t.Fatalf("a master with a live TPROXY listener refuses nothing, yet it claims %v", got)
 	}
 }

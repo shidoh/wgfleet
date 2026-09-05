@@ -755,7 +755,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			a.metrics.ObserveStandbyTransports(standbyTransportHealth(a.tier, spec))
 		}
 		if a.role == domain.RoleMaster {
-			bindable, known := udpReturnObservations(spec)
+			bindable, known := a.udpReturnObservations(spec)
 			a.metrics.ObserveUDPReturn(bindable, known)
 			// mihomo's own complaints. The cursor lives on the agent, not in a planner:
 			// planners are rebuilt every pass and would forget where they got to.
@@ -831,7 +831,7 @@ func (a *agent) healthChecks(spec domain.NodeSpec) []health.Check {
 		mp := a.masterPaths()
 		probes.ClientWGOwned = health.ClientWGOwnedProbe(
 			master.ClaimPathFor(mp.ClientWGConf), clientIfaceName(mp.ClientWGConf))
-		probes.ClientUDPReturn = clientUDPReturnProbe(spec)
+		probes.ClientUDPReturn = a.clientUDPReturnProbe(spec)
 		return health.MasterChecks(spec, probes)
 	}
 	return health.ExitChecks(spec, health.DefaultExitProbes(spec))
@@ -1673,65 +1673,62 @@ func (a *agent) pullSpecOrCache(ctx, base context.Context, plan bool, fromCache 
 	return domain.NodeSpec{}, fmt.Errorf("pull spec: %w", err)
 }
 
-// knownUDPBlackHoles derives the destination ports whose client traffic already
-// cannot get a reply on THIS node, from the node's own spec.
+// accountedUDPBlackHoles derives the destination ports whose client traffic is
+// REFUSED by this node's own ruleset — the ports on which a missing reply socket
+// costs nothing, because no client datagram gets that far.
 //
-// Derived, not listed. mihomo's TPROXY reply path binds the SERVER's address:port,
-// so every port this host holds a socket on is unreachable for clients — and which
-// ports those are is a property of the deployment, not of this source file. An
-// earlier version hardcoded 443 and ZeroTier's defaults, which is the same mistake
-// as the bug it was written to catch: on a fleet whose client interface listens
-// anywhere else, that node's own port would have looked like an undeclared black
-// hole and driven it straight to Degraded on the first pass after an upgrade.
+// Refused, not held. The first version answered with the ports the node BINDS,
+// which is the very set the check examines: the client WG interface's port was
+// accounted for by virtue of being the black hole, so `accepted(443)` was true
+// forever and the alert could not fire on the one port the August outage was on.
+// "This node holds the port" and "a rule refuses traffic to it" are two different
+// facts, and only the second one means nobody is sitting there
+// waiting for a reply that cannot come.
 //
-// The set is everything the node deliberately binds: the client interface's port,
-// the WG port the firewall opens, the management overlay's port, and any UDP port
-// the operator declared public. A port outside it that cannot take a reply socket
-// is one nobody accounted for — which is exactly what deserves an alert.
-func knownUDPBlackHoles(spec domain.NodeSpec) map[int]bool {
-	known := map[int]bool{netfw.ZeroTierPort: true}
-	for _, p := range []int{spec.WGServer.ListenPort, spec.Firewall.WGPort} {
-		if p > 0 {
-			known[p] = true
-		}
-	}
-	for _, p := range spec.Firewall.PublicUDPPorts {
-		if p > 0 {
-			known[p] = true
-		}
-	}
-	if spec.Master != nil && spec.Master.ClientWG != nil && spec.Master.ClientWG.ListenPort > 0 {
-		known[spec.Master.ClientWG.ListenPort] = true
+// The set comes from netfw, derived from the same input the ruleset was rendered
+// from, so a drop rule that stops being emitted stops being claimed.
+func accountedUDPBlackHoles(in netfw.MasterNATInput) map[int]bool {
+	known := map[int]bool{}
+	for _, p := range netfw.RefusedUDPPorts(in) {
+		known[p] = true
 	}
 	return known
+}
+
+// natInputFor rebuilds the master NAT render input as this pass's planner will
+// build it, so the ports claimed refused describe the ruleset this node actually
+// applies.
+func (a *agent) natInputFor(spec domain.NodeSpec) netfw.MasterNATInput {
+	attached := a.netnsMove != nil && a.netnsMove.Attached()
+	return master.NATInput(spec, clientIfaceName(a.masterPaths().ClientWGConf), attached)
 }
 
 // clientUDPReturnProbe builds the master's UDP-return check over the ports the
 // kernel actually reports, not a list in the code — the first draft guessed the
 // ports and would have missed exactly the case it was written to catch.
-func clientUDPReturnProbe(spec domain.NodeSpec) health.Probe {
+func (a *agent) clientUDPReturnProbe(spec domain.NodeSpec) health.Probe {
 	ports, err := health.HeldUDPPorts()
 	if err != nil {
 		// Cannot read the socket table: probe the one port we know by construction
 		// rather than nothing, and let the probe report itself blind if that fails too.
 		ports = []int{spec.WGServer.ListenPort}
 	}
-	known := knownUDPBlackHoles(spec)
+	known := accountedUDPBlackHoles(a.natInputFor(spec))
 	return health.ClientUDPReturnProbe(ports, health.UDPReturnBindable, func(p int) bool {
 		return known[p]
 	})
 }
 
 // udpReturnObservations samples, for every UDP port this host holds, whether a
-// TPROXY reply socket is still possible there and whether we have already decided
-// about it. It is the metric behind the udp-return-path check; a port the probe
-// cannot answer for is simply left out rather than reported as either state.
-func udpReturnObservations(spec domain.NodeSpec) (bindable, known map[int]bool) {
+// TPROXY reply socket is still possible there and whether a rule refuses client
+// traffic to it. It is the metric behind the udp-return-path check; a port the
+// probe cannot answer for is simply left out rather than reported as either state.
+func (a *agent) udpReturnObservations(spec domain.NodeSpec) (bindable, known map[int]bool) {
 	ports, err := health.HeldUDPPorts()
 	if err != nil {
 		return nil, nil
 	}
-	declared := knownUDPBlackHoles(spec)
+	declared := accountedUDPBlackHoles(a.natInputFor(spec))
 	bindable, known = map[int]bool{}, map[int]bool{}
 	for _, p := range ports {
 		ok, perr := health.UDPReturnBindable(p)
