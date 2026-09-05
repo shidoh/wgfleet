@@ -405,6 +405,28 @@ write-up is in `obsidian/claude/wgfleet/2026-09-05-netns-move-lima-rehearsal.md`
 What it did NOT cover is real clients under load, so the first live master should
 run as a canary on one device for a day before `auto`.
 
+### After switching it on, WATCH — do not just look
+
+Every point-in-time check can be green while the migration is failing, and on
+2026-09-05 they all were. mihomo was in the namespace, the rules were right, the
+client-path probes were green — and a self-heal probe still aimed at the host was
+restarting mihomo on every pass. Each restart re-initialises mihomo's userspace
+WireGuard devices; three exits fell out of the balancer within three minutes, and
+the first thing anybody noticed was traffic moving to the reserve tier.
+
+A restart is invisible to a snapshot. Run the watcher for three minutes after the
+switch, on the master:
+
+```bash
+./netns-move-check.sh 180
+```
+
+It fails on a mihomo that restarts, on a self-heal that is being throttled (the
+same defect with the symptom suppressed), on mihomo landing in an orphaned
+namespace, and on a Clash API the agent can no longer reach. Then check the exit
+tunnels in the dashboard: a wedged WireGuard device does not always come back on
+its own.
+
 ### How to tell where a master is
 
 ```bash

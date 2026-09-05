@@ -143,6 +143,7 @@ release-archive: agent-linux controller-linux
 	cp deploy/prepare-node.sh                   $(DIST)/$(PKG)/prepare-node.sh
 	cp deploy/client-diag.sh                    $(DIST)/$(PKG)/client-diag.sh
 	cp deploy/mihomo-ns.sh                      $(DIST)/$(PKG)/mihomo-ns.sh
+	cp deploy/netns-move-check.sh               $(DIST)/$(PKG)/netns-move-check.sh
 	cp deploy/examples/controller.yaml deploy/examples/agent.yaml $(DIST)/$(PKG)/examples/
 	cp deploy/examples/controller-split-ru.yaml $(DIST)/$(PKG)/examples/
 	cp docs/recipes/ru-split-tunnel-dns-filter.md $(DIST)/$(PKG)/examples/RU-SPLIT-TUNNEL.md
