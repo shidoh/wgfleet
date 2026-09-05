@@ -1975,6 +1975,13 @@ func (a *agent) decideNetnsMove(ctx context.Context, spec domain.NodeSpec, probe
 		a.log.Warn("client interception knob not understood; staying on the host path", "err", werr)
 		wanted = false
 	}
+	// Before the first decision of this process, ask the kernel where the
+	// interception actually is. Without it the agent starts in "waiting" while the
+	// world is "attached", tears the move down on the first pass and rebuilds it on
+	// the second — two mihomo recreations and a broken client path per restart.
+	a.netnsMove.AdoptWorld(func() bool {
+		return master.InterceptionInPlace(ctx, spec, master.ClientWGInterface)
+	})
 	before := a.netnsMove.Attached()
 	after := a.netnsMove.Decide(wanted,
 		func() error { return master.NamespaceReady(ctx, spec) },

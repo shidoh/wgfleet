@@ -597,6 +597,42 @@ func (p netnsPlanner) nsTProxyRoutingLive(ctx context.Context, nsPath string, ru
 	return err == nil && strings.Contains(route, "local default")
 }
 
+// InterceptionInPlace reports whether client traffic is ALREADY going through
+// mihomo's namespace, asked of the kernel rather than of a file.
+//
+// It exists because the state machine that owns the move starts every process in
+// "waiting", while the world it starts in is usually "attached". The first pass
+// then converges to the host path and the second moves back: two rebuilds of the
+// interception and two recreations of mihomo per agent restart, each one dropping
+// every client connection, with the client path failing in between. Seen six times
+// in one day of deploys.
+//
+// The record on disk deliberately does not carry this state — a file claiming the
+// interception is somewhere it is not would be worse than no file — so the honest
+// way to keep it across a restart is to look.
+func InterceptionInPlace(ctx context.Context, spec domain.NodeSpec, clientIface string) bool {
+	if spec.Master == nil || clientIface == "" {
+		return false
+	}
+	p := netnsPlanner{run: netns.Exec, clientIface: clientIface}
+	table := fmt.Sprintf("%d", netfw.NetnsRouteTable)
+	pref := fmt.Sprintf("%d", netfw.NetnsRulePref)
+	_, peerIP, err := netns.LinkAddrs(spec.Master.NetnsLinkCIDR())
+	if err != nil {
+		return false
+	}
+	if !p.routingLive(ctx, netns.Exec, pref, table, peerIP, domain.NetnsHostIface) {
+		return false
+	}
+	// Routed there, and mihomo actually in it: a rule pointing at a namespace mihomo
+	// left is not the move, it is the outage the move's own self-heal exists for.
+	nsPath, err := netns.Path(ctx, domain.NetnsHolder, netns.Exec)
+	if err != nil {
+		return false
+	}
+	return p.mihomoIsInTheNamespace(ctx, nsPath, netns.Exec)
+}
+
 // NamespaceReady reports whether mihomo's namespace is fit to carry client
 // traffic: it exists, it can resolve DNS, and it can open a connection outward.
 //

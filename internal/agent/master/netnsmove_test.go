@@ -340,3 +340,54 @@ func TestDisablingClearsATerminalVerdictOnDiskToo(t *testing.T) {
 		t.Errorf("spent attempts survived on disk: %d", restarted.Attempts())
 	}
 }
+
+// A restart must not be an event for the data plane.
+//
+// The record on disk deliberately carries no attached/detached state, so every
+// process begins in moveWaiting — while the world it begins in is, on a converged
+// master, "attached". Without adoption the first pass converges to the host path
+// and the second moves back: two rebuilds of the interception, two recreations of
+// mihomo, every client connection dropped twice, and a failing client path in
+// between. Observed six times in one day of deploys.
+func TestARestartAdoptsTheMoveThatIsAlreadyInPlace(t *testing.T) {
+	m := newNetnsMover()
+	m.AdoptWorld(func() bool { return true })
+
+	if !m.Attached() {
+		t.Fatalf("a converged master started detached: %s", m.Reason())
+	}
+	// And it does not immediately judge the path it has just adopted: mihomo may
+	// still be coming up behind the agent that restarted with it.
+	if got := m.Decide(true, func() error { return nil }, func() bool { return false }); !got {
+		t.Errorf("the adopted move was torn down by the first probe after a restart: %s", m.Reason())
+	}
+}
+
+// And when the world says the interception is NOT in place, adoption changes
+// nothing: the state machine has to earn the move through its own readiness gate.
+func TestAdoptionOfAWorldWithoutTheMoveChangesNothing(t *testing.T) {
+	m := newNetnsMover()
+	m.AdoptWorld(func() bool { return false })
+	if m.Attached() {
+		t.Fatal("a master with no interception in place claimed to be attached")
+	}
+}
+
+// A node that gave up stays given up. That verdict is the one thing the record is
+// for, and a world that still looks attached must not quietly overturn it.
+func TestAdoptionDoesNotOverturnATerminalVerdict(t *testing.T) {
+	m := newNetnsMover()
+	m.state, m.reason = moveGaveUp, "carried over from a previous run: reverted too often"
+	m.AdoptWorld(func() bool { return true })
+	if m.Attached() {
+		t.Fatal("a node that had given up adopted the move anyway")
+	}
+}
+
+// The world is consulted once. A second call must not re-seed a state the machine
+// has since decided for itself — that would make every pass a fresh start.
+func TestTheWorldIsAdoptedOnlyOnce(t *testing.T) {
+	m := newNetnsMover()
+	m.AdoptWorld(func() bool { return false })
+	m.AdoptWorld(func() bool { t.Fatal("the world was consulted twice"); return true })
+}

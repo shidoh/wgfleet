@@ -82,6 +82,8 @@ const (
 type NetnsMove = netnsMover
 
 type netnsMover struct {
+	// adopted records that the world has been consulted once; see AdoptWorld.
+	adopted  bool
 	state    moveState
 	attempts int
 	confirm  int
@@ -111,6 +113,31 @@ func NewNetnsMove(statePath string) *NetnsMove {
 }
 
 func newNetnsMover() *netnsMover { return &netnsMover{now: time.Now} }
+
+// AdoptWorld seeds the state from the world, once per process, before the first
+// decision is taken.
+//
+// Every process starts in moveWaiting because the record on disk deliberately does
+// not carry the attached state. That is right — a file claiming the interception is
+// somewhere it is not would be worse than no file — but starting from "waiting"
+// while the world says "attached" means the first pass tears the move down and the
+// second builds it back. Two mihomo recreations and a broken client path per agent
+// restart, which is the most ordinary event there is.
+//
+// A node that has already given up is not adopted: that verdict outlives a restart
+// on purpose, and the reverter is what should act on it.
+func (m *netnsMover) AdoptWorld(inPlace func() bool) {
+	if m.adopted {
+		return
+	}
+	m.adopted = true
+	if m.state != moveWaiting || !inPlace() {
+		return
+	}
+	m.state, m.confirm, m.fail = moveAttached, 0, 0
+	m.settle = moveSettlePasses
+	m.reason = "adopted the move that was already in place at startup"
+}
 
 // Attached reports the current decision without taking a new one.
 func (m *netnsMover) Attached() bool { return m.state == moveAttached }
@@ -198,6 +225,10 @@ func (m *netnsMover) Decide(wanted bool, ready func() error, pathOK func() bool)
 		m.settle = moveSettlePasses
 		m.lastFlip = m.now()
 		m.reason = "namespace ready; client interception moved in"
+		// Record the flip. Not for the state — that is re-derived, see AdoptWorld —
+		// but for lastFlip: without it the retry hold resets on every restart, and a
+		// node in a restart loop becomes a node in a flip loop.
+		m.save()
 		return true
 
 	case moveAttached:
