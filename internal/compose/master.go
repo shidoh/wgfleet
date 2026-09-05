@@ -58,11 +58,12 @@ const (
 	// how the fleet's AWG 2.0 tunnels are built. Enabling `version: 3` is a separate
 	// decision gated by tools/check-awg3-status.sh.
 	DefaultMihomoImage = "metacubex/mihomo:v1.19.30"
-	// DefaultNetnsHolderImage owns mihomo's network namespace and does nothing
-	// else. Small and ubiquitous on purpose: it has to be pullable from a master
-	// that sits behind the filtering this fleet exists to get around, and a node
-	// that cannot fetch it must simply not move rather than half-move.
-	DefaultNetnsHolderImage = "busybox:1.36"
+	// NetnsHolderSleep is what the namespace holder runs. A shell loop rather than
+	// `sleep infinity`, because the holder now runs the mihomo image (see
+	// netnsHolderImage) and BusyBox's sleep in some builds takes only an integer.
+	// PID 1 in a container gets no default signal handlers, so the loop is what
+	// keeps `docker stop` working: the shell traps and exits.
+	NetnsHolderSleep = "trap 'exit 0' TERM INT; while :; do sleep 3600 & wait $!; done"
 	// DefaultWGEasyWebPort is the wg-easy admin UI port when the spec leaves it
 	// unset. Exported so the controller UI can build a link to it.
 	DefaultWGEasyWebPort = 44423
@@ -237,9 +238,13 @@ func RenderMasterCompose(in RenderInput) (string, error) {
 		services[domain.NetnsHolder] = map[string]any{
 			"image":          in.NetnsHolderImage,
 			"container_name": domain.NetnsHolder,
-			"command":        []any{"sleep", "infinity"},
-			"network_mode":   "none",
-			"restart":        "unless-stopped",
+			// The image is the master's own mihomo unless the operator overrode it, so
+			// the entrypoint has to be replaced: mihomo's own would start a second proxy
+			// inside the namespace and fight the first one for the listeners.
+			"entrypoint":   []any{"/bin/sh", "-c"},
+			"command":      []any{NetnsHolderSleep},
+			"network_mode": "none",
+			"restart":      "unless-stopped",
 			"logging": map[string]any{
 				"driver":  "json-file",
 				"options": map[string]any{"max-size": "1m", "max-file": "1"},

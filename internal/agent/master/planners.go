@@ -180,8 +180,16 @@ func Planners(in Input) []reconcile.Planner {
 
 // composeStart is the idempotent "bring the stack up" action: docker compose up
 // -d is a no-op when nothing changed.
+//
+// BEST-EFFORT, and not as a convenience. The reconcile engine stops the whole
+// pass at the first failing action, and this planner runs third of a dozen — so
+// one unfetchable image, one registry timeout, one service that will not start
+// takes the namespace, mihomo, the master NAT, DOCKER-USER, blocky and the VLESS
+// inbound down with it, on every pass, until someone intervenes. A master that
+// cannot start a container should converge everything else and say so; the same
+// argument the client-interface planner makes for the same treatment.
 func composeStart(file string) reconcile.Action {
-	return reconcile.ExecAction("ensure the container stack is up",
+	return reconcile.BestEffortExecAction("ensure the container stack is up",
 		"docker", "compose", "-f", file, "up", "-d")
 }
 
@@ -916,5 +924,21 @@ func netnsHolderImage(spec domain.NodeSpec) string {
 	if img := spec.Master.Compose.NetnsHolderImage; img != "" {
 		return img
 	}
-	return compose.DefaultNetnsHolderImage
+	// The master's OWN mihomo image, not a small generic one.
+	//
+	// This started as busybox:1.36, which reads like the obvious choice and is the
+	// wrong one on the fleet this runs on. The holder is added to the compose file
+	// unconditionally, `docker compose up -d` is run every pass, and a master behind
+	// the filtering this fleet exists to get around is exactly where a registry pull
+	// fails — so an unfetchable holder meant `up -d` failing on every pass, which
+	// (before the same change made it best-effort) took every planner after it down
+	// with it: the namespace, mihomo, the master NAT, DOCKER-USER, blocky, VLESS.
+	// The node stopped converging entirely over a container it was one step away
+	// from not needing.
+	//
+	// The mihomo image is on the node by construction — it is running. Using it
+	// removes the pull rather than making it more likely to succeed, and the holder
+	// does not care what is inside it: the container exists to own a namespace and
+	// sleep.
+	return spec.Master.Compose.MihomoImage
 }

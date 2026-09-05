@@ -243,7 +243,7 @@ func run() error {
 		a.tier = master.NewTierSelector(a.log)
 		// One per process, like the tier selector and for the same reason: it has to
 		// remember how many times it has already tried and failed.
-		a.netnsMove = master.NewNetnsMove()
+		a.netnsMove = master.NewNetnsMove(a.masterPaths().NetnsMoveState)
 	}
 
 	// Agent /metrics (own reconcile/health counters). Defaults to mgmt:9301 so the
@@ -779,19 +779,31 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 				a.metrics.ObserveMihomoErrors(n)
 				a.mihomoLogCursor = cursor
 			}
-			// The client path, measured from the master's own client. Taken AFTER the
-			// pass: the prober's interface may have been created by it.
-			probes := master.MeasureClientPath(ctx, a.clientPathTargets(spec), nil)
-			results := map[string]bool{}
-			for _, pr := range probes {
-				results[pr.Name] = pr.OK
-				if !pr.OK {
-					a.log.Warn("client path probe failed", "probe", pr.Name, "err", pr.Why)
-				}
-			}
-			a.metrics.ObserveClientPath(results)
-			a.decideNetnsMove(ctx, spec, probes)
 		}
+	}
+	// The client path, and the migration decision it drives. OUTSIDE the metrics
+	// block, and that is the point: this is a DATA-PLANE decision that happens to
+	// produce a metric, not a metric that happens to move traffic. Nested inside
+	// `if a.metrics != nil`, turning the exporter off — with --metrics=off, or by
+	// leaving the mgmt address unset — silently disabled both the measurement and
+	// the automatic revert, so a node could move its clients into a namespace and
+	// then have no way of noticing it had broken them.
+	//
+	// Taken AFTER the pass: the prober's interface may have been created by it.
+	if a.role == domain.RoleMaster {
+		probes := master.MeasureClientPath(ctx, a.clientPathTargets(spec), nil)
+		results := map[string]bool{}
+		for _, pr := range probes {
+			results[pr.Name] = pr.OK
+			if !pr.OK {
+				a.log.Warn("client path probe failed", "probe", pr.Name, "err", pr.Why)
+			}
+		}
+		if a.metrics != nil {
+			a.metrics.ObserveClientPath(results)
+			a.metrics.ObserveNetnsMove(a.netnsMove.State(), a.netnsMove.Attempts())
+		}
+		a.decideNetnsMove(ctx, spec, probes)
 	}
 	a.log.Info("reconcile applied",
 		"changes", report.ChangeCount(), "drift", len(drifted),

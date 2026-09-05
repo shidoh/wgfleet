@@ -36,6 +36,10 @@ type Paths struct {
 	// and never published: nobody has to re-issue this config, so a key that never
 	// leaves is one fewer thing to leak.
 	SynthKey string
+	// NetnsMoveState is where the migration decision records its attempts and its
+	// terminal verdict, so a restart does not hand a node that has already been
+	// judged unfit a fresh set of three flips.
+	NetnsMoveState string
 	// SynthConf is the prober's device config, in `awg setconf` form.
 	SynthConf string
 }
@@ -64,10 +68,11 @@ func DefaultPaths() Paths {
 		// The filename IS the interface name: wg0 keeps the name wg-easy used, so the
 		// NAT, MSS-clamp and DOCKER-USER rules that already reference it need no change
 		// when the leg changes hands.
-		ClientWGConf: "/etc/amnezia/amneziawg/wg0.conf",
-		ClientWGKey:  "/etc/wgfleet/client-wg.key",
-		SynthKey:     "/etc/wgfleet/client-wg-synth.key",
-		SynthConf:    "/etc/wgfleet/client-wg-synth.conf",
+		ClientWGConf:   "/etc/amnezia/amneziawg/wg0.conf",
+		ClientWGKey:    "/etc/wgfleet/client-wg.key",
+		SynthKey:       "/etc/wgfleet/client-wg-synth.key",
+		NetnsMoveState: "/etc/wgfleet/netns-move.json",
+		SynthConf:      "/etc/wgfleet/client-wg-synth.conf",
 	}
 }
 
@@ -92,6 +97,7 @@ func PathsUnder(dir string) Paths {
 		ClientWGConf:   filepath.Join(dir, "wg0.conf"),
 		ClientWGKey:    filepath.Join(dir, "client-wg.key"),
 		SynthKey:       filepath.Join(dir, "client-wg-synth.key"),
+		NetnsMoveState: filepath.Join(dir, "netns-move.json"),
 		SynthConf:      filepath.Join(dir, "client-wg-synth.conf"),
 	}
 }

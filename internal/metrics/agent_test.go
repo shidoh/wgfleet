@@ -189,3 +189,61 @@ wgfleet_agent_standby_transport_usable{exit="vn1",node="master-xa-1",role="maste
 		t.Error(err)
 	}
 }
+
+// The state gauge must publish EVERY state every pass, not only the current one.
+// A gauge that writes just the live state leaves the others frozen at their last
+// value, and a dashboard showing "attached" and "gave_up" both true is
+// indistinguishable from one whose series simply stopped being written — the
+// frozen-green failure this whole metric family exists to avoid.
+func TestObserveNetnsMovePublishesEveryState(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewAgentMetrics(reg, "master-xa-1", domain.RoleMaster, time.Unix(1_700_000_000, 0))
+	m.ObserveNetnsMove("attached", 1)
+	m.ObserveNetnsMove("gave_up", 3)
+
+	if n := testutil.CollectAndCount(reg, "wgfleet_agent_netns_move_state"); n != len(NetnsMoveStates) {
+		t.Fatalf("got %d state series, want one per state (%d)", n, len(NetnsMoveStates))
+	}
+	if got := testutil.ToFloat64(m.netnsMoveState.WithLabelValues("attached")); got != 0 {
+		t.Errorf("the state the node left is still reported as current (%v)", got)
+	}
+	if got := testutil.ToFloat64(m.netnsMoveState.WithLabelValues("gave_up")); got != 1 {
+		t.Errorf("the current state is not reported (%v)", got)
+	}
+	if got := testutil.ToFloat64(m.netnsMoveTries); got != 3 {
+		t.Errorf("attempts = %v, want 3", got)
+	}
+}
+
+// A port that no longer has a socket must stop being reported rather than freeze
+// at its last value. The comment in ObserveUDPReturn calls this decisive and
+// nothing asserted it.
+func TestObserveUDPReturnForgetsPortsThatWentAway(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewAgentMetrics(reg, "master-xa-1", domain.RoleMaster, time.Unix(1_700_000_000, 0))
+	m.ObserveUDPReturn(map[int]bool{443: false, 5353: false}, map[int]bool{443: false, 5353: true})
+	m.ObserveUDPReturn(map[int]bool{443: false}, map[int]bool{443: false})
+
+	if n := testutil.CollectAndCount(reg, "wgfleet_agent_udp_return_socket"); n != 1 {
+		t.Errorf("got %d port series, want only the port that still has a socket", n)
+	}
+	if got := testutil.ToFloat64(m.udpReturnSocket.WithLabelValues("443")); got != 0 {
+		t.Errorf("the live port stopped reporting its black hole (%v)", got)
+	}
+}
+
+// Same rule for the client-path probes: a probe that stops being taken must
+// disappear, not stay green.
+func TestObserveClientPathForgetsProbesNoLongerTaken(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewAgentMetrics(reg, "master-xa-1", domain.RoleMaster, time.Unix(1_700_000_000, 0))
+	m.ObserveClientPath(map[string]bool{"icmp/gateway": true, "udp/53": true})
+	m.ObserveClientPath(map[string]bool{"icmp/gateway": false})
+
+	if n := testutil.CollectAndCount(reg, "wgfleet_agent_client_path_ok"); n != 1 {
+		t.Errorf("got %d probe series, want only the probe still being taken", n)
+	}
+	if got := testutil.ToFloat64(m.clientPathOK.WithLabelValues("icmp/gateway")); got != 0 {
+		t.Errorf("the live probe lost its failure (%v)", got)
+	}
+}

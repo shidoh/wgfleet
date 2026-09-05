@@ -1,7 +1,10 @@
 package master
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -23,8 +26,17 @@ const (
 	// revert loop is worse than either state: clients would be moved and moved back
 	// every minute, losing every connection each time.
 	moveMaxAttempts = 3
-	// moveMinHold is the floor on churn between decisions.
-	moveMinHold = 5 * time.Minute
+	// moveRetryHold is how long a node waits after a revert before trying again. It
+	// gates the FORWARD direction only. An earlier version used one hold for both,
+	// and the arithmetic of that is worth stating: the flip that killed client
+	// traffic instantly could not be undone for five minutes, three attempts came to
+	// a quarter of an hour of outage, and the automatic revert — the entire reason
+	// "on by default" was defensible — was slower than a human reading the alert.
+	//
+	// The asymmetry is the same one the tier selector uses, for the same reason:
+	// committing is cheap to get wrong because the way back is automatic, so the way
+	// back must never be rate-limited.
+	moveRetryHold = 5 * time.Minute
 )
 
 // moveState is where a master is in the migration of client interception into
@@ -63,19 +75,49 @@ type netnsMover struct {
 	lastFlip time.Time
 	reason   string
 	now      func() time.Time
+	// statePath is where attempts and the terminal verdict survive a restart. Empty
+	// ⇒ nothing is persisted, which is what tests want and what a --plan run must do.
+	statePath string
 }
 
-// NewNetnsMove builds the decision machine in its initial state: waiting, with
-// no attempts spent.
-func NewNetnsMove() *NetnsMove { return &netnsMover{now: time.Now} }
+// NewNetnsMove builds the decision machine, restoring what a previous process
+// learned.
+//
+// Restoring matters more than it looks. The agent restarts on every upgrade and
+// every reboot, and without this the attempt counter and the terminal "gave up"
+// verdict went with it — so a node that had already reverted three times, been
+// judged unfit and parked on the host path would come back up, forget all of it,
+// and put its clients through the same three flips again. A safety mechanism that
+// resets itself on the event most likely to follow a failure is not one.
+func NewNetnsMove(statePath string) *NetnsMove {
+	m := &netnsMover{now: time.Now, statePath: statePath}
+	m.load()
+	return m
+}
 
-func newNetnsMover() *netnsMover { return NewNetnsMove() }
+func newNetnsMover() *netnsMover { return &netnsMover{now: time.Now} }
 
 // Attached reports the current decision without taking a new one.
 func (m *netnsMover) Attached() bool { return m.state == moveAttached }
 
 // Reason explains the current state in one line, for the plan and the journal.
 func (m *netnsMover) Reason() string { return m.reason }
+
+// State names the current state for the metric. The strings are the label values
+// and match metrics.NetnsMoveStates.
+func (m *netnsMover) State() string {
+	switch m.state {
+	case moveAttached:
+		return "attached"
+	case moveGaveUp:
+		return "gave_up"
+	default:
+		return "waiting"
+	}
+}
+
+// Attempts is how many reverts this node has spent out of its allowance.
+func (m *netnsMover) Attempts() int { return m.attempts }
 
 // Decide advances the state machine for one pass.
 //
@@ -105,8 +147,8 @@ func (m *netnsMover) Decide(wanted bool, ready func() error, pathOK func() bool)
 		// cosmetic: ready() shells into the namespace and can take seconds, and
 		// during the five minutes after a revert its answer is discarded anyway.
 		// Ten wasted probes per hold window, each able to stretch a 30-second pass.
-		if !m.held() {
-			m.reason = "waiting out the min-hold before trying again"
+		if !m.retryHeld() {
+			m.reason = "waiting out the retry hold before trying again"
 			return false
 		}
 		if err := ready(); err != nil {
@@ -123,6 +165,18 @@ func (m *netnsMover) Decide(wanted bool, ready func() error, pathOK func() bool)
 			m.fail = 0
 			if m.confirm < moveConfirmPasses {
 				m.confirm++
+				// A move that has held up for this long has earned its attempts back. The
+				// counter exists to stop a node OSCILLATING, not to ration migrations over
+				// the lifetime of a process: without this, three unrelated failures weeks
+				// apart — a Docker Hub outage in March, a reboot in April — add up to a
+				// terminal verdict about a node that has been fine in between. It also
+				// gives moveConfirmPasses something to do; it used to be incremented,
+				// printed and never read, while the comment promised the move was not
+				// "settled" until it reached the threshold.
+				if m.confirm == moveConfirmPasses && m.attempts > 0 {
+					m.attempts = 0
+					m.save()
+				}
 			}
 			m.reason = fmt.Sprintf("client path healthy (%d/%d confirmations)", m.confirm, moveConfirmPasses)
 			return true
@@ -133,32 +187,86 @@ func (m *netnsMover) Decide(wanted bool, ready func() error, pathOK func() bool)
 			m.reason = fmt.Sprintf("client path failing (%d/%d before reverting)", m.fail, moveFailPasses)
 			return true
 		}
-		if !m.held() {
-			m.reason = "client path failing; revert suppressed by min-hold"
-			return true
-		}
+		// The revert is UNCONDITIONAL. No hold gates it: clients are on the floor, and
+		// every second spent honouring a churn limit is a second of outage bought with
+		// somebody else's traffic.
 		m.attempts++
 		m.lastFlip = m.now()
 		m.fail = 0
 		if m.attempts >= moveMaxAttempts {
 			m.state = moveGaveUp
 			m.reason = fmt.Sprintf("reverted %d times; staying on the host path until someone looks", m.attempts)
+			m.save()
 			return false
 		}
 		m.state = moveWaiting
 		m.reason = fmt.Sprintf("client path broke after the move; reverted (attempt %d of %d)",
 			m.attempts, moveMaxAttempts)
+		m.save()
 		return false
 	}
 	return false
 }
 
-// held reports whether the minimum hold since the last flip has elapsed. The
-// first decision of a process is never held back — a fresh agent must be able to
-// act at once.
-func (m *netnsMover) held() bool {
+// retryHeld reports whether the retry hold since the last flip has elapsed. It
+// gates only the move FORWARD; the way back is never held. The first decision of
+// a process is not held back either — a fresh agent must be able to act at once —
+// except when a persisted flip says otherwise, which is how a restart loop is
+// kept from becoming a flip loop.
+func (m *netnsMover) retryHeld() bool {
 	if m.lastFlip.IsZero() {
 		return true
 	}
-	return m.now().Sub(m.lastFlip) >= moveMinHold
+	return m.now().Sub(m.lastFlip) >= moveRetryHold
+}
+
+// moveRecord is what survives a restart: the attempts spent and whether this node
+// has been judged unfit. Deliberately NOT the attached/detached state — that is
+// re-derived from the world every pass, and a file claiming the interception is
+// somewhere it is not would be worse than no file.
+type moveRecord struct {
+	Attempts int       `json:"attempts"`
+	GaveUp   bool      `json:"gave_up"`
+	LastFlip time.Time `json:"last_flip"`
+	Reason   string    `json:"reason"`
+}
+
+func (m *netnsMover) load() {
+	if m.statePath == "" {
+		return
+	}
+	b, err := os.ReadFile(m.statePath)
+	if err != nil {
+		return // no record is the normal first-boot case
+	}
+	var rec moveRecord
+	if json.Unmarshal(b, &rec) != nil {
+		return
+	}
+	m.attempts, m.lastFlip = rec.Attempts, rec.LastFlip
+	if rec.GaveUp {
+		m.state = moveGaveUp
+		m.reason = "carried over from a previous run: " + rec.Reason
+	}
+}
+
+// save records the counters. A failure to write is logged nowhere and fails
+// nothing: the pass succeeded, and losing the safety net is not a reason to also
+// lose the convergence. It is visible in the file's absence, which is what the
+// runbook tells an operator to look at.
+func (m *netnsMover) save() {
+	if m.statePath == "" {
+		return
+	}
+	b, err := json.Marshal(moveRecord{
+		Attempts: m.attempts,
+		GaveUp:   m.state == moveGaveUp,
+		LastFlip: m.lastFlip,
+		Reason:   m.reason,
+	})
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(m.statePath), 0o700)
+	_ = os.WriteFile(m.statePath, b, 0o600)
 }

@@ -37,6 +37,8 @@ type AgentMetrics struct {
 	udpReturnKnown   *prometheus.GaugeVec // per UDP port: is a blocked port one we have decided about
 	mihomoErrors     prometheus.Counter   // error lines mihomo wrote about itself
 	clientPathOK     *prometheus.GaugeVec // per probe: does the client path work end to end
+	netnsMoveState   *prometheus.GaugeVec // where the namespace migration is
+	netnsMoveTries   prometheus.Gauge     // reverts spent out of the allowance
 	reconcileChanges prometheus.Gauge     // resources changed in the last pass
 	checkLatency     *prometheus.GaugeVec // per self-check: probe latency, seconds
 	startTime        prometheus.Gauge
@@ -110,6 +112,14 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Namespace: namespace, Subsystem: "agent", Name: "client_path_ok",
 			Help: "1 when the master's own client can send and receive over this protocol through the full client path (interface, firewall, proxy, exit); 0 when it cannot. The only signal that measures the sentence every component metric misses.", ConstLabels: cl,
 		}, []string{"probe"}),
+		netnsMoveState: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "netns_move_state",
+			Help: "1 for the state the client-interception migration is currently in (waiting, attached, gave_up), 0 for the others. Where a master is in the move, which until now existed only in a log line nobody greps.", ConstLabels: cl,
+		}, []string{"state"}),
+		netnsMoveTries: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "netns_move_attempts",
+			Help: "Reverts this master has spent out of its allowance. Rising means the namespace is being tried and failing; at the limit the node stops trying and stays on the host path until someone looks.", ConstLabels: cl,
+		}),
 		mihomoErrors: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "mihomo_errors_total",
 			Help: "Error lines mihomo has written about itself. Deliberately unclassified: the next failure of this kind will have a different message, and the signal is that the data plane is complaining at all.", ConstLabels: cl,
@@ -167,7 +177,8 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 
 	reg.MustRegister(m.reconcileTotal, m.reconcileDuration, m.stateInfo, m.checkUp, m.checkLatency,
 		m.driftTotal, m.driftResources, m.reconcileChanges, m.egressReach, m.egressActive,
-		m.egressThroughput, m.startTime, m.udpReturnSocket, m.udpReturnKnown, m.mihomoErrors, m.clientPathOK)
+		m.egressThroughput, m.startTime, m.udpReturnSocket, m.udpReturnKnown, m.mihomoErrors, m.clientPathOK,
+		m.netnsMoveState, m.netnsMoveTries)
 	if m.transportActive != nil {
 		reg.MustRegister(m.transportActive)
 	}
@@ -343,4 +354,25 @@ func (m *AgentMetrics) ObserveClientPath(results map[string]bool) {
 	for probe, ok := range results {
 		m.clientPathOK.WithLabelValues(probe).Set(boolToFloat(ok))
 	}
+}
+
+// NetnsMoveStates are the states the migration can be in, and the label set the
+// metric always publishes. All of them, every pass: a state gauge that only emits
+// the CURRENT state leaves the others at their last value, so a dashboard reading
+// "attached" and "gave_up" as both true is indistinguishable from one where the
+// series simply stopped being written.
+var NetnsMoveStates = []string{"waiting", "attached", "gave_up"}
+
+// ObserveNetnsMove records where the client-interception migration is and how
+// much of its allowance it has spent.
+//
+// Until this existed the whole machine reported itself in one Debug log line: an
+// operator could see that clients had moved only by reading the journal, and
+// could not see at all that a node had quietly given up and parked itself on the
+// host path — which is the state that most needs a human.
+func (m *AgentMetrics) ObserveNetnsMove(state string, attempts int) {
+	for _, s := range NetnsMoveStates {
+		m.netnsMoveState.WithLabelValues(s).Set(boolToFloat(s == state))
+	}
+	m.netnsMoveTries.Set(float64(attempts))
 }

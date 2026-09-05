@@ -46,7 +46,7 @@ func TestMoveRevertsItselfWhenTheClientPathBreaks(t *testing.T) {
 	if !m.Decide(true, isReady, pathUp) {
 		t.Fatal("did not move")
 	}
-	*clock = clock.Add(moveMinHold + time.Second)
+	*clock = clock.Add(moveRetryHold + time.Second)
 
 	// One bad pass is tolerated: the flip itself disturbs established flows.
 	if !m.Decide(true, isReady, pathDown) {
@@ -65,7 +65,7 @@ func TestMoveRevertsItselfWhenTheClientPathBreaks(t *testing.T) {
 func TestMoveForgetsAnIsolatedFailure(t *testing.T) {
 	m, clock := testMover()
 	m.Decide(true, isReady, pathUp)
-	*clock = clock.Add(moveMinHold + time.Second)
+	*clock = clock.Add(moveRetryHold + time.Second)
 
 	m.Decide(true, isReady, pathDown) // one bad
 	m.Decide(true, isReady, pathUp)   // recovered
@@ -82,11 +82,11 @@ func TestMoveGivesUpRatherThanOscillate(t *testing.T) {
 		if !m.Decide(true, isReady, pathUp) && attempt < moveMaxAttempts {
 			t.Fatalf("attempt %d: did not move", attempt)
 		}
-		*clock = clock.Add(moveMinHold + time.Second)
+		*clock = clock.Add(moveRetryHold + time.Second)
 		for range moveFailPasses {
 			m.Decide(true, isReady, pathDown)
 		}
-		*clock = clock.Add(moveMinHold + time.Second)
+		*clock = clock.Add(moveRetryHold + time.Second)
 	}
 	if m.Decide(true, isReady, pathUp) {
 		t.Fatal("kept trying after the attempt limit")
@@ -108,20 +108,111 @@ func TestMoveRespectsOff(t *testing.T) {
 	}
 }
 
-// Churn floor: a revert cannot immediately be followed by another move.
-func TestMoveHoldsBetweenFlips(t *testing.T) {
+// The hold gates the move FORWARD and nothing else. A revert cannot immediately
+// be followed by another attempt.
+func TestMoveHoldsBeforeTryingAgain(t *testing.T) {
 	m, _ := testMover()
 	if !m.Decide(true, isReady, pathUp) {
 		t.Fatal("did not move")
 	}
-	// No clock advance: the next decision is inside the hold window.
 	for range moveFailPasses {
 		m.Decide(true, isReady, pathDown)
 	}
-	if !m.Attached() {
-		t.Error("reverted inside the minimum hold window")
+	if m.Attached() {
+		t.Fatal("test premise: the path failed and it should have reverted")
 	}
-	if !strings.Contains(m.Reason(), "min-hold") {
+	// No clock advance: another attempt now would be churn.
+	if m.Decide(true, isReady, pathUp) {
+		t.Error("moved again immediately after reverting")
+	}
+	if !strings.Contains(m.Reason(), "hold") {
 		t.Errorf("the reason does not mention the hold: %q", m.Reason())
+	}
+}
+
+// The blocker: the hold used to gate the REVERT too, so a flip that killed client
+// traffic instantly could not be undone for five minutes — three attempts came to
+// a quarter of an hour of outage, and the automatic revert was slower than a human
+// reading the alert.
+func TestRevertIsNotHeldBack(t *testing.T) {
+	m, _ := testMover()
+	if !m.Decide(true, isReady, pathUp) {
+		t.Fatal("did not move")
+	}
+	// No clock advance at all: the flip has just happened and it has just broken.
+	for range moveFailPasses {
+		m.Decide(true, isReady, pathDown)
+	}
+	if m.Attached() {
+		t.Fatalf("clients are on the floor and the revert is waiting out a churn limit: %q", m.Reason())
+	}
+}
+
+// A move that has held up must earn its attempts back. The counter is there to
+// stop a node oscillating, not to ration migrations over the life of a process:
+// three unrelated failures weeks apart would otherwise add up to a terminal
+// verdict about a node that has been fine in between.
+func TestConfirmationsClearSpentAttempts(t *testing.T) {
+	m, clock := testMover()
+	m.Decide(true, isReady, pathUp)
+	for range moveFailPasses {
+		m.Decide(true, isReady, pathDown)
+	}
+	if m.attempts != 1 {
+		t.Fatalf("test premise: attempts = %d, want 1", m.attempts)
+	}
+	*clock = clock.Add(moveRetryHold + time.Second)
+	if !m.Decide(true, isReady, pathUp) {
+		t.Fatal("did not move again after the hold")
+	}
+	for range moveConfirmPasses {
+		m.Decide(true, isReady, pathUp)
+	}
+	if m.attempts != 0 {
+		t.Errorf("a settled move did not clear its spent attempts: %d", m.attempts)
+	}
+}
+
+// The attempt counter and the terminal verdict must survive a restart — the agent
+// restarts on every upgrade and every reboot, which is exactly when a node that
+// has already been judged unfit would otherwise get a fresh set of three flips.
+func TestGiveUpSurvivesARestart(t *testing.T) {
+	path := t.TempDir() + "/netns-move.json"
+	now := time.Now()
+	m := NewNetnsMove(path)
+	m.now = func() time.Time { return now }
+	for attempt := 1; attempt <= moveMaxAttempts; attempt++ {
+		m.Decide(true, isReady, pathUp)
+		for range moveFailPasses {
+			m.Decide(true, isReady, pathDown)
+		}
+		now = now.Add(moveRetryHold + time.Second)
+	}
+	if m.Decide(true, isReady, pathUp) {
+		t.Fatal("test premise: it should have given up by now")
+	}
+
+	restarted := NewNetnsMove(path)
+	restarted.now = func() time.Time { return now.Add(time.Hour) }
+	if restarted.Decide(true, isReady, pathUp) {
+		t.Fatal("a restart handed a node that had already given up a fresh set of flips")
+	}
+	if !strings.Contains(restarted.Reason(), "previous run") {
+		t.Errorf("the restored verdict does not say where it came from: %q", restarted.Reason())
+	}
+}
+
+// No state path means no file: a --plan run must not write anything, and tests
+// must not depend on a directory existing.
+func TestMoveWithoutAStatePathWritesNothing(t *testing.T) {
+	m, _ := testMover()
+	m.Decide(true, isReady, pathUp)
+	for range moveFailPasses {
+		m.Decide(true, isReady, pathDown)
+	}
+	// The assertion is simply that none of the above panicked or created anything;
+	// statePath is empty, so save() is a no-op by construction.
+	if m.statePath != "" {
+		t.Fatal("the test mover acquired a state path")
 	}
 }
