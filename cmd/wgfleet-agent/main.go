@@ -1870,7 +1870,14 @@ func (a *agent) decideNetnsMove(ctx context.Context, spec domain.NodeSpec, probe
 	if a.role != domain.RoleMaster || spec.Master == nil {
 		return
 	}
-	wanted, _ := spec.Master.NetnsWanted()
+	wanted, _, werr := spec.Master.NetnsWanted()
+	if werr != nil {
+		// The knob was mistyped. Refuse to move rather than guess at what was meant:
+		// an unrecognised value used to be read as a canary CIDR, so `"of"` instead of
+		// `"off"` turned the migration ON.
+		a.log.Warn("client interception knob not understood; staying on the host path", "err", werr)
+		wanted = false
+	}
 	before := a.netnsMove.Attached()
 	after := a.netnsMove.Decide(wanted,
 		func() error { return master.NamespaceReady(ctx, spec) },

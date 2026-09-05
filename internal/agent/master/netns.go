@@ -51,7 +51,13 @@ func (p netnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 	if spec.Master == nil {
 		return nil, fmt.Errorf("mihomo network namespace: node has no master spec")
 	}
-	wanted, _ := spec.Master.NetnsWanted()
+	wanted, canary, werr := spec.Master.NetnsWanted()
+	if werr != nil {
+		// A value we do not understand is a refusal, not a guess. Reported rather than
+		// swallowed: an operator who mistyped the knob has to learn it from the plan,
+		// not from the traffic.
+		return nil, fmt.Errorf("mihomo network namespace: %w", werr)
+	}
 	if !wanted {
 		return []reconcile.Action{reconcile.NoChangeAction("mihomo network namespace",
 			"disabled by master.client_via_netns; mihomo stays on host networking")}, nil
@@ -95,7 +101,7 @@ func (p netnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 	// Until then the plumbing above sits there doing nothing, which is exactly what
 	// makes it safe to build on a live master.
 	if p.attached != nil && p.attached() {
-		nftActions, nerr := p.interceptionActions(ctx, in, spec, run)
+		nftActions, nerr := p.interceptionActions(ctx, in, spec, canary, run)
 		if nerr != nil {
 			return nil, nerr
 		}
@@ -117,7 +123,7 @@ func (p netnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 // second unnumbered rule would land at 32764 and the relative order of the two
 // would then depend on which was added first, which changes across a re-apply.
 // The exits have used fixed priorities per logical rule from the start.
-func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, spec domain.NodeSpec, run netns.Runner) ([]reconcile.Action, error) {
+func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, spec domain.NodeSpec, canary string, run netns.Runner) ([]reconcile.Action, error) {
 	nsPath, err := netns.Path(ctx, in.Holder, run)
 	if err != nil {
 		return nil, nil // the holder went away; the next pass will rebuild
@@ -155,14 +161,25 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 	}
 	table := fmt.Sprintf("%d", netfw.NetnsRouteTable)
 	pref := fmt.Sprintf("%d", netfw.NetnsRulePref)
+	// The rule that actually moves traffic. With a canary it is scoped to those
+	// client sources and everyone else stays on the host path — which is what makes
+	// the blast radius of this migration one device instead of every client. The
+	// mode was documented, returned by NetnsWanted and then discarded at every call
+	// site: an operator who set a /32 got the full move.
+	rule := []string{"ip", "rule", "add"}
+	summary := "send client traffic to mihomo's namespace"
+	if canary != "" {
+		rule = append(rule, "from", canary)
+		summary = "send client traffic from " + canary + " to mihomo's namespace (canary)"
+	}
+	rule = append(rule, "iif", p.clientIface, "lookup", table, "pref", pref)
 	return []reconcile.Action{
 		file,
 		reconcile.ExecAction("load the in-namespace interception",
 			"nsenter", "--net="+nsPath, "nft", "-f", path),
 		reconcile.BestEffortExecAction("clear any stale rule at the namespace priority",
 			"ip", "rule", "del", "pref", pref),
-		reconcile.ExecAction("send client traffic to mihomo's namespace",
-			"ip", "rule", "add", "iif", p.clientIface, "lookup", table, "pref", pref),
+		reconcile.ExecAction(summary, rule...),
 		reconcile.ExecAction("route the namespace table through the veth",
 			"ip", "route", "replace", "default", "via", peerIP, "dev", in.HostIface, "table", table),
 	}, nil
@@ -181,7 +198,9 @@ func NamespaceReady(ctx context.Context, spec domain.NodeSpec) error {
 	if spec.Master == nil {
 		return fmt.Errorf("no master spec")
 	}
-	if wanted, _ := spec.Master.NetnsWanted(); !wanted {
+	if wanted, _, err := spec.Master.NetnsWanted(); err != nil {
+		return err
+	} else if !wanted {
 		return fmt.Errorf("disabled by master.client_via_netns")
 	}
 	host, port := exitProbeTarget(spec)

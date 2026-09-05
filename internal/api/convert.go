@@ -293,6 +293,8 @@ func masterToProto(m *domain.MasterSpec) *pb.MasterSpec {
 		Compose:             composeToProto(m.Compose),
 		ClientVless:         clientVlessToProto(m.ClientVLESS),
 		ClientWg:            clientWGToProto(m.ClientWG),
+		ClientViaNetns:      m.ClientViaNetns,
+		NetnsCidr:           m.NetnsCIDR,
 	}
 	for _, t := range m.ExitTunnels {
 		out.ExitTunnels = append(out.ExitTunnels, &pb.ExitTunnel{
@@ -334,6 +336,8 @@ func masterFromProto(m *pb.MasterSpec) *domain.MasterSpec {
 		Compose:             composeFromProto(m.GetCompose()),
 		ClientVLESS:         clientVlessFromProto(m.GetClientVless()),
 		ClientWG:            clientWGFromProto(m.GetClientWg()),
+		ClientViaNetns:      m.GetClientViaNetns(),
+		NetnsCIDR:           m.GetNetnsCidr(),
 	}
 	for _, t := range m.GetExitTunnels() {
 		out.ExitTunnels = append(out.ExitTunnels, domain.ExitTunnel{
@@ -398,7 +402,7 @@ func customFromProto(c *pb.CustomConfig) domain.CustomConfig {
 }
 
 func composeToProto(c domain.ComposeSpec) *pb.ComposeSpec {
-	if !c.Enabled() && c.PublicIP == "" && len(c.ClientDNS) == 0 && c.ClientAllowedIPs == "" {
+	if !c.Enabled() && c.PublicIP == "" && len(c.ClientDNS) == 0 && c.ClientAllowedIPs == "" && c.NetnsHolderImage == "" {
 		return nil
 	}
 	return &pb.ComposeSpec{
@@ -408,6 +412,7 @@ func composeToProto(c domain.ComposeSpec) *pb.ComposeSpec {
 		WgEasyWebPort:    int32(c.WGEasyWebPort),
 		ClientDns:        append([]string(nil), c.ClientDNS...),
 		ClientAllowedIps: c.ClientAllowedIPs,
+		NetnsHolderImage: c.NetnsHolderImage,
 	}
 }
 
@@ -422,6 +427,7 @@ func composeFromProto(c *pb.ComposeSpec) domain.ComposeSpec {
 		WGEasyWebPort:    int(c.GetWgEasyWebPort()),
 		ClientDNS:        append([]string(nil), c.GetClientDns()...),
 		ClientAllowedIPs: c.GetClientAllowedIps(),
+		NetnsHolderImage: c.GetNetnsHolderImage(),
 	}
 }
 

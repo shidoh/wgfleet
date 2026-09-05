@@ -368,3 +368,83 @@ func TestRefusedUDPPortsDoesNotAccountForTheClientWGPort(t *testing.T) {
 		t.Fatalf("a master with a live TPROXY listener refuses nothing, yet it claims %v", got)
 	}
 }
+
+// A canary runs the two paths side by side, and the HOST has to stop claiming the
+// canary sources for that to be true. TPROXY sits at mangle-prerouting, before
+// any routing decision, so a canary client intercepted by the host's own rule is
+// bound to a host socket and then routed into the namespace — neither path, and
+// the client gets nothing.
+func TestCanaryLeavesTheHostInterceptingEveryoneElse(t *testing.T) {
+	in := MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+		TProxyAddr:      "10.80.0.1:7896",
+		NetnsGateway:    "100.127.255.2",
+		NetnsHostIface:  "mih-host",
+		NetnsCanary:     "10.80.0.7/32",
+	}
+	out, err := RenderMasterNAT(in)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{
+		"ip saddr != 10.80.0.7/32 ip protocol tcp dnat to 10.80.0.1:7895",
+		"ip saddr != 10.80.0.7/32 meta l4proto udp tproxy ip to 10.80.0.1:7896",
+		"ip saddr != 10.80.0.7/32 meta l4proto udp counter drop",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	// The veth exemptions still apply: the canary's traffic is routed out of the
+	// host and must not be masqueraded or eaten by the leak guard on the way.
+	for _, want := range []string{
+		`oifname != "wg0" oifname != "mih-host" masquerade`,
+		`oifname != "mih-host" counter drop`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// A full move keeps nothing on the host: leaving the interception in place would
+// feed listeners that are no longer here — TCP to a refused connection, UDP into
+// the fail-closed drop, which is every client's traffic gone.
+func TestFullMoveStopsTheHostIntercepting(t *testing.T) {
+	in := MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+		TProxyAddr:      "10.80.0.1:7896",
+		NetnsGateway:    "100.127.255.2",
+		NetnsHostIface:  "mih-host",
+	}
+	out, err := RenderMasterNAT(in)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, unwanted := range []string{"dnat to", "tproxy ip to"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("the host still intercepts (%q) after the interception moved:\n%s", unwanted, out)
+		}
+	}
+}
+
+// A canary CIDR reaches this renderer from an operator manifest and is formatted
+// into a root-applied ruleset. It is parsed and re-emitted, never pasted.
+func TestCanaryCIDRCannotInjectRules(t *testing.T) {
+	in := MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+		TProxyAddr:      "10.80.0.1:7896",
+		NetnsGateway:    "100.127.255.2",
+		NetnsHostIface:  "mih-host",
+		NetnsCanary:     "10.80.0.7/32; drop",
+	}
+	if _, err := RenderMasterNAT(in); err == nil {
+		t.Fatal("a crafted canary CIDR was rendered into the ruleset")
+	}
+}

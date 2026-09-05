@@ -220,6 +220,20 @@ message MasterSpec {
   // drops the field leaves the interface unmanaged while the controller believes
   // it converged, so it rides a wire-version bump like client_vless did at v4.
   ClientWGSpec client_wg = 17;
+  // Where client traffic is intercepted: "off" (host path), "auto" (move into
+  // mihomo's network namespace once the preconditions hold), or a client CIDR
+  // (canary: only those sources take the new path). Empty ⇒ the agent's default.
+  //
+  // Additive, and deliberately so: an agent too old to know the field drops it and
+  // takes the host path, which is what it did before the field existed. That makes
+  // the knob safe to add without a wire-version bump — but it is also the reason
+  // the knob has to EXIST on the wire at all. Declared only in the agent's domain
+  // package, it never reached a live node, the agent read the zero value, and the
+  // feature was on with nothing able to turn it off.
+  string client_via_netns = 18;
+  // The point-to-point link between the host and mihomo's namespace, a /30.
+  // Empty ⇒ domain.NetnsDefaultCIDR (100.127.255.0/30, RFC 6598).
+  string netns_cidr = 19;
 }
 
 // ClientWGSpec is the master-side desired state for the CLIENT-FACING AmneziaWG
@@ -302,6 +316,12 @@ message ComposeSpec {
   int32 wg_easy_web_port = 4;
   repeated string client_dns = 5;
   string client_allowed_ips = 6;
+  // Image for the container that owns mihomo's network namespace. Empty ⇒ the
+  // agent's default. Worth setting on a node that cannot pull the default: the
+  // holder only has to exist and sleep, so any image already on the node will do,
+  // and a master behind the filtering this fleet exists to get around is exactly
+  // where a pull fails.
+  string netns_holder_image = 7;
 }
 
 // ExitTunnel is one master→exit mihomo WireGuard proxy.

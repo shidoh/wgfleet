@@ -39,6 +39,18 @@ type MasterNATInput struct {
 	// NetnsHostIface is the veth end the routed traffic leaves by. Required with
 	// NetnsGateway; the masquerade and the leak guard must both exempt it.
 	NetnsHostIface string
+	// NetnsCanary narrows the move to a subset of client SOURCES. Empty with a
+	// gateway set ⇒ every client moves; a prefix ⇒ only those addresses do, and the
+	// host keeps intercepting everyone else.
+	//
+	// The exclusion has to happen HERE and not only in the routing rule, and the
+	// order of the hooks is why. TPROXY runs at mangle-prerouting, before any
+	// routing decision, so a canary client's datagram would be intercepted by the
+	// host's own rule and marked — and the mark is consumed two hooks later by a
+	// policy route the namespace rule would already have overridden. The packet
+	// would belong to a socket on the host and be routed into the namespace. The
+	// canary is only real once the host stops claiming those sources.
+	NetnsCanary string
 }
 
 // TProxyMark is the fwmark TPROXY'd client packets carry so policy routing can
@@ -140,6 +152,21 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 		gatewayGuard = fmt.Sprintf(" ip daddr != %s", gw)
 	}
 
+	// Who the HOST still intercepts. With no namespace gateway, everyone: that is
+	// the world before this feature. With a gateway and no canary, nobody: the
+	// interception has moved wholesale. With a canary, everyone EXCEPT the canary
+	// sources — the two paths run side by side, which is the whole point of having
+	// a canary at all.
+	hostIntercepts := in.NetnsGateway == "" || in.NetnsCanary != ""
+	canaryGuard := ""
+	if in.NetnsGateway != "" && in.NetnsCanary != "" {
+		canon, cerr := canonicalPrefix(in.NetnsCanary)
+		if cerr != nil {
+			return "", fmt.Errorf("netfw master NAT: invalid canary CIDR %q: %w", in.NetnsCanary, cerr)
+		}
+		canaryGuard = fmt.Sprintf(" ip saddr != %s", canon)
+	}
+
 	b.WriteString("\tchain prerouting {\n")
 	b.WriteString("\t\ttype nat hook prerouting priority dstnat; policy accept;\n")
 	// Client QUIC is PROXIED now, not dropped.
@@ -161,8 +188,9 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 		fmt.Fprintf(&b, "\t\tiifname %q%s udp dport %d drop\n", in.ClientInterface, guards, QUICPort)
 	}
 	// DNAT non-private client TCP to mihomo's redir-port.
-	if in.NetnsGateway == "" {
-		fmt.Fprintf(&b, "\t\tiifname %q%s%s ip protocol tcp dnat to %s\n", in.ClientInterface, guards, gatewayGuard, in.RedirAddr)
+	if hostIntercepts {
+		fmt.Fprintf(&b, "\t\tiifname %q%s%s%s ip protocol tcp dnat to %s\n",
+			in.ClientInterface, guards, gatewayGuard, canaryGuard, in.RedirAddr)
 	}
 	b.WriteString("\t}\n\n")
 
@@ -199,11 +227,11 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// packet anyway. What it DID match was client datagrams addressed to mihomo's own
 	// listeners, which the guard below deliberately excludes and the input drop policy
 	// would otherwise eat; accepting those is the an earlier finding self-dial shape.
-	if in.TProxyAddr != "" && in.NetnsGateway == "" {
+	if in.TProxyAddr != "" && hostIntercepts {
 		b.WriteString("\tchain client_udp_tproxy {\n")
 		b.WriteString("\t\ttype filter hook prerouting priority mangle; policy accept;\n")
-		fmt.Fprintf(&b, "\t\tiifname %q%s%s meta l4proto udp tproxy ip to %s meta mark set %#x accept\n",
-			in.ClientInterface, guards, gatewayGuard, in.TProxyAddr, TProxyMark)
+		fmt.Fprintf(&b, "\t\tiifname %q%s%s%s meta l4proto udp tproxy ip to %s meta mark set %#x accept\n",
+			in.ClientInterface, guards, gatewayGuard, canaryGuard, in.TProxyAddr, TProxyMark)
 		// FAIL CLOSED. The rule above ends at NFT_BREAK when no transparent socket is
 		// listening — every mihomo restart — and without this second rule the datagram
 		// simply falls through to the forward chain and the masquerade, i.e. it leaves
@@ -216,8 +244,8 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 		// Scoped identically to the rule above, so it can only ever catch traffic that
 		// rule was meant to take: the private-destination and gateway exemptions still
 		// go DIRECT, and everything the master itself sends is on another interface.
-		fmt.Fprintf(&b, "\t\tiifname %q%s%s meta l4proto udp counter drop\n",
-			in.ClientInterface, guards, gatewayGuard)
+		fmt.Fprintf(&b, "\t\tiifname %q%s%s%s meta l4proto udp counter drop\n",
+			in.ClientInterface, guards, gatewayGuard, canaryGuard)
 		b.WriteString("\t}\n\n")
 	}
 

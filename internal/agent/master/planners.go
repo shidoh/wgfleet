@@ -602,11 +602,17 @@ func NATInput(spec domain.NodeSpec, clientIface string, netnsAttached bool) netf
 	// because TPROXY does not rewrite the packet, could not answer the right client.
 	// Exempting only the masquerade then leaves the source in the client pool and
 	// the leak guard drops it one hook later.
-	netnsGW, netnsIface := "", ""
+	netnsGW, netnsIface, canary := "", "", ""
 	if netnsAttached {
 		if _, peer, aerr := netns.LinkAddrs(spec.Master.NetnsLinkCIDR()); aerr == nil {
 			netnsGW, _, _ = strings.Cut(peer, "/")
 			netnsIface = domain.NetnsHostIface
+			// A canary narrows the move to a few client sources, so the host must go on
+			// intercepting the rest. Read from the same knob the routing rule reads, or
+			// the two disagree about who moved and those clients get neither path.
+			if _, c, cerr := spec.Master.NetnsWanted(); cerr == nil {
+				canary = c
+			}
 		}
 	}
 	return netfw.MasterNATInput{
@@ -617,6 +623,7 @@ func NATInput(spec domain.NodeSpec, clientIface string, netnsAttached bool) netf
 		PrivateCIDRs:    spec.Master.DirectCIDRs,
 		NetnsGateway:    netnsGW,
 		NetnsHostIface:  netnsIface,
+		NetnsCanary:     canary,
 	}
 }
 
@@ -903,7 +910,7 @@ func netnsHolderImage(spec domain.NodeSpec) string {
 	if spec.Master == nil {
 		return ""
 	}
-	if wanted, _ := spec.Master.NetnsWanted(); !wanted {
+	if wanted, _, err := spec.Master.NetnsWanted(); err != nil || !wanted {
 		return ""
 	}
 	if img := spec.Master.Compose.NetnsHolderImage; img != "" {

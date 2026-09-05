@@ -13,14 +13,14 @@ func netnsSpec() domain.NodeSpec {
 	return domain.NodeSpec{
 		Role:     domain.RoleMaster,
 		WGServer: domain.WGServerSpec{AddressPool: "10.73.0.0/24"},
-		Master:   &domain.MasterSpec{BindAddress: "10.73.0.1"},
+		Master:   &domain.MasterSpec{BindAddress: "10.73.0.1", ClientViaNetns: "auto"},
 	}
 }
 
-// The namespace is built by default, because a switch nobody flips is a fix
-// nobody gets. Safety comes from the preconditions and the revert, not from
-// leaving it off.
-func TestNetnsPlannerBuildsTheLinkByDefault(t *testing.T) {
+// With the knob on, the link is built — and only the link. Nothing about where
+// client traffic goes changes here; that is a separate decision taken later in
+// the pass, which is what makes this safe to converge on a live master.
+func TestNetnsPlannerBuildsTheLinkWhenAsked(t *testing.T) {
 	run := func(_ context.Context, name string, args ...string) (string, error) {
 		line := name + " " + strings.Join(args, " ")
 		if strings.Contains(line, "docker inspect") {
@@ -48,7 +48,8 @@ func TestNetnsPlannerBuildsTheLinkByDefault(t *testing.T) {
 	}
 }
 
-// "off" is the only way to decline, and it must be completely inert.
+// "off" — and, until the rollout finishes, an unset knob — must be completely
+// inert: not one probe of the box, not one action.
 func TestNetnsPlannerRespectsOff(t *testing.T) {
 	spec := netnsSpec()
 	spec.Master.ClientViaNetns = "off"
@@ -144,5 +145,71 @@ func TestAttachedNamespaceRefusesWithoutAClientInterface(t *testing.T) {
 	p := netnsPlanner{run: run, attached: func() bool { return true }, nftPath: t.TempDir() + "/n.nft"}
 	if _, err := p.Plan(context.Background(), netnsSpec()); err == nil {
 		t.Fatal("rendered a routing rule with no client interface to match")
+	}
+}
+
+// An unset knob is the same as "off" for now: the fleet that swaps a binary must
+// keep the path it had until the migration has been exercised end to end.
+func TestNetnsPlannerIsInertWhenTheKnobIsUnset(t *testing.T) {
+	spec := netnsSpec()
+	spec.Master.ClientViaNetns = ""
+	acts, err := netnsPlanner{run: func(context.Context, string, ...string) (string, error) {
+		t.Fatal("an unconfigured master probed the box for a namespace")
+		return "", nil
+	}}.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range acts {
+		if a.Changes() {
+			t.Errorf("an unconfigured master would change %q", a.Summary)
+		}
+	}
+}
+
+// A knob nobody can read is a refusal, not a guess. The planner reports it so the
+// operator learns about the typo from the plan rather than from the traffic.
+func TestNetnsPlannerRefusesAKnobItCannotRead(t *testing.T) {
+	spec := netnsSpec()
+	spec.Master.ClientViaNetns = "of"
+	_, err := netnsPlanner{run: func(context.Context, string, ...string) (string, error) {
+		return "", nil
+	}}.Plan(context.Background(), spec)
+	if err == nil {
+		t.Fatal("a mistyped knob converged silently")
+	}
+	if !strings.Contains(err.Error(), "client_via_netns") {
+		t.Errorf("the error does not name the knob: %v", err)
+	}
+}
+
+// The canary was documented, returned by NetnsWanted and then discarded at every
+// call site: an operator who set a /32 in the belief that one device was moving
+// got the full move. This is the rule that makes the blast radius one device.
+func TestCanaryMovesOnlyTheNamedSources(t *testing.T) {
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		if strings.Contains(name+" "+strings.Join(args, " "), "docker inspect") {
+			return "4242\n", nil
+		}
+		return "", errors.New("absent")
+	}
+	spec := netnsSpec()
+	spec.Master.ClientViaNetns = "10.73.0.7/32"
+	p := netnsPlanner{
+		run:         run,
+		attached:    func() bool { return true },
+		clientIface: "wg0",
+		nftPath:     t.TempDir() + "/netns.nft",
+	}
+	acts, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	var dump string
+	for _, a := range acts {
+		dump += a.Display + "\n"
+	}
+	if !strings.Contains(dump, "ip rule add from 10.73.0.7/32 iif wg0 lookup 51822 pref 400") {
+		t.Fatalf("the canary moved every client instead of the named source:\n%s", dump)
 	}
 }

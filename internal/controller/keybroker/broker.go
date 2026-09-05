@@ -611,6 +611,8 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		ClientAdminPorts:    append([]int(nil), master.ClientAdminPorts...),
 		Custom:              masterCustomConfig(master),
 		MaxFailedTimes:      master.Mihomo.MaxFailedTimes,
+		ClientViaNetns:      master.Mihomo.ClientViaNetns,
+		NetnsCIDR:           master.Mihomo.NetnsCIDR,
 	}
 
 	// The master's own node record, read ONCE for every use below (the /32 guard,
@@ -1168,6 +1170,7 @@ func (b *Broker) composeSpec(ctx context.Context, master config.MasterConfig, pu
 		WGEasyWebPort:    cc.WGEasyWebPort,
 		ClientDNS:        dns,
 		ClientAllowedIPs: cc.ClientAllowedIPs,
+		NetnsHolderImage: cc.NetnsHolderImage,
 	}
 }
 

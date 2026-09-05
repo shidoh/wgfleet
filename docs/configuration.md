@@ -267,6 +267,8 @@ See [§9 third-party configuration](#9-third-party-configuration) for the passth
 | `fleet.masters[].mihomo.sniffer_skip` | []string | none | Domains the sniffer must not rewrite. Needed when destination override breaks a protocol |
 | `fleet.masters[].mihomo.dashboard_url` | URL | metacubexd release | Where to fetch the web dashboard. Point at a mirror where GitHub is blocked |
 | `fleet.masters[].mihomo.dashboard_disabled` | bool | `false` | Skip the dashboard entirely — mihomo then never attempts the download |
+| `fleet.masters[].mihomo.client_via_netns` | string | `off` | Where client traffic is intercepted. `off` — on the host, as always. `auto` — inside mihomo's own network namespace once the agent has proved the namespace works, reverted automatically if the client path breaks after. A client CIDR — canary: only those sources take the new path. Any other value is refused, so a typo cannot enable a data-plane migration |
+| `fleet.masters[].mihomo.netns_cidr` | string | `100.127.255.0/30` | The point-to-point link between the host and that namespace (a /30, host `.1`, namespace `.2`). RFC 6598 by default because 10/8 on this fleet is routed into the corporate tunnel |
 | `fleet.masters[].mihomo.overrides` | map | none | **Deep-merged into the rendered mihomo `config.yaml`.** The escape hatch for anything wgfleet does not model |
 | `fleet.masters[].mihomo.extra_files[].path` | string | — | Additional managed file written alongside the config, e.g. a rule-provider list |
 | `fleet.masters[].mihomo.extra_files[].content` | string | — | Its literal contents |
@@ -283,6 +285,7 @@ See [§9 third-party configuration](#9-third-party-configuration) for the passth
 | `fleet.masters[].compose.mihomo_tag` | string | pinned | Explicit tag. **Pin this deliberately** — some releases crash-loop on AmneziaWG 2.0 parameters |
 | `fleet.masters[].compose.client_dns` | []string | exit mgmt addrs | DNS servers handed to clients |
 | `fleet.masters[].compose.client_allowed_ips` | string | `0.0.0.0/0` | `AllowedIPs` written into client configs. IPv4-only by default: the data plane has no IPv6, and offering `::/0` black-holes dual-stack clients |
+| `fleet.masters[].compose.netns_holder_image` | string | built-in | Image for the container that owns mihomo's network namespace. It only has to exist and sleep, so any image already on the node will do — which is the point on a master that cannot reach a registry |
 
 ### Master DNS
 

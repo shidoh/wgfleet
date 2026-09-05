@@ -1053,7 +1053,21 @@ type MasterSpec struct {
 	// half. nil ⇒ this master's client leg is still wg-easy's. A too-old agent that
 	// drops the field leaves the interface unmanaged while the controller believes
 	// it converged, so it rides a wire-version bump like client_vless did at v4.
-	ClientWg      *ClientWGSpec `protobuf:"bytes,17,opt,name=client_wg,json=clientWg,proto3" json:"client_wg,omitempty"`
+	ClientWg *ClientWGSpec `protobuf:"bytes,17,opt,name=client_wg,json=clientWg,proto3" json:"client_wg,omitempty"`
+	// Where client traffic is intercepted: "off" (host path), "auto" (move into
+	// mihomo's network namespace once the preconditions hold), or a client CIDR
+	// (canary: only those sources take the new path). Empty ⇒ the agent's default.
+	//
+	// Additive, and deliberately so: an agent too old to know the field drops it and
+	// takes the host path, which is what it did before the field existed. That makes
+	// the knob safe to add without a wire-version bump — but it is also the reason
+	// the knob has to EXIST on the wire at all. Declared only in the agent's domain
+	// package, it never reached a live node, the agent read the zero value, and the
+	// feature was on with nothing able to turn it off.
+	ClientViaNetns string `protobuf:"bytes,18,opt,name=client_via_netns,json=clientViaNetns,proto3" json:"client_via_netns,omitempty"`
+	// The point-to-point link between the host and mihomo's namespace, a /30.
+	// Empty ⇒ domain.NetnsDefaultCIDR (100.127.255.0/30, RFC 6598).
+	NetnsCidr     string `protobuf:"bytes,19,opt,name=netns_cidr,json=netnsCidr,proto3" json:"netns_cidr,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1205,6 +1219,20 @@ func (x *MasterSpec) GetClientWg() *ClientWGSpec {
 		return x.ClientWg
 	}
 	return nil
+}
+
+func (x *MasterSpec) GetClientViaNetns() string {
+	if x != nil {
+		return x.ClientViaNetns
+	}
+	return ""
+}
+
+func (x *MasterSpec) GetNetnsCidr() string {
+	if x != nil {
+		return x.NetnsCidr
+	}
+	return ""
 }
 
 // ClientWGSpec is the master-side desired state for the CLIENT-FACING AmneziaWG
@@ -1611,6 +1639,12 @@ type ComposeSpec struct {
 	WgEasyWebPort    int32                  `protobuf:"varint,4,opt,name=wg_easy_web_port,json=wgEasyWebPort,proto3" json:"wg_easy_web_port,omitempty"`
 	ClientDns        []string               `protobuf:"bytes,5,rep,name=client_dns,json=clientDns,proto3" json:"client_dns,omitempty"`
 	ClientAllowedIps string                 `protobuf:"bytes,6,opt,name=client_allowed_ips,json=clientAllowedIps,proto3" json:"client_allowed_ips,omitempty"`
+	// Image for the container that owns mihomo's network namespace. Empty ⇒ the
+	// agent's default. Worth setting on a node that cannot pull the default: the
+	// holder only has to exist and sleep, so any image already on the node will do,
+	// and a master behind the filtering this fleet exists to get around is exactly
+	// where a pull fails.
+	NetnsHolderImage string `protobuf:"bytes,7,opt,name=netns_holder_image,json=netnsHolderImage,proto3" json:"netns_holder_image,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -1683,6 +1717,13 @@ func (x *ComposeSpec) GetClientDns() []string {
 func (x *ComposeSpec) GetClientAllowedIps() string {
 	if x != nil {
 		return x.ClientAllowedIps
+	}
+	return ""
+}
+
+func (x *ComposeSpec) GetNetnsHolderImage() string {
+	if x != nil {
+		return x.NetnsHolderImage
 	}
 	return ""
 }
@@ -3255,7 +3296,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x04mode\x18\n" +
 	" \x01(\tR\x04mode\x12\x1d\n" +
 	"\n" +
-	"allow_ipv6\x18\v \x01(\bR\tallowIpv6\"\xf5\x05\n" +
+	"allow_ipv6\x18\v \x01(\bR\tallowIpv6\"\xbe\x06\n" +
 	"\n" +
 	"MasterSpec\x12!\n" +
 	"\fbind_address\x18\x01 \x01(\tR\vbindAddress\x12\x1d\n" +
@@ -3277,7 +3318,10 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x15health_check_interval\x18\x0e \x01(\x05R\x13healthCheckInterval\x12(\n" +
 	"\x10max_failed_times\x18\x0f \x01(\x05R\x0emaxFailedTimes\x12>\n" +
 	"\fclient_vless\x18\x10 \x01(\v2\x1b.wgfleet.v1.ClientVlessSpecR\vclientVless\x125\n" +
-	"\tclient_wg\x18\x11 \x01(\v2\x18.wgfleet.v1.ClientWGSpecR\bclientWg\"\xdc\x02\n" +
+	"\tclient_wg\x18\x11 \x01(\v2\x18.wgfleet.v1.ClientWGSpecR\bclientWg\x12(\n" +
+	"\x10client_via_netns\x18\x12 \x01(\tR\x0eclientViaNetns\x12\x1d\n" +
+	"\n" +
+	"netns_cidr\x18\x13 \x01(\tR\tnetnsCidr\"\xdc\x02\n" +
 	"\fClientWGSpec\x12\x1f\n" +
 	"\vlisten_port\x18\x01 \x01(\x05R\n" +
 	"listenPort\x12!\n" +
@@ -3321,7 +3365,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\vVlessClient\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04uuid\x18\x02 \x01(\tR\x04uuid\x12\x19\n" +
-	"\bshort_id\x18\x03 \x01(\tR\ashortId\"\xe7\x01\n" +
+	"\bshort_id\x18\x03 \x01(\tR\ashortId\"\x95\x02\n" +
 	"\vComposeSpec\x12\"\n" +
 	"\rwg_easy_image\x18\x01 \x01(\tR\vwgEasyImage\x12!\n" +
 	"\fmihomo_image\x18\x02 \x01(\tR\vmihomoImage\x12\x1b\n" +
@@ -3329,7 +3373,8 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x10wg_easy_web_port\x18\x04 \x01(\x05R\rwgEasyWebPort\x12\x1d\n" +
 	"\n" +
 	"client_dns\x18\x05 \x03(\tR\tclientDns\x12,\n" +
-	"\x12client_allowed_ips\x18\x06 \x01(\tR\x10clientAllowedIps\"\x98\x03\n" +
+	"\x12client_allowed_ips\x18\x06 \x01(\tR\x10clientAllowedIps\x12,\n" +
+	"\x12netns_holder_image\x18\a \x01(\tR\x10netnsHolderImage\"\x98\x03\n" +
 	"\n" +
 	"ExitTunnel\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +

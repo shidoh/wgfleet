@@ -489,6 +489,25 @@ type MihomoConfig struct {
 	// DashboardDisabled turns the web dashboard off entirely (mihomo won't try to
 	// download the UI on first run). Default false ⇒ dashboard enabled.
 	DashboardDisabled bool `koanf:"dashboard_disabled"`
+	// ClientViaNetns decides WHERE client traffic is intercepted:
+	//
+	//	"off" / unset — on the host, the way it has always worked
+	//	"auto"        — inside mihomo's own network namespace, once the agent has
+	//	                proved the namespace works; reverted automatically if the
+	//	                client path breaks after the switch
+	//	"<CIDR>"      — canary: only client sources inside that prefix take the new
+	//	                path, everyone else stays on the host path
+	//
+	// The namespace exists to remove a whole class of failure rather than one
+	// instance of it: mihomo's TPROXY reply path binds the SERVER's address:port,
+	// so every UDP port the HOST holds is a silent black hole for client traffic to
+	// that port. On this fleet that was 443, and client QUIC was one-way for eight
+	// days with every component metric green.
+	ClientViaNetns string `koanf:"client_via_netns"`
+	// NetnsCIDR overrides the point-to-point link between the host and that
+	// namespace — a /30, host .1, namespace .2. Empty ⇒ 100.127.255.0/30 (RFC 6598,
+	// chosen because 10/8 on this fleet is routed into the corporate tunnel).
+	NetnsCIDR string `koanf:"netns_cidr"`
 }
 
 // ComposeConfig is the operator-facing master container-stack tuning. Empty
@@ -501,6 +520,11 @@ type ComposeConfig struct {
 	WGEasyWebPort    int      `koanf:"wg_easy_web_port"`
 	ClientDNS        []string `koanf:"client_dns"`         // 0 ⇒ derived from exit mgmt addrs
 	ClientAllowedIPs string   `koanf:"client_allowed_ips"` // inverted RFC1918 list for clients
+	// NetnsHolderImage is the image for the container that owns mihomo's network
+	// namespace. Empty ⇒ the renderer's default. The holder only has to exist and
+	// sleep, so any image the node already has will do — which is the point on a
+	// master that cannot reach a registry.
+	NetnsHolderImage string `koanf:"netns_holder_image"`
 }
 
 // ExtraFileConfig is an operator-provisioned file written alongside the rendered

@@ -1,6 +1,10 @@
 package domain
 
-import "strings"
+import (
+	"fmt"
+	"net/netip"
+	"strings"
+)
 
 // MasterSpec is the master node's data-plane desired state. The master fronts
 // clients (client-facing AmneziaWG via WGServerSpec) and routes/load-balances
@@ -26,12 +30,13 @@ type MasterSpec struct {
 	NetnsCIDR string
 	// ClientViaNetns decides where client traffic is intercepted (ADR pending):
 	//
-	//	""/"auto"       — move to the namespace once the preconditions hold
+	//	""              — NetnsDefaultMode
 	//	"off"           — stay on the host path
+	//	"auto"          — move to the namespace once the preconditions hold
 	//	"<CIDR>"        — canary: only these client sources take the new path
 	//
-	// Default is to move, because a switch nobody flips is a fix nobody gets. What
-	// makes that safe is not optimism: the agent checks the namespace can resolve
+	// Anything else is an error rather than a canary; see NetnsWanted. What makes
+	// "auto" defensible is not optimism: the agent checks the namespace can resolve
 	// DNS and reach an exit BEFORE touching anything, verifies the client path
 	// after the switch, and reverts itself if the verification fails.
 	ClientViaNetns string
@@ -229,20 +234,45 @@ func (m MasterSpec) NetnsLinkCIDR() string {
 	return NetnsDefaultCIDR
 }
 
+// NetnsDefaultMode is what an unset master.client_via_netns means.
+//
+// "off" for now, and the reason is a date rather than a principle. The design
+// argument for defaulting ON is real — a switch nobody flips is a fix nobody gets
+// — and the safety it relies on is real too: the agent proves the namespace works
+// before moving anything and reverts itself if the client path breaks after. What
+// was NOT real, at the time this constant was written, was any of that having been
+// exercised end to end on a stand. Flipping this to "auto" is a one-line change
+// and it is the last step of the rollout, not the first.
+const NetnsDefaultMode = "off"
+
 // NetnsWanted reports whether client traffic should be intercepted inside
 // mihomo's namespace, and the client sources it applies to ("" ⇒ all of them).
 //
-// "off" is the only way to decline. An unset value means yes: the whole point of
-// the default is that a tester who swaps the binary gets the fix, and the safety
-// comes from the preconditions and the automatic revert rather than from leaving
-// the feature switched off.
-func (m MasterSpec) NetnsWanted() (wanted bool, canary string) {
-	switch v := m.ClientViaNetns; v {
-	case "off":
-		return false, ""
-	case "", "auto":
-		return true, ""
-	default:
-		return true, v
+// A value that is neither a mode nor a CIDR is an ERROR, not a canary. The first
+// version treated anything unrecognised as a canary prefix, so `client_via_netns:
+// "of"` — one keystroke short of "off" — silently switched the feature ON for a
+// prefix that matches nothing. A typo in a manifest must never be the thing that
+// enables a data-plane migration.
+func (m MasterSpec) NetnsWanted() (wanted bool, canary string, err error) {
+	v := strings.TrimSpace(m.ClientViaNetns)
+	if v == "" {
+		v = NetnsDefaultMode
 	}
+	switch v {
+	case "off":
+		return false, "", nil
+	case "auto":
+		return true, "", nil
+	}
+	p, perr := netip.ParsePrefix(v)
+	if perr != nil {
+		return false, "", fmt.Errorf("master.client_via_netns: %q is not \"off\", \"auto\" or a client CIDR: %w", v, perr)
+	}
+	if !p.Addr().Is4() {
+		return false, "", fmt.Errorf("master.client_via_netns: canary %q must be IPv4; the client interception it scopes is IPv4-only", v)
+	}
+	// Canonical form, always. The value is formatted into an `ip rule` argument and
+	// compared against the rendered ruleset, and "10.80.0.5/24" and "10.80.0.0/24"
+	// must not be able to describe the same rule under two names.
+	return true, p.Masked().String(), nil
 }
