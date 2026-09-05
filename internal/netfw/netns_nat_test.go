@@ -145,3 +145,60 @@ func TestMasterNATIsUnchangedWithoutTheMove(t *testing.T) {
 		t.Errorf("a namespace exemption leaked into a node that has not moved:\n%s", out)
 	}
 }
+
+// Destination exemptions are the second line of defence. The first is a routing
+// rule that keeps them out of the namespace; if one reaches here anyway, an
+// unguarded ruleset meets it with an unconditional DNAT for TCP and a fail-closed
+// drop for UDP — the corporate networks, the management overlay and the exits'
+// own public addresses, gone one way and silently.
+func TestNetnsNATGuardsDirectDestinations(t *testing.T) {
+	out, err := RenderNetnsNAT(NetnsNATInput{
+		PeerIface:   "mih0",
+		RedirAddr:   "100.127.255.2:7895",
+		TProxyAddr:  "100.127.255.2:7896",
+		DirectCIDRs: []string{"10.0.0.0/8", "172.29.0.0/16"},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{
+		`iifname "mih0" ip daddr != 10.0.0.0/8 ip daddr != 172.29.0.0/16 ip protocol tcp dnat to`,
+		`ip daddr != 172.29.0.0/16 meta l4proto udp tproxy ip to`,
+		`ip daddr != 172.29.0.0/16 meta l4proto udp counter drop`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// Everything that is not TCP or UDP — client ICMP above all — is not intercepted
+// in here; it reaches the forward hook and goes on to the host. The counter is
+// what makes that sentence checkable: before it, "client ICMP still works" was an
+// assumption with nothing behind it, and the client-path prober cannot settle it
+// either because its gateway ping is answered locally.
+func TestNetnsNATCountsWhatItForwards(t *testing.T) {
+	out, err := RenderNetnsNAT(NetnsNATInput{
+		PeerIface: "mih0", RedirAddr: "100.127.255.2:7895", TProxyAddr: "100.127.255.2:7896",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(out, "chain forward {") || !strings.Contains(out, `iifname "mih0" counter`) {
+		t.Errorf("nothing accounts for the protocols this namespace merely forwards:\n%s", out)
+	}
+	if !strings.Contains(out, "ct state invalid drop") {
+		t.Errorf("the namespace does not drop invalid-state packets (2026-07-27):\n%s", out)
+	}
+}
+
+// A crafted direct CIDR must not reach a root-applied ruleset verbatim.
+func TestNetnsNATRefusesACraftedDirectCIDR(t *testing.T) {
+	_, err := RenderNetnsNAT(NetnsNATInput{
+		PeerIface: "mih0", RedirAddr: "100.127.255.2:7895", TProxyAddr: "100.127.255.2:7896",
+		DirectCIDRs: []string{"10.0.0.0/8; drop"},
+	})
+	if err == nil {
+		t.Fatal("a crafted CIDR was rendered into the ruleset")
+	}
+}

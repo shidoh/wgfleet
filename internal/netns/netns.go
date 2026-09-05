@@ -22,6 +22,16 @@ import (
 	"strings"
 )
 
+// linkIsUp reads the STATE column of `ip -br link show`. Takes the runner's two
+// results directly so the call site stays one line.
+func linkIsUp(out string, err error) bool {
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(out)
+	return len(fields) >= 2 && fields[1] == "UP"
+}
+
 // Runner executes one command and returns its combined output. Injected so the
 // whole package is testable without root, a container runtime or a kernel.
 type Runner func(ctx context.Context, name string, args ...string) (string, error)
@@ -60,6 +70,12 @@ type Input struct {
 	// prove it has a working path to an exit. Empty ⇒ that check is skipped.
 	ProbeHost string
 	ProbePort int
+	// MTU is set on BOTH ends of the veth. A veth defaults to 1500, and the leg it
+	// now carries — mihomo to an exit — used to be a locally originated connection
+	// and is a FORWARDED one after the move, so it lives or dies on ICMP
+	// fragmentation-needed getting back. an earlier finding and #18 are both about paths
+	// where that assumption did not hold. 0 ⇒ leave the kernel default.
+	MTU int
 }
 
 // Step is one idempotent command the caller should run. Reads happen during
@@ -95,13 +111,33 @@ func Plan(ctx context.Context, in Input, run Runner) ([]Step, error) {
 		return append([]string{"--net=" + nsPath, "ip"}, rest...)
 	}
 
-	// The veth. `ip -br link show` answering is the whole test: the pair is created
-	// together, so if the host end exists the peer was made with it.
-	if _, err := run(ctx, "ip", "-br", "link", "show", in.HostIface); err != nil {
+	// The veth, checked at BOTH ends.
+	//
+	// The host end existing does not mean the pair is built: the two commands that
+	// build it are separate, and an agent that died between them — a restart, a
+	// reboot, an OOM kill — leaves the peer sitting in the host namespace with the
+	// same name. Every later step then runs `nsenter … dev mih0` against a namespace
+	// that has no such interface and fails forever, while this check says the link
+	// is fine because it only ever looked at its own side.
+	//
+	// So: if the far end is not INSIDE, rebuild. `ip link del` on the host end
+	// removes both halves of a pair, which makes the repair one command rather than
+	// a case analysis of which half survived.
+	_, hostErr := run(ctx, "ip", "-br", "link", "show", in.HostIface)
+	_, peerErr := run(ctx, "nsenter", nsArgs("-br", "link", "show", in.PeerIface)...)
+	switch {
+	case hostErr != nil:
 		add("create the veth to mihomo's namespace",
 			"ip", "link", "add", in.HostIface, "type", "veth", "peer", "name", in.PeerIface)
 		// Move the far end in. Only meaningful right after creation: once it is inside
 		// the namespace it is not visible here to move again.
+		add("move the far end into the namespace",
+			"ip", "link", "set", in.PeerIface, "netns", nsPathPID(nsPath))
+	case peerErr != nil:
+		add("remove a half-built veth (the far end never reached the namespace)",
+			"ip", "link", "del", in.HostIface)
+		add("create the veth to mihomo's namespace",
+			"ip", "link", "add", in.HostIface, "type", "veth", "peer", "name", in.PeerIface)
 		add("move the far end into the namespace",
 			"ip", "link", "set", in.PeerIface, "netns", nsPathPID(nsPath))
 	}
@@ -109,13 +145,53 @@ func Plan(ctx context.Context, in Input, run Runner) ([]Step, error) {
 	if out, err := run(ctx, "ip", "-br", "addr", "show", in.HostIface); err != nil || !strings.Contains(out, hostAddr) {
 		add("address the host end "+hostAddr, "ip", "addr", "add", hostAddr, "dev", in.HostIface)
 	}
-	if out, err := run(ctx, "ip", "-br", "link", "show", in.HostIface); err != nil || !strings.Contains(out, "UP") {
+	// `ip -br link show` prints `<name> <STATE> <mac> <FLAGS>`; the STATE column is
+	// what says whether the link is up. Matching "UP" anywhere in the line matches
+	// the UP flag inside `<NO-CARRIER,BROADCAST,MULTICAST,UP>` too, which is a
+	// DOWN link that has been asked to come up — right by accident today, wrong the
+	// first time it matters.
+	if !linkIsUp(run(ctx, "ip", "-br", "link", "show", in.HostIface)) {
 		add("bring the host end up", "ip", "link", "set", in.HostIface, "up")
 	}
 
 	if out, err := run(ctx, "nsenter", nsArgs("-br", "addr", "show", in.PeerIface)...); err != nil || !strings.Contains(out, peerAddr) {
 		add("address the namespace end "+peerAddr, append([]string{"nsenter"}, nsArgs("addr", "add", peerAddr, "dev", in.PeerIface)...)...)
 		add("bring the namespace end up", append([]string{"nsenter"}, nsArgs("link", "set", in.PeerIface, "up")...)...)
+	}
+
+	// The MTU, on both ends, when one was asked for. `ip link set mtu` is idempotent
+	// but the engine counts every exec as a change, so it is gated on the value the
+	// kernel reports.
+	if in.MTU > 0 {
+		mtu := strconv.Itoa(in.MTU)
+		if out, err := run(ctx, "ip", "-br", "link", "show", in.HostIface); err != nil || !strings.Contains(out, " mtu "+mtu) {
+			add("set the host end MTU to "+mtu, "ip", "link", "set", in.HostIface, "mtu", mtu)
+		}
+		if out, err := run(ctx, "nsenter", nsArgs("-br", "link", "show", in.PeerIface)...); err != nil || !strings.Contains(out, " mtu "+mtu) {
+			add("set the namespace end MTU to "+mtu, append([]string{"nsenter"}, nsArgs("link", "set", in.PeerIface, "mtu", mtu)...)...)
+		}
+	}
+
+	// Forwarding, inside the namespace. Everything that is not TCP or UDP — client
+	// ICMP above all — is not intercepted by the rules in there; it arrives on the
+	// veth addressed to somewhere else and needs the namespace to pass it on. A
+	// fresh namespace has ip_forward at 0, so without this those protocols simply
+	// stop working the moment the interception moves, which the client-path prober
+	// cannot see: its gateway ping is answered locally and never enters the
+	// namespace at all.
+	if out, err := run(ctx, "nsenter", "--net="+nsPath, "sysctl", "-n", "net.ipv4.ip_forward"); err != nil || strings.TrimSpace(out) != "1" {
+		add("let the namespace forward what it does not intercept",
+			"nsenter", "--net="+nsPath, "sysctl", "-w", "net.ipv4.ip_forward=1")
+	}
+	// Reverse-path filtering, pinned rather than inherited. The default a new
+	// namespace gets depends on the host's `all`/`default` values at the moment it
+	// was created, so it is one of those settings that is whatever the last
+	// hardening drop-in left it as. Strict mode here would drop client traffic
+	// outright: it arrives on the veth with a client-pool source, and the route back
+	// to that pool is over the same veth only because we put it there.
+	if out, err := run(ctx, "nsenter", "--net="+nsPath, "sysctl", "-n", "net.ipv4.conf.all.rp_filter"); err != nil || strings.TrimSpace(out) != "0" {
+		add("stop the namespace reverse-path filtering client traffic",
+			"nsenter", "--net="+nsPath, "sysctl", "-w", "net.ipv4.conf.all.rp_filter=0")
 	}
 
 	// Two routes, and both are load-bearing: out to the world so mihomo can reach

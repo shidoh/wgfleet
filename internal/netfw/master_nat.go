@@ -39,6 +39,18 @@ type MasterNATInput struct {
 	// NetnsHostIface is the veth end the routed traffic leaves by. Required with
 	// NetnsGateway; the masquerade and the leak guard must both exempt it.
 	NetnsHostIface string
+	// NetnsLinkCIDR is the point-to-point link to the namespace. Required with
+	// NetnsGateway: everything mihomo sends — exit endpoints, WARP, the management
+	// overlay, geo databases — now leaves with the namespace's address as its
+	// source, and nothing on the way out rewrites it.
+	//
+	// A comment in the in-namespace ruleset used to assert "the host masquerades on
+	// the way out". It did not: the only masquerade here matches the CLIENT pool,
+	// and this link is not in it. Every packet mihomo sent would have gone out with
+	// a source nobody can route a reply to, so not one master↔exit tunnel would
+	// have come up — which is also why the namespace never passed its readiness
+	// gate and why this never reached a client.
+	NetnsLinkCIDR string
 	// NetnsCanary narrows the move to a subset of client SOURCES. Empty with a
 	// gateway set ⇒ every client moves; a prefix ⇒ only those addresses do, and the
 	// host keeps intercepting everyone else.
@@ -157,6 +169,22 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// interception has moved wholesale. With a canary, everyone EXCEPT the canary
 	// sources — the two paths run side by side, which is the whole point of having
 	// a canary at all.
+	// The namespace link, canonicalised for the masquerade below. Only meaningful
+	// once the interception has moved; before that nothing sources traffic from it.
+	linkCIDR := ""
+	if in.NetnsGateway != "" && in.NetnsLinkCIDR != "" {
+		canon, lerr := canonicalPrefix(in.NetnsLinkCIDR)
+		if lerr != nil {
+			return "", fmt.Errorf("netfw master NAT: invalid namespace link CIDR %q: %w", in.NetnsLinkCIDR, lerr)
+		}
+		linkCIDR = canon
+	}
+	if in.NetnsGateway != "" && in.NetnsHostIface == "" {
+		// Without the veth name neither the masquerade nor the leak guard can exempt
+		// it, and both would then eat the traffic they were changed to let past.
+		return "", fmt.Errorf("netfw master NAT: the namespace gateway needs the veth name")
+	}
+
 	hostIntercepts := in.NetnsGateway == "" || in.NetnsCanary != ""
 	canaryGuard := ""
 	if in.NetnsGateway != "" && in.NetnsCanary != "" {
@@ -265,6 +293,17 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// reply to the right one.
 	fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q%s masquerade\n",
 		clientCIDR, in.ClientInterface, netnsIfaceGuard(in.NetnsHostIface))
+	// And the namespace's own address, for everything mihomo originates: the exit
+	// endpoints, WARP, the management overlay, the geo databases. It is a private
+	// CGNAT address that exists on this host and nowhere else, so without this every
+	// one of those connections leaves with a source no reply can come back to.
+	//
+	// Scoped `oifname != <veth>` for the same reason the client rule is scoped to the
+	// client interface: traffic going back INTO the namespace must keep its address,
+	// or mihomo cannot tell one correspondent from another.
+	if linkCIDR != "" {
+		fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q masquerade\n", linkCIDR, in.NetnsHostIface)
+	}
 	b.WriteString("\t}\n")
 
 	// Enforce what the masquerade above promises: no client-pool source ever reaches

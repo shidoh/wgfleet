@@ -20,6 +20,19 @@ type NetnsNATInput struct {
 	// address.
 	RedirAddr  string
 	TProxyAddr string
+	// DirectCIDRs are destinations that must NOT be intercepted: the corporate
+	// networks clients route through the master, the management overlay, the exits'
+	// own public addresses (an earlier finding — SSH to an exit from a full-tunnel client).
+	//
+	// On the host these have always been `ip daddr !=` guards on the interception
+	// rules. Routing the whole client interface into a namespace takes them with it,
+	// where an unguarded ruleset meets them with an unconditional DNAT for TCP and a
+	// fail-closed drop for UDP. This is the second of two lines of defence — the
+	// first is a routing rule that keeps them out of the namespace altogether — and
+	// it is here because the failure is the same shape as the outage this whole
+	// change exists to end: partial, one-way, and invisible to every component
+	// metric.
+	DirectCIDRs []string
 }
 
 // RenderNetnsNAT renders the interception that used to live on the host.
@@ -40,6 +53,11 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 		return "", fmt.Errorf("netfw netns NAT: peer interface, redir and tproxy addresses are required")
 	}
 
+	guards, err := privateGuards(in.DirectCIDRs)
+	if err != nil {
+		return "", err
+	}
+
 	var b strings.Builder
 	b.WriteString("#!/usr/sbin/nft -f\n")
 	b.WriteString("# Rendered by wgfleet — client interception inside mihomo's namespace. Do not edit by hand.\n")
@@ -51,7 +69,7 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 
 	b.WriteString("\tchain prerouting {\n")
 	b.WriteString("\t\ttype nat hook prerouting priority dstnat; policy accept;\n")
-	fmt.Fprintf(&b, "\t\tiifname %q ip protocol tcp dnat to %s\n", in.PeerIface, in.RedirAddr)
+	fmt.Fprintf(&b, "\t\tiifname %q%s ip protocol tcp dnat to %s\n", in.PeerIface, guards, in.RedirAddr)
 	b.WriteString("\t}\n\n")
 
 	b.WriteString("\tchain client_udp_tproxy {\n")
@@ -60,13 +78,13 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	// is on the host: nft_tproxy_eval returns NFT_BREAK when no transparent socket
 	// is listening, which ends the rule — so a mark written first would ride on a
 	// packet that was never intercepted and send it somewhere it does not belong.
-	fmt.Fprintf(&b, "\t\tiifname %q meta l4proto udp tproxy ip to %s meta mark set %#x accept\n",
-		in.PeerIface, in.TProxyAddr, TProxyMark)
+	fmt.Fprintf(&b, "\t\tiifname %q%s meta l4proto udp tproxy ip to %s meta mark set %#x accept\n",
+		in.PeerIface, guards, in.TProxyAddr, TProxyMark)
 	// FAIL CLOSED, for the same reason as on the host: an interception that did not
 	// happen is a packet that must not travel. Here it matters more, not less —
 	// this namespace has a default route to the host, so an unintercepted datagram
 	// would leave by the master's own uplink with the client's address on it.
-	fmt.Fprintf(&b, "\t\tiifname %q meta l4proto udp counter drop\n", in.PeerIface)
+	fmt.Fprintf(&b, "\t\tiifname %q%s meta l4proto udp counter drop\n", in.PeerIface, guards)
 	b.WriteString("\t}\n\n")
 
 	// Client traffic leaves this namespace as mihomo's own connections, so it needs
@@ -77,6 +95,29 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	// A permissive policy is right here and nowhere else: the only thing that can
 	// reach this namespace is what the host routes into it over the veth, and the
 	// host's own drop-policy input chain has already had its say.
+	//
+	// The one exception is the invalid-state drop, which is not about who may come
+	// in. A late FIN retransmit whose conntrack entry has aged out carries no NAT
+	// binding; upstream then holds a return path for the untranslated address,
+	// conntrack resolves the resulting tuple collision by rewriting the source port,
+	// and the far end receives data on a port it never dialled and resets. Traced
+	// end to end on an exit 2026-07-27, fixed there with this rule, and the reason
+	// it belongs in every namespace that forwards client traffic.
+	b.WriteString("\t\tct state invalid drop\n")
+	b.WriteString("\t}\n\n")
+
+	// Everything that is NOT TCP or UDP. ICMP, GRE, ESP: the prerouting rules above
+	// never see them, so they reach the forward hook and go on to the host, which
+	// masquerades them exactly as it did before the move.
+	//
+	// The chain exists to make that sentence checkable. Before it, "client ICMP
+	// still works" was an assumption with nothing behind it — and the client-path
+	// prober cannot settle it either, because its gateway ping is answered locally
+	// and never comes near here. A counter turns a regression from invisible into a
+	// number that stops moving.
+	b.WriteString("\tchain forward {\n")
+	b.WriteString("\t\ttype filter hook forward priority filter; policy accept;\n")
+	fmt.Fprintf(&b, "\t\tiifname %q counter\n", in.PeerIface)
 	b.WriteString("\t}\n")
 	b.WriteString("}\n")
 	return b.String(), nil

@@ -36,6 +36,11 @@ type netnsPlanner struct {
 	attached func() bool
 	// nftPath is where the in-namespace ruleset is written; "" ⇒ the canonical path.
 	nftPath string
+	// nftCheck validates a ruleset before it is written; nil ⇒ the real `nft -c`.
+	// A parameter rather than a package variable for the reason the host's copy
+	// became one: a package-level hook is a data race the first time two tests run
+	// in parallel, and `go vet` cannot see it.
+	nftCheck func([]byte) error
 	// clientIface is the interface client traffic arrives on — the `iif` the
 	// routing rule matches. Passed in like every other planner's copy of it rather
 	// than derived here: an earlier version derived it from an empty path and got
@@ -79,6 +84,7 @@ func (p netnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 		PeerIface:  domain.NetnsPeerIface,
 		CIDR:       spec.Master.NetnsLinkCIDR(),
 		ClientCIDR: spec.WGServer.AddressPool,
+		MTU:        netnsLinkMTU(spec),
 	}
 
 	steps, err := netns.Plan(ctx, in, run)
@@ -106,6 +112,12 @@ func (p netnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 			return nil, nerr
 		}
 		actions = append(actions, nftActions...)
+	} else {
+		// The way back. Not "add nothing": the rules installed by a previous pass are
+		// still in the kernel, and the one at priority 400 sorts ahead of the TPROXY
+		// mark rule the host has just re-armed — so leaving it there sends every
+		// intercepted client packet into a namespace nothing is listening in.
+		actions = append(actions, p.detachActions(ctx, run)...)
 	}
 
 	if len(actions) == 0 {
@@ -114,6 +126,13 @@ func (p netnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 	}
 	return actions, nil
 }
+
+// netnsDirectRulePref is the ip-rule priority that keeps destination-based
+// exemptions OUT of the namespace. Lower than NetnsRulePref so it is consulted
+// first: `ip rule` is evaluated in ascending priority order, and the whole point
+// is to answer "is this one of the destinations that must not be intercepted"
+// before "is this client traffic".
+const netnsDirectRulePref = 390
 
 // interceptionActions renders the in-namespace ruleset and the host-side policy
 // routing that sends client traffic into it.
@@ -137,10 +156,12 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 	if redir == 0 {
 		redir = mihomo.DefaultRedirPort
 	}
+	direct := directDestinations(spec)
 	ruleset, err := netfw.RenderNetnsNAT(netfw.NetnsNATInput{
-		PeerIface:  in.PeerIface,
-		RedirAddr:  fmt.Sprintf("%s:%d", peerIP, redir),
-		TProxyAddr: fmt.Sprintf("%s:%d", peerIP, mihomo.TProxyPortFor(redir)),
+		PeerIface:   in.PeerIface,
+		RedirAddr:   fmt.Sprintf("%s:%d", peerIP, redir),
+		TProxyAddr:  fmt.Sprintf("%s:%d", peerIP, mihomo.TProxyPortFor(redir)),
+		DirectCIDRs: direct,
 	})
 	if err != nil {
 		return nil, err
@@ -149,18 +170,65 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 	if path == "" {
 		path = netnsNFTPath
 	}
-	file, ferr := reconcile.FileAction(path, []byte(ruleset), 0o644, nil)
-	if ferr != nil {
-		return nil, ferr
-	}
 	if p.clientIface == "" {
 		// No interface, no rule. Installing one with an empty or invented `iif` is
 		// worse than installing none: it applies cleanly, matches nothing, and the
 		// host has already been told to stop intercepting.
 		return nil, fmt.Errorf("mihomo network namespace: client interface is unknown")
 	}
+	// Through NFTApply, with an nsenter'd nft. Everything that machinery gives the
+	// host's rulesets — a pre-check before the bytes are written, an applied marker
+	// so a FAILED apply is not recorded as done, the previous ruleset kept as a way
+	// back, a re-apply when the kernel has lost the table — is worth more here, not
+	// less: nobody notices a missing table inside a namespace.
+	nsNFT := []string{"nsenter", "--net=" + nsPath, "nft"}
+	actions, err := reconcile.NFTApplyWith(nsNFT, path, []byte(ruleset),
+		func() bool { return p.nsTableLoaded(ctx, nsPath, run) }, p.nftCheck,
+		"apply the in-namespace interception atomically")
+	if err != nil {
+		return nil, err
+	}
+
 	table := fmt.Sprintf("%d", netfw.NetnsRouteTable)
 	pref := fmt.Sprintf("%d", netfw.NetnsRulePref)
+
+	// Destination exemptions FIRST, and they are the difference between a migration
+	// and an outage.
+	//
+	// `ip rule … iif wg0 lookup 51822` takes the whole client interface, and table
+	// 51822 holds one default route into the namespace. Every destination that is
+	// supposed to stay off the proxy goes with it: the corporate networks clients
+	// carry in route_through_cidrs, the management overlay, the exits' own public
+	// addresses, client-to-client traffic inside the pool. Today those
+	// live as `ip daddr !=` guards in the host ruleset, which the move deletes.
+	//
+	// A lower priority is the whole mechanism: rules are consulted in ascending
+	// order, so "is this an exempt destination" is asked before "is this a client".
+	// The in-namespace guards are the second line, for anything that reaches it
+	// anyway.
+	live := livePrefixes(ctx, run, netnsDirectRulePref)
+	want := map[string]bool{}
+	for _, cidr := range direct {
+		want[cidr] = true
+		if live[cidr] {
+			continue
+		}
+		actions = append(actions, reconcile.ExecAction(
+			"keep "+cidr+" out of the namespace (direct destination)",
+			"ip", "rule", "add", "to", cidr, "lookup", "main", "pref", fmt.Sprintf("%d", netnsDirectRulePref)))
+	}
+	// And withdraw the ones that are no longer exempt. Without this an operator who
+	// removes a direct CIDR from the manifest leaves the rule behind forever, and
+	// that destination silently keeps bypassing the proxy.
+	for cidr := range live {
+		if want[cidr] {
+			continue
+		}
+		actions = append(actions, reconcile.BestEffortExecAction(
+			"stop exempting "+cidr+" (no longer a direct destination)",
+			"ip", "rule", "del", "to", cidr, "lookup", "main", "pref", fmt.Sprintf("%d", netnsDirectRulePref)))
+	}
+
 	// The rule that actually moves traffic. With a canary it is scoped to those
 	// client sources and everyone else stays on the host path — which is what makes
 	// the blast radius of this migration one device instead of every client. The
@@ -173,16 +241,192 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 		summary = "send client traffic from " + canary + " to mihomo's namespace (canary)"
 	}
 	rule = append(rule, "iif", p.clientIface, "lookup", table, "pref", pref)
-	return []reconcile.Action{
-		file,
-		reconcile.ExecAction("load the in-namespace interception",
-			"nsenter", "--net="+nsPath, "nft", "-f", path),
-		reconcile.BestEffortExecAction("clear any stale rule at the namespace priority",
-			"ip", "rule", "del", "pref", pref),
-		reconcile.ExecAction(summary, rule...),
-		reconcile.ExecAction("route the namespace table through the veth",
-			"ip", "route", "replace", "default", "via", peerIP, "dev", in.HostIface, "table", table),
-	}, nil
+
+	// Gated on what the kernel actually has. These used to be bare execs: every pass
+	// deleted the rule and added it back, and between the two calls a client packet
+	// takes the main table, leaves by the master's uplink and is masqueraded — the
+	// precise leak the fail-closed drop exists to prevent, opened twice a minute by
+	// the code that installs it. It also made every report show changes forever.
+	if !p.routingLive(ctx, run, pref, table, peerIP, in.HostIface) {
+		actions = append(actions,
+			reconcile.BestEffortExecAction("clear any stale rule at the namespace priority",
+				"ip", "rule", "del", "pref", pref),
+			reconcile.ExecAction(summary, rule...),
+			reconcile.ExecAction("route the namespace table through the veth",
+				"ip", "route", "replace", "default", "via", peerIP, "dev", in.HostIface, "table", table))
+	} else {
+		actions = append(actions, reconcile.NoChangeAction("namespace routing",
+			"client traffic already routed into the namespace"))
+	}
+
+	// TPROXY's other half, inside the namespace. `tproxy` only assigns the socket;
+	// the routing decision happens AFTER prerouting, and without a policy route for
+	// the mark the kernel looks at a destination that still belongs to somebody else
+	// and sends the packet out the default route. The transparent socket never sees
+	// a datagram.
+	//
+	// The host has carried this pair since TPROXY was introduced there
+	// (tproxyRouteActions); the namespace got the nft rule and not the routing, so
+	// the interception would have assigned sockets nothing ever delivered to.
+	if !p.nsTProxyRoutingLive(ctx, nsPath, run) {
+		nsPrefix := []string{"nsenter", "--net=" + nsPath, "ip"}
+		mark := fmt.Sprintf("%#x", netfw.TProxyMark)
+		tproxyTable := fmt.Sprintf("%d", netfw.TProxyTable)
+		actions = append(actions,
+			reconcile.BestEffortExecAction("drop any stale tproxy rule inside the namespace",
+				append(append([]string(nil), nsPrefix...), "rule", "del", "fwmark", mark, "lookup", tproxyTable)...),
+			reconcile.ExecAction("keep tproxy-marked packets in the namespace",
+				append(append([]string(nil), nsPrefix...), "rule", "add", "fwmark", mark, "lookup", tproxyTable)...),
+			reconcile.ExecAction("deliver tproxy-marked packets to the local socket",
+				append(append([]string(nil), nsPrefix...), "route", "replace", "local", "0.0.0.0/0", "dev", "lo", "table", tproxyTable)...))
+	}
+	return actions, nil
+}
+
+// detachActions undoes everything interceptionActions installed on the HOST.
+//
+// Symmetry here is not tidiness. `ip rule pref 400` sorts ahead of the TPROXY
+// mark rule at 32765, so a rule left behind after mihomo has moved back sends
+// every marked client packet into a namespace that is empty or gone — and it also
+// swallows every destination the direct-exemption rules were protecting. The
+// original branch simply stopped ADDING actions when the decision flipped back,
+// which meant the automatic revert — the thing that made "on by default"
+// defensible — left clients worse off than the move did, until a human logged in.
+func (p netnsPlanner) detachActions(ctx context.Context, run netns.Runner) []reconcile.Action {
+	pref := fmt.Sprintf("%d", netfw.NetnsRulePref)
+	table := fmt.Sprintf("%d", netfw.NetnsRouteTable)
+	var actions []reconcile.Action
+	if p.ruleLive(ctx, run, pref) {
+		actions = append(actions, reconcile.ExecAction(
+			"stop routing client traffic into the namespace",
+			"ip", "rule", "del", "pref", pref))
+	}
+	for cidr := range livePrefixes(ctx, run, netnsDirectRulePref) {
+		actions = append(actions, reconcile.BestEffortExecAction(
+			"withdraw the direct-destination exemption for "+cidr,
+			"ip", "rule", "del", "to", cidr, "lookup", "main", "pref",
+			fmt.Sprintf("%d", netnsDirectRulePref)))
+	}
+	if out, err := run(ctx, "ip", "route", "show", "table", table); err == nil && strings.TrimSpace(out) != "" {
+		actions = append(actions, reconcile.BestEffortExecAction(
+			"empty the namespace routing table",
+			"ip", "route", "flush", "table", table))
+	}
+	return actions
+}
+
+// directDestinations is what must not be intercepted. The client pool itself is
+// included: client-to-client traffic is delivered by the master's own interface
+// and has no business crossing a proxy.
+func directDestinations(spec domain.NodeSpec) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(c string) {
+		c = strings.TrimSpace(c)
+		if c == "" || seen[c] {
+			return
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+	if spec.Master != nil {
+		for _, c := range spec.Master.DirectCIDRs {
+			add(c)
+		}
+	}
+	add(spec.WGServer.AddressPool)
+	return out
+}
+
+// livePrefixes reads the destinations currently exempted at a given ip-rule
+// priority. Reading the kernel rather than remembering what we wrote is what lets
+// a withdrawn CIDR actually be withdrawn — a planner is rebuilt every pass and
+// remembers nothing.
+func livePrefixes(ctx context.Context, run netns.Runner, pref int) map[string]bool {
+	out := map[string]bool{}
+	text, err := run(ctx, "ip", "rule", "list")
+	if err != nil {
+		return out
+	}
+	want := fmt.Sprintf("%d:", pref)
+	for _, line := range strings.Split(text, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || fields[0] != want {
+			continue
+		}
+		for i, f := range fields {
+			if f == "to" && i+1 < len(fields) {
+				out[fields[i+1]] = true
+			}
+		}
+	}
+	return out
+}
+
+// ruleLive reports whether any rule sits at a priority.
+func (p netnsPlanner) ruleLive(ctx context.Context, run netns.Runner, pref string) bool {
+	text, err := run(ctx, "ip", "rule", "list")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), pref+":") {
+			return true
+		}
+	}
+	return false
+}
+
+// routingLive reports whether the kernel already carries BOTH halves of the move:
+// the rule at our priority naming the client interface and the right table, and
+// that table's default route through the veth.
+func (p netnsPlanner) routingLive(ctx context.Context, run netns.Runner, pref, table, peerIP, hostIface string) bool {
+	text, err := run(ctx, "ip", "rule", "list")
+	if err != nil {
+		return false
+	}
+	found := false
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, pref+":") {
+			continue
+		}
+		if strings.Contains(line, "iif "+p.clientIface) && strings.Contains(line, "lookup "+table) {
+			found = true
+		}
+	}
+	if !found {
+		return false
+	}
+	route, err := run(ctx, "ip", "route", "show", "table", table)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(route, "default via "+peerIP) && strings.Contains(route, "dev "+hostIface)
+}
+
+// nsTableLoaded reports whether the namespace holds the interception table.
+func (p netnsPlanner) nsTableLoaded(ctx context.Context, nsPath string, run netns.Runner) bool {
+	_, err := run(ctx, "nsenter", "--net="+nsPath, "nft", "list", "table", "ip", netfw.NetnsNATTable)
+	return err == nil
+}
+
+// nsTProxyRoutingLive reports whether the namespace carries the fwmark rule and
+// the local default route TPROXY needs.
+func (p netnsPlanner) nsTProxyRoutingLive(ctx context.Context, nsPath string, run netns.Runner) bool {
+	mark := fmt.Sprintf("%#x", netfw.TProxyMark)
+	table := fmt.Sprintf("%d", netfw.TProxyTable)
+	rules, err := run(ctx, "nsenter", "--net="+nsPath, "ip", "rule", "list")
+	if err != nil || !strings.Contains(rules, "lookup "+table) {
+		return false
+	}
+	// `ip rule list` prints the mark as `fwmark 0x2`; accept either spelling so a
+	// kernel that renders it differently does not cause a re-add every pass.
+	if !strings.Contains(rules, mark) && !strings.Contains(rules, "fwmark 2") {
+		return false
+	}
+	route, err := run(ctx, "nsenter", "--net="+nsPath, "ip", "route", "show", "table", table)
+	return err == nil && strings.Contains(route, "local default")
 }
 
 // NamespaceReady reports whether mihomo's namespace is fit to carry client
@@ -285,4 +529,25 @@ func NetnsHostIP(spec domain.NodeSpec) string {
 	}
 	ip, _, _ := strings.Cut(host, "/")
 	return ip
+}
+
+// netnsLinkMTU is what both ends of the veth are set to.
+//
+// The client interface's own MTU, because that is the size of the packets this
+// link will carry: a client datagram arrives on wg0 already fragmented to fit the
+// tunnel, is routed across the veth, and leaves again over another tunnel. A veth
+// left at the default 1500 claims it can carry more than either neighbour can,
+// and the leg it now carries changed character with the move — mihomo-to-exit
+// used to be a locally originated connection, where the kernel knows the path
+// MTU, and is a FORWARDED one afterwards, where correctness rests on ICMP
+// fragmentation-needed coming back. an earlier finding and #18 are both about paths where
+// that did not hold.
+//
+// 0 when the client interface has no MTU of its own: better to leave the kernel
+// default than to invent a number.
+func netnsLinkMTU(spec domain.NodeSpec) int {
+	if spec.Master == nil || spec.Master.ClientWG == nil {
+		return 0
+	}
+	return spec.Master.ClientWG.MTU
 }

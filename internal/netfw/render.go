@@ -114,6 +114,14 @@ type RenderInput struct {
 	// but no DNS). 0 ⇒ clients use some other resolver (the pre-ADR-0024 default
 	// where clients pointed at the exit blockys directly).
 	ClientDNSPort int
+	// NetnsHostIface is the host end of the veth to mihomo's network namespace, set
+	// only once client interception has moved there. Traffic from the namespace to
+	// this host — the fleet resolver, the local services mihomo depends on — arrives
+	// on it, and a drop-policy input chain with nothing accepting it silently
+	// isolates the namespace. That also broke the readiness gate itself: `nsenter
+	// --net` changes only the network namespace, so `getent` inside still reads the
+	// HOST's resolv.conf, sends the query to the gateway, and had it dropped here.
+	NetnsHostIface string
 	// TProxyMark, when > 0 (master role), makes the input chain accept packets the
 	// TPROXY chain marked. It has to key on the MARK and not on a port: tproxy hands
 	// the datagram to a transparent socket without rewriting it, so it reaches INPUT
@@ -297,6 +305,14 @@ func RenderRuleset(in RenderInput) (string, error) {
 	b.WriteString("\t\tiif \"lo\" accept\n")
 	// Trust the management overlay wholesale (fail-safe; see mgmtOverlayIface).
 	fmt.Fprintf(&b, "\t\tiifname %q accept\n", mgmtOverlayIface)
+	// And the veth to mihomo's namespace, on the same argument. What is on the far
+	// end is a container this agent created, holding a namespace this agent built,
+	// on a /30 that exists nowhere else — there is no third party to keep out. What
+	// IS on this side is the fleet resolver and the services mihomo needs to reach
+	// to do its job at all.
+	if in.NetnsHostIface != "" {
+		fmt.Fprintf(&b, "\t\tiifname %q accept\n", in.NetnsHostIface)
+	}
 	b.WriteString("\t\tip saddr @whitelist accept\n")
 	// Whitelist accept precedes the blacklist drop, so an explicitly trusted source
 	// (mgmt overlay, master IP) is never caught by a scanner feed.

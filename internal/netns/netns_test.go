@@ -34,7 +34,8 @@ func (r *recorder) run(_ context.Context, name string, args ...string) (string, 
 }
 
 func isRead(line string) bool {
-	return strings.Contains(line, " show") || strings.Contains(line, "docker inspect")
+	return strings.Contains(line, " show") || strings.Contains(line, "docker inspect") ||
+		strings.Contains(line, "sysctl -n") || strings.Contains(line, " rule list")
 }
 
 func (r *recorder) mutating() []string {
@@ -65,11 +66,14 @@ func testInput() Input {
 // exists to avoid, delivered on a timer.
 func TestEnsureIsIdempotent(t *testing.T) {
 	r := &recorder{out: map[string]string{
-		"docker inspect -f {{.State.Pid}} wgfleet-netns":        "4242\n",
-		"ip -br link show mih-host":                             "mih-host@if9 UP 100.127.255.1/30\n",
-		"ip -br addr show mih-host":                             "mih-host@if9 UP 100.127.255.1/30\n",
-		"nsenter --net=/proc/4242/ns/net ip -br addr show mih0": "mih0@if8 UP 100.127.255.2/30\n",
-		"nsenter --net=/proc/4242/ns/net ip route show":         "default via 100.127.255.1 dev mih0\n10.73.0.0/24 via 100.127.255.1 dev mih0\n",
+		"docker inspect -f {{.State.Pid}} wgfleet-netns":                        "4242\n",
+		"ip -br link show mih-host":                                             "mih-host@if9 UP 100.127.255.1/30\n",
+		"ip -br addr show mih-host":                                             "mih-host@if9 UP 100.127.255.1/30\n",
+		"nsenter --net=/proc/4242/ns/net ip -br addr show mih0":                 "mih0@if8 UP 100.127.255.2/30\n",
+		"nsenter --net=/proc/4242/ns/net ip -br link show mih0":                 "mih0@if8 UP 100.127.255.2/30\n",
+		"nsenter --net=/proc/4242/ns/net ip route show":                         "default via 100.127.255.1 dev mih0\n10.73.0.0/24 via 100.127.255.1 dev mih0\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.ip_forward":         "1\n",
+		"nsenter --net=/proc/4242/ns/net sysctl -n net.ipv4.conf.all.rp_filter": "0\n",
 	}}
 
 	steps, err := Plan(context.Background(), testInput(), r.run)

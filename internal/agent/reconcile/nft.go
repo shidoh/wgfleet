@@ -93,6 +93,27 @@ func NFTPreviousRuleset(rulesetPath string) string { return rulesetPath + ".prev
 // package var is invisible to `go vet`, and the first parallel test or concurrent
 // caller would turn it into a silent data race.
 func NFTApply(path string, ruleset []byte, loaded func() bool, check func([]byte) error, summary string) ([]Action, error) {
+	return NFTApplyWith(nil, path, ruleset, loaded, check, summary)
+}
+
+// NFTApplyWith is NFTApply for a ruleset that has to be loaded somewhere other
+// than this namespace: nftPrefix replaces the bare `nft` invocation (nil ⇒ `nft`),
+// so a caller can pass `nsenter --net=<path> nft`.
+//
+// It exists because the second renderer this branch added went around all of the
+// above — no pre-check, no applied marker, no previous ruleset, no kernel
+// comparison — and did so in the ONE place where the consequences are least
+// visible: a ruleset inside a namespace, where nobody runs `nft list ruleset` by
+// reflex. That is an earlier finding in its purest form: a fix written for one resource is
+// not a fix until it is applied to all of them.
+func NFTApplyWith(nftPrefix []string, path string, ruleset []byte, loaded func() bool, check func([]byte) error, summary string) ([]Action, error) {
+	if len(nftPrefix) == 0 {
+		nftPrefix = []string{"nft"}
+	}
+	apply := func(extra string) Action {
+		argv := append(append([]string(nil), nftPrefix...), "-f", path)
+		return ExecAction(summary+extra, argv...)
+	}
 	if check == nil {
 		check = checkRulesetWithNFT
 	}
@@ -136,12 +157,12 @@ func NFTApply(path string, ruleset []byte, loaded func() bool, check func([]byte
 
 	switch {
 	case string(applied) != want:
-		actions = append(actions, ExecAction(summary, "nft", "-f", path).OnApplied(record))
+		actions = append(actions, apply("").OnApplied(record))
 	case !loaded():
 		// The ruleset is the one we last applied, but the kernel no longer has the
 		// table: a reboot cleared nft state, or someone flushed it by hand. Re-apply
 		// to self-heal rather than run with no rules while reporting Ready.
-		actions = append(actions, ExecAction(summary+" (kernel table missing)", "nft", "-f", path).OnApplied(record))
+		actions = append(actions, apply(" (kernel table missing)").OnApplied(record))
 	default:
 		actions = append(actions, NoChangeAction("nft -f", "ruleset applied and present in the kernel"))
 	}

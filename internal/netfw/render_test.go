@@ -786,3 +786,36 @@ func TestMasterInputHasNoTProxyAcceptWhenUnused(t *testing.T) {
 		t.Errorf("rendered a mark-based accept with no interception configured:\n%s", out)
 	}
 }
+
+// A drop-policy input chain with nothing accepting the veth isolates mihomo's
+// namespace from this host: no fleet resolver, no local services. It also broke
+// the readiness gate itself — `nsenter --net` changes only the network namespace,
+// so `getent` inside still reads the HOST's resolv.conf, sends the query to the
+// gateway, and had it dropped right here.
+func TestInputChainTrustsTheNamespaceVeth(t *testing.T) {
+	out, err := RenderRuleset(RenderInput{
+		Firewall:       domain.FirewallSpec{WGPort: 51820},
+		Role:           domain.RoleMaster,
+		NetnsHostIface: "mih-host",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(out, `iifname "mih-host" accept`) {
+		t.Errorf("the namespace cannot reach anything on this host:\n%s", out)
+	}
+}
+
+// And before the move there is no veth to trust, so nothing is opened.
+func TestInputChainOpensNothingBeforeTheMove(t *testing.T) {
+	out, err := RenderRuleset(RenderInput{
+		Firewall: domain.FirewallSpec{WGPort: 51820},
+		Role:     domain.RoleMaster,
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(out, "mih-host") {
+		t.Errorf("an unmoved master trusts an interface that does not exist:\n%s", out)
+	}
+}

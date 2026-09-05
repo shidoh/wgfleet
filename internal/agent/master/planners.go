@@ -105,7 +105,8 @@ func Planners(in Input) []reconcile.Planner {
 		tuning.BBRPlanner(),
 		// Input firewall: bring the drop policy up before the services, the same
 		// ordering the bootstrap uses ("firewall before traffic").
-		firewallPlanner{path: in.Paths.FirewallNFT, overlayMSS: in.OverlayMSS, clientIface: in.ClientInterface},
+		firewallPlanner{path: in.Paths.FirewallNFT, overlayMSS: in.OverlayMSS, clientIface: in.ClientInterface,
+			netnsAttached: in.NetnsAttached},
 		// The client interface goes BEFORE compose, and the order is load-bearing in
 		// the REVERSE direction. On the rollback pass compose restores wg-easy and
 		// lets it recreate wg0; if we ran after it, we would tear down the interface
@@ -123,14 +124,6 @@ func Planners(in Input) []reconcile.Planner {
 			serverPub: in.ClientWGPublicKey},
 		composePlanner{path: in.Paths.Compose, adminUser: in.AdminUsername, adminPass: in.AdminPassword,
 			netnsAttached: in.NetnsAttached},
-		// The client leg has exactly one owner. While wg-easy holds it these three
-		// keep its database converged; once the operator hands the leg to the agent
-		// they all no-op (see handedOver) and clientWGPlanner takes over. Writing to
-		// a database whose service we just stopped would be harmless but misleading —
-		// the plan would report work on a component that is gone.
-		wgEasyPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface, compose: in.Paths.Compose},
-		wgEasyUserConfigPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface},
-		wgEasyMetricsPlanner{dbPath: in.Paths.WGEasyDB},
 		// Extra files (operator rule-provider lists like direct-domains.yaml) MUST be
 		// written before mihomo renders + hot-reloads its config, which references them
 		// as `file` rule-providers — otherwise the first reload points at a missing
@@ -147,6 +140,22 @@ func Planners(in Input) []reconcile.Planner {
 			netnsAttached: in.NetnsAttached},
 		masterNATPlanner{path: in.Paths.NFT, v6Path: in.Paths.V6NFT, clientIface: in.ClientInterface,
 			netnsAttached: in.NetnsAttached},
+		// The client leg has exactly one owner. While wg-easy holds it these three
+		// keep its database converged; once the operator hands the leg to the agent
+		// they all no-op (see handedOver) and clientWGPlanner takes over. Writing to
+		// a database whose service we just stopped would be harmless but misleading —
+		// the plan would report work on a component that is gone.
+		//
+		// They sit AFTER the data plane rather than before it, and the reason is the
+		// pass on which client interception moves into mihomo's namespace. Compose
+		// puts mihomo in the namespace; the host stops intercepting only when the
+		// master NAT is re-rendered, several planners later — and in between, the host
+		// is still redirecting client traffic at listeners that have moved. Everything
+		// standing in that gap is time clients spend with no path, so only the things
+		// that MUST precede mihomo (its extra files, its dashboard) are left there.
+		wgEasyPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface, compose: in.Paths.Compose},
+		wgEasyUserConfigPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface},
+		wgEasyMetricsPlanner{dbPath: in.Paths.WGEasyDB},
 		dockerfw.NewForwardPlanner(
 			"master forwarding (ip_forward + DOCKER-USER)",
 			in.ClientInterface, defaultClientInterface,
@@ -466,6 +475,10 @@ type firewallPlanner struct {
 	// present". Set on the receiver copy inside Plan, which is why isLoaded is only
 	// ever taken as a method value after the assignment.
 	lastRendered string
+	// netnsAttached reports whether client interception has moved into mihomo's
+	// namespace. When it has, the drop-policy input chain must trust the veth or the
+	// namespace can reach nothing on this host — including the resolver.
+	netnsAttached func() bool
 }
 
 func (firewallPlanner) Component() string { return "master firewall (nftables)" }
@@ -517,6 +530,10 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 		ClientAdminPorts: adminPorts,
 		ClientMSS:        clientMSS,
 		ClientDNSPort:    clientDNSPort,
+		// Rendered from the same decision the NAT table reads, so the interception
+		// moving and the host trusting the veth are one change rather than two that
+		// converge at different times.
+		NetnsHostIface: netnsVethIface(spec, p.netnsAttached),
 	})
 	if err != nil {
 		return nil, err
@@ -579,6 +596,15 @@ type masterNATPlanner struct {
 	netnsAttached func() bool
 }
 
+// netnsVethIface names the veth to mihomo's namespace once interception lives
+// there, and nothing before that.
+func netnsVethIface(spec domain.NodeSpec, attached func() bool) string {
+	if attached == nil || !attached() || spec.Master == nil {
+		return ""
+	}
+	return domain.NetnsHostIface
+}
+
 // NATInput builds the input the master's NAT ruleset is rendered from.
 //
 // Exported, and a free function rather than a planner method, because a second
@@ -632,6 +658,7 @@ func NATInput(spec domain.NodeSpec, clientIface string, netnsAttached bool) netf
 		PrivateCIDRs:    spec.Master.DirectCIDRs,
 		NetnsGateway:    netnsGW,
 		NetnsHostIface:  netnsIface,
+		NetnsLinkCIDR:   spec.Master.NetnsLinkCIDR(),
 		NetnsCanary:     canary,
 	}
 }

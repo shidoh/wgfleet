@@ -448,3 +448,42 @@ func TestCanaryCIDRCannotInjectRules(t *testing.T) {
 		t.Fatal("a crafted canary CIDR was rendered into the ruleset")
 	}
 }
+
+// Everything mihomo sends once it lives in the namespace — exit endpoints, WARP,
+// the management overlay, geo databases — leaves with the namespace's address as
+// its source. Nothing on the way out rewrote it: the only masquerade matched the
+// CLIENT pool, and this link is not in it. Not one master↔exit tunnel would have
+// come up.
+func TestNamespaceLinkIsMasqueraded(t *testing.T) {
+	in := MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+		TProxyAddr:      "10.80.0.1:7896",
+		NetnsGateway:    "100.127.255.2",
+		NetnsHostIface:  "mih-host",
+		NetnsLinkCIDR:   "100.127.255.0/30",
+	}
+	out, err := RenderMasterNAT(in)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(out, `ip saddr 100.127.255.0/30 oifname != "mih-host" masquerade`) {
+		t.Errorf("mihomo's own traffic leaves with an unroutable source:\n%s", out)
+	}
+}
+
+// The masquerade and the leak guard must both exempt the veth, so a gateway with
+// no interface name is refused rather than rendered into a ruleset that eats the
+// traffic it was changed to let past.
+func TestNamespaceGatewayWithoutTheVethIsRefused(t *testing.T) {
+	_, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0",
+		ClientCIDR:      "10.80.0.0/24",
+		RedirAddr:       "10.80.0.1:7895",
+		NetnsGateway:    "100.127.255.2",
+	})
+	if err == nil {
+		t.Fatal("a namespace gateway with no veth name was rendered")
+	}
+}
