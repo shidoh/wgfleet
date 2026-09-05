@@ -47,6 +47,8 @@ const (
 // Action is one intended change. apply is nil for ActionNoChange. Display is the
 // human-safe rendering shown in plan mode; it never contains secrets.
 type Action struct {
+	// guard, when set, is the question the action re-asks at apply time; see OnlyIf.
+	guard   func(ctx context.Context) bool
 	Kind    ActionKind
 	Target  string // file path or resource label
 	Summary string // one-line description
@@ -96,6 +98,29 @@ func (a Action) OnApplied(hook func()) Action {
 // correctly ignores a mode-only change. A future caller mapping Changes() straight
 // to "must restart" would not be so lucky: compare content explicitly.
 func (a Action) Changes() bool { return a.Kind != ActionNoChange }
+
+// GuardHoldsForTest reports whether a guarded action would act right now, and
+// whether it is guarded at all.
+//
+// It exists because the guard is invisible from outside once composed under
+// BestEffort — a skip becomes a warning, the apply returns nil, and a test that
+// applies the action cannot tell a refusal from a success. Without this, replacing
+// a guarded action with a plain one broke no test: the guard had coverage as a
+// primitive and the predicate had coverage on its own, and nothing tied either to
+// the action that ships.
+func (a Action) GuardHoldsForTest(ctx context.Context) (guarded, holds bool) {
+	if a.guard == nil {
+		return false, true
+	}
+	return true, a.guard(ctx)
+}
+
+// ApplyForTest runs one action's effect from a test in another package. The
+// engine is the only production caller of `run`, and keeping it unexported is
+// right; but a property like "this action refuses when the world moved" can only
+// be asserted by applying the action itself, and asserting it on a copy of the
+// action built by the test would assert nothing about the one that ships.
+func (a Action) ApplyForTest(ctx context.Context) error { return a.run(ctx) }
 
 // run executes the action's effect, or is a no-op when there is nothing to do.
 func (a Action) run(ctx context.Context) error {
@@ -186,8 +211,17 @@ func (r Report) String() string {
 	fmt.Fprintf(&b, "reconcile %s — %d change(s)\n", r.Mode, r.ChangeCount())
 	for _, p := range r.Plans {
 		fmt.Fprintf(&b, "\n=== %s ===\n", p.Component)
+		// A component that failed says so here. Without this it rendered as
+		// "(nothing to do)" — the same as a component with nothing to do — and the
+		// only difference between "converged" and "did not converge" was a line in
+		// the journal.
+		if p.Err != nil {
+			fmt.Fprintf(&b, "  ! FAILED — %v\n", p.Err)
+		}
 		if len(p.Actions) == 0 {
-			b.WriteString("  (nothing to do)\n")
+			if p.Err == nil {
+				b.WriteString("  (nothing to do)\n")
+			}
 			continue
 		}
 		for _, a := range p.Actions {

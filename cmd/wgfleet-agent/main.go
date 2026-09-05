@@ -677,10 +677,16 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 
 	if plan {
 		// Dry-run: show exactly what would change, change nothing.
+		//
+		// The report is printed even when the pass failed, and printed BEFORE the
+		// error is returned. A plan that stops at one component's failure and shows
+		// nothing is the least useful thing to hand an operator who is trying to find
+		// out what that component is going to do — and since the pass no longer aborts
+		// at the first error, there are eighteen other plans behind it worth reading.
+		fmt.Print(report.String())
 		if reconcileErr != nil {
 			return fmt.Errorf("reconcile: %w", reconcileErr)
 		}
-		fmt.Print(report.String())
 		return nil
 	}
 

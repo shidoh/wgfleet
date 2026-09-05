@@ -611,35 +611,52 @@ func (p netnsPlanner) nsTProxyRoutingLive(ctx context.Context, nsPath string, ru
 // interception is somewhere it is not would be worse than no file — so the honest
 // way to keep it across a restart is to look.
 func InterceptionInPlace(ctx context.Context, spec domain.NodeSpec, clientIface string) (bool, error) {
+	return interceptionInPlace(ctx, spec, clientIface, netns.Exec)
+}
+
+// interceptionInPlace is InterceptionInPlace with the runner injected, so the
+// question can be asked of a scripted kernel in a test. The exported wrapper had
+// no seam at all, and the first version of it compared a route against an address
+// carrying its prefix — `default via 100.127.255.2` against `100.127.255.2/30` —
+// so it answered "not in place" on every master alive. Nothing failed: the mover
+// simply never adopted anything, and every restart went on tearing the move down
+// and building it again, which is the exact behaviour this was written to stop.
+// Found on the stand, by rendering the first pass against a live kernel.
+func interceptionInPlace(ctx context.Context, spec domain.NodeSpec, clientIface string, run netns.Runner) (bool, error) {
 	if spec.Master == nil || clientIface == "" {
 		return false, fmt.Errorf("no master spec or client interface to ask about")
 	}
-	p := netnsPlanner{run: netns.Exec, clientIface: clientIface}
+	p := netnsPlanner{run: run, clientIface: clientIface}
 	table := fmt.Sprintf("%d", netfw.NetnsRouteTable)
 	pref := fmt.Sprintf("%d", netfw.NetnsRulePref)
-	_, peerIP, err := netns.LinkAddrs(spec.Master.NetnsLinkCIDR())
+	_, peerAddr, err := netns.LinkAddrs(spec.Master.NetnsLinkCIDR())
 	if err != nil {
 		return false, fmt.Errorf("link addresses: %w", err)
 	}
+	// Without the prefix: this is compared against what `ip route` prints, and the
+	// kernel prints a gateway as a bare address. The three other callers of
+	// LinkAddrs in this file all cut it; this one did not, and the comparison could
+	// therefore never succeed.
+	peerIP, _, _ := strings.Cut(peerAddr, "/")
 	// A rule that is not there is an answer; a kernel that would not talk to us is
 	// not. The two used to be the same value, which is how a netlink busy for one
 	// second after a restart could cost every client their connection: the mover
 	// would read "not attached", tear down a working move and build it again.
-	if out, err := netns.Exec(ctx, "ip", "rule", "list"); err != nil {
+	if out, err := run(ctx, "ip", "rule", "list"); err != nil {
 		return false, fmt.Errorf("ip rule list: %w", err)
 	} else if !strings.Contains(out, "lookup "+table) {
 		return false, nil
 	}
-	if !p.routingLive(ctx, netns.Exec, pref, table, peerIP, domain.NetnsHostIface) {
+	if !p.routingLive(ctx, run, pref, table, peerIP, domain.NetnsHostIface) {
 		return false, nil
 	}
 	// Routed there, and mihomo actually in it: a rule pointing at a namespace mihomo
 	// left is not the move, it is the outage the move's own self-heal exists for.
-	nsPath, err := netns.Path(ctx, domain.NetnsHolder, netns.Exec)
+	nsPath, err := netns.Path(ctx, domain.NetnsHolder, run)
 	if err != nil {
 		return false, fmt.Errorf("holder namespace: %w", err)
 	}
-	return p.mihomoIsInTheNamespace(ctx, nsPath, netns.Exec), nil
+	return p.mihomoSharesNamespace(ctx, nsPath, run), nil
 }
 
 // NamespaceReady reports whether mihomo's namespace is fit to carry client
@@ -845,6 +862,14 @@ func (p netnsPlanner) mihomoIsInTheNamespace(ctx context.Context, nsPath string,
 	if p.composePath == "" {
 		return true // nothing to recreate it with; do not render an action we cannot take
 	}
+	return p.mihomoSharesNamespace(ctx, nsPath, run)
+}
+
+// mihomoSharesNamespace is the question itself, without the "can we act on the
+// answer" guard above it. Asking it through that guard is how the startup probe
+// first claimed a mihomo in a foreign namespace was fine: the probe has no compose
+// file because it renders nothing, and an empty compose path means "assume yes".
+func (p netnsPlanner) mihomoSharesNamespace(ctx context.Context, nsPath string, run netns.Runner) bool {
 	out, err := run(ctx, "docker", "inspect", "-f", "{{.State.Pid}}", "mihomo")
 	if err != nil {
 		return true

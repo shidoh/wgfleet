@@ -102,3 +102,95 @@ func TestAFailedActionStopsItsOwnComponentOnly(t *testing.T) {
 		t.Errorf("ran %s: step3 must be skipped (it assumes step2 happened) and other must not", got)
 	}
 }
+
+// Some components really are one build, and continuing past a failure in the first
+// one is worse than stopping.
+//
+// The master's NAT renders the "moved" ruleset — host interception removed,
+// client traffic routed at mihomo's namespace — because the namespace planner one
+// step earlier was supposed to have armed that namespace. While the pass aborted
+// on the first error, a namespace that failed to arm took the NAT down with it and
+// the host kept intercepting. Continuing blindly would instead tear down the host
+// path with nothing on the other side.
+func TestAComponentThatBuildsOnAFailedOneIsSkipped(t *testing.T) {
+	var ran []string
+	eng := NewEngine(quietLogger(),
+		fakePlanner{component: "namespace", plan: func() ([]Action, error) {
+			ran = append(ran, "namespace")
+			return nil, errors.New("the holder is not up")
+		}},
+		dependentPlanner{fakePlanner{component: "master NAT", plan: func() ([]Action, error) {
+			ran = append(ran, "master NAT")
+			return []Action{NoChangeAction("nat", "fine")}, nil
+		}}, "namespace"},
+		fakePlanner{component: "unrelated", plan: func() ([]Action, error) {
+			ran = append(ran, "unrelated")
+			return []Action{NoChangeAction("dns", "fine")}, nil
+		}},
+	)
+	report, err := eng.Reconcile(context.Background(), domain.NodeSpec{}, ModeApply)
+	if err == nil {
+		t.Fatal("a failed component reported a clean pass")
+	}
+	if got := strings.Join(ran, ","); got != "namespace,unrelated" {
+		t.Errorf("ran %s: the dependent must not be planned at all, the unrelated one must", got)
+	}
+	var skipped string
+	for _, p := range report.Plans {
+		if p.Component == "master NAT" && len(p.Actions) == 1 {
+			skipped = p.Actions[0].Summary
+		}
+	}
+	if !strings.Contains(skipped, "namespace") {
+		t.Errorf("the skip does not say what it is waiting for: %q", skipped)
+	}
+}
+
+// And a dependency that is satisfied changes nothing.
+func TestADependentComponentRunsWhenWhatItBuildsOnConverged(t *testing.T) {
+	var ran []string
+	eng := NewEngine(quietLogger(),
+		fakePlanner{component: "namespace", plan: func() ([]Action, error) {
+			ran = append(ran, "namespace")
+			return []Action{NoChangeAction("ns", "fine")}, nil
+		}},
+		dependentPlanner{fakePlanner{component: "master NAT", plan: func() ([]Action, error) {
+			ran = append(ran, "master NAT")
+			return []Action{NoChangeAction("nat", "fine")}, nil
+		}}, "namespace"},
+	)
+	if _, err := eng.Reconcile(context.Background(), domain.NodeSpec{}, ModeApply); err != nil {
+		t.Fatalf("a clean pass reported an error: %v", err)
+	}
+	if got := strings.Join(ran, ","); got != "namespace,master NAT" {
+		t.Errorf("ran %s, want both", got)
+	}
+}
+
+type dependentPlanner struct {
+	fakePlanner
+	on string
+}
+
+func (d dependentPlanner) DependsOn() string { return d.on }
+
+// A failed component must be visible in the report, not only in the journal.
+//
+// It used to render as "(nothing to do)" — indistinguishable from a component that
+// had nothing to do — because Plan.Err was written by the engine and read by
+// nobody.
+func TestTheReportNamesTheComponentThatFailed(t *testing.T) {
+	eng := NewEngine(quietLogger(),
+		fakePlanner{component: "namespace", plan: func() ([]Action, error) {
+			return nil, errors.New("the holder is not up")
+		}},
+	)
+	report, _ := eng.Reconcile(context.Background(), domain.NodeSpec{}, ModeApply)
+	out := report.String()
+	if strings.Contains(out, "(nothing to do)") {
+		t.Errorf("a failed component reads as an idle one:\n%s", out)
+	}
+	if !strings.Contains(out, "the holder is not up") {
+		t.Errorf("the report does not say why the component failed:\n%s", out)
+	}
+}

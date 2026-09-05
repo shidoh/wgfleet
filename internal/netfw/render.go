@@ -313,9 +313,11 @@ func RenderRuleset(in RenderInput) (string, error) {
 	// third party to keep out. The argument holds for the container and not for what
 	// passes THROUGH it: the rule at pref 400 routes client traffic into that
 	// namespace, and whatever it forwards back arrives here on this interface. A
-	// wholesale accept therefore offered every client a path to sshd, to the
-	// controller's API and web panel, and to ztnet — services whose own exposure was
-	// decided very deliberately elsewhere.
+	// wholesale accept therefore offered every client a path to the controller's API
+	// and web panel and to ztnet — services whose own exposure was decided very
+	// deliberately elsewhere. (Not to sshd: this ruleset accepts tcp/22 from
+	// everywhere already, on its own argument. Measured on the stand, which is how
+	// the first draft of this comment turned out to be wrong about it.)
 	//
 	// Replies to connections this host opened INTO the namespace (the agent steering
 	// mihomo's control API, the health probes) are not affected: they are matched by

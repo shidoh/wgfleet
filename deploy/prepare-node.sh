@@ -94,7 +94,26 @@ fi
 # kernel that arrives on its own at 06:00, followed by a reboot, can leave a node
 # with no module and therefore no tunnels at all, and nothing the agent can do
 # about it. Kernel upgrades are done deliberately, with the module checked after.
-apt-mark hold linux-image-generic linux-headers-generic >/dev/null 2>&1 || true
+# Hold what is actually installed. `apt-mark hold` on an absent package returns 0
+# and shows up in `showhold`, so holding a guessed name reads exactly like a hold
+# that works — measured on a stand where the kernel metapackage is
+# linux-image-virtual and the script was holding linux-image-generic. Whether a
+# node even HAS a metapackage differs across providers: on this fleet the master
+# does and the exits do not (their kernel is pinned to a version, so nothing pulls
+# a new one — which is its own trade-off, and one for the operator to know about).
+held=""
+for pkg in linux-image-generic linux-headers-generic \
+           linux-image-virtual linux-headers-virtual \
+           linux-image-kvm linux-image-cloud-amd64; do
+  if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+    apt-mark hold "$pkg" >/dev/null 2>&1 && held="$held $pkg"
+  fi
+done
+if [ -n "$held" ]; then
+  log "kernel held:$held (DKMS builds AmneziaWG; an unattended kernel would leave the node without it)"
+else
+  warn "no kernel metapackage installed — nothing to hold, and nothing pulls a new kernel here either"
+fi
 
 # nftables.service is masked, not merely disabled.
 #

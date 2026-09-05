@@ -20,6 +20,25 @@ type Planner interface {
 	Plan(ctx context.Context, spec domain.NodeSpec) ([]Action, error)
 }
 
+// DependentPlanner is a planner whose plan is only meaningful while another
+// component converged.
+//
+// It exists because the pass no longer stops at the first failure, and that
+// exposed a pair that really is one build: the master's NAT renders the "moved"
+// ruleset — host interception removed, client traffic routed at the namespace —
+// on the strength of a decision the namespace planner is supposed to have carried
+// out one step earlier. When the pass aborted, a namespace that failed to arm took
+// the NAT with it and the host kept intercepting. Now it does not, so the NAT
+// would tear down the host path with nothing on the other side, and clients go
+// nowhere until the mover reverts, up to thirty seconds later.
+//
+// Ordering cannot express that, and neither can a comment. A dependency can.
+type DependentPlanner interface {
+	// DependsOn names the component this one is only valid after, or "" when it
+	// stands on its own — which may depend on the spec, so it is asked every pass.
+	DependsOn() string
+}
+
 // ScheduledPlanner is an optional interface a Planner may implement to declare
 // that its changes are driven by an out-of-band schedule (e.g. a timer-based
 // feed refresh), not by divergence from the desired spec. The engine flags such
@@ -65,13 +84,29 @@ func NewEngine(log *slog.Logger, planners ...Planner) *Engine {
 func (e *Engine) Reconcile(ctx context.Context, spec domain.NodeSpec, mode Mode) (Report, error) {
 	report := Report{Mode: mode}
 	var failed []error
+	broken := map[string]bool{}
 	for _, p := range e.planners {
+		if dep, ok := p.(DependentPlanner); ok {
+			if on := dep.DependsOn(); on != "" && broken[on] {
+				// Not an error of its own, and not a silent skip either: the plan says
+				// which component it is waiting for, and why nothing was changed.
+				e.log.Warn("component skipped: what it builds on did not converge",
+					"component", p.Component(), "waiting_for", on)
+				report.Plans = append(report.Plans, Plan{
+					Component: p.Component(),
+					Actions: []Action{NoChangeAction(p.Component(),
+						"skipped: "+on+" did not converge, and this would act on what it was supposed to build")},
+				})
+				continue
+			}
+		}
 		actions, err := p.Plan(ctx, spec)
 		if err != nil {
 			err = fmt.Errorf("plan %s: %w", p.Component(), err)
 			e.log.Error("component did not converge", "component", p.Component(), "err", err)
 			report.Plans = append(report.Plans, Plan{Component: p.Component(), Err: err})
 			failed = append(failed, err)
+			broken[p.Component()] = true
 			continue
 		}
 		plan := Plan{Component: p.Component(), Actions: actions}
@@ -93,6 +128,7 @@ func (e *Engine) Reconcile(ctx context.Context, spec domain.NodeSpec, mode Mode)
 					e.log.Error("component did not converge", "component", p.Component(), "err", err)
 					plan.Err = err
 					failed = append(failed, err)
+					broken[p.Component()] = true
 					break
 				}
 			}

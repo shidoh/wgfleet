@@ -915,3 +915,150 @@ func TestAnUnreadableDockerDoesNotBounceMihomo(t *testing.T) {
 		t.Error("an unanswerable question was read as a fault")
 	}
 }
+
+// The question the mover asks at startup, asked of a kernel that answers exactly
+// the way the real one does.
+//
+// The first version of this compared a route against an address that still carried
+// its prefix — `default via 100.127.255.2` against `100.127.255.2/30` — so it said
+// "not in place" on every master alive. Nothing failed and nothing logged: the
+// mover simply never adopted, and every restart went on tearing the move down and
+// rebuilding it, which is exactly what it was written to stop. It went unnoticed
+// because nothing called this function in a test at all.
+func TestTheMoveIsRecognisedFromWhatTheKernelActuallyPrints(t *testing.T) {
+	spec := netnsSpec()
+	live := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		switch {
+		case line == "ip rule list":
+			return "0:\tfrom all lookup local\n400:\tfrom all iif wg0 lookup 51822\n32766:\tfrom all lookup main\n", nil
+		case strings.Contains(line, "route show table 51822"):
+			// As `ip route` prints it: the gateway bare, no prefix.
+			return "default via 100.127.255.2 dev mih-host\nblackhole default metric 1000\n", nil
+		case strings.Contains(line, "docker inspect -f {{.State.Pid}} wgfleet-netns"):
+			return "4242\n", nil
+		case strings.Contains(line, "docker inspect -f {{.State.Pid}} mihomo"):
+			return "5150\n", nil
+		case strings.Contains(line, "readlink"):
+			return "net:[4026532999]\n", nil
+		}
+		return "", errors.New("absent: " + line)
+	}
+	got, err := interceptionInPlace(context.Background(), spec, "wg0", live)
+	if err != nil {
+		t.Fatalf("the probe failed on a converged master: %v", err)
+	}
+	if !got {
+		t.Fatal("a master with the rule, the route and mihomo in the namespace was read as not moved")
+	}
+}
+
+// And the negatives are still negatives, each for its own reason.
+func TestTheMoveIsNotClaimedWhenAPieceIsMissing(t *testing.T) {
+	base := map[string]string{
+		"ip rule list":                 "400:\tfrom all iif wg0 lookup 51822\n",
+		"route show table 51822":       "default via 100.127.255.2 dev mih-host\n",
+		"{{.State.Pid}} wgfleet-netns": "4242\n",
+		"{{.State.Pid}} mihomo":        "5150\n",
+		"readlink":                     "net:[4026532999]\n",
+	}
+	cases := map[string]map[string]string{
+		"no rule":                     {"ip rule list": "32766:\tfrom all lookup main\n"},
+		"no route in the table":       {"route show table 51822": ""},
+		"mihomo in another namespace": {"readlink /proc/5150/ns/net": "net:[4026530000]\n"},
+	}
+	for name, override := range cases {
+		t.Run(name, func(t *testing.T) {
+			run := func(_ context.Context, cmd string, args ...string) (string, error) {
+				line := cmd + " " + strings.Join(args, " ")
+				for k, v := range override {
+					if strings.Contains(line, k) {
+						return v, nil
+					}
+				}
+				for k, v := range base {
+					if strings.Contains(line, k) {
+						return v, nil
+					}
+				}
+				return "", errors.New("absent: " + line)
+			}
+			got, err := interceptionInPlace(context.Background(), netnsSpec(), "wg0", run)
+			if err != nil {
+				t.Fatalf("probe: %v", err)
+			}
+			if got {
+				t.Error("the move was claimed although a piece of it is missing")
+			}
+		})
+	}
+}
+
+// A kernel that will not answer is not a kernel saying no.
+func TestAnUnreadableKernelIsAnErrorAndNotAVerdict(t *testing.T) {
+	run := func(context.Context, string, ...string) (string, error) {
+		return "", errors.New("netlink: device or resource busy")
+	}
+	got, err := interceptionInPlace(context.Background(), netnsSpec(), "wg0", run)
+	if err == nil {
+		t.Fatal("an unreadable kernel was reported as a clean answer")
+	}
+	if got {
+		t.Fatal("an unreadable kernel claimed the move is in place")
+	}
+}
+
+// The gate on the rule has to be on the ACTION, not only in the planner's head.
+//
+// Replacing the guarded action with a plain best-effort exec used to break no test
+// at all: one test covered OnlyIf as a primitive and another covered the predicate,
+// and nothing tied them to this rule. So the property that survives a refactor is
+// asserted here — apply the planned rule in a world whose table is empty, and it
+// must refuse rather than point clients at nothing.
+func TestTheMoveRuleRefusesToApplyWhenTheTableWentAwayAfterPlanning(t *testing.T) {
+	tableFilled := true
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.Contains(line, "docker inspect"):
+			return "4242\n", nil
+		case strings.Contains(line, "route show table 51822"):
+			if tableFilled {
+				return "default via 100.127.255.2 dev mih-host\nblackhole default metric 1000\n", nil
+			}
+			return "", nil // the holder was recreated between planning and applying
+		}
+		return "", errors.New("absent: " + line)
+	}
+	p := netnsPlanner{
+		run: run, attached: func() bool { return true }, clientIface: "wg0",
+		nftPath: t.TempDir() + "/netns.nft", nftCheck: func([]byte) error { return nil },
+	}
+	acts, err := p.Plan(context.Background(), netnsSpec())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	var rule *reconcile.Action
+	for i := range acts {
+		if strings.Contains(acts[i].Display, "ip rule add iif wg0 lookup 51822") {
+			rule = &acts[i]
+		}
+	}
+	if rule == nil {
+		t.Fatalf("no rule was planned:\n%s", displays(acts))
+	}
+
+	guarded, holds := rule.GuardHoldsForTest(context.Background())
+	if !guarded {
+		t.Fatal("the rule that sends clients into the namespace carries no apply-time guard, " +
+			"so it will be installed over whatever the table happens to be by then")
+	}
+	if !holds {
+		t.Error("the guard refuses a table that is filled and floored")
+	}
+
+	tableFilled = false // the holder was recreated between planning and applying
+	if _, holds := rule.GuardHoldsForTest(context.Background()); holds {
+		t.Error("the rule would have been installed over a table that emptied since planning")
+	}
+}

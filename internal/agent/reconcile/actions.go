@@ -172,6 +172,7 @@ func (a Action) BestEffort() Action {
 // becomes a warning naming the reason, and a step that quietly did not happen is
 // the hardest kind to find.
 func (a Action) OnlyIf(because string, cond func(ctx context.Context) bool) Action {
+	a.guard = cond
 	inner := a.apply
 	a.apply = func(ctx context.Context) error {
 		if !cond(ctx) {
