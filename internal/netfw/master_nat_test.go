@@ -488,9 +488,43 @@ func TestClashAPIRedirectIsMgmtOnly(t *testing.T) {
 		ClashAPI: "172.29.3.10:9090",
 	}
 	out, _ := RenderMasterNAT(in)
+	// Only the PREROUTING copy needs an interface scope: it is the one that sees
+	// traffic from elsewhere, and the client pool has no business on an admin API.
+	// The output copy is local by construction — it exists so tools ON the master
+	// keep working — and an iifname there would match nothing.
+	chain := ""
 	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "dport 9090") && !strings.Contains(line, `iifname "zt*"`) {
-			t.Errorf("the API redirect is not scoped to the mgmt overlay:\n  %s", line)
+		if i := strings.Index(line, "chain "); i >= 0 {
+			chain = strings.Fields(line[i+6:])[0]
 		}
+		if !strings.Contains(line, "dport 9090") {
+			continue
+		}
+		if chain == "prerouting" && !strings.Contains(line, `iifname "zt*"`) {
+			t.Errorf("the inbound API redirect is not scoped to the mgmt overlay:\n  %s", line)
+		}
+	}
+}
+
+// A tool running ON the master must keep reaching the API too. A DNAT at
+// prerouting never sees locally generated packets, so without an output copy every
+// script that dials the management address breaks the moment the interception
+// moves — including the check written to verify the move.
+func TestClashAPIRedirectAlsoCoversTheMasterItself(t *testing.T) {
+	in := MasterNATInput{
+		ClientInterface: "wg0", ClientCIDR: "10.80.0.0/24", RedirAddr: "10.80.0.1:7895",
+		TProxyAddr: "10.80.0.1:7896", NetnsGateway: "100.127.255.2",
+		NetnsHostIface: "mih-host", NetnsLinkCIDR: "100.127.255.0/30",
+		ClashAPI: "172.29.3.10:9090",
+	}
+	out, err := RenderMasterNAT(in)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(out, "type nat hook output priority dstnat") {
+		t.Fatalf("no output chain — the master cannot reach its own API:\n%s", out)
+	}
+	if !strings.Contains(out, "ip daddr 172.29.3.10 tcp dport 9090 dnat to 100.127.255.2:9090") {
+		t.Errorf("the output redirect does not point into the namespace:\n%s", out)
 	}
 }

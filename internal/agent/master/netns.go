@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
@@ -99,6 +101,7 @@ func (p netnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 		PeerIface:  domain.NetnsPeerIface,
 		CIDR:       spec.Master.NetnsLinkCIDR(),
 		ClientCIDR: spec.WGServer.AddressPool,
+		MTU:        netnsLinkMTU(),
 	}
 
 	steps, err := netns.Plan(ctx, in, run)
@@ -625,7 +628,7 @@ func NetnsHostIP(spec domain.NodeSpec) string {
 	return ip
 }
 
-// netnsLinkMTU is what both ends of the veth are set to: NOTHING.
+// netnsLinkMTU is what both ends of the veth are set to: the HOST UPLINK's MTU.
 //
 // The first version set it to the client interface's MTU, and the reasoning was
 // backwards in a way that only production showed. What crosses this veth is not
@@ -647,9 +650,39 @@ func NetnsHostIP(spec domain.NodeSpec) string {
 // failed over to the reserve — which survived only because it is TCP, where MSS
 // clamping does the fitting that UDP has nobody to do.
 //
-// The kernel default (1500) is right, and anything derived from a client tunnel is
-// wrong. A host whose uplink is smaller fragments at the uplink exactly as it did
-// before the move — the veth is not where that decision belongs.
+// So it is pinned to the uplink's own MTU rather than left alone. "Leave it at the
+// default" would be right on a fresh node and wrong on every node that already ran
+// a build which narrowed it: removing the code that sets a value does not unset the
+// value. Measured on the stand — the veth kept 1360 across the upgrade, because
+// nothing recreates a link that already exists.
+//
+// 0 when the uplink cannot be read: better the kernel default than a guess.
+func netnsLinkMTU() int {
+	out, err := exec.Command("ip", "route", "get", "1.1.1.1").Output()
+	if err != nil {
+		return 0
+	}
+	fields := strings.Fields(string(out))
+	dev := ""
+	for i, f := range fields {
+		if f == "dev" && i+1 < len(fields) {
+			dev = fields[i+1]
+			break
+		}
+	}
+	if dev == "" {
+		return 0
+	}
+	b, err := os.ReadFile("/sys/class/net/" + dev + "/mtu")
+	if err != nil {
+		return 0
+	}
+	mtu, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || mtu <= 0 {
+		return 0
+	}
+	return mtu
+}
 
 // mihomoIsInTheNamespace compares the network namespace mihomo is in with the
 // holder's. Read from /proc rather than from Docker's own view: `docker inspect`

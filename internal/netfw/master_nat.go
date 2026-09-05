@@ -240,12 +240,14 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// with its drop policy). The agent does not need this rule — it dials the
 	// namespace directly — so it exists purely so a human's bookmark, and anything
 	// else pointed at the mgmt address, survives the move.
+	apiAddr, apiPort := "", 0
 	if in.NetnsGateway != "" && in.ClashAPI != "" {
 		if host, port, err := net.SplitHostPort(in.ClashAPI); err == nil {
 			if addr, aerr := netip.ParseAddr(host); aerr == nil {
 				if p, perr := strconv.Atoi(port); perr == nil && p > 0 && p <= 65535 {
+					apiAddr, apiPort = addr.String(), p
 					fmt.Fprintf(&b, "\t\tiifname %q ip daddr %s tcp dport %d dnat to %s:%d\n",
-						mgmtOverlayIface, addr, p, in.NetnsGateway, p)
+						mgmtOverlayIface, apiAddr, apiPort, in.NetnsGateway, apiPort)
 				}
 			}
 		}
@@ -307,7 +309,20 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 		b.WriteString("\t}\n\n")
 	}
 
-	b.WriteString("\tchain postrouting {\n")
+	// The same redirect for traffic this host ORIGINATES. A DNAT at prerouting never
+	// sees it — locally generated packets go straight to output — so without this
+	// every tool on the master that dials the management address stops working the
+	// moment the interception moves, including the check written to verify the move.
+	// Found on the stand 2026-09-05, one flip after the prerouting rule was added.
+	if apiAddr != "" {
+		b.WriteString("\n\tchain output {\n")
+		b.WriteString("\t\ttype nat hook output priority dstnat; policy accept;\n")
+		fmt.Fprintf(&b, "\t\tip daddr %s tcp dport %d dnat to %s:%d\n",
+			apiAddr, apiPort, in.NetnsGateway, apiPort)
+		b.WriteString("\t}\n")
+	}
+
+	b.WriteString("\n\tchain postrouting {\n")
 	b.WriteString("\t\ttype nat hook postrouting priority srcnat; policy accept;\n")
 	// MASQUERADE client traffic on EVERY egress except back into the client
 	// interface itself. Client packets leave by more than one uplink: the public
