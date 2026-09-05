@@ -140,6 +140,7 @@ func BestEffortExecAction(summary string, cmd ...string) Action {
 // first, hook second — would fire the hook on failure too, because the wrapper
 // reports success unconditionally.
 func (a Action) BestEffort() Action {
+	a.NonFatal = true
 	inner := a.apply
 	display := a.Display
 	a.apply = func(ctx context.Context) error {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
@@ -631,5 +632,73 @@ func TestDisablingTheKnobCleansUpWhatTheMoveInstalled(t *testing.T) {
 		if !strings.Contains(dump, want) {
 			t.Errorf("turning the knob off does not %q:\n%s", want, dump)
 		}
+	}
+}
+
+// The kernel prints a single host as `to 192.168.105.4`, with no prefix length,
+// while the spec carries `192.168.105.4/32`. Compared as strings they never match,
+// so the rule is added on every pass, `ip rule add` returns EEXIST, and — because
+// the action was not best-effort — the engine stopped the whole pass there.
+//
+// A master whose direct CIDRs contain any host address fails to converge ANYTHING
+// after this planner, every thirty seconds, for ever. The controller derives
+// exactly such addresses: the master's own public IP and one per exit. Reproduced
+// on the stand 2026-09-05 as state=Error on every pass.
+func TestHostAddressExemptionsAreNotReAddedEveryPass(t *testing.T) {
+	spec := netnsSpec()
+	spec.Master.DirectCIDRs = []string{"10.0.0.0/8", "192.168.105.4/32"}
+	dump := attachedPlan(t, spec, map[string]string{
+		"ip rule list": "390:\tfrom all to 10.0.0.0/8 lookup main\n" +
+			"390:\tfrom all to 192.168.105.4 lookup main\n" +
+			"400:\tfrom all iif wg0 lookup 51822\n",
+		"ip route show table 51822": "default via 100.127.255.2 dev mih-host\n",
+	})
+	if strings.Contains(dump, "ip rule add to 192.168.105.4/32") {
+		t.Errorf("an exemption already in the kernel was added again; the pass dies on EEXIST:\n%s", dump)
+	}
+	if strings.Contains(dump, "ip rule del to 192.168.105.4") {
+		t.Errorf("a live exemption was read as withdrawn and removed:\n%s", dump)
+	}
+}
+
+// And when one of them genuinely cannot be installed, it must not take the rest of
+// the pass down with it: mihomo, the master NAT, DOCKER-USER and the resolver all
+// converge after this planner, and the engine stops at the first fatal failure.
+func TestExemptionFailuresDoNotAbortThePass(t *testing.T) {
+	spec := netnsSpec()
+	spec.Master.DirectCIDRs = []string{"10.0.0.0/8"}
+	dumpActions := func() []reconcile.Action {
+		run := func(_ context.Context, name string, args ...string) (string, error) {
+			line := name + " " + strings.Join(args, " ")
+			switch {
+			case strings.Contains(line, "docker inspect"):
+				return "4242\n", nil
+			case line == "ip rule list":
+				return "0:\tfrom all lookup local\n", nil
+			}
+			return "", errors.New("absent")
+		}
+		p := netnsPlanner{
+			run: run, attached: func() bool { return true }, clientIface: "wg0",
+			nftPath: t.TempDir() + "/netns.nft", nftCheck: func([]byte) error { return nil },
+		}
+		acts, err := p.Plan(context.Background(), spec)
+		if err != nil {
+			t.Fatalf("Plan: %v", err)
+		}
+		return acts
+	}
+	var found bool
+	for _, a := range dumpActions() {
+		if !strings.Contains(a.Display, "ip rule add to 10.0.0.0/8") {
+			continue
+		}
+		found = true
+		if !a.NonFatal {
+			t.Errorf("an exemption that fails would freeze everything after this planner: %q", a.Display)
+		}
+	}
+	if !found {
+		t.Error("the exemption was never planned at all")
 	}
 }

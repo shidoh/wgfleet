@@ -51,7 +51,14 @@ type Action struct {
 	Target  string // file path or resource label
 	Summary string // one-line description
 	Display string // redacted artifact, diff, or command shown in plan output
-	apply   func(ctx context.Context) error
+	// NonFatal marks an action whose failure is logged and swallowed rather than
+	// stopping the pass. Exposed rather than hidden in the closure because it is a
+	// property of the PLAN, not an implementation detail: a reader deciding whether
+	// a migration is safe needs to know which of its steps the node is allowed to
+	// fail, and a test asserting that a planner cannot freeze everything behind it
+	// has nothing else to look at.
+	NonFatal bool
+	apply    func(ctx context.Context) error
 }
 
 // OnApplied returns a copy of a whose apply runs hook after the action itself

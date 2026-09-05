@@ -225,11 +225,17 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 	live := livePrefixes(ctx, run, netnsDirectRulePref)
 	want := map[string]bool{}
 	for _, cidr := range direct {
-		want[cidr] = true
-		if live[cidr] {
+		want[canonRule(cidr)] = true
+		if live[canonRule(cidr)] {
 			continue
 		}
-		actions = append(actions, reconcile.ExecAction(
+		// Best-effort, and for the reason the compose start is: this planner runs
+		// before mihomo, the master NAT, DOCKER-USER and the resolver, and the engine
+		// stops the pass at the first failing action. An exemption that will not
+		// install is worth a warning; it is not worth freezing everything downstream.
+		// The client-path probe is what notices if the result is actually broken, and
+		// the move reverts itself on that.
+		actions = append(actions, reconcile.BestEffortExecAction(
 			"keep "+cidr+" out of the namespace (direct destination)",
 			"ip", "rule", "add", "to", cidr, "lookup", "main", "pref", fmt.Sprintf("%d", netnsDirectRulePref)))
 	}
@@ -237,7 +243,7 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 	// removes a direct CIDR from the manifest leaves the rule behind forever, and
 	// that destination silently keeps bypassing the proxy.
 	for cidr := range live {
-		if want[cidr] {
+		if want[canonRule(cidr)] {
 			continue
 		}
 		actions = append(actions, reconcile.BestEffortExecAction(
@@ -267,8 +273,8 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 		actions = append(actions,
 			reconcile.BestEffortExecAction("clear any stale rule at the namespace priority",
 				"ip", "rule", "del", "pref", pref),
-			reconcile.ExecAction(summary, rule...),
-			reconcile.ExecAction("route the namespace table through the veth",
+			reconcile.BestEffortExecAction(summary, rule...),
+			reconcile.BestEffortExecAction("route the namespace table through the veth",
 				"ip", "route", "replace", "default", "via", peerIP, "dev", in.HostIface, "table", table))
 	} else {
 		actions = append(actions, reconcile.NoChangeAction("namespace routing",
@@ -396,6 +402,29 @@ func directDestinations(spec domain.NodeSpec) []string {
 	return out
 }
 
+// canonRule renders a destination the way BOTH sides of the comparison can agree
+// on: the kernel prints a single host as `to 192.168.105.4`, with no prefix
+// length, while the spec carries `192.168.105.4/32`.
+//
+// Getting this wrong does not merely add noise. `ip rule add` on a rule that is
+// already there returns EEXIST, the action is not best-effort, and the engine
+// stops the whole pass at the first failure — so a master whose direct CIDRs
+// include any host address (its own public IP, and one per exit: exactly what the
+// controller derives) fails to converge ANYTHING after this planner, every thirty
+// seconds, for ever. Reproduced on the stand 2026-09-05: state=Error on every
+// pass, with mihomo, the master NAT, DOCKER-USER and the resolver all frozen
+// behind it.
+func canonRule(s string) string {
+	s = strings.TrimSpace(s)
+	if p, err := netip.ParsePrefix(s); err == nil {
+		return p.Masked().String()
+	}
+	if a, err := netip.ParseAddr(s); err == nil {
+		return netip.PrefixFrom(a, a.BitLen()).String()
+	}
+	return s
+}
+
 // livePrefixes reads the destinations currently exempted at a given ip-rule
 // priority. Reading the kernel rather than remembering what we wrote is what lets
 // a withdrawn CIDR actually be withdrawn — a planner is rebuilt every pass and
@@ -414,7 +443,7 @@ func livePrefixes(ctx context.Context, run netns.Runner, pref int) map[string]bo
 		}
 		for i, f := range fields {
 			if f == "to" && i+1 < len(fields) {
-				out[fields[i+1]] = true
+				out[canonRule(fields[i+1])] = true
 			}
 		}
 	}
