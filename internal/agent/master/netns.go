@@ -196,6 +196,10 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 		ClientCIDR:  in.ClientCIDR,
 		SelfAddr:    peerIP,
 		DirectCIDRs: direct,
+		// The host forwards these in for clients; the closure must admit them. The
+		// port is read off the address mihomo binds IN HERE (attached by construction
+		// — this is the interception), not off the host's management address.
+		ClientForwardedPorts: netfw.ClientForwardedPorts(ClashAPIAddr(spec, true), spec.Master.ClientAdminPorts),
 	})
 	if err != nil {
 		return nil, err

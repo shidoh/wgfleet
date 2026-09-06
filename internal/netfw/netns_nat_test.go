@@ -371,3 +371,69 @@ func TestAClientReachesOnlyTheRedirectOnTheNamespaceAddress(t *testing.T) {
 		t.Errorf("the host end of the link is named in a client rule:\n%s", in)
 	}
 }
+
+// The host forwards the Clash API port INTO the namespace for clients when the
+// operator has put it in client_admin_ports. The namespace's own input closure
+// must know the same list, or the host opens the door and the namespace slams it:
+// measured on the live master 2026-09-06 — 2097 client SYNs to the dashboard
+// dropped by the closure, conntrack full of UNREPLIED DNAT entries.
+func TestAClientReachesTheAdminPortsTheHostForwardsIntoTheNamespace(t *testing.T) {
+	out, err := RenderNetnsNAT(NetnsNATInput{
+		PeerIface:            "mih0",
+		ClientCIDR:           "10.73.0.0/24",
+		RedirAddr:            "100.127.255.2:7895",
+		TProxyAddr:           "100.127.255.2:7896",
+		SelfAddr:             "100.127.255.2",
+		ClientForwardedPorts: []int{9090, 9090, 7895},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	in, ok := chainBody(out, "chain input {")
+	if !ok {
+		t.Fatalf("no input chain:\n%s", out)
+	}
+	want := "ip saddr 10.73.0.0/24 ip saddr != 10.73.0.1 ip daddr 100.127.255.2 tcp dport != { 7895, 9090 } counter drop"
+	if !strings.Contains(in, want) {
+		t.Errorf("the closure does not admit the forwarded admin port; want %q in:\n%s", want, in)
+	}
+}
+
+// One source for "which admin port reaches the namespace from the client tunnel":
+// the host's DNAT and the namespace's closure are rendered from the same answer.
+func TestTheHostAndTheNamespaceAgreeOnTheClientAdminPort(t *testing.T) {
+	api, admin := "172.29.3.10:9090", []int{9000, 9090, 51821}
+	host, err := RenderMasterNAT(MasterNATInput{
+		ClientInterface: "wg0", ClientCIDR: "10.73.0.0/24",
+		RedirAddr: "10.73.0.1:7895", TProxyAddr: "10.73.0.1:7896",
+		NetnsGateway: "100.127.255.2", NetnsHostIface: "mih-host",
+		ClashAPI: api, ClientAdminPorts: admin,
+	})
+	if err != nil {
+		t.Fatalf("host render: %v", err)
+	}
+	if !strings.Contains(host, `iifname "wg0" ip daddr 172.29.3.10 tcp dport 9090 dnat to 100.127.255.2:9090`) {
+		t.Fatalf("the host no longer forwards the client admin port; the premise of this test is gone:\n%s", host)
+	}
+	ns, err := RenderNetnsNAT(NetnsNATInput{
+		PeerIface:            "mih0",
+		ClientCIDR:           "10.73.0.0/24",
+		RedirAddr:            "100.127.255.2:7895",
+		TProxyAddr:           "100.127.255.2:7896",
+		SelfAddr:             "100.127.255.2",
+		ClientForwardedPorts: ClientForwardedPorts(api, admin),
+	})
+	if err != nil {
+		t.Fatalf("namespace render: %v", err)
+	}
+	if !strings.Contains(ns, "tcp dport != { 7895, 9090 } counter drop") {
+		t.Errorf("the namespace closure disagrees with the host about 9090:\n%s", ns)
+	}
+	// And when the operator has NOT opened it, neither side opens it.
+	if got := ClientForwardedPorts(api, []int{9000}); len(got) != 0 {
+		t.Errorf("9090 forwarded to clients without the opt-in: %v", got)
+	}
+	if got := ClientForwardedPorts("", admin); len(got) != 0 {
+		t.Errorf("a port forwarded with no API address at all: %v", got)
+	}
+}

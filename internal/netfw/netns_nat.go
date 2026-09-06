@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 )
 
@@ -63,6 +64,12 @@ type NetnsNATInput struct {
 	// master 2026-09-05: the dashboard's TCP handshake completed and was immediately
 	// FIN'd, from the client tunnel only.
 	SelfAddr string
+	// ClientForwardedPorts are the TCP ports on SelfAddr that the HOST forwards in
+	// here on behalf of clients — the Clash API port when the operator has opened it
+	// in client_admin_ports. They are admitted by the input closure below alongside
+	// the redirect port. Computed by ClientForwardedPorts, never listed by hand: the
+	// host's DNAT is rendered from the same call, so the door and the room agree.
+	ClientForwardedPorts []int
 }
 
 // RenderNetnsNAT renders the interception that used to live on the host.
@@ -224,7 +231,15 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	if perr != nil {
 		return "", fmt.Errorf("netfw netns NAT: redirect address %q has no port: %w", in.RedirAddr, perr)
 	}
-	fmt.Fprintf(&b, "\t\t%s ip daddr %s tcp dport != %s counter drop\n", scope, in.SelfAddr, redirPort)
+	// Plus whatever the host forwards in here for clients (the dashboard, when the
+	// operator opened it): a port the host DNATs to this address and this chain then
+	// drops is the exact regression measured on the live master 2026-09-06.
+	rp, aerr := strconv.Atoi(redirPort)
+	if aerr != nil {
+		return "", fmt.Errorf("netfw netns NAT: redirect port %q is not a number: %w", redirPort, aerr)
+	}
+	allowed := append([]int{rp}, in.ClientForwardedPorts...)
+	fmt.Fprintf(&b, "\t\t%s ip daddr %s tcp dport != %s counter drop\n", scope, in.SelfAddr, tcpPortSet(allowed...))
 	fmt.Fprintf(&b, "\t\t%s ip daddr %s meta l4proto != tcp counter drop\n", scope, in.SelfAddr)
 	b.WriteString("\t}\n\n")
 

@@ -2,9 +2,7 @@ package netfw
 
 import (
 	"fmt"
-	"net"
 	"net/netip"
-	"strconv"
 	"strings"
 )
 
@@ -247,27 +245,25 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// namespace directly — so it exists purely so a human's bookmark, and anything
 	// else pointed at the mgmt address, survives the move.
 	apiAddr, apiPort := "", 0
-	if in.NetnsGateway != "" && in.ClashAPI != "" {
-		if host, port, err := net.SplitHostPort(in.ClashAPI); err == nil {
-			if addr, aerr := netip.ParseAddr(host); aerr == nil {
-				if p, perr := strconv.Atoi(port); perr == nil && p > 0 && p <= 65535 {
-					apiAddr, apiPort = addr.String(), p
-					fmt.Fprintf(&b, "\t\tiifname %q ip daddr %s tcp dport %d dnat to %s:%d\n",
-						mgmtOverlayIface, apiAddr, apiPort, in.NetnsGateway, apiPort)
-					// And from the client tunnel, when the operator has opened this port to
-					// it. That opt-in already exists and already means "I reach the admin UI
-					// this way"; the redirect has to honour the same list or the move takes
-					// the dashboard away from whoever uses that door. Measured on the live
-					// master 2026-09-05: the mgmt-only rule looked right, the check run ON
-					// the master passed through the output chain, and the operator — coming
-					// over the client tunnel — got nothing.
-					for _, ap := range in.ClientAdminPorts {
-						if ap == apiPort && in.ClientInterface != "" {
-							fmt.Fprintf(&b, "\t\tiifname %q ip daddr %s tcp dport %d dnat to %s:%d\n",
-								in.ClientInterface, apiAddr, apiPort, in.NetnsGateway, apiPort)
-						}
-					}
-				}
+	if addr, p, ok := clashAPIEndpoint(in.ClashAPI); ok && in.NetnsGateway != "" {
+		apiAddr, apiPort = addr, p
+		fmt.Fprintf(&b, "\t\tiifname %q ip daddr %s tcp dport %d dnat to %s:%d\n",
+			mgmtOverlayIface, apiAddr, apiPort, in.NetnsGateway, apiPort)
+		// And from the client tunnel, when the operator has opened this port to it.
+		// That opt-in already exists and already means "I reach the admin UI this
+		// way"; the redirect has to honour the same list or the move takes the
+		// dashboard away from whoever uses that door. Measured on the live master
+		// 2026-09-05: the mgmt-only rule looked right, the check run ON the master
+		// passed through the output chain, and the operator — coming over the client
+		// tunnel — got nothing.
+		//
+		// ClientForwardedPorts is the same call the namespace closure renders from:
+		// if this loop opens the door, that chain admits the port. Two readings of the
+		// spec drifted within a day (2026-09-06); one function cannot.
+		if in.ClientInterface != "" {
+			for _, ap := range ClientForwardedPorts(in.ClashAPI, in.ClientAdminPorts) {
+				fmt.Fprintf(&b, "\t\tiifname %q ip daddr %s tcp dport %d dnat to %s:%d\n",
+					in.ClientInterface, apiAddr, ap, in.NetnsGateway, ap)
 			}
 		}
 	}
