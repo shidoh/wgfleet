@@ -306,12 +306,13 @@ func RenderRuleset(in RenderInput) (string, error) {
 	// Trust the management overlay wholesale (fail-safe; see mgmtOverlayIface).
 	fmt.Fprintf(&b, "\t\tiifname %q accept\n", mgmtOverlayIface)
 	// And the veth to mihomo's namespace — but only for what mihomo needs from this
-	// host, which is the resolver. The resolver answers on plain DNS (:53) AND
-	// DNS-over-TLS (:853, TCP) — the client-facing REALITY/VLESS path resolves over
-	// DoT, so :53 alone silently black-holes every REALITY client's DNS while plain
-	// traffic still flows. Measured on the live master 2026-09-06: mihomo dialing
-	// 172.29.3.10:853 DIRECT timed out because this trust admitted only :53; both
-	// ports belong to the same resolver and both must be here.
+	// host, which is the resolver. blocky answers on plain DNS (:53) AND DNS-over-TLS
+	// (:853, TCP), and both must be admitted: a live capture on the master 2026-09-06
+	// showed EVERY REALITY client's DNS arriving on :853 and none on :53. The DoT is
+	// the client app's own doing (v2rayTun / Clash dial DoT regardless of a bare-IP
+	// nameserver) — not our VLESS/Clash config, which merely names the address — so
+	// mihomo proxies the client's :853 connection here DIRECT. Admitting only :53
+	// silently black-holes those clients while plain traffic still flows.
 	//
 	// It used to be a wholesale accept, on the argument that the far end is a
 	// container this agent created on a /30 that exists nowhere else, so there is no

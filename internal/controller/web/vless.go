@@ -186,7 +186,16 @@ func buildClashConfig(host string, cv domain.ClientVLESSServerSpec, pubkey, bloc
 	if blockyAddr != "" {
 		// redir-host + the master blocky dialed THROUGH the proxy: private-domain
 		// split resolves, real IPs come back and route through the tunnel.
-		dns = fmt.Sprintf("  enhanced-mode: redir-host\n  default-nameserver:\n    - 1.1.1.1\n    - 8.8.8.8\n  nameserver:\n    - %q\n", blockyAddr+"#wgfleet")
+		//
+		// tls:// (DoT, :853) not a bare IP (UDP :53): this is what the clients already
+		// do in the field — a live capture on the master (2026-09-06) showed every
+		// client DNS flow arriving on blocky's :853 and none on :53, because the app
+		// DNS engines dial DoT regardless of what a bare address looks like. Making the
+		// config say :853 keeps the handed-out config, the namespace firewall (which
+		// must admit :853, see internal/netfw render veth trust) and reality in one
+		// source instead of three that drift. blocky serves DoT on this address, so no
+		// server change is needed.
+		dns = fmt.Sprintf("  enhanced-mode: redir-host\n  default-nameserver:\n    - 1.1.1.1\n    - 8.8.8.8\n  nameserver:\n    - %q\n", "tls://"+blockyAddr+"#wgfleet")
 	}
 	// Empty-SNI (the client-leg default): send the ClientHello with no SNI by setting
 	// servername to the server IP — uTLS omits the SNI extension for a literal IP,

@@ -809,8 +809,9 @@ func TestInputChainOpensTheResolverToTheNamespaceAndNothingElse(t *testing.T) {
 	for _, want := range []string{
 		`iifname "mih-host" udp dport 53 accept`,
 		`iifname "mih-host" tcp dport 53 accept`,
-		// DNS-over-TLS: the REALITY/VLESS client path resolves over DoT (:853), so
-		// :53 alone black-holes every REALITY client's DNS (live master 2026-09-06).
+		// DNS-over-TLS: REALITY clients' app DNS engines dial blocky over DoT (:853),
+		// measured on the wire 2026-09-06 (every client DNS flow on :853, none on :53),
+		// so admitting only :53 black-holes them.
 		`iifname "mih-host" tcp dport 853 accept`,
 	} {
 		if !strings.Contains(out, want) {

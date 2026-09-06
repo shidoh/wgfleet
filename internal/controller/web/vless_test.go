@@ -126,7 +126,7 @@ func TestBuildClashConfig(t *testing.T) {
 	for _, want := range []string{
 		"strict-route: true", "type: vless", `server: "203.0.113.1"`, "port: 47252",
 		`uuid: "u-1"`, `public-key: "PBK"`, `short-id: "0badc0de"`, `servername: "www.python.org"`,
-		"mode: packet-up", "- MATCH,wgfleet", `"172.29.3.10#wgfleet"`,
+		"mode: packet-up", "- MATCH,wgfleet", `"tls://172.29.3.10#wgfleet"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("clash config missing %q\n---\n%s", want, out)
