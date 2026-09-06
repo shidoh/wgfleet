@@ -359,8 +359,33 @@ func run() error {
 			if err := a.reconcile(ctx, *plan); err != nil {
 				a.log.Error("reconcile failed", "err", err)
 			}
+			// A decision taken at the END of a pass is applied by the NEXT one, and
+			// waiting a full interval for that is the largest part of the outage it is
+			// supposed to end. The migration decision needs the client-path probes,
+			// which need the pass that builds the prober — so the decision cannot move
+			// earlier, but the pass that acts on it can come sooner.
+			//
+			// Measured on the stand 2026-09-06: after a reboot the decision landed at
+			// 11.4s and the interception at 36.6s. Twenty-five of those seconds were
+			// this wait, with the master back in the port-collision configuration for
+			// all of them.
+			if a.decisionChanged() {
+				if err := a.reconcile(ctx, *plan); err != nil {
+					a.log.Error("follow-up reconcile after a changed decision failed", "err", err)
+				}
+			}
 		}
 	}
+}
+
+// decisionChanged reports whether the last pass ended with a migration decision
+// different from the one it was rendered with, and clears the flag.
+func (a *agent) decisionChanged() bool {
+	if !a.moveDecisionChanged {
+		return false
+	}
+	a.moveDecisionChanged = false
+	return true
 }
 
 type agent struct {
@@ -377,6 +402,10 @@ type agent struct {
 	mihomoLogCursor time.Time
 	// synthKP is the master's own client keypair, minted once and kept on the node.
 	synthKP wg.KeyPair
+	// moveDecisionChanged marks that the pass just finished ended with a different
+	// migration decision than it was planned with, so the loop runs another pass at
+	// once instead of waiting out the interval. See the daemon loop.
+	moveDecisionChanged bool
 	// netnsMove decides, pass by pass, whether client interception lives in
 	// mihomo's namespace. On the agent rather than in a planner because planners
 	// are rebuilt every pass and would forget every attempt they ever made — the
@@ -2028,6 +2057,7 @@ func (a *agent) decideNetnsMove(ctx context.Context, spec domain.NodeSpec, probe
 		func() bool { return master.ClientPathOK(probes) })
 	if before != after {
 		a.netnsMoveReason = a.netnsMove.Reason()
+		a.moveDecisionChanged = true
 		a.log.Warn("client interception moved", "in_namespace", after, "why", a.netnsMove.Reason())
 		return
 	}

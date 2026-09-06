@@ -68,3 +68,28 @@ func TestRenewBackoffDoublesToAnHour(t *testing.T) {
 		t.Errorf("%d attempts in 24h; the failure drowns itself again", attempts)
 	}
 }
+
+// A decision taken at the end of a pass must not wait a whole interval to be
+// applied.
+//
+// The migration decision needs the client-path probes, and those need the pass
+// that builds the prober — so it is taken after the pass and the NEXT pass renders
+// it. Waiting the full interval for that next pass is the largest part of the very
+// outage the decision ends: measured on the stand after a reboot, the decision
+// landed at 11.4s and the interception at 36.6s, and twenty-five of those seconds
+// were this wait, with the master back in the port-collision configuration.
+func TestAChangedDecisionAsksForAnotherPassAtOnce(t *testing.T) {
+	a := &agent{}
+	if a.decisionChanged() {
+		t.Fatal("a pass that changed nothing asked for a follow-up")
+	}
+
+	a.moveDecisionChanged = true
+	if !a.decisionChanged() {
+		t.Fatal("a changed decision did not ask for a follow-up pass")
+	}
+	// And exactly once: a flag that stays set turns the interval into a busy loop.
+	if a.decisionChanged() {
+		t.Fatal("the follow-up repeats forever; the flag is never cleared")
+	}
+}
