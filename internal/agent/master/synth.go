@@ -135,6 +135,18 @@ func (p synthPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 	// Created HERE and moved THERE: the socket stays in this namespace, which is
 	// the only reason the prober can dial 127.0.0.1 at all.
 	build := []reconcile.Action{
+		// Clear a leftover in THIS namespace before creating one here.
+		//
+		// The device is created here and moved there, so a build interrupted between
+		// those two steps leaves the interface on the host — where the check above,
+		// which looks only inside the namespace, cannot see it. Every pass afterwards
+		// plans the same `ip link add` and gets `File exists`, forever. Found on the
+		// stand 2026-09-06: the prober had been wedged since the previous day, and
+		// because this device is the judge of the automatic revert, the migration was
+		// reverted three times and then abandoned — by a netdev sitting in the wrong
+		// namespace. Best-effort: on the normal path there is nothing to delete.
+		reconcile.BestEffortExecAction("clear a half-built prober left in the host namespace",
+			"ip", "link", "del", synthIface),
 		reconcile.ExecAction("create the prober's interface", "ip", "link", "add", synthIface, "type", "amneziawg"),
 		reconcile.ExecAction("configure the prober's device", "awg", "setconf", synthIface, p.confPath),
 		reconcile.ExecAction("move the prober's interface into its namespace",

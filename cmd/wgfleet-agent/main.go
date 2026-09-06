@@ -670,6 +670,17 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		"peers", len(spec.Peers), "egress", spec.Egress,
 		"wg_port", spec.WGServer.ListenPort, "mtu", spec.WGServer.MTU)
 
+	// Ask the kernel where the interception is BEFORE anything is planned.
+	//
+	// The decision itself is taken after the pass, because the evidence it needs —
+	// the client-path probes — depends on what the pass built. Adoption is the
+	// opposite: the planners read Attached() while they render, so a mover still in
+	// "waiting" makes the first pass of every restart tear the interception down,
+	// and by the time the decision runs there is nothing left to adopt. Measured on
+	// the stand 2026-09-06: `--plan` on a converged master printed a full teardown —
+	// the mechanism written to stop that was cancelling itself.
+	a.adoptNetnsMove(ctx, spec)
+
 	engine := reconcile.NewEngine(a.log, a.planners(kp.PrivateKey, realityPriv, clientWGPriv, adminUser, adminPass)...)
 	start := time.Now()
 	report, reconcileErr := engine.Reconcile(ctx, spec, mode)
@@ -1976,6 +1987,18 @@ func (a *agent) clientPathTargets(spec domain.NodeSpec) master.ClientPathTargets
 // A thin alias so main.go does not have to name the master package's internals.
 type netnsMoveState = master.NetnsMove
 
+// adoptNetnsMove seeds the mover from the world, once per process, before the
+// first pass renders anything. See netnsMover.AdoptWorld for why the state is not
+// carried on disk.
+func (a *agent) adoptNetnsMove(ctx context.Context, spec domain.NodeSpec) {
+	if a.role != domain.RoleMaster || spec.Master == nil || a.netnsMove == nil {
+		return
+	}
+	a.netnsMove.AdoptWorld(func() (bool, error) {
+		return master.InterceptionInPlace(ctx, spec, master.ClientWGInterface)
+	})
+}
+
 // decideNetnsMove advances the migration decision using the evidence this pass
 // already gathered.
 //
@@ -1999,13 +2022,6 @@ func (a *agent) decideNetnsMove(ctx context.Context, spec domain.NodeSpec, probe
 		a.log.Warn("client interception knob not understood; staying on the host path", "err", werr)
 		wanted = false
 	}
-	// Before the first decision of this process, ask the kernel where the
-	// interception actually is. Without it the agent starts in "waiting" while the
-	// world is "attached", tears the move down on the first pass and rebuilds it on
-	// the second — two mihomo recreations and a broken client path per restart.
-	a.netnsMove.AdoptWorld(func() (bool, error) {
-		return master.InterceptionInPlace(ctx, spec, master.ClientWGInterface)
-	})
 	before := a.netnsMove.Attached()
 	after := a.netnsMove.Decide(wanted,
 		func() error { return master.NamespaceReady(ctx, spec) },

@@ -91,9 +91,19 @@ type netnsMover struct {
 	confirm  int
 	fail     int
 	settle   int
-	lastFlip time.Time
-	reason   string
-	now      func() time.Time
+	// lastRevert is when the move was last UNDONE, and it is the only thing the
+	// retry hold looks at.
+	//
+	// It used to be lastFlip — every transition, forward or back — and that made the
+	// hold punish success. A node that moved cleanly and then rebooted came up
+	// inside the five-minute window of its own successful move and waited it out
+	// with the interception on the host: measured on the stand, 2 minutes 35 seconds
+	// of a master back in the port-collision configuration, with client QUIC on 443
+	// dead the whole time and nothing reporting it. The hold exists to stop a node
+	// OSCILLATING, and only a revert is evidence of oscillation.
+	lastRevert time.Time
+	reason     string
+	now        func() time.Time
 	// statePath is where attempts and the terminal verdict survive a restart. Empty
 	// ⇒ nothing is persisted, which is what tests want and what a --plan run must do.
 	statePath string
@@ -207,7 +217,7 @@ func (m *netnsMover) Decide(wanted bool, ready func() error, pathOK func() bool)
 		// looked reset in memory, and every agent restart loaded the verdict back.
 		wasStuck := m.state == moveGaveUp || m.attempts > 0
 		m.state, m.reason = moveWaiting, "disabled by master.client_via_netns"
-		m.attempts, m.lastFlip, m.fail, m.confirm, m.settle = 0, time.Time{}, 0, 0, 0
+		m.attempts, m.lastRevert, m.fail, m.confirm, m.settle = 0, time.Time{}, 0, 0, 0
 		if wasStuck {
 			m.save()
 		}
@@ -235,12 +245,9 @@ func (m *netnsMover) Decide(wanted bool, ready func() error, pathOK func() bool)
 		}
 		m.state, m.confirm, m.fail = moveAttached, 0, 0
 		m.settle = moveSettlePasses
-		m.lastFlip = m.now()
 		m.reason = "namespace ready; client interception moved in"
-		// Record the flip. Not for the state — that is re-derived, see AdoptWorld —
-		// but for lastFlip: without it the retry hold resets on every restart, and a
-		// node in a restart loop becomes a node in a flip loop.
-		m.save()
+		// A successful move stamps nothing. What survives a restart is the record of
+		// REVERTS — see lastRevert — because that is what the hold is about.
 		return true
 
 	case moveAttached:
@@ -281,7 +288,7 @@ func (m *netnsMover) Decide(wanted bool, ready func() error, pathOK func() bool)
 		// every second spent honouring a churn limit is a second of outage bought with
 		// somebody else's traffic.
 		m.attempts++
-		m.lastFlip = m.now()
+		m.lastRevert = m.now()
 		m.fail = 0
 		if m.attempts >= moveMaxAttempts {
 			m.state = moveGaveUp
@@ -298,16 +305,15 @@ func (m *netnsMover) Decide(wanted bool, ready func() error, pathOK func() bool)
 	return false
 }
 
-// retryHeld reports whether the retry hold since the last flip has elapsed. It
-// gates only the move FORWARD; the way back is never held. The first decision of
-// a process is not held back either — a fresh agent must be able to act at once —
-// except when a persisted flip says otherwise, which is how a restart loop is
-// kept from becoming a flip loop.
+// retryHeld reports whether the hold since the last REVERT has elapsed. It gates
+// only the move forward; the way back is never held. A node that has never
+// reverted is never held — including a node that moved successfully and then
+// restarted, which used to sit out the remaining window of its own success.
 func (m *netnsMover) retryHeld() bool {
-	if m.lastFlip.IsZero() {
+	if m.lastRevert.IsZero() {
 		return true
 	}
-	return m.now().Sub(m.lastFlip) >= moveRetryHold
+	return m.now().Sub(m.lastRevert) >= moveRetryHold
 }
 
 // moveRecord is what survives a restart: the attempts spent and whether this node
@@ -315,10 +321,14 @@ func (m *netnsMover) retryHeld() bool {
 // re-derived from the world every pass, and a file claiming the interception is
 // somewhere it is not would be worse than no file.
 type moveRecord struct {
-	Attempts int       `json:"attempts"`
-	GaveUp   bool      `json:"gave_up"`
-	LastFlip time.Time `json:"last_flip"`
-	Reason   string    `json:"reason"`
+	Attempts int  `json:"attempts"`
+	GaveUp   bool `json:"gave_up"`
+	// LastRevert is when the move was last undone. The field used to be last_flip and
+	// carried successful moves too, which made the hold punish success; an old record
+	// simply reads as "no revert yet", which is the safe direction — a node that
+	// deserves the hold earns it again the moment it reverts.
+	LastRevert time.Time `json:"last_revert"`
+	Reason     string    `json:"reason"`
 }
 
 func (m *netnsMover) load() {
@@ -333,7 +343,7 @@ func (m *netnsMover) load() {
 	if json.Unmarshal(b, &rec) != nil {
 		return
 	}
-	m.attempts, m.lastFlip = rec.Attempts, rec.LastFlip
+	m.attempts, m.lastRevert = rec.Attempts, rec.LastRevert
 	if rec.GaveUp {
 		m.state = moveGaveUp
 		m.reason = "carried over from a previous run: " + rec.Reason
@@ -349,10 +359,10 @@ func (m *netnsMover) save() {
 		return
 	}
 	b, err := json.Marshal(moveRecord{
-		Attempts: m.attempts,
-		GaveUp:   m.state == moveGaveUp,
-		LastFlip: m.lastFlip,
-		Reason:   m.reason,
+		Attempts:   m.attempts,
+		GaveUp:     m.state == moveGaveUp,
+		LastRevert: m.lastRevert,
+		Reason:     m.reason,
 	})
 	if err != nil {
 		return

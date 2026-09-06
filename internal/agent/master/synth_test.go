@@ -176,3 +176,52 @@ func TestProberIsRebuiltWhenItsParametersChange(t *testing.T) {
 		t.Errorf("the prober was removed and never rebuilt:\n%s", dump)
 	}
 }
+
+// The prober's device is created on the host and moved into its namespace, so a
+// build interrupted between those two steps leaves it on the host — where the
+// only check looks inside the namespace and cannot see it. Every pass afterwards
+// plans the same `ip link add` and gets `File exists`.
+//
+// That is not a cosmetic loop: this device is the judge of the automatic revert,
+// so a prober that cannot be built makes every migration look broken. Found on the
+// stand 2026-09-06 after it had reverted a working migration three times and then
+// given up on it.
+func TestABuildLeftHalfwayIsClearedBeforeTheNextAttempt(t *testing.T) {
+	run := func(_ context.Context, name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.Contains(line, "netns list"):
+			return synthNetns + "\n", nil
+		// The namespace has no device: this is exactly the state a half-built prober
+		// leaves behind, and the state that used to wedge the node.
+		case strings.Contains(line, "netns exec "+synthNetns+" ip link show"):
+			return "", errors.New("Device \"wgs0\" does not exist")
+		}
+		return "", errors.New("absent: " + line)
+	}
+	p := synthPlanner{
+		run: run, confPath: t.TempDir() + "/wgs0.conf", serverPub: "SRV",
+		synthKey: wg.KeyPair{PrivateKey: "priv", PublicKey: "PUB"},
+	}
+	acts, err := p.Plan(context.Background(), synthPlannerSpec())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+
+	var del, add int
+	for i, a := range acts {
+		switch {
+		case strings.Contains(a.Display, "ip link del wgs0"):
+			del = i + 1
+		case strings.Contains(a.Display, "ip link add wgs0"):
+			add = i + 1
+		}
+	}
+	if del == 0 {
+		t.Fatalf("nothing clears a device left in the host namespace, so `ip link add` will fail forever:\n%s",
+			displays(acts))
+	}
+	if add == 0 || del > add {
+		t.Errorf("the clear must come before the create, got del=%d add=%d:\n%s", del, add, displays(acts))
+	}
+}

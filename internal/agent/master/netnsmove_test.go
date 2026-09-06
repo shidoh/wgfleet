@@ -2,6 +2,7 @@ package master
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -414,5 +415,70 @@ func TestAnUnanswerableProbeNeitherAdoptsNorGivesUpTheChance(t *testing.T) {
 	}
 	if !m.Attached() {
 		t.Fatal("the second, successful probe did not adopt the move it found")
+	}
+}
+
+// A node that moved successfully and then restarted must not sit out the hold of
+// its own success.
+//
+// The hold used to count every transition, so a reboot within five minutes of a
+// clean move came up with the interception on the HOST and waited. Measured on the
+// stand: 2 minutes 35 seconds of a master back in the port-collision
+// configuration — client QUIC on 443 dead, and no probe looking at it. The hold
+// exists to stop oscillation, and only a revert is evidence of oscillation.
+func TestASuccessfulMoveDoesNotHoldTheNextOne(t *testing.T) {
+	now := time.Now()
+	m := newNetnsMover()
+	m.now = func() time.Time { return now }
+
+	if !m.Decide(true, func() error { return nil }, func() bool { return true }) {
+		t.Fatalf("the first move did not happen: %s", m.Reason())
+	}
+	// The process restarts a minute later: fresh mover, the record it left behind.
+	restarted := newNetnsMover()
+	restarted.now = func() time.Time { return now.Add(time.Minute) }
+	restarted.attempts, restarted.lastRevert = m.attempts, m.lastRevert
+
+	if !restarted.Decide(true, func() error { return nil }, func() bool { return true }) {
+		t.Errorf("a restart within the hold of its own SUCCESS was made to wait: %s", restarted.Reason())
+	}
+}
+
+// A revert still holds: that is what the hold is for.
+func TestARevertHoldsTheNextAttempt(t *testing.T) {
+	now := time.Now()
+	m := newNetnsMover()
+	m.now = func() time.Time { return now }
+	m.state, m.attempts, m.lastRevert = moveWaiting, 1, now.Add(-time.Minute)
+
+	if m.Decide(true, func() error { return nil }, func() bool { return true }) {
+		t.Error("a node that reverted a minute ago moved again immediately")
+	}
+	if !strings.Contains(m.Reason(), "hold") {
+		t.Errorf("the reason does not mention the hold: %s", m.Reason())
+	}
+
+	m.now = func() time.Time { return now.Add(moveRetryHold + time.Second) }
+	if !m.Decide(true, func() error { return nil }, func() bool { return true }) {
+		t.Errorf("the hold never expired: %s", m.Reason())
+	}
+}
+
+// An older record carrying the field under its previous name reads as "no revert
+// yet". That is the safe direction: a node that deserves the hold earns it again
+// the moment it reverts, whereas the other way round would hold a healthy node for
+// five minutes after an upgrade.
+func TestARecordFromAnOlderBuildDoesNotHoldTheMove(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/netns-move.json"
+	if err := os.WriteFile(path, []byte(`{"attempts":1,"gave_up":false,"last_flip":"2026-09-06T00:00:00Z"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewNetnsMove(path)
+	if m.attempts != 1 {
+		t.Errorf("attempts did not survive the rename: %d", m.attempts)
+	}
+	if !m.lastRevert.IsZero() {
+		t.Errorf("a last_flip from an older build was read as a revert: %v", m.lastRevert)
 	}
 }
