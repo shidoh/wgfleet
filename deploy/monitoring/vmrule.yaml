@@ -593,26 +593,46 @@ spec:
         description: The nftables AS blacklist ({{ $labels.family }}) on {{ $labels.node }} exists with 0
           entries — the feed probe is failing and abuse filtering is off.
     - alert: WgfleetGuardIsCatchingPackets
-      # A guard chain exists to be empty. egress_leak_guard asserts that no client
-      # address reaches the wire un-NATed; egress_path_guard asserts that no client
-      # packet leaves by a path nobody chose. Either one counting means something
-      # upstream is broken — an empty namespace routing table, a masquerade that did
-      # not fire — and both of those are silent otherwise: the client simply has no
-      # internet, and every component metric stays green.
+      # Two chains, two meanings, and only one of them is ever supposed to be zero.
       #
-      # On increase rather than on value: the counter belongs to the ruleset and
-      # resets when it is re-applied, so a node that caught something last week and
-      # has been clean since must not page anybody today.
-      expr: increase(wgfleet_agent_guard_drops_packets[15m]) > 0
+      # egress_path_guard asserts that no client packet leaves by a path nobody
+      # chose. Nothing legitimate matches it, so ANY packet is news: it means client
+      # traffic fell out of the namespace routing table and went for the uplink.
+      #
+      # egress_leak_guard asserts that no client address reaches the wire un-NATed,
+      # and it catches a steady trickle by design: late FIN/ACK stragglers of
+      # intercepted flows whose conntrack entry has aged out carry no NAT binding.
+      # Measured on the live master 2026-09-06 — about 7 packets a minute against
+      # 569 concurrent client flows, with every check green. Alerting on any increase
+      # there would mean an alert that is always on, and an alert that is always on
+      # is one that gets silenced.
+      #
+      # So: the path guard pages on a single packet, the leak guard only on a rate
+      # far above that baseline.
+      expr: increase(wgfleet_agent_guard_drops_packets{chain="egress_path_guard"}[15m]) > 0
       for: 5m
       labels:
         severity: warning
         service: wgfleet
       annotations:
-        summary: Firewall guard {{ $labels.chain }} is dropping packets on {{ $labels.node }}
-        description: The {{ $labels.chain }} chain on {{ $labels.node }} has dropped packets in the
-          last 15 minutes. These chains assert what must never happen, so this is client traffic
-          taking a path it should not — check the namespace routing table and the masquerade.
+        summary: Client traffic took a path nobody chose on {{ $labels.node }}
+        description: The egress_path_guard chain on {{ $labels.node }} dropped client packets — traffic
+          left the namespace routing table for the uplink. Check that table 51822 still holds the veth
+          route and its blackhole floor.
+    - alert: WgfleetUnNATedClientTrafficRising
+      # The leak guard's baseline is late TCP stragglers (see above). A rate an order
+      # of magnitude above it means something else: a masquerade that stopped
+      # matching, or a path that stopped being NATed at all.
+      expr: increase(wgfleet_agent_guard_drops_packets{chain="egress_leak_guard"}[15m]) > 500
+      for: 15m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Un-NATed client packets are rising on {{ $labels.node }}
+        description: The egress_leak_guard chain on {{ $labels.node }} is dropping far more than the
+          straggler baseline (~7/min). Something stopped being masqueraded — check the masquerade rule's
+          scope against the client pool and the outgoing interface.
     - alert: WgfleetNodeCertExpiring
       # Node certificates are issued for a year and the agent renews its own between
       # 70% and 90% of that, in place, over the control plane. So this rule no longer
