@@ -138,6 +138,13 @@ func newNetnsMover() *netnsMover { return &netnsMover{now: time.Now} }
 //
 // A node that has already given up is not adopted: that verdict outlives a restart
 // on purpose, and the reverter is what should act on it.
+//
+// One case reads oddly and is correct anyway: if the knob went to `off` while this
+// process was down, adoption still takes the world as it finds it, the pass that
+// follows renders no change, and the teardown happens one pass later when the
+// decision runs. That is a single extra pass, not a wrong state — and the
+// alternative, refusing to adopt what is actually there, is the behaviour that made
+// every restart tear the interception down.
 func (m *netnsMover) AdoptWorld(inPlace func() (bool, error)) {
 	if m.adopted {
 		return
@@ -324,9 +331,16 @@ type moveRecord struct {
 	Attempts int  `json:"attempts"`
 	GaveUp   bool `json:"gave_up"`
 	// LastRevert is when the move was last undone. The field used to be last_flip and
-	// carried successful moves too, which made the hold punish success; an old record
-	// simply reads as "no revert yet", which is the safe direction — a node that
-	// deserves the hold earns it again the moment it reverts.
+	// carried successful moves too, which made the hold punish success.
+	//
+	// An old record reads as "no revert yet", deliberately, and the trade is worth
+	// stating because it is not symmetric. Honouring the old key would hold a node
+	// that had just MOVED SUCCESSFULLY and then upgraded — which is the outage this
+	// change exists to remove, and it lands on every node of a rollout. Ignoring it
+	// costs one unheld retry on a node that reverted in the minute before its
+	// upgrade, and `attempts` survives, so the ceiling of moveMaxAttempts still
+	// holds. One extra attempt on one node beats three minutes of port collision on
+	// all of them.
 	LastRevert time.Time `json:"last_revert"`
 	Reason     string    `json:"reason"`
 }
