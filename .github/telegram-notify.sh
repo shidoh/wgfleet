@@ -1,33 +1,30 @@
 #!/usr/bin/env bash
-# Announce a wgfleet release in a Telegram channel — as ONE message.
+# Announce a wgfleet release in a Telegram channel — as ONE message: the files as
+# an album, the announcement as the album's caption.
 #
 #   TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... \
 #     .github/telegram-notify.sh <tag> <release-notes.md> <dist-dir>
 #
-# Sends the announcement as a text message — version, highlights, and a count of
-# what the changelog holds — and then the files right behind it: the build
-# archives, SHA256SUMS, and the release notes as CHANGELOG-<tag>.md. The album is
-# sent silently, so the pair costs the channel ONE notification.
+# One sendMediaGroup: the changelog (CHANGELOG-<tag>.md) first so the caption and
+# the notes sit together, then the build archives and SHA256SUMS. The caption —
+# version, highlights, and a count of what the changelog holds — rides on the
+# first item, so the channel gets a single post and a single notification with the
+# text and the files together. (An earlier version sent the text as its own
+# message ahead of a silent album; the operator wanted them as one message, not
+# two, so the announcement is a caption now.)
 #
-# Text first, files second, and not as a caption, because a document album has no
-# single caption to speak of: each file is its own bubble and a caption belongs to
-# the bubble it is attached to. On the first item it renders BETWEEN the files, on
-# the last one it lands under four download rows, and either way the channel
-# preview shows a file name instead of the announcement. There is no
-# show_caption_above_media for documents.
+# The changelog is a FILE, not inline text, because a message/caption is capped
+# (4096 for a message, 1024 for a caption) and a full changelog is not: v0.2.2's
+# was 5.9 KB. So the caption carries the highlights + a per-section count, and the
+# whole changelog rides along as the attached file.
 #
-# The changelog is attached rather than posted because a message is 4096
-# characters and a full changelog is not: v0.2.2's was 5.9 KB. That leaves exactly
-# three options — cut it, hide it, or attach it. This attaches it.
-#
-# The two that were tried first are worth naming, because both look reasonable
-# until you see them in a channel:
-#   * splitting the changelog across messages produced a second bubble opening
-#     mid-list, which reads as debris;
-#   * <blockquote expandable> collapses to THREE LINES, so a quote that began
-#     with "Changelog" + a blank line + "Features" showed the reader one word.
-# Telegram has no list markup either, hence "•" — bullets are a convention here,
-# not a feature.
+# Constraints worth naming (all seen in a real channel):
+#   * a document album caption lives on ONE item and is limited to 1024 chars,
+#     hence the highlights-only caption + the changelog as a file;
+#   * there is no show_caption_above_media for documents, so the caption renders
+#     with the first bubble — putting the changelog first keeps that coherent;
+#   * <blockquote expandable> collapses to THREE LINES, so it is not used;
+#   * Telegram has no list markup, hence "•" — a convention here, not a feature.
 #
 # TELEGRAM_DRY_RUN=1 prints the message that would be sent and calls no API.
 # No repository links — the repo is private, so a "full changelog" link would be
@@ -49,7 +46,7 @@ fi
 
 API="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN:-dry-run}"
 MAX_BYTES=$((50 * 1024 * 1024))   # Telegram bot upload ceiling, per file
-TEXT_BUDGET=3500                  # the ceiling is 4096; the highlights use a fraction
+CAPTION_BUDGET=900               # the caption ceiling is 1024; leave room for header + summary
 
 # --- Markdown -> Telegram HTML ------------------------------------------------
 # escape_html: neutralize &, <, > so they don't collide with our own HTML tags.
@@ -142,7 +139,7 @@ NOTES_NAME="CHANGELOG-${TAG}.md"
 # font-size control, so prominence comes from weight, position and an emoji.
 ANNOUNCEMENT="$(printf '🚀 <b>wgfleet %s</b>' "$TAG_HTML")"
 if [ -n "$(tr -d '[:space:]' <<<"$LEAD_HTML")" ]; then
-  ANNOUNCEMENT+="$(printf '\n\n%s' "$(fit "$TEXT_BUDGET" <<<"$LEAD_HTML")")"
+  ANNOUNCEMENT+="$(printf '\n\n%s' "$(fit "$CAPTION_BUDGET" <<<"$LEAD_HTML")")"
 fi
 SUMMARY="$(summary_line)"
 if [ -n "$SUMMARY" ]; then
@@ -156,7 +153,9 @@ fi
 NOTES_DOC="$(mktemp -d)/${NOTES_NAME}"
 cp "$NOTES_FILE" "$NOTES_DOC"
 
-FILES=()
+# The notes go first: the caption lives on the first item, so the highlights and
+# the full changelog file sit together, then the archives and checksums follow.
+FILES=("$NOTES_DOC")
 for f in "$DIST_DIR"/*.tar.gz "$DIST_DIR"/SHA256SUMS; do
   [ -f "$f" ] || continue
   if [ "$(wc -c < "$f")" -gt "$MAX_BYTES" ]; then
@@ -165,50 +164,46 @@ for f in "$DIST_DIR"/*.tar.gz "$DIST_DIR"/SHA256SUMS; do
   fi
   FILES+=("$f")
 done
-FILES+=("$NOTES_DOC")
 
-send_message() {
-  if [ -n "$DRY_RUN" ]; then
-    printf '\n----- sendMessage (%d chars) -----\n%s\n' "${#1}" "$1"
-    return 0
-  fi
-  curl -fsS -X POST "$API/sendMessage" \
-    --form-string "chat_id=${TELEGRAM_CHAT_ID}" \
-    --form-string "text=$1" \
-    --form-string "parse_mode=HTML" \
-    --form-string "disable_web_page_preview=true" \
-    >/dev/null
-}
+# Hard cap the caption at Telegram's 1024 (fit() already trimmed the lead, but the
+# header and summary are added after it): keep whole lines, mark a cut, never fail.
+if [ "${#ANNOUNCEMENT}" -gt 1024 ]; then
+  ANNOUNCEMENT="$(printf '%s' "$ANNOUNCEMENT" | fit 1000)…"
+fi
+
+caption_json_note() { :; }
 
 if [ -n "$DRY_RUN" ]; then
-  printf '\n----- sendMessage (%d chars) -----\n%s\n' "${#ANNOUNCEMENT}" "$ANNOUNCEMENT"
-  printf '\n----- album, silent: %d file(s), no caption -----\n' "${#FILES[@]}"
+  printf '\n----- ONE message: sendMediaGroup, %d file(s), caption on the first -----\n' "${#FILES[@]}"
+  printf 'caption (%d chars):\n%s\n\nfiles (first carries the caption):\n' "${#ANNOUNCEMENT}" "$ANNOUNCEMENT"
   for f in "${FILES[@]}"; do printf '  %s\n' "$(basename "$f")"; done
   echo "Telegram announcement complete (dry run)."
   exit 0
 fi
 
-echo "Posting the announcement, then ${#FILES[@]} file(s) silently behind it"
-send_message "$ANNOUNCEMENT"
+echo "Posting one message: ${#FILES[@]} file(s) as an album, highlights in the caption"
 
 if [ "${#FILES[@]}" -eq 1 ]; then
-  # sendMediaGroup requires 2..10 items; a lone file goes via sendDocument.
-  # --form-string keeps curl from reading a leading "@" (as in "@channel") or
-  # "<" value as a local file (curl error 26); only real files use -F "@path".
+  # sendMediaGroup requires 2..10 items; a lone file goes via sendDocument, caption
+  # and all. --form-string keeps curl from reading a leading "@"/"<" as a file.
   curl -fsS -X POST "$API/sendDocument" \
     --form-string "chat_id=${TELEGRAM_CHAT_ID}" \
-    --form-string "disable_notification=true" \
+    --form-string "caption=${ANNOUNCEMENT}" \
+    --form-string "parse_mode=HTML" \
     -F "document=@${FILES[0]}" \
     >/dev/null
 else
-  media_json="$(jq -cn '
-    [ $ARGS.positional | to_entries[]
-      | { type: "document", media: ("attach://file" + (.key | tostring)) } ]
+  # Caption + parse_mode ride on the FIRST media item only; it becomes the album's
+  # caption. `as $e` keeps the index in scope after the object is built.
+  media_json="$(jq -cn --arg cap "$ANNOUNCEMENT" '
+    [ $ARGS.positional | to_entries[] as $e
+      | { type: "document", media: ("attach://file" + ($e.key | tostring)) }
+        + ( if $e.key == 0 then { caption: $cap, parse_mode: "HTML" } else {} end )
+    ]
   ' --args "${FILES[@]}")"
 
   curl_args=(--form-string "chat_id=${TELEGRAM_CHAT_ID}"
-             --form-string "media=${media_json}"
-             --form-string "disable_notification=true")
+             --form-string "media=${media_json}")
   for i in "${!FILES[@]}"; do
     curl_args+=(-F "file${i}=@${FILES[$i]}")
   done
