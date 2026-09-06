@@ -197,3 +197,50 @@ func TestRenderUpdateSQL(t *testing.T) {
 		}
 	}
 }
+
+// TestEmptyISlotsWriteNull pins the fix for the STUN+QUIC combo: with only I1/I2
+// set and I3-I5 empty, the empty slots must be written as SQL NULL (wg-easy omits
+// the line when regenerating wg0.conf), never as ” (which risks a malformed
+// `Ix = ` that the AWG parser rejects, taking wg0 down).
+func TestEmptyISlotsWriteNull(t *testing.T) {
+	ctx := context.Background()
+	path := newWGEasyDB(t, true)
+
+	cols := ColumnsFromSpec(sampleSpec())
+	cols.I1 = "<b 0x000100002112a442><r 12>"                        // STUN
+	cols.I2 = "<b 0xc30000000108><r 8><b 0x08><r 8><b 0x00><r 120>" // QUIC
+	cols.I3, cols.I4, cols.I5 = "", "", ""
+
+	if err := UpdateInterface(ctx, path, "wg0", cols); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	// Raw check: i1/i2 hold their values, i3/i4/i5 are SQL NULL (not '').
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var i1, i2 string
+	var i3Null, i4Null, i5Null bool
+	err = db.QueryRow(`SELECT COALESCE(i1,''), COALESCE(i2,''),
+		i3 IS NULL, i4 IS NULL, i5 IS NULL FROM interfaces_table WHERE name='wg0'`).
+		Scan(&i1, &i2, &i3Null, &i4Null, &i5Null)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i1 != cols.I1 || i2 != cols.I2 {
+		t.Errorf("i1/i2 not written: i1=%q i2=%q", i1, i2)
+	}
+	if !i3Null || !i4Null || !i5Null {
+		t.Errorf("empty I-slots must be SQL NULL, got i3Null=%v i4Null=%v i5Null=%v", i3Null, i4Null, i5Null)
+	}
+
+	// The dry-run rendering must match: empty slots as NULL, set ones quoted.
+	sqlText := RenderUpdateSQL("wg0", cols)
+	for _, want := range []string{"i3=NULL", "i4=NULL", "i5=NULL", "i1='<b 0x000100002112a442><r 12>'"} {
+		if !strings.Contains(sqlText, want) {
+			t.Errorf("rendered SQL missing %q:\n%s", want, sqlText)
+		}
+	}
+}

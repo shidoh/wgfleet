@@ -148,17 +148,21 @@ func TestDeriveAWGHeaderRangesNonOverlapping(t *testing.T) {
 	}
 }
 
-// TestDeriveSignaturesAlwaysGenerated verifies every end gets all five I-packets
-// and they are valid CPS templates, across many seeds and both tag profiles.
+// TestDeriveSignaturesAlwaysGenerated verifies every end gets the two-packet cover
+// (I1 STUN, I2 QUIC) with I3-I5 empty, and that the module accepts them, across many
+// seeds and both tag profiles.
 func TestDeriveSignaturesAlwaysGenerated(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		seed := string(rune(i)) + "-tunnel"
 		for _, kernel := range []bool{true, false} {
 			loc := DeriveAWGLocal(seed, kernel)
-			sigs := []string{loc.I1, loc.I2, loc.I3, loc.I4, loc.I5}
-			for k, s := range sigs {
-				if s == "" {
-					t.Fatalf("seed %q kernel=%v: I%d is empty", seed, kernel, k+1)
+			// The cover is exactly two packets: I1 and I2 are set, I3-I5 empty.
+			if loc.I1 == "" || loc.I2 == "" {
+				t.Fatalf("seed %q kernel=%v: I1/I2 must be set, got I1=%q I2=%q", seed, kernel, loc.I1, loc.I2)
+			}
+			for k, s := range []string{loc.I3, loc.I4, loc.I5} {
+				if s != "" {
+					t.Fatalf("seed %q kernel=%v: I%d must be empty (two-packet cover), got %q", seed, kernel, k+3, s)
 				}
 			}
 			// What actually has to hold is that the module accepts these: an
@@ -178,79 +182,110 @@ func TestDeriveSignaturesAlwaysGenerated(t *testing.T) {
 	}
 }
 
-// TestISlotsAreOpaqueNoise pins the decision taken in ADR-0022 after the
-// 2026-08-28 measurement: I1-I5 carry NO protocol structure at all.
+// TestISlotsAreStunQuicCombo pins the decision taken in ADR-0033's 2026-09-07
+// amendment after the field A/B on live RU carriers: the prologue is a two-packet
+// cover — I1 a canonical STUN Binding Request, I2 a QUIC v1 Initial long header —
+// with I3-I5 empty. Field-measured, this beat noise on every mobile carrier (noise
+// was hard-blocked, rx=0) and the two-protocol opening hedged the time-varying
+// filter (combo beat STUN-alone on carrier B). The mechanics are in the kernel and
+// amneziawg-go: all filled I-slots are sent in order before the handshake.
 //
-// The previous design filled the slots with QUIC/STUN/DTLS templates. Measured,
-// that was worse than sending nothing of the sort: the packets were recognised as
-// their protocol AND malformed (the QUIC varint Length was never emitted, the DTLS
-// handshake header was 4 bytes where RFC 6347 wants 12, and the length fields were
-// literally `<r N>` random bytes), so a dissector got a cleaner signal out of them
-// than out of noise. The same sizes filled with random bytes measured as plain UDP
-// with no attribution at all. Structure is the liability here, so there must be
-// none: no literal `<b ...>` bytes, one random run per slot, nothing else.
-func TestISlotsAreOpaqueNoise(t *testing.T) {
-	rTag := regexp.MustCompile(`^<r (\d+)>$`)
+// I1 (STUN) is deliberately UNIFORM across ends: a valid Binding Request is fixed
+// at 20 bytes by RFC 5389 (8-byte header + 12-byte transaction ID), and the TID is
+// `<r 12>` — fresh content every handshake, but the shape cannot vary without
+// ceasing to be STUN. Per-end uniqueness is therefore carried by I2 (QUIC), whose
+// DCID/SCID/payload sizes are drawn from the per-end seed.
+func TestISlotsAreStunQuicCombo(t *testing.T) {
+	// QUIC Initial long header: 0xc3, version 00000001, DCID-len byte, DCID,
+	// SCID-len byte, SCID, token-len 0x00, payload. The two length bytes must equal
+	// the following random-run lengths for the packet to parse as QUIC.
+	quicRe := regexp.MustCompile(`^<b 0xc300000001([0-9a-f]{2})><r (\d+)><b 0x([0-9a-f]{2})><r (\d+)><b 0x00><r (\d+)>$`)
+	// STUN Binding Request by parts: message type, message length, magic cookie, TID run.
+	stunRe := regexp.MustCompile(`^<b 0x([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{8})><r (\d+)>$`)
 
-	fleetI1 := map[string]bool{}
+	fleetI2 := map[string]bool{}
 	for i := 0; i < 300; i++ {
 		seed := fmt.Sprintf("tunnel-%d", i)
 		for _, kernel := range []bool{true, false} {
 			loc := DeriveAWGLocal(seed, kernel)
-			slots := []string{loc.I1, loc.I2, loc.I3, loc.I4, loc.I5}
-			distinct := map[string]bool{}
-			for k, sig := range slots {
-				m := rTag.FindStringSubmatch(sig)
-				if m == nil {
-					t.Fatalf("seed %q I%d is not a single random run: %q", seed, k+1, sig)
-				}
-				// Any literal byte is a fingerprint an analyser can key on — that is
-				// exactly what the measurement caught.
-				if strings.Contains(sig, "<b ") {
-					t.Fatalf("seed %q I%d carries literal protocol bytes: %q", seed, k+1, sig)
-				}
-				// <c>/<t> are kernel-only tags; a userspace peer rejects them outright.
-				if strings.Contains(sig, "<c>") || strings.Contains(sig, "<t>") {
-					t.Fatalf("seed %q I%d uses a kernel-only tag: %q", seed, k+1, sig)
-				}
-				n, err := strconv.Atoi(m[1])
-				if err != nil {
-					t.Fatalf("seed %q I%d has an unparsable length: %q", seed, k+1, sig)
-				}
-				if n < iNoiseLow || n > iNoiseHigh {
-					t.Errorf("seed %q I%d length %d outside [%d,%d]", seed, k+1, n, iNoiseLow, iNoiseHigh)
-				}
-				distinct[sig] = true
+
+			// I1: a canonical STUN Binding Request, identical for everyone. Checked by
+			// its parts (not against the impl's own constant), so a typo in the magic
+			// cookie / type / length baked into stunBindingI1 is caught here too.
+			sm := stunRe.FindStringSubmatch(loc.I1)
+			if sm == nil {
+				t.Fatalf("seed %q kernel=%v: I1 is not a STUN-shaped Binding Request: %q", seed, kernel, loc.I1)
 			}
-			// The five slots must not collapse to one size — that would hand back a
-			// static per-interface shape.
-			if len(distinct) < 2 {
-				t.Errorf("seed %q kernel=%v: I1-I5 are all identical (%q)", seed, kernel, loc.I1)
+			if sm[1] != "0001" {
+				t.Errorf("seed %q I1: STUN message type must be 0001 (Binding Request), got %q", seed, sm[1])
+			}
+			if sm[2] != "0000" {
+				t.Errorf("seed %q I1: STUN message length must be 0000 (bodyless request), got %q", seed, sm[2])
+			}
+			if sm[3] != "2112a442" {
+				t.Errorf("seed %q I1: STUN magic cookie must be 2112a442, got %q", seed, sm[3])
+			}
+			if sm[4] != "12" {
+				t.Errorf("seed %q I1: STUN transaction ID must be 12 bytes, got %q", seed, sm[4])
+			}
+
+			// I2: a QUIC long header whose length bytes match their runs.
+			m := quicRe.FindStringSubmatch(loc.I2)
+			if m == nil {
+				t.Fatalf("seed %q I2 is not a QUIC-shaped long header: %q", seed, loc.I2)
+			}
+			dcidByte, _ := strconv.ParseInt(m[1], 16, 0)
+			dcidRun, _ := strconv.Atoi(m[2])
+			scidByte, _ := strconv.ParseInt(m[3], 16, 0)
+			scidRun, _ := strconv.Atoi(m[4])
+			if int(dcidByte) != dcidRun {
+				t.Errorf("seed %q I2: DCID length byte %d != DCID run %d (invalid QUIC)", seed, dcidByte, dcidRun)
+			}
+			if int(scidByte) != scidRun {
+				t.Errorf("seed %q I2: SCID length byte %d != SCID run %d (invalid QUIC)", seed, scidByte, scidRun)
+			}
+
+			// I3-I5 empty: the cover is exactly two packets.
+			for k, s := range []string{loc.I3, loc.I4, loc.I5} {
+				if s != "" {
+					t.Fatalf("seed %q kernel=%v: I%d must be empty, got %q", seed, kernel, k+3, s)
+				}
+			}
+
+			// Userspace-safe: no kernel-only tags in either slot.
+			for _, sig := range []string{loc.I1, loc.I2} {
+				if strings.Contains(sig, "<c>") || strings.Contains(sig, "<t>") {
+					t.Fatalf("seed %q: prologue uses a kernel-only tag: %q", seed, sig)
+				}
 			}
 		}
-		fleetI1[DeriveAWGLocal(seed, true).I1] = true
+		fleetI2[DeriveAWGLocal(seed, true).I2] = true
 	}
-	// Sizes are drawn from a bounded range, so exact collisions across 300 seeds are
-	// expected and fine; what must not happen is the range collapsing to a handful.
-	if len(fleetI1) < 40 {
-		t.Errorf("I1 sizes barely vary across the fleet: only %d distinct of 300 seeds", len(fleetI1))
+	// I2 carries the uniqueness: its size profile must vary widely across the fleet.
+	if len(fleetI2) < 40 {
+		t.Errorf("I2 (QUIC) barely varies across the fleet: only %d distinct of 300 seeds", len(fleetI2))
 	}
 }
 
-// The two ends of one tunnel must not end up with the same I-packet shapes: a
-// matched pair on both directions is a correlatable signature.
+// The two ends of one tunnel must not carry the same UNIQUE prologue packet. I1
+// (STUN) is uniform by design; I2 (QUIC) is the per-end carrier, so it is I2 that
+// must differ — a matched QUIC pair on both directions is a correlatable signature.
 func TestISlotsDifferBetweenTheTwoEnds(t *testing.T) {
-	same := 0
+	sameI2 := 0
 	for i := 0; i < 200; i++ {
 		seed := fmt.Sprintf("tunnel-%d", i)
 		a := DeriveAWGLocal(seed+"|a", true)
 		b := DeriveAWGLocal(seed+"|b", true)
-		if a.I1 == b.I1 && a.I2 == b.I2 && a.I3 == b.I3 && a.I4 == b.I4 && a.I5 == b.I5 {
-			same++
+		// I1 is uniform: both ends share the canonical STUN request by design.
+		if a.I1 != b.I1 {
+			t.Fatalf("tunnel %d: I1 (STUN) should be uniform across ends, got %q vs %q", i, a.I1, b.I1)
+		}
+		if a.I2 == b.I2 {
+			sameI2++
 		}
 	}
-	if same > 4 {
-		t.Errorf("the two ends carried identical I1-I5 in %d/200 tunnels", same)
+	if sameI2 > 4 {
+		t.Errorf("the two ends carried identical I2 (QUIC) in %d/200 tunnels", sameI2)
 	}
 }
 

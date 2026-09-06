@@ -410,10 +410,20 @@ func TestClientConfigsGetTheirOwnDecoy(t *testing.T) {
 	a := render("a", testClientPubA)
 	b := render("b", testClientPubB)
 
-	for _, key := range []string{"Jc", "Jmin", "Jmax", "I1"} {
+	// The per-end unique half: junk decoy plus the QUIC cover packet (I2), whose
+	// DCID/SCID/payload sizes are drawn from the client's own seed.
+	for _, key := range []string{"Jc", "Jmin", "Jmax", "I2"} {
 		if line(a, key) == line(b, key) {
 			t.Errorf("two clients share %s (%q) — their traffic is correlatable", key, line(a, key))
 		}
+	}
+	// I1 (STUN) is uniform BY DESIGN: a valid Binding Request is fixed-shape, so
+	// every client sends the same canonical request (the TID is re-randomised per
+	// handshake by the module). Uniqueness is carried by I2, asserted above.
+	if got := line(a, "I1"); got == "" {
+		t.Error("I1 (STUN) line missing from the rendered client config")
+	} else if got != line(b, "I1") {
+		t.Errorf("I1 (STUN) should be uniform across clients, got %q vs %q", got, line(b, "I1"))
 	}
 	// The shared half MUST still match, or neither config completes a handshake.
 	for _, key := range []string{"S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4"} {

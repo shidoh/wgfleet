@@ -83,18 +83,26 @@ func ColumnsFromSpec(w domain.WGServerSpec) InterfaceColumns {
 // UpdateInterface would run, for dry-run plan output. None of these columns are
 // secret (public obfuscation params + transport settings).
 func RenderUpdateSQL(name string, c InterfaceColumns) string {
+	// Empty I-slots render as NULL (matching UpdateInterface's nullIfEmpty write),
+	// non-empty ones quoted, so the dry-run reflects exactly what is executed.
+	sqlI := func(s string) string {
+		if s == "" {
+			return "NULL"
+		}
+		return "'" + s + "'"
+	}
 	return fmt.Sprintf(
 		"UPDATE interfaces_table SET\n"+
 			"  port=%d, ipv4_cidr='%s', mtu=%d,\n"+
 			"  j_c=%d, j_min=%d, j_max=%d,\n"+
 			"  s1=%d, s2=%d, s3=%d, s4=%d,\n"+
 			"  h1='%s', h2='%s', h3='%s', h4='%s',\n"+
-			"  i1='%s', i2='%s', i3='%s', i4='%s', i5='%s'\n"+
+			"  i1=%s, i2=%s, i3=%s, i4=%s, i5=%s\n"+
 			"WHERE name='%s';",
 		c.Port, c.IPv4CIDR, c.MTU,
 		c.Jc, c.Jmin, c.Jmax, c.S1, c.S2, c.S3, c.S4,
 		c.H1, c.H2, c.H3, c.H4,
-		c.I1, c.I2, c.I3, c.I4, c.I5, name)
+		sqlI(c.I1), sqlI(c.I2), sqlI(c.I3), sqlI(c.I4), sqlI(c.I5), name)
 }
 
 // ReadInterface returns the interface's current managed columns. found is false
@@ -136,6 +144,17 @@ func ReadInterface(ctx context.Context, dbPath, name string) (cols InterfaceColu
 	return cols, true, nil
 }
 
+// nullIfEmpty returns nil for an empty string so database/sql writes SQL NULL, and
+// the string itself otherwise. Used for the I1-I5 columns: an empty signature slot
+// must be NULL (wg-easy omits the line) rather than ” (untested; risks a malformed
+// `Ix = ` in wg0.conf).
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 // UpdateInterface applies the managed columns to the interface row. It errors if
 // the interface does not exist (wg-easy must be set up first).
 func UpdateInterface(ctx context.Context, dbPath, name string, c InterfaceColumns) error {
@@ -152,11 +171,18 @@ func UpdateInterface(ctx context.Context, dbPath, name string, c InterfaceColumn
 		h1=?, h2=?, h3=?, h4=?,
 		i1=?, i2=?, i3=?, i4=?, i5=?
 		WHERE name=?`
+	// An empty I-slot is written as NULL, not '' — wg-easy treats a NULL i-column
+	// as "no signature packet" and omits the line when it regenerates wg0.conf
+	// (see userconfig.go). A literal empty string is untested and could instead
+	// render a malformed `Ix = ` (empty RHS), which the AWG parser rejects with
+	// -EINVAL, taking wg0 (and every client on it) down. With the STUN+QUIC combo,
+	// I3-I5 are empty, so this path is now exercised for the first time.
 	res, err := db.ExecContext(ctx, q,
 		c.Port, c.IPv4CIDR, c.MTU,
 		c.Jc, c.Jmin, c.Jmax, c.S1, c.S2, c.S3, c.S4,
 		c.H1, c.H2, c.H3, c.H4,
-		c.I1, c.I2, c.I3, c.I4, c.I5, name)
+		nullIfEmpty(c.I1), nullIfEmpty(c.I2), nullIfEmpty(c.I3),
+		nullIfEmpty(c.I4), nullIfEmpty(c.I5), name)
 	if err != nil {
 		return fmt.Errorf("update wg-easy interface %q: %w", name, err)
 	}

@@ -70,22 +70,37 @@ const (
 	jminLow, jminHigh = 8, 40  // lower bound of the junk size window
 	jGapLow, jGapHigh = 24, 88 // Jmax = Jmin + gap, so Jmin < Jmax always holds
 
-	// awgSignatureSlots is the number of I-packet (I1-I5) slots we fill — each with
-	// an opaque run of random bytes (see deriveSignatures).
+	// awgSignatureSlots is the number of I-packet (I1-I5) slots the domain model
+	// carries. We fill the first two (STUN, QUIC); I3-I5 stay empty (see
+	// deriveSignatures and ADR-0033's 2026-09-07 amendment).
 	awgSignatureSlots = 5
-	// iNoiseLow/iNoiseHigh bound the per-slot I-packet size. The band is the one the
-	// old cover-protocol templates happened to occupy (~95-207 B), kept deliberately:
-	// it is the size distribution the 2026-08-28 counterfactual actually measured as
-	// unattributable, so nothing about the measured result is being extrapolated.
+
+	// stunBindingI1 is the first cover packet: a canonical STUN Binding Request —
+	// message type 0x0001, message length 0x0000, magic cookie 0x2112a442 (8 bytes),
+	// then a 12-byte transaction ID. `<r 12>` regenerates the TID on every handshake,
+	// so the CONTENT is fresh each time while the SHAPE stays a valid 20-byte request.
+	// The shape cannot vary without ceasing to be STUN (the TID is fixed at 96 bits by
+	// RFC 5389), so I1 is deliberately UNIFORM across every end; per-end uniqueness is
+	// carried by the QUIC packet in I2.
+	stunBindingI1 = "<b 0x000100002112a442><r 12>"
+
+	// QUIC Initial (I2) field-size bounds. The packet is a QUIC v1 long header
+	// (0xc3, version 0x00000001) followed by a DCID-length byte + DCID, an
+	// SCID-length byte + SCID, a zero token-length, and a payload run. RFC 9000
+	// allows connection IDs of 0-20 bytes; drawing DCID/SCID/payload per end from
+	// the seed gives every interface a distinct QUIC size profile, and each length
+	// BYTE is emitted from the same drawn value as its run so those fields are
+	// internally consistent.
 	//
-	// It does NOT avoid the decorated handshake sizes, and does not need to: with
-	// S in [15,64] those are 148+S1 ∈ [163,212], 92+S2 ∈ [107,156] and 64+S3 ∈
-	// [79,128], all of which this band crosses. an earlier finding's hazard is a genuine
-	// transport DATA packet landing on a handshake size and being read at the wrong
-	// junk offset — awgSizesSafe still guards exactly that. An I-packet is discarded
-	// by the receiver whatever its size, so it is not on that grid at all.
-	iNoiseLow  = 96
-	iNoiseHigh = 208
+	// This is PREFIX-plausible, not RFC 9000-complete: it deliberately omits the
+	// Length varint and Packet Number that a full parser (or a stateful censor)
+	// needs, and stays well under the ~1200 B minimum for a genuine client Initial.
+	// The target is the mobile operators' first-packet prefix filter, which keys on
+	// byte0 / version / CID framing — field-measured to admit it (carrier A/carrier B 100%).
+	// A deep inspector still sees malformed QUIC; that case is the per-credential
+	// none/noise knob (ADR-0033 Open items), not this default.
+	quicCIDLow, quicCIDHigh = 4, 18   // DCID/SCID length
+	quicPayLow, quicPayHigh = 96, 180 // Initial payload run
 )
 
 // DeriveAWGLocal returns the local (per-end) AmneziaWG parameters for one end:
@@ -117,39 +132,52 @@ func deriveJunk(seed string) (jc, jmin, jmax int) {
 }
 
 // deriveSignatures generates the I1-I5 CPS templates from seed. The I-packets go
-// out BEFORE the WireGuard handshake, and each one is a single opaque run of random
-// bytes: `<r N>`, with N drawn per slot from the seed.
+// out in order BEFORE the WireGuard handshake (kernel send.c, amneziawg-go
+// device/send.go send every filled slot, then the Jc junk, then the initiation).
+// We fill exactly two: I1 a canonical STUN Binding Request, I2 a QUIC v1 Initial;
+// I3-I5 stay empty.
 //
-// It used to imitate a real UDP protocol — one of QUIC Initial / STUN Binding /
-// DTLS ClientHello per tunnel-end, with per-slot field variation — on the theory
-// that a passive DPI would classify the flow as that protocol rather than as a VPN
-// handshake. Measured on 2026-08-28 that theory was not merely unproven but
-// backwards: the packets were recognised as their protocol AND rejected as
-// malformed, because the length fields were themselves `<r N>` random bytes (CPS
-// has no arithmetic, so a template cannot describe its own length) and the QUIC
-// varint Length was never emitted at all. A dissector therefore got a CLEANER
-// signal out of the cover packets than out of noise — the same sizes filled with
-// random bytes came back as plain UDP with no attribution.
+// This is the 2026-09-07 amendment to ADR-0033, decided by a field A/B on live RU
+// carriers (carrier A, carrier B, carrier C, a home ISP). The prior design filled all five slots
+// with opaque noise `<r N>`; that measured WORST on every mobile carrier — the
+// operators' per-flow prefix filter hard-blocked the opening (the server never
+// answered, rx=0) — while a valid protocol cover was admitted. A single cover is
+// carrier- and time-varying (STUN led carrier A in one window and was blocked in
+// another), so the two-packet STUN+QUIC opening is a hedge: when one protocol is
+// being dropped, the other carries the flow. Measured F=I1 STUN+I2 QUIC hit 100 %
+// on carrier A and carrier B and beat STUN-alone (80 %) on carrier B although both send the
+// same I1 — proof the filter reads past the first packet.
 //
-// Fixing the lengths would not have rescued it either: cover only holds while the
-// whole flow speaks the protocol, and the AWG handshake that follows on the same
-// 5-tuple does not, so a stateful dissector marks the flow malformed however good
-// the opening packets are. Protocol impersonation belongs on a transport that can
-// sustain it for the whole session (VLESS+REALITY+XHTTP), not in five packets in
-// front of a UDP handshake. See ADR-0022.
+// The stand's adversary (a stateful censor that follows the flow) wants the
+// OPPOSITE: a STUN/QUIC opening in front of a WireGuard handshake on the same
+// 5-tuple is a chimera it can key on. That case is served by the per-credential
+// prologue knob (ADR-0033), which can select none/noise; this default targets the
+// mass mobile user's dumb prefix filter.
 //
 // Grammar (verified against amneziawg-linux-kernel-module junk.c jp_parse_tags):
-// `<r N>` is N bytes the module regenerates on every handshake initiation, so the
-// SIZE is stable per interface while the CONTENT is fresh every time. The `kernel`
-// profile does not differ: `<r>` is accepted by kernel and userspace alike, unlike
-// the kernel-only `<c>`/`<t>`.
+// `<b 0xHEX>` is static bytes (even hex), `<r N>` is N bytes the module regenerates
+// on every handshake initiation. Both are accepted by kernel and userspace alike,
+// unlike the kernel-only `<c>`/`<t>`, so the `kernel` profile does not differ.
 func deriveSignatures(seed string, kernel bool) [awgSignatureSlots]string {
-	_ = kernel // <r> is valid for both profiles; only <c>/<t> are kernel-only
+	_ = kernel // combo uses only <b>/<r>, valid for both profiles; <c>/<t> are kernel-only
 	var out [awgSignatureSlots]string
-	for k := 0; k < awgSignatureSlots; k++ {
-		d := newDetStream(fmt.Sprintf("%s|I%d", seed, k+1))
-		out[k] = fmt.Sprintf("<r %d>", iNoiseLow+d.intn(iNoiseHigh-iNoiseLow+1))
-	}
+
+	// I1: canonical STUN Binding Request, uniform across ends (see stunBindingI1).
+	out[0] = stunBindingI1
+
+	// I2: QUIC v1 Initial long header with per-end DCID/SCID/payload sizes, so every
+	// end carries a distinct QUIC size profile. Each CID length byte is emitted from
+	// the same drawn value as its run, so those fields are internally consistent —
+	// prefix-plausible, not RFC 9000-complete (see the quicCID/quicPay constants).
+	d := newDetStream(seed + "|I2quic")
+	dcid := quicCIDLow + d.intn(quicCIDHigh-quicCIDLow+1)
+	scid := quicCIDLow + d.intn(quicCIDHigh-quicCIDLow+1)
+	pay := quicPayLow + d.intn(quicPayHigh-quicPayLow+1)
+	out[1] = fmt.Sprintf("<b 0xc300000001%02x><r %d><b 0x%02x><r %d><b 0x00><r %d>",
+		dcid, dcid, scid, scid, pay)
+
+	// I3-I5 stay empty: the field A/B showed two packets suffice, and more distinct
+	// protocols only add signal against a stateful censor.
 	return out
 }
 
