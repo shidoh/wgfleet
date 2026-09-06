@@ -809,6 +809,9 @@ func TestInputChainOpensTheResolverToTheNamespaceAndNothingElse(t *testing.T) {
 	for _, want := range []string{
 		`iifname "mih-host" udp dport 53 accept`,
 		`iifname "mih-host" tcp dport 53 accept`,
+		// DNS-over-TLS: the REALITY/VLESS client path resolves over DoT (:853), so
+		// :53 alone black-holes every REALITY client's DNS (live master 2026-09-06).
+		`iifname "mih-host" tcp dport 853 accept`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the namespace cannot reach the fleet resolver; missing %q:\n%s", want, out)

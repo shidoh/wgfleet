@@ -306,7 +306,12 @@ func RenderRuleset(in RenderInput) (string, error) {
 	// Trust the management overlay wholesale (fail-safe; see mgmtOverlayIface).
 	fmt.Fprintf(&b, "\t\tiifname %q accept\n", mgmtOverlayIface)
 	// And the veth to mihomo's namespace — but only for what mihomo needs from this
-	// host, which is the resolver.
+	// host, which is the resolver. The resolver answers on plain DNS (:53) AND
+	// DNS-over-TLS (:853, TCP) — the client-facing REALITY/VLESS path resolves over
+	// DoT, so :53 alone silently black-holes every REALITY client's DNS while plain
+	// traffic still flows. Measured on the live master 2026-09-06: mihomo dialing
+	// 172.29.3.10:853 DIRECT timed out because this trust admitted only :53; both
+	// ports belong to the same resolver and both must be here.
 	//
 	// It used to be a wholesale accept, on the argument that the far end is a
 	// container this agent created on a /30 that exists nowhere else, so there is no
@@ -325,6 +330,7 @@ func RenderRuleset(in RenderInput) (string, error) {
 	if in.NetnsHostIface != "" {
 		fmt.Fprintf(&b, "\t\tiifname %q udp dport 53 accept\n", in.NetnsHostIface)
 		fmt.Fprintf(&b, "\t\tiifname %q tcp dport 53 accept\n", in.NetnsHostIface)
+		fmt.Fprintf(&b, "\t\tiifname %q tcp dport 853 accept\n", in.NetnsHostIface)
 	}
 	b.WriteString("\t\tip saddr @whitelist accept\n")
 	// Whitelist accept precedes the blacklist drop, so an explicitly trusted source
