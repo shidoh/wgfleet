@@ -255,11 +255,43 @@ func (s *SQLiteStore) ListNodes(ctx context.Context) ([]domain.Node, error) {
 
 // DeleteNode implements Store.
 func (s *SQLiteStore) DeleteNode(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM nodes WHERE id = ?`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("delete node %q: begin: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, `DELETE FROM nodes WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete node %q: %w", id, err)
 	}
-	return requireAffected(res)
+	if err := requireAffected(res); err != nil {
+		return err
+	}
+	// The tombstone, in the same transaction: a delete that succeeded without it
+	// is the bug this table exists to close.
+	if _, err := tx.ExecContext(ctx,
+		`INSERT OR REPLACE INTO retired_nodes (id, retired_at) VALUES (?, ?)`,
+		id, fmtTime(s.now().UTC())); err != nil {
+		return fmt.Errorf("retire node %q: %w", id, err)
+	}
+	return tx.Commit()
+}
+
+// Retired implements Store.
+func (s *SQLiteStore) Retired(ctx context.Context, id string) (bool, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM retired_nodes WHERE id = ?`, id).Scan(&n); err != nil {
+		return false, fmt.Errorf("retired %q: %w", id, err)
+	}
+	return n > 0, nil
+}
+
+// Readmit implements Store.
+func (s *SQLiteStore) Readmit(ctx context.Context, id string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM retired_nodes WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("readmit %q: %w", id, err)
+	}
+	return nil
 }
 
 // SetNodeState implements Store.

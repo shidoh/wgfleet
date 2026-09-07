@@ -122,6 +122,17 @@ var migrations = []string{
 	// per-report blobs: the shape is the agent's to change, and the controller only
 	// ever reads it back whole to render a page.
 	`ALTER TABLE node_status ADD COLUMN client_peers_json TEXT NOT NULL DEFAULT '[]'`,
+	// v14: nodes the operator deleted. Deleting a row was not the end of a node:
+	// its certificate is not revoked, so an agent that still reached the controller
+	// re-registered on its next pass and auto-created the row again — the exit an
+	// operator had just deleted was back on the fleet page, back in the master's
+	// tunnel list, and back in front of the namespace readiness gate, within a
+	// minute (a tester's fleet, 2026-09-07). A retired id is refused at Register
+	// until an explicit Provision re-admits it.
+	`CREATE TABLE IF NOT EXISTS retired_nodes (
+		id         TEXT PRIMARY KEY,
+		retired_at TEXT NOT NULL
+	)`,
 }
 
 // MigrationCount is how many schema migrations this build knows. Exported so a

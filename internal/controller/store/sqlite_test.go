@@ -539,3 +539,28 @@ func TestRollForwardAfterAnOldBinaryLoweredTheStamp(t *testing.T) {
 		t.Errorf("the node did not survive the rollback: %v", err)
 	}
 }
+
+// A deleted node is refused readmission until an operator provisions it again:
+// deleting it used to be undone by the node's own next Register.
+func TestDeleteRetiresTheNodeUntilReadmitted(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := st.UpsertNode(ctx, domain.Node{ID: "exit-x", Name: "exit-x", Role: domain.RoleExit}); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := st.Retired(ctx, "exit-x"); r {
+		t.Fatal("a live node reads as retired")
+	}
+	if err := st.DeleteNode(ctx, "exit-x"); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := st.Retired(ctx, "exit-x"); err != nil || !r {
+		t.Fatalf("deleted node not retired: %v %v", r, err)
+	}
+	if err := st.Readmit(ctx, "exit-x"); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := st.Retired(ctx, "exit-x"); r {
+		t.Fatal("readmitted node still retired")
+	}
+}

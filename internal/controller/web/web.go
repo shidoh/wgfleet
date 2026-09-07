@@ -658,7 +658,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		Title:        "Delete " + id,
 		Heading:      "Delete " + id + "?",
 		Consequence:  "This removes the exit from the fleet inventory and from the manifest permanently. The master stops peering with it and its tunnel keys are dropped. No client credentials live on an exit, so nobody's config is deleted by this.",
-		Detail:       "This also removes the node's declaration from the manifest (and its name from any reserve_exits), so bringing it back means declaring it again. Its certificate is NOT revoked: if the box is still running its agent and can reach the controller, it re-registers within a reconcile pass and reappears here. Stop and disable wgfleet-agent on it first, or delete once the server is gone. The node's own files are not touched; this is the controller forgetting it. Nothing here can be undone from the console.",
+		Detail:       "This also removes the node's declaration from the manifest (and its name from any reserve_exits), so bringing it back means declaring it again. If the box is still running its agent, its registration is refused from now on — it cannot come back on its own; provisioning it again re-admits it. The node's own files are not touched; this is the controller forgetting it. Nothing here can be undone from the console.",
 		Action:       "/nodes/" + id + "/delete",
 		ConfirmLabel: "Delete " + id,
 		CancelHref:   "/nodes/" + id,

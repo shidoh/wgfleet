@@ -98,7 +98,7 @@
   {{end}}
   {{if .CanDelete}}
   <form method="post" action="/nodes/{{.Node.ID}}/delete" onsubmit="return lockAction(this)"
-        data-confirm="Delete {{.Node.Name}} from inventory? This removes the exit permanently, and removes its declaration from the manifest so it does not come back as a Pending card.{{if .DecommissionStuck}} The node is not reporting, so nothing on the box gets torn down: if it ever comes back, stop and disable wgfleet-agent on it by hand, or it re-registers here.{{else}} Its certificate is NOT revoked: if the box still runs its agent it re-registers and reappears.{{end}} No client credential lives on an exit, so nobody&#39;s config is deleted by this.">
+        data-confirm="Delete {{.Node.Name}} from inventory? This removes the exit permanently, and removes its declaration from the manifest so it does not come back as a Pending card.{{if .DecommissionStuck}} The node is not reporting, so nothing on the box gets torn down; if it ever comes back, its agent is refused here until you provision it again — stop and disable wgfleet-agent on it when you can.{{else}} If the box still runs its agent, it is refused at registration from now on (Provision re-admits it).{{end}} No client credential lives on an exit, so nobody&#39;s config is deleted by this.">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     {{/* Empty until lockAction fills it in. The server refuses a delete without it
          and asks on its own page instead, because this form's only prompt is

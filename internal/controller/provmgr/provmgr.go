@@ -467,6 +467,10 @@ func (m *Manager) setState(ctx context.Context, nodeID string, state domain.Node
 // its data plane down on every reconcile instead of converging — an endless
 // "decommission complete" loop that never comes back up (observed live 2026-06-18).
 func (m *Manager) ensureNode(ctx context.Context, node domain.Node, state domain.NodeState) error {
+	// Provisioning is the operator saying "this node, again": it lifts a delete.
+	if err := m.store.Readmit(ctx, node.ID); err != nil {
+		return err
+	}
 	if existing, err := m.store.GetNode(ctx, node.ID); err == nil {
 		existing.State = state
 		existing.LastError = ""

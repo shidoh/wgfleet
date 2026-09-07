@@ -28,8 +28,14 @@ type Store interface {
 	// the key broker: every node carries its registered PublicKey.
 	ListNodes(ctx context.Context) ([]domain.Node, error)
 
-	// DeleteNode removes a node and its status. Returns ErrNotFound if absent.
+	// DeleteNode removes a node and its status, and retires its id: a later
+	// Register under that id is refused until Readmit. Returns ErrNotFound if absent.
 	DeleteNode(ctx context.Context, id string) error
+	// Retired reports whether an id was deleted and not since re-admitted.
+	Retired(ctx context.Context, id string) (bool, error)
+	// Readmit lifts the retirement of an id — the explicit operator act
+	// (provisioning) that brings a deleted node back. Absent id ⇒ no-op.
+	Readmit(ctx context.Context, id string) error
 
 	// SetNodeState transitions a node's lifecycle state and records lastErr
 	// (empty string clears it). Returns ErrNotFound if the node is absent.

@@ -106,6 +106,19 @@ func (s *Service) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Re
 	known := true
 	switch {
 	case errors.Is(err, store.ErrNotFound):
+		// Deleted is not "never seen". The certificate is not revoked when a node
+		// is deleted, so an agent that still reaches the controller would re-create
+		// its row here on the next pass and undo the operator's delete — and put
+		// the exit back in the master's tunnel list. A retired id stays out until
+		// someone provisions it again on purpose.
+		if retired, rerr := s.store.Retired(ctx, nodeID); rerr != nil {
+			return nil, status.Errorf(codes.Internal, "lookup node %q: %v", nodeID, rerr)
+		} else if retired {
+			s.log.Warn("a deleted node tried to register; refused — provision it again to re-admit it, or stop its agent",
+				"node", nodeID, "role", role)
+			return nil, status.Errorf(codes.PermissionDenied,
+				"node %q was deleted from the fleet; it is not admitted until an operator provisions it again", nodeID)
+		}
 		known = false
 		node = domain.Node{ID: nodeID, Name: nodeID}
 		s.log.Warn("node registering without prior inventory entry; auto-creating",

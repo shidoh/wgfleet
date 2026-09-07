@@ -64,3 +64,30 @@ func TestRegisterDoesNotRewriteUnchangedNode(t *testing.T) {
 			third.UpdatedAt, first.UpdatedAt)
 	}
 }
+
+// A node the operator deleted must not come back by registering. Its certificate
+// still validates — deletion does not revoke it — so the refusal is the gate.
+func TestRegisterRefusesADeletedNodeUntilProvisioned(t *testing.T) {
+	h := newHarness(t, integrationFleet())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := h.store.UpsertNode(ctx, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.DeleteNode(ctx, "exit-de-1"); err != nil {
+		t.Fatal(err)
+	}
+	agent := h.agentFor(t, "exit-de-1")
+	if _, err := agent.Register(ctx, domain.RoleExit, "198.51.100.7", "", "10.20.0.5"); err == nil {
+		t.Fatal("a deleted node registered itself back into the fleet")
+	}
+	if _, err := h.store.GetNode(ctx, "exit-de-1"); err == nil {
+		t.Fatal("the refused registration still created the row")
+	}
+	if err := h.store.Readmit(ctx, "exit-de-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agent.Register(ctx, domain.RoleExit, "198.51.100.7", "", "10.20.0.5"); err != nil {
+		t.Fatalf("readmitted node refused: %v", err)
+	}
+}
