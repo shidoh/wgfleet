@@ -521,7 +521,7 @@ func TestClashAPIRedirectAlsoCoversTheMasterItself(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	if !strings.Contains(out, "type nat hook output priority dstnat") {
+	if !strings.Contains(out, "type nat hook output priority -100") {
 		t.Fatalf("no output chain — the master cannot reach its own API:\n%s", out)
 	}
 	if !strings.Contains(out, "ip daddr 172.29.3.10 tcp dport 9090 dnat to 100.127.255.2:9090") {
@@ -727,5 +727,28 @@ func TestThePathGuardIsAbsentUntilTheInterceptionMoves(t *testing.T) {
 	}
 	if !strings.Contains(onHost, "egress_leak_guard") {
 		t.Error("the un-NATed egress guard belongs on every master, moved or not")
+	}
+}
+
+// The output chain the moved state adds must carry a numeric priority: nftables
+// 1.0.2 (Ubuntu 22.04) rejects `dstnat` outside prerouting, and a rejected
+// ruleset is never written — the host then keeps intercepting clients mihomo
+// has left. Reproduced on a stock jammy nft, 2026-09-08.
+func TestMovedStateOutputChainPriorityIsNumericForOldNftables(t *testing.T) {
+	in := MasterNATInput{
+		ClientInterface: "wg0", ClientCIDR: "10.80.0.0/24",
+		RedirAddr: "10.80.0.1:7895", TProxyAddr: "10.80.0.1:7896",
+		NetnsGateway: "100.127.255.2", NetnsHostIface: "mih-host", NetnsLinkCIDR: "100.127.255.0/30",
+		ClashAPI: "10.59.187.39:9090",
+	}
+	out, err := RenderMasterNAT(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "type nat hook output priority -100;") {
+		t.Fatalf("output chain must use the numeric priority:\n%s", out)
+	}
+	if strings.Contains(out, "hook output priority dstnat") {
+		t.Fatalf("dstnat in an output chain is rejected by nftables 1.0.2:\n%s", out)
 	}
 }

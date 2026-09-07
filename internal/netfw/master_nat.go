@@ -331,7 +331,14 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// Found on the stand 2026-09-05, one flip after the prerouting rule was added.
 	if apiAddr != "" {
 		b.WriteString("\n\tchain output {\n")
-		b.WriteString("\t\ttype nat hook output priority dstnat; policy accept;\n")
+		// Numeric, not `dstnat`. The symbolic name is only valid in the prerouting
+		// hook on nftables 1.0.2 (Ubuntu 22.04); used in an output chain it fails
+		// `nft -c` with "invalid priority expression value in this context", and
+		// NFTApply then keeps the previous ruleset — so on a jammy master the host
+		// went on intercepting clients after mihomo had moved into its namespace,
+		// and every probe came back "connection refused". Reproduced against a
+		// stock jammy nft on 2026-09-08; -100 is what dstnat means on every version.
+		b.WriteString("\t\ttype nat hook output priority -100; policy accept;\n")
 		fmt.Fprintf(&b, "\t\tip daddr %s tcp dport %d dnat to %s:%d\n",
 			apiAddr, apiPort, in.NetnsGateway, apiPort)
 		b.WriteString("\t}\n")

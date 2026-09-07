@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -163,6 +164,13 @@ func NFTApplyWith(nftPrefix []string, path string, ruleset []byte, loaded func()
 	// only one the checker actively REJECTS is refused, and refusing is a plan
 	// entry rather than an error so the rest of the pass still runs.
 	if err := check(ruleset); err != nil && !errors.Is(err, ErrNFTCheckUnavailable) {
+		// Loud. This used to be a NoChange line nobody reads: on a jammy master the
+		// moved-state ruleset was rejected by nft 1.0.2 on every pass, the host kept
+		// its old rules, and the only trace was probes failing for a reason that
+		// looked like anything else (2026-09-07). Keeping the previous ruleset is
+		// still right — an applied ruleset beats no ruleset — but it has to be said.
+		slog.Error("nft rejects the rendered ruleset; keeping the previous one in the kernel",
+			"file", path, "err", err)
 		return []Action{NoChangeAction(filepath.Base(path),
 			fmt.Sprintf("refusing to write a ruleset nft rejects: %v", err))}, nil
 	}
