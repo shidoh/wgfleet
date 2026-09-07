@@ -408,6 +408,9 @@ type agent struct {
 	// this agent. The namespace mover reads it: a client-path probe that fails inside
 	// mihomoDisturbGrace of it is not evidence against the namespace (PathVerdict).
 	mihomoDisturbedAt time.Time
+	// clientIfaceUp reports whether the client interface exists; nil ⇒ the real
+	// `ip link show` (tests inject). See clientPathVerdict.
+	clientIfaceUp func() bool
 	// synthKP is the master's own client keypair, minted once and kept on the node.
 	synthKP wg.KeyPair
 	// moveDecisionChanged marks that the pass just finished ended with a different
@@ -2136,6 +2139,14 @@ func selfHealStats(gov *restart.Governor) map[string]metrics.SelfHealStats {
 // WireGuard devices behind the exits need up to a REKEY_TIMEOUT (~7 s) to settle.
 const mihomoDisturbGrace = 90 * time.Second
 
+// clientInterfaceUp is master.ClientInterfaceUp unless a test injected its own.
+func (a *agent) clientInterfaceUp() bool {
+	if a.clientIfaceUp != nil {
+		return a.clientIfaceUp()
+	}
+	return master.ClientInterfaceUp()
+}
+
 // noteMihomoDisturbed is the planners' hook (master.Input.OnMihomoDisturbed).
 func (a *agent) noteMihomoDisturbed() { a.mihomoDisturbedAt = time.Now() }
 
@@ -2145,8 +2156,20 @@ func (a *agent) noteMihomoDisturbed() { a.mihomoDisturbedAt = time.Now() }
 // three self-heal restarts in a row failed the probe twice, the mover read that as
 // "the move broke the path" and put the interception back on the host — into the
 // port collision the migration exists to escape — for five minutes.
+//
+// Nor is a pass that fails while the client interface itself is down. On
+// 2026-09-07 a tester's master lost wg0 to a kernel-module upgrade; every probe
+// through it failed, the mover spent all three attempts on a namespace that had
+// nothing to do with it, and recorded a terminal verdict that outlived the
+// outage — the interface came back, the interception stayed on the host, and the
+// port collision it exists to escape stayed with it until an operator toggled the
+// knob by hand.
 func (a *agent) clientPathVerdict(probes []master.ClientPathProbe) master.PathVerdict {
 	ok := master.ClientPathOK(probes)
+	if !ok && !a.clientInterfaceUp() {
+		return master.PathVerdict{Known: false,
+			Why: "the client interface " + master.ClientWGInterface + " is down; a failing probe says nothing about the namespace"}
+	}
 	if !ok && !a.mihomoDisturbedAt.IsZero() {
 		if since := time.Since(a.mihomoDisturbedAt); since < mihomoDisturbGrace {
 			return master.PathVerdict{Known: false,

@@ -284,3 +284,42 @@ func TestHolderAloneDoesNotMoveMihomo(t *testing.T) {
 		t.Errorf("mihomo left host networking during phase A:\n%s", out)
 	}
 }
+
+// The wg-easy image follows the kernel module's generation, because the tools the
+// container bundles must match it. On 2026-09-07 a master lost every client to a
+// 15.3 container on a 3.x module.
+func TestWGEasyImageFollowsModuleGeneration(t *testing.T) {
+	cases := []struct {
+		name  string
+		image string
+		gen   int
+		want  string
+	}{
+		{"default, generation 1", "", 1, DefaultWGEasyImage},
+		{"default, generation unknown keeps the pin", "", 0, DefaultWGEasyImage},
+		{"default, generation 3", "", 3, DefaultWGEasyImageAWG3},
+		{"controller-resolved default, generation 3", DefaultWGEasyImage, 3, DefaultWGEasyImageAWG3},
+		{"controller-resolved default, generation 1", DefaultWGEasyImage, 1, DefaultWGEasyImage},
+		{"operator override is never touched", "ghcr.io/wg-easy/wg-easy:15.3.0", 3, "ghcr.io/wg-easy/wg-easy:15.3.0"},
+	}
+	for _, c := range cases {
+		if got := WGEasyImageFor(c.image, c.gen); got != c.want {
+			t.Errorf("%s: WGEasyImageFor(%q, %d) = %q, want %q", c.name, c.image, c.gen, got, c.want)
+		}
+	}
+}
+
+func TestRenderMasterComposeSwapsWGEasyForAWG3Module(t *testing.T) {
+	in := RenderInput{MgmtAddr: "10.20.25.254", ClientPool: "10.80.0.0/24", AWGModuleGeneration: 3}
+	out, err := RenderMasterCompose(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, DefaultWGEasyImageAWG3) || strings.Contains(out, DefaultWGEasyImage) {
+		t.Errorf("a 3.x module must render the AWG3 wg-easy image:\n%s", out)
+	}
+	// And the two defaults are actually different images, or the test above is vacuous.
+	if DefaultWGEasyImage == DefaultWGEasyImageAWG3 {
+		t.Fatal("the two wg-easy defaults must differ")
+	}
+}

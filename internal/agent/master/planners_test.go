@@ -345,7 +345,7 @@ func TestMasterExtraFilesWritten(t *testing.T) {
 // would and writes it to disk, so a follow-up Plan sees an unchanged file.
 func writeMasterCompose(t *testing.T, path string, spec domain.NodeSpec) {
 	t.Helper()
-	yamlText, err := compose.RenderMasterCompose(masterComposeInput(spec, "", "", nil))
+	yamlText, err := compose.RenderMasterCompose(masterComposeInput(spec, "", "", nil, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1052,4 +1052,88 @@ func TestTProxyTeardownActsWhenTheKernelWillNotAnswer(t *testing.T) {
 	if changing == 0 {
 		t.Error("an unanswered probe was read as 'already withdrawn', leaving the host rules in place")
 	}
+}
+
+// The wg-easy image follows the kernel module's generation, and a module that
+// moved is a compose change: `up -d` recreates the container with tools that can
+// drive the module. On 2026-09-07 a tester's master lost every client to a 15.3
+// container on a 3.x module, with nothing in the fleet able to say why.
+func TestComposePlannerFollowsTheModuleGeneration(t *testing.T) {
+	spec, _ := masterSpec(t)
+	spec.Master.Compose.WGEasyImage = "" // left at the default: the agent may choose
+	gen := func(g int) func() (int, error) { return func() (int, error) { return g, nil } }
+
+	paths := testPaths(t)
+	pl := composePlanner{path: paths.Compose, up: func(string) bool { return true }, awgGen: gen(1)}
+	if _, err := pl.Plan(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFromPlan(t, paths.Compose, spec, gen(1)); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(paths.Compose); !strings.Contains(string(b), compose.DefaultWGEasyImage) {
+		t.Fatalf("generation 1 must keep the pinned image:\n%s", b)
+	}
+
+	// The module moves to 3.x under an unchanged file: the render changes, so the
+	// plan must end in `up -d`, and the file must now name the AWG3 image.
+	pl = composePlanner{path: paths.Compose, up: func(string) bool { return true }, awgGen: gen(3)}
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lastKind(actions); got != reconcile.ActionExec {
+		t.Fatalf("module moved to 3.x: want exec (up -d), got %q in %+v", got, actions)
+	}
+	if err := writeFromPlan(t, paths.Compose, spec, gen(3)); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(paths.Compose)
+	if !strings.Contains(string(b), compose.DefaultWGEasyImageAWG3) || strings.Contains(string(b), compose.DefaultWGEasyImage) {
+		t.Fatalf("generation 3 must render the AWG3 image:\n%s", b)
+	}
+
+	// An unreadable generation — the module unloaded for the seconds of its own
+	// upgrade — changes nothing: the file on disk already says which image this
+	// node runs, and flipping it on a blank answer would recreate the container
+	// twice for no reason.
+	unreadable := func() (int, error) { return 0, errors.New("modinfo: not found") }
+	pl = composePlanner{path: paths.Compose, up: func(string) bool { return true }, awgGen: unreadable}
+	actions, err = pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lastKind(actions); got != reconcile.ActionNoChange {
+		t.Fatalf("unreadable generation on an AWG3 file must change nothing, got %q in %+v", got, actions)
+	}
+	b, _ = os.ReadFile(paths.Compose)
+	if !strings.Contains(string(b), compose.DefaultWGEasyImageAWG3) {
+		t.Fatalf("unreadable generation must leave the AWG3 image in place:\n%s", b)
+	}
+
+	// With no file at all, unreadable means the pin: the image every node ran
+	// before this decision existed.
+	fresh := testPaths(t)
+	pl = composePlanner{path: fresh.Compose, up: func(string) bool { return true }, awgGen: unreadable}
+	if _, err := pl.Plan(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFromPlan(t, fresh.Compose, spec, func() (int, error) { return 0, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(fresh.Compose); !strings.Contains(string(b), compose.DefaultWGEasyImage) {
+		t.Fatalf("unreadable generation with no prior file must render the pin:\n%s", b)
+	}
+}
+
+// writeFromPlan renders the compose file the way composePlanner would with the
+// given module generation and writes it, so the next Plan sees it unchanged.
+func writeFromPlan(t *testing.T, path string, spec domain.NodeSpec, gen func() (int, error)) error {
+	t.Helper()
+	g, _ := gen()
+	yamlText, err := compose.RenderMasterCompose(masterComposeInput(spec, "", "", nil, g))
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(yamlText), 0o600)
 }

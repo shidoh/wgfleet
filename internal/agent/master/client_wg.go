@@ -502,6 +502,12 @@ func ipLinkUp(name string) bool {
 	return exec.Command("ip", "link", "show", name).Run() == nil
 }
 
+// ClientInterfaceUp reports whether the master's client-facing interface exists
+// at all. The namespace mover asks before it reads a failing client-path probe as
+// evidence: with no interface there is no client path, in the namespace or out of
+// it, and the probe's failure is about the interface, not about where mihomo is.
+func ClientInterfaceUp() bool { return ipLinkUp(ClientWGInterface) }
+
 // syntheticPeer builds the master's own client peer for this spec, or the zero
 // value when there is no key or the pool has no room for one. The address comes
 // from the pool rather than from configuration so an operator resizing the pool

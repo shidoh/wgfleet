@@ -11,6 +11,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/agent/restart"
 	"github.com/shidoh/wgfleet/internal/agent/tuning"
+	"github.com/shidoh/wgfleet/internal/awgmod"
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/dnsfilter"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -231,6 +232,10 @@ type composePlanner struct {
 	adminUser     string                 // wg-easy unattended-setup admin user (INIT_USERNAME)
 	adminPass     string                 // wg-easy unattended-setup admin password (INIT_PASSWORD); agent-local
 	up            func(file string) bool // nil ⇒ real `docker compose ps` probe
+	// awgGen reads the AmneziaWG kernel module generation; nil ⇒ the real modinfo
+	// probe (tests inject). It selects the wg-easy image while wg-easy still owns
+	// the client leg — see compose.WGEasyImageFor.
+	awgGen func() (int, error)
 }
 
 func (composePlanner) Component() string { return "container stack (docker compose)" }
@@ -239,7 +244,7 @@ func (p composePlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]recon
 	if spec.Master == nil {
 		return nil, fmt.Errorf("compose: node has no master spec")
 	}
-	yamlText, err := compose.RenderMasterCompose(masterComposeInput(spec, p.adminUser, p.adminPass, p.netnsAttached))
+	yamlText, err := compose.RenderMasterCompose(masterComposeInput(spec, p.adminUser, p.adminPass, p.netnsAttached, p.wgEasyGeneration()))
 	if err != nil {
 		return nil, err
 	}
@@ -276,6 +281,27 @@ func (p composePlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]recon
 		actions = append(actions, reconcile.NoChangeAction("docker compose", "container stack already up"))
 	}
 	return actions, nil
+}
+
+// wgEasyGeneration is the AmneziaWG module generation the wg-easy image is chosen
+// for. The kernel's answer when it has one; otherwise whatever generation the
+// compose file on disk was last rendered for, so that a module that is merely
+// UNLOADED — the few seconds of a `modprobe -r`/`modprobe` during an upgrade, or
+// the window before modules-load.d runs at boot — does not flip the container to
+// the other image and back. A planner must not recreate a container on a guess,
+// and "modinfo said nothing" is not a generation.
+func (p composePlanner) wgEasyGeneration() int {
+	gen := p.awgGen
+	if gen == nil {
+		gen = awgmod.ModuleGeneration
+	}
+	if g, err := gen(); err == nil {
+		return g
+	}
+	if b, err := os.ReadFile(p.path); err == nil && strings.Contains(string(b), compose.DefaultWGEasyImageAWG3) {
+		return 3
+	}
+	return 0
 }
 
 func (p composePlanner) isUp(ctx context.Context) bool {
@@ -1017,16 +1043,17 @@ func handedOver(spec domain.NodeSpec) bool {
 // field added to the render (the namespace holder) made the fixture and the
 // planner disagree and the idempotency test failed for a reason that had nothing
 // to do with idempotency.
-func masterComposeInput(spec domain.NodeSpec, adminUser, adminPass string, attached func() bool) compose.RenderInput {
+func masterComposeInput(spec domain.NodeSpec, adminUser, adminPass string, attached func() bool, awgGen int) compose.RenderInput {
 	return compose.RenderInput{
-		Compose:          spec.Master.Compose,
-		ClientListenPort: spec.WGServer.ListenPort,
-		ClientPool:       spec.WGServer.AddressPool,
-		MgmtAddr:         masterMgmtAddr(spec),
-		AdminUsername:    adminUser,
-		AdminPassword:    adminPass,
-		ClientWGManaged:  handedOver(spec),
-		NetnsHolderImage: netnsHolderImage(spec),
+		AWGModuleGeneration: awgGen,
+		Compose:             spec.Master.Compose,
+		ClientListenPort:    spec.WGServer.ListenPort,
+		ClientPool:          spec.WGServer.AddressPool,
+		MgmtAddr:            masterMgmtAddr(spec),
+		AdminUsername:       adminUser,
+		AdminPassword:       adminPass,
+		ClientWGManaged:     handedOver(spec),
+		NetnsHolderImage:    netnsHolderImage(spec),
 		// Phase A renders the holder but does NOT move mihomo: the namespace stays
 		// inert until the interception rules move with it (see netnsAttach).
 		NetnsAttachMihomo: netnsAttach(attached),

@@ -40,6 +40,25 @@ const (
 	// (v15.3.0, built 2026-05-18). Bumping this is an operator decision: re-check
 	// internal/wgeasy/awg.go ColumnsFromSpec against the new schema first.
 	DefaultWGEasyImage = "ghcr.io/wg-easy/wg-easy:15@sha256:93bbd593e07bab98d02807a28770ac87ab6c48818e319e68c1f66561feb99876"
+	// DefaultWGEasyImageAWG3 is the wg-easy the stack runs once the host's AmneziaWG
+	// kernel module is generation 3. wg-easy drives the interface with the
+	// amneziawg-tools it bundles, and AmneziaWG 3.0 changed the netlink attribute
+	// layout between tools and module, so the two must be of one generation:
+	// v15.3.0 above bundles generation-1 tools, v15.4.0 pins AWGTOOLS_BRANCH to
+	// v3.0.20260805. A 15.3 container on a 3.x module fails `awg setconf` with
+	// "Invalid argument" on its own defaults and never raises the interface — a
+	// tester's master lost every client that way on 2026-09-07 after a routine
+	// module upgrade. Both digests were exercised against the same module and the
+	// agent's exact AWG columns on a stand that day; see WGEasyImageFor.
+	//
+	// Multi-arch index digest of ghcr.io/wg-easy/wg-easy:15 as resolved 2026-09-07
+	// (v15.4.0). The interfaces_table AWG columns are identical to 15.3's
+	// (j_c/j_min/j_max, s1-s4, h1-h4 text, i1-i5 text); 15.4 adds routing_table
+	// with a default, which is why the agent's UPDATE keeps working unchanged.
+	DefaultWGEasyImageAWG3 = "ghcr.io/wg-easy/wg-easy:15@sha256:0e7bc9d34e86ddcaa92bc700d4d7dc9b33291dbc07ac8d13382f7c2095f949ec"
+	// wgEasyAWG3MinGeneration is the module generation from which the stack runs
+	// DefaultWGEasyImageAWG3 (mirrors awgmod's gate).
+	wgEasyAWG3MinGeneration = 3
 	// Pinned, NOT :latest and NOT :Alpha (docs/DESIGN.md #8) — reproducible/auditable
 	// deploys. (The AWG-param safety that keeps mihomo's amneziawg-go from panicking is
 	// handled in the derivation: Jmin is floored ≥ S4, so no junk packet underflows its
@@ -107,6 +126,35 @@ type RenderInput struct {
 	// interception rules with it, leaving clients with no path until the next
 	// reconcile pass noticed. Empty ⇒ no holder, mihomo stays on host networking.
 	NetnsHolderImage string
+	// AWGModuleGeneration is the MAJOR version of the AmneziaWG kernel module on
+	// this node — 1 for the 1.x line, 3 for 3.x, 0 when it could not be read. The
+	// agent supplies it (awgmod.ModuleGeneration) because only the node knows which
+	// module it runs; the controller resolves the image knob without that
+	// knowledge. It selects the wg-easy image when the operator left it at the
+	// default: see WGEasyImageFor.
+	AWGModuleGeneration int
+}
+
+// WGEasyImageFor picks the wg-easy image for a node whose AmneziaWG module is
+// generation gen. An operator override is returned untouched — pinning is theirs
+// to get right and theirs to be told about. The default follows the module: the
+// generation-1 pin until the module is 3.x, DefaultWGEasyImageAWG3 from then on.
+// An unreadable generation (0) keeps the pin, which is the image the node was
+// running before this decision existed.
+//
+// The controller sends the resolved default rather than an empty string, so
+// "left at the default" is recognised by value. That is deliberate: the wire
+// contract does not change, and an older controller's spec still gets the right
+// image on a node whose module moved.
+func WGEasyImageFor(image string, gen int) string {
+	switch {
+	case image != "" && image != DefaultWGEasyImage:
+		return image
+	case gen >= wgEasyAWG3MinGeneration:
+		return DefaultWGEasyImageAWG3
+	default:
+		return DefaultWGEasyImage
+	}
 }
 
 // RenderMasterCompose renders docker-compose.yml for the master stack. The
@@ -119,7 +167,7 @@ func RenderMasterCompose(in RenderInput) (string, error) {
 	}
 	c := in.Compose
 
-	wgEasyImage := orDefault(c.WGEasyImage, DefaultWGEasyImage)
+	wgEasyImage := WGEasyImageFor(c.WGEasyImage, in.AWGModuleGeneration)
 	mihomoImage := orDefault(c.MihomoImage, DefaultMihomoImage)
 	webPort := c.WGEasyWebPort
 	if webPort == 0 {

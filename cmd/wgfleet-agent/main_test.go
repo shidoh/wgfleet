@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/shidoh/wgfleet/internal/agent/master"
 	"testing"
 	"time"
 )
@@ -91,5 +92,30 @@ func TestAChangedDecisionAsksForAnotherPassAtOnce(t *testing.T) {
 	// And exactly once: a flag that stays set turns the interval into a busy loop.
 	if a.decisionChanged() {
 		t.Fatal("the follow-up repeats forever; the flag is never cleared")
+	}
+}
+
+// A failing client-path probe while the client interface is DOWN is not evidence
+// about the namespace. On 2026-09-07 a master that had lost wg0 to a module
+// upgrade spent all three namespace attempts on it and parked the interception
+// on the host — into the port collision — long after the interface came back.
+func TestClientPathVerdictDoesNotJudgeWhileTheClientInterfaceIsDown(t *testing.T) {
+	failing := []master.ClientPathProbe{{Name: "udp/53", Decisive: true, OK: false}}
+
+	a := &agent{clientIfaceUp: func() bool { return false }}
+	if v := a.clientPathVerdict(failing); v.Known {
+		t.Fatalf("interface down: verdict must not be evidence, got %+v", v)
+	}
+
+	a = &agent{clientIfaceUp: func() bool { return true }}
+	v := a.clientPathVerdict(failing)
+	if !v.Known || v.OK {
+		t.Fatalf("interface up, probe failing: want a known negative verdict, got %+v", v)
+	}
+
+	passing := []master.ClientPathProbe{{Name: "udp/53", Decisive: true, OK: true}}
+	a = &agent{clientIfaceUp: func() bool { return false }}
+	if v := a.clientPathVerdict(passing); !v.Known || !v.OK {
+		t.Fatalf("a passing probe is always evidence, got %+v", v)
 	}
 }
