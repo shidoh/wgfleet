@@ -1174,7 +1174,7 @@ func TestMasterRoutingButtonsExitOnly(t *testing.T) {
 		}
 	}
 	_, exit := get(t, h, "/nodes/exit-de-1")
-	for _, s := range []string{"Take out of routing", "Decommission", "Delete"} {
+	for _, s := range []string{">Drain<", "Decommission", "Delete"} {
 		if !strings.Contains(exit, s) {
 			t.Errorf("exit detail must contain routing-lifecycle element %q", s)
 		}
@@ -1310,12 +1310,12 @@ func TestTopologyOrdersCarryingFirstThenAlphabetical(t *testing.T) {
 	// node names must appear in the same carrying-then-alphabetical order.
 	_, body := get(t, h, "/")
 	carryIdx := strings.Index(body, "CARRYING")
-	reserveIdx := strings.Index(body, "RESERVE")
+	reserveIdx := strings.Index(body, "NOT CARRYING")
 	if carryIdx == -1 || reserveIdx == -1 {
-		t.Fatalf("rendered body missing CARRYING/RESERVE group labels")
+		t.Fatalf("rendered body missing CARRYING/NOT CARRYING group labels")
 	}
 	if carryIdx >= reserveIdx {
-		t.Errorf("rendered body: CARRYING label at %d, RESERVE at %d — want CARRYING first", carryIdx, reserveIdx)
+		t.Errorf("rendered body: CARRYING label at %d, NOT CARRYING at %d — want CARRYING first", carryIdx, reserveIdx)
 	}
 
 	lastIdx := -1
@@ -1403,5 +1403,45 @@ func TestCredentialSurfacesForbidCaching(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if got := rec.Result().Header.Get("Cache-Control"); got != "no-store" {
 		t.Errorf("/login: Cache-Control = %q, want no-store", got)
+	}
+}
+
+// A drain declared in the manifest shows as such and cannot be undone from the
+// console: the file would drain the node again on the next render.
+func TestManifestDrainIsShownAndCannotBeUndrained(t *testing.T) {
+	prov := &stubProv{manifest: []domain.Node{{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, Drain: true, DrainByConfig: true}}}
+	h, st := newProvHandler(t, prov)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+
+	_, body := get(t, h, "/nodes/exit-de-1")
+	if !strings.Contains(body, "drained by config") {
+		t.Fatalf("node page does not say the drain comes from the manifest:\n%s", body)
+	}
+	if strings.Contains(body, "action=\"/nodes/exit-de-1/undrain\"") {
+		t.Fatal("node page offers Undrain for a manifest-drained exit")
+	}
+
+	res := post(t, h, "/nodes/exit-de-1/undrain")
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("undrain status = %d, want a redirect with the refusal", res.StatusCode)
+	}
+	if n, _ := st.GetNode(context.Background(), "exit-de-1"); n.Drain {
+		// The store flag was never set (the manifest carries the drain), so a refused
+		// undrain leaves it as it was.
+		t.Fatal("store flag changed on a refused undrain")
+	}
+}
+
+// A decommissioned node that is not reporting cannot be torn down by anyone; the
+// page must say so and keep Delete open.
+func TestStuckDecommissionIsNamedAndDeletable(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateDegraded, Drain: true, Decommission: true})
+	_, body := get(t, h, "/nodes/exit-de-1")
+	if !strings.Contains(body, "decommission stuck") {
+		t.Fatalf("a silent decommissioning node is still called decommissioning:\n%s", body)
+	}
+	if !strings.Contains(body, "action=\"/nodes/exit-de-1/delete\"") {
+		t.Fatal("Delete is not offered for a stuck decommission")
 	}
 }

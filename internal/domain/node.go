@@ -79,6 +79,11 @@ type Node struct {
 	// configured peer/proxy (existing connections survive) but receives no new
 	// traffic. The operator drains, then deletes. Independent of State (health).
 	Drain bool
+	// DrainByConfig reports that the manifest declares this exit drained
+	// (fleet.exits[].drain). Not persisted: it is read from the manifest each time
+	// and shown so the console can say WHY the node is out of routing and refuse
+	// to undrain what the file will drain again.
+	DrainByConfig bool
 
 	// Decommission, when set, tells the agent to tear down the node's data plane
 	// (stop containers/services, bring down tunnels, clear routing/firewall) — the

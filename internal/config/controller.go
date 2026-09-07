@@ -862,9 +862,16 @@ func derivedExitPort(name string) int {
 
 // ExitConfig describes one exit node in the fleet manifest.
 type ExitConfig struct {
-	Name           string   `koanf:"name"`
-	Region         string   `koanf:"region"`
-	Egress         string   `koanf:"egress"`          // "warp" | "direct" (preferred)
+	Name   string `koanf:"name"`
+	Region string `koanf:"region"`
+	Egress string `koanf:"egress"` // "warp" | "direct" (preferred)
+	// Drain keeps the exit out of the load balancer by declaration: it stays a
+	// configured tunnel (the master keeps peering, existing sessions survive) but
+	// carries no new client traffic, and the console cannot undrain it — the
+	// manifest is the authority. For an exit that is down at its hoster, or held
+	// back on purpose, this is the honest place to say so: the button in the
+	// console is a store flag that a re-provision clears.
+	Drain          bool     `koanf:"drain"`
 	EgressFallback []string `koanf:"egress_fallback"` // ordered fallbacks for censorship-adaptive failover (ADR-0017), e.g. [direct]; empty ⇒ no failover
 	WARPMTU        int      `koanf:"warp_mtu"`        // WARP interface MTU; 0 ⇒ computed (1440). Set when the real WARP path is smaller (an earlier finding: 1320-1420)
 	// LinkMTU is the physical/path MTU of the master↔exit link — the largest packet

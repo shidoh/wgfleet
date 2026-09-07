@@ -591,6 +591,15 @@ func (h *Handler) handleDrain(drain bool) http.HandlerFunc {
 		if drain && !h.requireExit(w, r, id, "take out of routing") {
 			return
 		}
+		// Undraining a manifest-drained exit would last until the next render at
+		// most; refusing is the honest answer, and it names the file to edit.
+		if !drain {
+			if mn, ok := h.manifestNode(id); ok && mn.DrainByConfig {
+				h.redirectErr(w, r, "/nodes/"+id, "undrain refused",
+					fmt.Errorf("%s is drained by the manifest (fleet.exits[].drain: true); remove that line and restart the controller to bring it back", id))
+				return
+			}
+		}
 		if err := h.store.SetNodeDrain(r.Context(), id, drain); err != nil {
 			h.redirectErr(w, r, "/nodes/"+id, "set drain", err)
 			return
@@ -1010,6 +1019,7 @@ type topoCard struct {
 	LastSeen      time.Time
 	// Censorship / lifecycle sub-badges — same set + copy as the table's STATE cell.
 	Drain         bool
+	DrainByConfig bool // the drain is declared in the manifest, not a console flag
 	EgressBlocked bool
 	LowThroughput bool
 	Decommission  bool
@@ -1047,6 +1057,7 @@ func cardOf(r nodeRow) topoCard {
 		LastHandshake: r.LastHandshake,
 		LastSeen:      r.LastSeen,
 		Drain:         r.Drain,
+		DrainByConfig: r.DrainByConfig,
 		EgressBlocked: r.EgressBlocked,
 		LowThroughput: r.LowThroughput,
 		Decommission:  r.Decommission,
@@ -1163,6 +1174,13 @@ func backfillFromManifest(n, mn domain.Node) domain.Node {
 	if mn.PublicIP != "" {
 		n.PublicIP = mn.PublicIP
 	}
+	// A drain declared in the manifest is a drain, whatever the store flag says:
+	// the keybroker renders it drained, so the console must show it drained, and
+	// say where the decision lives.
+	if mn.DrainByConfig {
+		n.Drain = true
+		n.DrainByConfig = true
+	}
 	return n
 }
 
@@ -1206,6 +1224,7 @@ func (h *Handler) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 		data.HasStatus = true
 		data.Status = st
 	}
+	data.DecommissionStuck = decommissionStuck(node, data.HasStatus, data.Status)
 	if data.CanDelete && h.renderer != nil && node.Role == domain.RoleMaster {
 		clients, err := h.renderer.ListWGClients(r.Context(), id)
 		switch {
@@ -1242,6 +1261,24 @@ func (h *Handler) handleNodesPartial(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// decommissionSilence is how long a decommissioning node may go without a
+// status report before the page stops calling it "decommissioning" and calls it
+// what it is: stuck, with Delete as the way out.
+const decommissionSilence = 3 * time.Minute
+
+// decommissionStuck reports a decommission nobody will carry out. A decommission
+// is executed by the node's own agent; a node that is not reporting has no agent
+// to execute it, and a page that says "decommissioning" about it promises
+// something that will never happen — a tester watched one sit in that state
+// until the hoster's outage was over. Say what is true and offer the way out,
+// which is Delete.
+func decommissionStuck(node domain.Node, hasStatus bool, st domain.NodeStatus) bool {
+	if !node.Decommission {
+		return false
+	}
+	return !hasStatus || time.Since(st.ReportedAt) > decommissionSilence
+}
+
 type nodeData struct {
 	Title           string
 	NodeCount       int
@@ -1264,6 +1301,9 @@ type nodeData struct {
 	// found". Gating Delete on it made the ghost of a destroyed server permanently
 	// undeletable from the console.
 	CanDelete bool
+	// DecommissionStuck: a decommission was requested but the node is not
+	// reporting, so no agent will ever carry it out. Delete is the way out.
+	DecommissionStuck bool
 	// Unregistered: the node is declared in the manifest but has no store row —
 	// never provisioned, or its server is gone. Drain and Decommission are store
 	// writes, so for such a node they can only ever fail "store: not found"; the
@@ -1323,6 +1363,7 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 		data.HasStatus = true
 		data.Status = st
 	}
+	data.DecommissionStuck = decommissionStuck(node, data.HasStatus, data.Status)
 	if data.CanDelete && h.renderer != nil && node.Role == domain.RoleMaster {
 		clients, err := h.renderer.ListWGClients(r.Context(), id)
 		switch {

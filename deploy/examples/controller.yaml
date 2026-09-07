@@ -387,6 +387,7 @@ fleet:
     - name: exit-de-1
       region: de
       egress: warp # warp | direct (preferred)
+      # drain: true # keep this exit out of the load balancer by declaration (tunnel stays up; console shows "drained by config")
       # egress_fallback: deliberately NOT set. Setting it would auto-switch warp→direct when WARP is blocked/throttled, but DIRECT egress exits under the node's datacenter IP (exposes the server). With no fallback, a blocked/throttled exit is instead auto-suspended from the load balancer — it stops carrying client traffic without ever revealing its IP. Only set egress_fallback once you have a non-exposing fallback transport.
       # warp_mtu: 1380 # pin the WARP interface MTU when the real path is < 1500 (typically 1320-1420). 0/unset ⇒ default 1380, refined per-exit by an auto-probe (tracepath to the WARP endpoint; capped at 1380, only lowers). Also lowers the client MTU so packets never fragment at egress.
       # link_mtu: 1400 # physical/path MTU of the MASTER↔EXIT link when it is < 1500 (a DC overlay, PPPoE, narrow transit). Measure from the master: `ping -M do -s N <exit-ip>` — path MTU = largest passing N + 28. Lowers BOTH ends of this exit's master↔exit tunnel AND the client MTU so the AmneziaWG carrier packets fit instead of black-holing (the "tunnel up but intermittently hangs" symptom). 0/unset = assume 1500.

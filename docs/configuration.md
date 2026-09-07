@@ -309,6 +309,7 @@ See [§9 third-party configuration](#9-third-party-configuration) for the passth
 | `fleet.exits[].public_ip` | string | = `ssh.host` | Public IP the master dials for the AmneziaWG endpoint |
 | `fleet.exits[].address_pool` | CIDR | — | Address pool for this exit's tunnel |
 | `fleet.exits[].egress` | string | — | Preferred egress: `warp` or `direct` |
+| `fleet.exits[].drain` | bool | `false` | Keep the exit out of the load balancer by declaration. The tunnel stays up and the node keeps reconciling; it carries no new client traffic, the console shows it as *drained by config*, and Undrain in the console is refused — remove the line and restart the controller instead. For an exit down at its hoster, or held back on purpose |
 | `fleet.exits[].egress_fallback` | []string | none | Ordered fallbacks for censorship-adaptive failover, e.g. `[direct]`. Empty disables failover |
 | `fleet.exits[].min_egress_throughput_kbytes` | int | fleet value | Per-exit throughput floor. `>0` custom, `0` inherit, negative disables the watchdog here |
 | `fleet.exits[].listen_port` | int | derived `20000`–`32000` | Legacy top-level AmneziaWG port. Prefer `fleet.exits[].transports.awg.listen_port` |

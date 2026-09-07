@@ -165,6 +165,29 @@ binaries land, so a normal change does not read as a fault.
   caused it. If a master of yours shows `udp-return-path` failing and
   `client interception not moving … reverted 3 times`, that is the old behaviour:
   toggle `mihomo.client_via_netns` to `off` and back to `auto` once.
+- **The namespace move no longer starts on a master where wg-easy still owns the
+  client interface**, and it no longer counts a pass in which nothing was measured
+  as a failure. There is no client-path prober without the agent's own interface,
+  and a move nobody can watch used to be tried, reverted and parked in three
+  cycles on every such master. Migrate the client leg (client-migration.md) and
+  the move follows.
+- **The namespace readiness gate is satisfied by any reachable exit.** It used to
+  ping the first exit in the manifest and only that one, so a fleet whose first
+  exit was down at its hoster never moved.
+- **The client-path prober resolves where the clients resolve** — the list written
+  into client configs — instead of assuming the master runs its own resolver. A
+  master without `dns_filter` used to fail every tcp/443 probe on name resolution
+  and revert a healthy move.
+- **`fleet.exits[].drain: true`** drains an exit from the manifest; the console
+  shows *drained by config* and refuses to undrain it. The console buttons are now
+  called Drain and Undrain, the topology card's second group is labelled NOT
+  CARRYING (it never was the reserve tier), and a decommissioned node that is not
+  reporting is shown as *decommission stuck* with Delete as the way out rather
+  than as "decommissioning" forever.
+- **The AmneziaWG apt pin no longer fails the reconcile pass on a node where none
+  of the packages is installed** (a module built from source). dpkg's "no such
+  package" exit code was read as a failed probe and took every planner after it
+  down, every pass.
 - **`prepare-node.sh --upgrade-awg`** is the supported way to move a node's
   AmneziaWG module and tools to the newest PPA build; re-running the script
   without it never did and still does not. Details in `operations.md`,

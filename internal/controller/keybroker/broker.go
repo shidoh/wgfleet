@@ -825,7 +825,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		// drains whichever is active. REALITY only becomes active once the exit has
 		// published its reality pubkey AND its endpoint is dialable — until then the
 		// AWG tunnel keeps carrying traffic (no flip to a not-yet-ready transport).
-		baseDrained := exitNode.Drain || autoSuspend[exit.Name]
+		baseDrained := exitNode.Drain || exit.Drain || autoSuspend[exit.Name]
 		// Reserve is orthogonal to Drained: it keys off the manifest exit name (never
 		// the "-reality" proxy-name suffix), so both transports of a dual-transport
 		// exit land in the same tier.
@@ -1055,7 +1055,7 @@ func (b *Broker) throughputAutoSuspend(ctx context.Context) map[string]bool {
 		switch {
 		case st.EgressThroughputDegraded():
 			degraded[exit.Name] = true
-		case !node.Drain:
+		case !node.Drain && !exit.Drain:
 			healthy++
 		}
 	}

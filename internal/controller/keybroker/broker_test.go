@@ -1334,3 +1334,26 @@ func TestClientVLESSSpecFailsRatherThanDeIssuingEveryone(t *testing.T) {
 		t.Errorf("render error = %v, want it to wrap the store failure", err)
 	}
 }
+
+// fleet.exits[].drain is a drain: the master renders the tunnel Drained and the
+// last-exit guard of auto-suspend does not count the node as healthy.
+func TestMasterSpecHonorsManifestDrain(t *testing.T) {
+	ctx := context.Background()
+	fleet := testFleet()
+	for i := range fleet.Exits {
+		if fleet.Exits[i].Name == "exit-de-1" {
+			fleet.Exits[i].Drain = true
+		}
+	}
+	b, st := newBrokerWithFleet(t, fleet)
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if spec.Master == nil || len(spec.Master.ExitTunnels) != 1 || !spec.Master.ExitTunnels[0].Drained {
+		t.Fatalf("a manifest-drained exit must render Drained, got %+v", spec.Master)
+	}
+}

@@ -6,8 +6,10 @@
   <span class="state-pill {{lower .Node.State}}"><span class="led"></span>{{.Node.State}}</span>
   {{if or .Node.Drain .Node.Decommission .WireSkew (and .HasStatus .Status.EgressBlocked) (and .HasStatus .Status.EgressThroughputDegraded) (and .HasStatus (ne .Status.ActiveEgress "") (ne .Status.ActiveEgress "warp"))}}
   <span class="subbadges">
-    {{if .Node.Drain}}<span class="subbadge drain" title="Manually taken out of the load balancer — no new traffic. The node is untouched; reverse instantly with “Resume routing”."><span class="led"></span>out of routing</span>{{end}}
-    {{if .Node.Decommission}}<span class="subbadge decommission"><span class="led"></span>decommissioning</span>{{end}}
+    {{if .Node.DrainByConfig}}<span class="subbadge drain" title="Drained by the manifest (fleet.exits[].drain: true): no new traffic, the tunnel stays up. Remove that line and restart the controller to bring it back; the console cannot undrain it."><span class="led"></span>drained by config</span>
+    {{else if .Node.Drain}}<span class="subbadge drain" title="Drained from the console — out of the load balancer, no new traffic. The node is untouched; Undrain reverses it instantly."><span class="led"></span>drained</span>{{end}}
+    {{if .DecommissionStuck}}<span class="subbadge decommission" title="Decommission was requested, but this node is not reporting: its agent is the one that tears the data plane down, and it is not there to do it. Delete removes the node from the fleet; if the box ever comes back, stop wgfleet-agent on it by hand."><span class="led"></span>decommission stuck: node not reporting</span>
+    {{else if .Node.Decommission}}<span class="subbadge decommission"><span class="led"></span>decommissioning</span>{{end}}
     {{if and .HasStatus .Status.EgressBlocked}}<span class="subbadge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
     {{if and .HasStatus .Status.EgressThroughputDegraded}}<span class="subbadge slow" title="Egress throughput below the floor — auto-suspended from the load balancer (ADR-0021)"><span class="led"></span>low egress throughput</span>{{end}}
     {{if .HasStatus}}{{$e := .Status.ActiveEgress}}{{if and $e (ne $e "warp")}}<span class="subbadge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{$e}}</span>{{end}}{{end}}
@@ -51,18 +53,23 @@
     <button type="button" class="btn ghost-amber" disabled>Decommission</button>
   </span>
   {{else}}
-  {{if .Node.Drain}}
-  {{/* Fast, one-click reverse: no confirm. Prominent so a suspended node is
+  {{if .Node.DrainByConfig}}
+  {{/* The manifest drains it; a console undrain would not survive the next render. */}}
+  <span title="Drained by the manifest (fleet.exits[].drain: true). Remove that line and restart the controller to undrain.">
+    <button type="button" class="btn go" disabled>Undrain</button>
+  </span>
+  {{else if .Node.Drain}}
+  {{/* Fast, one-click reverse: no confirm. Prominent so a drained node is
        obviously easy to bring back. Hot-reloads mihomo — other clients undisturbed. */}}
   <form method="post" action="/nodes/{{.Node.ID}}/undrain" onsubmit="return lockAction(this)">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-    <button type="submit" class="btn go" data-pending="Resuming…" title="Bring this node back into routing. Instant (mihomo hot reload); no node change.">↩ Resume routing</button>
+    <button type="submit" class="btn go" data-pending="Undraining…" title="Put this node back into routing. Instant (mihomo hot reload); nothing on the node changes.">↩ Undrain</button>
   </form>
   {{else}}
   <form method="post" action="/nodes/{{.Node.ID}}/drain" onsubmit="return lockAction(this)"
-        data-confirm="Take {{.Node.Name}} out of routing? New traffic stops going to it (for a flaky node). The node is NOT changed or wiped, and it is applied by hot-reloading mihomo so other clients keep their connections. Reverse instantly with “Resume routing”.">
+        data-confirm="Drain {{.Node.Name}}? It leaves the load balancer: no new client traffic goes to it, existing sessions finish. The node itself is NOT changed or wiped, and the change is a mihomo hot reload so other clients keep their connections. Undrain reverses it instantly. Drain is also the first step before Decommission.">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-    <button type="submit" class="btn caution" data-pending="Taking out…" title="Temporarily pull this node out of routing (reversible; no node change).">Take out of routing</button>
+    <button type="submit" class="btn caution" data-pending="Draining…" title="Drain: take this node out of routing. Reversible, nothing on the node changes.">Drain</button>
   </form>
   {{end}}
   <span class="action-spacer"></span>
@@ -84,14 +91,14 @@
        The reason sits on the WRAPPER, not on the button: browsers do not show a
        title on a disabled control, so the explanation for why it is disabled was
        the one explanation nobody could read. */}}
-  <span title="Take the node out of routing first (Drain), then decommission">
+  <span title="Drain the node first, then decommission">
     <button type="button" class="btn ghost-amber" disabled>Decommission</button>
   </span>
   {{end}}
   {{end}}
   {{if .CanDelete}}
   <form method="post" action="/nodes/{{.Node.ID}}/delete" onsubmit="return lockAction(this)"
-        data-confirm="Delete {{.Node.Name}} from inventory? This removes the exit permanently, and removes its declaration from the manifest so it does not come back as a Pending card. Its certificate is NOT revoked: if the box still runs its agent it re-registers and reappears. No client credential lives on an exit, so nobody&#39;s config is deleted by this.">
+        data-confirm="Delete {{.Node.Name}} from inventory? This removes the exit permanently, and removes its declaration from the manifest so it does not come back as a Pending card.{{if .DecommissionStuck}} The node is not reporting, so nothing on the box gets torn down: if it ever comes back, stop and disable wgfleet-agent on it by hand, or it re-registers here.{{else}} Its certificate is NOT revoked: if the box still runs its agent it re-registers and reappears.{{end}} No client credential lives on an exit, so nobody&#39;s config is deleted by this.">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     {{/* Empty until lockAction fills it in. The server refuses a delete without it
          and asks on its own page instead, because this form's only prompt is

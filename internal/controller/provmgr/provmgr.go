@@ -547,6 +547,7 @@ func (m *Manager) findNodeLocked(name string) (domain.Node, config.SSHConfig, bo
 			return domain.Node{
 				ID: e.Name, Name: e.Name, Role: domain.RoleExit, Region: e.Region,
 				MgmtAddr: e.MgmtAddr, PublicIP: publicIP(e.PublicIP, e.SSH.Host),
+				Drain: e.Drain, DrainByConfig: e.Drain,
 				SSH: toSSHTarget(e.SSH),
 			}, e.SSH, true
 		}

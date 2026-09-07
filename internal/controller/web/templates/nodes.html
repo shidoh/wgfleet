@@ -103,7 +103,12 @@
   {{end}}
 
   {{with .Reserve}}
-  <div class="topo-grp"><span class="topo-grp-lbl">RESERVE</span><span class="topo-grp-line"></span><span class="topo-grp-n">{{len .}}</span></div>
+  {{/* Everything the master is NOT routing through right now: held out by its
+       probes, drained, errored, decommissioning. It used to say RESERVE, which is a
+       manifest tier (routing.reserve_exits) and not what this group is — a fleet
+       with no reserve tier saw its only, failing exit filed under RESERVE and read
+       that as a failover it had not asked for. */}}
+  <div class="topo-grp"><span class="topo-grp-lbl" title="Exits the master is not routing through right now — held out after failed probes, drained, or down. Not a tier.">NOT CARRYING</span><span class="topo-grp-line"></span><span class="topo-grp-n">{{len .}}</span></div>
   <div class="topo-group">
     <div class="topo-rail" aria-hidden="true"></div>
     {{range .}}{{template "topo-row" .}}{{end}}
@@ -146,7 +151,8 @@
 {{define "node-subbadges"}}
 {{if or .Drain .EgressBlocked .ActiveEgress .LowThroughput .Decommission}}
 <span class="subbadges">
-  {{if .Drain}}<span class="subbadge drain" title="Manually taken out of the load balancer — no new traffic. The node is untouched; reverse instantly with “Resume routing”."><span class="led"></span>out of routing</span>{{end}}
+  {{if .DrainByConfig}}<span class="subbadge drain" title="Drained by the manifest (fleet.exits[].drain: true) — no new traffic; undrain by editing the manifest."><span class="led"></span>drained by config</span>
+  {{else if .Drain}}<span class="subbadge drain" title="Drained from the console — out of the load balancer, no new traffic. The node is untouched; Undrain reverses it instantly."><span class="led"></span>drained</span>{{end}}
   {{if .EgressBlocked}}<span class="subbadge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
   {{if .ActiveEgress}}<span class="subbadge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{.ActiveEgress}}</span>{{end}}
   {{if .LowThroughput}}<span class="subbadge slow" title="Egress throughput below floor — auto-suspended (ADR-0021)"><span class="led"></span>low throughput</span>{{end}}
