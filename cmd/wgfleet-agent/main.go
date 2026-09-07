@@ -2206,5 +2206,18 @@ func (a *agent) clientPathVerdict(probes []master.ClientPathProbe) master.PathVe
 					since.Round(time.Second))}
 		}
 	}
-	return master.PathVerdict{OK: ok, Known: true}
+	if !ok {
+		// Name the failures in the verdict itself, so the revert line in the journal
+		// carries them: an operator reading "client path broke after the move" had
+		// to go and find the probe lines by hand, and the ones that mattered were
+		// the reason ("connection refused") more than the fact.
+		var failed []string
+		for _, p := range probes {
+			if p.Decisive && !p.OK {
+				failed = append(failed, p.Name+": "+master.TrimProbeError(p.Why))
+			}
+		}
+		return master.PathVerdict{OK: false, Known: true, Why: strings.Join(failed, "; ")}
+	}
+	return master.PathVerdict{OK: true, Known: true}
 }

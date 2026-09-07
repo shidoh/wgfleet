@@ -317,9 +317,44 @@ func TestARulesetNFTActuallyRejectsIsStillRefused(t *testing.T) {
 	if !strings.Contains(summaries, "refusing") {
 		t.Fatalf("a ruleset nft rejects must not be written:\n%s", summaries)
 	}
-	for _, a := range actions {
-		if a.Changes() {
-			t.Fatalf("a refused ruleset must change nothing:\n%s", summaries)
-		}
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Fatal("a refused ruleset reached the disk")
+	}
+	// Refused is not converged: the previous ruleset stays in the kernel, and the
+	// component says so by failing rather than by a NoChange line nobody reads.
+	if len(actions) != 1 || actions[0].apply(context.Background()) == nil {
+		t.Fatalf("a refused ruleset must fail its component:\n%s", summaries)
+	}
+}
+
+// Symbolic priorities are hook-specific on nftables 1.0.2. The check is static
+// so it holds on a box whose own nft would have accepted the ruleset.
+func TestCheckNFTPortabilityRefusesHookSpecificNamesElsewhere(t *testing.T) {
+	good := "table ip t {\n\tchain a {\n\t\ttype nat hook prerouting priority dstnat; policy accept;\n\t}\n" +
+		"\tchain b {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t}\n" +
+		"\tchain c {\n\t\ttype filter hook postrouting priority srcnat + 10; policy accept;\n\t}\n" +
+		"\tchain d {\n\t\ttype nat hook output priority -100; policy accept;\n\t}\n" +
+		"\tchain e {\n\t\ttype filter hook output priority mangle; policy accept;\n\t}\n}\n"
+	if err := CheckNFTPortability([]byte(good)); err != nil {
+		t.Fatalf("a portable ruleset was refused: %v", err)
+	}
+	bad := "table ip t {\n\tchain d {\n\t\ttype nat hook output priority dstnat; policy accept;\n\t}\n}\n"
+	if err := CheckNFTPortability([]byte(bad)); err == nil {
+		t.Fatal("dstnat in an output chain passed the portability check")
+	}
+	// And NFTApply refuses it as a FAILING component, loudly, without writing.
+	path := filepath.Join(t.TempDir(), "rules.nft")
+	actions, err := NFTApply(path, []byte(bad), func() bool { return true }, checkerFor(nil), "apply")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		t.Fatal("a non-portable ruleset was written to disk")
+	}
+	if len(actions) != 1 || actions[0].Kind == ActionNoChange {
+		t.Fatalf("the refusal must be a failing action, not a NoChange: %+v", actions)
+	}
+	if aerr := actions[0].apply(context.Background()); aerr == nil || !strings.Contains(aerr.Error(), "dstnat") {
+		t.Fatalf("applying the refusal must fail and name the cause, got %v", aerr)
 	}
 }

@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -24,6 +26,44 @@ import (
 // nftables yet, and every unprivileged container — silently, since the refusal is
 // a no-change entry and the pass stays green while the firewall never converges.
 var ErrNFTCheckUnavailable = errors.New("nft check unavailable")
+
+// refusedRuleset is what NFTApply returns for a ruleset that must not reach the
+// disk. It is a FAILING action, not a NoChange: the previous ruleset stays in
+// the kernel (an applied ruleset beats no ruleset), but the component reports
+// itself unconverged and the node's state says why. It used to be a NoChange
+// line nobody reads — on a jammy master the moved-state ruleset was rejected by
+// nft 1.0.2 on every pass, the host kept intercepting clients mihomo had left,
+// and the only trace was client probes failing "connection refused" (2026-09-07).
+func refusedRuleset(path string, err error) []Action {
+	why := fmt.Sprintf("refusing to write a ruleset nft rejects: %v", err)
+	slog.Error("nft rejects the rendered ruleset; the previous one stays in the kernel", "file", path, "err", err)
+	return []Action{CustomAction(ActionUpdate, filepath.Base(path), why, why, func(context.Context) error {
+		return errors.New(why)
+	})}
+}
+
+// symbolicPriority matches a chain's base line and captures the hook and the
+// priority expression, so the hook-specific symbolic names can be checked.
+var symbolicPriority = regexp.MustCompile(`(?m)^\s*type\s+\w+\s+hook\s+(\w+)\s+priority\s+([a-z]+)`)
+
+// CheckNFTPortability refuses symbolic chain priorities that only newer nftables
+// accepts. On nftables 1.0.2 (Ubuntu 22.04) `dstnat` is valid in the prerouting
+// hook only and `srcnat` in postrouting only; used elsewhere they fail `nft -c`
+// with "invalid priority expression value in this context". A ruleset that
+// passes the developer's nft 1.0.9 and fails a tester's 1.0.2 is exactly the
+// defect a static check catches and a local `nft -c` cannot. The numeric values
+// (-100, 100) mean the same on every version; render those instead.
+func CheckNFTPortability(ruleset []byte) error {
+	allowed := map[string]string{"dstnat": "prerouting", "srcnat": "postrouting"}
+	for _, m := range symbolicPriority.FindAllStringSubmatch(string(ruleset), -1) {
+		hook, prio := m[1], m[2]
+		if only, restricted := allowed[prio]; restricted && hook != only {
+			return fmt.Errorf("priority %q is only valid in the %s hook on nftables 1.0.2, not in %s — render the numeric value",
+				prio, only, hook)
+		}
+	}
+	return nil
+}
 
 // checkRulesetWithNFT runs `nft -c -f` on the bytes. `-c` parses and resolves the
 // ruleset and does NOT talk to the kernel, so it is safe to run during planning
@@ -163,16 +203,14 @@ func NFTApplyWith(nftPrefix []string, path string, ruleset []byte, loaded func()
 	// A ruleset we cannot check is applied as before (see ErrNFTCheckUnavailable);
 	// only one the checker actively REJECTS is refused, and refusing is a plan
 	// entry rather than an error so the rest of the pass still runs.
+	// Portability first, on every box, whatever nft it has: the local `nft -c` on a
+	// current release accepts what an older one rejects, and the fleet does not run
+	// one nftables everywhere.
+	if err := CheckNFTPortability(ruleset); err != nil {
+		return refusedRuleset(path, err), nil
+	}
 	if err := check(ruleset); err != nil && !errors.Is(err, ErrNFTCheckUnavailable) {
-		// Loud. This used to be a NoChange line nobody reads: on a jammy master the
-		// moved-state ruleset was rejected by nft 1.0.2 on every pass, the host kept
-		// its old rules, and the only trace was probes failing for a reason that
-		// looked like anything else (2026-09-07). Keeping the previous ruleset is
-		// still right — an applied ruleset beats no ruleset — but it has to be said.
-		slog.Error("nft rejects the rendered ruleset; keeping the previous one in the kernel",
-			"file", path, "err", err)
-		return []Action{NoChangeAction(filepath.Base(path),
-			fmt.Sprintf("refusing to write a ruleset nft rejects: %v", err))}, nil
+		return refusedRuleset(path, err), nil
 	}
 
 	var actions []Action

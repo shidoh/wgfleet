@@ -322,15 +322,19 @@ func (m *netnsMover) DecideWith(wanted bool, ready func() error, path func() Pat
 		m.attempts++
 		m.lastRevert = m.now()
 		m.fail = 0
+		because := ""
+		if v.Why != "" {
+			because = " — last failing probes: " + v.Why
+		}
 		if m.attempts >= moveMaxAttempts {
 			m.state = moveGaveUp
-			m.reason = fmt.Sprintf("reverted %d times; staying on the host path until someone looks", m.attempts)
+			m.reason = fmt.Sprintf("reverted %d times; staying on the host path until someone looks%s", m.attempts, because)
 			m.save()
 			return false
 		}
 		m.state = moveWaiting
-		m.reason = fmt.Sprintf("client path broke after the move; reverted (attempt %d of %d)",
-			m.attempts, moveMaxAttempts)
+		m.reason = fmt.Sprintf("client path broke after the move; reverted (attempt %d of %d)%s",
+			m.attempts, moveMaxAttempts, because)
 		m.save()
 		return false
 	}

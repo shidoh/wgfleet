@@ -30,6 +30,17 @@ func NodeCollectors(role string) []Collector {
 		{File: "identity.txt", Name: "timezone", Cmd: "timedatectl show -p Timezone --value"},
 		{File: "identity.txt", Name: "agent version", Cmd: "/usr/local/bin/wgfleet-agent --version"},
 		{File: "identity.txt", Name: "controller version", Cmd: "/usr/local/bin/wgfleet-controller --version"},
+		// The versions a diagnosis turns on. On 2026-09-07 every one of these was
+		// asked for by hand, one message at a time: the nftables version decided the
+		// outcome (1.0.2 rejects a ruleset 1.0.9 accepts), and the module's srcversion
+		// is the only thing that tells two PPA builds apart.
+		{File: "identity.txt", Name: "nftables version", Cmd: "nft --version"},
+		{File: "identity.txt", Name: "amneziawg module", Cmd: "modinfo -F version amneziawg"},
+		{File: "identity.txt", Name: "amneziawg module srcversion (on disk / loaded)", Cmd: "modinfo -F srcversion amneziawg; cat /sys/module/amneziawg/srcversion"},
+		{File: "identity.txt", Name: "amneziawg tools", Cmd: "awg --version"},
+		{File: "identity.txt", Name: "dkms", Cmd: "dkms status"},
+		{File: "identity.txt", Name: "apt holds", Cmd: "apt-mark showhold"},
+		{File: "identity.txt", Name: "docker", Cmd: "docker --version; docker compose version"},
 
 		// network.txt — addresses, routes, firewall, and the sockets actually
 		// listening, so a stale bind can be spotted against ip addr.
@@ -37,6 +48,11 @@ func NodeCollectors(role string) []Collector {
 		{File: "network.txt", Name: "routes", Cmd: "ip route show"},
 		{File: "network.txt", Name: "rules", Cmd: "ip rule list"},
 		{File: "network.txt", Name: "wg routing table", Cmd: "ip route show table 51820"},
+		{File: "network.txt", Name: "namespace routing table", Cmd: "ip route show table 51822"},
+		{File: "network.txt", Name: "mihomo network mode", Cmd: "docker inspect -f '{{.HostConfig.NetworkMode}}' mihomo"},
+		{File: "network.txt", Name: "namespace move state", Cmd: "cat /etc/wgfleet/netns-move.json"},
+		{File: "network.txt", Name: "nft ruleset inside mihomo's namespace", Cmd: "nsenter --net=/proc/$(docker inspect -f '{{.State.Pid}}' mihomo)/ns/net nft list ruleset"},
+		{File: "network.txt", Name: "listening sockets inside mihomo's namespace", Cmd: "nsenter --net=/proc/$(docker inspect -f '{{.State.Pid}}' mihomo)/ns/net ss -ltnup"},
 		{File: "network.txt", Name: "awg show", Cmd: "awg show"},
 		{File: "network.txt", Name: "nft ruleset", Cmd: "nft list ruleset"},
 		{File: "network.txt", Name: "listening sockets", Cmd: "ss -ltnp"},

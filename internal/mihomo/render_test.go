@@ -3,6 +3,7 @@ package mihomo
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1183,5 +1184,23 @@ func TestNonLoopbackResolversAreUntouched(t *testing.T) {
 		if got := swapLoopbackHost(entry, "10.73.0.1"); got == entry {
 			t.Errorf("%q was left pointing at a loopback that is not there", entry)
 		}
+	}
+}
+
+// A file provider whose file is absent is reported, so the operator learns that
+// a rule list is silently empty before the traffic it was meant to keep direct
+// has gone through an exit for a week.
+func TestMissingProviderFilesNamesAbsentFileProviders(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "present.yaml"), []byte("payload: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "rule-providers:\n" +
+		"  present:\n    type: file\n    behavior: domain\n    path: " + filepath.Join(dir, "present.yaml") + "\n" +
+		"  absent:\n    type: file\n    behavior: domain\n    path: /etc/mihomo/direct-domains.yaml\n" +
+		"  remote:\n    type: http\n    url: https://example.invalid/list\n"
+	got := MissingProviderFiles(cfg, dir)
+	if len(got) != 1 || got[0] != "/etc/mihomo/direct-domains.yaml" {
+		t.Fatalf("want exactly the absent file provider, got %v", got)
 	}
 }

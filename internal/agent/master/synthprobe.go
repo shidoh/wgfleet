@@ -2,6 +2,7 @@ package master
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -208,6 +209,15 @@ func ClientPathOK(probes []ClientPathProbe) bool {
 		}
 	}
 	return decisive > 0
+}
+
+// TrimProbeError is trimProbeError for callers outside the package that carry a
+// probe's reason into a verdict.
+func TrimProbeError(why string) string {
+	if why == "" {
+		return ""
+	}
+	return trimProbeError(errors.New(why))
 }
 
 // trimProbeError keeps a probe failure readable in a log line.

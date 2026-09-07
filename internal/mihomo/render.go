@@ -14,6 +14,9 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -941,4 +944,34 @@ func (in RenderInput) controllerAddr() string {
 		return ec
 	}
 	return net.JoinHostPort(in.NetnsPeerAddr, port)
+}
+
+// MissingProviderFiles lists the `type: file` rule-provider paths in a rendered
+// config that do not exist on the node. dir is the mihomo config directory the
+// paths are expected under; a path elsewhere is checked as given.
+func MissingProviderFiles(configYAML string, dir string) []string {
+	var doc map[string]any
+	if yaml.Unmarshal([]byte(configYAML), &doc) != nil {
+		return nil
+	}
+	providers, _ := doc["rule-providers"].(map[string]any)
+	var missing []string
+	for _, v := range providers {
+		p, _ := v.(map[string]any)
+		if t, _ := p["type"].(string); t != "file" {
+			continue
+		}
+		path, _ := p["path"].(string)
+		if path == "" {
+			continue
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(dir, path)
+		}
+		if _, err := os.Stat(path); err != nil {
+			missing = append(missing, path)
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }

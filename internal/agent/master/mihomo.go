@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/netip"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -110,6 +112,18 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 		TunnelPrivateKey: p.tunnelKey, Resolvers: mihomoResolvers(spec, attached),
 		NetnsPeerAddr: peerIP,
 	})
+	if err == nil {
+		// A rule provider of type file whose file is not on the node is a policy
+		// hole, not a startup error: mihomo logs one line at start and carries on
+		// with that provider empty, so the domains it was meant to send DIRECT go
+		// through the exits instead. A tester's manifest referenced
+		// /etc/mihomo/direct-domains.yaml in mihomo.overrides without shipping it
+		// in mihomo.extra_files (2026-09-07), and nothing said so.
+		for _, missing := range mihomo.MissingProviderFiles(cfg, filepath.Dir(p.paths.MihomoConfig)) {
+			slog.Warn("mihomo config references a rule-provider file that is not on this node; that provider will be empty — ship it in mihomo.extra_files",
+				"path", missing)
+		}
+	}
 	if err != nil {
 		// Defer this component; do NOT fail the pass.
 		//
