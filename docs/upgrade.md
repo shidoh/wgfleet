@@ -147,6 +147,28 @@ binaries land, so a normal change does not read as a fault.
 - **The alert rules changed** (`monitoring/ (in the release archive; deploy/monitoring/ in the repo)`): four fixed, one added for CA
   expiry. Apply them whenever convenient — they are written to fail open, so the
   order relative to the binaries does not matter.
+- **A master still on wg-easy gets the wg-easy image that matches its kernel
+  module.** wg-easy drives the client interface with the amneziawg-tools it bundles,
+  and those must be of the module's generation: the pinned v15.3.0 carries
+  generation-1 tools, so on a 3.x module it fails `awg setconf` and never raises
+  `wg0` — the whole client base gone after a routine module upgrade. The agent now
+  reads the module generation each pass and renders v15.4.0 (generation-3 tools)
+  for a 3.x module, the old pin otherwise. A master whose module is already 3.x
+  sees its wg-easy container recreated once on the first pass; it was not serving
+  anyone before that. An operator-pinned `compose.wg_easy_image` is left alone.
+  Do not downgrade the module afterwards: v15.4.0 migrates wg-easy's database
+  forward, and v15.3.0 will not open it.
+- **The namespace mover no longer spends its attempts while the client interface
+  is down.** A probe that fails because `wg0` does not exist says nothing about
+  the namespace; it used to count as a failed move, three of them parked the
+  interception on the host for good, and the verdict outlived the outage that
+  caused it. If a master of yours shows `udp-return-path` failing and
+  `client interception not moving … reverted 3 times`, that is the old behaviour:
+  toggle `mihomo.client_via_netns` to `off` and back to `auto` once.
+- **`prepare-node.sh --upgrade-awg`** is the supported way to move a node's
+  AmneziaWG module and tools to the newest PPA build; re-running the script
+  without it never did and still does not. Details in `operations.md`,
+  "Upgrading the AmneziaWG module".
 
 ## Notes & gotchas
 

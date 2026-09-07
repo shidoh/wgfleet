@@ -72,9 +72,12 @@ cp /var/lib/wgfleet/state.db  /root/state.db.bak
 container, so a master that only ever ran wg-easy may never have needed them
 outside it. Without them the handover in part 3 cannot raise the interface at all.
 
-**Module 3.x** ⇒ your wg-easy is already broken and will fail to raise the
-interface on its next container restart (its bundled tools are generation 1).
-Rollback in part 3 is unavailable; the migration is the fix.
+**Module 3.x** ⇒ wg-easy needs the v15.4.0 image (generation-3 tools); the pinned
+v15.3.0 fails to raise the interface on a 3.x module. An agent of v0.2.4 or later
+recreates the container from the right image by itself, so wg-easy keeps working
+and rollback in part 3 works. On an older agent wg-easy is already broken and
+the migration is the fix — check `docker ps` for `unhealthy` and
+`docker logs wg-easy` for `Invalid argument`.
 
 **Client names** must be letters, digits, `-`, `_`, `.`, max 64. Anything else
 does not migrate. Part 2's dry run names them.
@@ -276,16 +279,15 @@ wg-easy's database plus its image, both checked in pre-flight.
 *Free until you issue your first new client. After that it strands exactly those
 people — see the warning at the end of this section.*
 
-Only if the module is 1.x or 2.x.
-
 ```yaml
         managed: false
 ```
 
 Validate, restart, wait one reconcile. The agent releases the interface, compose
-puts wg-easy back and recreates it from the local image; it reads its untouched
-database and takes the client interface again. Imported credentials stay in the
-store.
+puts wg-easy back and recreates it from the image matching the module's
+generation (v15.4.0 on a 3.x module — pulled if not local); it reads its
+untouched database and takes the client interface again. Imported credentials
+stay in the store.
 
 **Anyone you issued AFTER the cutover exists only in the controller's store.**
 wg-easy has never heard of them, so a rollback strands exactly those people — they

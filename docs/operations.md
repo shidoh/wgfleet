@@ -429,10 +429,17 @@ modinfo -F version amneziawg                  # 3.1.… for the current line
 ```
 
 On a master whose clients are still served by wg-easy (client-migration.md, part 3
-not done), the container created `wg0` once at start and will not notice it is gone:
-the agent reports `wg0 not found` until you `docker restart wg-easy`. The script does
-that for you; by hand, do not forget it. wg-easy's bundled 1.x tools drive a 3.x
-module without complaint.
+not done) the container is the thing to watch, not the interface. wg-easy drives
+`wg0` with the amneziawg-tools it bundles, and those must be of the module's
+generation: the pinned v15.3.0 bundles generation-1 tools and on a 3.x module its
+`awg-quick up wg0` dies with `Unable to modify interface: Invalid argument` — the
+client base is gone until something changes. The agent handles this since v0.2.4:
+it reads the module generation every pass and recreates wg-easy from v15.4.0
+(generation-3 tools) within one pass of the reload; do not `docker restart` it by
+hand in between, that only restarts the container that cannot work. An agent
+older than that cannot help; the way out there is the migration in
+client-migration.md, parts 2-3. Once v15.4.0 has run, do not take the module
+back to 1.x: it migrated wg-easy's database forward and v15.3.0 will not open it.
 
 Do **not** `apt-mark unhold` first: the agent re-pins the packages on every
 reconcile pass (about every 30 s), so by the time `apt-get update` has finished
@@ -446,6 +453,42 @@ Ubuntu 22.04 the GA kernel is 5.15, and upstream has broken the build for
 pre-6.7 kernels before (fixed the same day, but the PPA build you get is whatever
 is current). Moving to the HWE kernel (`linux-generic-hwe-22.04`) is the cheap
 way out — your package decision, per the section above.
+
+### AmneziaWG is down: where to look
+
+Three places on the node, in this order, and none of them is `awg-quick@` — the
+agent never installs that unit. A tester lost an evening in its journal.
+
+```bash
+journalctl -u wgfleet-agent -b --no-pager | grep -i -E 'error|warn|awg|wg0' | tail -30
+ip -br link | grep -E 'wg|awg'
+docker ps -a --format '{{.Names}} {{.Status}}'        # master: is wg-easy up and healthy?
+```
+
+The first says what the agent tried and where it stopped. `wg0 not found` in a
+health check is the agent NOTICING the interface is gone, not failing to create
+it: on a master before the client-leg migration the creator is the wg-easy
+container, and its reason is in `docker logs --tail 40 wg-easy`. On an exit the
+interface is `awg0`, the agent raises it itself, and the failing `awg-quick up`
+is in the journal with its output.
+
+What it has been so far, in order of likelihood:
+
+- **Tools and module of different generations** — `awg setconf … Invalid
+  argument`. Compare `modinfo -F version amneziawg` (module) with
+  `awg --version` on the host and, on a wg-easy master, inside the container
+  (`docker exec wg-easy awg --version`). The major versions must agree. See the
+  section above.
+- **Module not built for the running kernel** — `dkms status` has no `installed`
+  line for `uname -r`. See "Kernel upgrades" above.
+- **The interface is back but `udp-return-path` keeps failing** — the namespace
+  mover gave up while the interface was down (`client interception not moving …
+  reverted 3 times` in the journal). Fixed in v0.2.4; on an older agent toggle
+  `mihomo.client_via_netns` to `off`, wait a pass, and back to `auto`.
+
+When it is not one of those, take a support bundle and send it rather than
+guessing further: `wgfleet-agent --support-bundle --note "..."` on the node — it
+carries all three of the above plus the container logs, and nothing secret.
 
 ## Client interception in mihomo's network namespace
 
