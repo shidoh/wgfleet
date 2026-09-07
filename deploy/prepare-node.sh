@@ -15,12 +15,25 @@
 #   # or, as cloud-init user-data, set the network id below:
 #   ZT_NETWORK=8056c2e21c000001 ./prepare-node.sh
 #
+#   # Upgrade an already-prepared node's AmneziaWG module + tools to the newest
+#   # PPA build (bounces every AWG interface on the node for a few seconds):
+#   sudo ./prepare-node.sh --upgrade-awg
+#
 # After this runs and the node is AUTHORIZED in ZeroTier Central (assign it the
 # managed IP you put in the fleet manifest as mgmt_addr), run the provisioner.
 
 set -euo pipefail
 
-ZT_NETWORK="${1:-${ZT_NETWORK:-}}"
+ZT_NETWORK="${ZT_NETWORK:-}"
+UPGRADE_AWG="${UPGRADE_AWG:-0}"
+for arg in "$@"; do
+  case "$arg" in
+    --upgrade-awg) UPGRADE_AWG=1 ;;
+    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) printf 'unknown option: %s\n' "$arg" >&2; exit 2 ;;
+    *) ZT_NETWORK="$arg" ;;
+  esac
+done
 
 log()  { printf '\n\033[1;32m[prepare-node]\033[0m %s\n' "$*"; }
 info() { printf '  %s\n' "$*"; }
@@ -61,26 +74,103 @@ export DEBIAN_FRONTEND=noninteractive
 # DKMS compiles against the running kernel, so it needs matching headers and can
 # fail in environment-specific ways — better here, before reconcile, than mid-
 # provision.
-if module_loaded amneziawg; then
-  log "AmneziaWG kernel module already loaded — skipping DKMS build"
-  info "version: $(modinfo -F version amneziawg 2>/dev/null || echo unknown)   kernel: $(uname -r)"
-elif modinfo amneziawg >/dev/null 2>&1; then
-  log "AmneziaWG kernel module built but not loaded — skipping DKMS build, will modprobe below"
-else
-  log "installing AmneziaWG kernel module via DKMS"
+AWG_PKGS="amneziawg-dkms amneziawg-tools"
+
+awg_add_ppa() {
   apt-get update -y
   # software-properties-common provides add-apt-repository on minimal images.
   apt-get install -y software-properties-common
   add-apt-repository -y ppa:amnezia/ppa
   apt-get update -y
+}
+
+# awg_pkg_versions — "<installed> <candidate>" for amneziawg-dkms, "(none)" when
+# absent. The PPA never bumps the upstream version (always 1.0.0); what moves is
+# the Debian revision, e.g. 1.0.0-0~202609061402+4569c4c — build date + commit.
+awg_pkg_versions() {
+  apt-cache policy amneziawg-dkms 2>/dev/null | awk '
+    /Installed:/ { i = $2 } /Candidate:/ { c = $2 }
+    END { printf "%s %s\n", (i == "" ? "(none)" : i), (c == "" ? "(none)" : c) }'
+}
+
+# awg_install — the module + tools as ONE apt transaction, held or not.
+#
+# --allow-change-held-packages is not optional. The agent pins these three
+# packages on every reconcile pass (~30s): the tools and the module must stay on
+# one AmneziaWG generation, and an unattended upgrade of one without the other
+# leaves `awg setconf` failing. So "apt-mark unhold && apt-get install" loses the
+# race with the agent — by the time apt-get update has finished, the hold is back
+# and apt refuses with "Held packages were changed and -y was used". Seen on a
+# tester's node 2026-09-07. Telling apt the hold may be changed is the honest way
+# through: both packages move together, and the agent re-pins the new version.
+awg_install() {
+  # shellcheck disable=SC2086
+  apt-get install -y --allow-change-held-packages dkms build-essential \
+    "linux-headers-$(uname -r)" linux-headers-generic \
+    $AWG_PKGS \
+    || die "AmneziaWG DKMS build failed — check that linux-headers-$(uname -r) is available for this kernel (DKMS log: /var/lib/dkms/amneziawg/1.0.0/build/make.log)"
+}
+
+# awg_reload — swap the loaded module for the one on disk. Removing the module
+# deletes every AmneziaWG interface on the node (the kernel does that, not us);
+# the agent rebuilds them on its next pass. Say so before doing it.
+#
+# Compared by srcversion (a hash of the module's source), NOT by version: upstream
+# rebuilds the PPA from master without bumping MODULE_VERSION, so two different
+# builds routinely both say "3.1.20260812". Judging by that string kept the old
+# code loaded after a successful package upgrade (Lima rehearsal, 2026-09-07).
+awg_reload() {
+  local loaded ondisk out
+  loaded=$(cat /sys/module/amneziawg/srcversion 2>/dev/null || echo none)
+  ondisk=$(modinfo -F srcversion amneziawg 2>/dev/null || echo unknown)
+  if [ "$loaded" = "$ondisk" ]; then
+    info "loaded module already matches disk (srcversion $loaded) — no reload needed"
+    return 0
+  fi
+  warn "reloading amneziawg (srcversion $loaded -> $ondisk): every AWG interface on this node goes down for a few seconds until the agent rebuilds it"
+  out=$(modprobe -r amneziawg 2>&1) || die "could not unload amneziawg: ${out:-no output} — reboot to pick up the new module"
+  out=$(modprobe amneziawg 2>&1) || die "new amneziawg module failed to load: ${out:-no output}"
+}
+
+# awg_state — one line of what is loaded and what tools are installed.
+awg_state() {
+  printf 'module %s (srcversion %s), tools %s' \
+    "$(cat /sys/module/amneziawg/version 2>/dev/null || echo none)" \
+    "$(cat /sys/module/amneziawg/srcversion 2>/dev/null || echo none)" \
+    "$(awg --version 2>/dev/null || echo none)"
+}
+
+if [ "$UPGRADE_AWG" = 1 ]; then
+  log "upgrading AmneziaWG module + tools to the newest PPA build"
+  info "before: $(awg_state)"
+  if ! grep -rqs "amnezia/ppa" /etc/apt/sources.list.d/; then
+    awg_add_ppa
+  else
+    apt-get update -y
+  fi
+  read -r AWG_INSTALLED AWG_CANDIDATE <<<"$(awg_pkg_versions)"
+  if [ "$AWG_INSTALLED" = "$AWG_CANDIDATE" ]; then
+    log "amneziawg-dkms already at the newest PPA build ($AWG_INSTALLED)"
+  else
+    info "amneziawg-dkms: $AWG_INSTALLED -> $AWG_CANDIDATE"
+    awg_install
+  fi
+  awg_reload
+  info "after:  $(awg_state)"
+elif module_loaded amneziawg; then
+  log "AmneziaWG kernel module already loaded — skipping DKMS build"
+  info "version: $(modinfo -F version amneziawg 2>/dev/null || echo unknown)   kernel: $(uname -r)"
+  info "(re-running does not upgrade it; for that: $0 --upgrade-awg)"
+elif modinfo amneziawg >/dev/null 2>&1; then
+  log "AmneziaWG kernel module built but not loaded — skipping DKMS build, will modprobe below"
+else
+  log "installing AmneziaWG kernel module via DKMS"
+  awg_add_ppa
   # Headers for the RUNNING kernel AND the meta-package, so a later kernel upgrade
   # pulls matching headers and DKMS auto-rebuilds the module for it (otherwise an
   # apt/unattended kernel bump leaves AWG missing under the new kernel). Plus the
   # toolchain (build-essential/dkms), which minimal/cloud images such as Lima lack.
-  apt-get install -y dkms build-essential \
-    "linux-headers-$(uname -r)" linux-headers-generic \
-    amneziawg-dkms amneziawg-tools \
-    || die "AmneziaWG DKMS build failed — check that linux-headers-$(uname -r) is available for this kernel"
+  awg_install
 fi
 
 # Ensure the module is loaded NOW (it may be built but not inserted — e.g. after a

@@ -188,6 +188,8 @@ buttons or store flags.
 ## Gotchas (hard-won)
 
 - **AmneziaWG module** is a pre-flight requirement — `prepare-node.sh` builds it.
+  Re-running the script never upgrades it; `prepare-node.sh --upgrade-awg` does
+  (see operations.md, "Upgrading the AmneziaWG module").
   A kernel upgrade rebuilds it via DKMS and `modules-load.d` re-inserts it on boot.
 - **`mgmt_addr` is the ZeroTier IP**, planned in advance and assigned in ZT Central.
 - **WARP MTU**: if egress packets fragment / "first N requests fail", the real

@@ -400,9 +400,46 @@ The one apt hold wgfleet does keep is on `amneziawg`, `amneziawg-dkms` and
 `amneziawg-tools` — our own component, pinned because the userspace tools and the
 kernel module must stay on the same AmneziaWG generation — AmneziaWG 3.0 changed the
 netlink attribute layout between them, so a node whose tools and module disagree fails
-`awg setconf` outright and the interface never comes up. It blocks
-automatic upgrades only; `apt-mark unhold && apt install` still works, and the
-agent re-establishes the hold at whatever version you chose.
+`awg setconf` outright and the interface never comes up. It blocks automatic
+upgrades only, and the agent re-establishes it at whatever version you chose.
+
+### Upgrading the AmneziaWG module
+
+Neither a wgfleet upgrade nor a re-run of `prepare-node.sh` touches the module: the
+script builds it only when it is missing, and the agent keeps the packages held.
+A node prepared under an early release therefore still runs the module the PPA
+shipped that day (a 1.x build, before AmneziaWG 3.x), and keeps working on it —
+a 2.0 config runs on either generation. You need a newer module only when you
+turn on `awg3` (the agent then refuses the config and says so in the reconcile
+error), or when upstream fixes something you are hitting.
+
+```bash
+prepare-node.sh --upgrade-awg
+```
+
+That installs `amneziawg-dkms` and `amneziawg-tools` together, then reloads the
+module, which deletes every AmneziaWG interface on the node; the agent rebuilds
+them on its next pass (a few seconds of loss). By hand it is:
+
+```bash
+apt-get update
+apt-get install -y --allow-change-held-packages amneziawg-dkms amneziawg-tools
+modprobe -r amneziawg && modprobe amneziawg   # or reboot
+modinfo -F version amneziawg                  # 3.1.… for the current line
+```
+
+Do **not** `apt-mark unhold` first: the agent re-pins the packages on every
+reconcile pass (about every 30 s), so by the time `apt-get update` has finished
+the hold is back and `apt-get install -y` fails with "Held packages were changed".
+`--allow-change-held-packages` is the honest way through — both packages move as
+one transaction and the agent re-pins the new version.
+
+If the DKMS build itself fails, the reason is in
+`/var/lib/dkms/amneziawg/1.0.0/build/make.log`. It is usually the kernel: on
+Ubuntu 22.04 the GA kernel is 5.15, and upstream has broken the build for
+pre-6.7 kernels before (fixed the same day, but the PPA build you get is whatever
+is current). Moving to the HWE kernel (`linux-generic-hwe-22.04`) is the cheap
+way out — your package decision, per the section above.
 
 ## Client interception in mihomo's network namespace
 
