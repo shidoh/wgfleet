@@ -188,6 +188,20 @@ binaries land, so a normal change does not read as a fault.
   of the packages is installed** (a module built from source). dpkg's "no such
   package" exit code was read as a failed probe and took every planner after it
   down, every pass.
+- **Masters on Ubuntu 22.04 can move client interception into mihomo's namespace.**
+  The moved-state NAT ruleset used a symbolic chain priority nftables 1.0.2 rejects;
+  the agent kept the previous ruleset in silence, the host went on intercepting
+  clients after mihomo had moved, and every attempt reverted. Rendered numerically
+  now, checked statically before every write, and a rejected ruleset reports its
+  component unconverged with the reason instead of a line nobody reads.
+- **A deleted node stays deleted.** Delete used to remove the row and the manifest
+  declaration but not the node's ability to register: an agent that still reached
+  the controller re-created its row on the next pass. A deleted id is refused at
+  registration until you provision it again.
+- **The support bundle carries the versions that decide a diagnosis** (nftables,
+  module, tools, dkms, holds, Docker) and the namespace-move state, and the agent
+  warns when a `type: file` rule provider in `mihomo.overrides` points at a file
+  the node does not have.
 - **`prepare-node.sh --upgrade-awg`** is the supported way to move a node's
   AmneziaWG module and tools to the newest PPA build; re-running the script
   without it never did and still does not. Details in `operations.md`,

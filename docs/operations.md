@@ -472,6 +472,13 @@ container, and its reason is in `docker logs --tail 40 wg-easy`. On an exit the
 interface is `awg0`, the agent raises it itself, and the failing `awg-quick up`
 is in the journal with its output.
 
+Start with the versions; two of the three causes below are version splits:
+
+```bash
+nft --version                           # 1.0.2 on Ubuntu 22.04, 1.0.9 on 24.04
+modinfo -F version amneziawg; awg --version
+```
+
 What it has been so far, in order of likelihood:
 
 - **Tools and module of different generations** — `awg setconf … Invalid
@@ -481,6 +488,12 @@ What it has been so far, in order of likelihood:
   section above.
 - **Module not built for the running kernel** — `dkms status` has no `installed`
   line for `uname -r`. See "Kernel upgrades" above.
+- **The move into mihomo's namespace reverts every time, probes say "connection
+  refused"** — the host is still intercepting clients after mihomo left. Look for
+  `nft rejects the rendered ruleset` in the agent journal and check
+  `nft list table ip wgfleet_master` for a `dnat to <gateway>:7895` line while
+  mihomo's network mode is `container:…`. Fixed for nftables 1.0.2 in v0.2.4; the
+  agent now reports the component unconverged instead of keeping quiet.
 - **The interface is back but `udp-return-path` keeps failing** — the namespace
   mover gave up while the interface was down (`client interception not moving …
   reverted 3 times` in the journal). Fixed in v0.2.4; on an older agent toggle

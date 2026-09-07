@@ -35,11 +35,16 @@ locally rather than walked over SSH.
 
 ## What it collects
 
-Per node: hostname, uptime, kernel, current time, timezone, and the
-installed `wgfleet-agent`/`wgfleet-controller` version — often the single
-most useful field for triaging a report; network state (addresses,
-routes, routing rules, the AmneziaWG routing table, `awg show`, the nft
-firewall ruleset, listening sockets, conntrack count); wgfleet's own unit
+Per node: hostname, uptime, kernel, current time, timezone, the installed
+`wgfleet-agent`/`wgfleet-controller` version — often the single most useful
+field for triaging a report — and the versions a diagnosis turns on:
+nftables, the AmneziaWG module (version and `srcversion`, on disk and loaded),
+the AmneziaWG tools, `dkms status`, the apt holds, Docker and Compose; network
+state (addresses, routes, routing rules, the AmneziaWG routing table, the
+namespace routing table, `awg show`, the nft firewall ruleset, listening
+sockets, conntrack count); the client-interception namespace on a master
+(mihomo's network mode, the move's recorded state, the ruleset and listeners
+inside the namespace); wgfleet's own unit
 status plus every *failed* systemd unit fleet-wide, not just wgfleet's two;
 the list of running containers (`docker ps`); bounded journal tails for
 `wgfleet-agent`/`wgfleet-controller` (last ~300 lines each), journal disk

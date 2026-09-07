@@ -271,7 +271,7 @@ See [§9 third-party configuration](#9-third-party-configuration) for the passth
 | `fleet.masters[].mihomo.client_via_netns` | string | `auto` | Where client traffic is intercepted. `off` — on the host, as always. `auto` — inside mihomo's own network namespace once the agent has proved the namespace works, reverted automatically if the client path breaks after. There is no per-client mode: mihomo moves as a whole and `tproxy` only reaches sockets in its own namespace, so a CIDR here is refused with an explanation. Any other value is refused too, so a typo cannot enable a data-plane migration |
 | `fleet.masters[].mihomo.netns_cidr` | string | `100.127.255.0/30` | The point-to-point link between the host and that namespace (a /30, host `.1`, namespace `.2`). RFC 6598 by default because 10/8 on this fleet is routed into the corporate tunnel |
 | `fleet.masters[].mihomo.overrides` | map | none | **Deep-merged into the rendered mihomo `config.yaml`.** The escape hatch for anything wgfleet does not model |
-| `fleet.masters[].mihomo.extra_files[].path` | string | — | Additional managed file written alongside the config, e.g. a rule-provider list |
+| `fleet.masters[].mihomo.extra_files[].path` | string | — | Additional managed file written alongside the config, e.g. a rule-provider list. Every `type: file` rule provider you add under `mihomo.overrides` must ship its file here — mihomo starts without it and the provider is silently empty; the agent logs a warning naming the missing path |
 | `fleet.masters[].mihomo.extra_files[].content` | string | — | Its literal contents |
 | `fleet.masters[].mihomo.extra_files[].secret` | bool | `false` | Write mode `0600` and redact from logs and dry-run output |
 
