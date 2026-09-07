@@ -12,6 +12,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/controller/pki"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/hardening"
+	"github.com/shidoh/wgfleet/internal/nodeexporter"
 	"github.com/shidoh/wgfleet/internal/version"
 )
 
@@ -69,6 +70,8 @@ const (
 	remoteCACert       = "/etc/wgfleet/ca.crt"
 	remoteHardenConf   = hardening.SSHDDropInPath
 	remoteFail2ban     = hardening.Fail2banJailPath
+	remoteNodeExpDef   = nodeexporter.DefaultsPath
+	remoteNodeExpDrop  = nodeexporter.DropInPath
 )
 
 // awgHeldPackages are the AmneziaWG apt packages held back from unattended
@@ -160,6 +163,19 @@ func BuildPlan(in BootstrapInput) Plan {
 			[]byte(fail2banConf), 0o644, fail2banConf),
 		runStep("enable + (re)start fail2ban",
 			"systemctl enable fail2ban && systemctl restart fail2ban"),
+	)
+
+	// Phase 1c-5: host metrics. The package is installed by the dependency phase;
+	// here it is bound to the mgmt overlay and made to survive booting before the
+	// overlay address exists. The agent's host planner re-asserts both files.
+	nodeExpDefaults := nodeexporter.RenderDefaults(in.Node.MgmtAddr)
+	steps = append(steps,
+		uploadStep("bind the host-metrics exporter to the mgmt address", remoteNodeExpDef,
+			[]byte(nodeExpDefaults), 0o644, nodeExpDefaults),
+		uploadStep("install the host-metrics exporter unit drop-in", remoteNodeExpDrop,
+			[]byte(nodeexporter.DropIn), 0o644, nodeexporter.DropIn),
+		runStep("enable + (re)start the host-metrics exporter",
+			"systemctl daemon-reload && systemctl enable "+nodeexporter.Unit+" && systemctl restart "+nodeexporter.Unit),
 	)
 
 	// Phase 1d: join the mgmt overlay (ZeroTier) if configured.

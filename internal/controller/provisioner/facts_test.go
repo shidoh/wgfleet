@@ -79,7 +79,7 @@ func TestMissingPackages(t *testing.T) {
 		t.Fatal(err)
 	}
 	missing := strings.Join(f.MissingPackages(), ",")
-	for _, want := range []string{"amneziawg-tools", "conntrack", "fail2ban", "age"} {
+	for _, want := range []string{"amneziawg-tools", "conntrack", "fail2ban", "age", "prometheus-node-exporter"} {
 		if !strings.Contains(missing, want) {
 			t.Errorf("expected %q in missing packages, got %v", want, f.MissingPackages())
 		}

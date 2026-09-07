@@ -34,6 +34,13 @@ type Input struct {
 	// the planner reconciles the jail against THIS value, not against live fleet
 	// config, so a later fleet.mgmt_subnet change reaches a node only on re-provision.
 	MgmtIgnoreCIDRs []string
+	// MgmtAddr is this node's overlay address, the only thing the host-metrics
+	// exporter may bind. Empty binds loopback (see nodeexporter.RenderDefaults).
+	MgmtAddr string
+	// NodeExporter* default to the package's canonical paths; tests override them.
+	NodeExporterDefaultsPath string
+	NodeExporterDropInPath   string
+	NodeExporterBinary       string
 }
 
 // Planners returns the host-hardening reconcile planners applied on every node
@@ -54,6 +61,7 @@ func Planners(in Input) []reconcile.Planner {
 		// holding a package never conflicts with a deliberate operator upgrade. See
 		// awgHoldPlanner's doc comment.
 		awgHoldPlanner{},
+		newNodeExporterPlanner(in),
 	}
 }
 

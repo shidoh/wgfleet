@@ -44,3 +44,29 @@ spec:
       path: /metrics
       scheme: http
       interval: 30s
+---
+# Host metrics. The bootstrap installs prometheus-node-exporter on every node and
+# the agent keeps it bound to the mgmt address on port 9100 (internal/nodeexporter).
+# One target per node, labelled like the agent job so host and fleet series join
+# on `node`; WgfleetHostMetricsMissing fires for a node the controller knows but
+# this job does not scrape.
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMStaticScrape
+metadata:
+  name: wgfleet-node-exporter
+  namespace: monitoring # <-- your vmagent scrape namespace
+  labels:
+    app.kubernetes.io/name: wgfleet
+spec:
+  jobName: wgfleet-node
+  targetEndpoints:
+    - targets: ["10.20.0.1:9100"] # <-- EDIT: master ZT address
+      labels: { node: master, role: master }
+      path: /metrics
+      scheme: http
+      interval: 30s
+    - targets: ["10.20.0.2:9100"] # <-- EDIT: one entry per exit, node = manifest name
+      labels: { node: exit-1, role: exit }
+      path: /metrics
+      scheme: http
+      interval: 30s

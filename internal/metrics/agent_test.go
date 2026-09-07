@@ -247,3 +247,49 @@ func TestObserveClientPathForgetsProbesNoLongerTaken(t *testing.T) {
 		t.Errorf("the live probe lost its failure (%v)", got)
 	}
 }
+
+// A mihomo restart is the event that took three exits out of rotation in three
+// minutes (an earlier finding) and the only record of it was the master agent's journal.
+// The container's start time makes every restart — ours, docker's, a crash — a
+// step in one series; the self-heal snapshot says which of them were ours, and
+// whether the governor has stopped trying (the same defect with the symptom off).
+func TestMihomoStartAndSelfHealAreMasterOnly(t *testing.T) {
+	t.Run("exit registers nothing", func(t *testing.T) {
+		reg := prometheus.NewRegistry()
+		m := NewAgentMetrics(reg, "exit-de-1", domain.RoleExit, time.Unix(1_700_000_000, 0))
+		m.ObserveMihomoStart(time.Unix(1_700_000_100, 0))
+		m.ObserveSelfHeal(map[string]SelfHealStats{"mihomo": {Restarts: 2, Throttled: true}})
+		for _, name := range []string{"wgfleet_agent_mihomo_start_time_seconds", "wgfleet_agent_self_heal_restarts", "wgfleet_agent_self_heal_throttled"} {
+			if n := testutil.CollectAndCount(reg, name); n != 0 {
+				t.Errorf("exit must expose no %s, got %d series", name, n)
+			}
+		}
+	})
+	t.Run("master observes", func(t *testing.T) {
+		reg := prometheus.NewRegistry()
+		m := NewAgentMetrics(reg, "master-xa-1", domain.RoleMaster, time.Unix(1_700_000_000, 0))
+		m.ObserveMihomoStart(time.Unix(1_700_000_100, 0))
+		m.ObserveSelfHeal(map[string]SelfHealStats{"mihomo": {Restarts: 2, Throttled: true}})
+		want := `
+# HELP wgfleet_agent_mihomo_start_time_seconds Unix time mihomo's container last started, as docker reports it. Steps forward on every restart — ours, docker's or a crash — so changes() over it is the restart count no single restarter can see. Master nodes only.
+# TYPE wgfleet_agent_mihomo_start_time_seconds gauge
+wgfleet_agent_mihomo_start_time_seconds{node="master-xa-1",role="master"} 1.7000001e+09
+# HELP wgfleet_agent_self_heal_restarts Self-heal restarts the agent has applied to this service since it started (monotonic; read with increase()). Master nodes only.
+# TYPE wgfleet_agent_self_heal_restarts gauge
+wgfleet_agent_self_heal_restarts{node="master-xa-1",role="master",service="mihomo"} 2
+# HELP wgfleet_agent_self_heal_throttled 1 while the restart governor is refusing further self-heal restarts of this service because they keep being needed. The defect is still there; only the symptom is muted. Master nodes only.
+# TYPE wgfleet_agent_self_heal_throttled gauge
+wgfleet_agent_self_heal_throttled{node="master-xa-1",role="master",service="mihomo"} 1
+`
+		if err := testutil.GatherAndCompare(reg, strings.NewReader(want),
+			"wgfleet_agent_mihomo_start_time_seconds", "wgfleet_agent_self_heal_restarts", "wgfleet_agent_self_heal_throttled"); err != nil {
+			t.Error(err)
+		}
+		// A service that stopped needing restarts long enough for the governor to
+		// forget it must drop out rather than freeze at its last value.
+		m.ObserveSelfHeal(nil)
+		if n := testutil.CollectAndCount(reg, "wgfleet_agent_self_heal_restarts"); n != 0 {
+			t.Errorf("forgotten service still reported: %d series", n)
+		}
+	})
+}

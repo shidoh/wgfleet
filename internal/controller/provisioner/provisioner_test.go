@@ -9,6 +9,7 @@ import (
 
 	"github.com/shidoh/wgfleet/internal/controller/pki"
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/nodeexporter"
 )
 
 func testInput() BootstrapInput {
@@ -156,6 +157,29 @@ func TestBootstrapHoldsAmneziaWGPackages(t *testing.T) {
 				t.Errorf("role=%s complete=%v: no apt-mark hold step:\n%s", role, complete, got)
 			}
 		}
+	}
+}
+
+// Host metrics are part of what a provisioned node is: without them the master —
+// the client entry point and the fleet's CPU bottleneck — had no CPU, memory or
+// disk series at all. Bootstrap installs the exporter and binds it to the mgmt
+// overlay; the agent's host planner re-asserts the same files every pass.
+func TestBootstrapConfiguresNodeExporterOnTheMgmtAddress(t *testing.T) {
+	in := testInput()
+	in.Facts = Facts{OS: "Linux", Arch: "x86_64", HasAWGKmod: true}
+	got := planText(BuildPlan(in))
+	for _, want := range []string{
+		nodeexporter.DefaultsPath, nodeexporter.DropInPath,
+		"--web.listen-address=10.20.0.5:9100",
+		"systemctl enable prometheus-node-exporter",
+		"systemctl restart prometheus-node-exporter",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("bootstrap plan lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "0.0.0.0:9100") {
+		t.Errorf("exporter must not bind the wildcard:\n%s", got)
 	}
 }
 

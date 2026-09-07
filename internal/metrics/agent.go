@@ -37,6 +37,9 @@ type AgentMetrics struct {
 	udpReturnSocket  *prometheus.GaugeVec // per UDP port: can a TPROXY reply socket still be opened
 	udpReturnKnown   *prometheus.GaugeVec // per UDP port: is a blocked port one we have decided about
 	mihomoErrors     prometheus.Counter   // error lines mihomo wrote about itself
+	mihomoStart      prometheus.Gauge     // when mihomo's container last started (master-only)
+	selfHealRestarts *prometheus.GaugeVec // per service: self-heal restarts since agent start (master-only)
+	selfHealThrottle *prometheus.GaugeVec // per service: 1 while the governor refuses restarts (master-only)
 	clientPathOK     *prometheus.GaugeVec // per probe: does the client path work end to end
 	netnsMoveState   *prometheus.GaugeVec // where the namespace migration is
 	netnsMoveTries   prometheus.Gauge     // reverts spent out of the allowance
@@ -163,6 +166,18 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Namespace: namespace, Subsystem: "agent", Name: "standby_tier_total",
 			Help: "Exits of the INACTIVE tier that the last warm probe could sample. 0 means the standby has not been measured — a failover would be blind. Master nodes only.", ConstLabels: cl,
 		})
+		m.mihomoStart = prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "mihomo_start_time_seconds",
+			Help: "Unix time mihomo's container last started, as docker reports it. Steps forward on every restart — ours, docker's or a crash — so changes() over it is the restart count no single restarter can see. Master nodes only.", ConstLabels: cl,
+		})
+		m.selfHealRestarts = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "self_heal_restarts",
+			Help: "Self-heal restarts the agent has applied to this service since it started (monotonic; read with increase()). Master nodes only.", ConstLabels: cl,
+		}, []string{"service"})
+		m.selfHealThrottle = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "self_heal_throttled",
+			Help: "1 while the restart governor is refusing further self-heal restarts of this service because they keep being needed. The defect is still there; only the symptom is muted. Master nodes only.", ConstLabels: cl,
+		}, []string{"service"})
 		m.standbyTransport = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "standby_transport_usable",
 			Help: "1 when the last probe found this exit's INACTIVE transport able to reach the internet, 0 when it could not. Absent means never measured, which is not the same as healthy. Master nodes only.", ConstLabels: cl,
@@ -189,7 +204,8 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 		reg.MustRegister(m.transportActive)
 	}
 	if m.exitHeldOut != nil {
-		reg.MustRegister(m.exitHeldOut, m.reserveTier, m.standbyUsable, m.standbyTotal, m.standbyTransport)
+		reg.MustRegister(m.exitHeldOut, m.reserveTier, m.standbyUsable, m.standbyTotal, m.standbyTransport,
+			m.mihomoStart, m.selfHealRestarts, m.selfHealThrottle)
 	}
 	return m
 }
@@ -359,6 +375,37 @@ func (m *AgentMetrics) ObserveUDPReturn(bindable, known map[int]bool) {
 func (m *AgentMetrics) ObserveMihomoErrors(n int) {
 	if n > 0 {
 		m.mihomoErrors.Add(float64(n))
+	}
+}
+
+// ObserveMihomoStart records when mihomo's container last started. No-op on an
+// exit, which runs no mihomo.
+func (m *AgentMetrics) ObserveMihomoStart(started time.Time) {
+	if m.mihomoStart == nil {
+		return
+	}
+	m.mihomoStart.Set(float64(started.Unix()))
+}
+
+// SelfHealStats is one service's self-heal history as the restart governor sees
+// it: how many restarts the agent has applied, and whether it has stopped.
+type SelfHealStats struct {
+	Restarts  int
+	Throttled bool
+}
+
+// ObserveSelfHeal publishes the governor's snapshot. REPLACED, not merged: a
+// service the governor has forgotten (a long healthy run) must drop out rather
+// than freeze at its last value. No-op on an exit.
+func (m *AgentMetrics) ObserveSelfHeal(stats map[string]SelfHealStats) {
+	if m.selfHealRestarts == nil {
+		return
+	}
+	m.selfHealRestarts.Reset()
+	m.selfHealThrottle.Reset()
+	for service, st := range stats {
+		m.selfHealRestarts.WithLabelValues(service).Set(float64(st.Restarts))
+		m.selfHealThrottle.WithLabelValues(service).Set(boolToFloat(st.Throttled))
 	}
 }
 

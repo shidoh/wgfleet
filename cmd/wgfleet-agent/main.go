@@ -54,6 +54,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/mihomo"
 	"github.com/shidoh/wgfleet/internal/netfw"
 	"github.com/shidoh/wgfleet/internal/netns"
+	"github.com/shidoh/wgfleet/internal/nodeexporter"
 	"github.com/shidoh/wgfleet/internal/version"
 	"github.com/shidoh/wgfleet/internal/wg"
 	"github.com/shidoh/wgfleet/internal/wgeasy"
@@ -857,6 +858,17 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 				a.metrics.ObserveMihomoErrors(n)
 				a.mihomoLogCursor = cursor
 			}
+			// When mihomo's container last started. Every restart — a self-heal, a
+			// crash, docker's own policy — steps this forward, so a restart loop is a
+			// staircase no single restarter has to confess to. an earlier finding: the planner
+			// that restarted mihomo every pass was found by a person, not by a metric.
+			if started, serr := mihomo.StartedAt(ctx, "mihomo"); serr == nil {
+				a.metrics.ObserveMihomoStart(started)
+			}
+			// And which of those restarts were ours, plus whether the governor has
+			// stopped issuing them — a throttled self-heal is the same defect with the
+			// symptom muted, and reading fewer restarts as recovery is the trap.
+			a.metrics.ObserveSelfHeal(selfHealStats(a.restarts))
 		}
 	}
 	// The client path, and the migration decision it drives. OUTSIDE the metrics
@@ -1083,12 +1095,14 @@ func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, admi
 	// Host hardening (sshd drop-in + fail2ban jail) is role-agnostic: applied on every
 	// node so a drifted or hand-overwritten file self-heals on the next reconcile pass,
 	// rather than persisting until the node is re-provisioned.
-	hostIn := host.Input{MgmtIgnoreCIDRs: a.cfg.Agent.MgmtIgnoreCIDRs}
+	hostIn := host.Input{MgmtIgnoreCIDRs: a.cfg.Agent.MgmtIgnoreCIDRs, MgmtAddr: a.mgmtAddr}
 	if a.stateDir != "" {
 		// Root managed files under the state dir for non-root/dev runs (--state-dir),
 		// exactly like exit/master paths — never touch the real host's /etc in a sandbox.
 		hostIn.SSHDConfigPath = filepath.Join(a.stateDir, hardening.SSHDDropInPath)
 		hostIn.Fail2banJailPath = filepath.Join(a.stateDir, hardening.Fail2banJailPath)
+		hostIn.NodeExporterDefaultsPath = filepath.Join(a.stateDir, nodeexporter.DefaultsPath)
+		hostIn.NodeExporterDropInPath = filepath.Join(a.stateDir, nodeexporter.DropInPath)
 	}
 	base = append(base, host.Planners(hostIn)...)
 	return base
@@ -2074,4 +2088,18 @@ func (a *agent) decideNetnsMove(ctx context.Context, spec domain.NodeSpec, probe
 		return
 	}
 	a.log.Debug("client interception unchanged", "in_namespace", after, "why", a.netnsMove.Reason())
+}
+
+// selfHealStats projects the restart governor's view into the metrics' own type,
+// so the metrics package does not depend on the agent's restart policy.
+func selfHealStats(gov *restart.Governor) map[string]metrics.SelfHealStats {
+	snap := gov.Snapshot()
+	if len(snap) == 0 {
+		return nil
+	}
+	out := make(map[string]metrics.SelfHealStats, len(snap))
+	for service, st := range snap {
+		out[service] = metrics.SelfHealStats{Restarts: st.Restarts, Throttled: st.Throttled}
+	}
+	return out
 }

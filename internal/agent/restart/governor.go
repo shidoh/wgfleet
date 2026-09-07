@@ -64,6 +64,41 @@ type entry struct {
 	pause time.Duration
 	// until is when a suppressed key may restart again.
 	until time.Time
+	// total counts every restart ever recorded for the key. Unlike recent it is
+	// never pruned and survives the healthy-run reset: it feeds a metric, and a
+	// counter that forgets is worse than none.
+	total int
+}
+
+// Stats is one service's restart history as the metrics see it.
+type Stats struct {
+	// Restarts is the number of self-heal restarts recorded since the agent started.
+	Restarts int
+	// Throttled is true while Allow would refuse a restart of this service.
+	Throttled bool
+}
+
+// Snapshot returns every service the governor has seen, with its total restart
+// count and whether it is currently throttled. The throttle is the part that
+// matters most: a service parked in backoff is the same defect as a restart loop
+// with the symptom muted, and a restart count alone would read that as recovery.
+// A nil Governor knows nothing and returns nil.
+func (g *Governor) Snapshot() map[string]Stats {
+	if g == nil {
+		return nil
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	now := g.now()
+	out := make(map[string]Stats, len(g.state))
+	for key := range g.state {
+		e := g.entryLocked(key, now)
+		out[key] = Stats{
+			Restarts:  e.total,
+			Throttled: !e.until.IsZero() && now.Before(e.until),
+		}
+	}
+	return out
 }
 
 // Governor decides whether a self-heal restart may run. It is safe for concurrent
@@ -116,6 +151,7 @@ func (g *Governor) Record(key string) {
 	e := g.entryLocked(key, now)
 	e.recent = append(e.recent, now)
 	e.last = now
+	e.total++
 
 	if len(e.recent) < FreeBudget {
 		// Still inside the free budget. Deliberately does NOT clear an existing
@@ -157,7 +193,7 @@ func (g *Governor) entryLocked(key string, now time.Time) *entry {
 	}
 	// A long quiet stretch means the service is not looping — forget everything.
 	if !e.last.IsZero() && now.Sub(e.last) >= HealthyRun {
-		*e = entry{}
+		*e = entry{total: e.total}
 		return e
 	}
 	cutoff := now.Add(-CrashWindow)

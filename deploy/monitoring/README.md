@@ -80,6 +80,17 @@ Edit before applying:
 
 Verify targets are `UP` under Prometheus → Status → Targets.
 
+### Host metrics (node_exporter)
+
+The bootstrap installs `prometheus-node-exporter` on every node and the agent's
+host planner keeps it bound to `<mgmt_addr>:9100` (never the public interface;
+an unknown mgmt address binds loopback). Scrape it as job `wgfleet-node` with a
+`node` label equal to the manifest name, so host series join the fleet series —
+`vmstaticscrape.yaml` carries the template. `WgfleetHostMetricsMissing` names any
+node the controller knows that this job is not scraping; nodes provisioned before
+this existed are exactly those, and a re-provision (or a one-off
+`apt-get install prometheus-node-exporter`) closes it.
+
 ## 3. Import the dashboard
 
 **Which file depends on your Grafana.** Grafana 13 replaced the dashboard wire
@@ -96,7 +107,8 @@ file, so shipping only one strands whoever runs the other.
 Then pick your Prometheus data source. The dashboard variable `$node` is
 populated from `wgfleet_node_info` (controller metrics), so the controller alone
 already drives the overview, inventory and health rows; the egress-throughput,
-exit-rotation and reconcile rows need the agent `/metrics` (step 1).
+exit-rotation, client-path and reconcile rows need the agent `/metrics` (step 1),
+and the host row needs the node-exporter job.
 
 ### Editing it
 
@@ -192,6 +204,16 @@ refresh (`as_blacklist_feed`):
 | `wgfleet_agent_standby_tier_usable` / `_total` | — | members of the INACTIVE tier the last warm probe found usable, out of those it could sample (master-only) |
 | `wgfleet_agent_standby_transport_usable` | `exit,transport` | 1 when this exit's INACTIVE transport — the one an operator would switch it onto — reached the internet on the last probe, 0 when it did not (master-only). **Absent means never measured**, which is not the same as healthy |
 | `wgfleet_fw_as_blacklist_size` | `family` | size of the scanner-ASN blacklist set actually loaded in nftables |
+| `wgfleet_agent_client_path_ok` | `probe` | 1 when the master's OWN client can send and receive over this protocol through the full client path (interface, firewall, proxy, exit); 0 when it cannot (master-only). Probes: `icmp/direct`, `icmp/gateway`, `icmp/mgmt`, `tcp/443`, `udp/53`. The one measurement that says whether a client works, as opposed to whether each component looks fine |
+| `wgfleet_agent_udp_return_socket` | `port` | 1 when a TPROXY reply socket can still be opened for this destination port; 0 when a socket this namespace already holds makes it impossible, so client traffic to that port gets no replies (master-only) |
+| `wgfleet_agent_udp_return_known` | `port` | 1 when a port whose replies cannot come back is one we have decided about (refused by rule, or a declared loss); 0 marks a silent black hole. `WgfleetClientUDPBlackHole` reads both |
+| `wgfleet_agent_netns_move_state` | `state` | 1 for the state the client-interception move is in (`waiting`, `attached`, `gave_up`), 0 for the others (master-only) |
+| `wgfleet_agent_netns_move_attempts` | — | reverts this master has spent out of its allowance; at the limit it stops trying and stays on the host path |
+| `wgfleet_agent_mihomo_errors_total` | — | error lines mihomo has written about itself, deliberately unclassified: the signal is that the data plane is complaining at all |
+| `wgfleet_agent_guard_drops_packets` | `chain` | packets each firewall guard chain has dropped since its ruleset was applied. `egress_path_guard` must stay at zero (any drop pages); `egress_leak_guard` catches stragglers that would leave un-NATed, and only a RISING count alerts |
+| `wgfleet_agent_mihomo_start_time_seconds` | — | unix time mihomo's container last started, from `docker inspect` (master-only). Steps forward on EVERY restart — a self-heal, a crash, docker's restart policy — so `changes()` over it counts restarts no single restarter has to confess to |
+| `wgfleet_agent_self_heal_restarts` | `service` | self-heal restarts the agent has applied to this service since it started (monotonic gauge; read with `increase()`; master-only) |
+| `wgfleet_agent_self_heal_throttled` | `service` | 1 while the restart governor refuses further self-heal restarts of this service. **The defect is still there; only the symptom is muted** — fewer restarts here is not recovery |
 
 A probe that has never even attempted to run on a node (feature disabled, or
 `warp_mtu` pinned by the operator) emits **no series at all** — an all-zero pair
@@ -233,7 +255,7 @@ an untested proxy rather than a measurement.
 
 ## 4. Alerts
 
-**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 34 alerts,
+**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 46 alerts,
 already applied by step 2 above. Earlier revisions of this file printed two of them
 as a snippet to paste; the copies drifted from the shipped rules (different group
 name, different `for`, a different expression on one), so pasting produced a second,
@@ -266,6 +288,8 @@ What ships, by severity:
 | `WgfleetStandbyTransportUnusable` | warning |
 | `WgfleetClientPathDead` | critical |
 | `WgfleetClientUDPBlackHole` | critical |
+| `WgfleetGuardIsCatchingPackets` | warning |
+| `WgfleetUnNATedClientTrafficRising` | warning |
 | `WgfleetMihomoComplaining` | warning |
 | `WgfleetCAExpiringSoon` | critical |
 | `WgfleetConfigUnreadable` | warning |
@@ -281,6 +305,13 @@ What ships, by severity:
 | `WgfleetWARPEgressDegraded` | warning |
 | `WgfleetWireGuardHandshakeStale` | warning |
 | `WgfleetWireVersionSkew` | warning |
+| `WgfleetMihomoRestartLoop` | warning |
+| `WgfleetSelfHealThrottled` | warning |
+| `WgfleetReconcileNeverConverges` | warning |
+| `WgfleetHostMetricsMissing` | warning |
+| `WgfleetHostDiskAlmostFull` | warning |
+| `WgfleetHostMemoryPressure` | warning |
+| `WgfleetHostCPUSaturated` | warning |
 
 Two notes worth carrying in your head:
 

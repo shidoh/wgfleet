@@ -246,6 +246,48 @@ spec:
         summary: wgfleet-agent restarting repeatedly on {{ $labels.node }}
         description: The agent on {{ $labels.node }} restarted {{ $value | printf "%.0f" }} times in the
           last hour.
+    - alert: WgfleetMihomoRestartLoop
+      # Every restart of the container — a self-heal, a crash, docker's restart
+      # policy — steps the start time forward, so this counts restarts no single
+      # restarter has to confess to. an earlier finding: a planner restarted mihomo every
+      # pass, three exits fell out of rotation in three minutes, and the only record
+      # was the master agent's journal. Each restart drops mihomo's userspace
+      # WireGuard devices, which is why it is an outage and not a blip.
+      expr: changes(wgfleet_agent_mihomo_start_time_seconds[30m]) > 2
+      for: 5m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: mihomo on {{ $labels.node }} restarted {{ $value }} times in 30m
+        description: mihomo's container on {{ $labels.node }} has restarted {{ $value }} times in the last 30 minutes. Each restart tears down the master↔exit tunnels. Check wgfleet_agent_self_heal_restarts to see whether the agent is doing it, and the mihomo log for why.
+    - alert: WgfleetSelfHealThrottled
+      # The restart governor has stopped restarting a service because restarts keep
+      # being needed. That is the SAME defect as a restart loop with the symptom
+      # muted — fewer restarts here is not recovery, and a rule watching restarts
+      # alone would fall silent at exactly the moment a person is needed.
+      expr: wgfleet_agent_self_heal_throttled == 1
+      for: 5m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Self-heal of {{ $labels.service }} on {{ $labels.node }} is throttled
+        description: The agent on {{ $labels.node }} has restarted {{ $labels.service }} too often and is now refusing to; the service is left in whatever state the last restart produced. Investigate the cause rather than waiting for the backoff to expire.
+    - alert: WgfleetReconcileNeverConverges
+      # A node that changes something on EVERY pass for half an hour is not
+      # converging, it is fighting itself: a planner whose probe reads the wrong
+      # namespace, a file two planners both own, an interface that comes up and is
+      # torn down again. Every point check is green while it happens (each pass
+      # succeeds); only the shape over time shows it.
+      expr: min_over_time(wgfleet_agent_reconcile_changes[30m]) > 0
+      for: 5m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: "{{ $labels.node }} changes something on every reconcile pass"
+        description: Every reconcile pass on {{ $labels.node }} ({{ $labels.role }}) in the last 30m applied at least one change. A converged node applies none; something is being repaired and undone in a loop. The agent journal names the component.
   - name: wgfleet.versions
     interval: 1m
     rules:
@@ -677,3 +719,59 @@ spec:
         summary: Scheduled probe '{{ $labels.probe }}' has never succeeded on {{ $labels.node }}
         description: Probe '{{ $labels.probe }}' on {{ $labels.node }} has been attempted but never once
           succeeded.
+  - name: wgfleet.host
+    # Host metrics come from prometheus-node-exporter, installed by the bootstrap
+    # and bound to the mgmt overlay by the agent's host planner (job wgfleet-node,
+    # one target per node, labelled node/role like the agent job). Three of seven
+    # nodes had these by accident of their hoster; the master — the client entry
+    # point and the fleet's CPU bottleneck — had none at all.
+    rules:
+    - alert: WgfleetHostMetricsMissing
+      # A node the controller knows about that no node-exporter target is UP for.
+      # Absence, not failure: a node provisioned before host metrics existed, or an
+      # exporter that hit its start limit before the overlay address came up, looks
+      # exactly like a node that is fine unless somebody asks this question.
+      expr: |
+        wgfleet_node_info{state!="Decommissioning"} == 1
+          unless on(node) (up{job="wgfleet-node"} == 1)
+      for: 30m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: No host metrics from {{ $labels.node }}
+        description: The controller knows {{ $labels.node }} ({{ $labels.role }}) but no node-exporter target for it has been up for 30m. Re-provision the node or check the prometheus-node-exporter unit; until then CPU, memory and disk on it are invisible.
+    - alert: WgfleetHostDiskAlmostFull
+      expr: |
+        (node_filesystem_avail_bytes{job="wgfleet-node",mountpoint="/",fstype!~"tmpfs|overlay"}
+          / node_filesystem_size_bytes{job="wgfleet-node",mountpoint="/",fstype!~"tmpfs|overlay"}) < 0.10
+      for: 15m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Root filesystem on {{ $labels.node }} below 10% free
+        description: "{{ $labels.node }} has {{ $value | humanizePercentage }} of / left. Docker images, journald and the AS-blacklist cache all live there; a full root stops the reconcile from writing config and the containers from restarting."
+    - alert: WgfleetHostMemoryPressure
+      expr: |
+        (node_memory_MemAvailable_bytes{job="wgfleet-node"} / node_memory_MemTotal_bytes{job="wgfleet-node"}) < 0.10
+      for: 15m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: "{{ $labels.node }} has under 10% memory available"
+        description: "{{ $labels.node }} has {{ $value | humanizePercentage }} of RAM available for 15m. The OOM killer picks the largest process, which on a master is mihomo — every client connection with it."
+    - alert: WgfleetHostCPUSaturated
+      # 1 vCPU boxes: the overlay alone is CPU-bound at 20-30 Mbit (ZeroTier is
+      # single-threaded), so a saturated master is a throughput ceiling on every
+      # client, not a box that is merely busy.
+      expr: |
+        (1 - avg by (node, role) (rate(node_cpu_seconds_total{job="wgfleet-node",mode="idle"}[10m]))) > 0.90
+      for: 30m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: "{{ $labels.node }} CPU above 90% for 30m"
+        description: "{{ $labels.node }} ({{ $labels.role }}) has been at {{ $value | humanizePercentage }} CPU for 30m. On a master this caps every client's throughput; on an exit it is usually WARP userspace crypto or a scanner storm at the firewall."

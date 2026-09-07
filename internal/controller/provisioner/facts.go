@@ -3,6 +3,7 @@ package provisioner
 import (
 	"context"
 	"fmt"
+	"github.com/shidoh/wgfleet/internal/nodeexporter"
 	"strings"
 )
 
@@ -25,6 +26,8 @@ type Facts struct {
 	HasDocker    bool   // docker engine present (needed for blocky/mihomo/wg-easy)
 	HasFail2ban  bool   // fail2ban present (SSH brute-force protection)
 	HasAge       bool   // age present (controller backup/restore archive encryption)
+	// HasNodeExporter reports the host-metrics exporter (prometheus-node-exporter).
+	HasNodeExporter bool
 }
 
 // CollectFacts gathers Facts from the target via the Runner. It never mutates
@@ -59,6 +62,7 @@ func CollectFacts(ctx context.Context, r Runner) (Facts, error) {
 	f.HasDocker = commandExists(ctx, r, "docker")
 	f.HasFail2ban = commandExists(ctx, r, "fail2ban-client")
 	f.HasAge = commandExists(ctx, r, "age")
+	f.HasNodeExporter = commandExists(ctx, r, "prometheus-node-exporter")
 	f.HasAWGKmod = awgKmodPresent(ctx, r)
 
 	return f, nil
@@ -147,6 +151,12 @@ func (f Facts) MissingPackages() []string {
 		// internal/controller/backup). Needed on any node that may host the controller
 		// so disaster-recovery restore works on a freshly provisioned box.
 		pkgs = append(pkgs, "age")
+	}
+	if !f.HasNodeExporter {
+		// Host metrics (CPU, memory, disk, network). Without them the master — the
+		// client entry point and the fleet's CPU bottleneck — had no host series at
+		// all. Bound to the mgmt overlay by a dedicated bootstrap step below.
+		pkgs = append(pkgs, nodeexporter.Package)
 	}
 	return pkgs
 }

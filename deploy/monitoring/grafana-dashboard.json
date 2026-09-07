@@ -1754,142 +1754,6 @@
    ]
   },
   {
-   "type": "stat",
-   "title": "Client UDP black holes",
-   "description": "UDP ports this master holds a socket on that are NOT declared, so mihomo cannot open a transparent reply socket for them and client traffic to those ports gets no replies. Anything above zero is a silent outage for that port: requests leave, nothing returns.",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "${datasource}"
-   },
-   "gridPos": {
-    "h": 8,
-    "w": 4,
-    "x": 0,
-    "y": 59
-   },
-   "id": 96,
-   "fieldConfig": {
-    "defaults": {
-     "color": {
-      "mode": "thresholds"
-     },
-     "thresholds": {
-      "mode": "absolute",
-      "steps": [
-       {
-        "color": "green",
-        "value": null
-       },
-       {
-        "color": "red",
-        "value": 1
-       }
-      ]
-     },
-     "unit": "short"
-    },
-    "overrides": []
-   },
-   "options": {
-    "colorMode": "value",
-    "graphMode": "none",
-    "reduceOptions": {
-     "calcs": [
-      "lastNotNull"
-     ],
-     "fields": "",
-     "values": false
-    },
-    "textMode": "auto"
-   },
-   "targets": [
-    {
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${datasource}"
-     },
-     "expr": "count(wgfleet_agent_udp_return_socket == 0 and on(node, port) wgfleet_agent_udp_return_known == 0) or vector(0)",
-     "refId": "A",
-     "instant": true
-    }
-   ]
-  },
-  {
-   "type": "state-timeline",
-   "title": "UDP reply socket possible, by port",
-   "description": "1 = a TPROXY reply socket can still be opened for that destination port; 0 = a socket this host already holds makes it impossible. Port 443 sitting at 0 is the client AmneziaWG interface holding it, which is why client QUIC had no return path from 2026-08-28.",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "${datasource}"
-   },
-   "gridPos": {
-    "h": 8,
-    "w": 8,
-    "x": 4,
-    "y": 59
-   },
-   "id": 97,
-   "fieldConfig": {
-    "defaults": {
-     "color": {
-      "mode": "fixed",
-      "fixedColor": "text"
-     },
-     "custom": {
-      "fillOpacity": 85,
-      "lineWidth": 0,
-      "spanNulls": true
-     },
-     "mappings": [
-      {
-       "type": "value",
-       "options": {
-        "0": {
-         "text": "out",
-         "color": "red",
-         "index": 0
-        },
-        "1": {
-         "text": "in",
-         "color": "green",
-         "index": 1
-        }
-       }
-      }
-     ],
-     "min": 0,
-     "max": 1
-    },
-    "overrides": []
-   },
-   "options": {
-    "alignValue": "left",
-    "legend": {
-     "displayMode": "list",
-     "placement": "bottom",
-     "showLegend": false
-    },
-    "mergeValues": true,
-    "rowHeight": 0.85,
-    "showValue": "auto",
-    "tooltip": {
-     "mode": "single",
-     "sort": "none"
-    }
-   },
-   "targets": [
-    {
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${datasource}"
-     },
-     "expr": "wgfleet_agent_udp_return_socket",
-     "refId": "A",
-     "legendFormat": "{{node}} :{{port}}"
-    }
-   ]
-  },
-  {
    "type": "state-timeline",
    "title": "Held out by the multi-destination probe",
    "description": "The CAUSE behind the rotation panel: red means the master agent's probe judged this exit unable to reach enough independent destinations and is holding it out. mihomo's own weaker check would put such an exit straight back, so the agent re-probes every held-out member each pass to keep the stricter verdict in force.",
@@ -1966,13 +1830,610 @@
   },
   {
    "type": "row",
+   "title": "Client path (master)",
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 59
+   },
+   "id": 100,
+   "panels": []
+  },
+  {
+   "type": "stat",
+   "title": "Client-path probes failing",
+   "description": "Probes the master runs from its OWN client through the full client path — interface, firewall, transparent proxy, exit — that currently fail. This is the one measurement that says whether a client works, as opposed to whether each component looks fine. Non-zero is a client-visible outage for that protocol.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 4,
+    "x": 0,
+    "y": 60
+   },
+   "id": 101,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "count(wgfleet_agent_client_path_ok == 0) or vector(0)",
+     "refId": "A",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "type": "state-timeline",
+   "title": "Client path, by probe",
+   "description": "Each end-to-end probe over time: ICMP through the direct route, the gateway and the mgmt overlay, TCP/443 and UDP/53 through the proxy. Read this to see WHICH protocol broke and when — a red UDP/53 with green TCP/443 is the return-path black hole, not an exit failure.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 4,
+    "y": 60
+   },
+   "id": 102,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "text"
+     },
+     "custom": {
+      "fillOpacity": 85,
+      "lineWidth": 0,
+      "spanNulls": true
+     },
+     "mappings": [
+      {
+       "type": "value",
+       "options": {
+        "0": {
+         "text": "down",
+         "color": "red",
+         "index": 0
+        },
+        "1": {
+         "text": "ok",
+         "color": "green",
+         "index": 1
+        }
+       }
+      }
+     ],
+     "min": 0,
+     "max": 1
+    },
+    "overrides": []
+   },
+   "options": {
+    "alignValue": "left",
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": false
+    },
+    "mergeValues": true,
+    "rowHeight": 0.85,
+    "showValue": "auto",
+    "tooltip": {
+     "mode": "single",
+     "sort": "none"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "wgfleet_agent_client_path_ok{node=~\"$node\"}",
+     "refId": "A",
+     "legendFormat": "{{node}} {{probe}}"
+    }
+   ]
+  },
+  {
+   "type": "stat",
+   "title": "Interception namespace",
+   "description": "Where the master is in the move of client interception into its own network namespace. `attached` is the steady state; `waiting` means the move is pending or was reverted and will be retried; `gave_up` means the revert allowance is spent and the node sits on the host path until someone looks.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 4,
+    "x": 16,
+    "y": 60
+   },
+   "id": 103,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "text"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "text",
+        "value": null
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "attached"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "green"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "waiting"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "yellow"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "gave_up"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "red"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "name"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "wgfleet_agent_netns_move_state == 1",
+     "refId": "A",
+     "instant": true,
+     "legendFormat": "{{state}}"
+    }
+   ]
+  },
+  {
+   "type": "stat",
+   "title": "Path-guard drops (15m)",
+   "description": "Drops on `egress_path_guard` in the last 15 minutes — the chain that must never match. Anything above zero is a client packet that tried to leave by a path nobody chose, and the WgfleetGuardIsCatchingPackets alert fires on it.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 4,
+    "x": 20,
+    "y": 60
+   },
+   "id": 104,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum(increase(wgfleet_agent_guard_drops_packets{chain=\"egress_path_guard\"}[15m])) or vector(0)",
+     "refId": "A",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "type": "stat",
+   "title": "Client UDP black holes",
+   "description": "UDP ports this master holds a socket on that are NOT declared, so mihomo cannot open a transparent reply socket for them and client traffic to those ports gets no replies. Anything above zero is a silent outage for that port: requests leave, nothing returns.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 4,
+    "x": 0,
+    "y": 68
+   },
+   "id": 96,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "count(wgfleet_agent_udp_return_socket == 0 and on(node, port) wgfleet_agent_udp_return_known == 0) or vector(0)",
+     "refId": "A",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "type": "state-timeline",
+   "title": "UDP reply socket possible, by port",
+   "description": "1 = a TPROXY reply socket can still be opened for that destination port; 0 = a socket this host already holds makes it impossible. Port 443 sitting at 0 is the client AmneziaWG interface holding it, which is why client QUIC had no return path from 2026-08-28.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 4,
+    "y": 68
+   },
+   "id": 97,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "text"
+     },
+     "custom": {
+      "fillOpacity": 85,
+      "lineWidth": 0,
+      "spanNulls": true
+     },
+     "mappings": [
+      {
+       "type": "value",
+       "options": {
+        "0": {
+         "text": "out",
+         "color": "red",
+         "index": 0
+        },
+        "1": {
+         "text": "in",
+         "color": "green",
+         "index": 1
+        }
+       }
+      }
+     ],
+     "min": 0,
+     "max": 1
+    },
+    "overrides": []
+   },
+   "options": {
+    "alignValue": "left",
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": false
+    },
+    "mergeValues": true,
+    "rowHeight": 0.85,
+    "showValue": "auto",
+    "tooltip": {
+     "mode": "single",
+     "sort": "none"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "wgfleet_agent_udp_return_socket",
+     "refId": "A",
+     "legendFormat": "{{node}} :{{port}}"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Guard chain drops (15m)",
+   "description": "Packets each firewall guard chain dropped in the last 15 minutes. `egress_path_guard` asserts that no client packet leaves by a path nobody chose — it MUST stay at zero, and the alert pages on any value. `egress_leak_guard` catches stragglers that would otherwise leave un-NATed with a client address; a trickle is expected, a rising line means NAT is losing flows.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 12,
+    "y": 68
+   },
+   "id": 106,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisCenteredZero": false,
+      "axisColorMode": "text",
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "gradientMode": "opacity",
+      "lineInterpolation": "linear",
+      "lineWidth": 2,
+      "pointSize": 5,
+      "scaleDistribution": {
+       "type": "linear"
+      },
+      "showPoints": "never",
+      "spanNulls": false,
+      "stacking": {
+       "group": "A",
+       "mode": "none"
+      },
+      "thresholdsStyle": {
+       "mode": "off"
+      }
+     },
+     "mappings": [],
+     "min": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "calcs": [],
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "increase(wgfleet_agent_guard_drops_packets{node=~\"$node\"}[15m])",
+     "refId": "A",
+     "legendFormat": "{{node}} {{chain}}"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "mihomo error lines (5m)",
+   "description": "Error lines mihomo wrote about itself, per node, in the last 5 minutes. Deliberately unclassified: the signal is that the data plane is complaining at all. The master's line is the one that matters for clients; on exits it usually means a WireGuard device mihomo could not bring up.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 18,
+    "y": 68
+   },
+   "id": 107,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisCenteredZero": false,
+      "axisColorMode": "text",
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "gradientMode": "opacity",
+      "lineInterpolation": "linear",
+      "lineWidth": 2,
+      "pointSize": 5,
+      "scaleDistribution": {
+       "type": "linear"
+      },
+      "showPoints": "never",
+      "spanNulls": false,
+      "stacking": {
+       "group": "A",
+       "mode": "none"
+      },
+      "thresholdsStyle": {
+       "mode": "off"
+      }
+     },
+     "mappings": [],
+     "min": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "calcs": [],
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "increase(wgfleet_agent_mihomo_errors_total{node=~\"$node\"}[5m])",
+     "refId": "A",
+     "legendFormat": "{{node}}"
+    }
+   ]
+  },
+  {
+   "type": "row",
    "title": "Reconcile",
    "collapsed": false,
    "gridPos": {
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 67
+    "y": 76
    },
    "id": 50,
    "panels": []
@@ -1986,9 +2447,9 @@
    },
    "gridPos": {
     "h": 8,
-    "w": 8,
+    "w": 6,
     "x": 0,
-    "y": 68
+    "y": 77
    },
    "id": 51,
    "fieldConfig": {
@@ -2063,9 +2524,9 @@
    },
    "gridPos": {
     "h": 8,
-    "w": 8,
-    "x": 8,
-    "y": 68
+    "w": 6,
+    "x": 6,
+    "y": 77
    },
    "id": 52,
    "fieldConfig": {
@@ -2122,9 +2583,9 @@
    },
    "gridPos": {
     "h": 8,
-    "w": 8,
-    "x": 16,
-    "y": 68
+    "w": 6,
+    "x": 12,
+    "y": 77
    },
    "id": 53,
    "fieldConfig": {
@@ -2170,6 +2631,88 @@
    ]
   },
   {
+   "type": "timeseries",
+   "title": "mihomo restarts (30m) and self-heal throttle",
+   "description": "Restarts of mihomo's container in a trailing 30 minutes, from docker's own start time — every restart counts, whoever caused it — plus 1 while the agent's restart governor is refusing further self-heal restarts. an earlier finding: a planner restarted mihomo every pass, three exits fell out of rotation in three minutes, and the only record was a journal. A throttle is the same defect with the symptom muted.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 18,
+    "y": 77
+   },
+   "id": 54,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisCenteredZero": false,
+      "axisColorMode": "text",
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "gradientMode": "opacity",
+      "lineInterpolation": "linear",
+      "lineWidth": 2,
+      "pointSize": 5,
+      "scaleDistribution": {
+       "type": "linear"
+      },
+      "showPoints": "never",
+      "spanNulls": false,
+      "stacking": {
+       "group": "A",
+       "mode": "none"
+      },
+      "thresholdsStyle": {
+       "mode": "off"
+      }
+     },
+     "mappings": [],
+     "min": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "calcs": [],
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "changes(wgfleet_agent_mihomo_start_time_seconds{node=~\"$node\"}[30m])",
+     "refId": "A",
+     "legendFormat": "{{node}} restarts"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "wgfleet_agent_self_heal_throttled{node=~\"$node\"}",
+     "refId": "B",
+     "legendFormat": "{{node}} {{service}} throttled"
+    }
+   ]
+  },
+  {
    "type": "row",
    "title": "Transport (dual-transport)",
    "collapsed": false,
@@ -2177,7 +2720,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 76
+    "y": 85
    },
    "id": 60,
    "panels": []
@@ -2194,7 +2737,7 @@
     "h": 8,
     "w": 12,
     "x": 0,
-    "y": 77
+    "y": 86
    },
    "id": 61,
    "fieldConfig": {
@@ -2299,7 +2842,7 @@
     "h": 8,
     "w": 12,
     "x": 12,
-    "y": 77
+    "y": 86
    },
    "id": 62,
    "fieldConfig": {
@@ -2371,7 +2914,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 85
+    "y": 94
    },
    "id": 70,
    "panels": []
@@ -2388,7 +2931,7 @@
     "h": 8,
     "w": 4,
     "x": 0,
-    "y": 86
+    "y": 95
    },
    "id": 71,
    "fieldConfig": {
@@ -2449,7 +2992,7 @@
     "h": 8,
     "w": 4,
     "x": 4,
-    "y": 86
+    "y": 95
    },
    "id": 72,
    "fieldConfig": {
@@ -2507,7 +3050,7 @@
     "h": 8,
     "w": 16,
     "x": 8,
-    "y": 86
+    "y": 95
    },
    "id": 73,
    "fieldConfig": {
@@ -2586,7 +3129,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 94
+    "y": 103
    },
    "id": 80,
    "panels": []
@@ -2603,7 +3146,7 @@
     "h": 8,
     "w": 5,
     "x": 0,
-    "y": 95
+    "y": 104
    },
    "id": 81,
    "fieldConfig": {
@@ -2664,7 +3207,7 @@
     "h": 8,
     "w": 5,
     "x": 5,
-    "y": 95
+    "y": 104
    },
    "id": 82,
    "fieldConfig": {
@@ -2725,7 +3268,7 @@
     "h": 8,
     "w": 14,
     "x": 10,
-    "y": 95
+    "y": 104
    },
    "id": 83,
    "fieldConfig": {
@@ -2829,6 +3372,472 @@
      "format": "table",
      "instant": true,
      "refId": "A"
+    }
+   ]
+  },
+  {
+   "type": "row",
+   "title": "Host (node_exporter)",
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 112
+   },
+   "id": 110,
+   "panels": []
+  },
+  {
+   "type": "stat",
+   "title": "Nodes without host metrics",
+   "description": "Nodes the controller knows that have no node-exporter target up. Three of seven had host metrics by accident of their hoster; the master had none. A node here is one whose CPU, memory and disk are invisible — re-provision it, or check its prometheus-node-exporter unit.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 4,
+    "x": 0,
+    "y": 113
+   },
+   "id": 111,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "count(wgfleet_node_info{state!=\"Decommissioning\"} == 1 unless on(node) (up{job=\"wgfleet-node\"} == 1)) or vector(0)",
+     "refId": "A",
+     "instant": true
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "CPU busy",
+   "description": "Share of CPU not idle, per node. The overlay alone is CPU-bound on 1-vCPU boxes (ZeroTier is single-threaded), so a saturated master is a throughput ceiling on every client.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 10,
+    "x": 4,
+    "y": 113
+   },
+   "id": 112,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisCenteredZero": false,
+      "axisColorMode": "text",
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "gradientMode": "opacity",
+      "lineInterpolation": "linear",
+      "lineWidth": 2,
+      "pointSize": 5,
+      "scaleDistribution": {
+       "type": "linear"
+      },
+      "showPoints": "never",
+      "spanNulls": false,
+      "stacking": {
+       "group": "A",
+       "mode": "none"
+      },
+      "thresholdsStyle": {
+       "mode": "off"
+      }
+     },
+     "mappings": [],
+     "min": 0,
+     "unit": "percentunit",
+     "max": 1
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "lastNotNull",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "1 - avg by (node) (rate(node_cpu_seconds_total{job=\"wgfleet-node\",mode=\"idle\",node=~\"$node\"}[5m]))",
+     "refId": "A",
+     "legendFormat": "{{node}}"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Memory used",
+   "description": "1 − MemAvailable/MemTotal. The OOM killer takes the largest process, which on a master is mihomo and every client connection with it.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 10,
+    "x": 14,
+    "y": 113
+   },
+   "id": 113,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisCenteredZero": false,
+      "axisColorMode": "text",
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "gradientMode": "opacity",
+      "lineInterpolation": "linear",
+      "lineWidth": 2,
+      "pointSize": 5,
+      "scaleDistribution": {
+       "type": "linear"
+      },
+      "showPoints": "never",
+      "spanNulls": false,
+      "stacking": {
+       "group": "A",
+       "mode": "none"
+      },
+      "thresholdsStyle": {
+       "mode": "off"
+      }
+     },
+     "mappings": [],
+     "min": 0,
+     "unit": "percentunit",
+     "max": 1
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "lastNotNull",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "1 - node_memory_MemAvailable_bytes{job=\"wgfleet-node\",node=~\"$node\"} / node_memory_MemTotal_bytes{job=\"wgfleet-node\",node=~\"$node\"}",
+     "refId": "A",
+     "legendFormat": "{{node}}"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Root filesystem used",
+   "description": "Used share of /. Docker images, journald and the AS-blacklist cache live there; a full root stops the reconcile from writing config and the containers from restarting.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 121
+   },
+   "id": 114,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisCenteredZero": false,
+      "axisColorMode": "text",
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "gradientMode": "opacity",
+      "lineInterpolation": "linear",
+      "lineWidth": 2,
+      "pointSize": 5,
+      "scaleDistribution": {
+       "type": "linear"
+      },
+      "showPoints": "never",
+      "spanNulls": false,
+      "stacking": {
+       "group": "A",
+       "mode": "none"
+      },
+      "thresholdsStyle": {
+       "mode": "off"
+      }
+     },
+     "mappings": [],
+     "min": 0,
+     "unit": "percentunit",
+     "max": 1
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "lastNotNull",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "1 - node_filesystem_avail_bytes{job=\"wgfleet-node\",mountpoint=\"/\",node=~\"$node\"} / node_filesystem_size_bytes{job=\"wgfleet-node\",mountpoint=\"/\",node=~\"$node\"}",
+     "refId": "A",
+     "legendFormat": "{{node}}"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Public interface traffic",
+   "description": "Bytes per second on each node's non-loopback, non-overlay, non-tunnel interfaces — the uplink. Receive is what clients send in (master) or the tunnel from the master (exit); transmit is what leaves for the internet.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 8,
+    "y": 121
+   },
+   "id": 115,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisCenteredZero": false,
+      "axisColorMode": "text",
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "gradientMode": "opacity",
+      "lineInterpolation": "linear",
+      "lineWidth": 2,
+      "pointSize": 5,
+      "scaleDistribution": {
+       "type": "linear"
+      },
+      "showPoints": "never",
+      "spanNulls": false,
+      "stacking": {
+       "group": "A",
+       "mode": "none"
+      },
+      "thresholdsStyle": {
+       "mode": "off"
+      }
+     },
+     "mappings": [],
+     "min": 0,
+     "unit": "Bps"
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "lastNotNull",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum by (node) (rate(node_network_transmit_bytes_total{job=\"wgfleet-node\",device!~\"lo|zt.*|awg.*|wg.*|wgcf|docker.*|veth.*|br-.*|mih.*\",node=~\"$node\"}[5m]))",
+     "refId": "A",
+     "legendFormat": "{{node}} tx"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum by (node) (rate(node_network_receive_bytes_total{job=\"wgfleet-node\",device!~\"lo|zt.*|awg.*|wg.*|wgcf|docker.*|veth.*|br-.*|mih.*\",node=~\"$node\"}[5m]))",
+     "refId": "B",
+     "legendFormat": "{{node}} rx"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Load average (1m) per core",
+   "description": "1-minute load divided by CPU count. Above 1 for long means work is queueing; on these small boxes that is usually WARP userspace crypto or a scanner storm hitting the firewall.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 121
+   },
+   "id": 116,
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisCenteredZero": false,
+      "axisColorMode": "text",
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "gradientMode": "opacity",
+      "lineInterpolation": "linear",
+      "lineWidth": 2,
+      "pointSize": 5,
+      "scaleDistribution": {
+       "type": "linear"
+      },
+      "showPoints": "never",
+      "spanNulls": false,
+      "stacking": {
+       "group": "A",
+       "mode": "none"
+      },
+      "thresholdsStyle": {
+       "mode": "off"
+      }
+     },
+     "mappings": [],
+     "min": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "lastNotNull",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "node_load1{job=\"wgfleet-node\",node=~\"$node\"} / on(node) count by (node) (node_cpu_seconds_total{job=\"wgfleet-node\",mode=\"idle\",node=~\"$node\"})",
+     "refId": "A",
+     "legendFormat": "{{node}}"
     }
    ]
   }

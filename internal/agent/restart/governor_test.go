@@ -136,3 +136,38 @@ func TestZeroValueGovernorAllows(t *testing.T) {
 	}
 	g.Record("mihomo") // must not panic
 }
+
+// TestSnapshotExposesTotalsAndThrottle — the governor is the only thing that knows
+// how often a service has needed a self-heal restart, and whether it has given up
+// restarting it. Both facts were invisible: a throttled service is the SAME defect
+// as a restart loop with the symptom muted, and a metric that only saw restarts
+// would read the throttle as recovery.
+func TestSnapshotExposesTotalsAndThrottle(t *testing.T) {
+	g, c := newTestGovernor()
+	if snap := g.Snapshot(); len(snap) != 0 {
+		t.Fatalf("fresh governor must know no services, got %v", snap)
+	}
+	g.Record("mihomo")
+	st := g.Snapshot()["mihomo"]
+	if st.Restarts != 1 || st.Throttled {
+		t.Fatalf("after one restart: want {1 false}, got %+v", st)
+	}
+	for i := 1; i < FreeBudget; i++ {
+		c.add(30 * time.Second)
+		g.Record("mihomo")
+	}
+	st = g.Snapshot()["mihomo"]
+	if st.Restarts != FreeBudget || !st.Throttled {
+		t.Fatalf("budget spent: want {%d true}, got %+v", FreeBudget, st)
+	}
+	// Totals are monotonic: the healthy-run reset forgets the window, not history.
+	c.add(HealthyRun + time.Minute)
+	st = g.Snapshot()["mihomo"]
+	if st.Restarts != FreeBudget || st.Throttled {
+		t.Fatalf("after a healthy run: want {%d false}, got %+v", FreeBudget, st)
+	}
+	var nilGov *Governor
+	if snap := nilGov.Snapshot(); snap != nil {
+		t.Errorf("nil governor must report nothing, got %v", snap)
+	}
+}
