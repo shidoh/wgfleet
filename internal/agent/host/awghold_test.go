@@ -3,6 +3,8 @@ package host
 import (
 	"context"
 	"errors"
+	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -187,5 +189,30 @@ func TestIsDpkgLockBusy(t *testing.T) {
 		if isDpkgLockBusy(s) {
 			t.Errorf("must NOT be treated as a busy lock: %q", s)
 		}
+	}
+}
+
+// dpkg-query answers "not installed" with exit code 1, for one package or for all
+// of them. Neither is a failed probe. On a node where every AmneziaWG package is
+// absent the first version failed the whole reconcile pass on this, every 30 s.
+func TestDpkgInstalledReadsExitOneAsNotInstalled(t *testing.T) {
+	exit := func(code int) error {
+		cmd := exec.Command("sh", "-c", "exit "+strconv.Itoa(code))
+		return cmd.Run()
+	}
+	got, err := dpkgInstalled(nil, exit(1))
+	if err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("all packages unknown: want an empty set and no error, got %v, %v", got, err)
+	}
+	got, err = dpkgInstalled([]byte("amneziawg-tools installed\n"), exit(1))
+	if err != nil || !got["amneziawg-tools"] || got["amneziawg-dkms"] {
+		t.Fatalf("one known, one unknown: want just the known one, got %v, %v", got, err)
+	}
+	if _, err := dpkgInstalled(nil, exit(2)); err == nil {
+		t.Fatal("exit 2 is a real dpkg failure and must be reported")
+	}
+	got, err = dpkgInstalled(nil, exec.Command("dpkg-query-that-does-not-exist-anywhere").Run())
+	if err != nil || got != nil {
+		t.Fatalf("no dpkg on the node: want nil, nil, got %v, %v", got, err)
 	}
 }

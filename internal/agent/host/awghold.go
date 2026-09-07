@@ -110,22 +110,13 @@ func aptPackageState(ctx context.Context) (installed, held map[string]bool, err 
 	held = make(map[string]bool, len(awgAptPackages))
 
 	args := append([]string{"-W", "-f", "${Package} ${db:Status-Status}\n"}, awgAptPackages...)
-	// dpkg-query exits non-zero when ANY named package is unknown, while still
-	// printing the ones it does know — so the exit code is not a failure signal
-	// here and only a missing binary is.
 	out, derr := exec.CommandContext(ctx, "dpkg-query", args...).Output()
-	if derr != nil && len(out) == 0 {
-		if isMissingBinary(derr) {
-			return installed, held, nil
-		}
-		return nil, nil, fmt.Errorf("dpkg-query: %w", derr)
+	installed, err = dpkgInstalled(out, derr)
+	if err != nil {
+		return nil, nil, err
 	}
-	sc := bufio.NewScanner(strings.NewReader(string(out)))
-	for sc.Scan() {
-		f := strings.Fields(sc.Text())
-		if len(f) == 2 && f[1] == "installed" {
-			installed[f[0]] = true
-		}
+	if installed == nil {
+		return map[string]bool{}, held, nil // no dpkg on this node
 	}
 
 	hout, herr := exec.CommandContext(ctx, "apt-mark", "showhold").Output()
@@ -135,13 +126,46 @@ func aptPackageState(ctx context.Context) (installed, held map[string]bool, err 
 		}
 		return nil, nil, fmt.Errorf("apt-mark showhold: %w", herr)
 	}
-	sc = bufio.NewScanner(strings.NewReader(string(hout)))
+	sc := bufio.NewScanner(strings.NewReader(string(hout)))
 	for sc.Scan() {
 		if name := strings.TrimSpace(sc.Text()); name != "" {
 			held[name] = true
 		}
 	}
 	return installed, held, nil
+}
+
+// dpkgInstalled reads `dpkg-query -W` output into the set of installed packages.
+// nil, nil means there is no dpkg on this node at all.
+//
+// dpkg-query exits 1 when ANY named package is unknown, printing the ones it does
+// know to stdout and "no packages found matching X" to stderr. When NONE is known
+// stdout is empty and the exit code is still 1 — which the first version of this
+// read as a failed probe, failing the whole reconcile pass every 30 s on a node
+// whose module came from source rather than the PPA (a stand, 2026-09-07; any
+// node built outside our own scripts). Exit code 1 is an answer, not an error:
+// "not installed". Anything else — exit 2 (usage/database trouble) or a signal —
+// stays an error, because a planner that cannot see the node must not report it
+// converged.
+func dpkgInstalled(out []byte, derr error) (map[string]bool, error) {
+	installed := make(map[string]bool, len(awgAptPackages))
+	if derr != nil {
+		if isMissingBinary(derr) {
+			return nil, nil
+		}
+		var ee *exec.ExitError
+		if !errors.As(derr, &ee) || ee.ExitCode() != 1 {
+			return nil, fmt.Errorf("dpkg-query: %w", derr)
+		}
+	}
+	sc := bufio.NewScanner(strings.NewReader(string(out)))
+	for sc.Scan() {
+		f := strings.Fields(sc.Text())
+		if len(f) == 2 && f[1] == "installed" {
+			installed[f[0]] = true
+		}
+	}
+	return installed, nil
 }
 
 // errDpkgLockBusy marks a hold that could not run because another process holds
