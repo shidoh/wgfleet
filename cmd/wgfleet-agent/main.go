@@ -773,7 +773,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			// download reads high here, so the watchdog never actively probes it — that
 			// is what stops a busy-but-healthy exit from being falsely auto-suspended.
 			passive := a.passiveEgressBytesPerSec(spec.Routing.EgressInterface)
-			probe := health.NewThroughputProbe(spec.Routing.EgressInterface, spec.EgressThroughputProbeURL)
+			probe := health.NewThroughputProbe(spec.Routing.EgressInterface, spec.EgressThroughputProbeURL, float64(spec.EgressThroughputMinBps))
 			deg, chk := a.throughput.Observe(ctx, passive, probe)
 			// Re-baseline the byte counter AFTER the probe so the probe's own ~256 KiB
 			// (when it ran) are not counted as "live traffic" in next pass's passive
@@ -808,7 +808,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 				if spec.EgressThroughputMinBps <= 0 {
 					return true
 				}
-				rate, err := health.NewThroughputProbe(egressfo.WARPInterface, spec.EgressThroughputProbeURL)(c)
+				rate, err := health.NewThroughputProbe(egressfo.WARPInterface, spec.EgressThroughputProbeURL, float64(spec.EgressThroughputMinBps))(c)
 				return err == nil && rate >= float64(spec.EgressThroughputMinBps)
 			})
 		if next != activeEgress {

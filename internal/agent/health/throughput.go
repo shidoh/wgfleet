@@ -26,7 +26,30 @@ const (
 	// throttled exit (verified live: exit-3 stalled fetching it via wgcf). Override
 	// per fleet for a stricter, non-Cloudflare target.
 	DefaultThroughputProbeURL = "https://speed.cloudflare.com/__down?bytes=262144"
+	// probeRangeBytes bounds every probe download to the same 256 KiB, whatever the
+	// file behind the URL is: the alternates below are 1 MB files served with
+	// Range support, and a probe that downloaded all of it would cost four times
+	// the data for the same answer.
+	probeRangeBytes = 262144
 )
+
+// DefaultThroughputProbeURLs are the targets the watchdog tries IN ORDER, stopping
+// at the first that clears the floor.
+//
+// One target is not a bandwidth measurement, it is a measurement of that target.
+// On 2026-09-07 vn0 was declared throughput-degraded for the sixth time that day:
+// speed.cloudflare.com answered its 256 KiB in 0.8–1.9 s (140–270 KiB/s, the floor
+// is 250) while three other CDNs, through the SAME WARP tunnel and the SAME egress
+// address that vn1 was using, answered in 60 ms at 1.5–3.7 MB/s. TCP and TLS to
+// Cloudflare took 2 ms and 42 ms; the delay was that endpoint deciding when to
+// start sending. Every verdict built on it — the check, the controller's
+// auto-suspend, the reload cascade behind it — was a verdict about a speed-test
+// page. Spread across independent operators, like the exit-reachability probe.
+var DefaultThroughputProbeURLs = []string{
+	DefaultThroughputProbeURL,
+	"https://cachefly.cachefly.net/1mb.test",
+	"https://proof.ovh.net/files/1Mb.dat",
+}
 
 // ThroughputProbe measures the egress throughput in bytes/sec, or returns an
 // error if the measurement could not be taken at all. A throttled-but-reachable
@@ -34,12 +57,65 @@ const (
 // total failure to measure is an error.
 type ThroughputProbe func(ctx context.Context) (bytesPerSec float64, err error)
 
-// NewThroughputProbe builds the real throughput probe: it downloads url through
-// iface (empty ⇒ default route) and returns the achieved bytes/sec. Exported so
+// NewThroughputProbe builds the real throughput probe: it downloads through iface
+// (empty ⇒ default route) from the given targets in order and returns the best
+// bytes/sec it saw, stopping at the first that clears floor. An explicit override
+// URL (the fleet's egress_throughput_probe_url) replaces the default list rather
+// than joining it: an operator who names a target means that target. Exported so
 // the agent can build one for the active egress (the watchdog) and a separate one
 // for wgcf (the failover recovery probe, which must test the preferred egress's
 // throughput, not just its reachability).
-func NewThroughputProbe(iface, url string) ThroughputProbe { return throughputProbe(iface, url) }
+func NewThroughputProbe(iface, override string, floor float64) ThroughputProbe {
+	urls := DefaultThroughputProbeURLs
+	if override != "" {
+		urls = []string{override}
+	}
+	return func(ctx context.Context) (float64, error) {
+		return probeBest(ctx, floor, urls, func(ctx context.Context, url string) (float64, error) {
+			return throughputProbe(iface, url)(ctx)
+		})
+	}
+}
+
+// probeBest is the target-selection half, free of curl so it is testable: try the
+// targets in order, return the first rate at or above floor, otherwise the best
+// rate seen; an error only when NO target produced a measurement. Sequential on
+// purpose — concurrent downloads on a genuinely 2 Mbit path would each read a
+// third of it and fail a healthy exit — and the early exit keeps the common case
+// at one download.
+func probeBest(ctx context.Context, floor float64, urls []string, measure func(ctx context.Context, url string) (float64, error)) (float64, error) {
+	var (
+		best     float64
+		measured bool
+		firstErr error
+	)
+	for _, u := range urls {
+		if ctx.Err() != nil {
+			break
+		}
+		rate, err := measure(ctx, u)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		measured = true
+		if rate >= floor && floor > 0 {
+			return rate, nil
+		}
+		if rate > best {
+			best = rate
+		}
+	}
+	if !measured {
+		if firstErr == nil {
+			firstErr = fmt.Errorf("throughput probe: no targets")
+		}
+		return 0, firstErr
+	}
+	return best, nil
+}
 
 // throughputProbe downloads url through iface (empty ⇒ default route, e.g. direct
 // egress) and returns the achieved bytes/sec. It tolerates a max-time abort: curl
@@ -52,7 +128,10 @@ func throughputProbe(iface, url string) ThroughputProbe {
 	}
 	return func(ctx context.Context) (float64, error) {
 		args := []string{"-s", "-o", "/dev/null", "-w", "%{size_download} %{time_total}",
-			"--max-time", strconv.Itoa(int(probeTimeout.Seconds()))}
+			"--max-time", strconv.Itoa(int(probeTimeout.Seconds())),
+			// Same 256 KiB from every target; a server without Range support simply
+			// sends the whole file, which is what the Cloudflare URL already sizes.
+			"-r", "0-" + strconv.Itoa(probeRangeBytes-1)}
 		if iface != "" {
 			args = append(args, "--interface", iface)
 		}

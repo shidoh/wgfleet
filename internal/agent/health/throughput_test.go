@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -109,5 +110,55 @@ func TestParseThroughput(t *testing.T) {
 				t.Errorf("parseThroughput(%q) = %v,%v want %v,%v", c.out, rate, ok, c.rate, c.ok)
 			}
 		})
+	}
+}
+
+// One target is a measurement of that target. vn0, 2026-09-07: Cloudflare's speed
+// page answered at 140–270 KiB/s while three other CDNs through the same tunnel
+// gave megabytes per second, and the exit was declared degraded six times that day.
+func TestProbeBestStopsAtTheFirstTargetThatClearsTheFloor(t *testing.T) {
+	ctx := context.Background()
+	calls := []string{}
+	rates := map[string]float64{"a": 100, "b": 5000, "c": 9000}
+	measure := func(_ context.Context, u string) (float64, error) {
+		calls = append(calls, u)
+		return rates[u], nil
+	}
+	rate, err := probeBest(ctx, 1000, []string{"a", "b", "c"}, measure)
+	if err != nil || rate != 5000 {
+		t.Fatalf("got %v,%v want 5000", rate, err)
+	}
+	if len(calls) != 2 {
+		t.Errorf("did not stop at the first clearing target: %v", calls)
+	}
+}
+
+func TestProbeBestReportsTheBestWhenNoneClears(t *testing.T) {
+	ctx := context.Background()
+	measure := func(_ context.Context, u string) (float64, error) {
+		return map[string]float64{"a": 100, "b": 300, "c": 200}[u], nil
+	}
+	rate, err := probeBest(ctx, 1000, []string{"a", "b", "c"}, measure)
+	if err != nil || rate != 300 {
+		t.Fatalf("got %v,%v want the best (300)", rate, err)
+	}
+}
+
+// A target that cannot be measured at all is skipped, and only when every target
+// fails is the probe an error — that is what the watchdog counts as a bad sample.
+func TestProbeBestErrsOnlyWhenNothingMeasured(t *testing.T) {
+	ctx := context.Background()
+	failing := func(_ context.Context, u string) (float64, error) {
+		if u == "a" {
+			return 0, errors.New("no route")
+		}
+		return 2000, nil
+	}
+	if rate, err := probeBest(ctx, 1000, []string{"a", "b"}, failing); err != nil || rate != 2000 {
+		t.Fatalf("one failing target poisoned the probe: %v,%v", rate, err)
+	}
+	allFail := func(context.Context, string) (float64, error) { return 0, errors.New("no route") }
+	if _, err := probeBest(ctx, 1000, []string{"a", "b"}, allFail); err == nil {
+		t.Fatal("every target failing must be an error")
 	}
 }
