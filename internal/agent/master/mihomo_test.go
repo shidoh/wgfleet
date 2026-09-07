@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/mihomo"
 	"github.com/shidoh/wgfleet/internal/wg"
@@ -376,5 +378,55 @@ func TestRedirectSelfHealDefersWhenTheHolderIsDown(t *testing.T) {
 		if a.Changes() {
 			t.Errorf("thrashed mihomo while its namespace holder was down: %q", a.Summary)
 		}
+	}
+}
+
+// The journal is the only record of why mihomo was reloaded — the previous config
+// is gone the moment the file is overwritten. So the reload action has to SAY what
+// moved, as key paths: on 2026-09-07 four reloads in seven minutes each recorded
+// "update config.yaml" and nothing else, and the trigger could not be found.
+func TestMihomoReloadActionNamesWhatChanged(t *testing.T) {
+	paths := PathsUnder(t.TempDir())
+	spec := domain.NodeSpec{Master: &domain.MasterSpec{
+		BindAddress: "10.73.0.1", ExternalController: "172.29.3.10:9090",
+		ExitTunnels: []domain.ExitTunnel{{
+			Name: "exit-de-1", Endpoint: "198.51.100.7:51820",
+			ServerPublicKey: "EXITPUB==", TunnelIP: "10.81.0.2", MTU: 1360,
+		}},
+	}}
+	p := mihomoPlanner{paths: paths, privateKey: testKey(t),
+		reload:  func(context.Context, string, string, []byte) error { return nil },
+		restart: func(context.Context) error { return nil }} // the first write "changes" every proxy
+	// First pass writes the config; then change one thing on disk so the next
+	// render differs from it in exactly that place.
+	if _, err := reconcile.NewEngine(nil, p).Reconcile(context.Background(), spec, reconcile.ModeApply); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	raw, err := os.ReadFile(paths.MihomoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "MATCH,") {
+		t.Fatalf("rendered config has no MATCH rule to perturb:\n%s", raw)
+	}
+	edited := strings.Replace(string(raw), "MATCH,", "MATCH,DIRECT #", 1)
+	if err := os.WriteFile(paths.MihomoConfig, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	acts, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	var reloadSummary string
+	for _, a := range acts {
+		if a.Target == "mihomo" && a.Kind == reconcile.ActionUpdate {
+			reloadSummary = a.Summary
+		}
+	}
+	if reloadSummary == "" {
+		t.Fatalf("no reload action in %+v", acts)
+	}
+	if !strings.Contains(reloadSummary, "changed: rules") {
+		t.Errorf("reload does not name the changed section: %q", reloadSummary)
 	}
 }

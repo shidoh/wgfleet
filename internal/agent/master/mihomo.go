@@ -153,7 +153,15 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 		// point at where it is supposed to be.
 		changed := mihomo.ChangedProxies(oldCfg, []byte(cfg))
 		changed = append(changed, mihomo.ChangedListeners(oldCfg, []byte(cfg))...)
-		actions = append(actions, p.applyConfigAction(spec, []byte(cfg), oldCfg, changed))
+		// Name what moved, as key paths. The rendered config is not kept, so once the
+		// file is overwritten this line in the journal is the only record of why
+		// mihomo was asked to reload — and a reload is never free (see the
+		// leaked-device planner below).
+		why := mihomo.DescribeChange(oldCfg, []byte(cfg))
+		if directAction.Changes() {
+			why = strings.TrimPrefix(why+"; direct-networks.yaml", "; ")
+		}
+		actions = append(actions, p.applyConfigAction(spec, []byte(cfg), oldCfg, changed, why))
 	} else {
 		actions = append(actions, reconcile.NoChangeAction("mihomo", "config already current"))
 	}
@@ -173,7 +181,10 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 // rebind self-heal, mihomoWGDupPlanner) loads the bad file and drops the data plane
 // far from the change that caused it. prevCfg empty (first ever write) ⇒ nothing to
 // roll back to, so the file is left as-is and only the rejection is reported.
-func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML, prevCfg []byte, changedProxies []string) reconcile.Action {
+func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML, prevCfg []byte, changedProxies []string, why string) reconcile.Action {
+	if why == "" {
+		why = "<no difference found>"
+	}
 	reload := p.reload
 	if reload == nil {
 		reload = mihomo.Reload
@@ -196,7 +207,7 @@ func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML, prevCfg 
 	if len(changedProxies) > 0 {
 		return reconcile.CustomAction(reconcile.ActionUpdate, "mihomo",
 			"restart mihomo (proxy definitions changed, hot reload can't re-init the device): "+
-				strings.Join(changedProxies, ", "),
+				strings.Join(changedProxies, ", ")+" — changed: "+why,
 			"docker compose restart mihomo", restart)
 	}
 
@@ -228,7 +239,7 @@ func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML, prevCfg 
 		}
 	}
 	return reconcile.CustomAction(reconcile.ActionUpdate, "mihomo",
-		"reload mihomo config in place (Clash API; existing connections preserved)", display, apply)
+		"reload mihomo config in place (Clash API; existing connections preserved) — changed: "+why, display, apply)
 }
 
 // clashSecret extracts the Clash API secret from the operator's mihomo overrides

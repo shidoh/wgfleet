@@ -148,8 +148,11 @@ func (e *Engine) Reconcile(ctx context.Context, spec domain.NodeSpec, mode Mode)
 				if !a.Changes() {
 					continue
 				}
+				// The summary rides along: it is the only place an action says WHY. A
+				// journal that read "update /etc/mihomo/config.yaml" four times in seven
+				// minutes could not say what had changed, and the bytes were gone.
 				e.log.Info("applying action", "component", p.Component(),
-					"kind", a.Kind, "target", a.Target)
+					"kind", a.Kind, "target", a.Target, "summary", a.Summary)
 				if err := a.run(ctx); err != nil {
 					// This component's remaining actions are the rest of one build and
 					// depend on the step that just failed; the components after it do not.
