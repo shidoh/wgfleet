@@ -316,6 +316,15 @@ func (c *Coordinator) runNode(ctx context.Context, i int) error {
 	id := c.nodeID(i)
 	c.setPhase(i, PhaseUploading, func(n *NodeProgress) { n.StartedAt = c.now() })
 
+	// Where the node stands BEFORE it is touched sets the bar it has to clear
+	// afterwards. Read here, not at plan time: the plan may be minutes old, and it
+	// is this moment's state the gate has to be fair to. Unreadable ⇒ demand Ready,
+	// the strict default.
+	before := domain.StateReady
+	if n, err := c.read.GetNode(ctx, id); err == nil {
+		before = n.State
+	}
+
 	// One call covers upload + sha256 verification + restart (the verification
 	// happens inside, before the restart). The phases are reported around it so the
 	// UI shows movement; the boundary between them is not separately observable.
@@ -333,7 +342,7 @@ func (c *Coordinator) runNode(ctx context.Context, i int) error {
 	// never satisfies it, no matter how long we wait.
 	restartedAt := c.now()
 	c.setPhase(i, PhaseConfirming, nil)
-	if err := c.confirm(ctx, id, installed, restartedAt); err != nil {
+	if err := c.confirm(ctx, id, installed, restartedAt, before); err != nil {
 		return c.fail(ctx, i, err)
 	}
 
@@ -343,7 +352,7 @@ func (c *Coordinator) runNode(ctx context.Context, i int) error {
 }
 
 // confirm blocks until the node satisfies the gate or the timeout expires.
-func (c *Coordinator) confirm(ctx context.Context, id, want string, restartedAt time.Time) error {
+func (c *Coordinator) confirm(ctx context.Context, id, want string, restartedAt time.Time, before domain.NodeState) error {
 	deadline := restartedAt.Add(c.cfg.ConfirmTimeout)
 	var last string
 	for {
@@ -355,7 +364,7 @@ func (c *Coordinator) confirm(ctx context.Context, id, want string, restartedAt 
 		case err != nil:
 			last = "store read failed: " + err.Error()
 		default:
-			last = c.gateReason(n, want, restartedAt)
+			last = c.gateReasonFrom(before, n, want, restartedAt)
 			if last == "" {
 				return nil
 			}
@@ -377,7 +386,13 @@ func (c *Coordinator) confirm(ctx context.Context, id, want string, restartedAt 
 // The conditions themselves live on domain.Node, because three other paths upgrade
 // an agent and none of them used to ask this question at all.
 func (c *Coordinator) gateReason(n domain.Node, want string, restartedAt time.Time) string {
-	return n.AgentBackReason(want, restartedAt, c.now(), c.cfg.FreshWithin)
+	return c.gateReasonFrom(domain.StateReady, n, want, restartedAt)
+}
+
+// gateReasonFrom is gateReason with the bar set by the node's state before the
+// upgrade; see domain.Node.AgentBackReasonFrom.
+func (c *Coordinator) gateReasonFrom(before domain.NodeState, n domain.Node, want string, restartedAt time.Time) string {
+	return n.AgentBackReasonFrom(before, want, restartedAt, c.now(), c.cfg.FreshWithin)
 }
 
 // nodeUntouched reports whether err says the upgrade failed BEFORE it modified

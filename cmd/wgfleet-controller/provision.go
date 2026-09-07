@@ -105,7 +105,7 @@ func upgradeAgentNode(cfg *config.ControllerConfig, ca *pki.CA, node, agentBin s
 		// rather than claim success.
 		return fmt.Errorf("upgraded %q but cannot identify the binary to confirm against: %w", node, verr)
 	}
-	if err := mgr.AwaitAgentBack(context.Background(), node, want,
+	if err := mgr.AwaitAgentBackAsBefore(context.Background(), node, want,
 		restartedAt, 3*time.Minute, 2*time.Minute); err != nil {
 		return err
 	}

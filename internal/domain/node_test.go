@@ -50,3 +50,32 @@ func TestAgentBackReasonHoldsAllFourConditions(t *testing.T) {
 		})
 	}
 }
+
+// A node that was Degraded going into an upgrade has come back when it is Degraded
+// again: the gate is for binaries that break nodes, and a node that arrives broken
+// and leaves as broken was not broken by the binary. Ready before ⇒ Ready required;
+// Error never passes.
+func TestAgentBackReasonFromHonoursThePriorState(t *testing.T) {
+	restarted := time.Date(2026, 9, 7, 8, 50, 0, 0, time.UTC)
+	now := restarted.Add(20 * time.Second)
+	fresh := time.Minute
+	back := func(st NodeState) Node {
+		return Node{State: st, AgentVersion: "v2", LastSeen: restarted.Add(10 * time.Second)}
+	}
+	for _, tc := range []struct {
+		before, after NodeState
+		wantOK        bool
+	}{
+		{StateDegraded, StateDegraded, true},
+		{StateDegraded, StateReady, true},
+		{StateReady, StateDegraded, false},
+		{StateReady, StateReady, true},
+		{StateDegraded, StateError, false},
+		{StateError, StateError, false},
+	} {
+		r := back(tc.after).AgentBackReasonFrom(tc.before, "v2", restarted, now, fresh)
+		if (r == "") != tc.wantOK {
+			t.Errorf("before=%s after=%s: reason %q, want ok=%v", tc.before, tc.after, r, tc.wantOK)
+		}
+	}
+}

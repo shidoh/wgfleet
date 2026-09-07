@@ -360,7 +360,23 @@ func (m *Manager) awaitAfterUpgrade(ctx context.Context, nodeID string) error {
 		// rather than claim success.
 		return fmt.Errorf("upgraded but cannot identify the binary to confirm against: %w", err)
 	}
-	return m.AwaitAgentBack(ctx, nodeID, want, restartedAt, upgradeConfirmTimeout, upgradeReportFresh)
+	return m.AwaitAgentBackAsBefore(ctx, nodeID, want, restartedAt, upgradeConfirmTimeout, upgradeReportFresh)
+}
+
+// AwaitAgentBackAsBefore is AwaitAgentBack with the bar set by the state the node
+// last reported BEFORE the restart — which is what the store still holds at this
+// point, because the new process has not checked in yet. A node that went in
+// Degraded is back when it is Degraded on the new version; see
+// domain.Node.AgentBackReasonFrom for why demanding Ready of it made the one node
+// that needed a fix the one node that could never take it.
+func (m *Manager) AwaitAgentBackAsBefore(ctx context.Context, nodeID, want string, restartedAt time.Time, timeout, freshWithin time.Duration) error {
+	before := domain.StateReady
+	if m.store != nil {
+		if n, err := m.store.GetNode(ctx, nodeID); err == nil && !n.LastSeen.After(restartedAt) {
+			before = n.State
+		}
+	}
+	return m.AwaitAgentBackFrom(ctx, nodeID, before, want, restartedAt, timeout, freshWithin)
 }
 
 // How long to wait for a node to report in on its new binary, and how recent that
@@ -577,6 +593,13 @@ func toSSHTarget(s config.SSHConfig) domain.SSHTarget {
 // .prev happens to be is not obviously the kinder outcome. Saying plainly what
 // happened is.
 func (m *Manager) AwaitAgentBack(ctx context.Context, nodeID, want string, restartedAt time.Time, timeout, freshWithin time.Duration) error {
+	return m.AwaitAgentBackFrom(ctx, nodeID, domain.StateReady, want, restartedAt, timeout, freshWithin)
+}
+
+// AwaitAgentBackFrom is AwaitAgentBack with the bar set by the node's state before
+// the upgrade (see domain.Node.AgentBackReasonFrom): a node that went in Degraded
+// has come back when it reports Degraded on the new version.
+func (m *Manager) AwaitAgentBackFrom(ctx context.Context, nodeID string, before domain.NodeState, want string, restartedAt time.Time, timeout, freshWithin time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var last string
 	for {
@@ -585,7 +608,7 @@ func (m *Manager) AwaitAgentBack(ctx context.Context, nodeID, want string, resta
 		case err != nil:
 			last = "cannot read the node: " + err.Error()
 		default:
-			if last = node.AgentBackReason(want, restartedAt, time.Now(), freshWithin); last == "" {
+			if last = node.AgentBackReasonFrom(before, want, restartedAt, time.Now(), freshWithin); last == "" {
 				return nil
 			}
 		}

@@ -255,7 +255,25 @@ type AuthRecord struct {
 // was the only caller that checked, and a check only one of four callers performs
 // is a check the operator cannot rely on.
 func (n Node) AgentBackReason(want string, restartedAt, now time.Time, freshWithin time.Duration) string {
-	if n.State != StateReady {
+	return n.AgentBackReasonFrom(StateReady, want, restartedAt, now, freshWithin)
+}
+
+// AgentBackReasonFrom is AgentBackReason with the bar set by where the node stood
+// BEFORE the upgrade: a node that was Degraded going in has come back when it is
+// Degraded again, not only when it is Ready.
+//
+// Demanding Ready of every node made a degraded node un-upgradeable: anz3 sat
+// Degraded on a throttled WARP path for a day, every rollout halted at it — rolled
+// it back, skipped the four nodes behind it — and the exit whose throughput check
+// was failing was, by construction, the one that could never receive a fix. The
+// gate exists to catch a binary that broke a node; a node that arrives broken and
+// leaves exactly as broken has not been broken by the binary. Error never passes:
+// it is not a degree of health, it is the reconcile failing.
+func (n Node) AgentBackReasonFrom(before NodeState, want string, restartedAt, now time.Time, freshWithin time.Duration) string {
+	switch {
+	case n.State == StateReady:
+	case n.State == StateDegraded && before == StateDegraded:
+	default:
 		return "state is " + string(n.State)
 	}
 	if n.AgentVersion != want {

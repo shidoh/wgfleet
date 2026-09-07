@@ -377,3 +377,35 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// anz3, 2026-09-07: Degraded on a throttled WARP path before the rollout, Degraded
+// on the new binary after it — and the rollout halted at it, rolled it back and
+// skipped four healthy nodes. A node that comes back exactly as it went in has
+// been upgraded, not broken.
+func TestADegradedNodeThatComesBackDegradedPassesTheGate(t *testing.T) {
+	clk := newClock()
+	up := newUpgrader("new")
+	st := &fakeStore{clock: clk, fn: func(id string, call int) domain.Node {
+		if id == "anz3" {
+			// Degraded throughout; the version flips once the upgrade lands.
+			v := "old"
+			if call > 1 {
+				v = "new"
+			}
+			return domain.Node{State: domain.StateDegraded, AgentVersion: v, LastSeen: clk.now()}
+		}
+		return domain.Node{State: domain.StateReady, AgentVersion: "new", LastSeen: clk.now()}
+	}}
+	c := testCoordinator(up, st, clk)
+	if err := c.Start(context.Background(), planOf("anz3", "vn1")); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	c.Wait()
+	got := phases(c.Snapshot())
+	if got["anz3"] != PhaseDone || got["vn1"] != PhaseDone {
+		t.Fatalf("phases = %v, want both done (err %q)", got, c.Snapshot().Err)
+	}
+	if len(up.restored()) != 0 {
+		t.Errorf("a node that came back as it went in was rolled back: %v", up.restored())
+	}
+}
