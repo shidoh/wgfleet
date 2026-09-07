@@ -334,6 +334,10 @@ func (s *TierSelector) ReserveActive(ctx context.Context, probe memberProbe, pri
 		s.consecFail++
 		s.consecOK = 0
 	}
+	if s.log != nil {
+		s.log.Debug("tier decision", "primary_usable", usable, "reserve_active", s.reserveActive,
+			"consec_fail", s.consecFail, "consec_ok", s.consecOK, "held_out", len(s.heldOut))
+	}
 
 	switch {
 	case !s.reserveActive && s.consecFail >= s.failStreak:

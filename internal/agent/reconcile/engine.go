@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/shidoh/wgfleet/internal/logging"
 	"log/slog"
 
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -142,6 +143,16 @@ func (e *Engine) Reconcile(ctx context.Context, spec domain.NodeSpec, mode Mode)
 		if sp, ok := p.(ScheduledPlanner); ok && sp.Scheduled() {
 			plan.Scheduled = true
 		}
+		// What every planner concluded, every pass — at debug, because at info it
+		// would be twenty lines every thirty seconds, and at nothing it was the
+		// question nobody could answer on 2026-09-07 ("what did the master decide
+		// between 11:30 and 11:37?"). Trace adds each action, no-change ones too.
+		e.log.Debug("planned", "component", p.Component(), "changes", changing(actions),
+			"actions", len(actions), "first", firstSummary(actions))
+		for _, a := range actions {
+			logging.Trace(e.log, "action", "component", p.Component(), "kind", a.Kind,
+				"target", a.Target, "summary", a.Summary)
+		}
 
 		if mode == ModeApply {
 			for _, a := range actions {
@@ -171,4 +182,24 @@ func (e *Engine) Reconcile(ctx context.Context, spec domain.NodeSpec, mode Mode)
 		return report, errors.Join(failed...)
 	}
 	return report, nil
+}
+
+// firstSummary is the one line a debug reader gets per planner: the first
+// action's summary, which for a converged component is its no-change reason.
+func firstSummary(actions []Action) string {
+	if len(actions) == 0 {
+		return ""
+	}
+	return actions[0].Summary
+}
+
+// changing counts the actions that would alter the node.
+func changing(actions []Action) int {
+	n := 0
+	for _, a := range actions {
+		if a.Changes() {
+			n++
+		}
+	}
+	return n
 }

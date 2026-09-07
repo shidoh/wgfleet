@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/logging"
 )
 
 // DefaultReconcileInterval is used when agent.reconcile_interval is unset. It sets
@@ -31,11 +32,15 @@ type AgentConfig struct {
 
 // AgentSection holds the agent's identity and controller coordinates.
 type AgentSection struct {
-	Role              string          `koanf:"role"`               // "master" | "exit"
-	Controller        string          `koanf:"controller"`         // controller mTLS endpoint
-	NodeID            string          `koanf:"node_id"`            // stable node identifier
-	ReconcileInterval time.Duration   `koanf:"reconcile_interval"` // e.g. "60s"
-	Identity          IdentitySection `koanf:"identity"`
+	Role              string        `koanf:"role"`               // "master" | "exit"
+	Controller        string        `koanf:"controller"`         // controller mTLS endpoint
+	NodeID            string        `koanf:"node_id"`            // stable node identifier
+	ReconcileInterval time.Duration `koanf:"reconcile_interval"` // e.g. "60s"
+	// LogLevel is how much the agent says: trace | debug | info | warn | error.
+	// Empty means info. The --log-level flag overrides it; SIGUSR1/SIGUSR2 move it
+	// on a running process (see internal/logging).
+	LogLevel string          `koanf:"log_level"`
+	Identity IdentitySection `koanf:"identity"`
 	// MgmtAddr is this node's management/overlay (ZeroTier) address. It is the bind
 	// address for agent surfaces that must stay off the public interface — today the
 	// Prometheus /metrics endpoint, which the agent binds to
@@ -87,6 +92,9 @@ func (a AgentConfig) Interval() time.Duration {
 // Validate checks the agent config for boundary violations before use.
 func (a AgentConfig) Validate() error {
 	var errs []error
+	if _, err := logging.ParseLevel(a.Agent.LogLevel); err != nil {
+		errs = append(errs, fmt.Errorf("agent.log_level: %w", err))
+	}
 	if _, err := domain.ParseRole(a.Agent.Role); err != nil {
 		errs = append(errs, fmt.Errorf("agent.role: %w", err))
 	}

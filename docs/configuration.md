@@ -87,6 +87,7 @@ SOPS setup is covered in `docs/secrets-sops.md` in the source repository.
 | `controller.listen` | string | **required** | gRPC/mTLS endpoint agents connect to. Bind the mgmt/ZT address, e.g. `10.20.25.254:8443` — agents dial exactly what is written here, so `0.0.0.0` works only together with `controller.advertise` |
 | `controller.advertise` | string | = `listen` | Address agents should dial when it differs from the bind — behind NAT, a gateway, or a published load balancer. Also adds a SAN to the server certificate so TLS validates the dialed name |
 | `controller.store` | string | **required** | Path to the SQLite state database |
+| `controller.log_level` | string | `info` | How much the controller says: `trace` \| `debug` \| `info` \| `warn` \| `error`. `debug` prints every spec render decision (auto-suspend per exit, rollout gate); `trace` adds one line per agent RPC. `--log-level` overrides it. On a running process `SIGUSR1` steps one level more verbose (info → debug → trace) and `SIGUSR2` returns to this value — no restart needed to start talking |
 | `controller.webui` | string | disabled | Web UI bind. **Must be a mgmt/overlay address** unless `WGFLEET_ALLOW_PUBLIC_BIND=1` |
 | `controller.metrics` | string | disabled | Prometheus `/metrics` bind (conventionally `<mgmt>:9300`). Same mgmt-only restriction |
 | `controller.client_portal_url` | string | — | Base URL clients reach the portal on — the address a phone types, e.g. `https://vpn.example.org`. The controller knows its bind, not the address a phone types, so without this it cannot show you the per-client link to hand out |
@@ -420,6 +421,7 @@ controller is; everything else arrives in the spec it pulls.
 | `agent.controller` | string | **required** | Controller mTLS endpoint |
 | `agent.mgmt_addr` | string | — | This node's overlay address. Binds `/metrics` at `<mgmt_addr>:9301` by default. Overridden by `--mgmt-addr` |
 | `agent.reconcile_interval` | duration | `30s` | This node's reconcile cadence; overrides the fleet value |
+| `agent.log_level` | string | `info` | How much the agent says: `trace` \| `debug` \| `info` \| `warn` \| `error`. `debug` prints every planner's conclusion and every self-check each pass, the tier decision and the namespace mover's reason; `trace` adds one line per planned action, no-change ones included. `--log-level` overrides it. On a running process `SIGUSR1` steps one level more verbose and `SIGUSR2` returns to this value — `systemctl kill -s USR1 wgfleet-agent` on the node under investigation, `USR2` when done |
 | `agent.identity.cert` | string | **required** | Node client certificate |
 | `agent.identity.key` | string | **required** | Node private key, mode `0600`, generated on the node and never transmitted |
 | `agent.identity.ca` | string | **required** | CA certificate used to verify the controller |

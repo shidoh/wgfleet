@@ -16,6 +16,7 @@ Every flag on both binaries. Subcommands are mutually exclusive: passing two of
 | `--check-config` | | validate the manifest and exit: 0 if the controller would start here, 1 with the reasons if not. Prints the file's sha256, master and exit counts, then the checks a restart makes before it serves — the secret provider, the CA, `fleet.awg3_key` (resolved, not merely referenced), and whether the store's schema is newer than this build. Changes nothing: it does not create the store, run migrations, or self-heal the manifest's permissions. Run it before every restart — a manifest or a missing CA this binary refuses makes the controller exit at startup, and the unit's `Restart=on-failure` turns that into a crash loop of the whole control plane. The manifest verdict and the HOST verdict are printed separately, so validating a manifest from your laptop reports the host-local failures without calling the file bad. It also warns when the running controller is on a DIFFERENT manifest — that is, when this file has been edited but never applied |
 | `--config` | `/etc/wgfleet/controller.yaml` | config path |
 | `--log-format` | `text` | `text` \| `json` |
+| `--log-level` | (from config, else `info`) | `trace` \| `debug` \| `info` \| `warn` \| `error`. Overrides `log_level` in the config. `SIGUSR1` makes a running process one level more verbose, `SIGUSR2` returns it to the configured level |
 | `--store` | (from config) | override `controller.store` |
 | `--init-pki` | | generate a CA at the configured pki paths, then exit |
 | `--issue-node <id>` | | issue an mTLS bundle (`node.crt`/`node.key`/`ca.crt`) for a node, then exit |
@@ -51,6 +52,7 @@ No subcommand flags ⇒ serve the API + UI + metrics until signalled.
 | `--version` | | print build version (Version, Commit, BuildDate) and exit |
 | `--config` | `/etc/wgfleet/agent.yaml` | config path |
 | `--log-format` | `text` | `text` \| `json` |
+| `--log-level` | (from config, else `info`) | `trace` \| `debug` \| `info` \| `warn` \| `error`. Overrides `log_level` in the config. `SIGUSR1` makes a running process one level more verbose, `SIGUSR2` returns it to the configured level |
 | `--plan` | | dry-run: render the full plan, change nothing |
 | `--once` | | run a single reconcile pass and exit |
 | `--public-ip <ip>` | | this node's public IP to advertise (peer endpoint) |

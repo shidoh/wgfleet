@@ -47,6 +47,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/controller/web"
 	"github.com/shidoh/wgfleet/internal/controller/web/auth"
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/logging"
 	"github.com/shidoh/wgfleet/internal/metrics"
 	"github.com/shidoh/wgfleet/internal/version"
 )
@@ -66,6 +67,7 @@ func run() error {
 	var (
 		configPath   = flag.String("config", "/etc/wgfleet/controller.yaml", "path to controller config")
 		logFormat    = flag.String("log-format", "text", "log format: text | json")
+		logLevel     = flag.String("log-level", "", "log level: trace | debug | info | warn | error (default: the config's log_level, else info); SIGUSR1 steps a running process one level more verbose, SIGUSR2 back")
 		storePath    = flag.String("store", "", "override controller.store path")
 		initPKI      = flag.Bool("init-pki", false, "generate a CA at the configured pki paths and exit")
 		issueNode    = flag.String("issue-node", "", "issue an mTLS bundle for the given node ID and exit")
@@ -102,7 +104,7 @@ func run() error {
 		return nil
 	}
 
-	setupLogging(*logFormat)
+	logLV, logBase := setupLogging(*logFormat, *logLevel)
 
 	// --check-config answers the question a restart otherwise answers destructively.
 	// A manifest this binary refuses makes the controller exit at startup, and the
@@ -125,6 +127,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	defer applyConfigLogLevel(logLV, logBase, *logLevel, cfg.Controller.LogLevel)()
 	// --plan on its own used to fall through to serve(). Every subcommand consults it
 	// and none of them was selected, so the flag that means "change nothing" started
 	// the control plane: a port conflict on a live master, and a second unsupervised
@@ -770,15 +773,30 @@ func readAdminPassword(passwordFile string) (string, error) {
 	return string(b), nil
 }
 
-func setupLogging(format string) {
-	var handler slog.Handler
-	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
-	if format == "json" {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
-	} else {
-		handler = slog.NewTextHandler(os.Stdout, opts)
+// setupLogging installs the logger at the level the flag asks for (info when it
+// is empty) and returns the level variable plus the level that was asked for, so
+// the config's log_level can be applied once the config is read and SIGUSR2 has a
+// baseline to return to. A level the flag cannot parse is fatal here, before
+// anything else runs: a node under investigation must not start quietly.
+func setupLogging(format, level string) (*slog.LevelVar, slog.Level) {
+	lvl, err := logging.ParseLevel(level)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "--log-level:", err)
+		os.Exit(2)
 	}
-	slog.SetDefault(slog.New(handler))
+	return logging.Configure(os.Stdout, format, lvl), lvl
+}
+
+// applyConfigLogLevel lets the config's log_level take effect when the flag did
+// not name one, and starts the signal watcher either way.
+func applyConfigLogLevel(lv *slog.LevelVar, base slog.Level, flagLevel, cfgLevel string) func() {
+	if flagLevel == "" && cfgLevel != "" {
+		if lvl, err := logging.ParseLevel(cfgLevel); err == nil {
+			base = lvl
+			lv.Set(lvl)
+		}
+	}
+	return logging.WatchSignals(lv, base, slog.Default())
 }
 
 // portalSource adapts the controller's store and keybroker to the portal's

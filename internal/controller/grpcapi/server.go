@@ -21,6 +21,7 @@ import (
 	pb "github.com/shidoh/wgfleet/internal/api/pb/wgfleet/v1"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/logging"
 )
 
 // SpecRenderer renders the desired NodeSpec for a node. *keybroker.Broker
@@ -98,6 +99,8 @@ func (s *Service) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Re
 		return nil, status.Errorf(codes.InvalidArgument, "register %q: %v", nodeID, err)
 	}
 	wire, agentVersion := reportedVersions(ctx)
+	logging.Trace(s.log, "rpc Register", "node", nodeID, "role", role, "wire", wire, "agent_version", agentVersion,
+		"public_ip", req.GetPublicIp(), "mgmt_addr", req.GetMgmtAddr())
 
 	node, err := s.store.GetNode(ctx, nodeID)
 	known := true
@@ -226,6 +229,8 @@ func (s *Service) PullSpec(ctx context.Context, _ *pb.PullSpecRequest) (*pb.Node
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "render spec for %q: %v", nodeID, err)
 	}
+	logging.Trace(s.log, "rpc PullSpec", "node", nodeID, "peers", len(spec.Peers),
+		"exit_tunnels", exitTunnelCount(spec), "decommission", spec.Decommission)
 	return api.SpecToProto(spec), nil
 }
 
@@ -246,6 +251,8 @@ func (s *Service) ReportStatus(stream pb.NodeService_ReportStatusServer) error {
 			return status.Errorf(codes.Internal, "recv status from %q: %v", nodeID, err)
 		}
 		st := api.StatusFromProto(nodeID, report)
+		logging.Trace(s.log, "rpc ReportStatus", "node", nodeID, "state", st.State,
+			"checks", len(st.Checks), "egress_ip", st.EgressIP, "exit_health", len(st.ExitHealth))
 		if err := s.store.RecordStatus(stream.Context(), st); err != nil {
 			return status.Errorf(codes.Internal, "record status from %q: %v", nodeID, err)
 		}
@@ -293,4 +300,12 @@ func peerAddr(ctx context.Context) string {
 		return p.Addr.String()
 	}
 	return "unknown"
+}
+
+// exitTunnelCount is what a trace line can say about a spec without printing it.
+func exitTunnelCount(spec domain.NodeSpec) int {
+	if spec.Master == nil {
+		return 0
+	}
+	return len(spec.Master.ExitTunnels)
 }

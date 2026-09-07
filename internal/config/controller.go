@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/logging"
 	"github.com/shidoh/wgfleet/internal/routing"
 	"github.com/shidoh/wgfleet/internal/wg"
 )
@@ -60,6 +61,10 @@ type ControllerConfig struct {
 // ControllerSection holds the controller's own runtime settings.
 type ControllerSection struct {
 	Listen string `koanf:"listen"` // gRPC/HTTPS API for agents (mTLS)
+	// LogLevel is how much the controller says: trace | debug | info | warn | error.
+	// Empty means info. The --log-level flag overrides it; SIGUSR1/SIGUSR2 move it
+	// on a running process (see internal/logging).
+	LogLevel string `koanf:"log_level"`
 	// Advertise is the address agents dial to reach the controller when it differs
 	// from Listen — e.g. the controller binds 0.0.0.0 (or an overlay address) but
 	// is reached through a NAT/gateway/host address (a Lima host gateway, a
@@ -1100,6 +1105,9 @@ var validBalances = map[string]struct{}{
 // Validate checks the controller config for boundary violations before use.
 func (c ControllerConfig) Validate() error {
 	var errs []error
+	if _, err := logging.ParseLevel(c.Controller.LogLevel); err != nil {
+		errs = append(errs, fmt.Errorf("controller.log_level: %w", err))
+	}
 	if c.Controller.Listen == "" {
 		errs = append(errs, errors.New("controller.listen is required"))
 	}

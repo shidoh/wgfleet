@@ -1107,6 +1107,8 @@ func (b *Broker) trackSuspensions(degraded map[string]bool, present []string) ma
 		if t.suspended {
 			out[name] = true
 		}
+		b.log.Debug("auto-suspend: exit assessed", "exit", name, "degraded", degraded[name],
+			"suspended", t.suspended, "degraded_since", t.degradedSince, "healthy_since", t.healthySince)
 	}
 	b.suspend = keep
 	return out

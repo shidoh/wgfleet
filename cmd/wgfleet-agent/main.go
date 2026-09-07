@@ -50,6 +50,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/egress"
 	"github.com/shidoh/wgfleet/internal/hardening"
+	"github.com/shidoh/wgfleet/internal/logging"
 	"github.com/shidoh/wgfleet/internal/metrics"
 	"github.com/shidoh/wgfleet/internal/mihomo"
 	"github.com/shidoh/wgfleet/internal/netfw"
@@ -156,6 +157,7 @@ func run() error {
 	var (
 		configPath    = flag.String("config", "/etc/wgfleet/agent.yaml", "path to agent config")
 		logFormat     = flag.String("log-format", "text", "log format: text | json")
+		logLevel      = flag.String("log-level", "", "log level: trace | debug | info | warn | error (default: the config's log_level, else info); SIGUSR1 steps a running process one level more verbose, SIGUSR2 back")
 		plan          = flag.Bool("plan", false, "dry-run: show what reconcile would change, apply nothing")
 		once          = flag.Bool("once", false, "run a single reconcile pass and exit")
 		publicIP      = flag.String("public-ip", "", "this node's public IP to advertise (peer endpoint)")
@@ -212,12 +214,13 @@ func run() error {
 		return nil
 	}
 
-	setupLogging(*logFormat)
+	logLV, logBase := setupLogging(*logFormat, *logLevel)
 
 	cfg, err := config.Load(*configPath, &config.AgentConfig{})
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	defer applyConfigLogLevel(logLV, logBase, *logLevel, cfg.Agent.LogLevel)()
 	role, err := domain.ParseRole(cfg.Agent.Role)
 	if err != nil {
 		return err
@@ -739,6 +742,9 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	// node moves to Ready/Degraded/Error rather than staying Reconciling.
 	checks := a.healthChecks(spec)
 	state, results := health.Evaluate(ctx, reconcileErr, checks)
+	for _, r := range results {
+		a.log.Debug("self-check", "check", r.Name, "ok", r.OK, "detail", r.Detail)
+	}
 
 	// Egress reachability classification (detect-only censorship-block signal): on
 	// a persistent warp-egress failure, actively confirm whether the WARP path
@@ -1761,15 +1767,30 @@ func serverNameOf(endpoint string) string {
 	return host
 }
 
-func setupLogging(format string) {
-	var handler slog.Handler
-	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
-	if format == "json" {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
-	} else {
-		handler = slog.NewTextHandler(os.Stdout, opts)
+// setupLogging installs the logger at the level the flag asks for (info when it
+// is empty) and returns the level variable plus the level that was asked for, so
+// the config's log_level can be applied once the config is read and SIGUSR2 has a
+// baseline to return to. A level the flag cannot parse is fatal here, before
+// anything else runs: a node under investigation must not start quietly.
+func setupLogging(format, level string) (*slog.LevelVar, slog.Level) {
+	lvl, err := logging.ParseLevel(level)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "--log-level:", err)
+		os.Exit(2)
 	}
-	slog.SetDefault(slog.New(handler))
+	return logging.Configure(os.Stdout, format, lvl), lvl
+}
+
+// applyConfigLogLevel lets the config's log_level take effect when the flag did
+// not name one, and starts the signal watcher either way.
+func applyConfigLogLevel(lv *slog.LevelVar, base slog.Level, flagLevel, cfgLevel string) func() {
+	if flagLevel == "" && cfgLevel != "" {
+		if lvl, err := logging.ParseLevel(cfgLevel); err == nil {
+			base = lvl
+			lv.Set(lvl)
+		}
+	}
+	return logging.WatchSignals(lv, base, slog.Default())
 }
 
 // clientIfaceName derives the client interface's name from its config path, the
