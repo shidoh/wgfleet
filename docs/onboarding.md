@@ -8,6 +8,9 @@ one `exit`); scale the per-node steps for more.
 > See [colocated-controller-master.md](colocated-controller-master.md) — the
 > master is onboarded by hand (local cert issue) while exits stay SSH-provisioned.
 
+Supported OS, sizing and the versions the platform pins are in the
+[system requirements](requirements.md); this page assumes a node that meets them.
+
 The work splits cleanly in two:
 
 - **OS prep** (`prepare-node.sh`, beside this file; `deploy/prepare-node.sh` in a

@@ -109,6 +109,7 @@ perl -pi -e '\
   s{\]\((?:\./|\.\./)?manifest\.md}{]($(2)MANIFEST.md}g; \
   s{\]\((?:\./|\.\./)?colocated-controller-master\.md}{]($(2)COLOCATED-CONTROLLER-MASTER.md}g; \
   s{\]\((?:\./|\.\./)?onboarding\.md}{]($(2)ONBOARDING.md}g; \
+  s{\]\((?:\./|\.\./)?(?:docs/)?requirements\.md}{]($(2)REQUIREMENTS.md}g; \
   s{\]\((?:\./|\.\./)?SECURITY\.md}{]($(2)SECURITY.md}g; \
   s{\]\((?:\./|\.\./)?(?:docs/)?recipes/ru-split-tunnel-dns-filter\.md}{]($(2)examples/RU-SPLIT-TUNNEL.md}g; \
   s{\]\((?:\.\./)*deploy/examples/controller-split-ru\.yaml}{]($(2)examples/controller-split-ru.yaml}g; \
@@ -126,6 +127,7 @@ release-archive: agent-linux controller-linux
 	cp LICENSE                                  $(DIST)/$(PKG)/LICENSE
 	cp DISCLAIMER.md                            $(DIST)/$(PKG)/DISCLAIMER.md
 	cp docs/QUICKSTART.md                       $(DIST)/$(PKG)/INSTALL.md
+	cp docs/requirements.md                     $(DIST)/$(PKG)/REQUIREMENTS.md
 	cp docs/configuration.md                    $(DIST)/$(PKG)/CONFIGURATION.md
 	cp docs/master-migration.md                 $(DIST)/$(PKG)/MASTER-MIGRATION.md
 	cp docs/client-migration.md                 $(DIST)/$(PKG)/CLIENT-MIGRATION.md

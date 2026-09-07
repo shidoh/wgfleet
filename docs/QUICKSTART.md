@@ -22,10 +22,10 @@ This is the short path. For the reasoning behind each step see
 
 ## What you need
 
-- **2 servers** (or more), Ubuntu 24.04 (22.04 works; its nftables 1.0.2 and
-  5.15 kernel are older than what the fleet is developed against, so prefer 24.04
-  for a new install), **root SSH access**, each with a public IP. 1 vCPU / 1 GB RAM
-  is enough for an exit; give the master 2 vCPU.
+- **2 servers** (or more), **Ubuntu 24.04**, **root SSH access**, each with a
+  public IP. 1 vCPU / 1 GB RAM is enough for an exit; give the master 2 vCPU.
+  Anything older than 24.04 is best effort — see the
+  [system requirements](requirements.md) before choosing an image.
 - A free **ZeroTier** account — <https://my.zerotier.com>. wgfleet uses it as a
   private management network so no admin port is ever exposed to the internet.
 - The release archive for your CPU, from the Releases page:

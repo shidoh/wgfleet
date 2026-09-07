@@ -428,6 +428,7 @@ users nothing. What it takes to turn on, and in what order:
 | Document | What it covers |
 |---|---|
 | [docs/QUICKSTART.md](docs/QUICKSTART.md) | Two blank servers to a working VPN, start here |
+| [docs/requirements.md](docs/requirements.md) | System requirements and compatibility: supported OS, sizing, pinned versions, controller↔agent contract |
 | [docs/manifest.md](docs/manifest.md) | Annotated `controller.yaml` and `agent.yaml`, with secret schemes |
 | [docs/configuration.md](docs/configuration.md) | Exhaustive per-key reference; a test fails the build if it drifts |
 | [docs/cli.md](docs/cli.md) | Every flag on both binaries |
