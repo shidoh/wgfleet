@@ -428,6 +428,12 @@ modprobe -r amneziawg && modprobe amneziawg   # or reboot
 modinfo -F version amneziawg                  # 3.1.… for the current line
 ```
 
+On a master whose clients are still served by wg-easy (client-migration.md, part 3
+not done), the container created `wg0` once at start and will not notice it is gone:
+the agent reports `wg0 not found` until you `docker restart wg-easy`. The script does
+that for you; by hand, do not forget it. wg-easy's bundled 1.x tools drive a 3.x
+module without complaint.
+
 Do **not** `apt-mark unhold` first: the agent re-pins the packages on every
 reconcile pass (about every 30 s), so by the time `apt-get update` has finished
 the hold is back and `apt-get install -y` fails with "Held packages were changed".
