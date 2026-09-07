@@ -2096,7 +2096,20 @@ func (a *agent) decideNetnsMove(ctx context.Context, spec domain.NodeSpec, probe
 	}
 	before := a.netnsMove.Attached()
 	after := a.netnsMove.DecideWith(wanted,
-		func() error { return master.NamespaceReady(ctx, spec) },
+		func() error {
+			// The move is watched by the client-path prober, and the prober is a peer
+			// on the AGENT's client interface. While wg-easy still owns that interface
+			// there is no prober, no probe, and therefore no way to notice the move
+			// broke anyone — so it does not start. It used to: the empty probe set
+			// read as "path broken", the node moved, reverted, moved, reverted, and
+			// parked itself on the host path with a terminal verdict, three times
+			// per wg-easy master, for nothing. Measured on a stand and in a tester's
+			// journal, 2026-09-07.
+			if spec.Master.ClientWG == nil {
+				return errors.New("the client path cannot be measured while wg-easy owns the client interface (client_awg.managed is off); not moving until the agent carries it")
+			}
+			return master.NamespaceReady(ctx, spec)
+		},
 		func() master.PathVerdict { return a.clientPathVerdict(probes) })
 	if before != after {
 		a.netnsMoveReason = a.netnsMove.Reason()
@@ -2139,6 +2152,16 @@ func selfHealStats(gov *restart.Governor) map[string]metrics.SelfHealStats {
 // WireGuard devices behind the exits need up to a REKEY_TIMEOUT (~7 s) to settle.
 const mihomoDisturbGrace = 90 * time.Second
 
+// anyDecisive reports whether at least one probe that may revert a move ran.
+func anyDecisive(probes []master.ClientPathProbe) bool {
+	for _, p := range probes {
+		if p.Decisive {
+			return true
+		}
+	}
+	return false
+}
+
 // clientInterfaceUp is master.ClientInterfaceUp unless a test injected its own.
 func (a *agent) clientInterfaceUp() bool {
 	if a.clientIfaceUp != nil {
@@ -2166,6 +2189,12 @@ func (a *agent) noteMihomoDisturbed() { a.mihomoDisturbedAt = time.Now() }
 // knob by hand.
 func (a *agent) clientPathVerdict(probes []master.ClientPathProbe) master.PathVerdict {
 	ok := master.ClientPathOK(probes)
+	if !ok && !anyDecisive(probes) {
+		// Nothing was measured. That is a fact about the prober, not about the
+		// namespace: ClientPathOK is right to call an empty set unhealthy for a
+		// health verdict, and wrong as grounds to move every client back.
+		return master.PathVerdict{Known: false, Why: "no client-path probe ran this pass; nothing to judge the namespace by"}
+	}
 	if !ok && !a.clientInterfaceUp() {
 		return master.PathVerdict{Known: false,
 			Why: "the client interface " + master.ClientWGInterface + " is down; a failing probe says nothing about the namespace"}

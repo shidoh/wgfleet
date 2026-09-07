@@ -66,9 +66,10 @@ type Input struct {
 	// ClientCIDR is the client pool, routed from the namespace back through the
 	// host so mihomo's replies reach the client interface.
 	ClientCIDR string
-	// ProbeHost is the address Ready reaches for from inside the namespace to prove
-	// it has a working path to an exit. Empty ⇒ that check is skipped.
-	ProbeHost string
+	// ProbeHosts are the addresses Ready reaches for from inside the namespace to
+	// prove it has a working path to the wire: one reachable exit is proof enough.
+	// Empty ⇒ that check is skipped.
+	ProbeHosts []string
 	// ProbeResolver is the resolver Ready queries from inside the namespace, as
 	// host:port, and ProbeBin is the binary that asks it. Both empty ⇒ the DNS check
 	// is skipped, which is honest: without knowing WHICH resolver mihomo will use in
@@ -284,15 +285,32 @@ func Ready(ctx context.Context, in Input, run Runner) error {
 	// It also removes the shell from the probe entirely, and with it the injection
 	// surface that made the address parsing necessary — the parsing stays, because
 	// an address that is not an address is still a spec we should refuse.
-	if in.ProbeHost != "" {
-		addr, perr := netip.ParseAddr(in.ProbeHost)
-		if perr != nil {
-			return fmt.Errorf("netns: probe host %q is not an IP address: %w", in.ProbeHost, perr)
+	//
+	// ANY reachable exit is proof. The gate used to ask the first exit in the list
+	// and only that one, so a fleet whose first exit was down at its hoster could
+	// never move — the node sat in "waiting" indefinitely, on the host path with the
+	// port collision this migration exists to escape, while its other exit carried
+	// every client fine. A tester's fleet, 2026-09-07. The addresses are still
+	// validated one by one: a hostname or nonsense in the list is a spec to refuse,
+	// not an exit to skip.
+	if len(in.ProbeHosts) > 0 {
+		var addrs []netip.Addr
+		for _, h := range in.ProbeHosts {
+			addr, perr := netip.ParseAddr(h)
+			if perr != nil {
+				return fmt.Errorf("netns: probe host %q is not an IP address: %w", h, perr)
+			}
+			addrs = append(addrs, addr)
 		}
-		if _, err := run(ctx, "nsenter", "--net="+nsPath,
-			"ping", "-c", "2", "-W", "2", "-q", addr.String()); err != nil {
-			return fmt.Errorf("namespace %s cannot reach %s: %w", in.Holder, addr, err)
+		var failures []string
+		for _, addr := range addrs {
+			if _, err := run(ctx, "nsenter", "--net="+nsPath,
+				"ping", "-c", "2", "-W", "2", "-q", addr.String()); err == nil {
+				return nil
+			}
+			failures = append(failures, addr.String())
 		}
+		return fmt.Errorf("namespace %s cannot reach any exit (tried %s)", in.Holder, strings.Join(failures, ", "))
 	}
 	return nil
 }

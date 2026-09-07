@@ -686,7 +686,7 @@ func NamespaceReady(ctx context.Context, spec domain.NodeSpec) error {
 	} else if !wanted {
 		return fmt.Errorf("disabled by master.client_via_netns")
 	}
-	host := exitProbeTarget(spec)
+	hosts := exitProbeTargets(spec)
 	resolver, bin := "", ""
 	if rs := mihomoResolvers(spec, true); len(rs) > 0 {
 		resolver = net.JoinHostPort(rs[0], "53")
@@ -700,14 +700,15 @@ func NamespaceReady(ctx context.Context, spec domain.NodeSpec) error {
 		PeerIface:     domain.NetnsPeerIface,
 		CIDR:          spec.Master.NetnsLinkCIDR(),
 		ClientCIDR:    spec.WGServer.AddressPool,
-		ProbeHost:     host,
+		ProbeHosts:    hosts,
 		ProbeResolver: resolver,
 		ProbeBin:      bin,
 	}, netns.Exec)
 }
 
-// exitProbeTarget picks an exit endpoint the namespace can dial to prove it has a
-// path to the wire, not merely a route table that says it does.
+// exitProbeTargets lists the exit endpoints the namespace can ping to prove it
+// has a path to the wire, not merely a route table that says it does. Every
+// non-drained exit, in manifest order; netns.Ready is satisfied by any one of them.
 //
 // It was the missing half of the readiness gate: netns.Ready has carried this
 // check since it was written, validated the address against injection, and was
@@ -723,10 +724,12 @@ func NamespaceReady(ctx context.Context, spec domain.NodeSpec) error {
 // Only literal addresses are used. A hostname would need the namespace's resolver
 // to answer before the probe can run, which makes a reachability check depend on
 // the thing it is meant to be independent of.
-func exitProbeTarget(spec domain.NodeSpec) string {
+func exitProbeTargets(spec domain.NodeSpec) []string {
 	if spec.Master == nil {
-		return ""
+		return nil
 	}
+	var out []string
+	seen := map[string]bool{}
 	for _, t := range spec.Master.ExitTunnels {
 		if t.Drained || t.Endpoint == "" {
 			continue
@@ -736,12 +739,13 @@ func exitProbeTarget(spec domain.NodeSpec) string {
 			continue
 		}
 		addr, aerr := netip.ParseAddr(host)
-		if aerr != nil {
+		if aerr != nil || seen[addr.String()] {
 			continue
 		}
-		return addr.String()
+		seen[addr.String()] = true
+		out = append(out, addr.String())
 	}
-	return ""
+	return out
 }
 
 // NetnsPeerIP is mihomo's address inside its namespace — the veth's far end.

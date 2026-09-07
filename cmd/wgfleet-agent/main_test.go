@@ -1,7 +1,12 @@
 package main
 
 import (
+	"context"
 	"github.com/shidoh/wgfleet/internal/agent/master"
+	"github.com/shidoh/wgfleet/internal/domain"
+	"io"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -117,5 +122,40 @@ func TestClientPathVerdictDoesNotJudgeWhileTheClientInterfaceIsDown(t *testing.T
 	a = &agent{clientIfaceUp: func() bool { return false }}
 	if v := a.clientPathVerdict(passing); !v.Known || !v.OK {
 		t.Fatalf("a passing probe is always evidence, got %+v", v)
+	}
+}
+
+// No probe at all is not a verdict either way.
+func TestClientPathVerdictNeedsAMeasurement(t *testing.T) {
+	a := &agent{clientIfaceUp: func() bool { return true }}
+	if v := a.clientPathVerdict(nil); v.Known {
+		t.Fatalf("no probes: must not be evidence, got %+v", v)
+	}
+	advisory := []master.ClientPathProbe{{Name: "icmp/direct", Decisive: false, OK: false}}
+	if v := a.clientPathVerdict(advisory); v.Known {
+		t.Fatalf("only advisory probes: must not be evidence, got %+v", v)
+	}
+}
+
+// A wg-easy master has no prober, so the move is not started rather than
+// started and reverted three times.
+func TestNetnsMoveWaitsWhileWGEasyOwnsTheClientInterface(t *testing.T) {
+	a := &agent{
+		role:      domain.RoleMaster,
+		log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		netnsMove: master.NewNetnsMove(""),
+	}
+	spec := domain.NodeSpec{Master: &domain.MasterSpec{}} // ClientWG nil: wg-easy owns wg0; knob at its default (auto)
+	for i := 0; i < 3; i++ {
+		a.decideNetnsMove(context.Background(), spec, nil)
+	}
+	if a.netnsMove.Attached() {
+		t.Fatal("moved with no way to watch the move")
+	}
+	if a.netnsMove.Attempts() != 0 {
+		t.Fatalf("spent %d attempt(s) without ever moving", a.netnsMove.Attempts())
+	}
+	if why := a.netnsMove.Reason(); !strings.Contains(why, "wg-easy") {
+		t.Fatalf("the reason must name the cause, got %q", why)
 	}
 }

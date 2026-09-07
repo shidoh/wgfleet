@@ -30,6 +30,28 @@ func clientGateway(cw domain.ClientWGSpec) string {
 	return ""
 }
 
+// proberResolvers is the resolver list the prober's namespace gets: the one the
+// clients are handed, else the gateway. Duplicates collapse — a list that names
+// the same address twice would only make a failing probe wait twice as long.
+func proberResolvers(cw domain.ClientWGSpec) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, ns := range cw.DNS {
+		ns = strings.TrimSpace(ns)
+		if ns == "" || seen[ns] {
+			continue
+		}
+		seen[ns] = true
+		out = append(out, ns)
+	}
+	if len(out) == 0 {
+		if gw := clientGateway(cw); gw != "" {
+			out = append(out, gw)
+		}
+	}
+	return out
+}
+
 // synthPlanner builds the master's own client: a real AmneziaWG peer whose
 // decrypted side lives in an isolated namespace.
 //
@@ -102,17 +124,26 @@ func (p synthPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 	// tunnel underneath is perfectly healthy. That is a prober that reports the path
 	// broken when it is fine, which is worse than no prober at all.
 	//
-	// Pointing it at the client gateway is not a workaround but the point: a real
-	// client resolves through the master's own blocky at that address, so this
-	// measures the DNS path users actually take.
-	if gw := clientGateway(*cw); gw != "" {
+	// "Where clients resolve" is the list the controller writes into every client
+	// config (cw.DNS) — the master's own blocky at the gateway address when the
+	// master runs one, the exits' resolvers otherwise. It used to be the gateway
+	// unconditionally, which on a master WITHOUT dns_filter is an address nothing
+	// listens on: every tcp/443 probe died on "Resolving timed out", the move
+	// reverted, and after three of those the node parked itself on the host path
+	// for good — while real clients, pointed at the exits, resolved fine. A fresh
+	// stand, 2026-09-08. The gateway remains the fallback for a spec that carries
+	// no list at all.
+	if servers := proberResolvers(*cw); len(servers) > 0 {
 		resolvPath := p.resolvPath
 		if resolvPath == "" {
 			resolvPath = synthResolvConf
 		}
-		resolv, rerr := reconcile.FileAction(resolvPath,
-			[]byte("# Rendered by wgfleet — the prober resolves where clients resolve.\nnameserver "+gw+"\n"),
-			0o644, nil)
+		var b strings.Builder
+		b.WriteString("# Rendered by wgfleet — the prober resolves where clients resolve.\n")
+		for _, ns := range servers {
+			b.WriteString("nameserver " + ns + "\n")
+		}
+		resolv, rerr := reconcile.FileAction(resolvPath, []byte(b.String()), 0o644, nil)
 		if rerr != nil {
 			return nil, rerr
 		}

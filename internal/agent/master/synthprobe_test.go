@@ -221,14 +221,18 @@ func TestNoGatewayMeasuresNothing(t *testing.T) {
 // so "ready" meant "DNS resolves" — and DNS resolves in the HOST namespace, which
 // the migration does not touch. The gate could pass on a namespace with no path
 // out at all.
-func TestExitProbeTargetPicksALiveLiteralEndpoint(t *testing.T) {
+func TestExitProbeTargetsListEveryLiveLiteralEndpoint(t *testing.T) {
 	spec := domain.NodeSpec{Master: &domain.MasterSpec{ExitTunnels: []domain.ExitTunnel{
 		{Name: "drained", Endpoint: "203.0.113.1:443", Drained: true},
 		{Name: "hostname", Endpoint: "exit.example.com:443"},
 		{Name: "good", Endpoint: "198.51.100.9:51820"},
+		{Name: "good-reality", Endpoint: "198.51.100.9:443"}, // same host, other transport: once
+		{Name: "second", Endpoint: "198.51.100.10:51820"},
 	}}}
-	if host := exitProbeTarget(spec); host != "198.51.100.9" {
-		t.Fatalf("got %q, want the first live literal endpoint", host)
+	got := exitProbeTargets(spec)
+	want := []string{"198.51.100.9", "198.51.100.10"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %v, want every live literal endpoint once, in order: %v", got, want)
 	}
 }
 
@@ -239,7 +243,7 @@ func TestExitProbeTargetIsEmptyWhenNothingIsDialable(t *testing.T) {
 		{Name: "hostname", Endpoint: "exit.example.com:443"},
 		{Name: "junk", Endpoint: "not-an-endpoint"},
 	}}}
-	if host := exitProbeTarget(spec); host != "" {
-		t.Fatalf("got %q, want no target", host)
+	if hosts := exitProbeTargets(spec); len(hosts) != 0 {
+		t.Fatalf("got %v, want no target", hosts)
 	}
 }

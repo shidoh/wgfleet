@@ -225,3 +225,30 @@ func TestABuildLeftHalfwayIsClearedBeforeTheNextAttempt(t *testing.T) {
 		t.Errorf("the clear must come before the create, got del=%d add=%d:\n%s", del, add, displays(acts))
 	}
 }
+
+// The prober resolves where the clients resolve: the list the controller writes
+// into client configs, not the gateway by assumption. On a master without its own
+// resolver the gateway answers nothing, and a prober pointed there reported the
+// namespace broken while every real client resolved fine (stand, 2026-09-08).
+func TestProberResolvesWhereClientsResolve(t *testing.T) {
+	cw := domain.ClientWGSpec{ServerAddress: "10.80.0.1"}
+	if got := proberResolvers(cw); len(got) != 1 || got[0] != "10.80.0.1" {
+		t.Fatalf("no client DNS list: want the gateway, got %v", got)
+	}
+	cw.DNS = []string{"192.168.105.11", " 192.168.105.11 ", "192.168.105.12"}
+	if got := proberResolvers(cw); strings.Join(got, ",") != "192.168.105.11,192.168.105.12" {
+		t.Fatalf("client DNS list set: want it, deduplicated, got %v", got)
+	}
+
+	dir := t.TempDir()
+	spec := synthPlannerSpec()
+	spec.Master.ClientWG.DNS = []string{"192.168.105.11"}
+	p := synthPlanner{confPath: dir + "/synth.conf", resolvPath: dir + "/resolv.conf", serverPub: "SRV",
+		synthKey: wg.KeyPair{PrivateKey: "priv", PublicKey: "PUB"}}
+	eng := reconcile.NewEngine(nil, p)
+	_, _ = eng.Reconcile(context.Background(), spec, reconcile.ModeApply)
+	b, _ := os.ReadFile(dir + "/resolv.conf")
+	if !strings.Contains(string(b), "nameserver 192.168.105.11") || strings.Contains(string(b), "10.80.0.1") {
+		t.Fatalf("resolv.conf must carry the clients' resolver and not the gateway:\n%s", b)
+	}
+}

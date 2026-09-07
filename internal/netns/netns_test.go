@@ -171,7 +171,7 @@ func TestReadyChecksDNSEgressAndSourceAddress(t *testing.T) {
 		"docker inspect -f {{.State.Pid}} wgfleet-netns": "4242\n",
 	}
 	in := testInput()
-	in.ProbeHost = "203.0.113.9"
+	in.ProbeHosts = []string{"203.0.113.9"}
 	in.ProbeResolver = "10.80.0.1:53"
 	in.ProbeBin = "/usr/local/bin/wgfleet-agent"
 
@@ -234,7 +234,7 @@ func TestReadyRefusesAProbeHostThatIsNotAnAddress(t *testing.T) {
 		"exit.example.com",
 	} {
 		in := testInput()
-		in.ProbeHost = bad
+		in.ProbeHosts = []string{bad}
 		r := &recorder{out: base}
 		if err := Ready(context.Background(), in, r.run); err == nil {
 			t.Errorf("probe host %q was accepted", bad)
@@ -333,7 +333,7 @@ func TestReadyDoesNotDialTCPAtAWireGuardEndpoint(t *testing.T) {
 		"docker inspect -f {{.State.Pid}} wgfleet-netns": "4242\n",
 	}}
 	in := testInput()
-	in.ProbeHost = "203.0.113.9"
+	in.ProbeHosts = []string{"203.0.113.9"}
 	if err := Ready(context.Background(), in, r.run); err != nil {
 		t.Fatalf("Ready: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestReadyFailsWhenTheExitCannotBeReached(t *testing.T) {
 		fail: map[string]bool{"nsenter --net=/proc/4242/ns/net ping -c 2 -W 2 -q 203.0.113.9": true},
 	}
 	in := testInput()
-	in.ProbeHost = "203.0.113.9"
+	in.ProbeHosts = []string{"203.0.113.9"}
 	if err := Ready(context.Background(), in, r.run); err == nil {
 		t.Fatal("a namespace with no path to an exit was declared ready")
 	}
@@ -397,5 +397,28 @@ func TestReversePathFilteringIsPinnedOnEveryKeyTheKernelConsults(t *testing.T) {
 	}
 	if strings.Contains(steps, "net.ipv4.conf.all.rp_filter=0") {
 		t.Errorf("a key that is already 0 was written again:\n%s", steps)
+	}
+}
+
+// One reachable exit is proof enough; a dead first exit must not hold the gate.
+func TestReadyIsSatisfiedByAnyReachableExit(t *testing.T) {
+	base := map[string]string{"docker inspect -f {{.State.Pid}} wgfleet-netns": "4242\n"}
+	in := testInput()
+	in.ProbeHosts = []string{"203.0.113.9", "203.0.113.10"}
+	dead := "nsenter --net=/proc/4242/ns/net ping -c 2 -W 2 -q 203.0.113.9"
+
+	r := &recorder{out: base, fail: map[string]bool{dead: true}}
+	if err := Ready(context.Background(), in, r.run); err != nil {
+		t.Fatalf("second exit reachable, yet not ready: %v", err)
+	}
+	if !strings.Contains(strings.Join(r.calls, "\n"), "203.0.113.10") {
+		t.Fatal("the second exit was never tried")
+	}
+
+	r = &recorder{out: base, fail: map[string]bool{dead: true,
+		"nsenter --net=/proc/4242/ns/net ping -c 2 -W 2 -q 203.0.113.10": true}}
+	err := Ready(context.Background(), in, r.run)
+	if err == nil || !strings.Contains(err.Error(), "203.0.113.9") || !strings.Contains(err.Error(), "203.0.113.10") {
+		t.Fatalf("all exits dead: the error must name every one tried, got %v", err)
 	}
 }
