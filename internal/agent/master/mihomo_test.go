@@ -430,3 +430,64 @@ func TestMihomoReloadActionNamesWhatChanged(t *testing.T) {
 		t.Errorf("reload does not name the changed section: %q", reloadSummary)
 	}
 }
+
+// Every applied reload or restart of mihomo has to reach the agent, or the
+// mover judges the namespace by a probe taken while the container was down.
+func TestMihomoReloadAndRestartReportADisturbance(t *testing.T) {
+	paths := PathsUnder(t.TempDir())
+	spec := domain.NodeSpec{Master: &domain.MasterSpec{
+		BindAddress: "10.73.0.1", ExternalController: "172.29.3.10:9090",
+		ExitTunnels: []domain.ExitTunnel{{
+			Name: "exit-de-1", Endpoint: "198.51.100.7:51820",
+			ServerPublicKey: "EXITPUB==", TunnelIP: "10.81.0.2", MTU: 1360,
+		}},
+	}}
+	disturbed := 0
+	p := mihomoPlanner{paths: paths, privateKey: testKey(t),
+		reload:    func(context.Context, string, string, []byte) error { return nil },
+		restart:   func(context.Context) error { return nil },
+		disturbed: func() { disturbed++ }}
+	// First pass: proxies appear ⇒ restart path.
+	if _, err := reconcile.NewEngine(nil, p).Reconcile(context.Background(), spec, reconcile.ModeApply); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	if disturbed != 1 {
+		t.Fatalf("restart did not report a disturbance (got %d)", disturbed)
+	}
+	// Perturb a rule ⇒ hot-reload path.
+	raw, _ := os.ReadFile(paths.MihomoConfig)
+	if err := os.WriteFile(paths.MihomoConfig, []byte(strings.Replace(string(raw), "MATCH,", "MATCH,DIRECT #", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconcile.NewEngine(nil, p).Reconcile(context.Background(), spec, reconcile.ModeApply); err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+	if disturbed != 2 {
+		t.Fatalf("hot reload did not report a disturbance (got %d)", disturbed)
+	}
+	// A converged pass reports nothing.
+	if _, err := reconcile.NewEngine(nil, p).Reconcile(context.Background(), spec, reconcile.ModeApply); err != nil {
+		t.Fatalf("third pass: %v", err)
+	}
+	if disturbed != 2 {
+		t.Fatalf("a no-change pass reported a disturbance (got %d)", disturbed)
+	}
+	// And the self-heal restart gate reports too.
+	fired := 0
+	act := gateRestart(nil, func() { fired++ }, "mihomo redirect listener",
+		reconcile.CustomAction(reconcile.ActionUpdate, "mihomo", "restart", "x", func(context.Context) error { return nil }))
+	if _, err := reconcile.NewEngine(nil, oneAction{act}).Reconcile(context.Background(), spec, reconcile.ModeApply); err != nil {
+		t.Fatal(err)
+	}
+	if fired != 1 {
+		t.Fatalf("gated restart did not report a disturbance (got %d)", fired)
+	}
+}
+
+// oneAction is a planner that returns a fixed action, for exercising hooks.
+type oneAction struct{ a reconcile.Action }
+
+func (oneAction) Component() string { return "test" }
+func (o oneAction) Plan(context.Context, domain.NodeSpec) ([]reconcile.Action, error) {
+	return []reconcile.Action{o.a}, nil
+}

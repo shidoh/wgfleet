@@ -52,6 +52,9 @@ type mihomoPlanner struct {
 	// the answer, so it is threaded here rather than re-derived: the config and the
 	// namespace disagreeing is the whole failure mode.
 	netnsAttached func() bool
+	// disturbed is told after a reload or restart of mihomo has been applied; nil
+	// ⇒ nobody listens. See Input.OnMihomoDisturbed.
+	disturbed func()
 }
 
 func (mihomoPlanner) Component() string { return "mihomo (data plane)" }
@@ -161,7 +164,7 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 		if directAction.Changes() {
 			why = strings.TrimPrefix(why+"; direct-networks.yaml", "; ")
 		}
-		actions = append(actions, p.applyConfigAction(spec, []byte(cfg), oldCfg, changed, why))
+		actions = append(actions, p.applyConfigAction(spec, []byte(cfg), oldCfg, changed, why).OnApplied(p.disturbed))
 	} else {
 		actions = append(actions, reconcile.NoChangeAction("mihomo", "config already current"))
 	}
@@ -276,7 +279,7 @@ const restartKeyMihomo = "mihomo"
 // The Record hook rides OnApplied, so plan mode cannot spend budget: repeatedly
 // inspecting a broken master would otherwise throttle the very repair the operator
 // is about to authorise.
-func gateRestart(gov *restart.Governor, target string, act reconcile.Action) reconcile.Action {
+func gateRestart(gov *restart.Governor, disturbed func(), target string, act reconcile.Action) reconcile.Action {
 	ok, until := gov.Allow(restartKeyMihomo)
 	if !ok {
 		return reconcile.NoChangeAction(target, fmt.Sprintf(
@@ -284,7 +287,12 @@ func gateRestart(gov *restart.Governor, target string, act reconcile.Action) rec
 				"so restarting again is not fixing it; investigate rather than wait",
 			until.Format(time.RFC3339)))
 	}
-	return act.OnApplied(func() { gov.Record(restartKeyMihomo) })
+	return act.OnApplied(func() {
+		gov.Record(restartKeyMihomo)
+		if disturbed != nil {
+			disturbed()
+		}
+	})
 }
 
 // --- mihomo redirect-listener self-heal ---
@@ -327,6 +335,7 @@ type mihomoRedirPlanner struct {
 	// ACTS on its answer.
 	netnsAttached func() bool
 	run           netns.Runner
+	disturbed     func() // see Input.OnMihomoDisturbed
 }
 
 func (mihomoRedirPlanner) Component() string { return "mihomo redirect listener" }
@@ -422,7 +431,7 @@ func (p mihomoRedirPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]r
 			}
 			return nil
 		})
-	return []reconcile.Action{gateRestart(p.gov, "mihomo redirect listener", restart)}, nil
+	return []reconcile.Action{gateRestart(p.gov, p.disturbed, "mihomo redirect listener", restart)}, nil
 }
 
 // --- mihomo leaked-wireguard-device self-heal ---
@@ -463,6 +472,8 @@ type mihomoWGDupPlanner struct {
 	// are rebuilt every pass, so a governor constructed here would forget every
 	// restart it saw and never throttle anything.
 	gov *restart.Governor
+	// disturbed is told after the restart has been applied; see Input.OnMihomoDisturbed.
+	disturbed func()
 }
 
 func (mihomoWGDupPlanner) Component() string { return "mihomo wireguard devices" }
@@ -505,7 +516,7 @@ func (p mihomoWGDupPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]rec
 	if restart == nil {
 		restart = composeRestartMihomo(p.compose)
 	}
-	return []reconcile.Action{gateRestart(p.gov, "mihomo wireguard devices",
+	return []reconcile.Action{gateRestart(p.gov, p.disturbed, "mihomo wireguard devices",
 		reconcile.CustomAction(reconcile.ActionUpdate, "mihomo wireguard devices",
 			"leaked AmneziaWG device(s) detected — restart mihomo to clear: "+strings.Join(dupes, ", "),
 			"docker compose restart mihomo", restart))}, nil

@@ -401,6 +401,10 @@ type agent struct {
 	// Kept here rather than in a planner: planners are rebuilt every pass and would
 	// re-count the same window forever.
 	mihomoLogCursor time.Time
+	// mihomoDisturbedAt is when a reload or restart of mihomo was last applied by
+	// this agent. The namespace mover reads it: a client-path probe that fails inside
+	// mihomoDisturbGrace of it is not evidence against the namespace (PathVerdict).
+	mihomoDisturbedAt time.Time
 	// synthKP is the master's own client keypair, minted once and kept on the node.
 	synthKP wg.KeyPair
 	// moveDecisionChanged marks that the pass just finished ended with a different
@@ -1078,6 +1082,7 @@ func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, admi
 			AdminUsername:      adminUser,
 			AdminPassword:      adminPass,
 			OverlayMSS:         a.cfg.Agent.MgmtOverlayMSS,
+			OnMihomoDisturbed:  a.noteMihomoDisturbed,
 		})
 	} else {
 		in := exit.Input{
@@ -2066,9 +2071,9 @@ func (a *agent) decideNetnsMove(ctx context.Context, spec domain.NodeSpec, probe
 		wanted = false
 	}
 	before := a.netnsMove.Attached()
-	after := a.netnsMove.Decide(wanted,
+	after := a.netnsMove.DecideWith(wanted,
 		func() error { return master.NamespaceReady(ctx, spec) },
-		func() bool { return master.ClientPathOK(probes) })
+		func() master.PathVerdict { return a.clientPathVerdict(probes) })
 	if before != after {
 		a.netnsMoveReason = a.netnsMove.Reason()
 		a.moveDecisionChanged = true
@@ -2102,4 +2107,31 @@ func selfHealStats(gov *restart.Governor) map[string]metrics.SelfHealStats {
 		out[service] = metrics.SelfHealStats{Restarts: st.Restarts, Throttled: st.Throttled}
 	}
 	return out
+}
+
+// mihomoDisturbGrace is how long after a mihomo reload or restart a FAILING
+// client-path probe is not held against the namespace. Three passes: a hot reload
+// re-opens listeners in under a second, a restart takes ten, and the userspace
+// WireGuard devices behind the exits need up to a REKEY_TIMEOUT (~7 s) to settle.
+const mihomoDisturbGrace = 90 * time.Second
+
+// noteMihomoDisturbed is the planners' hook (master.Input.OnMihomoDisturbed).
+func (a *agent) noteMihomoDisturbed() { a.mihomoDisturbedAt = time.Now() }
+
+// clientPathVerdict turns this pass's probes into what the mover may conclude
+// from them. A pass that succeeds is always evidence. A pass that fails inside
+// mihomoDisturbGrace of our own reload or restart of mihomo is not: on 2026-09-07
+// three self-heal restarts in a row failed the probe twice, the mover read that as
+// "the move broke the path" and put the interception back on the host — into the
+// port collision the migration exists to escape — for five minutes.
+func (a *agent) clientPathVerdict(probes []master.ClientPathProbe) master.PathVerdict {
+	ok := master.ClientPathOK(probes)
+	if !ok && !a.mihomoDisturbedAt.IsZero() {
+		if since := time.Since(a.mihomoDisturbedAt); since < mihomoDisturbGrace {
+			return master.PathVerdict{Known: false,
+				Why: fmt.Sprintf("mihomo was reloaded or restarted %s ago; a failing probe now says nothing about the namespace",
+					since.Round(time.Second))}
+		}
+	}
+	return master.PathVerdict{OK: ok, Known: true}
 }

@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"sync"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/config"
@@ -51,14 +52,40 @@ type Broker struct {
 	// warnOnce.
 	warnMu sync.Mutex
 	warned map[string]string
+
+	// Auto-suspend hysteresis (see throughputAutoSuspend). now is injected by tests.
+	now       func() time.Time
+	suspendMu sync.Mutex
+	suspend   map[string]*suspendTrack
 }
+
+// suspendTrack is one exit's auto-suspend history: how long it has been degraded
+// or healthy without interruption, and whether it is currently out of the balancer.
+type suspendTrack struct {
+	degradedSince, healthySince time.Time
+	suspended                   bool
+}
+
+// Auto-suspend hysteresis, in MINUTES. The exit's own throughput watchdog already
+// smooths the check over three probes (90 s), and that was the whole gate: on
+// 2026-09-07 vn0's WARP path sat at the 250 KiB/s floor, its check flipped three
+// times in seven minutes, and every flip re-rendered the master's mihomo config —
+// a hot reload that leaks WireGuard devices, so each one cost a container restart
+// and ten minutes of clients on the floor. Removing an exit from the balancer is
+// an expensive act on the master; it has to be earned by minutes of evidence, and
+// undone by minutes of evidence, not by one probe either way.
+const (
+	AutoSuspendAfter = 5 * time.Minute
+	AutoReleaseAfter = 5 * time.Minute
+)
 
 // New constructs a Broker over the given store and fleet manifest.
 func New(st store.Store, fleet config.FleetSection, log *slog.Logger, opts ...Option) *Broker {
 	if log == nil {
 		log = slog.Default()
 	}
-	b := &Broker{store: st, fleet: fleet, log: log, warned: make(map[string]string)}
+	b := &Broker{store: st, fleet: fleet, log: log, warned: make(map[string]string),
+		now: time.Now, suspend: make(map[string]*suspendTrack)}
 	for _, o := range opts {
 		o(b)
 	}
@@ -74,6 +101,12 @@ type Option func(*Broker)
 // secret; header protection is refused at config validation instead.
 func WithAWG3Key(key string) Option {
 	return func(b *Broker) { b.awg3Key = key }
+}
+
+// WithClock overrides the broker's clock; tests drive the auto-suspend
+// hysteresis with it instead of waiting out real minutes.
+func WithClock(now func() time.Time) Option {
+	return func(b *Broker) { b.now = now }
 }
 
 // RegisterPublicKey records a node's WireGuard public key in the registry. This
@@ -995,6 +1028,7 @@ func deriveRealityIDs(seed string) (uuid, shortID string) {
 // signal is the exit's own hysteresis-smoothed egress-throughput check.
 func (b *Broker) throughputAutoSuspend(ctx context.Context) map[string]bool {
 	degraded := make(map[string]bool)
+	var present []string
 	healthy := 0
 	for _, exit := range b.fleet.Exits {
 		node, pub, err := b.lookupPubKey(ctx, exit.Name)
@@ -1017,6 +1051,7 @@ func (b *Broker) throughputAutoSuspend(ctx context.Context) map[string]bool {
 			}
 			continue // no status ⇒ neither degraded nor counted toward the guard
 		}
+		present = append(present, exit.Name)
 		switch {
 		case st.EgressThroughputDegraded():
 			degraded[exit.Name] = true
@@ -1024,10 +1059,57 @@ func (b *Broker) throughputAutoSuspend(ctx context.Context) map[string]bool {
 			healthy++
 		}
 	}
+	suspended := b.trackSuspensions(degraded, present)
 	if healthy == 0 {
 		return nil // keep every exit in the LB rather than black-hole all clients
 	}
-	return degraded
+	return suspended
+}
+
+// trackSuspensions turns this pass's degraded set into the suspended set, with
+// hysteresis: an exit is suspended only after AutoSuspendAfter of continuous
+// degradation and released only after AutoReleaseAfter of continuous health.
+// Exits not in present are forgotten. Every transition is logged — the previous
+// version changed the master's data plane without a line anywhere.
+func (b *Broker) trackSuspensions(degraded map[string]bool, present []string) map[string]bool {
+	b.suspendMu.Lock()
+	defer b.suspendMu.Unlock()
+	now := b.now()
+	keep := make(map[string]*suspendTrack, len(present))
+	out := make(map[string]bool)
+	for _, name := range present {
+		t := b.suspend[name]
+		if t == nil {
+			t = &suspendTrack{}
+		}
+		keep[name] = t
+		if degraded[name] {
+			t.healthySince = time.Time{}
+			if t.degradedSince.IsZero() {
+				t.degradedSince = now
+			}
+			if !t.suspended && now.Sub(t.degradedSince) >= AutoSuspendAfter {
+				t.suspended = true
+				b.log.Warn("auto-suspend: exit removed from the load balancer",
+					"exit", name, "degraded_for", now.Sub(t.degradedSince).Round(time.Second))
+			}
+		} else {
+			t.degradedSince = time.Time{}
+			if t.healthySince.IsZero() {
+				t.healthySince = now
+			}
+			if t.suspended && now.Sub(t.healthySince) >= AutoReleaseAfter {
+				t.suspended = false
+				b.log.Info("auto-suspend: exit returned to the load balancer",
+					"exit", name, "healthy_for", now.Sub(t.healthySince).Round(time.Second))
+			}
+		}
+		if t.suspended {
+			out[name] = true
+		}
+	}
+	b.suspend = keep
+	return out
 }
 
 // egressChain builds the exit's egress priority chain (ADR-0017) from its

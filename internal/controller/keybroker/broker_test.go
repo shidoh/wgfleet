@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/store"
@@ -603,32 +604,79 @@ func TestAutoSuspendThroughputDegraded(t *testing.T) {
 
 	fleet := testFleet()
 	fleet.Exits = append(fleet.Exits, config.ExitConfig{Name: "exit-de-2", Egress: "warp", AddressPool: "10.82.0.0/24"})
-	b := New(st, fleet, log)
+	clock := time.Date(2026, 9, 7, 8, 30, 0, 0, time.UTC)
+	b := New(st, fleet, log, WithClock(func() time.Time { return clock }))
 	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
 	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
 	seedNode(t, st, "exit-de-2", "10.20.0.6", "198.51.100.8", "bGm5lqV2yYt8m6Dl0sFhT4xQ0r9p7zX1cV2bN3mK4U=", domain.RoleExit)
+
+	drained := func(name string) bool {
+		t.Helper()
+		spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		x, ok := tunnelByName(spec.Master.ExitTunnels, name)
+		if !ok {
+			t.Fatalf("no tunnel %s", name)
+		}
+		return x.Drained
+	}
 
 	// exit-de-2 reports throughput-degraded; exit-de-1 is healthy.
 	recordThroughputDegraded(t, st, "exit-de-1", true)
 	recordThroughputDegraded(t, st, "exit-de-2", false)
 
-	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
-	if err != nil {
-		t.Fatal(err)
+	// One degraded report is not evidence: a probe that lands under the floor once
+	// must not re-render the master's data plane. vn0, 2026-09-07.
+	if drained("exit-de-2") {
+		t.Error("exit-de-2 was suspended on its first degraded report")
 	}
-	t1, _ := tunnelByName(spec.Master.ExitTunnels, "exit-de-1")
-	t2, _ := tunnelByName(spec.Master.ExitTunnels, "exit-de-2")
-	if t1.Drained {
+	clock = clock.Add(AutoSuspendAfter - time.Second)
+	if drained("exit-de-2") {
+		t.Error("exit-de-2 was suspended before AutoSuspendAfter elapsed")
+	}
+	clock = clock.Add(2 * time.Second)
+	if !drained("exit-de-2") {
+		t.Error("exit-de-2 degraded for AutoSuspendAfter must be auto-suspended from the LB group")
+	}
+	if drained("exit-de-1") {
 		t.Error("healthy exit-de-1 must stay in the LB group")
 	}
-	if !t2.Drained {
-		t.Error("throughput-degraded exit-de-2 must be auto-suspended from the LB group")
+
+	// Recovery is held to the same standard: one healthy report does not put the
+	// exit back, because putting it back is a reload too.
+	recordThroughputDegraded(t, st, "exit-de-2", true)
+	clock = clock.Add(time.Second)
+	if !drained("exit-de-2") {
+		t.Error("exit-de-2 was released on its first healthy report")
+	}
+	clock = clock.Add(AutoReleaseAfter)
+	if drained("exit-de-2") {
+		t.Error("exit-de-2 healthy for AutoReleaseAfter must be back in the LB group")
+	}
+
+	// A relapse restarts the degraded clock from zero — from the first render that
+	// sees it, since the tracker only ever sees the fleet at render time.
+	recordThroughputDegraded(t, st, "exit-de-2", false)
+	clock = clock.Add(time.Second)
+	if drained("exit-de-2") {
+		t.Error("a relapse was suspended immediately")
+	}
+	clock = clock.Add(AutoSuspendAfter - 2*time.Second)
+	if drained("exit-de-2") {
+		t.Error("a relapse must earn its suspension again from zero")
+	}
+	clock = clock.Add(2 * time.Second)
+	if !drained("exit-de-2") {
+		t.Error("exit-de-2 degraded again for AutoSuspendAfter must be suspended")
 	}
 
 	// Last-exit guard: if BOTH exits are degraded, neither is suspended (a throttled
-	// exit beats a black hole).
+	// exit beats a black hole) — however long they have been degraded.
 	recordThroughputDegraded(t, st, "exit-de-1", false)
-	spec, err = b.RenderNodeSpec(ctx, "master-xa-1")
+	clock = clock.Add(AutoSuspendAfter + time.Second)
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
 	if err != nil {
 		t.Fatal(err)
 	}

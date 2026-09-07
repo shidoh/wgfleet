@@ -482,3 +482,33 @@ func TestARecordFromAnOlderBuildDoesNotHoldTheMove(t *testing.T) {
 		t.Errorf("a last_flip from an older build was read as a revert: %v", m.lastRevert)
 	}
 }
+
+// A probe that fails while mihomo is being restarted is not evidence against the
+// namespace. 2026-09-07: three self-heal restarts in a row, two failed probes, and
+// the mover reverted a working move into the port collision it exists to escape.
+func TestMoveIsNotJudgedOnAnUnknownVerdict(t *testing.T) {
+	m, clock := testMover()
+	if !m.Decide(true, isReady, pathUp) {
+		t.Fatal("did not move")
+	}
+	settleOut(m)
+	*clock = clock.Add(moveRetryHold + time.Second)
+
+	unknown := func() PathVerdict { return PathVerdict{OK: false, Known: false, Why: "mihomo restarted 5s ago"} }
+	for i := 0; i < moveFailPasses+2; i++ {
+		if !m.DecideWith(true, isReady, unknown) {
+			t.Fatalf("pass %d: an unjudged probe reverted the move", i)
+		}
+	}
+	if !strings.Contains(m.Reason(), "not judged") {
+		t.Errorf("reason does not say the pass was not judged: %q", m.Reason())
+	}
+	// Once the probe can judge again, failures count from zero — the unknown passes
+	// did not accumulate.
+	if !m.Decide(true, isReady, pathDown) {
+		t.Fatal("reverted on the first KNOWN failure after unknown passes")
+	}
+	if m.Decide(true, isReady, pathDown) {
+		t.Fatal("stayed attached after enough known failures")
+	}
+}

@@ -202,6 +202,25 @@ func (m *netnsMover) Attempts() int { return m.attempts }
 // Both are functions rather than values so a pass that does not need them does
 // not pay for them.
 func (m *netnsMover) Decide(wanted bool, ready func() error, pathOK func() bool) bool {
+	return m.DecideWith(wanted, ready, func() PathVerdict { return PathVerdict{OK: pathOK(), Known: true} })
+}
+
+// PathVerdict is what the client-path probe says this pass. Known=false means the
+// probe's answer is not evidence about the namespace — mihomo was just reloaded
+// or restarted, and a probe that fails while the container is coming back says
+// nothing about where the interception lives. On 2026-09-07 three self-heal
+// restarts in a row failed the probe twice, the mover read that as "the move broke
+// the path" and put the interception back on the host — into the port collision
+// this whole migration exists to escape — for five minutes. Why carries the
+// reason into the journal.
+type PathVerdict struct {
+	OK    bool
+	Known bool
+	Why   string
+}
+
+// DecideWith is Decide with a probe that can decline to judge; see PathVerdict.
+func (m *netnsMover) DecideWith(wanted bool, ready func() error, path func() PathVerdict) bool {
 	if !wanted {
 		// Turning the feature OFF clears the churn bookkeeping, and that is not
 		// housekeeping — it is the difference between a knob that works and one that
@@ -265,7 +284,13 @@ func (m *netnsMover) Decide(wanted bool, ready func() error, pathOK func() bool)
 			m.reason = fmt.Sprintf("settling after the move (%d pass(es) to go)", m.settle)
 			return true
 		}
-		if pathOK() {
+		v := path()
+		if !v.Known {
+			// Not evidence either way: counters stand, the move stands.
+			m.reason = "client path not judged this pass: " + v.Why
+			return true
+		}
+		if v.OK {
 			m.fail = 0
 			if m.confirm < moveConfirmPasses {
 				m.confirm++

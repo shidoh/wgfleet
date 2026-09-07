@@ -67,6 +67,11 @@ type Input struct {
 	// OverlayMSS clamps TCP MSS on the mgmt overlay (control-plane insurance);
 	// 0 disables. See config.AgentSection.MgmtOverlayMSS and netfw.RenderInput.
 	OverlayMSS int
+	// OnMihomoDisturbed is called after any action that reloads or restarts mihomo
+	// has been APPLIED. The agent uses it to stop the namespace mover from reading a
+	// probe that failed while the container was coming back as evidence against the
+	// namespace (see PathVerdict). nil ⇒ nobody is listening.
+	OnMihomoDisturbed func()
 	// Tier carries the exit-tier failover decision ACROSS reconcile passes. It must
 	// be owned by the caller and reused, because Planners() is invoked once per pass
 	// (cmd/wgfleet-agent: the engine is rebuilt every 30s). A selector constructed
@@ -138,7 +143,7 @@ func Planners(in Input) []reconcile.Planner {
 		netnsPlanner{attached: in.NetnsAttached, clientIface: in.ClientInterface,
 			composePath: in.Paths.Compose},
 		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey, tier: in.Tier,
-			netnsAttached: in.NetnsAttached},
+			netnsAttached: in.NetnsAttached, disturbed: in.OnMihomoDisturbed},
 		masterNATPlanner{path: in.Paths.NFT, v6Path: in.Paths.V6NFT, clientIface: in.ClientInterface,
 			netnsAttached: in.NetnsAttached},
 		// The client leg has exactly one owner. While wg-easy holds it these three
@@ -186,14 +191,14 @@ func Planners(in Input) []reconcile.Planner {
 		// lost its redir bind (the client iface was recreated under it, e.g. a wg-easy
 		// restart flapped the bind address) — DNAT'd client TCP black-holes otherwise.
 		mihomoRedirPlanner{compose: in.Paths.Compose, gov: in.Restart,
-			netnsAttached: in.NetnsAttached},
+			netnsAttached: in.NetnsAttached, disturbed: in.OnMihomoDisturbed},
 		// Also last: clear mihomo's leaked userspace AmneziaWG devices. A hot reload
 		// can leave a second device alive per AWG exit, and because every exit tunnel
 		// shares one master WG identity the exit's single peer slot then flaps between
 		// the two sockets — intermittent failures and ~7s REKEY_TIMEOUT stalls on AWG
 		// exits. Gated on an observed duplicate, never on config change, because the
 		// repair is a connection-dropping restart.
-		mihomoWGDupPlanner{compose: in.Paths.Compose, gov: in.Restart},
+		mihomoWGDupPlanner{compose: in.Paths.Compose, gov: in.Restart, disturbed: in.OnMihomoDisturbed},
 	}
 }
 
