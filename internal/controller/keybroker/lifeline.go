@@ -102,9 +102,19 @@ func (b *Broker) lifelineSpec(ctx context.Context, exit config.ExitConfig, exitN
 	// same string throughout the broker (see lookupPubKey(ctx, exit.Name)), and the
 	// PSK derivation is what makes one exit's lifeline keys useless on another, so
 	// it must be THIS exit's identity and nothing else.
-	peers, err := domain.LifelinePeersOf(clients, masterPool, lifelinePool, exit.Name)
-	if err != nil {
-		return nil, fmt.Errorf("lifeline on %q: %w", exit.Name, err)
+	peers, skipped := domain.LifelinePeersOf(clients, masterPool, lifelinePool, exit.Name)
+	for _, s := range skipped {
+		// One credential's blast radius is one credential. Failing here would fail
+		// the exit's whole NodeSpec, and the agent refuses a spec entire — so an
+		// address left outside the master pool by an operator narrowing the client
+		// pool would stop nftables, routing, the exit's own AWG server and its
+		// egress from converging, over one person's reserve peer. That is the
+		// trade spec.go argues out for ClientWG and ClientVLESS, and it applies
+		// here for the same reason. Keyed per exit AND credential so each affected
+		// credential is named once, and again if its reason changes.
+		b.warnOnce("lifeline-unprojectable-credential:"+exit.Name+"/"+s.ID, s.Reason.Error(),
+			"lifeline peer skipped: this credential cannot be projected onto the reserve interface; every other client is unaffected",
+			"exit", exit.Name, "credential", s.Name, "credential_id", s.ID, "reason", s.Reason)
 	}
 
 	return &domain.LifelineSpec{

@@ -353,10 +353,14 @@ func TestLifelineMTU(t *testing.T) {
 	}
 }
 
-// A credential outside the master's pool cannot be projected onto the lifeline,
-// and guessing is worse than failing: the render fails and the exit keeps its
-// last-good interface.
-func TestLifelineSpecFailsOnAnUnprojectableCredential(t *testing.T) {
+// One credential that cannot be projected must cost exactly itself.
+//
+// Failing the render instead would fail the exit's WHOLE NodeSpec, and the agent
+// refuses a spec entire: an address left outside the master pool by an operator
+// narrowing the client pool would stop nftables, routing, the exit's own AWG
+// server and its egress from converging — over one person's reserve peer. That is
+// the blast-radius rule spec.go argues out for ClientWG and ClientVLESS.
+func TestLifelineSkipsAnUnprojectableCredentialWithoutFailingTheExit(t *testing.T) {
 	b, st, ctx := brokerWithLifeline(t, lifelineFleet())
 	if err := st.AddWGClient(ctx, "m", domain.WGClient{
 		ID: "c3", Name: "stray", Address: "192.0.2.9/32",
@@ -365,7 +369,29 @@ func TestLifelineSpecFailsOnAnUnprojectableCredential(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed stray credential: %v", err)
 	}
-	if _, err := b.RenderNodeSpec(ctx, "e"); err == nil {
-		t.Fatal("a credential outside the master pool rendered a lifeline instead of failing")
+
+	spec, err := b.RenderNodeSpec(ctx, "e")
+	if err != nil {
+		t.Fatalf("one unprojectable credential failed the whole exit spec: %v", err)
+	}
+	if spec.Lifeline == nil {
+		t.Fatal("the lifeline was dropped entirely instead of dropping one peer")
+	}
+	names := make([]string, 0, len(spec.Lifeline.Clients))
+	for _, c := range spec.Lifeline.Clients {
+		names = append(names, c.Name)
+	}
+	if slices.Contains(names, "stray") {
+		t.Errorf("peers = %v, want the unprojectable credential skipped", names)
+	}
+	if !slices.Contains(names, "laptop") {
+		t.Errorf("peers = %v, want the projectable credential kept", names)
+	}
+	// The rest of the exit must be intact — that is the whole point of skipping.
+	if spec.Firewall.LifelinePort != 41827 || spec.WGServer.ListenPort == 0 {
+		t.Errorf("the exit spec was degraded by one bad credential: %+v", spec.Firewall)
+	}
+	if err := spec.Lifeline.Validate(); err != nil {
+		t.Errorf("lifeline with a skipped peer does not validate: %v", err)
 	}
 }

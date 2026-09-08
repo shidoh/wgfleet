@@ -161,9 +161,9 @@ func TestLifelinePeersOfSkipsDisabled(t *testing.T) {
 		{ID: "b", Name: "phone", Address: "10.80.0.3/24", PublicKey: testClientPub2, PrivateKey: "priv-b", Enabled: false},
 	}
 
-	peers, err := LifelinePeersOf(clients, masterPool, lifelinePool, "exit-a")
-	if err != nil {
-		t.Fatalf("LifelinePeersOf() = %v, want nil error", err)
+	peers, skipped := LifelinePeersOf(clients, masterPool, lifelinePool, "exit-a")
+	if len(skipped) != 0 {
+		t.Fatalf("LifelinePeersOf() skipped %+v, want nothing skipped", skipped)
 	}
 	if len(peers) != 1 {
 		t.Fatalf("LifelinePeersOf() returned %d peers, want 1: %+v", len(peers), peers)
@@ -178,9 +178,9 @@ func TestLifelinePeersOfKeepsNameAndPubkey(t *testing.T) {
 		{ID: "a", Name: "laptop", Address: "10.80.0.7/24", PublicKey: testClientPub1, PrivateKey: "priv-a", Enabled: true},
 	}
 
-	peers, err := LifelinePeersOf(clients, masterPool, lifelinePool, "exit-a")
-	if err != nil {
-		t.Fatalf("LifelinePeersOf() = %v, want nil error", err)
+	peers, skipped := LifelinePeersOf(clients, masterPool, lifelinePool, "exit-a")
+	if len(skipped) != 0 {
+		t.Fatalf("LifelinePeersOf() skipped %+v, want nothing skipped", skipped)
 	}
 	if len(peers) != 1 {
 		t.Fatalf("LifelinePeersOf() returned %d peers, want 1", len(peers))
@@ -207,5 +207,78 @@ func TestLifelinePeerViewHasNoPrivateKeyField(t *testing.T) {
 		if strings.Contains(name, "private") {
 			t.Fatalf("WGClientPeer has field %q: the lifeline peer view must never carry a private key", rt.Field(i).Name)
 		}
+	}
+}
+
+// A peer address is what the interface writes as that peer's AllowedIPs, so it
+// must be a single host however wide the lifeline pool is. This is the assertion
+// that keeps LifelinePeersOf's output acceptable to ClientWGSpec.Validate, which
+// LifelineSpec inherits through the embedding.
+func TestLifelinePeersOfEmitsHostPrefixes(t *testing.T) {
+	masterPool := mustPrefix(t, "10.80.0.0/24")
+	lifelinePool := mustPrefix(t, "10.98.77.0/24")
+	clients := []WGClient{
+		{ID: "a", Name: "laptop", Address: "10.80.0.5/32", PublicKey: testClientPub1, Enabled: true},
+	}
+
+	peers, skipped := LifelinePeersOf(clients, masterPool, lifelinePool, "exit-a")
+	if len(skipped) != 0 || len(peers) != 1 {
+		t.Fatalf("LifelinePeersOf() = %+v, skipped %+v; want one peer and no skips", peers, skipped)
+	}
+	p, err := netip.ParsePrefix(peers[0].Address)
+	if err != nil {
+		t.Fatalf("peer address %q does not parse: %v", peers[0].Address, err)
+	}
+	if p.Bits() != p.Addr().BitLen() {
+		t.Fatalf("peer address = %q, want a single host (/%d)", peers[0].Address, p.Addr().BitLen())
+	}
+}
+
+// One credential that cannot be projected must cost exactly itself.
+//
+// It reaches the exit's whole NodeSpec otherwise, and the agent refuses a spec
+// entire: an address left outside the master pool by a manifest edit would stop
+// nftables, routing and the exit's own AWG server from converging. So the batch
+// survives, and the caller is handed the ID and the reason to say so with.
+func TestLifelinePeersOfSkipsTheUnprojectableAndKeepsTheRest(t *testing.T) {
+	masterPool := mustPrefix(t, "10.80.0.0/24")
+	lifelinePool := mustPrefix(t, "10.98.77.0/24")
+	clients := []WGClient{
+		{ID: "a", Name: "laptop", Address: "10.80.0.5/32", PublicKey: testClientPub1, Enabled: true},
+		{ID: "b", Name: "stray", Address: "192.0.2.9/32", PublicKey: testClientPub2, Enabled: true},
+	}
+
+	peers, skipped := LifelinePeersOf(clients, masterPool, lifelinePool, "exit-a")
+	if len(peers) != 1 || peers[0].Name != "laptop" {
+		t.Fatalf("peers = %+v, want only the projectable credential", peers)
+	}
+	if len(skipped) != 1 {
+		t.Fatalf("skipped = %+v, want exactly the stray credential", skipped)
+	}
+	if skipped[0].ID != "b" || skipped[0].Name != "stray" {
+		t.Errorf("skipped[0] = %+v, want the credential identified by ID and name", skipped[0])
+	}
+	if skipped[0].Reason == nil {
+		t.Error("a skip must carry the reason it was skipped")
+	}
+}
+
+// A malformed preshared key is the other way a single credential can fail, and
+// it must be skipped on the same terms rather than failing the batch.
+func TestLifelinePeersOfSkipsAMalformedPresharedKey(t *testing.T) {
+	masterPool := mustPrefix(t, "10.80.0.0/24")
+	lifelinePool := mustPrefix(t, "10.98.77.0/24")
+	clients := []WGClient{
+		{ID: "a", Name: "laptop", Address: "10.80.0.5/32", PublicKey: testClientPub1, Enabled: true},
+		{ID: "b", Name: "broken", Address: "10.80.0.6/32", PublicKey: testClientPub2,
+			PresharedKey: "not-valid-base64!!!", Enabled: true},
+	}
+
+	peers, skipped := LifelinePeersOf(clients, masterPool, lifelinePool, "exit-a")
+	if len(peers) != 1 || peers[0].Name != "laptop" {
+		t.Fatalf("peers = %+v, want only the good credential", peers)
+	}
+	if len(skipped) != 1 || skipped[0].ID != "b" {
+		t.Fatalf("skipped = %+v, want exactly the credential with the bad PSK", skipped)
 	}
 }

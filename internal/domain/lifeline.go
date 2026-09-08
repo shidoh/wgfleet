@@ -137,24 +137,50 @@ func LifelinePSK(psk, exitID string) (string, error) {
 	return base64.StdEncoding.EncodeToString(mac.Sum(nil)), nil
 }
 
+// LifelineSkip names one credential that could not be projected onto a lifeline,
+// and why. It exists so the caller can report the skip against the credential it
+// happened to — a joined error would say the same words while losing the ID the
+// log has to be keyed on, and would tempt the caller back into failing the whole
+// render.
+type LifelineSkip struct {
+	ID     string
+	Name   string
+	Reason error
+}
+
 // LifelinePeersOf projects issued credentials onto the lifeline interface's
 // peer view for one exit: the same enabled/muted rule as PeersOf, plus the
 // address shift (LifelineAddress) and the per-exit PSK derivation
 // (LifelinePSK). Like PeersOf, this is the only path from a WGClient to
 // wire-bound data, so the private key stays structurally unreachable here too.
-func LifelinePeersOf(clients []WGClient, masterPool, lifelinePool netip.Prefix, exitID string) ([]WGClientPeer, error) {
+//
+// A credential that cannot be projected is SKIPPED and returned in the second
+// result, never allowed to fail the batch. The failure it would otherwise cause
+// is out of all proportion to its cause: one address left outside the master pool
+// by a pool the operator narrowed — a manifest edit, not an outage — would fail
+// the exit's whole NodeSpec, and the agent refuses a spec entire, so nftables,
+// routing, the exit's own AWG server and its egress would all stop converging
+// because ONE person's reserve peer could not be computed. Every other client
+// keeps its lifeline peer; the caller says out loud which one it dropped.
+func LifelinePeersOf(clients []WGClient, masterPool, lifelinePool netip.Prefix, exitID string) ([]WGClientPeer, []LifelineSkip) {
 	peers := make([]WGClientPeer, 0, len(clients))
+	var skipped []LifelineSkip
+	skip := func(c WGClient, err error) {
+		skipped = append(skipped, LifelineSkip{ID: c.ID, Name: c.Name, Reason: err})
+	}
 	for _, c := range clients {
 		if !c.Enabled {
 			continue
 		}
 		addr, err := LifelineAddress(c.Address, masterPool, lifelinePool)
 		if err != nil {
-			return nil, fmt.Errorf("client %q: %w", c.Name, err)
+			skip(c, err)
+			continue
 		}
 		psk, err := LifelinePSK(c.PresharedKey, exitID)
 		if err != nil {
-			return nil, fmt.Errorf("client %q: %w", c.Name, err)
+			skip(c, err)
+			continue
 		}
 		peers = append(peers, WGClientPeer{
 			Name:         c.Name,
@@ -163,5 +189,5 @@ func LifelinePeersOf(clients []WGClient, masterPool, lifelinePool netip.Prefix, 
 			PresharedKey: psk,
 		})
 	}
-	return peers, nil
+	return peers, skipped
 }
