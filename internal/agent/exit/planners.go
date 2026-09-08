@@ -184,6 +184,16 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	if spec.Lifeline != nil {
 		in.LifelineCIDR = spec.Lifeline.AddressPool
 		in.LifelineInterface = domain.LifelineInterface
+		// And the resolver those clients were handed. With no explicit lifeline.dns
+		// the controller points them at the lifeline gateway, which this exit's own
+		// blocky binds (see dnsPlanner) — so without these holes the reserve interface
+		// comes up, handshakes, and resolves nothing. Only when this exit actually
+		// runs the filter: opening ports no process listens on is exposure for
+		// nothing. The ports come from dnsfilter's own defaulting so the hole and the
+		// bind can never disagree; a TLS port <= 0 means DoT is off and gets no hole.
+		if spec.DNS.Enabled {
+			in.LifelineDNSPort, in.LifelineDoTPort = dnsfilter.ResolvedPorts(spec.DNS.Ports)
+		}
 	}
 	// Clamp forwarded TCP MSS (both directions) to the tightest tunnel on the client
 	// path: the master↔exit tunnel (WGServer.MTU) or, if smaller, a constrained WARP

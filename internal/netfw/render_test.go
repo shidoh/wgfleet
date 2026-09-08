@@ -958,3 +958,85 @@ func TestInputChainOpensNothingBeforeTheMove(t *testing.T) {
 		t.Errorf("an unmoved master trusts an interface that does not exist:\n%s", out)
 	}
 }
+
+func TestRenderExitLifelineResolverPorts(t *testing.T) {
+	// Reserve clients are handed the lifeline gateway as their resolver, and the
+	// exit's own blocky binds it — so their DNS lands on THIS node's INPUT hook and
+	// the drop policy eats it unless the resolver ports are let in, scoped to the
+	// lifeline interface. :853 as well: clients resolve over DoT regardless of the
+	// bare-IP nameserver they were handed.
+	out, err := RenderRuleset(RenderInput{
+		Role:            domain.RoleExit,
+		Firewall:        domain.FirewallSpec{WGPort: 51820, LifelinePort: 41827},
+		LifelineCIDR:    "10.98.77.0/24",
+		LifelineDNSPort: 53,
+		LifelineDoTPort: 853,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, ok := chainBody(out, "chain input")
+	if !ok {
+		t.Fatalf("no input chain rendered:\n%s", out)
+	}
+	for _, want := range []string{
+		`iifname "awgl0" udp dport 53 accept`,
+		`iifname "awgl0" tcp dport 53 accept`,
+		`iifname "awgl0" tcp dport 853 accept`,
+	} {
+		if !strings.Contains(input, want) {
+			t.Errorf("input chain missing %q:\n%s", want, input)
+		}
+	}
+}
+
+func TestRenderExitLifelineResolverPortsFollowTheInterfaceOverride(t *testing.T) {
+	out, err := RenderRuleset(RenderInput{
+		Role:              domain.RoleExit,
+		Firewall:          domain.FirewallSpec{WGPort: 51820, LifelinePort: 41827},
+		LifelineCIDR:      "10.98.77.0/24",
+		LifelineInterface: "awgl9",
+		LifelineDNSPort:   53,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `iifname "awgl9" udp dport 53 accept`) {
+		t.Errorf("resolver accept must use the named lifeline interface:\n%s", out)
+	}
+}
+
+func TestRenderExitLifelineWithoutResolverPortsOpensNothing(t *testing.T) {
+	// The exit runs no resolver (dns disabled): a lifeline alone must not open :53.
+	out, err := RenderRuleset(RenderInput{
+		Role:         domain.RoleExit,
+		Firewall:     domain.FirewallSpec{WGPort: 51820, LifelinePort: 41827},
+		LifelineCIDR: "10.98.77.0/24",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unwanted := range []string{"dport 53 accept", "dport 853 accept"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("no resolver ports set: ruleset must not carry %q:\n%s", unwanted, out)
+		}
+	}
+}
+
+func TestRenderExitResolverPortsWithoutALifelineOpenNothing(t *testing.T) {
+	// The ports are meaningless without a pool to serve; they must never render an
+	// unscoped or lifeline-named accept on an exit that carries no reserve leg.
+	out, err := RenderRuleset(RenderInput{
+		Role:            domain.RoleExit,
+		Firewall:        domain.FirewallSpec{WGPort: 51820},
+		ClientCIDR:      "10.71.0.0/24",
+		LifelineDNSPort: 53,
+		LifelineDoTPort: 853,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "awgl0") || strings.Contains(out, "dport 53 accept") || strings.Contains(out, "dport 853 accept") {
+		t.Errorf("no lifeline: ruleset must carry no resolver accepts:\n%s", out)
+	}
+}

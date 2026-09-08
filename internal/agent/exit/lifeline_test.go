@@ -599,3 +599,74 @@ func TestDNSFilterAllowsBindingTheLifelineGatewayBeforeItExists(t *testing.T) {
 		t.Errorf("an exit without a lifeline must not touch ip_nonlocal_bind:\n%s", planDump(acts))
 	}
 }
+
+// --- the resolver reserve clients are handed ---
+
+// lifelineRuleset plans the exit firewall and returns the rendered ruleset.
+func lifelineRuleset(t *testing.T, spec domain.NodeSpec) string {
+	t.Helper()
+	acts, err := firewallPlanner{path: testPaths(t).NFT}.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return acts[0].Display
+}
+
+// With no explicit lifeline.dns the controller hands reserve clients the lifeline
+// gateway as their resolver and the exit's own blocky binds it — so the query
+// arrives on this node's INPUT hook, where the drop policy eats it unless the
+// resolver ports are open on the reserve interface. Plain DNS and DoT both:
+// clients dial :853 regardless of the bare-IP nameserver they were given.
+func TestFirewallOpensTheResolverToReserveClients(t *testing.T) {
+	out := lifelineRuleset(t, lifelineExitSpec(t))
+	iface := "\"" + domain.LifelineInterface + "\""
+	for _, want := range []string{
+		"iifname " + iface + " udp dport 53 accept",
+		"iifname " + iface + " tcp dport 53 accept",
+		"iifname " + iface + " tcp dport 853 accept",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("lifeline exit ruleset missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// The holes follow the resolver's actual ports, not the defaults: an operator who
+// moved plain DNS gets the port they moved it to, and one who turned DoT off gets
+// no 853 hole at all.
+func TestFirewallResolverHolesFollowTheConfiguredPorts(t *testing.T) {
+	spec := lifelineExitSpec(t)
+	spec.DNS.Ports = domain.DNSPorts{DNS: 5353, TLS: -1}
+	out := lifelineRuleset(t, spec)
+	if !strings.Contains(out, "udp dport 5353 accept") {
+		t.Errorf("the plain-DNS hole must follow the configured port:\n%s", out)
+	}
+	if strings.Contains(out, "dport 853 accept") {
+		t.Errorf("DoT is off on this exit: no 853 hole may render:\n%s", out)
+	}
+}
+
+// An exit that runs no resolver has nothing on those ports, so opening them would
+// be exposure for nothing.
+func TestFirewallOpensNoResolverWhenTheFilterIsOff(t *testing.T) {
+	spec := lifelineExitSpec(t)
+	spec.DNS.Enabled = false
+	out := lifelineRuleset(t, spec)
+	for _, unwanted := range []string{"dport 53 accept", "dport 853 accept"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("no resolver on this exit: ruleset must not carry %q:\n%s", unwanted, out)
+		}
+	}
+}
+
+// And an exit without a lifeline renders no resolver hole either, however healthy
+// its blocky is: the accepts exist for the reserve pool alone.
+func TestFirewallOpensNoResolverWithoutALifeline(t *testing.T) {
+	spec, _ := exitSpec(t)
+	out := lifelineRuleset(t, spec)
+	for _, unwanted := range []string{"dport 53 accept", "dport 853 accept"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("no lifeline: ruleset must not carry %q:\n%s", unwanted, out)
+		}
+	}
+}

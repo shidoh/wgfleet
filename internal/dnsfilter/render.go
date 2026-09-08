@@ -147,18 +147,29 @@ func bindAddrs(spec domain.DNSFilterSpec) []string {
 	return addrs
 }
 
-// portsMap binds each enabled protocol on loopback + the given internal addresses
-// only. This is what keeps :53 (and the rest) off the public interface.
-func portsMap(addrs []string, p domain.DNSPorts) map[string]any {
-	dns := p.DNS
+// ResolvedPorts applies the spec's defaulting to the two ports a client actually
+// queries — plain DNS and DNS-over-TLS — and returns what the resolver will
+// really listen on: zero means "take the default" for both, and a value <= 0
+// after that means the protocol is off (only TLS can end up there; DNS always
+// has a port). Exported because the firewall has to open exactly the ports
+// blocky binds, and a second copy of these rules on the netfw side is precisely
+// how a hole ends up in front of nothing, or a listener behind a closed port.
+func ResolvedPorts(p domain.DNSPorts) (dns, tls int) {
+	dns, tls = p.DNS, p.TLS
 	if dns == 0 {
 		dns = DefaultDNSPort
 	}
-	out := map[string]any{"dns": binds(addrs, dns)}
-	tls := p.TLS
 	if tls == 0 {
 		tls = DefaultTLSPort
 	}
+	return dns, tls
+}
+
+// portsMap binds each enabled protocol on loopback + the given internal addresses
+// only. This is what keeps :53 (and the rest) off the public interface.
+func portsMap(addrs []string, p domain.DNSPorts) map[string]any {
+	dns, tls := ResolvedPorts(p)
+	out := map[string]any{"dns": binds(addrs, dns)}
 	if tls > 0 {
 		out["tls"] = binds(addrs, tls)
 	}

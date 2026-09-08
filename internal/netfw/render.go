@@ -75,6 +75,20 @@ type RenderInput struct {
 	// ("awgl0") — the constant every LifelineSpec renders under, so leaving this
 	// unset is equivalent to naming it explicitly.
 	LifelineInterface string
+	// LifelineDNSPort / LifelineDoTPort, when > 0 and paired with LifelineCIDR, open
+	// the exit's OWN resolver to the reserve client pool — plain DNS (UDP+TCP) and
+	// DNS-over-TLS (TCP) respectively — scoped to the lifeline interface. They are
+	// the exit-side twin of the master's ClientDNSPort and exist for the same
+	// reason: with no explicit `lifeline.dns` the controller hands reserve clients
+	// the lifeline GATEWAY as their nameserver, blocky binds that address, and the
+	// query therefore lands on this node's INPUT hook, where the drop policy eats it
+	// — a reserve interface that comes up, handshakes, and resolves nothing. The DoT
+	// port is not optional politeness: clients have been observed dialing :853
+	// regardless of the bare-IP nameserver they were handed (see NetnsHostIface
+	// above). 0 ⇒ that protocol stays closed, which is what an exit running no
+	// resolver at all must render.
+	LifelineDNSPort int
+	LifelineDoTPort int
 	// EgressInterface is the WARP/wgcf interface. When set, an MSS clamp is rendered
 	// in the forward chain so TLS through the double encapsulation (client→master→
 	// exit→WARP) does not stall when PMTU discovery is blocked (an earlier finding; the reference deployment
@@ -248,6 +262,17 @@ func normalizePorts(ports []int) []int {
 	return out
 }
 
+// lifelineIfaceName resolves the interface the lifeline rules are scoped to: the
+// caller's name, else the constant every LifelineSpec renders under. One helper
+// so the input accepts and the postrouting pair can never disagree about which
+// interface they are talking about.
+func lifelineIfaceName(in RenderInput) string {
+	if in.LifelineInterface != "" {
+		return in.LifelineInterface
+	}
+	return domain.LifelineInterface
+}
+
 func RenderRuleset(in RenderInput) (string, error) {
 	if in.Firewall.WGPort <= 0 || in.Firewall.WGPort > 65535 {
 		return "", fmt.Errorf("netfw render: invalid WG port %d", in.Firewall.WGPort)
@@ -370,6 +395,20 @@ func RenderRuleset(in RenderInput) (string, error) {
 	// client-facing AWG interface, so it needs its own accept beside WGPort's.
 	if in.Firewall.LifelinePort > 0 {
 		fmt.Fprintf(&b, "\t\tudp dport %d accept\n", in.Firewall.LifelinePort)
+	}
+	// And the resolver those reserve clients were handed (see LifelineDNSPort).
+	// Scoped to the lifeline interface exactly as the master scopes ClientDNSPort to
+	// its client interface: this opens :53/:853 to the reserve pool and to nobody
+	// else, so the exit's blocky stays off the public interface.
+	if in.LifelineCIDR != "" {
+		lifelineIface := lifelineIfaceName(in)
+		if in.LifelineDNSPort > 0 {
+			fmt.Fprintf(&b, "\t\tiifname %q udp dport %d accept\n", lifelineIface, in.LifelineDNSPort)
+			fmt.Fprintf(&b, "\t\tiifname %q tcp dport %d accept\n", lifelineIface, in.LifelineDNSPort)
+		}
+		if in.LifelineDoTPort > 0 {
+			fmt.Fprintf(&b, "\t\tiifname %q tcp dport %d accept\n", lifelineIface, in.LifelineDoTPort)
+		}
 	}
 	// REALITY/XHTTP inbound (xray) listens on TCP, not UDP (ADR-0025). Open it so the
 	// master can dial the reality transport; 0 ⇒ the exit does not run reality.
@@ -614,11 +653,7 @@ func RenderRuleset(in RenderInput) (string, error) {
 			}
 		}
 		if in.LifelineCIDR != "" {
-			lifelineIface := in.LifelineInterface
-			if lifelineIface == "" {
-				lifelineIface = domain.LifelineInterface
-			}
-			if err := renderPoolPair(in.LifelineCIDR, lifelineIface, "lifeline"); err != nil {
+			if err := renderPoolPair(in.LifelineCIDR, lifelineIfaceName(in), "lifeline"); err != nil {
 				return "", err
 			}
 		}
