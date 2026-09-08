@@ -149,10 +149,17 @@ func (b *Broker) lifelineResolvers(exit config.ExitConfig, gateway netip.Addr) [
 // lifelineMTU sizes the reserve interface. MTU is computed, not guessed (earlier findings
 // ): the lifeline is one AmneziaWG layer over the exit's own physical link,
 // which is the same arithmetic the master↔exit tunnel on that link already does.
-// A WARP-egressing lifeline additionally drops to what the wgcf leg carries, kept
-// deliberately conservative — the controller cannot see the agent's probed wgcf
-// MTU, and an MTU set too low costs throughput while one set too high black-holes
-// full-size packets.
+//
+// A WARP-egressing lifeline takes the MINIMUM of that and the wgcf interface MTU
+// AS IS — exitWARPMTU is not subtracted from. These are TERMINATING hops, not a
+// nested stack (sequential model, ADR-0014): a client packet is decrypted off
+// awgl0 down to the bare payload and re-encapsulated afresh into wgcf, so the two
+// hops each impose their own independent cap and neither rides inside the other.
+// exitWARPMTU is already the payload wgcf carries, so reserving another AWG layer
+// against it would subtract the same overhead twice — it would put a default exit
+// at 1240, below wg.MinTunnelMTU, for no path that actually costs those bytes.
+// clientFacingMTU does the identical thing with the identical helper, and must:
+// the lifeline hands out the same client configs the master's interface does.
 //
 // An operator override wins outright: it is measured, and we are not.
 func lifelineMTU(exit config.ExitConfig) int {
@@ -161,7 +168,7 @@ func lifelineMTU(exit config.ExitConfig) int {
 	}
 	mtu := exitTunnelMTU(exit, false) // IPv4: the lifeline pool is IPv4 by validation
 	if exit.Lifeline.ResolvedEgress() == domain.EgressWARP {
-		mtu = wg.MinMTU(mtu, wg.TunnelMTU(exitWARPMTU(exit), true, false))
+		mtu = wg.MinMTU(mtu, exitWARPMTU(exit))
 	}
 	return mtu
 }

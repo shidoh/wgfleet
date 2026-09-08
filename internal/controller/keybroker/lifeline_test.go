@@ -298,14 +298,29 @@ func TestLifelineEgressMirrorsTheManifest(t *testing.T) {
 	}
 }
 
-// MTU is computed, not guessed. The lifeline is one AmneziaWG layer
-// over the exit's own link; a WARP-egressing lifeline drops to whatever the wgcf
-// leg carries as well.
+// MTU is computed, not guessed, and the expected values are written
+// out as literals rather than recomputed from the same helpers the implementation
+// uses — a test that repeats the formula cannot catch the formula being wrong.
+//
+// The WARP row is the one that matters: awgl0 and wgcf are TERMINATING hops, so
+// the client payload must fit each of them independently. Subtracting an AWG
+// layer from the wgcf MTU as well would put this at 1240 (below wg.MinTunnelMTU)
+// and charge the same overhead twice.
 func TestLifelineMTU(t *testing.T) {
 	direct := lifelineFleet()
+
 	warp := lifelineFleet()
 	warp.Exits[0].Egress = "warp"
 	warp.Exits[0].Lifeline.Egress = "warp"
+
+	narrowWARP := lifelineFleet()
+	narrowWARP.Exits[0].Egress = "warp"
+	narrowWARP.Exits[0].Lifeline.Egress = "warp"
+	narrowWARP.Exits[0].WARPMTU = 1320
+
+	narrowLink := lifelineFleet()
+	narrowLink.Exits[0].LinkMTU = 1400
+
 	pinned := lifelineFleet()
 	pinned.Exits[0].Lifeline.MTU = 1300
 
@@ -313,17 +328,19 @@ func TestLifelineMTU(t *testing.T) {
 		name  string
 		fleet config.FleetSection
 		want  int
+		why   string
 	}{
-		{"direct", direct, exitTunnelMTU(direct.Exits[0], false)},
-		{"warp", warp, wg.MinMTU(exitTunnelMTU(warp.Exits[0], false),
-			wg.TunnelMTU(exitWARPMTU(warp.Exits[0]), true, false))},
-		{"pinned", pinned, 1300},
+		{"direct", direct, 1360, "1500 link minus one AWG layer (60 + 80)"},
+		{"warp", warp, 1360, "min(1360 tunnel, the wgcf MTU as is) — the AWG layer is NOT charged twice"},
+		{"warp_pinned_narrow", narrowWARP, 1320, "the wgcf leg is now the narrower hop"},
+		{"narrow_link", narrowLink, 1260, "1400 link minus one AWG layer"},
+		{"operator_override", pinned, 1300, "lifeline.mtu wins outright"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			b, _, ctx := brokerWithLifeline(t, tc.fleet)
 			if got := renderLifeline(t, b, ctx).MTU; got != tc.want {
-				t.Errorf("MTU = %d, want %d", got, tc.want)
+				t.Errorf("MTU = %d, want %d (%s)", got, tc.want, tc.why)
 			}
 		})
 	}
