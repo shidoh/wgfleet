@@ -3,6 +3,7 @@ package exit
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -562,6 +563,8 @@ type dnsPlanner struct {
 	configPath  string
 	composePath string
 	up          func(file string) bool // nil ⇒ real `docker compose ps` probe
+	// nonlocalBind reports whether net.ipv4.ip_nonlocal_bind is already on; nil ⇒ real read.
+	nonlocalBind func() bool
 }
 
 func (dnsPlanner) Component() string { return "dns filter (blocky)" }
@@ -571,6 +574,14 @@ func (p dnsPlanner) isUp(ctx context.Context) bool {
 		return compose.StackUp(ctx, p.composePath)
 	}
 	return p.up(p.composePath)
+}
+
+func (p dnsPlanner) nonlocalBindOn() bool {
+	if p.nonlocalBind != nil {
+		return p.nonlocalBind()
+	}
+	b, err := os.ReadFile("/proc/sys/net/ipv4/ip_nonlocal_bind")
+	return err == nil && strings.TrimSpace(string(b)) == "1"
 }
 
 func (p dnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
@@ -613,7 +624,24 @@ func (p dnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile
 		return nil, err
 	}
 
-	actions := []reconcile.Action{composeFile, cfgFile}
+	var actions []reconcile.Action
+	// blocky binds the lifeline gateway, which only exists once the agent has brought
+	// awgl0 up. ip_nonlocal_bind lets the host-net container claim the address even if
+	// it (re)starts before awgl0 — e.g. after a reboot — instead of crash-looping
+	// until the interface appears. Gated on the current value so it is not a
+	// perpetual "change", and only emitted when there IS such an address: an exit
+	// without a lifeline binds loopback and the mgmt address, both of which are there
+	// before blocky starts, and its plan must stay exactly what it was.
+	if dns.ClientBindAddr != "" {
+		if p.nonlocalBindOn() {
+			actions = append(actions, reconcile.NoChangeAction("ip_nonlocal_bind", "already enabled"))
+		} else {
+			actions = append(actions, reconcile.BestEffortExecAction(
+				"allow binding the not-yet-present lifeline gateway",
+				"sysctl", "-w", "net.ipv4.ip_nonlocal_bind=1"))
+		}
+	}
+	actions = append(actions, composeFile, cfgFile)
 
 	// Operator extra files (Custom.Files): include lists referenced from the
 	// overrides (e.g. a local denylist). Relative paths land next to config.yml.

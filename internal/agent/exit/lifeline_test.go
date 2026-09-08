@@ -504,3 +504,54 @@ func TestDockerUserAcceptsLifelineForwarding(t *testing.T) {
 		t.Fatal("no DOCKER-USER forwarding planner in the exit plan")
 	}
 }
+
+// blocky is a host-net container under Docker's restart policy, so after a reboot
+// it can (re)start before the agent has raised awgl0 — and the lifeline gateway it
+// is told to bind does not exist yet. Without ip_nonlocal_bind that is a crash
+// loop: the resolver the reserve clients depend on is down for as long as Docker's
+// backoff lasts. The master pays for exactly the same race on wg0 and solves it
+// the same way.
+func TestDNSFilterAllowsBindingTheLifelineGatewayBeforeItExists(t *testing.T) {
+	plannerIn := func(dir string, bound bool) dnsPlanner {
+		return dnsPlanner{
+			configPath:   filepath.Join(dir, "config.yml"),
+			composePath:  filepath.Join(dir, "docker-compose.yml"),
+			up:           func(string) bool { return true },
+			nonlocalBind: func() bool { return bound },
+		}
+	}
+	const sysctl = "net.ipv4.ip_nonlocal_bind=1"
+
+	// A lifeline gateway to bind, and the sysctl off ⇒ turn it on.
+	acts, err := plannerIn(t.TempDir(), false).Plan(context.Background(), lifelineExitSpec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(planDump(acts), sysctl) {
+		t.Errorf("a lifeline exit must allow binding the not-yet-present gateway:\n%s", planDump(acts))
+	}
+
+	// Already on ⇒ a no-change, not a perpetual "change" every pass.
+	acts, err = plannerIn(t.TempDir(), true).Plan(context.Background(), lifelineExitSpec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(planDump(acts), sysctl) {
+		t.Errorf("ip_nonlocal_bind is already on; the planner must not re-set it:\n%s", planDump(acts))
+	}
+	if !strings.Contains(summariesOf(acts), "already enabled") {
+		t.Errorf("the satisfied precondition should still be visible in the plan:\n%s", summariesOf(acts))
+	}
+
+	// No lifeline ⇒ no gateway to bind, and the exit's plan must be exactly what it
+	// was before this existed: blocky binds only loopback and the mgmt address,
+	// both of which are there before it starts.
+	spec, _ := exitSpec(t)
+	acts, err = plannerIn(t.TempDir(), false).Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(planDump(acts), "ip_nonlocal_bind") {
+		t.Errorf("an exit without a lifeline must not touch ip_nonlocal_bind:\n%s", planDump(acts))
+	}
+}
