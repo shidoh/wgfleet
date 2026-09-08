@@ -12,74 +12,72 @@ the agent binary forward.
 
 ## Dry-run everywhere
 
-`--plan` (agent) and `--provision … --plan` (controller) render every config and
-the exact change set and write nothing. Plan output shows files (secrets
-redacted), commands, and DB updates.
+| Flag | Binary | Effect |
+|---|---|---|
+| `--plan` | agent | Render every config and the exact change set, write nothing. |
+| `--provision … --plan` | controller | Render every config and the exact change set, write nothing. |
+
+Plan output shows files (secrets redacted), commands, and DB updates.
 
 ## Web dashboard
 
-`controller.webui` serves a fleet view (bind the ZeroTier address):
+`controller.webui` serves a fleet view. Bind it to the ZeroTier address.
 
 ![Fleet view: the master trunk row, CARRYING exits with live latency, NOT CARRYING exits with their reason badges.](assets/img/console-fleet.png)
 
-- Fleet list with a per-state summary and live refresh, state badges.
-- Per-node detail: inventory, latest status + health checks, rendered `NodeSpec`
-  preview (AWG params, peers, routing, firewall, DNS, master data plane), and a
-  version-skew badge when the agent's wire version is incompatible.
-- **Actions** (all confirmed POSTs with CSRF + same-origin checks):
-  - **Provision** — SSH-bootstrap a `Pending` node asynchronously
-    (Pending → Provisioning → Ready).
-  - **Upgrade** — roll the agent binary forward over SSH without tearing down the
-    data plane.
-  - **Drain** — keep the node as a configured proxy but remove it from
-    load-balance; existing connections survive, no new traffic.
-  - **Undrain** — rejoin the load-balance group.
-  - **Decommission** — the agent tears down the data plane on its next reconcile
-    (stop services, clear routing/firewall, best-effort reverse reconcile) and
-    destroys the node's WireGuard and REALITY private keys; a recommissioned node
-    comes back with new ones and is re-peered from scratch.
-  - **Delete** — remove the exit from inventory AND from the manifest (its block
-    in `fleet.exits`, plus its name in any `reserve_exits`). The certificate is
-    not revoked, but a deleted id is refused at registration until you provision
-    it again. Delete once the server is gone, or stop its agent first. No client
-    credential lives on an exit.
-  - Drain, Decommission and Delete are **exits only**, enforced server-side.
-    Undrain and Recommission are not restricted, so a node carrying either flag
-    always has a way back from the console.
-  - **Download backup** — export an age-encrypted archive of the controller (and
-    co-located master) state.
+| Surface | Shows |
+|---|---|
+| Fleet list | Per-state summary, live refresh, state badges. |
+| Node detail | Inventory, latest status + health checks, rendered `NodeSpec` preview (AWG params, peers, routing, firewall, DNS, master data plane), and a version-skew badge when the agent's wire version is incompatible. |
+
+Actions are confirmed POSTs with CSRF and same-origin checks.
+
+| Action | Effect |
+|---|---|
+| **Provision** | SSH-bootstrap a `Pending` node asynchronously (Pending → Provisioning → Ready). |
+| **Upgrade** | Roll the agent binary forward over SSH without tearing down the data plane. |
+| **Drain** | Keep the node as a configured proxy but remove it from load-balance. Existing connections survive, no new traffic. |
+| **Undrain** | Rejoin the load-balance group. |
+| **Decommission** | The agent tears down the data plane on its next reconcile (stop services, clear routing/firewall, best-effort reverse reconcile) and destroys the node's WireGuard and REALITY private keys. A recommissioned node comes back with new ones and is re-peered from scratch. |
+| **Delete** | Remove the exit from inventory AND from the manifest: its block in `fleet.exits`, plus its name in any `reserve_exits`. |
+| **Download backup** | Export an age-encrypted archive of the controller (and co-located master) state. |
+
+Delete does not revoke the certificate, but a deleted id is refused at
+registration until you provision it again. Delete once the server is gone, or
+stop its agent first. No client credential lives on an exit.
+
+Drain, Decommission and Delete are **exits only**, enforced server-side. Undrain
+and Recommission are not restricted, so a node carrying either flag always has a
+way back from the console.
 
 ## Client credentials (AmneziaWG)
 
 ![AWG clients page on the master: issue a client, the interface every config inherits, issued clients with online state and transfer.](assets/img/console-wg-clients.png)
 
 On a master with `client_awg.managed`, its node page has a **Client credentials**
-panel:
+panel.
 
-- **Issue** — creates a credential and opens its card: `.conf`, QR, and a
-  **self-service link** (a page carrying only that profile, reached over the
-  tunnel or the portal address). Hand out the link rather than the file.
-- **Pause** — reversible. The peer is removed from the interface and the
-  self-service page says so; the same config works again on resume.
-- **Rename** — a label for you only; nothing the person holds changes.
-- **Revoke** — permanent. The credential and its key are deleted; the only way
-  back is a new profile. The console confirms on its own page.
+| Action | Effect |
+|---|---|
+| **Issue** | Create a credential and open its card: `.conf`, QR, and a **self-service link** (a page carrying only that profile, reached over the tunnel or the portal address). Hand out the link rather than the file. |
+| **Pause** | Reversible. The peer is removed from the interface and the self-service page says so. The same config works again on resume. |
+| **Rename** | A label for you only. Nothing the person holds changes. |
+| **Revoke** | Permanent. The credential and its key are deleted, and the only way back is a new profile. The console confirms on its own page. |
 
-A VLESS credential (below) has no pause: revoking is the only way to cut one off.
+A VLESS credential (below) has no pause. Revoking is the only way to cut one off.
 
 ## The master is lost: reserve configs
 
-An exit with `lifeline` carries a second client interface `awgl0` with the master's
-credentials. Each credential gets a reserve profile per lifeline exit. Hand them out
-**in advance**; the console and the portal live on the master.
+An exit with `lifeline` carries a second client interface `awgl0` with the
+master's credentials. Each credential gets a reserve profile per lifeline exit.
+Hand them out **in advance**, because the console and the portal live on the
+master.
 
-**Person:** switch the app to the reserve profile they already imported; switch back
-when the master returns. Reserve traffic uses that exit's uplink (or WARP), without
-fleet routing, geo rules or failover.
+Tell the person to switch the app to the reserve profile they already imported,
+and to switch back when the master returns. Reserve traffic uses that exit's
+uplink (or WARP), without fleet routing, geo rules or failover.
 
-**Where the configs are:**
-
-| Surface | Location |
+| Surface | Where the reserve configs are |
 |---|---|
 | Console | node page → credential card → **RESERVE · if the main server stops working**, one `.conf` + QR per exit |
 | Portal | the person's own page → **If the main server stops working** (ready exits only; hidden while paused) |
@@ -88,11 +86,11 @@ Console reasons when an exit is not ready:
 
 | Reason | Fix |
 |---|---|
-| `the exit has not published its lifeline key yet` | wait one reconcile pass |
-| `no public endpoint known for this exit` | set `public_ip` on the exit |
-| `Reserve configs could not be listed: …` | listing failed; credentials and main configs still render |
+| `the exit has not published its lifeline key yet` | Wait one reconcile pass. |
+| `no public endpoint known for this exit` | Set `public_ip` on the exit. |
+| `Reserve configs could not be listed: …` | Listing failed. Credentials and main configs still render. |
 
-**Check on the exit:**
+Check on the exit:
 
 ```bash
 awg show awgl0                          # port, peers, handshakes
@@ -100,16 +98,15 @@ nft list table inet wgfleet | grep -E 'awgl0|<lifeline port>'   # accept, masque
 iptables -S DOCKER-USER | grep awgl0    # forward accepts
 ```
 
-**Health check `lifeline`** on the node page: red with a reason (no key yet, spec
-rejected, AmneziaWG 3.x refused by the module) means `awgl0` serves its last good
-config, not the current spec.
+Health check `lifeline` on the node page, red with a reason (no key yet, spec
+rejected, AmneziaWG 3.x refused by the module), means `awgl0` serves its last
+good config, not the current spec.
 
-**Turning it off:** two reconcile passes — pass 1 brings `awgl0` down and keeps the
-config, pass 2 removes the config.
+Turning it off takes two reconcile passes. Pass 1 brings `awgl0` down and keeps
+the config, pass 2 removes the config.
 
-### Retiring a hand-built emergency interface
-
-Before adding `lifeline` to an exit that already has a hand-made `awgl0`:
+Retire a hand-built emergency interface before adding `lifeline` to an exit that
+already has a hand-made `awgl0`:
 
 ```bash
 systemctl disable --now awg-quick@awgl0
@@ -118,23 +115,19 @@ rm -r /etc/systemd/system/awg-quick@awgl0.service.d
 systemctl daemon-reload
 ```
 
-Then add the `lifeline` section. The server key changes: peers issued against the
-old interface re-import the reserve profile from the console or the portal.
+Then add the `lifeline` section. The server key changes, so peers issued against
+the old interface re-import the reserve profile from the console or the portal.
 
 ## Client access (VLESS)
 
 On a master with `client_vless.enabled`, its node page has a **VLESS clients**
-entry. Issue per-client credentials there and hand each user one of:
+entry. Issue per-client credentials there and hand each user one of these.
 
-- **Clash config (`.yaml`)** — the recommended client on macOS. It bakes in the
-  proxy, tun `strict-route` (without it macOS leaves RFC1918 off the tunnel) and
-  DNS pointed at the master's blocky over the tunnel. Import into
-  **Clash Verge Rev** and enable Tun Mode.
-- **vless:// link / QR** — for v2rayTun and other clients. To reach internal
-  networks in v2rayTun, also import the routing object (Routing → import from
-  clipboard, `v2rayTun://import_route/…`, shown on the page).
-- **Subscription URL** — carries the vless link and the routing rules in a
-  `routing` response header (reachable over the mgmt/ZT overlay).
+| Handout | Notes |
+|---|---|
+| **Clash config (`.yaml`)** | The recommended client on macOS. It bakes in the proxy, tun `strict-route` (without it macOS leaves RFC1918 off the tunnel) and DNS pointed at the master's blocky over the tunnel. Import into **Clash Verge Rev** and enable Tun Mode. |
+| **vless:// link / QR** | For v2rayTun and other clients. To reach internal networks in v2rayTun, also import the routing object (Routing → import from clipboard, `v2rayTun://import_route/…`, shown on the page). |
+| **Subscription URL** | Carries the vless link and the routing rules in a `routing` response header. Reachable over the mgmt/ZT overlay. |
 
 `client_vless.route_through_cidrs` in the manifest controls which internal
 networks clients route through the tunnel.
@@ -142,55 +135,56 @@ networks clients route through the tunnel.
 ## Break-glass: reaching a node you just cut off
 
 Firewall, client-interface and NAT changes all land on the master, which is
-usually the box you are connected *through*.
+usually the box you are connected *through*. **SSH over the ZeroTier mgmt
+overlay survives every knob in the manifest.** Use the overlay, not the public
+IP, as the escape hatch.
 
-**SSH over the ZeroTier mgmt overlay survives every knob in the manifest.** The
-input chain accepts `iifname "zt*"` ahead of `masters[].whitelist`,
-`public_udp_ports`, `public_tcp_ports` and the AS blacklist; the egress leak
-guard cannot touch a master. The public SSH port is opened too, but **after** the
-AS-blacklist drop, so direct SSH from a flagged address can be refused while the
-overlay still works. The overlay, not the public IP, is the escape hatch.
+| Rule | Detail |
+|---|---|
+| Overlay accept | The input chain accepts `iifname "zt*"` ahead of `masters[].whitelist`, `public_udp_ports`, `public_tcp_ports` and the AS blacklist. |
+| Leak guard | The egress leak guard cannot touch a master. |
+| Public SSH port | Opened **after** the AS-blacklist drop, so direct SSH from a flagged address can be refused while the overlay still works. |
 
 - **Keep a second SSH session open** on the master for the whole of any firewall,
-  routing or client-interface change; `wgfleet-agent --once --plan` in it shows
-  why the new state locked you out.
-- **Reach an exit through the master** when its public path wedges:
-  `ssh <master>` then `ssh root@<exit-mgmt-addr>`.
-- **Have provider console access ready** (VNC/serial) before touching the master's
-  firewall.
-- The agent keeps its **last-good spec** on disk (`/var/lib/wgfleet/last-spec.json`,
-  0600). A controller that is down or refusing a bad manifest does not take the
-  data plane with it, and a node that reboots in that window comes back converged
-  (nftables, interfaces, routing).
-  - **A node running from the cache reports nothing**: it goes stale in the
-    console and in `wgfleet_node_last_report_age_seconds` while healthy. Its log
-    says `converging on the last-good spec instead of standing still`.
-  - The fallback happens only when NOTHING ANSWERED (dial failure, timeout). A
-    controller that answers and refuses — a deleted node, a revoked certificate, a
-    wire-version mismatch — is obeyed. A node you deleted does not rebuild itself.
+  routing or client-interface change. Run `wgfleet-agent --once --plan` in it to
+  see why the new state locked you out.
+- **Reach an exit through the master** when its public path wedges: `ssh <master>`,
+  then `ssh root@<exit-mgmt-addr>`.
+- **Have provider console access ready** (VNC/serial) before touching the
+  master's firewall.
+
+The agent keeps its **last-good spec** on disk at `/var/lib/wgfleet/last-spec.json`
+(0600). A controller that is down or refusing a bad manifest does not take the
+data plane with it, and a node that reboots in that window comes back converged
+(nftables, interfaces, routing).
+
+| See | Meaning |
+|---|---|
+| A node goes stale in the console and in `wgfleet_node_last_report_age_seconds` while healthy | It runs from the cache and reports nothing. Its log says `converging on the last-good spec instead of standing still`. |
+| The controller answers and refuses: a deleted node, a revoked certificate, a wire-version mismatch | The refusal is obeyed. A node you deleted does not rebuild itself. |
+
+The fallback happens only when NOTHING ANSWERED, meaning a dial failure or a
+timeout.
 
 ## A node changed its public address
 
 The address the fleet dials is declared in the manifest and nowhere else. A move
-is a manifest edit plus a controller restart; no re-provisioning.
+is a manifest edit plus a controller restart, with no re-provisioning.
 
 1. Edit the node's entry.
-   - **An exit:** `public_ip` when set, otherwise `ssh.host` (its default). Set
-     both if SSH and the tunnel should go to different addresses. The value must
-     be an IP literal; a DNS name is skipped and the next source is used.
-   - **A master:** `public_ip`, and only that. It does not fall back to `ssh.host`
-     (often the management overlay, which must never reach a client profile); a
-     master with no `public_ip` has no endpoint to hand out and the client pages
-     say so. A master's `public_ip` may be a DNS name
-     ([master-migration.md](master-migration.md) recommends one).
-2. Restart the controller. It reads the manifest once at startup and never reloads
-   it.
-3. Wait for two reconcile passes (~60 s at the default 30 s interval): the master
+2. Restart the controller. It reads the manifest once at startup and never
+   reloads it.
+3. Wait for two reconcile passes (~60 s at the default 30 s interval). The master
    re-renders the tunnel at the new endpoint and re-dials, then the exit sees the
    fresh handshake and leaves **Degraded**.
 
+| Role | Key | Rules |
+|---|---|---|
+| Exit | `public_ip` when set, otherwise `ssh.host` (its default) | Set both if SSH and the tunnel should go to different addresses. The value must be an IP literal; a DNS name is skipped and the next source is used. |
+| Master | `public_ip`, and only that | It does not fall back to `ssh.host` (often the management overlay, which must never reach a client profile). A master with no `public_ip` has no endpoint to hand out and the client pages say so. A master's `public_ip` may be a DNS name, and [master-migration.md](master-migration.md) recommends one. |
+
 If it was the **master** that moved, client profiles already handed out still
-carry the old endpoint: re-issue them and have each device re-import.
+carry the old endpoint. Re-issue them and have each device re-import.
 
 ## Support bundle
 
@@ -206,27 +200,22 @@ wgfleet-agent --support-bundle --note "clients stopped resolving around 14:00"
 wgfleet-controller --support-bundle --fleet
 ```
 
-Read it before sending it: `tar tzf <archive>` lists, `tar xzf <archive>`
-extracts, `MANIFEST.txt` names every file and what was **not** collected. If the
-tool refuses to write the archive, report the refusal rather than working around
-it. `--fleet` collects only one inventory line about the co-located master, so
-run the agent bundle on the master too when the master is the problem. For
-client-side problems run `client-diag.sh` from the client.
+Read it before sending it.
+
+| Need | Do |
+|---|---|
+| List the archive | `tar tzf <archive>` |
+| Extract it | `tar xzf <archive>` |
+| See every file and what was **not** collected | Read `MANIFEST.txt` inside it. |
+| The tool refuses to write the archive | Report the refusal rather than working around it. |
+| The master is the problem | `--fleet` collects only one inventory line about the co-located master, so run the agent bundle on the master too. |
+| The problem is client-side | Run `client-diag.sh` from the client. |
 
 ## Backup & restore
 
 One command captures the **irreplaceable** state and one restores it onto a fresh
 node. Everything else (nft, mihomo/xray/blocky configs, compose files) is
 regenerated by the agent's reconcile loop and is not captured.
-
-**Two things are neither captured nor regenerable, and the archive says so on
-every run.** Copy them somewhere the master is not:
-
-- **The SSH private keys the exits are provisioned with** (`exits[].ssh.key_path`);
-  only the paths travel. Without them a restored controller cannot provision,
-  upgrade or roll back any exit.
-- **The ZeroTier identity** (`/var/lib/zerotier-one/`); without it the node cannot
-  rejoin as the SAME mgmt address.
 
 ```bash
 # Export (controller may stay live; the db snapshot is WAL-consistent).
@@ -240,67 +229,95 @@ wgfleet-controller --restore fleet.tar.age --age-identity key.txt
 #   ...drop --age-identity for a passphrase-encrypted archive; age prompts for it.
 ```
 
-Captured: the store db (`VACUUM INTO` snapshot), the CA cert + key,
-`controller.yaml`, the sops secrets file (when configured), the fleet secret
-`awg3.key`, and — when this node is also a master — the master's own AmneziaWG
-key, the client-interface key, the client-facing VLESS/REALITY key, the wg-easy
-client db and admin password (where wg-easy is still in use), and the node
-identity (`node.crt`/`node.key`/`agent.yaml`). **Six private keys** in one
-envelope: store it like a secret.
+Captured:
+
+| Item | When |
+|---|---|
+| The store db, a `VACUUM INTO` snapshot | always |
+| The CA cert + key | always |
+| `controller.yaml` | always |
+| The sops secrets file | when configured |
+| The fleet secret `awg3.key` | always |
+| The master's own AmneziaWG key | when this node is also a master |
+| The client-interface key | when this node is also a master |
+| The client-facing VLESS/REALITY key | when this node is also a master |
+| The wg-easy client db and admin password | where wg-easy is still in use |
+| The node identity `node.crt` / `node.key` / `agent.yaml` | when this node is also a master |
+
+**Six private keys** in one envelope: store it like a secret.
+
+Two things are neither captured nor regenerable, and the archive says so on every
+run. Copy them somewhere the master is not.
+
+| Item | Path | Without it |
+|---|---|---|
+| The SSH private keys the exits are provisioned with | `exits[].ssh.key_path`; only the paths travel | A restored controller cannot provision, upgrade or roll back any exit. |
+| The ZeroTier identity | `/var/lib/zerotier-one/` | The node cannot rejoin as the SAME mgmt address. |
 
 A secret the controller cannot put in the archive is warned about **before** the
 archive is written, on the console's Backup button and the CLI: a `pki.ca_key`
 behind `env://` or `secret://`, an `awg3_key` that is not a file, or either at a
-path this host cannot read. **Treat that warning as a failed backup**: without the
-CA a rebuilt host cannot issue or renew any certificate, and every node falls off
-the control plane as its certificate expires.
+path this host cannot read. **Treat that warning as a failed backup.** Without
+the CA a rebuilt host cannot issue or renew any certificate, and every node falls
+off the control plane as its certificate expires.
 
 Restore checks every destination **before it writes anything**, moves each
-existing file aside to `<path>.bak-<timestamp>`, and writes atomically, only where
-this host's `controller.yaml` says its files live and with this host's own
+existing file aside to `<path>.bak-<timestamp>`, and writes atomically, only
+where this host's `controller.yaml` says its files live and with this host's own
 permissions. A rejected archive leaves the box unchanged. It removes a stale
 SQLite write-ahead log beside a restored database, and refuses to run while a
 controller is still serving on the configured endpoint.
 
-**Migration.** Agents dial `controller: <mgmt>:8443`. Rejoin ZeroTier on the new
+Agents dial `controller: <mgmt>:8443`. To migrate, rejoin ZeroTier on the new
 node as the **same mgmt address** and the fleet re-adopts itself. If the mgmt
 address changes, update every node's `agent.yaml` `controller:` and re-issue the
-server cert SAN (restore prints this reminder).
+server cert SAN; restore prints this reminder.
 
 ## Certificates
 
 Every node authenticates to the controller with an mTLS certificate issued for a
 year. **Agents renew their own** between 70% and 90% of that, in place, over the
-control plane, with no restart; the moment is spread per node name.
+control plane, with no restart. The moment is spread per node name.
 
-Watch `wgfleet_agent_cert_expiry_timestamp_seconds`: a node whose value **stops
-going up** has a failing renewal, and by the time `WgfleetNodeCertExpiring` fires
-it has been failing for at least forty days. Usual causes: the node was offline,
-the controller has no CA loaded, or a clock is wrong.
+| See | Meaning |
+|---|---|
+| `wgfleet_agent_cert_expiry_timestamp_seconds` stops going up | Renewal is failing on that node. |
+| `WgfleetNodeCertExpiring` fires | Renewal has been failing for at least forty days. |
 
-`wgfleet-controller --certs check-expiration` prints what THIS host holds: the
-fleet CA and, on a co-located master, the local agent's certificate. Other nodes'
-certificates are on those nodes.
+Usual causes: the node was offline, the controller has no CA loaded, or a clock
+is wrong.
 
-An expired certificate cannot renew itself (renewal travels over the mTLS channel
-it opens). Use the out-of-band path:
+```bash
+# What THIS host holds: the fleet CA and, on a co-located master, the local agent's certificate.
+wgfleet-controller --certs check-expiration
+```
+
+Other nodes' certificates are on those nodes.
+
+An expired certificate cannot renew itself, because renewal travels over the
+mTLS channel it opens. Use the out-of-band path:
 
 ```bash
 sudo wgfleet-controller --certs renew --node exit-de-1
 ```
 
 It writes `pki/exit-de-1/node.{crt,key}` and prints the scp/ssh lines for that
-node from the manifest. Delete the local copy afterwards. There is no CRL: the
-old certificate stops being useful when it expires. A node that has left the
-fleet (`Decommission`, or deleted) is refused renewal; that is the only
-revocation this system has.
+node from the manifest. Delete the local copy afterwards.
+
+There is no CRL: the old certificate stops being useful when it expires. A node
+that has left the fleet (`Decommission`, or deleted) is refused renewal, and that
+is the only revocation this system has.
 
 ## Metrics
 
 The controller (`controller.metrics`) and every agent expose Prometheus text on
-the ZeroTier address only. The agent endpoint is **on by default** at
-`<mgmt_addr>:9301` (from `agent.mgmt_addr`); `--metrics <addr>` overrides the
-bind and `--metrics off` disables it.
+the ZeroTier address only.
+
+| Knob | Effect |
+|---|---|
+| default | The agent endpoint is **on** at `<mgmt_addr>:9301`, from `agent.mgmt_addr`. |
+| `--metrics <addr>` | Override the bind. |
+| `--metrics off` | Disable it. |
 
 **Controller** (a scrape-time projection of the state store):
 
@@ -335,18 +352,25 @@ wgfleet_agent_start_time_seconds                   # for uptime
 ![Exit detail page: live status, six health checks, transport, inventory and what the node carries.](assets/img/console-exit-de-1.png)
 
 After each apply reconcile the agent runs role-specific self-checks and reports
-the derived state:
+the derived state.
 
-- **Exit checks:** `wg-handshake` (freshest handshake under 3 m; an older handshake
-  means the tunnel has stopped carrying traffic even though the interface is up),
-  `egress-reachability` (ok | degraded | blocked), `warp-egress` (when
-  `egress=warp`), `dns-filter`.
-- **Master checks:** `client-wg` (interface up), `mihomo-api` (Clash API
-  `/version`), and — when `client_vless.enabled` — `client-vless` (the
-  VLESS+REALITY inbound is up; a down inbound shows **Degraded**).
+| Role | Check | Notes |
+|---|---|---|
+| Exit | `wg-handshake` | The freshest handshake must be under 3 m. An older handshake means the tunnel has stopped carrying traffic even though the interface is up. |
+| Exit | `egress-reachability` | Reports ok, degraded or blocked. |
+| Exit | `warp-egress` | Runs when `egress=warp`. |
+| Exit | `dns-filter` | — |
+| Exit | `lifeline` | Runs when the exit has a `lifeline`. Red with a reason ⇒ `awgl0` serves its last good config, not the current spec. |
+| Master | `client-wg` | The client interface is up. |
+| Master | `mihomo-api` | The Clash API `/version` answers. |
+| Master | `client-vless` | Runs when `client_vless.enabled`. The VLESS+REALITY inbound is up; a down inbound shows **Degraded**. |
 
-Aggregation: reconcile failed → **Error**; all checks pass → **Ready**; any check
-fails → **Degraded**; no checks → **Reconciling**.
+| Condition | Reported state |
+|---|---|
+| Reconcile failed | **Error** |
+| All checks pass | **Ready** |
+| Any check fails | **Degraded** |
+| No checks | **Reconciling** |
 
 If an agent goes silent, the controller's **staleness sweep** demotes its node
 (`Ready`/`Reconciling`) to **Degraded** after `controller.staleness_after`
@@ -355,17 +379,17 @@ agent recovers, its next report restores the state.
 
 ## Kernel upgrades (your call, not ours)
 
-AmneziaWG is a DKMS module built for a specific kernel — a node that reboots into
+AmneziaWG is a DKMS module built for a specific kernel. A node that reboots into
 a kernel the module was never built for (headers missing at install time, or a
-kernel API change) has no tunnels — and wgfleet does **not** hold kernel packages,
+kernel API change) has no tunnels. wgfleet does **not** hold kernel packages,
 touch unattended-upgrades or reboot nodes.
 
-- After any reboot, check the module came back: `modinfo amneziawg` on the node,
-  or that it returns to Ready.
+- After any reboot, check the module came back with `modinfo amneziawg` on the
+  node, or that the node returns to Ready.
 - Keep `linux-headers-generic` installed alongside the kernel metapackage.
 - To make kernel upgrades deliberate, hold the metapackage:
   `apt-mark hold linux-image-generic linux-headers-generic`. Check the name first
-  (`linux-image-virtual`, `linux-image-kvm` exist on other images): `apt-mark
+  (`linux-image-virtual`, `linux-image-kvm` exist on other images). `apt-mark
   hold` on a package that is not installed succeeds and appears in
   `apt-mark showhold` while holding nothing.
 - A provider image with no kernel metapackage, only a versioned
@@ -373,25 +397,25 @@ touch unattended-upgrades or reboot nodes.
   no kernel security updates either.
 
 The one apt hold wgfleet keeps is on `amneziawg`, `amneziawg-dkms` and
-`amneziawg-tools`: tools and module must stay on the same AmneziaWG generation or
+`amneziawg-tools`. Tools and module must stay on the same AmneziaWG generation or
 `awg setconf` fails and the interface never comes up. The hold blocks automatic
 upgrades only; the agent re-establishes it at whatever version you chose.
 
 ### Upgrading the AmneziaWG module
 
 Neither a wgfleet upgrade nor a re-run of `prepare-node.sh` touches the module. A
-node on a 1.x module keeps working (a 2.0 config runs on either generation). You
-need a newer module only when you turn on `awg3` (the agent refuses the config
-and says so in the reconcile error) or when upstream fixes something you are
-hitting.
+node on a 1.x module keeps working, and a 2.0 config runs on either generation.
+You need a newer module only when you turn on `awg3` (the agent refuses the
+config and says so in the reconcile error) or when upstream fixes something you
+are hitting.
 
 ```bash
 prepare-node.sh --upgrade-awg
 ```
 
 That installs `amneziawg-dkms` and `amneziawg-tools` together, then reloads the
-module, which deletes every AmneziaWG interface on the node; the agent rebuilds
-them on its next pass (a few seconds of loss). By hand:
+module, which deletes every AmneziaWG interface on the node. The agent rebuilds
+them on its next pass, a few seconds of loss. By hand:
 
 ```bash
 apt-get update
@@ -400,31 +424,32 @@ modprobe -r amneziawg && modprobe amneziawg   # or reboot
 modinfo -F version amneziawg                  # 3.1.… for the current line
 ```
 
-Do **not** `apt-mark unhold` first: the agent re-pins the packages every
-reconcile pass (about every 30 s) and `apt-get install -y` fails with "Held
-packages were changed". `--allow-change-held-packages` moves both packages as one
-transaction and the agent re-pins the new version.
+Do **not** `apt-mark unhold` first. The agent re-pins the packages every reconcile
+pass (about every 30 s) and `apt-get install -y` fails with "Held packages were
+changed". `--allow-change-held-packages` moves both packages as one transaction
+and the agent re-pins the new version.
 
 On a master whose clients are still served by wg-easy (see
 [client-migration.md](client-migration.md)), watch the container, not the
-interface: wg-easy v15.3.0 bundles generation-1 tools, and on a 3.x module its
-`awg-quick up wg0` fails with `Unable to modify interface: Invalid argument`. An
-agent v0.2.4 or newer recreates wg-easy from v15.4.0 (generation-3 tools) within
-one pass of the reload; do not `docker restart` it by hand in between. On an
-older agent, the way out is client-migration.md, parts 2-3. **Once v15.4.0 has
-run, do not take the module back to 1.x: it migrated wg-easy's database forward
-and v15.3.0 will not open it.**
+interface.
+
+| Fact | Detail |
+|---|---|
+| wg-easy v15.3.0 bundles generation-1 tools | On a 3.x module its `awg-quick up wg0` fails with `Unable to modify interface: Invalid argument`. |
+| Agent v0.2.4 or newer | Recreates wg-easy from v15.4.0 (generation-3 tools) within one pass of the reload. Do not `docker restart` it by hand in between. |
+| Older agent | The way out is client-migration.md, parts 2-3. |
+| Once v15.4.0 has run | Do **not** take the module back to 1.x: it migrated wg-easy's database forward and v15.3.0 will not open it. |
 
 If the DKMS build itself fails, the reason is in
-`/var/lib/dkms/amneziawg/1.0.0/build/make.log`, usually the kernel: Ubuntu 22.04's
-GA kernel is 5.15 and upstream builds have broken on pre-6.7 kernels. Moving to
-the HWE kernel (`linux-generic-hwe-22.04`) is the cheap way out; your package
-decision.
+`/var/lib/dkms/amneziawg/1.0.0/build/make.log`, usually the kernel. Ubuntu
+22.04's GA kernel is 5.15 and upstream builds have broken on pre-6.7 kernels.
+Moving to the HWE kernel (`linux-generic-hwe-22.04`) is the cheap way out, and
+the package decision is yours.
 
 ### AmneziaWG is down: where to look
 
-Three places on the node, in this order. None of them is `awg-quick@`: the agent
-never installs that unit.
+Three places on the node, in this order. None of them is `awg-quick@`, because
+the agent never installs that unit.
 
 ```bash
 journalctl -u wgfleet-agent -b --no-pager | grep -i -E 'error|warn|awg|wg0' | tail -30
@@ -433,7 +458,7 @@ docker ps -a --format '{{.Names}} {{.Status}}'        # master: is wg-easy up an
 ```
 
 `wg0 not found` in a health check is the agent NOTICING the interface is gone,
-not failing to create it: on a master still on wg-easy the creator is the
+not failing to create it. On a master still on wg-easy the creator is the
 container, and its reason is in `docker logs --tail 40 wg-easy`. On an exit the
 interface is `awg0`, the agent raises it, and the failing `awg-quick up` is in
 the journal with its output.
@@ -447,24 +472,12 @@ modinfo -F version amneziawg; awg --version
 
 Causes, in order of likelihood:
 
-- **Tools and module of different generations** — `awg setconf … Invalid
-  argument`. Compare `modinfo -F version amneziawg` with `awg --version` on the
-  host and, on a wg-easy master, inside the container
-  (`docker exec wg-easy awg --version`). The major versions must agree. See the
-  section above.
-- **Module not built for the running kernel** — `dkms status` has no `installed`
-  line for `uname -r`. See "Kernel upgrades" above.
-- **The move into mihomo's namespace reverts every time, probes say "connection
-  refused"** — the host is still intercepting clients after mihomo left. Look for
-  `nft rejects the rendered ruleset` in the agent journal and check
-  `nft list table ip wgfleet_master` for a `dnat to <gateway>:7895` line while
-  mihomo's network mode is `container:…`. Requires agent v0.2.4 or newer on
-  nftables 1.0.2 (Ubuntu 22.04).
-- **The interface is back but `udp-return-path` keeps failing** — the namespace
-  mover gave up while the interface was down
-  (`client interception not moving … reverted 3 times` in the journal). On an
-  agent older than v0.2.4, toggle `mihomo.client_via_netns` to `off`, wait a
-  pass, and back to `auto`.
+| Symptom | Look at | Do |
+|---|---|---|
+| `awg setconf … Invalid argument` | Compare `modinfo -F version amneziawg` with `awg --version` on the host and, on a wg-easy master, inside the container (`docker exec wg-easy awg --version`). | The major versions must agree. See the section above. |
+| `dkms status` has no `installed` line for `uname -r` | The module was not built for the running kernel. | See "Kernel upgrades" above. |
+| The move into mihomo's namespace reverts every time and probes say "connection refused" | `nft rejects the rendered ruleset` in the agent journal, and `nft list table ip wgfleet_master` for a `dnat to <gateway>:7895` line while mihomo's network mode is `container:…`. | The host is still intercepting clients after mihomo left. Requires agent v0.2.4 or newer on nftables 1.0.2 (Ubuntu 22.04). |
+| The interface is back but `udp-return-path` keeps failing | `client interception not moving … reverted 3 times` in the journal. | The namespace mover gave up while the interface was down. On an agent older than v0.2.4, toggle `mihomo.client_via_netns` to `off`, wait a pass, and back to `auto`. |
 
 When it is none of those, take a support bundle
 (`wgfleet-agent --support-bundle --note "..."` on the node) and send it.
@@ -473,7 +486,7 @@ When it is none of those, take a support bundle
 
 mihomo runs in its own network namespace so its transparent-proxy reply sockets
 cannot collide with UDP ports the host already holds (the client AmneziaWG port,
-for one) — a collision that silently black-holes client traffic to that port.
+for one), a collision that silently black-holes client traffic to that port.
 
 ### The knob
 
@@ -499,11 +512,14 @@ Run a canary on one device for a day before `auto`.
 
 ### After switching it on, WATCH — do not just look
 
-Every point-in-time check can be green while the migration is failing: a
-self-heal probe restarting mihomo on every pass (each restart re-initialises its
-userspace WireGuard devices and drops exits out of the balancer), or a veth
-narrower than the uplink (148-byte handshakes pass, every tunnel reports UP,
-nothing bigger gets through). Take a baseline first, then watch:
+Every point-in-time check can be green while the migration is failing.
+
+| Failure | What it looks like |
+|---|---|
+| A self-heal probe restarting mihomo on every pass | Each restart re-initialises its userspace WireGuard devices and drops exits out of the balancer. |
+| A veth narrower than the uplink | 148-byte handshakes pass, every tunnel reports UP, nothing bigger gets through. |
+
+Take a baseline first, then watch:
 
 ```bash
 ./netns-move-check.sh --baseline     # BEFORE the flip
@@ -542,9 +558,10 @@ Clash API moves with mihomo: once attached it is on the namespace end of the vet
 
 ### How to go back
 
-Set `client_via_netns: off` and let the agent converge: it withdraws the routing
-rule, the destination exemptions and the namespace route table, and mihomo returns
-to host networking. By hand, on the master, when the agent is not running:
+Set `client_via_netns: off` and let the agent converge. It withdraws the routing
+rule, the destination exemptions and the namespace route table, and mihomo
+returns to host networking. By hand, on the master, when the agent is not
+running:
 
 ```bash
 ip rule del pref 400                       # stop routing clients into the namespace
@@ -554,9 +571,9 @@ docker compose -f /etc/wgfleet/docker-compose.yml up -d --force-recreate mihomo
 nft -f /etc/wgfleet/wgfleet-master.nft     # re-arm the host interception
 ```
 
-The rule at priority 400 sorts ahead of the TPROXY mark rule; left in place after
-mihomo has moved back, marked client packets go into an empty namespace. Remove it
-first.
+The rule at priority 400 sorts ahead of the TPROXY mark rule. Left in place after
+mihomo has moved back, marked client packets go into an empty namespace. Remove
+it first.
 
 ### Downgrading the binary after a move
 
@@ -568,7 +585,7 @@ the knob and let the current agent converge before rolling the binary back.**
 
 `WgfleetClientUDPBlackHole` is a warning, not a page. On a master that still
 intercepts on the host it stands for every UDP port the host holds and clears
-when the interception moves (or the port is freed or the traffic refused). The
+when the interception moves, or the port is freed, or the traffic is refused. The
 user-visible outage has its own critical alert, `WgfleetClientPathDead`.
 
 Before rolling this out to a master, take the inventory the check will read:
