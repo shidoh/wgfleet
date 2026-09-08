@@ -224,6 +224,10 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	h.mux.HandleFunc("POST /nodes/{id}/wg-clients/{client}/rename", h.handleWGClientRename)
 	h.mux.HandleFunc("GET /nodes/{id}/wg-clients/{client}/config", h.handleWGClientConfig)
 	h.mux.HandleFunc("GET /nodes/{id}/wg-clients/{client}/qr", h.handleWGClientQR)
+	// The reserve door: the same credential, rendered against one exit's lifeline
+	// interface instead of the master's.
+	h.mux.HandleFunc("GET /nodes/{id}/wg-clients/{client}/lifeline/{exit}/config", h.handleWGClientLifelineConfig)
+	h.mux.HandleFunc("GET /nodes/{id}/wg-clients/{client}/lifeline/{exit}/qr", h.handleWGClientLifelineQR)
 	// Client subscription (auth-exempt; UUID-token in path). Serves the vless link
 	// with the routing object in the `routing` response header.
 	h.mux.HandleFunc("GET /sub/{master}/{token}", h.handleSubscription)

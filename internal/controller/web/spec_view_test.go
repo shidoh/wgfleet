@@ -21,6 +21,8 @@ var secretMarkers = map[string]string{
 	"blocky custom overrides":             "LEAK-dns-override",
 	"client interface AWG 3.0 key":        "LEAK-hpk-client",
 	"end-user WireGuard preshared key":    "LEAK-client-psk",
+	"lifeline AWG 3.0 key":                "LEAK-hpk-lifeline",
+	"lifeline preshared key":              "LEAK-lifeline-psk",
 }
 
 // loadedSpec is a NodeSpec with every credential field populated with a marker,
@@ -90,6 +92,21 @@ func loadedSpec() domain.NodeSpec {
 			Custom: domain.CustomConfig{Overrides: map[string]any{
 				"blocking": secretMarkers["blocky custom overrides"],
 			}},
+		},
+		// The reserve interface carries a second copy of every end-user secret the
+		// client interface holds, so it is planted here too — the allowlist has to
+		// hold on both.
+		Lifeline: &domain.LifelineSpec{
+			ClientWGSpec: domain.ClientWGSpec{
+				ListenPort: 41827, AddressPool: "10.98.77.0/24", ServerAddress: "10.98.77.1",
+				MTU: 1360, DNS: []string{"10.98.77.1"}, AllowedIPs: []string{"0.0.0.0/1", "128.0.0.0/1"},
+				AWG: awg(secretMarkers["lifeline AWG 3.0 key"]),
+				Clients: []domain.WGClientPeer{{
+					Name: "laptop", PublicKey: "client-pub-not-a-secret", Address: "10.98.77.2/32",
+					PresharedKey: secretMarkers["lifeline preshared key"],
+				}},
+			},
+			Egress: domain.EgressDirect,
 		},
 		Routing:   domain.RoutingSpec{EgressInterface: "wgcf", ClientCIDR: "10.73.0.0/24"},
 		Firewall:  domain.FirewallSpec{ASBlacklist: true, WGPort: 443},
@@ -234,5 +251,54 @@ func TestSpecViewDecommissionIsUnmistakable(t *testing.T) {
 	if len(v.Details) != 0 || len(v.Tables) != 0 || v.Raw != "" {
 		t.Errorf("a decommissioning node has no desired data plane to detail, got %d groups / %d tables / raw=%d bytes",
 			len(v.Details), len(v.Tables), len(v.Raw))
+	}
+}
+
+// The reserve interface is the one part of an exit's desired state an operator
+// cannot check anywhere else: it carries the master's clients on the exit, with
+// its own port, pool and egress, and none of that appears on the fleet page.
+func TestSpecViewShowsTheLifeline(t *testing.T) {
+	s := domain.NodeSpec{
+		Role: domain.RoleExit,
+		Lifeline: &domain.LifelineSpec{
+			ClientWGSpec: domain.ClientWGSpec{
+				ListenPort: 41827, AddressPool: "10.98.77.0/24", ServerAddress: "10.98.77.1",
+				MTU: 1360, DNS: []string{"10.98.77.1"},
+				AllowedIPs: []string{"0.0.0.0/1", "128.0.0.0/1"},
+				Clients: []domain.WGClientPeer{
+					{Name: "laptop", PublicKey: "client-pub", Address: "10.98.77.2/32"},
+				},
+			},
+			Egress: domain.EgressDirect,
+		},
+	}
+	v := buildSpecView(s)
+	var found bool
+	for _, g := range v.Details {
+		if g.Title == "Lifeline" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("an exit carrying a reserve interface shows no Lifeline group")
+	}
+	text := renderedText(v)
+	for _, want := range []string{"41827", "10.98.77.0/24", "10.98.77.1", "direct", "1360", "0.0.0.0/1"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the Lifeline group does not show %q", want)
+		}
+	}
+	// The peers are a count, not a list: the credentials themselves are the
+	// master's and are listed on its own clients page.
+	if !strings.Contains(text, "1") {
+		t.Error("the Lifeline group does not report how many peers it carries")
+	}
+
+	// An exit without one shows nothing at all — an empty group would read as a
+	// reserve door that is broken rather than one that was never asked for.
+	for _, g := range buildSpecView(domain.NodeSpec{Role: domain.RoleExit}).Details {
+		if g.Title == "Lifeline" {
+			t.Error("a node with no lifeline still renders a Lifeline group")
+		}
 	}
 }

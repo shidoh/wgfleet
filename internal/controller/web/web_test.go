@@ -30,9 +30,20 @@ type stubRenderer struct {
 	// wgClients is a pointer so handlers that mutate through the stub are visible
 	// to the test that owns the slice.
 	wgClients *[]domain.WGClient
+	// specs overrides spec per node id. The reserve path renders the EXIT's spec
+	// as well as the master's, so a single spec for every id cannot express the
+	// case it exists to cover.
+	specs map[string]domain.NodeSpec
+	// lifelines and exitHosts are the fleet's reserve doors as the controller
+	// reports them: which exits carry one, and the address a client dials for it.
+	lifelines []string
+	exitHosts map[string]string
 }
 
-func (s stubRenderer) RenderNodeSpec(context.Context, string) (domain.NodeSpec, error) {
+func (s stubRenderer) RenderNodeSpec(_ context.Context, id string) (domain.NodeSpec, error) {
+	if spec, ok := s.specs[id]; ok {
+		return spec, nil
+	}
 	return s.spec, s.err
 }
 
@@ -74,11 +85,13 @@ func (s stubRenderer) ListWGClients(context.Context, string) ([]domain.WGClient,
 	return *s.wgClients, nil
 }
 
-// The fleet's reserve doors. The stub declares none, so the console renders the
+// The fleet's reserve doors. A stub that declares none renders the console's
 // "no lifeline exits" case; the readiness matrix itself is tested in clientcfg.
-func (s stubRenderer) LifelineExits(context.Context) ([]string, error) { return nil, nil }
+func (s stubRenderer) LifelineExits(context.Context) ([]string, error) { return s.lifelines, nil }
 
-func (s stubRenderer) ExitEndpointHost(context.Context, string) (string, error) { return "", nil }
+func (s stubRenderer) ExitEndpointHost(_ context.Context, exitID string) (string, error) {
+	return s.exitHosts[exitID], nil
+}
 
 func (s stubRenderer) SetWGClientEnabled(_ context.Context, _, clientID string, enabled bool) error {
 	if s.wgClients == nil {

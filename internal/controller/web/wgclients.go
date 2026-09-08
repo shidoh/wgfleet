@@ -65,6 +65,23 @@ type wgClientsData struct {
 	// is off or its URL is unset, and the link column is hidden rather than guessed.
 	PortalBase string
 	Clients    []wgClientRow
+	// Reserves are the fleet's lifeline exits: the doors a client is handed when
+	// the master stops answering. Every exit that carries one is listed, ready or
+	// not — an operator who sees only the working ones cannot tell a fleet with no
+	// reserve at all from one that is a reconcile pass away from having it.
+	Reserves []reserveExitView
+}
+
+// reserveExitView is one exit's reserve door as the page shows it. Ready decides
+// whether the card offers a file or explains why it cannot: a link that answers
+// with an error is worse than no link, because it is followed on the one day the
+// operator has no time to debug the console.
+type reserveExitView struct {
+	ID       string
+	Name     string
+	Endpoint string
+	Ready    bool
+	Reason   string
 }
 
 // wgIfaceView describes the interface these credentials attach to. Everything a
@@ -240,6 +257,20 @@ func (h *Handler) wgClientsView(w http.ResponseWriter, r *http.Request) (wgClien
 	data.PortalBase = h.portalBase
 	if data.Managed {
 		data.IfaceDown = h.clientInterfaceDown(r, id)
+		// A listing that cannot be read is a FAILURE, not an empty reserve: an
+		// operator who is told "no reserve doors" by a page that simply could not
+		// look is being told the fleet has no fallback at the moment they came here
+		// to find one.
+		reserves, err := clientcfg.ListLifelineExits(r.Context(), clientSource{h}, id)
+		if err != nil {
+			data.Err = "Cannot list the fleet's reserve exits: " + err.Error()
+			return data, nil
+		}
+		for _, e := range reserves {
+			data.Reserves = append(data.Reserves, reserveExitView{
+				ID: e.ID, Name: e.Name, Endpoint: e.Endpoint, Ready: e.Ready, Reason: e.Reason,
+			})
+		}
 	}
 	peers := h.clientPeerStatus(r, id)
 	for _, c := range clients {
@@ -485,6 +516,67 @@ func (h *Handler) handleWGClientQR(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(png)
+}
+
+// handleWGClientLifelineConfig serves one client's RESERVE .conf for one exit.
+//
+// It gates on nothing the primary does not: a paused credential still renders,
+// there as here. Muting drops the peer from the interface on the next reconcile
+// while the file the person holds stays valid, so refusing to render it would
+// only stop the operator handing out a config that will work again the moment
+// access is resumed.
+func (h *Handler) handleWGClientLifelineConfig(w http.ResponseWriter, r *http.Request) {
+	exit := r.PathValue("exit")
+	res, err := h.buildLifelineConfig(r)
+	if err != nil {
+		lifelineError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	// A reserve config is a credential like any other: never cached.
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("attachment; filename=%q", clientcfg.LifelineFileName(res.Client, exit)))
+	_, _ = w.Write([]byte(res.Config))
+}
+
+// handleWGClientLifelineQR serves the QR of one client's RESERVE .conf.
+func (h *Handler) handleWGClientLifelineQR(w http.ResponseWriter, r *http.Request) {
+	res, err := h.buildLifelineConfig(r)
+	if err != nil {
+		lifelineError(w, err)
+		return
+	}
+	png, err := qrPNG(res.Config)
+	if err != nil {
+		httpError(w, "render QR", err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(png)
+}
+
+// buildLifelineConfig resolves one credential's reserve config for one exit
+// through the shared builder — the same bytes the operator page and any other
+// caller would get.
+func (h *Handler) buildLifelineConfig(r *http.Request) (clientcfg.Result, error) {
+	return clientcfg.BuildLifeline(r.Context(), clientSource{h},
+		r.PathValue("id"), r.PathValue("client"), r.PathValue("exit"))
+}
+
+// lifelineError separates the stale link from the broken fleet. An exit that
+// carries no reserve door, and a credential that no longer exists, are both
+// ErrNotFound: the caller is a URL somebody kept, and it must land on a 404
+// rather than on a 500 that reads as "the console is down" on the day the
+// console is the only thing still up. Everything else — an exit that has not
+// published its key, an unreachable store — is a real failure and says so.
+func lifelineError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "no such reserve config", http.StatusNotFound)
+		return
+	}
+	httpError(w, "build reserve config", err)
 }
 
 // buildClientConfig resolves one client's config through the shared builder, so

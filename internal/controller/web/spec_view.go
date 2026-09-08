@@ -87,7 +87,7 @@ func buildSpecView(s domain.NodeSpec) specView {
 	v := specView{Summary: summaryRows(s)}
 	for _, g := range []specGroup{
 		wgServerGroup(s), awgGroup(s), realityGroup(s.Reality), clientVLESSGroup(s.Master),
-		routingGroup(s.Routing), dnsGroup(s.DNS), firewallGroup(s.Firewall),
+		lifelineGroup(s.Lifeline), routingGroup(s.Routing), dnsGroup(s.DNS), firewallGroup(s.Firewall),
 		hardeningGroup(s), observabilityGroup(s),
 	} {
 		if len(g.Rows) > 0 {
@@ -350,6 +350,37 @@ func clientVLESSGroup(m *domain.MasterSpec) specGroup {
 	return g
 }
 
+// lifelineGroup renders the exit's RESERVE client-facing interface — the door
+// clients are handed when the master, the fleet's one publicly-dialed address,
+// stops answering. It is the only part of an exit's desired state that has no
+// other surface: the fleet page knows nothing about it, and its port, pool and
+// egress are what an operator checks a reserve config against.
+//
+// The peers are a COUNT. They are the master's credentials projected onto this
+// exit, they are listed in full on that master's clients page, and a second copy
+// here would be the list-in-a-details this view exists to avoid.
+func lifelineGroup(l *domain.LifelineSpec) specGroup {
+	if l == nil {
+		return specGroup{}
+	}
+	g := specGroup{
+		Title: "Lifeline",
+		Note:  "the reserve door: the master's own credentials, carried here, dialed directly when the master is unreachable.",
+		Rows: []specRow{
+			kv("Listen port", fmt.Sprintf("%d/udp", l.ListenPort)),
+			kv("Address pool", orDash(l.AddressPool)),
+			kv("Gateway", orDash(l.ServerAddress)),
+			{Label: "Egress", Value: orDash(string(l.Egress)),
+				Hint: "how this interface releases client traffic, independently of the exit's primary one"},
+			kv("MTU", fmt.Sprintf("%d", l.MTU)),
+			kv("DNS", orDash(strings.Join(l.DNS, ", "))),
+			kv("Peers", fmt.Sprintf("%d", len(l.Clients))),
+			kv("AllowedIPs", orDash(strings.Join(l.AllowedIPs, ", "))),
+		},
+	}
+	return g
+}
+
 func routingGroup(r domain.RoutingSpec) specGroup {
 	if r.EgressInterface == "" && len(r.DirectCIDRs) == 0 && r.ClientCIDR == "" {
 		return specGroup{}
@@ -553,6 +584,24 @@ func redactSpec(s domain.NodeSpec) domain.NodeSpec {
 		}
 		m.Custom = redactCustom(m.Custom)
 		s.Master = &m
+	}
+	if s.Lifeline != nil {
+		// The reserve interface carries the SAME end-user secrets as the master's
+		// client interface — every credential's preshared key (derived per exit, but
+		// a key nonetheless) and its own header-protection key. It is a second copy
+		// of the field the block above redacts, and it reached the raw view untouched.
+		l := *s.Lifeline
+		if l.AWG != nil {
+			a := *l.AWG
+			a.Shared.HeaderProtectionKey = redactIfSet(a.Shared.HeaderProtectionKey)
+			l.AWG = &a
+		}
+		peers := append([]domain.WGClientPeer(nil), l.Clients...)
+		for i := range peers {
+			peers[i].PresharedKey = redactIfSet(peers[i].PresharedKey)
+		}
+		l.Clients = peers
+		s.Lifeline = &l
 	}
 	s.DNS.Custom = redactCustom(s.DNS.Custom)
 	return s

@@ -673,3 +673,202 @@ type nodeListUnreadable struct{ store.Store }
 func (nodeListUnreadable) ListNodes(context.Context) ([]domain.Node, error) {
 	return nil, errors.New("database is locked")
 }
+
+// --- the reserve door --------------------------------------------------------
+//
+// A lifeline is a second client-facing interface on an EXIT, carrying the same
+// credentials as the master. It exists because the master is the one publicly
+// dialed address the fleet has and therefore the most blockable thing it runs:
+// the day it goes, the operator needs a config that does not route through it —
+// and needs it from a page that is still standing.
+
+// lifelineExitSpec is an exit carrying a reserve interface. The pool is
+// deliberately not the master's: a builder that rendered the master's spec by
+// mistake would produce an address in 10.80.0.0/24 and be caught here.
+func lifelineExitSpec() domain.NodeSpec {
+	return domain.NodeSpec{
+		Role: domain.RoleExit,
+		Lifeline: &domain.LifelineSpec{
+			ClientWGSpec: domain.ClientWGSpec{
+				ListenPort: 41827, AddressPool: "10.98.77.0/24", ServerAddress: "10.98.77.1",
+				MTU: 1360, DNS: []string{"10.98.77.1"},
+				AllowedIPs: []string{"0.0.0.0/1", "128.0.0.0/1"},
+			},
+			Egress: domain.EgressDirect,
+		},
+	}
+}
+
+// wgLifelineHandler wires a master whose credentials two exits carry: one whose
+// reserve door is ready, one that has not published its lifeline key yet. Both
+// states have to be on the page — a listing that showed only the working exits
+// would answer "there is no reserve here" for a fleet that has one and is one
+// reconcile pass away from offering it.
+func wgLifelineHandler(t *testing.T, clients *[]domain.WGClient) *Handler {
+	t.Helper()
+	h, st := newTestHandler(t, stubRenderer{
+		spec:      managedMasterSpec(),
+		wgClients: clients,
+		specs: map[string]domain.NodeSpec{
+			"exit-ready":   lifelineExitSpec(),
+			"exit-pending": lifelineExitSpec(),
+		},
+		lifelines: []string{"exit-ready", "exit-pending"},
+		exitHosts: map[string]string{"exit-ready": "203.0.113.9", "exit-pending": "203.0.113.10"},
+	})
+	seed(t, st, domain.Node{
+		ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster,
+		PublicIP: "203.0.113.1", State: domain.StateReady,
+		ClientWGPublicKey: "c2VydmVyLXB1YmxpYy0wMDAwMDAwMDAwMDAwMDAwMDA=",
+	})
+	seed(t, st, domain.Node{
+		ID: "exit-ready", Name: "exit-ready", Role: domain.RoleExit,
+		PublicIP: "203.0.113.9", State: domain.StateReady,
+		LifelinePublicKey: "ZXhpdC1saWZlbGluZS1rZXktMDAwMDAwMDAwMDAwMDA=",
+	})
+	seed(t, st, domain.Node{
+		ID: "exit-pending", Name: "exit-pending", Role: domain.RoleExit,
+		PublicIP: "203.0.113.10", State: domain.StateReady,
+	})
+	return h
+}
+
+// lifelineClients is one credential on the master, with a preshared key — the
+// reserve config derives its own from it, so a fixture without one would leave
+// that derivation untested.
+func lifelineClients() []domain.WGClient {
+	return []domain.WGClient{{
+		ID: "a", Name: "laptop", Address: "10.80.0.2/32", PublicKey: "pub-a",
+		PrivateKey:   "Y2xpZW50LXByaXZhdGUtMDAwMDAwMDAwMDAwMDAwMA=",
+		PresharedKey: "cHJlc2hhcmVkLWtleS0wMDAwMDAwMDAwMDAwMDAwMDAu",
+		Enabled:      true,
+	}}
+}
+
+func TestWGClientLifelineConfigDownload(t *testing.T) {
+	clients := lifelineClients()
+	h := wgLifelineHandler(t, &clients)
+
+	res, body := get(t, h, "/nodes/master-xa-1/wg-clients/a/lifeline/exit-ready/config")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d: %s", res.StatusCode, body)
+	}
+	for _, want := range []string{
+		"[Interface]",
+		"PrivateKey = Y2xpZW50LXByaXZhdGUtMDAwMDAwMDAwMDAwMDAwMA=",
+		// The address is shifted into the EXIT's pool and the endpoint is the
+		// exit's own: a reserve config that still pointed at the master would be
+		// useless on exactly the day it is reached for.
+		"Address = 10.98.77.2/32",
+		"Endpoint = 203.0.113.9:41827",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("reserve config missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "203.0.113.1:443") {
+		t.Errorf("the reserve config points at the master:\n%s", body)
+	}
+	// One person may hold several reserve configs, one per door: "laptop.conf"
+	// twice in a Downloads folder is how the wrong one gets imported.
+	if got := res.Header.Get("Content-Disposition"); !strings.Contains(got, `"laptop-exit-ready.conf"`) {
+		t.Errorf("Content-Disposition = %q", got)
+	}
+	if got := res.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+}
+
+func TestWGClientLifelineQR(t *testing.T) {
+	clients := lifelineClients()
+	h := wgLifelineHandler(t, &clients)
+
+	res, body := get(t, h, "/nodes/master-xa-1/wg-clients/a/lifeline/exit-ready/qr")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d: %s", res.StatusCode, body)
+	}
+	if got := res.Header.Get("Content-Type"); got != "image/png" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	if !strings.HasPrefix(body, "\x89PNG") {
+		t.Fatal("the reserve QR endpoint did not return a PNG")
+	}
+	if got := res.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+}
+
+// A link to an exit that carries no reserve door is a stale bookmark, and it must
+// land on the same 404 an unknown credential gets rather than on a 500 that reads
+// as "the console is broken".
+func TestWGClientLifelineUnknownExitIs404(t *testing.T) {
+	clients := lifelineClients()
+	h := wgLifelineHandler(t, &clients)
+
+	for _, path := range []string{
+		"/nodes/master-xa-1/wg-clients/a/lifeline/exit-nope/config",
+		"/nodes/master-xa-1/wg-clients/a/lifeline/exit-nope/qr",
+		"/nodes/master-xa-1/wg-clients/nobody/lifeline/exit-ready/config",
+	} {
+		res, body := get(t, h, path)
+		if res.StatusCode != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404: %s", path, res.StatusCode, body)
+		}
+	}
+}
+
+// An exit whose door is not ready yet fails like any other build failure, and
+// says which condition is missing — the operator's next action is on the exit.
+func TestWGClientLifelineNotReadyFails(t *testing.T) {
+	clients := lifelineClients()
+	h := wgLifelineHandler(t, &clients)
+
+	res, body := get(t, h, "/nodes/master-xa-1/wg-clients/a/lifeline/exit-pending/config")
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500: %s", res.StatusCode, body)
+	}
+	if !strings.Contains(body, "lifeline key") {
+		t.Errorf("the failure does not name the missing condition: %s", body)
+	}
+}
+
+// The page is where an operator learns the reserve exists at all. Both states
+// belong on it: the door that is open, with the file behind it, and the door that
+// is not, with the one thing that is missing.
+func TestWGClientsPageOffersReserveConfigs(t *testing.T) {
+	clients := lifelineClients()
+	h := wgLifelineHandler(t, &clients)
+
+	res, body := get(t, h, "/nodes/master-xa-1/wg-clients")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	for _, want := range []string{
+		"RESERVE",
+		"/nodes/master-xa-1/wg-clients/a/lifeline/exit-ready/config",
+		"/nodes/master-xa-1/wg-clients/a/lifeline/exit-ready/qr",
+		"exit-ready",
+		"exit-pending",
+		"has not published its lifeline key yet",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+	// A door that cannot hand out a config must not be offered as though it can.
+	if strings.Contains(body, "/lifeline/exit-pending/config") {
+		t.Error("the page offers a reserve config from an exit that has no key yet")
+	}
+}
+
+// A fleet with no reserve doors gets no reserve section: an empty heading over
+// nothing reads as a feature that is broken rather than one that is not in use.
+func TestWGClientsPageHidesTheReserveWithoutLifelineExits(t *testing.T) {
+	clients := lifelineClients()
+	h, _ := wgClientHandler(t, managedMasterSpec(), &clients)
+
+	_, body := get(t, h, "/nodes/master-xa-1/wg-clients")
+	if strings.Contains(body, "RESERVE") || strings.Contains(body, "/lifeline/") {
+		t.Errorf("the reserve section was rendered with no lifeline exits:\n%s", card(body, "a"))
+	}
+}

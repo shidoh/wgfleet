@@ -182,6 +182,48 @@
           </details>
           {{end}}
 
+          {{/* The reserve doors. Each one is the SAME credential rendered against an
+               exit's own lifeline interface, so it is handed out together with the
+               main config and used only when the main one stops connecting.
+
+               It lives inside the preserved subtree for the reason the block itself
+               does: an operator scanning a QR has focused nothing, so the 10s swap
+               would close the panel under them mid-scan. What that costs here is
+               that an exit's readiness is rendered once, at page load — acceptable,
+               because a reserve door that becomes ready while this panel is open is
+               one reload away, and the alternative is a panel that shuts itself. */}}
+          {{if and $.Ready $.Reserves}}
+          {{$client := .}}
+          <div class="rule"></div>
+
+          <div class="cfg-row">
+            <div class="cfg-main">
+              <div class="field-label">RESERVE · if the main server stops working</div>
+              <p class="cfg-hint">Each of these dials an exit directly instead of going through this master, so it keeps working when the master does not. Hand them out alongside the main config and tell the person to switch to one only when the main config stops connecting.</p>
+              {{range $.Reserves}}
+              {{if .Ready}}
+              <div class="cfg-actions">
+                <a class="btn" href="/nodes/{{$.NodeID}}/wg-clients/{{$client.ID}}/lifeline/{{.ID}}/config">↓ {{.Name}}.conf</a>
+                <span class="cfg-hint mono">{{.Endpoint}}</span>
+              </div>
+              <details class="cfg-direct qr-reveal">
+                <summary>Show QR for {{.Name}}</summary>
+                <img class="cfg-qr-lg" src="/nodes/{{$.NodeID}}/wg-clients/{{$client.ID}}/lifeline/{{.ID}}/qr"
+                     alt="reserve configuration QR for {{.Name}}" width="512" height="512" loading="lazy">
+                <a class="cfg-hint" href="/nodes/{{$.NodeID}}/wg-clients/{{$client.ID}}/lifeline/{{.ID}}/qr" target="_blank" rel="noopener">open full size</a>
+              </details>
+              {{else}}
+              {{/* Named, not hidden. An exit whose door is not open yet is still part
+                   of the answer to "what fallback does this person have", and the one
+                   missing condition is what the operator would otherwise go and look
+                   for on the node itself. */}}
+              <p class="cfg-hint dim">{{.Name}} — no reserve config yet: {{.Reason}}.</p>
+              {{end}}
+              {{end}}
+            </div>
+          </div>
+          {{end}}
+
           <div class="rule"></div>
 
           <div class="cfg-row">
