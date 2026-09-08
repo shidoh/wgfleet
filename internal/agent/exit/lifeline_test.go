@@ -4,9 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/shidoh/wgfleet/internal/agent/dockerfw"
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/wg"
@@ -369,4 +371,136 @@ func (staticPlanner) Component() string { return "static" }
 
 func (p staticPlanner) Plan(context.Context, domain.NodeSpec) ([]reconcile.Action, error) {
 	return p.actions, nil
+}
+
+// --- the lifeline pool in the rest of the exit's data plane ---
+
+// lifelineExitSpec is a full exit spec (firewall, routing, DNS) that also carries
+// a lifeline, i.e. what the controller sends once the operator flips the knob.
+func lifelineExitSpec(t *testing.T) domain.NodeSpec {
+	t.Helper()
+	spec, _ := exitSpec(t)
+	ll := lifelineNodeSpec(lifelinePeer(t, "alice", "10.98.77.7/32")).Lifeline
+	spec.Lifeline = ll
+	// The controller opens the hole and describes the interface together; netfw
+	// refuses one without the other, because either alone is a misconfiguration.
+	spec.Firewall.LifelinePort = ll.ListenPort
+	return spec
+}
+
+// The lifeline pool needs its own hole, its own masquerade and its own forward
+// pair. Without them the interface comes up and every packet on it dies: the
+// listener is firewalled off, and what does get through leaves with a private
+// source address.
+func TestFirewallCarriesTheLifelinePool(t *testing.T) {
+	acts, err := firewallPlanner{path: testPaths(t).NFT}.Plan(context.Background(), lifelineExitSpec(t))
+	if err != nil {
+		t.Fatalf("a lifeline exit's ruleset must render: %v", err)
+	}
+	iface := "\"" + domain.LifelineInterface + "\""
+	for _, want := range []string{
+		"udp dport 41827 accept", // the lifeline listener
+		// SNAT out of the reserve pool, and the guard that asserts nothing leaves
+		// still carrying it — both scoped to the lifeline's own interface.
+		"ip saddr 10.98.77.0/24 oifname != " + iface + " masquerade",
+		"ip saddr 10.98.77.0/24 ip saddr != 10.98.77.1 oifname != " + iface,
+	} {
+		if !strings.Contains(acts[0].Display, want) {
+			t.Errorf("lifeline exit ruleset missing %q:\n%s", want, acts[0].Display)
+		}
+	}
+}
+
+// An exit without a lifeline must render exactly as it did before: no pool, no
+// interface, and — since netfw refuses a hole without a listener — no port.
+func TestFirewallLeavesTheLifelineOutWhenTheSpecHasNone(t *testing.T) {
+	spec, _ := exitSpec(t)
+	acts, err := firewallPlanner{path: testPaths(t).NFT}.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(acts[0].Display, domain.LifelineInterface) {
+		t.Errorf("an exit with no lifeline must not render one:\n%s", acts[0].Display)
+	}
+}
+
+// A WARP lifeline egresses through WARP like the exit's primary pool, so its
+// traffic needs the same policy-routing rule. Without it the reserve clients'
+// packets follow the host default route and leave with the exit's own address,
+// which is the leak an earlier finding is about.
+func TestRoutingSendsTheLifelinePoolToTheEgressTable(t *testing.T) {
+	spec := lifelineExitSpec(t)
+	acts, err := routingPlanner{statePath: testPaths(t).RoutingState}.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(planDump(acts), "from 10.98.77.0/24 lookup") {
+		t.Errorf("a WARP lifeline's pool must be policy-routed to the egress table:\n%s", planDump(acts))
+	}
+}
+
+// A lifeline that egresses DIRECTLY must not be policy-routed into WARP, even on
+// an exit whose primary pool is. The two pools are separately switchable on
+// purpose: the reserve leg is the one that has to keep working when the egress
+// the primary pool uses is what got blocked.
+func TestRoutingLeavesADirectLifelineAlone(t *testing.T) {
+	spec := lifelineExitSpec(t)
+	direct := *spec.Lifeline
+	direct.Egress = domain.EgressDirect
+	spec.Lifeline = &direct
+
+	acts, err := routingPlanner{statePath: testPaths(t).RoutingState}.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(planDump(acts), "10.98.77.0/24") {
+		t.Errorf("a direct-egress lifeline must not be routed into WARP:\n%s", planDump(acts))
+	}
+}
+
+// Reserve clients are handed the lifeline gateway as their resolver, so blocky
+// has to bind it. Until it does, every client that falls back to the lifeline has
+// a DNS server that does not answer — a tunnel that comes up and resolves nothing.
+func TestDNSFilterBindsTheLifelineGateway(t *testing.T) {
+	dir := t.TempDir()
+	p := dnsPlanner{
+		configPath:  filepath.Join(dir, "config.yml"),
+		composePath: filepath.Join(dir, "docker-compose.yml"),
+		up:          func(string) bool { return true },
+	}
+	acts, err := p.Plan(context.Background(), lifelineExitSpec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(planDump(acts), "10.98.77.1:53") {
+		t.Errorf("blocky must bind the lifeline gateway:\n%s", planDump(acts))
+	}
+}
+
+// Docker sets the FORWARD policy to DROP, so a lifeline missing from DOCKER-USER
+// black-holes silently between two interfaces the operator never configured
+// — while every nftables rule the agent renders looks right.
+func TestDockerUserAcceptsLifelineForwarding(t *testing.T) {
+	paths := testPaths(t)
+	want := dockerfw.NewForwardPlanner(
+		"exit forwarding (ip_forward + DOCKER-USER)",
+		"awg0", "awg0",
+		"accept client→egress forwarding (DOCKER-USER)",
+		domain.LifelineInterface)
+
+	var found bool
+	for _, pl := range Planners(Input{Paths: paths}) {
+		fp, ok := pl.(dockerfw.ForwardPlanner)
+		if !ok {
+			continue
+		}
+		found = true
+		if !reflect.DeepEqual(fp, want) {
+			t.Errorf("the exit's DOCKER-USER planner must also allow %s:\ngot  %+v\nwant %+v",
+				domain.LifelineInterface, fp, want)
+		}
+	}
+	if !found {
+		t.Fatal("no DOCKER-USER forwarding planner in the exit plan")
+	}
 }

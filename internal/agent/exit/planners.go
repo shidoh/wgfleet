@@ -88,7 +88,13 @@ func Planners(in Input) []reconcile.Planner {
 		dockerfw.NewForwardPlanner(
 			"exit forwarding (ip_forward + DOCKER-USER)",
 			wgIfaceName(in.Paths.WGConf), "awg0",
-			"accept client→egress forwarding (DOCKER-USER)"),
+			"accept client→egress forwarding (DOCKER-USER)",
+			// The reserve client leg forwards to the same egress and dies just as
+			// silently without an accept here. Listed unconditionally: the
+			// rule names an interface that may not exist yet, which costs nothing, and
+			// the alternative is a DOCKER-USER chain that changes shape whenever the
+			// operator flips the lifeline knob.
+			domain.LifelineInterface),
 		// Last: refresh the scanner-ASN feed cache (network, Apply-side only). It only
 		// writes a file; the firewall (first) renders it into the nft sets next pass.
 		newASNFeedPlanner(in),
@@ -168,6 +174,15 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	// way. Direct egress ⇒ no egress interface ⇒ no mark needed.
 	if spec.Routing.EgressInterface != "" {
 		in.WGReplyMark = routing.EffectiveFwMark(spec.Routing)
+	}
+	// The reserve client leg gets the same treatment as the primary pool: a hole for
+	// its listener, a masquerade so its clients leave with the egress address, and a
+	// forward pair. Passed EXACTLY when the spec carries a lifeline — netfw refuses
+	// a pool without a port and a port without a pool, because either alone is a
+	// misconfiguration: a listener nobody can reach, or a hole into nothing.
+	if spec.Lifeline != nil {
+		in.LifelineCIDR = spec.Lifeline.AddressPool
+		in.LifelineInterface = domain.LifelineInterface
 	}
 	// Clamp forwarded TCP MSS (both directions) to the tightest tunnel on the client
 	// path: the master↔exit tunnel (WGServer.MTU) or, if smaller, a constrained WARP
@@ -426,6 +441,14 @@ func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 	if spec.HasTransport(domain.TransportRealityXHTTP) {
 		rspec.RealityEgressMark = xray.EgressMark
 	}
+	// The lifeline pool follows the same rule as the primary one, and only when the
+	// lifeline itself egresses through WARP. The two are separately switchable on
+	// purpose (LifelineSpec.Egress is its own field): the reserve leg is the one
+	// that has to keep working when the egress the primary pool uses is what got
+	// blocked, so a direct lifeline must not be dragged into WARP behind it.
+	if spec.Lifeline != nil && spec.Lifeline.Egress == domain.EgressWARP {
+		rspec.LifelineCIDR = spec.Lifeline.AddressPool
+	}
 	steps, err := routing.Render(rspec)
 	if err != nil {
 		return nil, err
@@ -560,12 +583,21 @@ func (p dnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile
 		return []reconcile.Action{reconcile.NoChangeAction("dns filter",
 			"pending: node mgmt address unknown, cannot pick a safe listen addr")}, nil
 	}
-	cfg, err := dnsfilter.RenderBlocky(spec.DNS)
+	// Reserve clients are handed the lifeline gateway as their resolver (the
+	// controller renders it into their configs), so blocky has to bind it as well as
+	// loopback and the mgmt address — otherwise a client that falls back to the
+	// lifeline comes up with a DNS server that does not answer. Copying the spec
+	// before mutating keeps Plan a pure function of the value it was handed.
+	dns := spec.DNS
+	if spec.Lifeline != nil {
+		dns.ClientBindAddr = spec.Lifeline.ServerAddress
+	}
+	cfg, err := dnsfilter.RenderBlocky(dns)
 	if err != nil {
 		return nil, fmt.Errorf("render dns filter: %w", err)
 	}
 	composeYAML, err := compose.RenderBlockyCompose(compose.BlockyInput{
-		Image:      spec.DNS.Image,
+		Image:      dns.Image,
 		ConfigPath: p.configPath,
 	})
 	if err != nil {
