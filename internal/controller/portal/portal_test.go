@@ -586,7 +586,7 @@ func TestPortalPausedProfileServesNoReserveConfigOrQR(t *testing.T) {
 // charged the same. The shape is checked before the store is touched, so a
 // grinder cannot use the reserve route as a cheaper oracle than the main one.
 func TestPortalRateLimitsBadExitNames(t *testing.T) {
-	for _, exit := range []string{"NOT_AN_EXIT", "exit-nope"} {
+	for _, exit := range []string{"not!an!exit", "exit-nope"} {
 		h := testPortal(t)
 		var locked bool
 		for i := range 20 {
@@ -663,12 +663,30 @@ func TestPortalChecksTheExitNameBeforeTouchingTheStore(t *testing.T) {
 	h := testPortal(t)
 	h.src = brokenExitSource{stubSource: h.src.(stubSource), err: errors.New("database is locked")}
 
-	res, _ := fetch(t, h, "/c/aaaabbbbccccdddd/l/NOT_AN_EXIT/config")
+	res, _ := fetch(t, h, "/c/aaaabbbbccccdddd/l/not!an!exit/config")
 	if res.StatusCode != http.StatusNotFound {
 		t.Fatalf("a malformed exit against an unreadable store = %d, want 404", res.StatusCode)
 	}
 	// And a well-formed one does reach the store, where the failure is ours.
 	if res, _ := fetch(t, h, "/c/aaaabbbbccccdddd/l/exit-ready/config"); res.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("a store failure on the reserve route = %d, want 503", res.StatusCode)
+	}
+}
+
+// The portal's charset and the manifest's are one rule (domain.ValidLifelineExitName).
+// While they disagreed, an exit named "EU-1" was LISTED on this page with a
+// download and a QR that both 404'd and both charged the limiter — ten auto-loaded
+// QR images and the person was locked out of their own working profile. The
+// falsifier is a store that cannot answer: a name that gets past the shape check
+// reaches it and comes back as our failure (503), not the caller's (404).
+func TestPortalAcceptsEveryExitNameTheManifestAllows(t *testing.T) {
+	for _, name := range []string{"EU-1", "de.fra.1", "eu_1"} {
+		h := testPortal(t)
+		h.src = brokenExitSource{stubSource: h.src.(stubSource), err: errors.New("database is locked")}
+		res, _ := fetch(t, h, "/c/aaaabbbbccccdddd/l/"+name+"/config")
+		if res.StatusCode != http.StatusServiceUnavailable {
+			t.Errorf("exit %q against an unreadable store = %d, want 503 (it must get past the shape check)",
+				name, res.StatusCode)
+		}
 	}
 }

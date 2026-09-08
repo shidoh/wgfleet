@@ -78,6 +78,18 @@ func (c ControllerConfig) validateLifeline() []error {
 		}
 		at := fmt.Sprintf("fleet.exits[%s].lifeline", e.Name)
 
+		// The exit's NAME is a path segment in every reserve URL the portal hands out
+		// ("/c/<token>/l/<exit>/config"), and the portal bounds that segment before it
+		// looks anything up. A name outside those bounds makes the console and the
+		// self-service page list a door whose download and QR both 404 — and both are
+		// charged to the reader's rate limit, so a handful of auto-loaded QR images
+		// locks them out of their own working profile. Only exits that actually carry
+		// a lifeline are held to it: elsewhere the name fronts no URL.
+		if !domain.ValidLifelineExitName(e.Name) {
+			errs = append(errs, fmt.Errorf("%s: the exit name %q cannot appear in a reserve config URL — want %s",
+				at, e.Name, domain.LifelineExitNameCharset))
+		}
+
 		if l.ListenPort <= 0 || l.ListenPort > 65535 {
 			errs = append(errs, fmt.Errorf("%s.listen_port %d out of range", at, l.ListenPort))
 		}

@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net/netip"
+	"regexp"
 	"strings"
 )
 
@@ -16,6 +17,33 @@ import (
 // name configurable — unlike WGServer's interface, which fronts a fleet-internal
 // tunnel whose naming already varies by role.
 const LifelineInterface = "awgl0"
+
+// lifelineExitNamePattern bounds an exit name that a reserve URL has to carry.
+// Deliberately wider than a node id needs to be and narrower than a manifest
+// name may be: letters in either case, digits, dot, underscore and dash, up to
+// 64 of them.
+var lifelineExitNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+
+// ValidLifelineExitName reports whether an exit name may front a reserve config.
+//
+// It is ONE rule with two enforcement points, and that is the whole point of it
+// living here. The self-service portal carries the exit in a URL path segment
+// ("/c/<token>/l/<exit>/config") and bounds it before anything it names is looked
+// up, charging a malformed one to the rate limiter so the reserve route is not a
+// cheaper oracle than the main one. The manifest, meanwhile, only ever required a
+// non-empty name. When the two disagreed, an exit named outside the portal's
+// charset was listed on the page with a download and a QR each, both 404ing AND
+// charging the limiter — ten auto-loaded QR images later the person was locked
+// out of their own working profile. So config validation refuses a lifeline on an
+// exit the portal could not serve, and the portal accepts exactly what validation
+// let through.
+func ValidLifelineExitName(name string) bool {
+	return lifelineExitNamePattern.MatchString(name)
+}
+
+// LifelineExitNameCharset describes the rule above in the words an error message
+// needs, so the manifest complaint and this pattern cannot drift apart.
+const LifelineExitNameCharset = "letters, digits, '.', '_' and '-', at most 64 characters"
 
 // LifelineSpec is the desired state of an exit's lifeline interface: the same
 // client population as the master's real ClientWG interface, kept warm on an

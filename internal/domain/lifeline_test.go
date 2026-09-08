@@ -282,3 +282,20 @@ func TestLifelinePeersOfSkipsAMalformedPresharedKey(t *testing.T) {
 		t.Fatalf("skipped = %+v, want exactly the credential with the bad PSK", skipped)
 	}
 }
+
+// The exit name is a URL path segment on the self-service portal ("/c/<token>/l/
+// <exit>/config"), so what the manifest allows and what the portal accepts have
+// to be the one rule — an exit the console lists but the portal rejects is a
+// dead link that also costs the person their rate-limit budget.
+func TestValidLifelineExitName(t *testing.T) {
+	for _, ok := range []string{"exit-a", "EU-1", "eu_1", "de.fra.1", "a", strings.Repeat("e", 64)} {
+		if !ValidLifelineExitName(ok) {
+			t.Errorf("ValidLifelineExitName(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{"", "exit a", "exit/a", "exit:a", "exit#1", "экзит", strings.Repeat("e", 65)} {
+		if ValidLifelineExitName(bad) {
+			t.Errorf("ValidLifelineExitName(%q) = true, want false", bad)
+		}
+	}
+}

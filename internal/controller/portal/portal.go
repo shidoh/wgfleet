@@ -25,6 +25,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/controller/clientcfg"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/controller/web/auth"
+	"github.com/shidoh/wgfleet/internal/domain"
 )
 
 // Handler serves the portal.
@@ -400,22 +401,15 @@ func validToken(s string) bool {
 	return true
 }
 
-// validExit bounds what reaches the store for a RESERVE config: node IDs are
-// lowercase names, and this runs before the lookup for the same reason
-// validToken does — the path segment is a stranger's string until it is checked.
-func validExit(s string) bool {
-	if s == "" || len(s) > 32 {
-		return false
-	}
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
-		default:
-			return false
-		}
-	}
-	return true
-}
+// validExit bounds what reaches the store for a RESERVE config. It runs before
+// the lookup for the same reason validToken does — the path segment is a
+// stranger's string until it is checked — and it defers to
+// domain.ValidLifelineExitName so this bound and the manifest's are the SAME
+// rule. They were not, once: this accepted lowercase only while the manifest
+// asked for nothing but a non-empty name, so an exit named "EU-1" was listed on
+// the page with a download and a QR that both 404'd and both charged the
+// limiter, locking the reader out of their own working profile.
+func validExit(s string) bool { return domain.ValidLifelineExitName(s) }
 
 // clientIP is the source address for rate limiting. The transport address only —
 // never a forwarded-for header, which the caller controls and could use to make

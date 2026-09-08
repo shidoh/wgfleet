@@ -349,6 +349,10 @@ credential then gets one reserve config per lifeline exit, in the console and on
 the self-service page. See [operations.md](operations.md) for what to check on the exit
 and how to hand the configs out.
 
+The exit's own `name` appears in every reserve URL, so an exit that carries a
+`lifeline` must be named in letters, digits, `.`, `_` and `-`, at most 64
+characters. Exits without a lifeline keep whatever name they have.
+
 What a reserve config routes into the tunnel is the master's `client_awg`
 decision, minus IPv6: `client_awg.ipv6: block` is not carried here, so the v6
 route is stripped and a reserve client behaves as it would under `off` — its own

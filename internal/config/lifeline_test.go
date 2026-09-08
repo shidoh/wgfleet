@@ -94,6 +94,19 @@ func TestValidateLifeline(t *testing.T) {
 			},
 			wantFrag: "client_awg.managed",
 		},
+		{
+			// The exit's name is a path segment in every reserve URL the portal hands
+			// out, so a name the portal cannot carry is a lifeline that is listed and
+			// undeliverable — and each dead link costs the reader rate-limit budget.
+			name:     "exit name outside the reserve-URL charset",
+			mutate:   func(f *FleetSection) { f.Exits[0].Name = "exit a" },
+			wantFrag: "fleet.exits[exit a].lifeline",
+		},
+		{
+			name:     "exit name too long for a reserve URL",
+			mutate:   func(f *FleetSection) { f.Exits[0].Name = strings.Repeat("e", 65) },
+			wantFrag: "at most 64 characters",
+		},
 	}
 
 	for _, tc := range tests {
@@ -163,5 +176,29 @@ func TestLifelineResolvedEgress(t *testing.T) {
 	}
 	if got := (LifelineConfig{Egress: " WARP "}).ResolvedEgress(); got != domain.EgressWARP {
 		t.Errorf("ResolvedEgress() = %q, want %q", got, domain.EgressWARP)
+	}
+}
+
+// Names the manifest allows and the portal serves are the same set, so the widest
+// legal ones must pass validation untouched — the charset is a bound on reserve
+// URLs, not a naming policy for exits that carry no lifeline.
+func TestValidateLifelineAcceptsThePortalsWholeCharset(t *testing.T) {
+	for _, name := range []string{"exit-a", "EU-1", "de.fra.1", "eu_1"} {
+		fleet := newLifelineFleet()
+		fleet.Exits[0].Name = name
+		if errs := (ControllerConfig{Fleet: fleet}).validateLifeline(); len(errs) != 0 {
+			t.Errorf("exit %q: validateLifeline() = %v, want no errors", name, errs)
+		}
+	}
+}
+
+// And an exit with no lifeline keeps whatever name it has: the rule exists for
+// the reserve URL, and there is no reserve URL here.
+func TestExitNameCharsetIsNotEnforcedWithoutALifeline(t *testing.T) {
+	fleet := newLifelineFleet()
+	fleet.Exits[0].Name = "exit a"
+	fleet.Exits[0].Lifeline = nil
+	if errs := (ControllerConfig{Fleet: fleet}).validateLifeline(); len(errs) != 0 {
+		t.Errorf("validateLifeline() = %v, want no errors for an exit without a lifeline", errs)
 	}
 }
