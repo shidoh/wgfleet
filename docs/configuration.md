@@ -334,6 +334,22 @@ run warm and you can switch the live path instantly.
 |---|---|---|---|
 | `fleet.exits[].dns_filter` | bool | `false` | Run the blocky resolver container on this exit |
 
+### Lifeline
+
+A reserve client-facing AmneziaWG interface on this exit — a second way in if the
+master's own client interface is ever unreachable. Opt-in: omit the whole section
+to leave the exit unchanged. Requires `masters[].client_awg.managed: true` — there
+is no wg-easy equivalent for a reserve interface, so the controller must own the
+credentials it projects here.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `fleet.exits[].lifeline.listen_port` | int | **required** | UDP port for the reserve interface. Must differ from the exit's own AmneziaWG port and from any `firewall.public_udp_ports` entry |
+| `fleet.exits[].lifeline.address_pool` | CIDR | **required** | Client address pool for the reserve interface. Must be at least as large as the master's `client_awg.address_pool` and must not overlap any other pool in the fleet |
+| `fleet.exits[].lifeline.egress` | string | `direct` | `direct` or `warp`. `warp` requires WARP to already be in this exit's egress chain (`egress` or `egress_fallback`) |
+| `fleet.exits[].lifeline.dns` | []string | — | Resolvers handed to lifeline clients. **Required** when `dns_filter` is off, since the master's resolvers are unreachable without the master |
+| `fleet.exits[].lifeline.mtu` | int | derived | MTU override for the reserve interface |
+
 ---
 
 ## 6. DNS (blocky)

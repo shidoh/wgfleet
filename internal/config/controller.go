@@ -928,6 +928,11 @@ type ExitConfig struct {
 	// Each step moves exactly ONE side of the tunnel, which is what makes it
 	// rollback-safe — see domain.PerTunnelKeyPhase.
 	PerTunnelKey string `koanf:"per_tunnel_key"`
+	// Lifeline is a reserve client-facing AmneziaWG interface on this exit — a
+	// second way in when the master's own client interface is unreachable. Opt-in:
+	// nil ⇒ no reserve interface, exactly the pre-lifeline behaviour. See
+	// LifelineConfig.
+	Lifeline *LifelineConfig `koanf:"lifeline"`
 }
 
 // PerTunnelKeyPhase returns the exit's ADR-0030 migration phase, defaulting to
@@ -1364,6 +1369,7 @@ func (c ControllerConfig) Validate() error {
 	if err := c.validateReserveExits(); err != nil {
 		errs = append(errs, err)
 	}
+	errs = append(errs, c.validateLifeline()...)
 	return errors.Join(errs...)
 }
 

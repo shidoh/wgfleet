@@ -1,0 +1,130 @@
+package config
+
+import (
+	"fmt"
+	"net/netip"
+	"strings"
+
+	"github.com/shidoh/wgfleet/internal/domain"
+)
+
+// LifelineConfig is a reserve client-facing AmneziaWG interface on an exit: a
+// second, independent way in for clients if the master's own client interface is
+// ever unreachable. It is opt-in (nil ⇒ off) and deliberately narrow — a listener,
+// a pool, an egress choice, resolvers and an MTU — because it exists purely as a
+// fallback path, not a second client-facing product surface to keep in parity with
+// the master's.
+type LifelineConfig struct {
+	ListenPort  int      `koanf:"listen_port"`
+	AddressPool string   `koanf:"address_pool"`
+	Egress      string   `koanf:"egress"` // "" | direct | warp
+	DNS         []string `koanf:"dns"`
+	MTU         int      `koanf:"mtu"`
+}
+
+// LifelineEnabled reports whether this exit carries a reserve client-facing
+// interface. A nil section means the exit is unchanged from before this feature
+// existed — no reserve path, exactly the pre-lifeline behaviour.
+func (e ExitConfig) LifelineEnabled() bool { return e.Lifeline != nil }
+
+// ResolvedEgress returns the lifeline's egress method, defaulting an unset value
+// to direct: a reserve path that exists to work when the master is unreachable
+// should not, by default, ALSO depend on the exit's WARP leg being healthy.
+func (l LifelineConfig) ResolvedEgress() domain.EgressMethod {
+	if strings.TrimSpace(l.Egress) == "" {
+		return domain.EgressDirect
+	}
+	return domain.EgressMethod(strings.ToLower(strings.TrimSpace(l.Egress)))
+}
+
+// primaryMaster returns the master that fronts exits (the first one), mirroring
+// keybroker.Broker.primaryMaster — this package cannot import keybroker (it would
+// be a cycle: keybroker already imports config), so the same tiny lookup is
+// re-declared here rather than shared.
+func (f FleetSection) primaryMaster() (MasterConfig, bool) {
+	if len(f.Masters) == 0 {
+		return MasterConfig{}, false
+	}
+	return f.Masters[0], true
+}
+
+// exitEgressChainHas reports whether m is somewhere in the exit's egress chain —
+// its preferred egress or one of its ADR-0017 fallbacks.
+func exitEgressChainHas(e ExitConfig, m domain.EgressMethod) bool {
+	if e.Egress == string(m) {
+		return true
+	}
+	for _, f := range e.EgressFallback {
+		if f == string(m) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateLifeline checks every exit's opt-in lifeline section. Each finding
+// names the manifest path it came from (fleet.exits[<name>].lifeline...) so a
+// misconfigured reserve interface fails loudly at startup instead of quietly
+// never coming up (or coming up unreachable) the day it is actually needed.
+func (c ControllerConfig) validateLifeline() []error {
+	var errs []error
+	master, hasMaster := c.Fleet.primaryMaster()
+	masterPool, _ := netip.ParsePrefix(master.ClientAWG.AddressPool) // invalid ⇒ zero Prefix, IsValid() false below
+
+	for _, e := range c.Fleet.Exits {
+		l := e.Lifeline
+		if l == nil {
+			continue
+		}
+		at := fmt.Sprintf("fleet.exits[%s].lifeline", e.Name)
+
+		if l.ListenPort <= 0 || l.ListenPort > 65535 {
+			errs = append(errs, fmt.Errorf("%s.listen_port %d out of range", at, l.ListenPort))
+		}
+		if l.ListenPort == e.WGListenPort() {
+			errs = append(errs, fmt.Errorf("%s.listen_port %d equals the exit listen_port", at, l.ListenPort))
+		}
+		for _, p := range e.Firewall.PublicUDPPorts {
+			if p == l.ListenPort {
+				errs = append(errs, fmt.Errorf("%s.listen_port %d is already listed in firewall.public_udp_ports", at, p))
+			}
+		}
+
+		switch p, err := netip.ParsePrefix(l.AddressPool); {
+		case l.AddressPool == "":
+			errs = append(errs, fmt.Errorf("%s.address_pool is required", at))
+		case err != nil:
+			errs = append(errs, fmt.Errorf("%s.address_pool %q: %w", at, l.AddressPool, err))
+		case !p.Addr().Is4():
+			errs = append(errs, fmt.Errorf("%s.address_pool %q must be IPv4", at, l.AddressPool))
+		case hasMaster && masterPool.IsValid() && p.Bits() > masterPool.Bits():
+			errs = append(errs, fmt.Errorf("%s.address_pool %s must be at least as large as the master client pool %s",
+				at, p.Masked(), masterPool.Masked()))
+		}
+
+		switch l.ResolvedEgress() {
+		case domain.EgressDirect:
+		case domain.EgressWARP:
+			if !exitEgressChainHas(e, domain.EgressWARP) {
+				errs = append(errs, fmt.Errorf("%s.egress: WARP is not in this exit's egress chain", at))
+			}
+		default:
+			errs = append(errs, fmt.Errorf("%s.egress %q: want direct or warp", at, l.Egress))
+		}
+
+		// Without dns_filter the exit's own blocky is the only resolver a lifeline
+		// client can reach — the master, which normally supplies DNS, is by
+		// definition the thing this reserve path exists to work around.
+		if len(l.DNS) == 0 && !e.DNSFilter {
+			errs = append(errs, fmt.Errorf("%s.dns is required when dns_filter is off (the master's resolvers are unreachable without the master)", at))
+		}
+
+		// The lifeline pool is projected by the controller, the same way the master's
+		// managed client pool is — there is no wg-easy equivalent for a reserve
+		// interface, so the controller must own the credentials on this exit too.
+		if hasMaster && !master.ClientAWGManaged() {
+			errs = append(errs, fmt.Errorf("%s: requires masters[%s].client_awg.managed: true (the controller must own the credentials it projects)", at, master.Name))
+		}
+	}
+	return errs
+}
