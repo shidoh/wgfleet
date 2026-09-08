@@ -25,6 +25,9 @@ DIST      := dist
 # This is the human/observability version, NOT the wire-compatibility key (that
 # is internal/api.WireContractVersion). See docs/upgrade.md.
 VERSION   ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
+# Wire contract this tree builds, stamped into the archive's VERSION file so
+# deploy-master.sh can pick the safe deploy order without the source tree.
+WIRE      := $(shell sed -n 's/.*WireContractVersion uint32 = \([0-9][0-9]*\).*/\1/p' internal/api/wire.go)
 COMMIT    ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)$(shell git diff --quiet 2>/dev/null || echo -dirty)
 DATE      ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 VPKG      := github.com/shidoh/wgfleet/internal/version
@@ -173,7 +176,7 @@ release-archive: agent-linux controller-linux
 	cp deploy/monitoring/grafana-dashboard.json deploy/monitoring/grafana-dashboard-v2.json deploy/monitoring/README.md $(DIST)/$(PKG)/monitoring/
 	cp deploy/monitoring/servicemonitor.yaml deploy/monitoring/scrapeconfig.yaml deploy/monitoring/vmstaticscrape.yaml $(DIST)/$(PKG)/monitoring/
 	cp deploy/monitoring/vmrule.yaml deploy/monitoring/prometheusrule.yaml $(DIST)/$(PKG)/monitoring/
-	@echo "$(VERSION) $(COMMIT) $(DATE) linux/$(ARCH)" > $(DIST)/$(PKG)/VERSION
+	@echo "$(VERSION) $(COMMIT) $(DATE) linux/$(ARCH) wire/$(WIRE)" > $(DIST)/$(PKG)/VERSION
 	chmod 0755 $(DIST)/$(PKG)/wgfleet-controller $(DIST)/$(PKG)/wgfleet-agent $(DIST)/$(PKG)/*.sh
 # COPYFILE_DISABLE stops macOS bsdtar packing its extended attributes, which GNU
 # tar on the target then reports as ~40 lines of "Ignoring unknown extended header

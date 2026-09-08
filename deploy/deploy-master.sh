@@ -81,7 +81,11 @@ elif [ -f "$_here/wgfleet-agent" ] || [ -f "$_here/wgfleet-controller" ]; then :
 else
   die "run this from a wgfleet repo root, or from the unpacked release archive (where the binaries are)"
 fi
-command -v go  >/dev/null 2>&1 || die "go toolchain not found (needed to cross-build)"
+# The toolchain is only needed when there is nothing prebuilt to ship: a tester
+# running this from the unpacked archive on a bare VM has no go and needs none.
+if [ ! -f "$_here/wgfleet-agent" ] && [ ! -f "$_here/wgfleet-controller" ]; then
+  command -v go >/dev/null 2>&1 || die "go toolchain not found (needed to cross-build)"
+fi
 command -v scp >/dev/null 2>&1 || die "scp not found"
 
 # component -> (dist artifact, service name, installed path)
@@ -207,12 +211,29 @@ case "$WHAT" in
   both)       build_one agent-linux "$agent_dist" wgfleet-agent; build_one controller-linux "$controller_dist" wgfleet-controller ;;
 esac
 
-# local_wire — the wire contract this working tree builds, read from source.
-# The built binary is a Linux cross-build we cannot execute here, so parse the
-# constant instead.
+# local_wire — the wire contract the binaries we are about to ship speak.
+#
+# Three sources, first hit wins: the source constant (repo checkout); the
+# archive's VERSION file, which the build stamps with "wire/N" (release
+# archive on any host); the shipped controller itself, when this host can run
+# it (release archive on a Linux box of the same arch). The built binary is
+# usually a Linux cross-build we cannot execute here, hence the file. Before
+# the VERSION stamp existed, every archive-driven run printed "wire version
+# undetermined" and silently fell back to controller-first.
 local_wire() {
-  # BRE only — \+ is a GNU extension and this script runs from a macOS shell too.
-  sed -n 's/.*WireContractVersion uint32 = \([0-9][0-9]*\).*/\1/p' internal/api/wire.go | head -1
+  local here; here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local w=""
+  if [ -f internal/api/wire.go ]; then
+    # BRE only — \+ is a GNU extension and this script runs from a macOS shell too.
+    w="$(sed -n 's/.*WireContractVersion uint32 = \([0-9][0-9]*\).*/\1/p' internal/api/wire.go | head -1)"
+  fi
+  if [ -z "$w" ] && [ -f "$here/VERSION" ]; then
+    w="$(sed -n 's/.*wire\/\([0-9][0-9]*\).*/\1/p' "$here/VERSION" | head -1)"
+  fi
+  if [ -z "$w" ] && [ -x "$here/wgfleet-controller" ]; then
+    w="$("$here/wgfleet-controller" --version 2>/dev/null | sed -n 's/.*wire-contract version \([0-9][0-9]*\).*/\1/p' | head -1)"
+  fi
+  printf '%s\n' "$w"
 }
 
 # remote_wire — the wire contract the master's INSTALLED controller serves.
