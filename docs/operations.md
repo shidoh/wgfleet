@@ -20,6 +20,8 @@ redacted), commands, and DB updates.
 
 `controller.webui` serves a fleet view (bind the ZeroTier address):
 
+![Fleet view: the master trunk row, CARRYING exits with live latency, NOT CARRYING exits with their reason badges.](assets/img/console-fleet.png)
+
 - Fleet list with a per-state summary and live refresh, state badges.
 - Per-node detail: inventory, latest status + health checks, rendered `NodeSpec`
   preview (AWG params, peers, routing, firewall, DNS, master data plane), and a
@@ -48,6 +50,8 @@ redacted), commands, and DB updates.
     co-located master) state.
 
 ## Client credentials (AmneziaWG)
+
+![AWG clients page on the master: issue a client, the interface every config inherits, issued clients with online state and transfer.](assets/img/console-wg-clients.png)
 
 On a master with `client_awg.managed`, its node page has a **Client credentials**
 panel:
@@ -273,6 +277,8 @@ wgfleet_agent_start_time_seconds                   # for uptime
 ```
 
 ## Node lifecycle & health
+
+![Exit detail page: live status, six health checks, transport, inventory and what the node carries.](assets/img/console-exit-de-1.png)
 
 After each apply reconcile the agent runs role-specific self-checks and reports
 the derived state:

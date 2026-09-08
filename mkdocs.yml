@@ -10,30 +10,55 @@ strict: true
 theme:
   name: material
   language: en
+  # Placeholder mark until the real icon lands; the plumbing is what matters.
+  logo: docs/assets/logo.svg
+  favicon: docs/assets/favicon.svg
+  font:
+    text: IBM Plex Sans
+    code: JetBrains Mono
   features:
+    # Top-level groups become tabs; the sidebar shows only the current group.
+    - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
+    - navigation.indexes
     - navigation.top
-    - content.code.copy
+    - navigation.footer
+    - toc.follow
     - search.suggest
+    - search.highlight
+    - content.code.copy
+  # Both schemes use the "custom" palette; the colours live in
+  # docs/assets/extra.css so the site and the README share one identity.
   palette:
     - scheme: default
-      primary: blue grey
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Dark
     - scheme: slate
-      primary: blue grey
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Light
 
+extra_css:
+  - docs/assets/extra.css
+
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
   - tables
   - toc:
       permalink: true
   - pymdownx.superfences
   - pymdownx.highlight
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
 
 # Only operator-facing pages are published. Engineering material stays out of
 # the site: adr/ and dev/ are for people with repository access.
@@ -42,6 +67,9 @@ exclude_docs: |
   docs/dev/
   docs/index.md
 
+# Every top-level entry is a section so that it gets its own tab; a one-page
+# section (Changelog, Security) still reads better as a tab than as a stray
+# link under Home.
 nav:
   - Home: index.md
   - Getting started:
@@ -63,5 +91,7 @@ nav:
       - Moving the master: docs/master-migration.md
   - Recipes:
       - RU split tunnel and DNS filtering: docs/recipes/ru-split-tunnel-dns-filter.md
-  - Changelog: docs/changelog.md
-  - Security: SECURITY.md
+  - Changelog:
+      - Changelog: docs/changelog.md
+  - Security:
+      - Security policy: SECURITY.md

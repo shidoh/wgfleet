@@ -125,7 +125,7 @@ endef
 
 release-archive: agent-linux controller-linux
 	@rm -rf $(DIST)/$(PKG) $(DIST)/wgfleet-*-linux-$(ARCH).tar.gz
-	@mkdir -p $(DIST)/$(PKG)/examples $(DIST)/$(PKG)/systemd $(DIST)/$(PKG)/monitoring
+	@mkdir -p $(DIST)/$(PKG)/examples $(DIST)/$(PKG)/systemd $(DIST)/$(PKG)/monitoring $(DIST)/$(PKG)/assets/img
 	cp $(DIST)/wgfleet-controller-linux-$(ARCH) $(DIST)/$(PKG)/wgfleet-controller
 	cp $(DIST)/wgfleet-agent-linux-$(ARCH)      $(DIST)/$(PKG)/wgfleet-agent
 	cp install.sh                               $(DIST)/$(PKG)/install.sh
@@ -157,6 +157,9 @@ release-archive: agent-linux controller-linux
 	cp deploy/examples/controller-split-ru.yaml $(DIST)/$(PKG)/examples/
 	cp docs/recipes/ru-split-tunnel-dns-filter.md $(DIST)/$(PKG)/examples/RU-SPLIT-TUNNEL.md
 	cp deploy/systemd/*.service                 $(DIST)/$(PKG)/systemd/
+	# Console screenshots referenced from OPERATIONS.md; a doc that links a
+	# picture the archive does not carry has a dead link on a server.
+	cp docs/assets/img/console-*.png            $(DIST)/$(PKG)/assets/img/
 	# Rewrite intra-doc links to the names the archive actually uses.
 	#
 	# Every doc links its siblings by their REPO name (docs/cli.md) and this target

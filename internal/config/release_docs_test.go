@@ -133,7 +133,11 @@ func TestShippedDocsLinkOnlyToShippedDocs(t *testing.T) {
 	}
 	// Everything ELSE the archive carries, so a link to a shipped manifest or script
 	// can be resolved too. `cp a b dir/` puts each source under its own basename.
-	dirCp := regexp.MustCompile(`(?m)^\tcp ((?:\S+ )+)\$\(DIST\)/\$\(PKG\)/(\S*/)$`)
+	// Sources and destination are aligned with runs of spaces in the Makefile, so
+	// the separator is a run of blanks, not a single space: with a single space every
+	// directory copy silently failed to parse and nothing under examples/,
+	// systemd/ or assets/ was ever considered shipped.
+	dirCp := regexp.MustCompile(`(?m)^\tcp ((?:\S+[ \t]+)+)\$\(DIST\)/\$\(PKG\)/(\S*/)$`)
 	for _, m := range dirCp.FindAllStringSubmatch(string(mk), -1) {
 		for _, src := range strings.Fields(m[1]) {
 			matches, _ := filepath.Glob(filepath.Join("..", "..", src))

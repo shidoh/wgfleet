@@ -1,0 +1,420 @@
+/* wgfleet documentation — theme overrides for mkdocs-material.
+ *
+ * The palette mirrors assets/readme/hero.svg so the site and the README read
+ * as one product: ink #0a0d12, paper #f1f3f7, green #3ddc84, blue #5b8def,
+ * amber #f5b14c, muted #8b93a1, rule #1c222c. Readability first: the dark
+ * identity lives in the chrome (header, tabs, footer, code), the page itself
+ * stays a plain reading surface in both schemes.
+ */
+
+:root {
+  --wgf-ink: #0a0d12;
+  --wgf-ink-2: #0d1119;
+  --wgf-ink-3: #151a22;
+  --wgf-rule: #1c222c;
+  --wgf-rule-2: #2a313d;
+  --wgf-paper: #f1f3f7;
+  --wgf-muted: #8b93a1;
+  --wgf-muted-2: #5a6270;
+  --wgf-green: #3ddc84;
+  --wgf-green-deep: #168a4e;
+  --wgf-blue: #5b8def;
+  --wgf-blue-deep: #2f66d6;
+  --wgf-amber: #f5b14c;
+}
+
+/* ------------------------------------------------------------------------
+ * Palette: header and tabs are ink in both schemes
+ * ---------------------------------------------------------------------- */
+
+[data-md-color-primary="custom"] {
+  --md-primary-fg-color: var(--wgf-ink);
+  --md-primary-fg-color--light: var(--wgf-rule);
+  --md-primary-fg-color--dark: #06080b;
+  --md-primary-bg-color: var(--wgf-paper);
+  --md-primary-bg-color--light: rgba(241, 243, 247, 0.72);
+}
+
+/* Light scheme: white page, deep blue links, deep green accent. */
+[data-md-color-scheme="default"] {
+  --md-typeset-a-color: var(--wgf-blue-deep);
+  --md-code-bg-color: #f3f5f8;
+  --md-code-fg-color: #2a313d;
+  --md-footer-bg-color: var(--wgf-ink-2);
+  --md-footer-bg-color--dark: var(--wgf-ink);
+  --wgf-surface-rule: #e3e7ee;
+}
+
+[data-md-color-scheme="default"][data-md-color-accent="custom"] {
+  --md-accent-fg-color: var(--wgf-green-deep);
+  --md-accent-fg-color--transparent: rgba(22, 138, 78, 0.1);
+  --md-accent-bg-color: #fff;
+  --md-accent-bg-color--light: rgba(255, 255, 255, 0.7);
+}
+
+/* Dark scheme: the README background, not Material's blue-grey slate. */
+[data-md-color-scheme="slate"] {
+  --md-hue: 218;
+  --md-default-bg-color: var(--wgf-ink);
+  --md-default-bg-color--light: rgba(10, 13, 18, 0.54);
+  --md-default-bg-color--lighter: rgba(10, 13, 18, 0.26);
+  --md-default-bg-color--lightest: rgba(10, 13, 18, 0.07);
+  --md-default-fg-color: rgba(241, 243, 247, 0.88);
+  --md-default-fg-color--light: var(--wgf-muted);
+  --md-default-fg-color--lighter: rgba(139, 147, 161, 0.55);
+  --md-default-fg-color--lightest: rgba(139, 147, 161, 0.16);
+  --md-code-bg-color: var(--wgf-ink-2);
+  --md-code-bg-color--light: rgba(13, 17, 25, 0.9);
+  --md-code-bg-color--lighter: rgba(13, 17, 25, 0.54);
+  --md-code-fg-color: #cdd3dd;
+  --md-code-hl-color: rgba(91, 141, 239, 0.35);
+  --md-code-hl-color--light: rgba(91, 141, 239, 0.12);
+  --md-code-hl-string-color: var(--wgf-green);
+  --md-code-hl-keyword-color: var(--wgf-blue);
+  --md-code-hl-number-color: var(--wgf-amber);
+  --md-code-hl-constant-color: #a9b4ff;
+  --md-code-hl-function-color: #d9a0ff;
+  --md-code-hl-special-color: var(--wgf-amber);
+  --md-typeset-a-color: var(--wgf-blue);
+  --md-typeset-mark-color: rgba(245, 177, 76, 0.3);
+  --md-typeset-table-color: rgba(241, 243, 247, 0.12);
+  --md-typeset-table-color--light: rgba(241, 243, 247, 0.035);
+  --md-admonition-bg-color: var(--wgf-ink-2);
+  --md-footer-bg-color: #06080b;
+  --md-footer-bg-color--dark: #06080b;
+  --wgf-surface-rule: var(--wgf-rule);
+}
+
+[data-md-color-scheme="slate"][data-md-color-accent="custom"] {
+  --md-accent-fg-color: var(--wgf-green);
+  --md-accent-fg-color--transparent: rgba(61, 220, 132, 0.12);
+  --md-accent-bg-color: var(--wgf-ink);
+  --md-accent-bg-color--light: rgba(10, 13, 18, 0.7);
+}
+
+/* ------------------------------------------------------------------------
+ * Header, tabs, search
+ * ---------------------------------------------------------------------- */
+
+.md-header {
+  box-shadow: none;
+  border-bottom: 1px solid var(--wgf-rule);
+}
+
+.md-header--shadow {
+  box-shadow: none;
+}
+
+.md-header__topic:first-child {
+  font-family: var(--md-code-font-family);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.md-header__button.md-logo img {
+  height: 0.9rem;
+  width: 0.9rem;
+}
+
+.md-tabs {
+  border-bottom: 1px solid var(--wgf-rule);
+}
+
+.md-tabs__link {
+  font-family: var(--md-code-font-family);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  color: var(--wgf-muted);
+  opacity: 1;
+  transition: color 0.2s;
+}
+
+.md-tabs__link:hover,
+.md-tabs__link:focus {
+  color: var(--wgf-paper);
+}
+
+.md-tabs__item--active .md-tabs__link {
+  color: var(--wgf-green);
+  box-shadow: inset 0 -2px 0 var(--wgf-green);
+  padding-bottom: 0.5rem;
+}
+
+/* The search box sits on the ink header; Material's translucent black box
+ * disappears on it, so give it its own edge. */
+@media screen and (min-width: 60em) {
+  .md-search__form {
+    background-color: var(--wgf-ink-3);
+    border: 1px solid var(--wgf-rule);
+  }
+
+  .md-search__form:hover {
+    background-color: #1a2029;
+  }
+
+  [data-md-toggle="search"]:checked ~ .md-header .md-search__form {
+    border-color: transparent;
+  }
+}
+
+/* ------------------------------------------------------------------------
+ * Sidebar: section labels as muted small caps, pages in a clear rhythm,
+ * active page marked with an accent bar
+ * ---------------------------------------------------------------------- */
+
+@media screen and (min-width: 76.25em) {
+  /* Group label at the top of a lifted nav, and any nested section label. */
+  .md-nav--lifted > .md-nav__list > .md-nav__item--active > .md-nav__link,
+  .md-nav--primary .md-nav__item--section > .md-nav__link {
+    font-family: var(--md-code-font-family);
+    font-size: 0.55rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--md-default-fg-color--light);
+    margin-bottom: 0.4rem;
+    padding-bottom: 0.3rem;
+  }
+
+  .md-nav--primary .md-nav__item--section {
+    margin: 1.4em 0 0;
+  }
+
+  /* Page links: even spacing, room for the accent bar. */
+  .md-sidebar--primary .md-nav__item .md-nav__link:not([for]) {
+    margin-top: 0;
+    padding: 0.22rem 0.4rem 0.22rem 0.55rem;
+    border-left: 2px solid transparent;
+    line-height: 1.35;
+    transition: border-color 0.15s, color 0.15s;
+  }
+
+  .md-sidebar--primary .md-nav__item .md-nav__link:not([for]):hover {
+    border-left-color: var(--md-default-fg-color--lighter);
+    color: var(--md-default-fg-color);
+  }
+
+  .md-sidebar--primary .md-nav__item .md-nav__link--active:not([for]) {
+    border-left-color: var(--md-accent-fg-color);
+    color: var(--md-default-fg-color);
+    font-weight: 600;
+  }
+
+  /* Nested pages step in once more. */
+  .md-sidebar--primary .md-nav[data-md-level="2"] .md-nav__link:not([for]) {
+    padding-left: 1rem;
+    font-size: 0.68rem;
+  }
+
+  /* A one-page group (Changelog, Security) has nothing to navigate; drop the
+   * sidebar's contents and keep the reading column where it is on every
+   * other page. */
+  .md-sidebar--primary:has(.md-nav--lifted > .md-nav__list > .md-nav__item--active > .md-nav > .md-nav__list > .md-nav__item:only-child) .md-nav--primary,
+  .md-sidebar--primary:has(.md-nav--lifted > .md-nav__list > .md-nav__item--active > .md-nav > .md-nav__list > .md-nav__item:only-child) .md-nav--primary .md-nav[data-md-level="1"] {
+    visibility: hidden;
+  }
+
+  /* Table of contents: same label treatment, quieter links. */
+  .md-nav--secondary .md-nav__title {
+    font-family: var(--md-code-font-family);
+    font-size: 0.55rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--md-default-fg-color--light);
+  }
+
+  .md-nav--secondary .md-nav__link {
+    font-size: 0.68rem;
+  }
+
+  .md-nav--secondary .md-nav__link--active {
+    font-weight: 600;
+  }
+}
+
+/* Wider reading column on large screens; the 20px root makes 72rem = 1440px. */
+@media screen and (min-width: 100em) {
+  .md-grid {
+    max-width: 72rem;
+  }
+}
+
+/* ------------------------------------------------------------------------
+ * Typography and content
+ * ---------------------------------------------------------------------- */
+
+.md-typeset h1 {
+  color: var(--md-default-fg-color);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+
+.md-typeset h2 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.md-typeset h3 {
+  font-weight: 600;
+}
+
+.md-typeset hr {
+  border-bottom-color: var(--wgf-surface-rule);
+}
+
+/* Code: mono with an edge, so a block is a block. */
+.md-typeset pre > code {
+  border: 1px solid var(--wgf-surface-rule);
+  border-radius: 0.2rem;
+}
+
+.md-typeset code {
+  border-radius: 0.15rem;
+}
+
+[data-md-color-scheme="slate"] .md-typeset pre > code {
+  border-color: var(--wgf-rule);
+}
+
+/* Tables: mono uppercase heads, otherwise Material's own layout. */
+.md-typeset table:not([class]) {
+  border: 1px solid var(--wgf-surface-rule);
+  border-radius: 0.2rem;
+  box-shadow: none;
+}
+
+.md-typeset table:not([class]) th {
+  font-family: var(--md-code-font-family);
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--md-default-fg-color--light);
+}
+
+/* Admonitions: thinner border, no drop shadow. */
+.md-typeset .admonition,
+.md-typeset details {
+  border-width: 0 0 0 0.2rem;
+  border-radius: 0.2rem;
+  box-shadow: none;
+  background-color: var(--md-code-bg-color);
+}
+
+.md-typeset .admonition-title,
+.md-typeset summary {
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------------------
+ * Landing page
+ * ---------------------------------------------------------------------- */
+
+.wgf-eyebrow {
+  display: block;
+  font-family: var(--md-code-font-family);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--md-default-fg-color--light);
+  margin-bottom: 0.4rem;
+}
+
+.md-typeset h1.wgf-title {
+  font-size: 2.1rem;
+  margin-bottom: 0.9rem;
+  max-width: 34rem;
+}
+
+@media screen and (max-width: 59.9375em) {
+  .md-typeset h1.wgf-title {
+    font-size: 1.6rem;
+  }
+}
+
+.md-typeset h1.wgf-title em {
+  font-style: normal;
+  color: var(--md-accent-fg-color);
+}
+
+.md-typeset .wgf-lead {
+  font-size: 0.95rem;
+  line-height: 1.55;
+  max-width: 40rem;
+  color: var(--md-default-fg-color);
+}
+
+.md-typeset .wgf-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 1rem 0 1.8rem;
+}
+
+.md-typeset .wgf-pill {
+  font-family: var(--md-code-font-family);
+  font-size: 0.6rem;
+  line-height: 1;
+  white-space: nowrap;
+  padding: 0.35rem 0.55rem;
+  border-radius: 0.3rem;
+  border: 1px solid var(--wgf-surface-rule);
+  color: var(--md-default-fg-color--light);
+  background: var(--md-code-bg-color);
+}
+
+.md-typeset .wgf-pill--green {
+  color: var(--wgf-green-deep);
+  border-color: rgba(22, 138, 78, 0.35);
+  background: rgba(61, 220, 132, 0.1);
+}
+
+.md-typeset .wgf-pill--blue {
+  color: var(--wgf-blue-deep);
+  border-color: rgba(91, 141, 239, 0.4);
+  background: rgba(91, 141, 239, 0.1);
+}
+
+[data-md-color-scheme="slate"] .md-typeset .wgf-pill--green {
+  color: var(--wgf-green);
+}
+
+[data-md-color-scheme="slate"] .md-typeset .wgf-pill--blue {
+  color: var(--wgf-blue);
+}
+
+/* Cards: edge instead of shadow, accent on hover. */
+.md-typeset .grid.cards > ul > li {
+  border: 1px solid var(--wgf-surface-rule);
+  border-radius: 0.3rem;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.md-typeset .grid.cards > ul > li:hover,
+.md-typeset .grid.cards > ul > li:focus-within {
+  border-color: var(--md-accent-fg-color);
+  box-shadow: none;
+  transform: translateY(-1px);
+}
+
+.md-typeset .grid.cards > ul > li > hr {
+  border-bottom-color: var(--wgf-surface-rule);
+  margin: 0.6em 0;
+}
+
+.md-typeset .grid.cards > ul > li > p:first-child .twemoji {
+  color: var(--md-accent-fg-color);
+}
+
+.md-typeset .grid.cards > ul > li > p:last-child a {
+  font-family: var(--md-code-font-family);
+  font-size: 0.65rem;
+}
+
+.md-typeset .wgf-map {
+  font-size: 0.72rem;
+  color: var(--md-default-fg-color--light);
+}
