@@ -267,28 +267,23 @@ func (p clientWGPlanner) livePeerCount() (n int, known bool) {
 // credential freezes the interface and every later revocation silently stops
 // taking effect while the UI reports success. A check that reads the world cannot
 // see a decision the planner made; it has to read the planner's verdict.
-func (p clientWGPlanner) deferredPath() string { return p.confPath + ".deferred" }
+func (p clientWGPlanner) deferredPath() string { return wgiface.DeferredPath(p.confPath) }
+
+// deferral is the shared marker this planner and the exit's lifeline both write;
+// the mechanism lives in wgiface so the ".deferred" suffix the health probes read
+// has exactly one owner.
+func (p clientWGPlanner) deferral() wgiface.Deferral {
+	return wgiface.Deferral{Path: p.deferredPath(), Component: "client AmneziaWG interface"}
+}
 
 // deferred returns the plan for a pass that declines to apply, recording the
 // reason where the health check can find it.
 func (p clientWGPlanner) deferred(reason string) []reconcile.Action {
-	act, err := reconcile.FileAction(p.deferredPath(), []byte(reason+"\n"), 0o600, nil)
-	if err != nil {
-		// Recording the reason is diagnostics; failing the pass over it would be the
-		// freeze this whole branch exists to avoid.
-		return []reconcile.Action{reconcile.NoChangeAction("client AmneziaWG interface", reason)}
-	}
-	return []reconcile.Action{act, reconcile.NoChangeAction("client AmneziaWG interface", reason)}
+	return p.deferral().Write(reason)
 }
 
 // clearDeferred removes the marker once the planner is applying or converged.
-func (p clientWGPlanner) clearDeferred() reconcile.Action {
-	act, err := reconcile.RemoveFileAction(p.deferredPath(), "clear the client interface deferral")
-	if err != nil {
-		return reconcile.NoChangeAction("client AmneziaWG interface", "")
-	}
-	return act
-}
+func (p clientWGPlanner) clearDeferred() reconcile.Action { return p.deferral().Clear() }
 
 // recordClaim writes the claim file. Best-effort by design: failing to record it
 // costs a redundant re-apply next pass, whereas failing the pass here would take

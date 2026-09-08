@@ -165,29 +165,15 @@ func (p lifelinePlanner) isUp() bool {
 	return p.up(name)
 }
 
-// deferredPath is where the planner records WHY it is not applying the spec. The
-// `lifeline` health check only sees the world (is awgl0 up), and a deferral is a
-// decision, not a state of the world: without this the operator's only signal
-// would be a line in a plan nobody is reading.
-func (p lifelinePlanner) deferredPath() string { return p.confPath + ".deferred" }
+// deferral is where the planner records WHY it is not applying the spec, and the
+// `lifeline` health check reads the same file: the check otherwise only sees the
+// world (is awgl0 up), and a deferral is a decision, not a state of the world.
+func (p lifelinePlanner) deferral() wgiface.Deferral {
+	return wgiface.Deferral{Path: wgiface.DeferredPath(p.confPath), Component: lifelineComponent}
+}
 
-// deferred returns the plan for a pass that declines to apply, recording the
-// reason where the operator and the status page can find it.
 func (p lifelinePlanner) deferred(reason string) []reconcile.Action {
-	act, err := reconcile.FileAction(p.deferredPath(), []byte(reason+"\n"), 0o600, nil)
-	if err != nil {
-		// Recording the reason is diagnostics; failing the pass over it would be the
-		// freeze this whole branch exists to avoid.
-		return []reconcile.Action{reconcile.NoChangeAction(lifelineComponent, reason)}
-	}
-	return []reconcile.Action{act, reconcile.NoChangeAction(lifelineComponent, reason)}
+	return p.deferral().Write(reason)
 }
 
-// clearDeferred removes the marker once the planner is applying or converged.
-func (p lifelinePlanner) clearDeferred() reconcile.Action {
-	act, err := reconcile.RemoveFileAction(p.deferredPath(), "clear the lifeline deferral")
-	if err != nil {
-		return reconcile.NoChangeAction(lifelineComponent, "")
-	}
-	return act
-}
+func (p lifelinePlanner) clearDeferred() reconcile.Action { return p.deferral().Clear() }

@@ -779,7 +779,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	// egress check; this only adds the reason.
 	var egressClass domain.EgressReachability
 	if a.role != domain.RoleMaster && reconcileErr == nil {
-		if class, chk := a.egress.Classify(ctx, results, health.DefaultExitProbes(spec).EgressConfirm); chk != nil {
+		if class, chk := a.egress.Classify(ctx, results, health.DefaultExitProbes(spec, a.paths.LifelineConf).EgressConfirm); chk != nil {
 			egressClass = class
 			results = append(results, *chk)
 			if class == domain.EgressReachBlocked {
@@ -833,7 +833,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		// throughput, so a still-throttled WARP is not promoted back.
 		next := a.egressSel.Step(ctx, spec.EgressMethods(), egressClass, throughputDegraded,
 			func(c context.Context) bool {
-				if !health.DefaultExitProbes(spec).WARPEgress(c).OK {
+				if !health.DefaultExitProbes(spec, a.paths.LifelineConf).WARPEgress(c).OK {
 					return false
 				}
 				if spec.EgressThroughputMinBps <= 0 {
@@ -992,7 +992,7 @@ func (a *agent) healthChecks(spec domain.NodeSpec) []health.Check {
 		probes.ClientUDPReturn = a.clientUDPReturnProbe(spec)
 		return health.MasterChecks(spec, probes)
 	}
-	return health.ExitChecks(spec, health.DefaultExitProbes(spec))
+	return health.ExitChecks(spec, health.DefaultExitProbes(spec, a.paths.LifelineConf))
 }
 
 // passiveEgressBytesPerSec returns the real throughput on the active egress

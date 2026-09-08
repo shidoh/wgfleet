@@ -197,3 +197,51 @@ func hostPrefix(addr string) string {
 	}
 	return addr + "/32"
 }
+
+// --- deferral markers ---
+
+// DeferredSuffix is appended to an interface config path to locate the file where
+// a planner records WHY it is not applying the spec.
+const DeferredSuffix = ".deferred"
+
+// DeferredPath returns the deferral marker for an interface config. Exported so
+// the health probes read exactly the path the planners write — the suffix has one
+// owner, and a check that looked at the wrong file would report green through
+// precisely the states the marker exists to surface.
+func DeferredPath(confPath string) string { return confPath + DeferredSuffix }
+
+// Deferral is a planner's record of a pass it declined to apply.
+//
+// It exists because a health check that reads the WORLD cannot see a DECISION:
+// an interface that is up stays up through "no key yet", "spec rejected" and
+// "AmneziaWG 3.x refused", so every one of those reported green — including a
+// malformed credential freezing the interface while later revocations silently
+// stop taking effect. The marker is the planner's verdict, written where the
+// check can find it.
+type Deferral struct {
+	// Path is the marker file, normally DeferredPath(confPath).
+	Path string
+	// Component names the planner in the plan output's no-change line.
+	Component string
+}
+
+// Write returns the plan for a pass that declines to apply: record the reason,
+// and say so in the plan.
+func (d Deferral) Write(reason string) []reconcile.Action {
+	act, err := reconcile.FileAction(d.Path, []byte(reason+"\n"), 0o600, nil)
+	if err != nil {
+		// Recording the reason is diagnostics; failing the pass over it would be the
+		// freeze the deferral exists to avoid.
+		return []reconcile.Action{reconcile.NoChangeAction(d.Component, reason)}
+	}
+	return []reconcile.Action{act, reconcile.NoChangeAction(d.Component, reason)}
+}
+
+// Clear removes the marker once the planner is applying or converged.
+func (d Deferral) Clear() reconcile.Action {
+	act, err := reconcile.RemoveFileAction(d.Path, "clear the deferral for "+d.Component)
+	if err != nil {
+		return reconcile.NoChangeAction(d.Component, "could not clear the deferral at "+d.Path+": "+err.Error())
+	}
+	return act
+}

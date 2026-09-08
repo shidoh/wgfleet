@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shidoh/wgfleet/internal/agent/wgiface"
 	"github.com/shidoh/wgfleet/internal/dnsfilter"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/wgeasy"
@@ -26,7 +27,11 @@ const probeTimeout = 8 * time.Second
 // DefaultExitProbes wires the real exec/http probes for an exit node from its
 // spec. These run system tools (awg, curl) and are therefore only meaningful on
 // a provisioned Linux node; they are not exercised on the dev box.
-func DefaultExitProbes(spec domain.NodeSpec) ExitProbes {
+// lifelineConf is the exit's lifeline interface config path; the probe derives the
+// planner's deferral marker from it (wgiface.DeferredPath), so a lifeline the
+// agent has stopped applying cannot report green just because awgl0 is still up
+// from the last good config.
+func DefaultExitProbes(spec domain.NodeSpec, lifelineConf string) ExitProbes {
 	wgIface := "awg0"
 	egressIface := spec.Routing.EgressInterface
 	if egressIface == "" {
@@ -42,10 +47,11 @@ func DefaultExitProbes(spec domain.NodeSpec) ExitProbes {
 		DNSResolves:    dnsResolvesProbe(dnsListenAddr(spec.DNS)),
 		EgressConfirm:  warpHandshakeProbe(egressIface),
 		RealityInbound: realityInboundProbe(realityPort),
-		// The reserve client leg (awgl0). `ip link show` is the right question here
-		// and not, say, a handshake: the lifeline is warm standby by design, so it can
-		// be perfectly healthy with no client on it for weeks.
-		LifelineUp: ifaceUpProbe(domain.LifelineInterface),
+		// The reserve client leg (awgl0). `ip link show` is the right question about the
+		// world here and not, say, a handshake: the lifeline is warm standby by design,
+		// so it can be perfectly healthy with no client on it for weeks. The planner's
+		// verdict is the other half — see LifelineUpProbe.
+		LifelineUp: LifelineUpProbe(lifelineConf, domain.LifelineInterface),
 	}
 }
 
@@ -406,7 +412,29 @@ func ClientWGOwnedProbe(claimPath, iface string) Probe {
 // off the interface config, so one argument determines the other and the probe's
 // signature does not have to grow.
 func deferredPathFor(claimPath string) string {
-	return strings.TrimSuffix(claimPath, ".claim") + ".deferred"
+	return wgiface.DeferredPath(strings.TrimSuffix(claimPath, ".claim"))
+}
+
+// LifelineUpProbe reports on the exit's reserve client interface: first the
+// planner's own verdict, then the world.
+//
+// The order is the whole point. `ip link show awgl0` answers "is an interface up",
+// and awgl0 STAYS up from its last good config through every deferral the planner
+// can report — no key yet, a rejected spec, AmneziaWG 3.x refused. So a bare link
+// probe reports green on an exit whose reserve peers stopped being updated days
+// ago, including one still serving a credential the operator revoked. A check
+// that reads the world cannot see a decision; it has to read the decision.
+func LifelineUpProbe(confPath, iface string) Probe {
+	return func(ctx context.Context) Result {
+		if confPath != "" {
+			if reason, err := os.ReadFile(wgiface.DeferredPath(confPath)); err == nil {
+				if r := strings.TrimSpace(string(reason)); r != "" {
+					return fail("the agent is not applying the lifeline spec: " + r)
+				}
+			}
+		}
+		return ifaceUpProbe(iface)(ctx)
+	}
 }
 
 // ClientUDPReturnProbe watches ONE invariant: every UDP port this namespace holds
