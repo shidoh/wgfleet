@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
+	"github.com/shidoh/wgfleet/internal/agent/wgiface"
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
@@ -33,8 +34,13 @@ func TestExitTeardownWipesFiles(t *testing.T) {
 	dir := t.TempDir()
 	paths := PathsUnder(dir)
 
-	// Create the managed files so the wipe has something to remove.
-	managed := []string{paths.WGConf, paths.WGKey, paths.NFT, paths.RoutingState, paths.DNS}
+	// Create the managed files so the wipe has something to remove. The lifeline's
+	// deferral marker is in there because it is written beside the config and
+	// survives it otherwise: a re-provisioned node would come up carrying a
+	// deferral from a lifeline that no longer exists, and the health check reads
+	// that marker before it looks at the interface.
+	managed := []string{paths.WGConf, paths.WGKey, paths.NFT, paths.RoutingState, paths.DNS,
+		paths.LifelineConf, paths.LifelineKey, wgiface.DeferredPath(paths.LifelineConf)}
 	for _, p := range managed {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)

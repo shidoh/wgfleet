@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
+	"github.com/shidoh/wgfleet/internal/agent/wgiface"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/routing"
 )
@@ -50,6 +51,11 @@ func (p exitTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]recon
 		{p.paths.XrayCompose, "xray compose file"},
 		{p.paths.XrayKey, "REALITY private key"},
 		{p.paths.LifelineConf, "lifeline interface config"},
+		// The deferral marker sits beside the config and outlives it otherwise: the
+		// lifeline health check reads it BEFORE it looks at the interface, so a
+		// re-provisioned node would report a deferral belonging to a lifeline that no
+		// longer exists.
+		{wgiface.DeferredPath(p.paths.LifelineConf), "lifeline deferral marker"},
 		{p.paths.LifelineKey, "lifeline private key"},
 		{p.paths.RoutingState, "policy-routing state"},
 		{p.paths.ASBlacklist, "AS-blacklist feed cache"},

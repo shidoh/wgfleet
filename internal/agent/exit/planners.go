@@ -655,7 +655,7 @@ func (p dnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile
 
 	// Operator extra files (Custom.Files): include lists referenced from the
 	// overrides (e.g. a local denylist). Relative paths land next to config.yml.
-	extra, err := reconcile.ManagedFileActions(spec.DNS.Custom.Files, filepath.Dir(p.configPath))
+	extra, err := reconcile.ManagedFileActions(dns.Custom.Files, filepath.Dir(p.configPath))
 	if err != nil {
 		return nil, err
 	}
