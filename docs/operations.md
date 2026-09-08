@@ -69,89 +69,57 @@ A VLESS credential (below) has no pause: revoking is the only way to cut one off
 
 ## The master is lost: reserve configs
 
-The master is the one publicly-dialed address every client uses, and it is the one
-thing in the fleet that does not fail over. An exit with `lifeline` in the manifest
-carries a second client-facing AmneziaWG interface, `awgl0`, whose peers are the
-same credentials the master serves. Every credential then has a **reserve profile**
-for each such exit: the same keys, a different server, a different port.
+An exit with `lifeline` carries a second client interface `awgl0` with the master's
+credentials. Each credential gets a reserve profile per lifeline exit. Hand them out
+**in advance**; the console and the portal live on the master.
 
-Hand these out **in advance**. The day the master stops answering is the day
-nobody can be told a new link — the console is on the master, and so is the
-self-service page for the main profile.
+**Person:** switch the app to the reserve profile they already imported; switch back
+when the master returns. Reserve traffic uses that exit's uplink (or WARP), without
+fleet routing, geo rules or failover.
 
-**What the person does.** Nothing new: they switch their app to the reserve
-profile they already imported and carry on. The reserve profile is a separate
-entry in the app, not an edit of the main one — its obfuscation parameters come
-from the exit, not from the master, so it cannot be produced by changing an
-endpoint by hand. Once the master is back, switch them to the main profile again:
-reserve traffic leaves through that one exit's uplink (or through WARP if the
-lifeline says so) and gets none of the fleet's routing — no geo rules, no load
-balancing, no failover between exits.
+**Where the configs are:**
 
-**Where the configs are.** On the master's node page, each credential's card has a
-**RESERVE · if the main server stops working** block listing every lifeline exit in
-manifest order, with a `.conf` and a QR each. An exit that cannot hand one out yet
-is listed with the reason — `the exit has not published its lifeline key yet` (it
-has not reconciled since the knob went on) or `no public endpoint known for this
-exit` (neither its `public_ip`, its `ssh.host` nor the address it registered is an
-IP literal — set `public_ip`). If the whole listing fails, the page says
-`Reserve configs could not be listed` and keeps the credentials and the main
-configs; it does not blank. The same reserve profiles are on the self-service page
-a user already holds, under **If the main server stops working** — that page shows
-only the exits that are ready, and shows none at all while the profile is paused.
+| Surface | Location |
+|---|---|
+| Console | node page → credential card → **RESERVE · if the main server stops working**, one `.conf` + QR per exit |
+| Portal | the person's own page → **If the main server stops working** (ready exits only; hidden while paused) |
 
-**What to check on the exit.**
+Console reasons when an exit is not ready:
+
+| Reason | Fix |
+|---|---|
+| `the exit has not published its lifeline key yet` | wait one reconcile pass |
+| `no public endpoint known for this exit` | set `public_ip` on the exit |
+| `Reserve configs could not be listed: …` | listing failed; credentials and main configs still render |
+
+**Check on the exit:**
 
 ```bash
-awg show awgl0                              # interface, port, peers, handshakes
-nft list table inet wgfleet                 # udp dport <lifeline port> accept;
-                                            # masquerade + leak guard for the pool
-iptables -S DOCKER-USER | grep awgl0        # the forward accepts Docker would eat
+awg show awgl0                          # port, peers, handshakes
+nft list table inet wgfleet | grep -E 'awgl0|<lifeline port>'   # accept, masquerade, leak guard
+iptables -S DOCKER-USER | grep awgl0    # forward accepts
 ```
 
-The node page carries a **lifeline** health check on every exit whose spec has one.
-It reads the agent's own verdict before it looks at the interface, which matters:
-`awgl0` stays up on its last good config through every reason the agent has to stop
-applying a new one — no key published yet, a spec it rejected, an AmneziaWG 3.x
-config the node's kernel module cannot take. A green link and a red check means the
-interface is serving something older than the spec, and the check says what stopped
-it. Peers on `awg show` that do not match the credentials you expect is the same
-symptom seen from the other side.
+**Health check `lifeline`** on the node page: red with a reason (no key yet, spec
+rejected, AmneziaWG 3.x refused by the module) means `awgl0` serves its last good
+config, not the current spec.
 
-Raising the interface is deliberately best-effort: it runs before the WARP egress,
-policy routing, the resolver and the REALITY inbound, and a reserve interface that
-will not come up must not freeze the exit's primary data plane. That is why the
-health check exists — nothing else reports the failure.
-
-**Turning a lifeline off** takes two reconcile passes. The first brings `awgl0`
-down and deliberately keeps its config, because that config is what
-`awg-quick down` reads to find the interface; the second removes the config once
-the interface is actually gone. An exit that still shows `awgl0` right after you
-removed the section from the manifest is mid-way through this, not stuck.
+**Turning it off:** two reconcile passes — pass 1 brings `awgl0` down and keeps the
+config, pass 2 removes the config.
 
 ### Retiring a hand-built emergency interface
 
-If an exit already carries an emergency AmneziaWG interface you raised by hand —
-a unit plus a `.conf` and an nftables drop-in — retire it before enabling
-`lifeline`, in this order:
+Before adding `lifeline` to an exit that already has a hand-made `awgl0`:
 
 ```bash
-systemctl stop awg-quick@awgl0
-systemctl disable awg-quick@awgl0
-rm /etc/amnezia/amneziawg/awgl0.conf                 # or wherever yours lives
-rm /etc/systemd/system/awg-quick@awgl0.service.d/*.conf
+systemctl disable --now awg-quick@awgl0
+rm /etc/amnezia/amneziawg/awgl0.conf
+rm -r /etc/systemd/system/awg-quick@awgl0.service.d
 systemctl daemon-reload
 ```
 
-Then add the `lifeline` section to that exit in the manifest and let the agent
-reconcile. Leaving the old unit in place is the one thing that will not work: both
-want the same interface name and the same port, and the winner is whichever
-started last.
-
-**The server key changes.** The new interface has a key the exit generated for
-itself and published the public half of, not the one your unit held, so any peer
-you had issued by hand against the old interface will not handshake. Those people re-import from the
-console — their credential is unchanged; it is the reserve profile that is new.
+Then add the `lifeline` section. The server key changes: peers issued against the
+old interface re-import the reserve profile from the console or the portal.
 
 ## Client access (VLESS)
 

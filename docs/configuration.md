@@ -336,35 +336,19 @@ run warm and you can switch the live path instantly.
 
 ### Lifeline
 
-A reserve client-facing AmneziaWG interface on this exit — a second way in if the
-master's own client interface is ever unreachable. Opt-in: omit the whole section
-to leave the exit unchanged. Requires `masters[].client_awg.managed: true` — there
-is no wg-easy equivalent for a reserve interface, so the controller must own the
-credentials it projects here.
-
-Its peers are the master's own credentials, projected: the same client keys, the
-same host offset carried into this pool (a client at `.7` of the master's pool is
-at `.7` of this one, as a `/32`), and a preshared key derived per exit. Each
-credential then gets one reserve config per lifeline exit, in the console and on
-the self-service page. See [operations.md](operations.md) for what to check on the exit
-and how to hand the configs out.
-
-The exit's own `name` appears in every reserve URL, so an exit that carries a
-`lifeline` must be named in letters, digits, `.`, `_` and `-`, at most 64
-characters. Exits without a lifeline keep whatever name they have.
-
-What a reserve config routes into the tunnel is the master's `client_awg`
-decision, minus IPv6: `client_awg.ipv6: block` is not carried here, so the v6
-route is stripped and a reserve client behaves as it would under `off` — its own
-IPv6 path stays outside the tunnel.
+Reserve client interface `awgl0` on an exit. Peers = the master's credentials (same
+client keys, same host offset in this pool, per-exit preshared key). Every credential
+gets one reserve config per lifeline exit in the console and on the portal. Requires
+`masters[].client_awg.managed: true`. Exit name: `[A-Za-z0-9._-]`, max 64. IPv6 route
+(`client_awg.ipv6: block`) is not carried. Checks and hand-out: [operations.md](operations.md).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `fleet.exits[].lifeline.listen_port` | int | **required** | UDP port for the reserve interface. Must differ from the exit's own AmneziaWG port and from any `firewall.public_udp_ports` entry |
 | `fleet.exits[].lifeline.address_pool` | CIDR | **required** | Client address pool for the reserve interface. Must be at least as large as the master's `client_awg.address_pool` and must not overlap any other pool in the fleet |
 | `fleet.exits[].lifeline.egress` | string | `direct` | `direct` or `warp`. `warp` requires WARP to already be in this exit's egress chain (`egress` or `egress_fallback`) |
-| `fleet.exits[].lifeline.dns` | []string | this exit's blocky | Resolvers handed to lifeline clients. Unset with `dns_filter: true` hands out this interface's own gateway address, which the exit's blocky binds. **Required** when `dns_filter` is off, since the master's resolvers are unreachable without the master |
-| `fleet.exits[].lifeline.mtu` | int | derived | MTU override. Derived otherwise: one AmneziaWG layer over this exit's own link — and with `egress: warp`, the smaller of that and the WARP interface's MTU, since the two hops terminate separately rather than nesting |
+| `fleet.exits[].lifeline.dns` | []string | this exit's blocky | Resolvers in reserve configs. Unset + `dns_filter: true` ⇒ the interface gateway (blocky binds it). **Required** when `dns_filter` is off |
+| `fleet.exits[].lifeline.mtu` | int | derived | MTU override. Derived: link MTU minus one AmneziaWG layer; with `egress: warp` also capped by the WARP interface MTU |
 
 ---
 
