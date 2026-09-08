@@ -47,19 +47,39 @@ func (p lifelinePlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 		// the knob is per-exit and off by default) or the operator just cleared it.
 		// The rendered config tells the two apart, and it can, because nothing else on
 		// the node writes that file or raises that interface.
-		if _, err := os.Stat(p.confPath); err != nil {
-			return []reconcile.Action{reconcile.NoChangeAction(lifelineComponent, "not configured")}, nil
+		//
+		// Disabling therefore converges in TWO passes, and the order is load-bearing.
+		// The config is what `awg-quick down` READS to find the interface, and the
+		// down is best-effort: removing both in one pass means a down that failed
+		// leaves awgl0 up with nothing left to take it down — and with the spec gone,
+		// the `lifeline` health check is gone too, so an orphaned interface still
+		// carrying live client peers reports as "not configured" forever.
+		_, statErr := os.Stat(p.confPath)
+		confPresent := statErr == nil
+		switch {
+		case confPresent && p.isUp():
+			// Down only. The config stays until a pass sees the interface actually gone.
+			return []reconcile.Action{reconcile.BestEffortExecAction(
+				"lifeline disabled: bring "+domain.LifelineInterface+" down (its config is kept until it is)",
+				"awg-quick", "down", p.confPath)}, nil
+		case confPresent:
+			rm, err := reconcile.RemoveFileAction(p.confPath, "lifeline disabled: remove its config")
+			if err != nil {
+				return nil, err
+			}
+			return []reconcile.Action{rm, p.clearDeferred()}, nil
+		case p.isUp():
+			// An interface with no config: /etc wiped, a half-finished restore, or the
+			// removal above running against a down that had silently failed earlier.
+			// `awg-quick down` has nothing to read, so delete the device directly.
+			return []reconcile.Action{reconcile.BestEffortExecAction(
+				"lifeline disabled: delete the orphaned "+domain.LifelineInterface+" (no config to bring it down with)",
+				"ip", "link", "del", domain.LifelineInterface)}, nil
 		}
-		rm, err := reconcile.RemoveFileAction(p.confPath, "lifeline disabled: remove its config")
-		if err != nil {
-			return nil, err
-		}
+		// Neither a config nor an interface: nothing to do, and nothing to remember.
 		return []reconcile.Action{
-			reconcile.BestEffortExecAction(
-				"lifeline disabled: bring "+domain.LifelineInterface+" down",
-				"awg-quick", "down", p.confPath),
-			rm,
 			p.clearDeferred(),
+			reconcile.NoChangeAction(lifelineComponent, "not configured"),
 		}, nil
 	}
 	if p.privateKey == "" {

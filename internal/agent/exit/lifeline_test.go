@@ -80,7 +80,8 @@ func applyLifeline(t *testing.T, p lifelinePlanner, spec domain.NodeSpec) {
 // exits are in this state, and a planner that reported work every pass would make
 // the plan output useless for the exits that do carry one.
 func TestLifelineAbsentAndUnconfiguredIsQuiet(t *testing.T) {
-	p := lifelinePlannerFor(t, false)
+	p := lifelinePlannerFor(t, false) // no config, and no interface either
+
 	acts := mustLifelinePlan(t, p, domain.NodeSpec{Role: domain.RoleExit})
 	for _, a := range acts {
 		if a.Changes() {
@@ -92,21 +93,36 @@ func TestLifelineAbsentAndUnconfiguredIsQuiet(t *testing.T) {
 	}
 }
 
-// Clearing the manifest knob must actually take the interface down. The config
-// file on disk is the ownership evidence — nothing but the agent raises awgl0 —
-// so its presence is what distinguishes "disable it" from "never had one".
-func TestLifelineDisabledBringsTheInterfaceDownAndRemovesTheConfig(t *testing.T) {
+// Disabling the lifeline converges in TWO passes, and the order is the whole
+// point: the config is what `awg-quick down` reads to find the interface, so
+// deleting it while awgl0 is still up strands a live interface nothing can take
+// down and nothing is watching — the spec is gone, so the health check is gone
+// with it. First pass brings it down and KEEPS the config; only a pass that finds
+// the interface actually gone removes it.
+func TestLifelineDisabledBringsTheInterfaceDownBeforeRemovingItsConfig(t *testing.T) {
 	p := lifelinePlannerFor(t, true)
 	applyLifeline(t, p, lifelineNodeSpec(lifelinePeer(t, "alice", "10.98.77.7/32")))
 	if _, err := os.Stat(p.confPath); err != nil {
 		t.Fatalf("setup: the config was not rendered: %v", err)
 	}
+	disabled := domain.NodeSpec{Role: domain.RoleExit}
 
-	acts := mustLifelinePlan(t, p, domain.NodeSpec{Role: domain.RoleExit})
+	// Pass 1 — the interface is still up: bring it down, keep the config.
+	acts := mustLifelinePlan(t, p, disabled)
 	got := planDump(acts)
 	if !strings.Contains(got, "awg-quick down "+p.confPath) {
 		t.Errorf("disabling the lifeline must bring %s down:\n%s", domain.LifelineInterface, got)
 	}
+	for _, a := range acts {
+		if a.Kind == reconcile.ActionDelete && a.Target == p.confPath {
+			t.Fatalf("the config must survive while the interface is up — deleting it orphans %s:\n%s",
+				domain.LifelineInterface, got)
+		}
+	}
+
+	// Pass 2 — the interface is gone: now the config may go.
+	p.up = func(string) bool { return false }
+	acts = mustLifelinePlan(t, p, disabled)
 	var removed bool
 	for _, a := range acts {
 		if a.Kind == reconcile.ActionDelete && a.Target == p.confPath {
@@ -114,7 +130,35 @@ func TestLifelineDisabledBringsTheInterfaceDownAndRemovesTheConfig(t *testing.T)
 		}
 	}
 	if !removed {
-		t.Errorf("disabling the lifeline must remove its config:\n%s", got)
+		t.Errorf("once the interface is down the config must be removed:\n%s", planDump(acts))
+	}
+}
+
+// A config that has been lost (a wiped /etc, a half-finished restore) with the
+// interface still up is the same orphan by another route: there is no config for
+// `awg-quick down` to read, so the interface has to be deleted directly.
+func TestLifelineDisabledDeletesAnOrphanedInterface(t *testing.T) {
+	p := lifelinePlannerFor(t, true) // up, and nothing was ever written to confPath
+	got := planDump(mustLifelinePlan(t, p, domain.NodeSpec{Role: domain.RoleExit}))
+	if !strings.Contains(got, "ip link del "+domain.LifelineInterface) {
+		t.Errorf("an interface with no config must still be torn down:\n%s", got)
+	}
+}
+
+// A stale deferral from a lifeline that no longer exists is a reason for a
+// decision nobody is making any more.
+func TestLifelineDisabledClearsAStaleDeferral(t *testing.T) {
+	p := lifelinePlannerFor(t, false)
+	keyless := p
+	keyless.privateKey = ""
+	applyActions(t, mustLifelinePlan(t, keyless, lifelineNodeSpec(lifelinePeer(t, "alice", "10.98.77.7/32"))))
+	if _, err := os.Stat(p.confPath + ".deferred"); err != nil {
+		t.Fatalf("setup: no deferral was recorded: %v", err)
+	}
+
+	applyActions(t, mustLifelinePlan(t, p, domain.NodeSpec{Role: domain.RoleExit}))
+	if _, err := os.Stat(p.confPath + ".deferred"); !os.IsNotExist(err) {
+		t.Errorf("a lifeline that is gone must not leave its deferral behind (err=%v)", err)
 	}
 }
 
