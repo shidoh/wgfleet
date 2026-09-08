@@ -168,6 +168,11 @@ fleet:
               ads: [https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.txt]
             clientGroupsBlock:
               default: [ads]
+      # lifeline: # reserve client interface on this exit: every issued credential gets a reserve profile against it, for the day the master is lost. Needs masters[].client_awg.managed: true
+      #   listen_port: 41827 # UDP port clients dial; must differ from this exit's AWG port and public_udp_ports
+      #   address_pool: 10.98.77.0/24 # reserve client pool; at least as large as the master's client pool, no overlaps
+      #   egress: direct # direct (default) | warp; warp needs WARP in this exit's egress chain
+      #   # dns: [10.98.77.1] # resolvers for reserve clients; required only when dns_filter is off
       firewall:
         as_blacklist: true # drop scanner ASNs from the fleet-wide feed (default false)
         whitelist: [10.20.0.0/16] # extra source CIDRs always accepted; mgmt overlay is included automatically
