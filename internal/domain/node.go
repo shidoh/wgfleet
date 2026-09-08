@@ -74,6 +74,14 @@ type Node struct {
 	// identity of the interface end users dial, published by the agent so the
 	// controller can render client configs. Empty while wg-easy owns that leg.
 	ClientWGPublicKey string
+	// LifelinePublicKey is the exit's LIFELINE WireGuard public key: the identity
+	// of LifelineInterface ("awgl0"), the reserve client-facing interface an exit
+	// may carry (NodeSpec.Lifeline). Published separately from PublicKey (the
+	// master↔exit tunnel identity) and from ClientWGPublicKey (the master's own
+	// client leg) because all three are distinct interfaces that can coexist on
+	// the same node. Like the others, the private key never leaves the node.
+	// Empty when the exit carries no lifeline.
+	LifelinePublicKey string
 
 	// Drain, when set, takes the node out of the load balancer: it stays a
 	// configured peer/proxy (existing connections survive) but receives no new

@@ -58,6 +58,12 @@ type NodeSpec struct {
 	// Reality is the VLESS+REALITY+XHTTP inbound server spec (exit only), set when
 	// TransportRealityXHTTP is enabled. nil otherwise.
 	Reality *RealityServerSpec
+	// Lifeline is the reserve client-facing AmneziaWG interface spec (exit only,
+	// LifelineInterface = "awgl0"): the same client population as the master's
+	// ClientWG interface, kept warm on an exit so the fleet survives the master
+	// being blocked or unreachable (product.md boundary 3). nil ⇒ the exit carries
+	// no lifeline, which is the default until an exit is designated to hold one.
+	Lifeline *LifelineSpec
 	// Hardening is the host-hardening policy: which of the managed hardening
 	// subsystems (sshd drop-in, fail2ban jail) the agent reconciles. nil ⇒ not
 	// configured, which every reader treats as BOTH ENABLED — the fail-safe default
@@ -243,6 +249,12 @@ type FirewallSpec struct {
 	// (ADR-0025). Unlike the AWG WGPort (UDP), this is TCP. 0 ⇒ not opened (the exit
 	// does not run the reality transport).
 	RealityPort int
+	// LifelinePort is the UDP port to open for the exit's lifeline listener
+	// (LifelineInterface), the reserve client-facing AmneziaWG interface. Separate
+	// from WGPort — that one fronts the master↔exit tunnel, not end users — and
+	// from the master's own ClientWGSpec.ListenPort, since the lifeline lives on a
+	// different node. 0 ⇒ not opened (the exit carries no lifeline).
+	LifelinePort int
 	// PublicTCPPorts are TCP ports opened to the WORLD (no interface scope), for
 	// services that must be reachable from the public internet — e.g. the decoy web
 	// listener on 80/443. Role-agnostic: it applies to masters and exits alike.
@@ -301,6 +313,14 @@ type RoutingSpec struct {
 	// agent-side (a fixed constant) when the exit runs the reality transport with a
 	// WARP egress; 0 ⇒ no such rule (direct egress, or no reality transport).
 	RealityEgressMark int
+	// LifelineCIDR is the SOURCE subnet whose traffic is sent to the egress table
+	// for the exit's lifeline interface, the same role ClientCIDR plays for the
+	// exit's own WGServer pool — scoped `from <LifelineCIDR>`, never `from all`,
+	// for the identical reason. It is the lifeline's address pool,
+	// populated agent-side from LifelineSpec.AddressPool (so it needs no wire
+	// field, like ClientCIDR); empty ⇒ no lifeline egress rule is rendered
+	// (fail-safe, and the state when the exit carries no lifeline).
+	LifelineCIDR string
 }
 
 // ExportersSpec selects which Prometheus endpoints the agent runs. Host metrics
