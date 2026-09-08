@@ -95,13 +95,17 @@ type pageData struct {
 	Reserves []reserveView
 }
 
-// reserveView is one reserve door as the page shows it. Ready is what the fill
-// filters on and is kept on the row so a template that ever ranges over an
-// unfiltered listing still cannot render a link that answers with an error.
+// reserveView is one reserve door as the page shows it. ID and Name are both
+// carried because they are two different things: the ID is what the URL names and
+// what validExit bounds, the Name is what the operator called the node and the
+// only one of the two a person has any chance of recognising when they are told
+// over the phone which reserve to switch to. They coincide until a node is
+// registered under a name of its own, which is exactly when showing the wrong one
+// would matter.
 type reserveView struct {
-	Exit     string
+	ID       string
+	Name     string
 	Endpoint string
-	Ready    bool
 }
 
 // resolve finds the credential a token refers to and renders its config.
@@ -187,7 +191,7 @@ func (h *Handler) reserves(r *http.Request, masterID string) []reserveView {
 		if !e.Ready {
 			continue
 		}
-		out = append(out, reserveView{Exit: e.ID, Endpoint: e.Endpoint, Ready: true})
+		out = append(out, reserveView{ID: e.ID, Name: e.Name, Endpoint: e.Endpoint})
 	}
 	return out
 }
@@ -479,7 +483,7 @@ a.btn:focus-visible { outline:2px solid #e6edf3; outline-offset:2px; }
    same profile, handed out for a different day, and a card of its own would read
    as a second product to install. */
 .reserve { margin-top:24px; padding-top:22px; border-top:1px solid #232c39; }
-h2 { margin:0 0 6px; font-size:17px; }
+.reserve h2 { margin:0 0 6px; font-size:17px; }
 .reserve > p { margin:0 0 4px; color:#8b98a9; font-size:15px; }
 .reserve-item { margin-top:18px; }
 .reserve-name { margin:0 0 8px; font-size:15px; }
@@ -530,11 +534,11 @@ obfuscated so it can get through the block, and the plain WireGuard app cannot r
   <p>Add these profiles now, while everything works. If the main one stops connecting, switch to any of them.</p>
   {{range .Reserves}}
   <div class="reserve-item">
-    <p class="reserve-name">{{.Exit}} <span>{{.Endpoint}}</span></p>
+    <p class="reserve-name">{{.Name}} <span>{{.Endpoint}}</span></p>
     <div class="actions">
-      <a class="btn" href="/c/{{$.Token}}/l/{{.Exit}}/config">Download reserve profile</a>
+      <a class="btn" href="/c/{{$.Token}}/l/{{.ID}}/config">Download reserve profile</a>
     </div>
-    <img class="qr-img" src="/c/{{$.Token}}/l/{{.Exit}}/qr" alt="QR code for the {{.Exit}} reserve profile" loading="lazy">
+    <img class="qr-img" src="/c/{{$.Token}}/l/{{.ID}}/qr" alt="QR code for the {{.Name}} reserve profile" loading="lazy">
   </div>
   {{end}}
 </section>

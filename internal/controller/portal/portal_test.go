@@ -98,7 +98,10 @@ func testPortal(t *testing.T) *Handler {
 		},
 		exits: []string{"exit-ready", "exit-waiting"},
 		exitNodes: map[string]domain.Node{
-			"exit-ready": {ID: "exit-ready", Name: "exit-ready", Role: domain.RoleExit,
+			// The name deliberately differs from the ID: the URL is built from one and
+			// the label from the other, and a fixture where they matched would let a
+			// page that shows the ID pass as one that shows the name.
+			"exit-ready": {ID: "exit-ready", Name: "spare-door", Role: domain.RoleExit,
 				PublicIP: "198.51.100.9", LifelinePublicKey: "ZXhpdC1saWZlbGluZS1rZXktMDAwMDAwMDAwMDAwMDA="},
 			// No published lifeline key: the door exists in the manifest and is not
 			// open yet.
@@ -216,6 +219,12 @@ func TestPortalHasNoFleetSurface(t *testing.T) {
 	for _, path := range []string{
 		"/", "/nodes", "/nodes/master-xa-1", "/login", "/backup",
 		"/nodes/master-xa-1/wg-clients", "/rollout/start", "/static/app.css",
+		// The reserve doors added two routes UNDER a token. Neither the console's
+		// own lifeline URLs nor a truncated portal one may answer here: the reserve
+		// path is a leaf on a credential, not a way into the fleet.
+		"/nodes/master-xa-1/wg-clients/aaaabbbbccccdddd/lifeline/exit-ready/config",
+		"/nodes/master-xa-1/wg-clients/aaaabbbbccccdddd/lifeline/exit-ready/qr",
+		"/c/aaaabbbbccccdddd/l", "/c/aaaabbbbccccdddd/l/exit-ready",
 	} {
 		res, _ := fetch(t, h, path)
 		if res.StatusCode != http.StatusNotFound {
@@ -228,13 +237,22 @@ func TestPortalHasNoFleetSurface(t *testing.T) {
 // from here.
 func TestPortalIsReadOnly(t *testing.T) {
 	h := testPortal(t)
+	// Every route the portal has, including the two reserve ones: a door handed out
+	// for the day the master is gone must be no more writable than the main one.
+	paths := []string{
+		"/c/aaaabbbbccccdddd",
+		"/c/aaaabbbbccccdddd/l/exit-ready/config",
+		"/c/aaaabbbbccccdddd/l/exit-ready/qr",
+	}
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
-		req := httptest.NewRequest(method, "/c/aaaabbbbccccdddd", nil)
-		req.RemoteAddr = "10.80.0.2:51820"
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code == http.StatusOK {
-			t.Errorf("%s on a profile succeeded", method)
+		for _, path := range paths {
+			req := httptest.NewRequest(method, path, nil)
+			req.RemoteAddr = "10.80.0.2:51820"
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code == http.StatusOK {
+				t.Errorf("%s %s succeeded", method, path)
+			}
 		}
 	}
 }
@@ -428,7 +446,6 @@ func TestPortalOffersReserveProfiles(t *testing.T) {
 	for _, want := range []string{
 		"If the main server stops working",
 		"Add these profiles now, while everything works.",
-		"exit-ready",
 		`href="/c/aaaabbbbccccdddd/l/exit-ready/config"`,
 		`src="/c/aaaabbbbccccdddd/l/exit-ready/qr"`,
 		"Download reserve profile",
@@ -437,10 +454,16 @@ func TestPortalOffersReserveProfiles(t *testing.T) {
 			t.Errorf("page missing %q:\n%s", want, body)
 		}
 	}
+	// The URL is built from the exit's ID and the label is the exit's NAME. They
+	// are different strings in this fixture on purpose: a person told over the
+	// phone which reserve to switch to is told the name.
+	if !strings.Contains(body, `<p class="reserve-name">spare-door <span>198.51.100.9:41827</span></p>`) {
+		t.Errorf("the reserve door is not labelled by the exit's name:\n%s", body)
+	}
 	// The QR is lazy: several reserve doors mean several full-size images, and the
 	// person on a phone came here to tap Download.
-	if !strings.Contains(body, `src="/c/aaaabbbbccccdddd/l/exit-ready/qr" alt="QR code for the exit-ready reserve profile" loading="lazy"`) {
-		t.Errorf("the reserve QR is not lazily loaded:\n%s", body)
+	if !strings.Contains(body, `src="/c/aaaabbbbccccdddd/l/exit-ready/qr" alt="QR code for the spare-door reserve profile" loading="lazy"`) {
+		t.Errorf("the reserve QR is not lazily loaded or not named:\n%s", body)
 	}
 	// An exit that cannot hand out a config is not on this page at all, and neither
 	// is our reason for it: the person can do nothing with either, and the operator
