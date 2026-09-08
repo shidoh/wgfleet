@@ -165,6 +165,8 @@ master node, `Degraded` until Step 7 adds an exit.
            key_path: "/root/.ssh/id_ed25519"
            # host_key: "ssh-ed25519 AAAA..."   # recommended, see below
    ```
+
+   All keys: [configuration.md#5-fleetexits-exit-nodes](configuration.md#5-fleetexits-exit-nodes)
 4. Recommended — pin the exit's SSH host key: provisioning ships the node's
    private identity over this connection.
    ```bash
@@ -198,6 +200,8 @@ confirm the master's `client_awg` block reads:
         managed: true   # the agent carries the client interface
 ```
 
+All keys: [configuration.md#client_awg-the-client-facing-amneziawg-listener](configuration.md#client_awg-the-client-facing-amneziawg-listener)
+
 1. Restart the controller (`--check-config` first — see [CLI.md](cli.md)).
 2. Web UI → master → **AWG CLIENTS** → issue one. You get a `.conf` to
    download and a QR to scan.
@@ -209,6 +213,18 @@ Optional — a permanent self-service link instead of a file: set
 (see `CONFIGURATION.md`). Setting one without the other is a startup error,
 which under `Restart=on-failure` becomes a restart loop — run
 `--check-config` before you restart the controller.
+
+```yaml
+controller:
+  client_portal: 10.147.20.10:9001             # the master's mgmt address
+  client_portal_url: https://vpn.example.org
+fleet:
+  masters:
+    - name: master-1
+      client_admin_ports: [9001]               # so clients can reach it
+```
+
+All keys: [configuration.md#2-controller-the-controller-process](configuration.md#2-controller-the-controller-process)
 
 Upgrading from a wgfleet that used wg-easy: do not set `managed: true`
 straight away — import the existing credentials first, or every client

@@ -52,6 +52,8 @@ The release archive contains both binaries; nothing to build.
      agent_bin: ./wgfleet-agent        # in the release archive beside the controller
    ```
 
+   All keys: [configuration.md#2-controller-the-controller-process](configuration.md#2-controller-the-controller-process)
+
    Expected: `--provision` installs this binary on each node.
 
 ## 1. Prep each VM (OS-level)
@@ -101,6 +103,9 @@ interface; the provisioner and the agent also reach the controller over this ove
          public_ip: 198.51.100.7          # WG endpoint the master dials this exit at
          ssh: { host: 198.51.100.7, port: 22, user: root, key_path: ~/.ssh/id_ed25519, host_key: "ssh-ed25519 AAAA..." }
    ```
+
+   All keys: [configuration.md#4-fleetmasters-master-nodes](configuration.md#4-fleetmasters-master-nodes),
+   [configuration.md#5-fleetexits-exit-nodes](configuration.md#5-fleetexits-exit-nodes)
 
 2. Pin `ssh.host_key`. Run `ssh-keyscan -t ed25519 <vm-ip>` and paste the
    `ssh-ed25519 AAAA...` part verbatim. Bootstrap ships the node's private mTLS
@@ -158,6 +163,18 @@ on Pending/Error nodes).
 3. **Metrics** (`controller.metrics`). Expected: `wgfleet_nodes{state="Ready"}`.
 
 4. **Client credentials.**
+
+   ```yaml
+   fleet:
+     masters:
+       - name: master-xa-1
+         public_ip: 203.0.113.10         # the endpoint every client config carries
+         client_awg:
+           managed: true
+   ```
+
+   All keys: [configuration.md#client_awg-the-client-facing-amneziawg-listener](configuration.md#client_awg-the-client-facing-amneziawg-listener)
+
    - With `client_awg.managed: true` (not the default): the agent owns the
      client interface, no wg-easy. Issue, pause, rename and revoke
      credentials on the master's page in the console; hand each person their

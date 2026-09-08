@@ -166,7 +166,15 @@ func TestShippedDocsLinkOnlyToShippedDocs(t *testing.T) {
 			if strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
 				continue
 			}
-			base := strings.TrimLeft(strings.ReplaceAll(target, "./", ""), "./")
+			// A fragment addresses a heading INSIDE the target file; the file is
+			// what has to ship, and the Makefile's fixlinks rewrites the name and
+			// leaves the fragment alone. Without this, every `configuration.md#key`
+			// link read as a filename that exists nowhere.
+			file := target
+			if i := strings.Index(file, "#"); i >= 0 {
+				file = file[:i]
+			}
+			base := strings.TrimLeft(strings.ReplaceAll(file, "./", ""), "./")
 			base = strings.TrimPrefix(base, "docs/")
 			// The Makefile's fixlinks rewrites repo paths to the names the archive
 			// uses; mirror the one class that is not a plain rename, so the check

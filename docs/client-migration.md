@@ -17,7 +17,7 @@ Four parts, each a separate decision. Stopping after any part is a finished stat
 - Parts 1-3 are invisible to your users: the agent adopts wg-easy's own interface key, every config already in the field keeps working, nobody re-imports anything.
 - Part 4 `awg3: full` adds header protection; every client must re-import before it works again, and the new config cannot be delivered through the tunnel. It is optional and nothing else depends on it.
 - Part 3 is the one that moves credentials into the controller's store, so issuing, pausing, renaming and revoking become console actions and each person gets a self-service link.
-- [The key check](#1a-the-key-check--do-not-skip-this) at the end of part 1 verifies that the agent will adopt wg-easy's identity rather than mint its own. It fails silently, and its failure is the only way this migration cuts everyone off at once. Run it even if you stop after part 1.
+- [The key check](#1a-the-key-check-do-not-skip-this) at the end of part 1 verifies that the agent will adopt wg-easy's identity rather than mint its own. It fails silently, and its failure is the only way this migration cuts everyone off at once. Run it even if you stop after part 1.
 - [Rollback](#rollback) in part 3 is free until you issue your first new client. Read it before starting part 3.
 
 ---
@@ -145,6 +145,8 @@ Reversible, nothing goes live. Copies wg-easy's clients into the controller's st
            address_pool: 10.73.0.0/24
    ```
 
+   All keys: [configuration.md#client_awg-the-client-facing-amneziawg-listener](configuration.md#client_awg-the-client-facing-amneziawg-listener)
+
 2. Dry-run the import. Run it on the master, controller live; it reads wg-easy's database and never writes to it. Add `--wg-easy-db PATH` if the database is not at `/etc/wireguard/wg-easy.db`.
 
    ```bash
@@ -177,13 +179,15 @@ Reversible, nothing goes live. Copies wg-easy's clients into the controller's st
 
 The cutover. Reversible until you issue your first new client — after that a rollback strands the people you issued. Users see nothing: the agent adopts wg-easy's interface key.
 
-Before you start: the [key check](#1a-the-key-check--do-not-skip-this) passed, and you have read [Rollback](#rollback) below.
+Before you start: the [key check](#1a-the-key-check-do-not-skip-this) passed, and you have read [Rollback](#rollback) below.
 
 1. Set the knob.
 
    ```yaml
            managed: true
    ```
+
+   All keys: [configuration.md#client_awg-the-client-facing-amneziawg-listener](configuration.md#client_awg-the-client-facing-amneziawg-listener)
 
 2. Validate and restart the controller. There is no reload signal; `kill -HUP` is logged and changes nothing.
 
@@ -250,6 +254,8 @@ Optional, no deadline. Do not start this part on the same evening as part 3. Req
            awg3: timers   # off | timers | full
    ```
 
+   All keys: [configuration.md#client_awg-the-client-facing-amneziawg-listener](configuration.md#client_awg-the-client-facing-amneziawg-listener)
+
    ```bash
    wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
    systemctl restart wgfleet-controller
@@ -265,6 +271,8 @@ Optional, no deadline. Do not start this part on the same evening as part 3. Req
 fleet:
   awg3_key: file:///etc/wgfleet/awg3.key   # openssl rand -base64 48 > /etc/wgfleet/awg3.key; chmod 600
 ```
+
+All keys: [configuration.md#3-fleet-fleet-wide-settings](configuration.md#3-fleet-fleet-wide-settings)
 
 - A file rather than `secret://`, because only a file travels in `--backup`.
 - Set it once and never change it. Rotating it re-derives the key on every 3.x tunnel: master↔exit tunnels go dark for up to one reconcile interval each, and every client config in the field becomes invalid at once.
