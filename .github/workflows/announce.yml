@@ -1,0 +1,33 @@
+# Re-post a release announcement in the Telegram channel without re-issuing the
+# release: downloads the published assets of the tag and runs the same notifier
+# the release workflow uses. For when a message was deleted or the format changed.
+name: announce
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to announce (e.g. v0.2.4)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main   # the changelog page the link points at is the current one
+
+      - name: Download the release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ github.event.inputs.tag }}" -D dist --pattern '*.tar.gz' --pattern 'SHA256SUMS'
+
+      - name: Announce on Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: bash .github/telegram-notify.sh "${{ github.event.inputs.tag }}" dist docs/changelog.md

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Announce a wgfleet release in a Telegram channel: one album with the build
 # archives and SHA256SUMS, captioned with the version and a link to the
-# release's section of the public changelog on the docs site.
+# release's section of the public changelog on the docs site. The caption sits
+# on the LAST file so it renders after the files, not between them.
 #
 #   TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... \
 #     .github/telegram-notify.sh <tag> <dist-dir> [changelog.md]
@@ -44,7 +45,7 @@ PAGE="${DOCS_URL%/}/docs/changelog/"
 ANCHOR="$(anchor_for)"
 LINK="$PAGE${ANCHOR:+#$ANCHOR}"
 
-CAPTION="$(printf '🚀 <b>wgfleet %s</b>\n\nWhat changed: <a href="%s">changelog</a>\nThe same text ships inside the archive as CHANGELOG.md.' \
+CAPTION="$(printf '🚀 <b>wgfleet %s</b>\n\nWhat changed: <a href="%s">changelog</a>' \
   "$(printf '%s' "$TAG" | escape_html)" "$(printf '%s' "$LINK" | escape_html)")"
 
 FILES=()
@@ -59,8 +60,9 @@ done
 [ "${#FILES[@]}" -gt 0 ] || { echo "nothing to send: no archives in $DIST_DIR" >&2; exit 1; }
 
 if [ -n "$DRY_RUN" ]; then
-  printf -- '----- album: %d file(s), caption on the first -----\n%s\n\nfiles:\n' "${#FILES[@]}" "$CAPTION"
+  printf -- '----- album: %d file(s), caption on the LAST -----\nfiles:\n' "${#FILES[@]}"
   for f in "${FILES[@]}"; do printf '  %s\n' "$(basename "$f")"; done
+  printf 'caption:\n%s\n' "$CAPTION"
   echo "Telegram announcement complete (dry run)."
   exit 0
 fi
@@ -75,11 +77,14 @@ if [ "${#FILES[@]}" -eq 1 ]; then
     -F "document=@${FILES[0]}" \
     >/dev/null
 else
-  # The caption rides on the first item and becomes the album's caption.
-  media_json="$(jq -cn --arg cap "$CAPTION" '
+  # A document album renders as one bubble per file, and the caption is drawn
+  # with the file that carries it. On the FIRST file it lands between that file
+  # and the rest ("file, text, more files"); on the LAST it follows every file.
+  last=$(( ${#FILES[@]} - 1 ))
+  media_json="$(jq -cn --arg cap "$CAPTION" --argjson last "$last" '
     [ $ARGS.positional | to_entries[] as $e
       | { type: "document", media: ("attach://file" + ($e.key | tostring)) }
-        + ( if $e.key == 0 then { caption: $cap, parse_mode: "HTML" } else {} end )
+        + ( if $e.key == $last then { caption: $cap, parse_mode: "HTML" } else {} end )
     ]
   ' --args "${FILES[@]}")"
   curl_args=(--form-string "chat_id=${TELEGRAM_CHAT_ID}" --form-string "media=${media_json}")
