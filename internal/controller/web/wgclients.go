@@ -70,6 +70,13 @@ type wgClientsData struct {
 	// not — an operator who sees only the working ones cannot tell a fleet with no
 	// reserve at all from one that is a reconcile pass away from having it.
 	Reserves []reserveExitView
+	// ReservesErr is a failure of the RESERVE listing alone, and it is deliberately
+	// not Err. Err blanks the page — no credentials, no issue form, no primary
+	// configs — and one exit whose spec will not render is no reason to take away
+	// the door that is still working and is the one the operator came to use. It is
+	// still shown, not swallowed: an operator told "no reserve" by a page that
+	// could not look is being told the fleet has no fallback.
+	ReservesErr string
 }
 
 // reserveExitView is one exit's reserve door as the page shows it. Ready decides
@@ -163,7 +170,34 @@ func (h *Handler) handleWGClients(w http.ResponseWriter, r *http.Request) {
 	// fails, and the node page renders as though it worked.
 	data.Flash = h.takeFlash(w, r)
 	data.FlashOK = h.takeFlashOK(w, r)
+	h.fillReserves(r, &data)
 	h.render(w, h.wgClientsTmpl, "layout", data)
+}
+
+// fillReserves lists the fleet's reserve doors for the FULL page render, and only
+// for it.
+//
+// It renders one spec per lifeline exit, and everything the page builds from it
+// sits inside the hand-out's hx-preserve subtree — which htmx keeps verbatim and
+// never re-renders. The 10-second poll would therefore pay that cost on every
+// tick of every open tab and throw the result away, so the poll (which shares
+// wgClientsView) does not come through here at all. Nothing flickers as a result:
+// the preserved node is not swapped, so a panel response carrying no reserves
+// changes nothing on screen.
+func (h *Handler) fillReserves(r *http.Request, data *wgClientsData) {
+	if !data.Managed || data.Err != "" || data.NotMaster {
+		return
+	}
+	reserves, err := clientcfg.ListLifelineExits(r.Context(), clientSource{h}, data.NodeID)
+	if err != nil {
+		data.ReservesErr = err.Error()
+		return
+	}
+	for _, e := range reserves {
+		data.Reserves = append(data.Reserves, reserveExitView{
+			ID: e.ID, Name: e.Name, Endpoint: e.Endpoint, Ready: e.Ready, Reason: e.Reason,
+		})
+	}
 }
 
 // handleWGClientsPanel answers the 10-second poll with the credentials panel and
@@ -257,20 +291,6 @@ func (h *Handler) wgClientsView(w http.ResponseWriter, r *http.Request) (wgClien
 	data.PortalBase = h.portalBase
 	if data.Managed {
 		data.IfaceDown = h.clientInterfaceDown(r, id)
-		// A listing that cannot be read is a FAILURE, not an empty reserve: an
-		// operator who is told "no reserve doors" by a page that simply could not
-		// look is being told the fleet has no fallback at the moment they came here
-		// to find one.
-		reserves, err := clientcfg.ListLifelineExits(r.Context(), clientSource{h}, id)
-		if err != nil {
-			data.Err = "Cannot list the fleet's reserve exits: " + err.Error()
-			return data, nil
-		}
-		for _, e := range reserves {
-			data.Reserves = append(data.Reserves, reserveExitView{
-				ID: e.ID, Name: e.Name, Endpoint: e.Endpoint, Ready: e.Ready, Reason: e.Reason,
-			})
-		}
 	}
 	peers := h.clientPeerStatus(r, id)
 	for _, c := range clients {

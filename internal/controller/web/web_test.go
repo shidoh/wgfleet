@@ -38,6 +38,11 @@ type stubRenderer struct {
 	// reports them: which exits carry one, and the address a client dials for it.
 	lifelines []string
 	exitHosts map[string]string
+	// lifelineErr fails the reserve listing, and lifelineCalls counts it. The
+	// count is what proves the 10-second poll does not pay for a listing whose
+	// output it throws away.
+	lifelineErr   error
+	lifelineCalls *int
 }
 
 func (s stubRenderer) RenderNodeSpec(_ context.Context, id string) (domain.NodeSpec, error) {
@@ -87,7 +92,12 @@ func (s stubRenderer) ListWGClients(context.Context, string) ([]domain.WGClient,
 
 // The fleet's reserve doors. A stub that declares none renders the console's
 // "no lifeline exits" case; the readiness matrix itself is tested in clientcfg.
-func (s stubRenderer) LifelineExits(context.Context) ([]string, error) { return s.lifelines, nil }
+func (s stubRenderer) LifelineExits(context.Context) ([]string, error) {
+	if s.lifelineCalls != nil {
+		*s.lifelineCalls++
+	}
+	return s.lifelines, s.lifelineErr
+}
 
 func (s stubRenderer) ExitEndpointHost(_ context.Context, exitID string) (string, error) {
 	return s.exitHosts[exitID], nil

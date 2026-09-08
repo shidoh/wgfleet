@@ -192,7 +192,7 @@
                that an exit's readiness is rendered once, at page load — acceptable,
                because a reserve door that becomes ready while this panel is open is
                one reload away, and the alternative is a panel that shuts itself. */}}
-          {{if and $.Ready $.Reserves}}
+          {{if and $.Ready (or $.Reserves $.ReservesErr)}}
           {{$client := .}}
           <div class="rule"></div>
 
@@ -200,6 +200,11 @@
             <div class="cfg-main">
               <div class="field-label">RESERVE · if the main server stops working</div>
               <p class="cfg-hint">Each of these dials an exit directly instead of going through this master, so it keeps working when the master does not. Hand them out alongside the main config and tell the person to switch to one only when the main config stops connecting.</p>
+              {{/* A listing that failed is said out loud and costs nothing else on
+                   this page: the credentials and the main config above are
+                   unaffected, and an operator who was quietly shown an empty
+                   reserve would conclude the fleet has no fallback at all. */}}
+              {{if $.ReservesErr}}<p class="cfg-hint warn">Reserve configs could not be listed: {{$.ReservesErr}}</p>{{end}}
               {{range $.Reserves}}
               {{if .Ready}}
               <div class="cfg-actions">

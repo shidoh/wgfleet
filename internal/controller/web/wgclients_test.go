@@ -872,3 +872,86 @@ func TestWGClientsPageHidesTheReserveWithoutLifelineExits(t *testing.T) {
 		t.Errorf("the reserve section was rendered with no lifeline exits:\n%s", card(body, "a"))
 	}
 }
+
+// A reserve listing that fails must not take the page with it.
+//
+// Setting the page's own Err here blanked everything: no credential list, no
+// issue form, no primary configs — because one exit's spec could not be rendered.
+// The reserve is the SECOND door; losing sight of it must not cost the operator
+// the first one, which is still working and still the thing they came to use.
+func TestWGClientsPageWarnsWhenTheReserveCannotBeListed(t *testing.T) {
+	clients := lifelineClients()
+	h, st := newTestHandler(t, stubRenderer{
+		spec:        managedMasterSpec(),
+		wgClients:   &clients,
+		lifelines:   []string{"exit-ready"},
+		lifelineErr: errInjected,
+	})
+	seed(t, st, domain.Node{
+		ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster,
+		PublicIP: "203.0.113.1", State: domain.StateReady,
+		ClientWGPublicKey: "c2VydmVyLXB1YmxpYy0wMDAwMDAwMDAwMDAwMDAwMDA=",
+	})
+
+	res, body := get(t, h, "/nodes/master-xa-1/wg-clients")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	// The page still does its job.
+	for _, want := range []string{"laptop", "10.80.0.2/32", "Download .conf"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page lost %q over a failed reserve listing", want)
+		}
+	}
+	// And it says what it could not read, rather than showing an empty reserve.
+	if !strings.Contains(body, "Reserve configs could not be listed") {
+		t.Errorf("nothing warns that the reserve listing failed:\n%s", card(body, "a"))
+	}
+}
+
+// The 10-second poll must not pay for the reserve listing.
+//
+// It renders one spec per lifeline exit, and everything the poll would build with
+// it sits inside the hx-preserve subtree htmx keeps verbatim — so the work is
+// discarded on every tick, on every open tab, forever.
+func TestWGClientsPollDoesNotListTheReserve(t *testing.T) {
+	clients := lifelineClients()
+	var calls int
+	h, st := newTestHandler(t, stubRenderer{
+		spec:          managedMasterSpec(),
+		wgClients:     &clients,
+		specs:         map[string]domain.NodeSpec{"exit-ready": lifelineExitSpec()},
+		lifelines:     []string{"exit-ready"},
+		exitHosts:     map[string]string{"exit-ready": "203.0.113.9"},
+		lifelineCalls: &calls,
+	})
+	seed(t, st, domain.Node{
+		ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster,
+		PublicIP: "203.0.113.1", State: domain.StateReady,
+		ClientWGPublicKey: "c2VydmVyLXB1YmxpYy0wMDAwMDAwMDAwMDAwMDAwMDA=",
+	})
+	seed(t, st, domain.Node{
+		ID: "exit-ready", Name: "exit-ready", Role: domain.RoleExit,
+		PublicIP: "203.0.113.9", State: domain.StateReady,
+		LifelinePublicKey: "ZXhpdC1saWZlbGluZS1rZXktMDAwMDAwMDAwMDAwMDA=",
+	})
+
+	if _, body := get(t, h, "/nodes/master-xa-1/wg-clients"); !strings.Contains(body, "RESERVE") {
+		t.Fatalf("the full page did not render the reserve section:\n%s", card(body, "a"))
+	}
+	if calls == 0 {
+		t.Fatal("the full page did not list the reserve exits at all")
+	}
+	onPageLoad := calls
+
+	res, body := get(t, h, "/nodes/master-xa-1/wg-clients/panel")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("panel status = %d", res.StatusCode)
+	}
+	if calls != onPageLoad {
+		t.Errorf("the poll listed the reserve exits %d more time(s)", calls-onPageLoad)
+	}
+	if !strings.Contains(body, "laptop") {
+		t.Errorf("the poll stopped carrying the credentials:\n%s", body)
+	}
+}
