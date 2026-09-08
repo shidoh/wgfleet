@@ -222,6 +222,28 @@ func TestKernelReflects(t *testing.T) {
 	}
 }
 
+// TestKernelReflectsLifelineOnly: a WARP exit with a lifeline pool but no
+// primary ClientCIDR still gets an egress default route from Render (Task 7
+// extended that condition) — KernelReflects must check for it rather than
+// short-circuiting to true just because ClientCIDR is unset.
+func TestKernelReflectsLifelineOnly(t *testing.T) {
+	spec := domain.RoutingSpec{
+		EgressInterface: "wgcf",
+		LifelineCIDR:    "10.98.77.0/24",
+	}
+	rulesWithLifeline := "0:\tfrom all lookup local\n" +
+		"200:\tfrom all fwmark 0x1 lookup main\n" +
+		"305:\tfrom all lookup 51820\n" +
+		"32766:\tfrom all lookup main\n"
+
+	if got := KernelReflects(spec, rulesWithLifeline, ""); got {
+		t.Error("lifeline-only spec with no default route in the egress table should NOT be reflected")
+	}
+	if got := KernelReflects(spec, rulesWithLifeline, "default dev wgcf scope link\n"); !got {
+		t.Error("lifeline-only spec with the default route present should be reflected")
+	}
+}
+
 func TestRenderRealityEgressMark(t *testing.T) {
 	steps, err := Render(domain.RoutingSpec{
 		EgressInterface:   "wgcf",

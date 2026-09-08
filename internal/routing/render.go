@@ -290,9 +290,10 @@ func KernelReflects(spec domain.RoutingSpec, ruleList, egressRoutes string) bool
 			return false
 		}
 	}
-	// The egress default route only exists when client traffic is actually routed
-	// (ClientCIDR set); without it there is nothing to verify in the egress table.
-	if spec.ClientCIDR == "" {
+	// The egress default route only exists when client or lifeline traffic is
+	// actually routed (ClientCIDR and/or LifelineCIDR set); without either there
+	// is nothing to verify in the egress table.
+	if spec.ClientCIDR == "" && spec.LifelineCIDR == "" {
 		return true
 	}
 	return strings.Contains(egressRoutes, "default") &&
