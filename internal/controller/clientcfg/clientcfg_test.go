@@ -72,13 +72,21 @@ const lifelineKey = "ZXhpdC1saWZlbGluZS1rZXktMDAwMDAwMDAwMDAwMDA="
 
 // lifelineSpec is an exit carrying a reserve client-facing interface for m1's
 // clients: the same population, a shifted pool, its own port.
+//
+// Its DNS and AllowedIPs deliberately DIFFER from the master's, which the real
+// renderer copies across (keybroker.lifelineSpec takes both from the master, so a
+// client finds the same routing on either door). Here they are made distinct on
+// purpose: every interface-level line in a reserve config must come from the
+// EXIT's spec, and identical fixtures would let a builder that rendered the
+// master's spec pass this test unnoticed.
 func lifelineSpec() domain.NodeSpec {
 	return domain.NodeSpec{
 		Role: domain.RoleExit,
 		Lifeline: &domain.LifelineSpec{
 			ClientWGSpec: domain.ClientWGSpec{
 				ListenPort: 41827, AddressPool: "10.98.77.0/24", ServerAddress: "10.98.77.1",
-				MTU: 1360, DNS: []string{"10.98.77.1"}, AllowedIPs: []string{"0.0.0.0/0"},
+				MTU: 1360, DNS: []string{"10.98.77.1"},
+				AllowedIPs: []string{"0.0.0.0/1", "128.0.0.0/1"},
 			},
 			Egress: domain.EgressDirect,
 		},
@@ -248,14 +256,18 @@ func TestBuildLifeline(t *testing.T) {
 		"PublicKey = " + lifelineKey,
 		"PresharedKey = " + wantPSK,
 		"Endpoint = 203.0.113.9:41827",
+		"DNS = 10.98.77.1",
+		"AllowedIPs = 0.0.0.0/1, 128.0.0.0/1",
 	} {
 		if !strings.Contains(res.Config, want) {
 			t.Errorf("config missing %q:\n%s", want, res.Config)
 		}
 	}
-	// Nothing of the master's own door may leak into the reserve config.
+	// Nothing of the master's own door may leak into the reserve config — not its
+	// endpoint, its pool address, its real preshared key or its interface key, and
+	// not its interface-level settings either (resolver, routed prefixes).
 	for _, unwanted := range []string{"203.0.113.1:443", "10.80.0.2/32", testPSK,
-		"c2VydmVyLXB1YmxpYy0wMDAwMDAwMDAwMDAwMDAwMDA="} {
+		"c2VydmVyLXB1YmxpYy0wMDAwMDAwMDAwMDAwMDAwMDA=", "10.80.0.1", "AllowedIPs = 0.0.0.0/0"} {
 		if strings.Contains(res.Config, unwanted) {
 			t.Errorf("config carries the master's %q:\n%s", unwanted, res.Config)
 		}

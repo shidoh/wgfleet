@@ -76,26 +76,45 @@ func Build(ctx context.Context, src Source, masterID, clientID string) (Result, 
 		return Result{}, errors.New("no public endpoint known for this master")
 	}
 
-	clients, err := src.ListWGClients(ctx, masterID)
+	c, err := findClient(ctx, src, masterID, clientID)
 	if err != nil {
 		return Result{}, err
 	}
-	for _, c := range clients {
-		if c.ID != clientID {
-			continue
-		}
-		cfg, rerr := wg.RenderClientConfig(wg.ClientConfigInput{
-			Spec:            *spec.Master.ClientWG,
-			Client:          c,
-			ServerPublicKey: node.ClientWGPublicKey,
-			Endpoint:        net.JoinHostPort(host, strconv.Itoa(spec.Master.ClientWG.ListenPort)),
-		})
-		if rerr != nil {
-			return Result{}, rerr
-		}
-		return Result{Config: cfg, Client: c, Master: node}, nil
+	cfg, err := wg.RenderClientConfig(wg.ClientConfigInput{
+		Spec:            *spec.Master.ClientWG,
+		Client:          c,
+		ServerPublicKey: node.ClientWGPublicKey,
+		Endpoint:        net.JoinHostPort(host, strconv.Itoa(spec.Master.ClientWG.ListenPort)),
+	})
+	if err != nil {
+		return Result{}, err
 	}
-	return Result{}, store.ErrNotFound
+	return Result{Config: cfg, Client: c, Master: node}, nil
+}
+
+// findClient resolves one credential on one master, or store.ErrNotFound.
+//
+// Both builders go through here so "which credential is this token" has exactly
+// one answer. The two used to carry their own copy of the loop, and the copies
+// would have had to be corrected together — a lookup that started, say, matching
+// on name in one of them is how a reserve link would quietly resolve to a
+// different person's credential than the main link with the same token.
+//
+// A store failure is returned as-is, not folded into ErrNotFound: the portal
+// renders ErrNotFound as "this link no longer works" AND charges a rate-limit
+// failure, so a busy SQLite must not tell every legitimate user their access was
+// revoked (see FindByID).
+func findClient(ctx context.Context, src Source, masterID, clientID string) (domain.WGClient, error) {
+	clients, err := src.ListWGClients(ctx, masterID)
+	if err != nil {
+		return domain.WGClient{}, err
+	}
+	for _, c := range clients {
+		if c.ID == clientID {
+			return c, nil
+		}
+	}
+	return domain.WGClient{}, store.ErrNotFound
 }
 
 // FindByID locates a credential across every master, returning the master it
@@ -310,37 +329,31 @@ func BuildLifeline(ctx context.Context, src Source, masterID, clientID, exitID s
 		return Result{}, fmt.Errorf("clientcfg: lifeline pool %q on exit %q: %w", lifeline.AddressPool, exitID, err)
 	}
 
-	clients, err := src.ListWGClients(ctx, masterID)
+	c, err := findClient(ctx, src, masterID, clientID)
 	if err != nil {
 		return Result{}, err
 	}
-	for _, c := range clients {
-		if c.ID != clientID {
-			continue
-		}
-		// c is the range's own copy, so shifting it here cannot reach the store's
-		// record — the master-side address and PSK must survive untouched.
-		addr, aerr := domain.LifelineAddress(c.Address, masterPool, lifelinePool)
-		if aerr != nil {
-			return Result{}, fmt.Errorf("clientcfg: reserve address for %q: %w", c.Name, aerr)
-		}
-		psk, perr := domain.LifelinePSK(c.PresharedKey, exitID)
-		if perr != nil {
-			return Result{}, fmt.Errorf("clientcfg: reserve preshared key for %q: %w", c.Name, perr)
-		}
-		c.Address, c.PresharedKey = addr, psk
-		cfg, rerr := wg.RenderClientConfig(wg.ClientConfigInput{
-			Spec:            lifeline.ClientWGSpec,
-			Client:          c,
-			ServerPublicKey: exitNode.LifelinePublicKey,
-			Endpoint:        state.Endpoint,
-		})
-		if rerr != nil {
-			return Result{}, rerr
-		}
-		return Result{Config: cfg, Client: c, Master: master, Exit: exitNode}, nil
+	// c is this function's own copy, so shifting it here cannot reach the store's
+	// record — the master-side address and PSK must survive untouched.
+	addr, err := domain.LifelineAddress(c.Address, masterPool, lifelinePool)
+	if err != nil {
+		return Result{}, fmt.Errorf("clientcfg: reserve address for %q: %w", c.Name, err)
 	}
-	return Result{}, store.ErrNotFound
+	psk, err := domain.LifelinePSK(c.PresharedKey, exitID)
+	if err != nil {
+		return Result{}, fmt.Errorf("clientcfg: reserve preshared key for %q: %w", c.Name, err)
+	}
+	c.Address, c.PresharedKey = addr, psk
+	cfg, err := wg.RenderClientConfig(wg.ClientConfigInput{
+		Spec:            lifeline.ClientWGSpec,
+		Client:          c,
+		ServerPublicKey: exitNode.LifelinePublicKey,
+		Endpoint:        state.Endpoint,
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Config: cfg, Client: c, Master: master, Exit: exitNode}, nil
 }
 
 // LifelineFileName is the filename a downloaded RESERVE config is offered under.
