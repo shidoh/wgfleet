@@ -1,0 +1,66 @@
+site_name: wgfleet
+site_description: Operator documentation for wgfleet
+site_url: https://shidoh.github.io/wgfleet-docs/
+repo_url: https://github.com/shidoh/wgfleet
+edit_uri: ""
+docs_dir: build-docs
+site_dir: site
+strict: true
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+  palette:
+    - scheme: default
+      primary: blue grey
+      toggle:
+        icon: material/brightness-7
+        name: Dark
+    - scheme: slate
+      primary: blue grey
+      toggle:
+        icon: material/brightness-4
+        name: Light
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.highlight
+
+# Only operator-facing pages are published. Engineering material stays out of
+# the site: adr/ and dev/ are for people with repository access.
+exclude_docs: |
+  docs/adr/
+  docs/dev/
+  docs/index.md
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Quickstart: docs/QUICKSTART.md
+      - System requirements: docs/requirements.md
+      - Onboarding a node: docs/onboarding.md
+      - Controller on the master: docs/colocated-controller-master.md
+  - Configuration:
+      - Manifest: docs/manifest.md
+      - Key reference: docs/configuration.md
+      - Secrets with SOPS: docs/secrets-sops.md
+      - CLI: docs/cli.md
+  - Operations:
+      - Operations: docs/operations.md
+      - Upgrading: docs/upgrade.md
+      - Support bundle: docs/support-bundle.md
+  - Migrations:
+      - Client leg off wg-easy: docs/client-migration.md
+      - Moving the master: docs/master-migration.md
+  - Recipes:
+      - RU split tunnel and DNS filtering: docs/recipes/ru-split-tunnel-dns-filter.md
+  - Security: SECURITY.md

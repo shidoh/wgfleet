@@ -1,0 +1,42 @@
+# Publishes the operator documentation as a static site into a SEPARATE, public
+# repository (shidoh/wgfleet-docs, branch gh-pages), so the site is public while
+# this repository stays private: GitHub Pages on a private repository needs a
+# paid plan, and even then the source would be one setting away from public.
+#
+# Requires one secret: DOCS_DEPLOY_KEY — the private half of a deploy key added
+# to shidoh/wgfleet-docs with write access. Only main publishes.
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "SECURITY.md"
+      - "mkdocs.yml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Build (strict — a broken link fails the job)
+        run: make docs-site
+
+      - name: Publish to the docs repository
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          deploy_key: ${{ secrets.DOCS_DEPLOY_KEY }}
+          external_repository: shidoh/wgfleet-docs
+          publish_branch: gh-pages
+          publish_dir: ./site
+          force_orphan: true
+          commit_message: "docs: ${{ github.sha }}"
