@@ -59,42 +59,50 @@ servers:
 $ wgfleet-agent --config exit-agent.yaml --once --plan \
     --public-ip 198.51.100.7 --mgmt-addr 10.20.0.5 --state-dir state/exit-de-1
 
-reconcile plan — 36 change(s)
+reconcile plan — 30 change(s)
 
 === firewall (nftables) ===
-  + create    state/exit-de-1/wgfleet.nft — 1730 bytes, mode 644
+  + create    state/exit-de-1/wgfleet.nft — 1740 bytes, mode 644
       | #!/usr/sbin/nft -f
       …
 
 === amneziawg interface ===
-  + create    state/exit-de-1/awg0.conf — 567 bytes, mode 600
+  + create    state/exit-de-1/awg0.conf — 378 bytes, mode 600
       | [Interface]
       | PrivateKey = <redacted>
       | Address = 10.81.0.1/24
       | ListenPort = 22891
       | MTU = 1360
       | Jc = 5
-      | Jmin = 31
-      | Jmax = 91
+      | Jmin = 45
+      | Jmax = 105
       | S1 = 27
       | S2 = 38
       | S3 = 63
       | S4 = 23
       | H1 = 29838687-159838687
       | H2 = 717803267-847803267
-      | I1 = <b 0xc10000000104><r 4><b 0x0a><r 10><b 0x00><r 101>
+      | H3 = 1073039351-1203039351
+      | H4 = 1504901982-1634901982
+      | I1 = <b 0x000100002112a442><r 12>
+      | I2 = <b 0xc3000000010e><r 14><b 0x0c><r 12><b 0x00><r 97>
       …
   ! exec      awg-quick — bring interface up with new config
       | awg-quick up state/exit-de-1/awg0.conf
 
 === policy routing ===
-  + create    state/exit-de-1/routing.applied — 742 bytes, mode 644
-      | ip rule add to 203.0.113.1 lookup main pref 100
-      | ip rule add to 10.0.0.0/8 lookup main pref 110
+  + create    state/exit-de-1/routing.applied — 533 bytes, mode 644
+      | sysctl -w net.ipv4.conf.all.rp_filter=0
+      | sysctl -w net.ipv4.conf.default.rp_filter=0
       …
 
+=== reality inbound (xray) ===
+    no-change reality inbound — disabled
+
 === exit forwarding (ip_forward + DOCKER-USER) ===
-    no-change DOCKER-USER — pending: DOCKER-USER chain not present yet
+  ! exec      sysctl — enable IPv4 forwarding
+      | sysctl -w net.ipv4.ip_forward=1
+      …
 ```
 
 `+ create` · `~ update` · `! exec` · `no-change` — the same four markers for
@@ -111,11 +119,11 @@ provisions nodes and serves the API, UI and metrics. **`wgfleet-agent`** runs on
 every managed node; its role (`master` or `exit`) comes from config. It pulls its
 `NodeSpec`, drives the node to it idempotently, and reports health.
 
-All fleet-internal tunnels are **AmneziaWG**, both client↔master and
-master↔exit. The only vanilla-WireGuard tunnel is the external WARP tunnel to
-Cloudflare. Each exit can additionally run a VLESS + REALITY + XHTTP transport
-as a **fallback for when AmneziaWG is blocked** by DPI, switched per-exit from
-the Web UI.
+Tunnels are **AmneziaWG** by default, both client↔master and master↔exit; the
+only vanilla-WireGuard tunnel is the external WARP tunnel to Cloudflare. Each
+exit can additionally run a VLESS + REALITY + XHTTP transport as a **fallback
+for when AmneziaWG is blocked** by DPI, switched per-exit from the Web UI, and
+clients can connect to the master over VLESS as well as AmneziaWG.
 
 ---
 
@@ -346,8 +354,8 @@ a year and agents renew their own between 70% and 90% of that; the controller
 refuses renewal for a node that has been decommissioned or deleted, but a
 certificate already issued stays valid until it expires. Cutting a node off
 sooner means reissuing the CA. The gRPC endpoints are **not rate-limited**, and
-the Web UI speaks **plain HTTP**; both are mitigated only by binding to the
-management overlay.
+the Web UI speaks **plain HTTP** behind a password login; both rely on being
+bound to the management overlay.
 
 Reporting a vulnerability: [SECURITY.md](SECURITY.md).
 
@@ -362,16 +370,21 @@ MVP, in active development.
 | Domain model, config, SQLite store, gRPC/mTLS transport, PKI, key broker | ✅ |
 | Reconcile engine with first-class dry-run | ✅ |
 | Exit data plane — awg-quick, wgcf/WARP, policy routing, nftables, blocky | ✅ |
-| Master data plane — mihomo, NAT, agent-owned client AWG interface, container lifecycle | ✅ |
+| Master data plane — mihomo in its own network namespace, NAT, agent-owned client AWG interface, container lifecycle | ✅ |
 | SSH provisioner, UI-triggered provisioning, agent upgrade, wire-contract gate | ✅ |
 | Health checks, drift repair, graceful drain, teardown, staleness sweep | ✅ |
 | AmneziaWG parameter generator, auto-MTU, SOPS/age secrets | ✅ |
 | Egress-block detection + censorship-adaptive failover | ✅ |
 | Web dashboard, Prometheus metrics, encrypted backup/restore | ✅ |
 | Dual transport — VLESS + REALITY + XHTTP fallback, per-exit, live switch | ✅ |
+| Client VLESS + REALITY + XHTTP — credentials, QR and subscription from the console | ✅ |
+| Tiered exit selection, throughput watchdog with auto-suspend, drain by config | ✅ |
+| Console login, certificate self-renewal, node tombstones | ✅ |
 | AmneziaWG 3.x — plumbing shipped, **off by default** | ⏸ |
 
-Apply-side actions and live SSH are supported on **Linux** (Ubuntu 24.04).
+Apply-side actions and live SSH are supported on **Linux**: Ubuntu 24.04 is
+the tested platform; 22.04 works but is not guaranteed
+([requirements](docs/requirements.md)).
 Automatic AmneziaWG → REALITY failover is not implemented; switching transports
 is a manual, per-exit action.
 
