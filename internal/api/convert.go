@@ -41,6 +41,33 @@ func SpecToProto(s domain.NodeSpec) *pb.NodeSpec {
 	out.ActiveTransport = string(s.ActiveTransport)
 	out.Reality = realityServerToProto(s.Reality)
 	out.Hardening = hardeningToProto(s.Hardening)
+	out.Lifeline = lifelineToProto(s.Lifeline)
+	return out
+}
+
+// lifelineToProto carries the exit's reserve client-facing interface onto the
+// wire, reusing clientWGToProto for the embedded ClientWGSpec so the same
+// "no private keys, no Keepalive" rules apply as for the master's client leg.
+func lifelineToProto(l *domain.LifelineSpec) *pb.LifelineSpec {
+	if l == nil {
+		return nil
+	}
+	return &pb.LifelineSpec{
+		ClientWg: clientWGToProto(&l.ClientWGSpec),
+		Egress:   string(l.Egress),
+	}
+}
+
+// lifelineFromProto is lifelineToProto's inverse. An absent message stays nil,
+// matching "this exit carries no lifeline".
+func lifelineFromProto(p *pb.LifelineSpec) *domain.LifelineSpec {
+	if p == nil {
+		return nil
+	}
+	out := &domain.LifelineSpec{Egress: domain.EgressMethod(p.GetEgress())}
+	if cw := clientWGFromProto(p.GetClientWg()); cw != nil {
+		out.ClientWGSpec = *cw
+	}
 	return out
 }
 
@@ -96,6 +123,7 @@ func SpecFromProto(p *pb.NodeSpec) domain.NodeSpec {
 	s.ActiveTransport = domain.MasterTransport(p.GetActiveTransport())
 	s.Reality = realityServerFromProto(p.GetReality())
 	s.Hardening = hardeningFromProto(p.GetHardening())
+	s.Lifeline = lifelineFromProto(p.GetLifeline())
 	return s
 }
 
@@ -615,10 +643,11 @@ func dnsFromProto(d *pb.DNSFilterSpec) domain.DNSFilterSpec {
 
 func firewallToProto(f domain.FirewallSpec) *pb.FirewallSpec {
 	out := &pb.FirewallSpec{
-		AsBlacklist: f.ASBlacklist,
-		Whitelist:   append([]string(nil), f.Whitelist...),
-		WgPort:      int32(f.WGPort),
-		RealityPort: int32(f.RealityPort),
+		AsBlacklist:  f.ASBlacklist,
+		Whitelist:    append([]string(nil), f.Whitelist...),
+		WgPort:       int32(f.WGPort),
+		RealityPort:  int32(f.RealityPort),
+		LifelinePort: int32(f.LifelinePort),
 	}
 	for _, p := range f.PublicTCPPorts {
 		out.PublicTcpPorts = append(out.PublicTcpPorts, int32(p))
@@ -634,10 +663,11 @@ func firewallFromProto(f *pb.FirewallSpec) domain.FirewallSpec {
 		return domain.FirewallSpec{}
 	}
 	out := domain.FirewallSpec{
-		ASBlacklist: f.GetAsBlacklist(),
-		Whitelist:   append([]string(nil), f.GetWhitelist()...),
-		WGPort:      int(f.GetWgPort()),
-		RealityPort: int(f.GetRealityPort()),
+		ASBlacklist:  f.GetAsBlacklist(),
+		Whitelist:    append([]string(nil), f.GetWhitelist()...),
+		WGPort:       int(f.GetWgPort()),
+		RealityPort:  int(f.GetRealityPort()),
+		LifelinePort: int(f.GetLifelinePort()),
 	}
 	for _, p := range f.GetPublicTcpPorts() {
 		out.PublicTCPPorts = append(out.PublicTCPPorts, int(p))

@@ -73,7 +73,15 @@ const (
 	// v10 adds RenewCertificate. An agent below it has no way to renew and will run
 	// to expiry in silence, so the gate is what tells the operator which nodes still
 	// need a hand rather than letting them discover it one anniversary at a time.
-	WireContractVersion uint32 = 10
+	// v11 adds NodeSpec.lifeline and FirewallSpec.lifeline_port — an exit's reserve
+	// client-facing AmneziaWG interface (product.md boundary 3: the fleet survives
+	// the master itself being blocked or unreachable). A v10 agent drops both
+	// fields: it neither brings the lifeline interface up nor opens its port, so an
+	// exit designated to hold one silently carries none, and the fleet loses the
+	// exact fallback it was configured to have precisely when the master is
+	// unreachable — the one moment nobody is there to notice. Deploy the controller
+	// FIRST.
+	WireContractVersion uint32 = 11
 
 	// WireClientWG is the wire version that introduced MasterSpec.client_wg. The
 	// controller refuses to render the client interface for a master below it: such
@@ -100,6 +108,17 @@ const (
 	// rather than compared against WireContractVersion so a later bump for something
 	// unrelated does not silently re-close this to the whole fleet.
 	WireClientIPv6 uint32 = 9
+
+	// WireLifeline is the wire version that introduced NodeSpec.lifeline and
+	// FirewallSpec.lifeline_port. The controller refuses to render a lifeline for
+	// an exit below it: such an agent drops both fields and brings up no reserve
+	// client-facing interface at all, so the exit silently carries none of the
+	// fallback capacity the operator configured — exactly the moment the fleet
+	// needs it, since the lifeline exists for when the master is unreachable. Named
+	// rather than compared against WireContractVersion so a later bump for
+	// something unrelated does not silently re-close the lifeline to the whole
+	// fleet.
+	WireLifeline uint32 = 11
 
 	// WireAWG3 is the wire version that introduced the AmneziaWG 3.0 block on
 	// AWGShared. The controller refuses to render 3.0 params for a node below it:

@@ -99,6 +99,45 @@ func TestNodeSpecRoundTripMinimal(t *testing.T) {
 	}
 }
 
+// The lifeline carries its own embedded ClientWGSpec, so it inherits the same
+// "Keepalive stays off the wire" rule as the master's client leg
+// (TestClientWGSpecKeepaliveStaysOffTheWire) — the node renders the interface,
+// the controller renders client configs, and Keepalive only ever belongs to the
+// latter.
+func TestNodeSpecRoundTripCarriesLifeline(t *testing.T) {
+	cw := *clientWGSpec()
+	cw.Keepalive = "20-30"
+
+	spec := domain.NodeSpec{
+		Role:     domain.RoleExit,
+		Egress:   domain.EgressWARP,
+		WGServer: domain.WGServerSpec{ListenPort: 51820, AddressPool: "10.81.0.0/24", Address: "10.81.0.1"},
+		Firewall: domain.FirewallSpec{WGPort: 51820, LifelinePort: 41827},
+		Lifeline: &domain.LifelineSpec{ClientWGSpec: cw, Egress: domain.EgressWARP},
+	}
+
+	got := SpecFromProto(SpecToProto(spec))
+
+	if got.Lifeline == nil {
+		t.Fatal("Lifeline did not survive the round trip")
+	}
+	if got.Lifeline.Keepalive != "" {
+		t.Errorf("Lifeline.Keepalive = %q after a round-trip; it must not cross the wire", got.Lifeline.Keepalive)
+	}
+	if got.Firewall.LifelinePort != 41827 {
+		t.Errorf("Firewall.LifelinePort = %d, want 41827", got.Firewall.LifelinePort)
+	}
+
+	want := spec
+	wantLifeline := *spec.Lifeline
+	wantLifeline.Keepalive = ""
+	want.Lifeline = &wantLifeline
+
+	if !reflect.DeepEqual(want, got) {
+		t.Fatalf("round-trip mismatch beyond the dropped keepalive:\n got = %+v\nwant = %+v", got, want)
+	}
+}
+
 func TestStatusRoundTrip(t *testing.T) {
 	hs := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
 	st := domain.NodeStatus{
