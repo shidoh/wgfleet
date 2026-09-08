@@ -66,13 +66,29 @@ to_html() {
     END { flush() }
   ' | escape_html | sed -E \
     -e 's|^#+[[:space:]]*(.*)$|<b>\1</b>|' \
+    -e 's|(^\|[^*])\*([^*]+)\*([^*]\|$)|\1<i>\2</i>\3|g' \
     -e 's|\*\*([^*]+)\*\*|<b>\1</b>|g' \
     -e 's|`([^`]+)`|<code>\1</code>|g'
 }
 
+# chunks splits text into whole-line pieces of at most $1 chars, NUL-separated.
+# Nothing is dropped: a message that does not fit one Telegram message becomes
+# two. (The alternative — cutting with an ellipsis — is what v0.2.4's announcement
+# got: one highlight of eleven, then "…", because the highlights were the caption
+# of a document album and a caption is capped at 1024.)
+chunks() {
+  local budget="$1" out="" line
+  while IFS= read -r line; do
+    if [ -n "$out" ] && [ $(( ${#out} + ${#line} + 1 )) -gt "$budget" ]; then
+      printf '%s\0' "$out"; out=""
+    fi
+    out+="${line}"$'\n'
+  done
+  [ -n "$out" ] && printf '%s\0' "$out"
+}
+
 # fit keeps whole lines while they fit the budget, marking a cut with an ellipsis.
-# Only the announcement is ever cut, and never at the cost of information: the
-# full notes ride along as a file.
+# Used only for the SHORT caption on the album, never for the highlights.
 fit() {
   local budget="$1" out="" line
   while IFS= read -r line; do
@@ -137,14 +153,29 @@ NOTES_NAME="CHANGELOG-${TAG}.md"
 # The header is one line: the product and the version, which is what a reader
 # scrolling a channel needs to identify the post. Telegram bot messages have no
 # font-size control, so prominence comes from weight, position and an emoji.
-ANNOUNCEMENT="$(printf '🚀 <b>wgfleet %s</b>' "$TAG_HTML")"
-if [ -n "$(tr -d '[:space:]' <<<"$LEAD_HTML")" ]; then
-  ANNOUNCEMENT+="$(printf '\n\n%s' "$(fit "$CAPTION_BUDGET" <<<"$LEAD_HTML")")"
-fi
+HEADER="$(printf '🚀 <b>wgfleet %s</b>' "$TAG_HTML")"
 SUMMARY="$(summary_line)"
+SUMMARY_HTML=""
 if [ -n "$SUMMARY" ]; then
-  ANNOUNCEMENT+="$(printf '\n\n%s — full changelog in <code>%s</code>' \
+  SUMMARY_HTML="$(printf '%s — full changelog in <code>%s</code>' \
     "$(printf '%s' "$SUMMARY" | escape_html)" "$(printf '%s' "$NOTES_NAME" | escape_html)")"
+fi
+HAVE_LEAD=""
+[ -n "$(tr -d '[:space:]' <<<"$LEAD_HTML")" ] && HAVE_LEAD=1
+
+# Two shapes, chosen by size. Highlights that fit a caption ride on the album as
+# before — one post. Highlights that do not are a text message of their own
+# (4096 per message, split by whole lines, nothing cut), and the album follows
+# with a short caption: header, counts, and where the highlights are.
+ANNOUNCEMENT="$HEADER"
+[ -n "$HAVE_LEAD" ] && ANNOUNCEMENT+="$(printf '\n\n%s' "$LEAD_HTML")"
+[ -n "$SUMMARY_HTML" ] && ANNOUNCEMENT+="$(printf '\n\n%s' "$SUMMARY_HTML")"
+TEXTS=()
+if [ "${#ANNOUNCEMENT}" -gt 1024 ] && [ -n "$HAVE_LEAD" ]; then
+  while IFS= read -r -d '' part; do TEXTS+=("$part"); done < <(chunks 4000 <<<"$(printf '%s\n\n%s' "$HEADER" "$LEAD_HTML")")
+  ANNOUNCEMENT="$HEADER"
+  [ -n "$SUMMARY_HTML" ] && ANNOUNCEMENT+="$(printf '\n\n%s' "$SUMMARY_HTML")"
+  ANNOUNCEMENT+="$(printf '\n\nHighlights are in the message above.')"
 fi
 
 # --- Collect what the album carries -------------------------------------------
@@ -165,8 +196,8 @@ for f in "$DIST_DIR"/*.tar.gz "$DIST_DIR"/SHA256SUMS; do
   FILES+=("$f")
 done
 
-# Hard cap the caption at Telegram's 1024 (fit() already trimmed the lead, but the
-# header and summary are added after it): keep whole lines, mark a cut, never fail.
+# Hard cap the caption at Telegram's 1024. With long highlights already moved to
+# their own message this only guards the header + summary; it must never fail.
 if [ "${#ANNOUNCEMENT}" -gt 1024 ]; then
   ANNOUNCEMENT="$(printf '%s' "$ANNOUNCEMENT" | fit 1000)…"
 fi
@@ -174,14 +205,25 @@ fi
 caption_json_note() { :; }
 
 if [ -n "$DRY_RUN" ]; then
-  printf '\n----- ONE message: sendMediaGroup, %d file(s), caption on the first -----\n' "${#FILES[@]}"
+  for t in "${TEXTS[@]}"; do
+    printf '\n----- text message (%d chars) -----\n%s\n' "${#t}" "$t"
+  done
+  printf '\n----- album: sendMediaGroup, %d file(s), caption on the first -----\n' "${#FILES[@]}"
   printf 'caption (%d chars):\n%s\n\nfiles (first carries the caption):\n' "${#ANNOUNCEMENT}" "$ANNOUNCEMENT"
   for f in "${FILES[@]}"; do printf '  %s\n' "$(basename "$f")"; done
   echo "Telegram announcement complete (dry run)."
   exit 0
 fi
 
-echo "Posting one message: ${#FILES[@]} file(s) as an album, highlights in the caption"
+for t in "${TEXTS[@]}"; do
+  curl -fsS -X POST "$API/sendMessage" \
+    --form-string "chat_id=${TELEGRAM_CHAT_ID}" \
+    --form-string "text=${t}" \
+    --form-string "parse_mode=HTML" \
+    --form-string "disable_web_page_preview=true" \
+    >/dev/null
+done
+echo "Posting the album: ${#FILES[@]} file(s), ${#TEXTS[@]} highlight message(s) before it"
 
 if [ "${#FILES[@]}" -eq 1 ]; then
   # sendMediaGroup requires 2..10 items; a lone file goes via sendDocument, caption
