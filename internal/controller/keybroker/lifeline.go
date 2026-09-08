@@ -40,12 +40,20 @@ import (
 // the exit has none.
 //
 // nil is a DECISION here, exactly as it is for the master's client leg: the
-// operator did not ask for a lifeline, or the agent is too old to own one. Every
-// failure to find out — an unreadable store, a credential that cannot be
-// projected — returns an error instead, which fails this exit's whole spec render
-// and leaves the node on its last-good config. An empty lifeline interface is
-// structurally valid and would be applied happily, locking every user out of the
-// reserve path on the one day they reach for it.
+// operator did not ask for a lifeline, or the agent is too old to own one. It is
+// never a failure in disguise — an empty lifeline interface is structurally valid
+// and would be applied happily, locking every user out of the reserve path on the
+// one day they reach for it.
+//
+// The two failures are graded, because their blast radii are not the same size:
+//
+//   - not being able to find out AT ALL — an unreadable store — returns an error,
+//     which fails this exit's whole spec render and leaves the node on its
+//     last-good config, peers and all.
+//   - ONE credential that cannot be projected is skipped and warned about once
+//     (see LifelinePeersOf). Failing the render over it would stop nftables,
+//     routing, the exit's own AWG server and its egress from converging because a
+//     single person's reserve peer could not be computed.
 func (b *Broker) lifelineSpec(ctx context.Context, exit config.ExitConfig, exitNode domain.Node) (*domain.LifelineSpec, error) {
 	if !exit.LifelineEnabled() {
 		return nil, nil

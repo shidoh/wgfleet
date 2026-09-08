@@ -148,9 +148,9 @@ reconcile. Leaving the old unit in place is the one thing that will not work: bo
 want the same interface name and the same port, and the winner is whichever
 started last.
 
-**The server key changes.** The new interface has a key the controller generated
-and published, not the one your unit held, so any peer you had issued by hand
-against the old interface will not handshake. Those people re-import from the
+**The server key changes.** The new interface has a key the exit generated for
+itself and published the public half of, not the one your unit held, so any peer
+you had issued by hand against the old interface will not handshake. Those people re-import from the
 console — their credential is unchanged; it is the reserve profile that is new.
 
 ## Client access (VLESS)

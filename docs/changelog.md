@@ -16,6 +16,7 @@ An exit can carry a reserve client-facing interface, so every credential gets a 
 ### Changed
 
 - The controller↔agent wire moves to v11, carrying the lifeline interface and its firewall port. An agent below v11 is rendered no lifeline at all rather than a firewall hole in front of a listener it cannot raise; the controller says so once per exit in its log.
+- Every exit now carries two `DOCKER-USER` accepts naming `awgl0` and generates and publishes a lifeline key each pass, whether or not a lifeline is configured: the rules name an interface that may not exist and the key is cheap, and both being there already is what makes enabling a lifeline a pure manifest edit with nothing to wait for.
 
 ### Fixed
 
