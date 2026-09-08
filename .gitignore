@@ -33,7 +33,7 @@ fleet.local.yaml
 /.codegraph/
 /.claude/
 /.superpowers/
-# Local maintainer context file (public design notes live in docs/DESIGN.md)
+# Local maintainer context file (design notes live in the Obsidian vault)
 /CLAUDE.md
 
 # Go
@@ -47,3 +47,16 @@ coverage.*
 .idea/
 .vscode/
 *.swp
+
+# Internal engineering notes — local only, never in the repository (they live in
+# the maintainer's Obsidian vault). Kept ignored so they cannot come back by
+# accident; the history was rewritten to drop them.
+/docs/DESIGN.md
+/docs/lessons.md
+/docs/product.md
+/docs/plans/
+/docs/research/
+
+# mkdocs build output and the root page staged into docs/ at build time
+/site/
+/build-docs/
