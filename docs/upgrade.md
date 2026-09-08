@@ -9,121 +9,106 @@ cannot be reached keeps serving its last good configuration.
 | Version | Where | Purpose |
 |---|---|---|
 | **Build version** | Stamped from git at build time | Human/observability. Shown by `--version`, in the UI, and in `wgfleet_node_agent_info`. |
-| **Wire-contract version** | A constant in each binary | The compatibility key. Controller and agent must agree within `[MinSupportedWire .. WireContractVersion]`. |
+| **Wire-contract version** | A constant in each binary | Compatibility key. Controller and agent must agree within `[MinSupportedWire .. WireContractVersion]`. |
 
-A release that only changes behaviour the agent already understands keeps the
-same wire version; the wire version is bumped whenever an agent must understand
-something new to converge correctly.
+Same wire version → release only changes behaviour the agent already understands.
+Bumped wire version → agent must understand something new to converge correctly.
 
 Check what a binary speaks:
-
 ```
 wgfleet-controller --version
 wgfleet-agent --version
 ```
+Result: prints wire + build version.
 
 ## What happens on a version mismatch
 
 The agent sends its wire + build version as gRPC metadata on every call. The
-controller gates `Register` and `PullSpec`:
+controller gates `Register` and `PullSpec`.
 
-- **Compatible** → served normally; the controller records the agent's version
-  (UI node page and `wgfleet_node_agent_info`).
-- **Agent too old / unknown** (below `MinSupportedWire`) → refused with
-  `FailedPrecondition`, node marked `Degraded` ("agent wire vN …"), and an
-  **auto-upgrade is triggered**: the controller pushes the configured agent binary
-  over SSH and restarts the agent. Requires `controller.agent_bin` and SSH reach.
-- **Agent too new** (controller behind) → refused; **upgrade the controller
-  first**. Auto-upgrade cannot fix a too-old controller.
-
-A refused agent keeps its last-good spec and keeps reconciling.
+| Situation | What happens | What to do |
+|---|---|---|
+| Compatible | Served normally. Controller records the agent's version (UI node page, `wgfleet_node_agent_info`). | — |
+| Agent too old / unknown (below `MinSupportedWire`) | Refused with `FailedPrecondition`. Node marked `Degraded` ("agent wire vN …"). Auto-upgrade triggered: controller pushes the configured agent binary over SSH and restarts the agent. | Requires `controller.agent_bin` and SSH reach. |
+| Agent too new (controller behind) | Refused. | Upgrade the controller first — auto-upgrade cannot fix a too-old controller. |
+| Any refusal | Agent keeps its last-good spec and keeps reconciling. | — |
 
 ## Recommended order: controller first, then agents
 
-1. **Get the new binaries.** From a release archive they are unpacked beside this
-   file: `wgfleet-controller` and `wgfleet-agent`, built for the architecture
-   named in the archive.
+1. **Get the new binaries.** From a release archive: `wgfleet-controller` and
+   `wgfleet-agent`, unpacked beside this file, built for the archive's
+   architecture.
 
-   Point the controller at the new agent binary so auto-upgrade and the
-   `--upgrade-agent` / UI button use it:
-
+   Point the controller at the new agent binary (needed for auto-upgrade and
+   `--upgrade-agent` / UI button):
    ```yaml
    # controller.yaml
    controller:
      agent_bin: /usr/local/bin/wgfleet-agent
    ```
 
-2. **Upgrade the controller.** Validate the manifest first: a bad manifest makes
-   the controller exit at startup, and `Restart=on-failure` turns that into a
-   crash loop that swapping the binary back does **not** fix.
-
+2. **Validate the manifest.**
    ```
    wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
    ```
+   Result: exits nonzero with an error if invalid. Run BEFORE restarting — a bad
+   manifest makes the controller exit at startup, and `Restart=on-failure` turns
+   that into a crash loop that swapping the binary back does **not** fix.
 
-   Then replace the binary and restart. While it is down, agents keep reconciling
-   their last spec and failover keeps working.
+3. **Replace the controller binary and restart.** While it is down, agents keep
+   reconciling their last spec and failover keeps working.
 
    - Wire version unchanged → agents keep talking to it as normal.
    - Wire version changed → agents are auto-upgraded only when they fall below
-     `MinSupportedWire`. A bump that keeps the previous version supported upgrades
-     nothing on its own; roll those agents in the next step.
+     `MinSupportedWire`. A bump that keeps the previous version supported
+     upgrades nothing on its own — roll those agents in the next step.
 
-3. **Roll the agents.** Three equivalent ways:
+4. **Roll the agents.** Three equivalent ways:
 
-   - **Automatic — only below `MinSupportedWire`:** an incompatible agent is
-     upgraded on its next `Register` (every `reconcile_interval`, default 30 s).
-     A merely older but still supported agent is never touched this way; if
-     `wgfleet_node_agent_info` or the fleet page shows versions not moving, roll
-     them explicitly.
-   - **Per node, explicitly:**
+   | Method | Command / action | Notes |
+   |---|---|---|
+   | Automatic | (none — happens on next `Register`) | Only agents below `MinSupportedWire`, on their next `Register` (every `reconcile_interval`, default 30 s). A merely older but still-supported agent is never touched this way. |
+   | Per node | `wgfleet-controller --upgrade-agent exit-de-1 --plan` (dry-run: show upload+restart), then `wgfleet-controller --upgrade-agent exit-de-1` (apply) | — |
+   | UI | node page → **Upgrade agent** | — |
 
-     ```
-     wgfleet-controller --upgrade-agent exit-de-1 --plan   # dry-run: show upload+restart
-     wgfleet-controller --upgrade-agent exit-de-1          # apply
-     ```
-
-   - **From the UI:** open the node page → **Upgrade agent**.
-
-   The upgrade is *upload new binary + restart the service*, then wait for the
+   Upgrade = upload new binary + restart the agent service, then wait for the
    node to report back on the new version. The data plane (kernel WG interfaces,
    mihomo/wg-easy/blocky containers) survives the restart: **no drain is
    required** and clients are not dropped.
 
-4. **Verify.** Each node's page shows the new **Agent** version and clears the
-   `version skew` badge once it re-registers. Watch:
+   If `wgfleet_node_agent_info` or the fleet page shows versions not moving,
+   roll explicitly (per node or UI) — automatic only fires below
+   `MinSupportedWire`.
 
+5. **Verify.**
    ```
-   wgfleet_node_agent_info{node,agent_version,wire_version}   # per-node versions
-   wgfleet_nodes{state="Ready"}                               # fleet health
+   wgfleet-agent --version
    ```
+   Result: prints the wire version the node now speaks — confirm it matches
+   what the new binaries speak before considering the roll done.
 
-   Confirm every node reports the wire version the new binaries speak (`--version`
-   prints it) before considering the roll done. An agent on an older but still
-   supported wire keeps reconciling and is neither refused nor auto-upgraded, so it
-   can silently lack behaviour the release relies on — certificate self-renewal,
-   for one (see below).
+   Node page: shows the new **Agent** version, clears the `version skew` badge
+   once the node re-registers.
+
+   | Metric | Meaning |
+   |---|---|
+   | `wgfleet_node_agent_info{node,agent_version,wire_version}` | Per-node agent + wire version. |
+   | `wgfleet_nodes{state="Ready"}` | Fleet health. |
+
+   An agent on an older but still-supported wire keeps reconciling and is
+   neither refused nor auto-upgraded, so it can silently lack behaviour the
+   release relies on — certificate self-renewal, for one (see below).
 
 ## What this release changes on its own
 
 Each release lists its own behaviour changes in its release notes — read them
-before rolling, so a normal change does not read as a fault. The rules below hold
-across releases:
+before rolling, so a normal change does not read as a fault. The rules below
+hold across releases.
 
-- **Agents renew their own certificates** between 70% and 90% of the one-year
-  lifetime, over the control plane, with no operator step. An agent from before
-  that behaviour never renews: it runs to its certificate's `NotAfter` about a
-  year after provisioning, then falls off the control plane, and the only way back
-  is SSH plus `--certs renew`. Such a node is also invisible to the
-  certificate-expiry alert, because that metric arrives with the same agent
-  generation. Roll stragglers before their certificates age out.
-- **`fleet.awg3_key` is REQUIRED once AmneziaWG 3.x header protection is on**:
-  if `fleet.awg3` or any `exits[].awg3` is true, OR any `masters[].client_awg.awg3`
-  is `full`, the controller refuses to start without it (`client_awg.awg3: timers`
-  needs no secret). Run `--check-config` BEFORE the restart: a missing key is a
-  startup failure and a crash loop. Set it once and never change it — rotating it
-  re-derives the key on every 3.x tunnel and invalidates every client config in
-  the field at once.
+| Rule | Detail |
+|---|---|
+| Agents renew their own certificates | Between 70% and 90% of the one-year lifetime, over the control plane, no operator step. An agent from before this behaviour never renews: runs to its certificate's `NotAfter` about a year after provisioning, then falls off the control plane. Recovery is SSH plus `--certs renew`. Also invisible to the certificate-expiry alert, because that metric arrives with the same agent generation. Roll stragglers before their certificates age out. |
+| `fleet.awg3_key` is REQUIRED once AmneziaWG 3.x header protection is on | Triggers when `fleet.awg3` is true, OR any `exits[].awg3` is true, OR any `masters[].client_awg.awg3` is `full` (`client_awg.awg3: timers` needs no secret). Missing key → controller refuses to start. Run `--check-config` BEFORE the restart: a missing key is a startup failure and a crash loop. Set it once and never change it — rotating it re-derives the key on every 3.x tunnel and invalidates every client config in the field at once. |
 
 ## Notes & gotchas
 
