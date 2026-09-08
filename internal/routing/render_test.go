@@ -250,6 +250,133 @@ func TestRenderRealityEgressMark(t *testing.T) {
 	}
 }
 
+// TestRenderLifelineEgress: when the exit's egress is WARP and a lifeline pool
+// is configured, the lifeline's client traffic must also be sent to the egress
+// table — the same fail-safe scoping (`from <LifelineCIDR>`, never `from all`)
+// that ClientCIDR gets, rendered after prefEgress and before prefRealityEgress.
+func TestRenderLifelineEgress(t *testing.T) {
+	steps, err := Render(domain.RoutingSpec{
+		EgressInterface: "wgcf",
+		ClientCIDR:      "10.81.0.0/24",
+		LifelineCIDR:    "10.98.77.0/24",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	script := Script(steps)
+	if !strings.Contains(script, "ip rule add from 10.98.77.0/24 lookup 51820") {
+		t.Errorf("missing lifeline egress rule:\n%s", script)
+	}
+	if !strings.Contains(script, "ip route replace default dev wgcf table 51820") {
+		t.Errorf("missing egress default route:\n%s", script)
+	}
+
+	// Ordering: the lifeline rule must land after prefEgress and before
+	// prefRealityEgress.
+	stepsWithReality, err := Render(domain.RoutingSpec{
+		EgressInterface:   "wgcf",
+		ClientCIDR:        "10.81.0.0/24",
+		LifelineCIDR:      "10.98.77.0/24",
+		RealityEgressMark: 0x33,
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	idxEgress := indexOfArgvContains(stepsWithReality, "ip rule add from 10.81.0.0/24 lookup 51820")
+	idxLifeline := indexOfArgvContains(stepsWithReality, "ip rule add from 10.98.77.0/24 lookup 51820")
+	idxReality := indexOfArgvContains(stepsWithReality, "ip rule add fwmark 0x33 lookup 51820")
+	if idxEgress < 0 || idxLifeline < 0 || idxReality < 0 {
+		t.Fatalf("expected all three egress rules present: egress=%d lifeline=%d reality=%d", idxEgress, idxLifeline, idxReality)
+	}
+	if !(idxEgress < idxLifeline && idxLifeline < idxReality) {
+		t.Errorf("lifeline rule out of order: egress=%d lifeline=%d reality=%d", idxEgress, idxLifeline, idxReality)
+	}
+}
+
+func indexOfArgvContains(steps []Step, substr string) int {
+	for i, s := range steps {
+		if strings.Contains(strings.Join(s.Argv, " "), substr) {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestRenderLifelineWithoutEgressInterfaceIsNoop: LifelineCIDR set but no
+// egress interface ⇒ direct egress, nothing to policy-route (Render's existing
+// early-return must keep winning).
+func TestRenderLifelineWithoutEgressInterfaceIsNoop(t *testing.T) {
+	steps, err := Render(domain.RoutingSpec{LifelineCIDR: "10.98.77.0/24"})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if len(steps) != 0 {
+		t.Errorf("no egress interface should render no steps, got %d", len(steps))
+	}
+}
+
+// TestRenderLifelineAloneRendersEgressDefaultRoute: the egress table's default
+// route must be rendered even when the LIFELINE pool is the only thing routed
+// into it (no ClientCIDR, no RealityEgressMark).
+func TestRenderLifelineAloneRendersEgressDefaultRoute(t *testing.T) {
+	steps, err := Render(domain.RoutingSpec{
+		EgressInterface: "wgcf",
+		LifelineCIDR:    "10.98.77.0/24",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	script := Script(steps)
+	if !strings.Contains(script, "ip rule add from 10.98.77.0/24 lookup 51820") {
+		t.Errorf("missing lifeline egress rule:\n%s", script)
+	}
+	if !strings.Contains(script, "ip route replace default dev wgcf table 51820") {
+		t.Errorf("missing egress default route when only lifeline routes into the table:\n%s", script)
+	}
+}
+
+func TestManagedPrefsIncludesLifeline(t *testing.T) {
+	spec := domain.RoutingSpec{
+		EgressInterface: "wgcf",
+		ClientCIDR:      "10.81.0.0/24",
+		LifelineCIDR:    "10.98.77.0/24",
+	}
+	prefs := ManagedPrefs(spec)
+	found := false
+	for _, p := range prefs {
+		if p == prefLifeline {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("ManagedPrefs missing lifeline pref %d: %v", prefLifeline, prefs)
+	}
+	// Not present when LifelineCIDR is unset.
+	prefsNoLifeline := ManagedPrefs(domain.RoutingSpec{EgressInterface: "wgcf", ClientCIDR: "10.81.0.0/24"})
+	for _, p := range prefsNoLifeline {
+		if p == prefLifeline {
+			t.Errorf("ManagedPrefs should not include lifeline pref %d when LifelineCIDR is unset: %v", prefLifeline, prefsNoLifeline)
+		}
+	}
+}
+
+func TestTeardownActionsIncludesLifelineDel(t *testing.T) {
+	steps := TeardownActions()
+	want := []string{"ip", "rule", "del", "pref", "305"}
+	found := false
+	for _, s := range steps {
+		if strings.Join(s.Argv, " ") == strings.Join(want, " ") {
+			found = true
+			if !s.BestEffort {
+				t.Errorf("lifeline egress rule delete must be best-effort: %v", s.Argv)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("TeardownActions missing delete of lifeline egress rule (pref 305): %v", steps)
+	}
+}
+
 func TestRenderRealityEgressMarkDirectEgressNoop(t *testing.T) {
 	// Direct egress (no interface) renders nothing even with a reality mark set.
 	steps, err := Render(domain.RoutingSpec{RealityEgressMark: 0x33})

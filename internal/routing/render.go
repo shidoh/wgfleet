@@ -49,6 +49,7 @@ const (
 	prefDirect0       = 110 // first direct-CIDR rule; CIDR i uses prefDirect0+i
 	prefFwmark        = 200 // keep WG replies/handshake (fwmark) on the main table
 	prefEgress        = 300 // send client traffic (from ClientCIDR) to the egress table
+	prefLifeline      = 305 // send lifeline client traffic (from LifelineCIDR) to the egress table
 	prefRealityEgress = 310 // send reality-marked host traffic to the egress table (ADR-0025)
 )
 
@@ -144,6 +145,17 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 		)...)
 	}
 
+	// A lifeline is a second client pool on the exit (its own WGServer, distinct
+	// from the primary ClientCIDR); when the exit's egress is WARP, its traffic
+	// must ALSO reach the egress table, scoped the same way and for the same
+	// reason as ClientCIDR (an earlier finding: never `from all`).
+	if spec.LifelineCIDR != "" {
+		steps = append(steps, ipRuleReplace(prefLifeline,
+			fmt.Sprintf("send lifeline client traffic (from %s) to the egress table", spec.LifelineCIDR),
+			"from", spec.LifelineCIDR, "lookup", fmt.Sprintf("%d", EgressTable),
+		)...)
+	}
+
 	// The xray REALITY inbound dials FROM THE HOST, so the `from <ClientCIDR>` rule
 	// above does not catch it. Mark-route its outbound (SO_MARK'd by
 	// xray) to the egress table so it leaves through WARP like client traffic
@@ -157,8 +169,9 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 	}
 
 	// The egress table needs its default route whenever anything is routed into it:
-	// client traffic (ClientCIDR) and/or the reality-marked host traffic.
-	if spec.ClientCIDR != "" || spec.RealityEgressMark > 0 {
+	// client traffic (ClientCIDR), lifeline traffic (LifelineCIDR), and/or the
+	// reality-marked host traffic.
+	if spec.ClientCIDR != "" || spec.LifelineCIDR != "" || spec.RealityEgressMark > 0 {
 		steps = append(steps, Step{
 			Summary: fmt.Sprintf("default route via %s in table %d", spec.EgressInterface, EgressTable),
 			Argv:    []string{"ip", "route", "replace", "default", "dev", spec.EgressInterface, "table", fmt.Sprintf("%d", EgressTable)},
@@ -214,6 +227,9 @@ func TeardownActions() []Step {
 		{Summary: fmt.Sprintf("remove the client egress rule (pref %d)", prefEgress),
 			Argv:       []string{"ip", "rule", "del", "pref", fmt.Sprintf("%d", prefEgress)},
 			BestEffort: true},
+		{Summary: fmt.Sprintf("remove the lifeline egress rule (pref %d)", prefLifeline),
+			Argv:       []string{"ip", "rule", "del", "pref", fmt.Sprintf("%d", prefLifeline)},
+			BestEffort: true},
 		{Summary: fmt.Sprintf("remove the REALITY egress rule (pref %d)", prefRealityEgress),
 			Argv:       []string{"ip", "rule", "del", "pref", fmt.Sprintf("%d", prefRealityEgress)},
 			BestEffort: true},
@@ -242,6 +258,11 @@ func ManagedPrefs(spec domain.RoutingSpec) []int {
 	// to (Render skips it otherwise), so only expect it then.
 	if spec.ClientCIDR != "" {
 		prefs = append(prefs, prefEgress)
+	}
+	// prefLifeline is only installed when the exit has a lifeline pool (Render
+	// skips it otherwise), same rationale as prefEgress above.
+	if spec.LifelineCIDR != "" {
+		prefs = append(prefs, prefLifeline)
 	}
 	if spec.RealityEgressMark > 0 {
 		prefs = append(prefs, prefRealityEgress)
