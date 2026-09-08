@@ -62,6 +62,19 @@ type RenderInput struct {
 	// it (`oifname != <wg>`) so only client→egress traffic is SNAT'd, never replies
 	// looping back to clients.
 	WGInterface string
+	// LifelineCIDR is the exit's lifeline client pool (domain.LifelineSpec) — the
+	// reserve client-facing AmneziaWG interface's pool, kept warm so the fleet
+	// survives the master being blocked (product.md boundary 3). It gets exactly
+	// the same treatment as ClientCIDR — its UDP port accepted on input, its own
+	// MASQUERADE + egress leak guard — rendered ALONGSIDE the primary pool's rules,
+	// never instead of them: an exit can carry both a normal client pool and a
+	// lifeline pool at once. Empty ⇒ this exit carries no lifeline (the default).
+	LifelineCIDR string
+	// LifelineInterface is the exit's lifeline interface, mirroring WGInterface's
+	// role for the primary pool. Empty defaults to domain.LifelineInterface
+	// ("awgl0") — the constant every LifelineSpec renders under, so leaving this
+	// unset is equivalent to naming it explicitly.
+	LifelineInterface string
 	// EgressInterface is the WARP/wgcf interface. When set, an MSS clamp is rendered
 	// in the forward chain so TLS through the double encapsulation (client→master→
 	// exit→WARP) does not stall when PMTU discovery is blocked (an earlier finding; the reference deployment
@@ -239,6 +252,16 @@ func RenderRuleset(in RenderInput) (string, error) {
 	if in.Firewall.WGPort <= 0 || in.Firewall.WGPort > 65535 {
 		return "", fmt.Errorf("netfw render: invalid WG port %d", in.Firewall.WGPort)
 	}
+	// A lifeline pool and its listener port must arrive together — a listener with
+	// no hole opened for it is unreachable, and a hole opened for no listener is a
+	// silent extra exposure. Either half missing is a manifest inconsistency and
+	// must fail the render rather than render one half of the pair silently.
+	if in.LifelineCIDR != "" && in.Firewall.LifelinePort <= 0 {
+		return "", fmt.Errorf("netfw render: LifelineCIDR %q set without Firewall.LifelinePort (a listener with no hole)", in.LifelineCIDR)
+	}
+	if in.Firewall.LifelinePort > 0 && in.LifelineCIDR == "" {
+		return "", fmt.Errorf("netfw render: Firewall.LifelinePort %d set without LifelineCIDR (a hole with no listener)", in.Firewall.LifelinePort)
+	}
 	v4Whitelist, err := splitWhitelist(in.Firewall.Whitelist)
 	if err != nil {
 		return "", err
@@ -343,6 +366,11 @@ func RenderRuleset(in RenderInput) (string, error) {
 	fmt.Fprintf(&b, "\t\ttcp dport %d accept\n", sshPort)
 	fmt.Fprintf(&b, "\t\tudp dport %d accept\n", ZeroTierPort)
 	fmt.Fprintf(&b, "\t\tudp dport %d accept\n", in.Firewall.WGPort)
+	// The lifeline's own listener port (see LifelineCIDR) — a second, independent
+	// client-facing AWG interface, so it needs its own accept beside WGPort's.
+	if in.Firewall.LifelinePort > 0 {
+		fmt.Fprintf(&b, "\t\tudp dport %d accept\n", in.Firewall.LifelinePort)
+	}
 	// REALITY/XHTTP inbound (xray) listens on TCP, not UDP (ADR-0025). Open it so the
 	// master can dial the reality transport; 0 ⇒ the exit does not run reality.
 	if in.Firewall.RealityPort > 0 {
@@ -447,7 +475,17 @@ func RenderRuleset(in RenderInput) (string, error) {
 	if in.WGReplyMark != 0 {
 		b.WriteString("\n\tchain mangle_output {\n")
 		b.WriteString("\t\ttype route hook output priority mangle; policy accept;\n")
-		fmt.Fprintf(&b, "\t\tmeta l4proto udp udp sport %d meta mark set 0x%x\n", in.Firewall.WGPort, in.WGReplyMark)
+		if in.Firewall.LifelinePort > 0 {
+			// One rule, an anonymous set of both server ports: the lifeline is a second
+			// independent AWG listener whose replies need the exact same fwmark
+			// treatment as the primary WGPort's, for the exact same reason (earlier findings
+			// ). A second standalone rule would work too, but this keeps the mangle
+			// chain to one line per node regardless of how many listener ports it runs.
+			fmt.Fprintf(&b, "\t\tmeta l4proto udp udp sport { %d, %d } meta mark set 0x%x\n",
+				in.Firewall.WGPort, in.Firewall.LifelinePort, in.WGReplyMark)
+		} else {
+			fmt.Fprintf(&b, "\t\tmeta l4proto udp udp sport %d meta mark set 0x%x\n", in.Firewall.WGPort, in.WGReplyMark)
+		}
 		b.WriteString("\t}\n")
 	}
 
@@ -516,53 +554,83 @@ func RenderRuleset(in RenderInput) (string, error) {
 	// WARP) drops them and cannot route the reply back — the symptom is a TCP that
 	// connects but returns nothing. Scoped to the client pool and excluding the WG
 	// interface so only client→egress is translated, never replies back to clients.
-	if in.Role == domain.RoleExit && in.ClientCIDR != "" {
-		// Canonicalize the client pool from its parsed form so a malformed or crafted
-		// ClientCIDR can never inject nft syntax into the rendered ruleset (it is run
-		// as root via `nft -f`). Mirrors splitWhitelist's parse-and-re-emit.
-		pool, err := canonicalPrefix(in.ClientCIDR)
-		if err != nil {
-			return "", fmt.Errorf("netfw render: invalid client CIDR %q: %w", in.ClientCIDR, err)
+	if in.Role == domain.RoleExit && (in.ClientCIDR != "" || in.LifelineCIDR != "") {
+		var postrouting, guard strings.Builder
+
+		// renderPoolPair appends one pool's masquerade + leak-guard rule pair to the
+		// two chain bodies being built. The lifeline pool (see LifelineCIDR) gets
+		// EXACTLY this treatment a second time, scoped to its own interface, appended
+		// AFTER the primary pool's rules — an exit can carry both pools live at once,
+		// so neither rule set replaces the other.
+		renderPoolPair := func(cidr, iface, label string) error {
+			// Canonicalize the pool from its parsed form so a malformed or crafted CIDR
+			// can never inject nft syntax into the rendered ruleset (it is run as root
+			// via `nft -f`). Mirrors splitWhitelist's parse-and-re-emit.
+			pool, err := canonicalPrefix(cidr)
+			if err != nil {
+				return fmt.Errorf("netfw render: invalid %s CIDR %q: %w", label, cidr, err)
+			}
+			fmt.Fprintf(&postrouting, "\t\tip saddr %s oifname != %q masquerade\n", pool, iface)
+
+			// Enforce the invariant the masquerade above is supposed to guarantee:
+			// nothing leaves this node for the outside world still carrying this pool's
+			// source. This chain runs AFTER srcnat, so every packet NAT actually
+			// translated no longer matches — a pool address surviving to here is by
+			// definition one NAT never saw.
+			//
+			// Deliberately redundant with `ct state invalid drop` in forward. That rule
+			// fixes the known cause; this one asserts the outcome, and so also covers
+			// causes we have not met yet (a future rule ordering mistake, a conntrack
+			// table exhaustion, a packet path that bypasses forward). The two mirror
+			// each other exactly — same pool, same `oifname != <iface>` scope as the
+			// masquerade — so a leak has to defeat both to reach the wire.
+			//
+			// Two exclusions keep the counter meaningful. Without them it counted the
+			// node talking to itself and read as half a million caught leaks on a
+			// healthy exit — measured 2026-08-27, every single event was a locally
+			// generated ICMP unreachable on `lo` carrying the node's own ZeroTier path
+			// probes. A number that alarming, and wrong, is worse than no number: it
+			// sends the next reader chasing a leak that is not happening.
+			//
+			//   oifname != "lo"    — a packet on loopback is not leaving the box, so it
+			//                        cannot be an egress leak by definition.
+			//   ip saddr != <gw>   — the node's own address sits inside the pool.
+			//                        Traffic from it is the node's, not a client's.
+			guardSrc := ""
+			if gw, err := gatewayAddr(pool); err == nil {
+				guardSrc = fmt.Sprintf(" ip saddr != %s", gw)
+			}
+			fmt.Fprintf(&guard, "\t\tip saddr %s%s oifname != %q oifname != \"lo\" counter drop\n", pool, guardSrc, iface)
+			return nil
 		}
-		wg := in.WGInterface
-		if wg == "" {
-			wg = "awg0"
+
+		if in.ClientCIDR != "" {
+			wg := in.WGInterface
+			if wg == "" {
+				wg = "awg0"
+			}
+			if err := renderPoolPair(in.ClientCIDR, wg, "client"); err != nil {
+				return "", err
+			}
 		}
+		if in.LifelineCIDR != "" {
+			lifelineIface := in.LifelineInterface
+			if lifelineIface == "" {
+				lifelineIface = domain.LifelineInterface
+			}
+			if err := renderPoolPair(in.LifelineCIDR, lifelineIface, "lifeline"); err != nil {
+				return "", err
+			}
+		}
+
 		b.WriteString("\n\tchain postrouting {\n")
 		b.WriteString("\t\ttype nat hook postrouting priority srcnat; policy accept;\n")
-		fmt.Fprintf(&b, "\t\tip saddr %s oifname != %q masquerade\n", pool, wg)
+		b.WriteString(postrouting.String())
 		b.WriteString("\t}\n")
 
-		// Enforce the invariant the masquerade above is supposed to guarantee: nothing
-		// leaves this node for the outside world still carrying a client-pool source.
-		// This chain runs AFTER srcnat, so every packet NAT actually translated no longer
-		// matches — a pool address surviving to here is by definition one NAT never saw.
-		//
-		// Deliberately redundant with `ct state invalid drop` in forward. That rule fixes
-		// the known cause; this one asserts the outcome, and so also covers causes we have
-		// not met yet (a future rule ordering mistake, a conntrack table exhaustion, a
-		// packet path that bypasses forward). The two mirror each other exactly — same
-		// pool, same `oifname != <wg>` scope as the masquerade — so a leak has to defeat
-		// both to reach the wire.
-		//
-		// Two exclusions keep the counter meaningful. Without them it counted the
-		// node talking to itself and read as half a million caught leaks on a
-		// healthy exit — measured 2026-08-27, every single event was a locally
-		// generated ICMP unreachable on `lo` carrying the node's own ZeroTier path
-		// probes. A number that alarming, and wrong, is worse than no number: it
-		// sends the next reader chasing a leak that is not happening.
-		//
-		//   oifname != "lo"  — a packet on loopback is not leaving the box, so it
-		//                      cannot be an egress leak by definition.
-		//   ip saddr != <gw> — the node's own address sits inside the pool. Traffic
-		//                      from it is the node's, not a client's.
-		guardSrc := ""
-		if gw, err := gatewayAddr(pool); err == nil {
-			guardSrc = fmt.Sprintf(" ip saddr != %s", gw)
-		}
 		b.WriteString("\n\tchain egress_leak_guard {\n")
 		b.WriteString("\t\ttype filter hook postrouting priority srcnat + 10; policy accept;\n")
-		fmt.Fprintf(&b, "\t\tip saddr %s%s oifname != %q oifname != \"lo\" counter drop\n", pool, guardSrc, wg)
+		b.WriteString(guard.String())
 		b.WriteString("\t}\n")
 	}
 

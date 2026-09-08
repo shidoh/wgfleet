@@ -285,6 +285,128 @@ func TestRenderExitEgressLeakGuard(t *testing.T) {
 	}
 }
 
+func TestRenderExitLifelinePool(t *testing.T) {
+	// A lifeline (the reserve client-facing AWG interface, domain.LifelineInterface
+	// == "awgl0") gets the same treatment as the primary client pool: its UDP port
+	// accepted on input, its pool masqueraded on egress and guarded against leaks —
+	// scoped to its own interface, alongside (not instead of) the primary pool's.
+	out, err := RenderRuleset(RenderInput{
+		Role:              domain.RoleExit,
+		Firewall:          domain.FirewallSpec{WGPort: 51820, LifelinePort: 41827},
+		ClientCIDR:        "10.90.0.0/24",
+		WGInterface:       "awg0",
+		LifelineCIDR:      "10.98.77.0/24",
+		LifelineInterface: "awgl0",
+		EgressInterface:   "wgcf",
+		WGReplyMark:       0x1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, ok := chainBody(out, "chain input")
+	if !ok {
+		t.Fatalf("no input chain rendered:\n%s", out)
+	}
+	if !strings.Contains(input, "udp dport 41827 accept") {
+		t.Errorf("input chain missing lifeline port accept:\n%s", input)
+	}
+
+	postrouting, ok := chainBody(out, "chain postrouting")
+	if !ok {
+		t.Fatalf("no postrouting chain rendered:\n%s", out)
+	}
+	for _, want := range []string{
+		`ip saddr 10.90.0.0/24 oifname != "awg0" masquerade`,
+		`ip saddr 10.98.77.0/24 oifname != "awgl0" masquerade`,
+	} {
+		if !strings.Contains(postrouting, want) {
+			t.Errorf("postrouting chain missing %q:\n%s", want, postrouting)
+		}
+	}
+
+	guard, ok := chainBody(out, "chain egress_leak_guard")
+	if !ok {
+		t.Fatalf("no egress leak guard rendered:\n%s", out)
+	}
+	for _, want := range []string{
+		`ip saddr 10.90.0.0/24 ip saddr != 10.90.0.1 oifname != "awg0" oifname != "lo" counter drop`,
+		`ip saddr 10.98.77.0/24 ip saddr != 10.98.77.1 oifname != "awgl0" oifname != "lo" counter drop`,
+	} {
+		if !strings.Contains(guard, want) {
+			t.Errorf("egress leak guard missing %q:\n%s", want, guard)
+		}
+	}
+
+	if !strings.Contains(out, "udp sport { 51820, 41827 } meta mark set 0x1") {
+		t.Errorf("mangle mark rule must cover both wg and lifeline ports as a set:\n%s", out)
+	}
+}
+
+func TestRenderExitLifelineInterfaceDefault(t *testing.T) {
+	// LifelineInterface empty ⇒ defaults to domain.LifelineInterface ("awgl0"),
+	// mirroring WGInterface's own default-to-"awg0" behaviour.
+	out, err := RenderRuleset(RenderInput{
+		Role:         domain.RoleExit,
+		Firewall:     domain.FirewallSpec{WGPort: 51820, LifelinePort: 41827},
+		LifelineCIDR: "10.98.77.0/24",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `ip saddr 10.98.77.0/24 oifname != "awgl0" masquerade`) {
+		t.Errorf("lifeline masquerade must default to awgl0:\n%s", out)
+	}
+}
+
+func TestRenderExitNoLifelineIsByteIdentical(t *testing.T) {
+	// Without a lifeline, the render must be completely unaffected: no lifeline port
+	// accept, no second masquerade/guard rule, and the mangle rule keeps its
+	// original single-port form (not a one-element set).
+	withLifelineFieldsZero, err := RenderRuleset(RenderInput{
+		Role:            domain.RoleExit,
+		Firewall:        domain.FirewallSpec{WGPort: 51820},
+		ClientCIDR:      "10.71.0.0/24",
+		WGInterface:     "awg0",
+		EgressInterface: "wgcf",
+		WGReplyMark:     0x1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(withLifelineFieldsZero, "41827") || strings.Contains(withLifelineFieldsZero, "awgl0") {
+		t.Errorf("no lifeline fields set: ruleset must carry nothing lifeline-related:\n%s", withLifelineFieldsZero)
+	}
+	if !strings.Contains(withLifelineFieldsZero, "udp sport 51820 meta mark set 0x1") {
+		t.Errorf("mangle rule must keep its single-port form without a lifeline:\n%s", withLifelineFieldsZero)
+	}
+	if strings.Contains(withLifelineFieldsZero, "udp sport {") {
+		t.Errorf("mangle rule must not render a set without a lifeline:\n%s", withLifelineFieldsZero)
+	}
+}
+
+func TestRenderExitLifelinePortWithoutCIDRIsAnError(t *testing.T) {
+	// A hole with no listener behind it must not render silently.
+	_, err := RenderRuleset(RenderInput{
+		Role:     domain.RoleExit,
+		Firewall: domain.FirewallSpec{WGPort: 51820, LifelinePort: 41827},
+	})
+	if err == nil {
+		t.Fatal("expected an error when LifelinePort is set without LifelineCIDR")
+	}
+}
+
+func TestRenderExitLifelineCIDRWithoutPortIsAnError(t *testing.T) {
+	// A listener with no hole opened for it must not render silently.
+	_, err := RenderRuleset(RenderInput{
+		Role:         domain.RoleExit,
+		Firewall:     domain.FirewallSpec{WGPort: 51820},
+		LifelineCIDR: "10.98.77.0/24",
+	})
+	if err == nil {
+		t.Fatal("expected an error when LifelineCIDR is set without Firewall.LifelinePort")
+	}
+}
+
 // chainBody returns the text of a rendered chain, from its header to the closing
 // brace. Assertions scoped to one chain cannot be satisfied by a matching rule that
 // happens to live in a different chain.
