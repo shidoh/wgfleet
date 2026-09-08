@@ -307,6 +307,12 @@ a:focus-visible,
 }
 
 .wordmark .dot { color: var(--green); }
+/* The mark (assets/brand/mark.svg) sits before the name; its ink follows the
+   text colour, the exits stay green. Inline-flex keeps the icon and the name
+   on one baseline without pushing the name's own runs apart (see above). */
+.wordmark, .auth-brand { display: inline-flex; align-items: center; gap: 10px; }
+.wordmark .mark { flex: none; }
+.auth-brand { justify-content: center; }
 .tagline {
   font-size: var(--fs-meta);
   color: var(--text-label);
