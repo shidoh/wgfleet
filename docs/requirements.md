@@ -20,7 +20,8 @@ promised.
 
 - **Root SSH** for bootstrap (`controller --provision`); the agent runs as root.
 - **A public IPv4 address.** The data plane is IPv4-only; IPv6 is refused on the
-  client interface on purpose (see `maintainer notes` #20).
+  client interface on purpose — a client handed `::/0` over an IPv4-only tunnel
+  black-holes every IPv6 destination instead of falling back.
 - **AmneziaWG kernel module** built by DKMS against the running kernel, from
   `ppa:amnezia/ppa` — `prepare-node.sh` does it. Kernel headers must match the
   running kernel; on 22.04 with the HWE kernel that is
@@ -85,6 +86,7 @@ used against a fleet:
   the master first (`docs/client-migration.md`, part 4).
 - **VLESS + REALITY clients** (v2rayTun and other xray-based apps) on the client
   VLESS inbound. Split-tunnel behaviour is a client-side setting and differs per
-  app (`maintainer notes` #29).
+  app: a client's tun mode decides whether private ranges go through the tunnel,
+  and some apps expose no switch for it.
 
 A client bug is documented, not worked around on the server (`docs/product.md`).
