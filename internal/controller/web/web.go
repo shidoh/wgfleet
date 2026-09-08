@@ -79,6 +79,11 @@ type SpecRenderer interface {
 	SetWGClientEnabled(ctx context.Context, masterID, clientID string, enabled bool) error
 	RenameWGClient(ctx context.Context, masterID, clientID, name string) error
 	RevokeWGClient(ctx context.Context, masterID, clientID string) error
+	// The reserve client-facing interfaces (lifelines) an exit may carry: which
+	// exits declare one, and the address a client dials for it. Both feed
+	// clientcfg's reserve-config builder — see clientcfg.Source.
+	LifelineExits(ctx context.Context) ([]string, error)
+	ExitEndpointHost(ctx context.Context, exitID string) (string, error)
 }
 
 // Provisioner triggers asynchronous node provisioning. *provmgr.Manager satisfies

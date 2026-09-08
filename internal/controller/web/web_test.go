@@ -74,6 +74,12 @@ func (s stubRenderer) ListWGClients(context.Context, string) ([]domain.WGClient,
 	return *s.wgClients, nil
 }
 
+// The fleet's reserve doors. The stub declares none, so the console renders the
+// "no lifeline exits" case; the readiness matrix itself is tested in clientcfg.
+func (s stubRenderer) LifelineExits(context.Context) ([]string, error) { return nil, nil }
+
+func (s stubRenderer) ExitEndpointHost(context.Context, string) (string, error) { return "", nil }
+
 func (s stubRenderer) SetWGClientEnabled(_ context.Context, _, clientID string, enabled bool) error {
 	if s.wgClients == nil {
 		return store.ErrNotFound

@@ -512,6 +512,14 @@ func (s clientSource) ListWGClients(ctx context.Context, id string) ([]domain.WG
 	return s.h.renderer.ListWGClients(ctx, id)
 }
 
+func (s clientSource) LifelineExits(ctx context.Context) ([]string, error) {
+	return s.h.renderer.LifelineExits(ctx)
+}
+
+func (s clientSource) ExitEndpointHost(ctx context.Context, exitID string) (string, error) {
+	return s.h.renderer.ExitEndpointHost(ctx, exitID)
+}
+
 // qrPNG encodes a client config as a QR image. The config is a credential, so it
 // is served from its own endpoint as bytes rather than embedded in the page as a
 // data: URL — a page the browser may cache should not carry a private key.

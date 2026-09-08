@@ -395,3 +395,88 @@ func TestLifelineSkipsAnUnprojectableCredentialWithoutFailingTheExit(t *testing.
 		t.Errorf("lifeline with a skipped peer does not validate: %v", err)
 	}
 }
+
+// The console lists reserve doors from the manifest, in manifest order, and only
+// the exits that actually declare one — an exit without the section is unchanged
+// from before the feature existed and must not appear as a door at all.
+func TestLifelineExitsListsOnlyTheExitsThatDeclareOne(t *testing.T) {
+	fleet := lifelineFleet()
+	fleet.Exits = append([]config.ExitConfig{{Name: "e0", Region: "nl", Egress: "direct", AddressPool: "10.82.0.0/24"}},
+		fleet.Exits...)
+	fleet.Exits = append(fleet.Exits, config.ExitConfig{
+		Name: "e2", Region: "fi", Egress: "direct", AddressPool: "10.83.0.0/24",
+		Lifeline: &config.LifelineConfig{ListenPort: 41827, AddressPool: "10.98.78.0/24"},
+	})
+	b, _, ctx := brokerWithLifeline(t, fleet)
+
+	got, err := b.LifelineExits(ctx)
+	if err != nil {
+		t.Fatalf("LifelineExits() error = %v", err)
+	}
+	if want := []string{"e", "e2"}; !slices.Equal(got, want) {
+		t.Fatalf("LifelineExits() = %v, want %v", got, want)
+	}
+}
+
+// The address a client dials for a reserve door is resolved exactly as the
+// master↔exit tunnel resolves it — declared address, then the bootstrap SSH host,
+// then whatever the node registered — because it is the same physical endpoint on
+// the same node, and two different answers would mean the tunnel works while the
+// reserve config points somewhere else. A DNS name is skipped, not fatal: the
+// kernel-level guards on this address cannot resolve one.
+func TestExitEndpointHostFollowsTheTunnelsOrder(t *testing.T) {
+	tests := map[string]struct {
+		publicIP, sshHost string
+		want              string
+	}{
+		"declared address wins": {publicIP: "203.0.113.20", sshHost: "203.0.113.21", want: "203.0.113.20"},
+		"then the ssh host":     {sshHost: "203.0.113.21", want: "203.0.113.21"},
+		"then the stored one":   {want: "198.51.100.7"},
+		"a name is skipped":     {publicIP: "exit.example.org", want: "198.51.100.7"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			fleet := lifelineFleet()
+			fleet.Exits[0].PublicIP = tc.publicIP
+			fleet.Exits[0].SSH = config.SSHConfig{Host: tc.sshHost}
+			b, _, ctx := brokerWithLifeline(t, fleet)
+
+			got, err := b.ExitEndpointHost(ctx, "e")
+			if err != nil {
+				t.Fatalf("ExitEndpointHost() error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("ExitEndpointHost() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// No address anywhere is an ordinary answer, not an error: the console reports it
+// as the one thing to fix, and an error here would fail the whole listing.
+func TestExitEndpointHostEmptyWhenNothingIsKnown(t *testing.T) {
+	b, st, ctx := brokerWithLifeline(t, lifelineFleet())
+	n, err := st.GetNode(ctx, "e")
+	if err != nil {
+		t.Fatalf("GetNode() error = %v", err)
+	}
+	n.PublicIP = ""
+	if err := st.UpsertNode(ctx, n); err != nil {
+		t.Fatalf("UpsertNode() error = %v", err)
+	}
+	got, err := b.ExitEndpointHost(ctx, "e")
+	if err != nil {
+		t.Fatalf("ExitEndpointHost() error = %v", err)
+	}
+	if got != "" {
+		t.Fatalf("ExitEndpointHost() = %q, want empty", got)
+	}
+}
+
+// An exit the manifest does not declare is a caller error, and says so.
+func TestExitEndpointHostRefusesAnUnknownExit(t *testing.T) {
+	b, _, ctx := brokerWithLifeline(t, lifelineFleet())
+	if _, err := b.ExitEndpointHost(ctx, "nope"); err == nil {
+		t.Fatal("ExitEndpointHost() for an undeclared exit = nil error, want one")
+	}
+}

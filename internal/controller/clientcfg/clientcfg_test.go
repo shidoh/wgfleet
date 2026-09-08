@@ -2,6 +2,7 @@ package clientcfg
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -11,10 +12,15 @@ import (
 )
 
 type stubSource struct {
-	nodes   map[string]domain.Node
-	spec    domain.NodeSpec
-	clients map[string][]domain.WGClient
-	listErr error
+	nodes map[string]domain.Node
+	spec  domain.NodeSpec
+	// specs overrides spec per node, so a fixture can hold a master AND the exit
+	// whose lifeline carries the master's clients.
+	specs     map[string]domain.NodeSpec
+	clients   map[string][]domain.WGClient
+	listErr   error
+	lifelines []string
+	hosts     map[string]string
 }
 
 func (s stubSource) GetNode(_ context.Context, id string) (domain.Node, error) {
@@ -25,7 +31,10 @@ func (s stubSource) GetNode(_ context.Context, id string) (domain.Node, error) {
 	return n, nil
 }
 
-func (s stubSource) RenderNodeSpec(context.Context, string) (domain.NodeSpec, error) {
+func (s stubSource) RenderNodeSpec(_ context.Context, id string) (domain.NodeSpec, error) {
+	if sp, ok := s.specs[id]; ok {
+		return sp, nil
+	}
 	return s.spec, nil
 }
 
@@ -34,6 +43,14 @@ func (s stubSource) ListWGClients(_ context.Context, id string) ([]domain.WGClie
 		return nil, s.listErr
 	}
 	return s.clients[id], nil
+}
+
+func (s stubSource) LifelineExits(context.Context) ([]string, error) {
+	return s.lifelines, nil
+}
+
+func (s stubSource) ExitEndpointHost(_ context.Context, exitID string) (string, error) {
+	return s.hosts[exitID], nil
 }
 
 func managedSpec() domain.NodeSpec {
@@ -46,17 +63,48 @@ func managedSpec() domain.NodeSpec {
 	}
 }
 
+// testPSK is a valid base64 preshared key; the lifeline derives its own from it.
+var testPSK = base64.StdEncoding.EncodeToString([]byte("preshared-key-00000000000000000."))
+
+// lifelineKey is the exit's published lifeline interface key — a different
+// identity from the master's, which is the whole point of the reserve door.
+const lifelineKey = "ZXhpdC1saWZlbGluZS1rZXktMDAwMDAwMDAwMDAwMDA="
+
+// lifelineSpec is an exit carrying a reserve client-facing interface for m1's
+// clients: the same population, a shifted pool, its own port.
+func lifelineSpec() domain.NodeSpec {
+	return domain.NodeSpec{
+		Role: domain.RoleExit,
+		Lifeline: &domain.LifelineSpec{
+			ClientWGSpec: domain.ClientWGSpec{
+				ListenPort: 41827, AddressPool: "10.98.77.0/24", ServerAddress: "10.98.77.1",
+				MTU: 1360, DNS: []string{"10.98.77.1"}, AllowedIPs: []string{"0.0.0.0/0"},
+			},
+			Egress: domain.EgressDirect,
+		},
+	}
+}
+
 func source() stubSource {
 	return stubSource{
-		nodes: map[string]domain.Node{"m1": {
-			ID: "m1", Name: "m1", Role: domain.RoleMaster, PublicIP: "203.0.113.1",
-			ClientWGPublicKey: "c2VydmVyLXB1YmxpYy0wMDAwMDAwMDAwMDAwMDAwMDA=",
-		}},
-		spec: managedSpec(),
+		nodes: map[string]domain.Node{
+			"m1": {
+				ID: "m1", Name: "m1", Role: domain.RoleMaster, PublicIP: "203.0.113.1",
+				ClientWGPublicKey: "c2VydmVyLXB1YmxpYy0wMDAwMDAwMDAwMDAwMDAwMDA=",
+			},
+			"e1": {
+				ID: "e1", Name: "e1", Role: domain.RoleExit, PublicIP: "203.0.113.9",
+				LifelinePublicKey: lifelineKey,
+			},
+		},
+		spec:  managedSpec(),
+		specs: map[string]domain.NodeSpec{"e1": lifelineSpec()},
 		clients: map[string][]domain.WGClient{"m1": {
 			{ID: "abc", Name: "laptop", Address: "10.80.0.2/32",
-				PublicKey: "pub", PrivateKey: "Y2xpZW50LWtleQ==", Enabled: true},
+				PublicKey: "pub", PrivateKey: "Y2xpZW50LWtleQ==", PresharedKey: testPSK, Enabled: true},
 		}},
+		lifelines: []string{"e1"},
+		hosts:     map[string]string{"e1": "203.0.113.9"},
 	}
 }
 
@@ -177,5 +225,172 @@ func TestEndpointHostFallback(t *testing.T) {
 	node.PublicIP = ""
 	if got := EndpointHost(node, spec); got != "" {
 		t.Errorf("EndpointHost() = %q, want empty — the SSH host must not reach a client config", got)
+	}
+}
+
+// A reserve config is the master's credential rendered against a different door:
+// the client's own private key, but the exit's lifeline identity, the shifted
+// address, the per-exit preshared key and the exit's endpoint. Getting any one of
+// those from the master would produce a config that looks right and never
+// completes a handshake — or, worse, hands the exit the master's real PSK.
+func TestBuildLifeline(t *testing.T) {
+	res, err := BuildLifeline(context.Background(), source(), "m1", "abc", "e1")
+	if err != nil {
+		t.Fatalf("BuildLifeline() error = %v", err)
+	}
+	wantPSK, err := domain.LifelinePSK(testPSK, "e1")
+	if err != nil {
+		t.Fatalf("LifelinePSK() error = %v", err)
+	}
+	for _, want := range []string{
+		"PrivateKey = Y2xpZW50LWtleQ==",
+		"Address = 10.98.77.2/32",
+		"PublicKey = " + lifelineKey,
+		"PresharedKey = " + wantPSK,
+		"Endpoint = 203.0.113.9:41827",
+	} {
+		if !strings.Contains(res.Config, want) {
+			t.Errorf("config missing %q:\n%s", want, res.Config)
+		}
+	}
+	// Nothing of the master's own door may leak into the reserve config.
+	for _, unwanted := range []string{"203.0.113.1:443", "10.80.0.2/32", testPSK,
+		"c2VydmVyLXB1YmxpYy0wMDAwMDAwMDAwMDAwMDAwMDA="} {
+		if strings.Contains(res.Config, unwanted) {
+			t.Errorf("config carries the master's %q:\n%s", unwanted, res.Config)
+		}
+	}
+	if res.Master.ID != "m1" || res.Exit.ID != "e1" {
+		t.Errorf("result master = %q, exit = %q; want m1 / e1", res.Master.ID, res.Exit.ID)
+	}
+	if res.Client.Address != "10.98.77.2/32" {
+		t.Errorf("result client address = %q, want the lifeline one", res.Client.Address)
+	}
+	if got := LifelineFileName(res.Client, "e1"); got != "laptop-e1.conf" {
+		t.Errorf("LifelineFileName() = %q, want laptop-e1.conf", got)
+	}
+}
+
+// A switched-off credential still renders. Gating on Enabled is the caller's job
+// (the console does it), and it is the same rule Build already follows — a person
+// whose profile is muted must not get a download that silently differs.
+func TestBuildLifelineDisabledClientStillRenders(t *testing.T) {
+	src := source()
+	c := src.clients["m1"][0]
+	c.Enabled = false
+	src.clients["m1"] = []domain.WGClient{c}
+
+	if _, err := BuildLifeline(context.Background(), src, "m1", "abc", "e1"); err != nil {
+		t.Fatalf("BuildLifeline() for a disabled credential = %v, want a config", err)
+	}
+}
+
+func TestBuildLifelineFailures(t *testing.T) {
+	tests := map[string]struct {
+		mutate  func(*stubSource)
+		exit    string
+		client  string
+		wantErr string
+	}{
+		"unknown exit":   {exit: "nope", client: "abc", wantErr: "not found"},
+		"unknown client": {exit: "e1", client: "zzz", wantErr: "not found"},
+		"interface still wg-easy's": {
+			mutate:  func(s *stubSource) { s.spec = domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}} },
+			exit:    "e1",
+			client:  "abc",
+			wantErr: "not managed",
+		},
+		"exit carries no lifeline": {
+			mutate:  func(s *stubSource) { s.specs["e1"] = domain.NodeSpec{Role: domain.RoleExit} },
+			exit:    "e1",
+			client:  "abc",
+			wantErr: "no lifeline on this exit",
+		},
+		"lifeline key not published yet": {
+			mutate: func(s *stubSource) {
+				n := s.nodes["e1"]
+				n.LifelinePublicKey = ""
+				s.nodes["e1"] = n
+			},
+			exit: "e1", client: "abc", wantErr: "has not published its lifeline key yet",
+		},
+		"no endpoint for the exit": {
+			mutate:  func(s *stubSource) { s.hosts = map[string]string{} },
+			exit:    "e1",
+			client:  "abc",
+			wantErr: "no public endpoint known for this exit",
+		},
+		"credential outside the master pool": {
+			mutate: func(s *stubSource) {
+				c := s.clients["m1"][0]
+				c.Address = "10.81.0.2/32"
+				s.clients["m1"] = []domain.WGClient{c}
+			},
+			exit: "e1", client: "abc", wantErr: "outside the master pool",
+		},
+		"store unavailable": {
+			mutate: func(s *stubSource) { s.listErr = errors.New("store is down") },
+			exit:   "e1", client: "abc", wantErr: "store is down",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			src := source()
+			if tc.mutate != nil {
+				tc.mutate(&src)
+			}
+			_, err := BuildLifeline(context.Background(), src, "m1", tc.client, tc.exit)
+			if err == nil {
+				t.Fatalf("BuildLifeline() = nil error, want one mentioning %q", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("BuildLifeline() = %v, want an error mentioning %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// An exit that is not a lifeline exit at all is ErrNotFound, not a bespoke error:
+// the caller (a URL someone typed or an old link) must get the same 404 an unknown
+// credential gets.
+func TestBuildLifelineUnknownExitIsNotFound(t *testing.T) {
+	_, err := BuildLifeline(context.Background(), source(), "m1", "abc", "e9")
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("BuildLifeline() for an unknown exit = %v, want ErrNotFound", err)
+	}
+}
+
+// The listing says, per exit, whether a reserve config can be handed out and — when
+// it cannot — the one thing the operator has to fix. Every not-ready reason is a
+// standing condition, so it belongs on the page rather than behind a failed download.
+func TestListLifelineExits(t *testing.T) {
+	src := source()
+	src.lifelines = []string{"e1", "e2", "e3", "e4"}
+	src.hosts["e2"] = "203.0.113.10"
+	src.hosts["e3"] = "203.0.113.11"
+	src.specs["e2"] = domain.NodeSpec{Role: domain.RoleExit} // no lifeline rendered
+	src.specs["e3"] = lifelineSpec()
+	src.specs["e4"] = lifelineSpec()
+	src.nodes["e2"] = domain.Node{ID: "e2", Name: "e2", Role: domain.RoleExit}
+	src.nodes["e3"] = domain.Node{ID: "e3", Name: "e3", Role: domain.RoleExit} // no key published
+	src.nodes["e4"] = domain.Node{ID: "e4", Name: "e4", Role: domain.RoleExit, LifelinePublicKey: lifelineKey}
+
+	got, err := ListLifelineExits(context.Background(), src, "m1")
+	if err != nil {
+		t.Fatalf("ListLifelineExits() error = %v", err)
+	}
+	want := []LifelineExit{
+		{ID: "e1", Name: "e1", Endpoint: "203.0.113.9:41827", Ready: true},
+		{ID: "e2", Name: "e2", Reason: "no lifeline on this exit"},
+		{ID: "e3", Name: "e3", Endpoint: "203.0.113.11:41827", Reason: "the exit has not published its lifeline key yet"},
+		{ID: "e4", Name: "e4", Reason: "no public endpoint known for this exit"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ListLifelineExits() = %+v, want %d entries", got, len(want))
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("exit %d = %+v, want %+v", i, got[i], w)
+		}
 	}
 }

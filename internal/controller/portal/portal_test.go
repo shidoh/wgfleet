@@ -35,6 +35,12 @@ func (s stubSource) ListWGClients(context.Context, string) ([]domain.WGClient, e
 	return s.clients, nil
 }
 
+// No reserve doors in this world: the portal serves the master's own config, and
+// the lifeline listing is exercised where it is built (clientcfg).
+func (s stubSource) LifelineExits(context.Context) ([]string, error) { return nil, nil }
+
+func (s stubSource) ExitEndpointHost(context.Context, string) (string, error) { return "", nil }
+
 func testPortal(t *testing.T) *Handler {
 	t.Helper()
 	src := stubSource{

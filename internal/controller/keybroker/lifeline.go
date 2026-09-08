@@ -2,11 +2,13 @@ package keybroker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 
 	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/config"
+	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/wg"
 )
@@ -214,4 +216,52 @@ func lifelineAWG(exit config.ExitConfig, master config.MasterConfig, exitNode do
 		p = wg.WithAWG3HeaderProtection(p, seed, awg3Key)
 	}
 	return &p
+}
+
+// LifelineExits names every exit the manifest gives a reserve client-facing
+// interface, in manifest order. It answers from the manifest alone: this is the
+// set of doors the operator DECLARED, and whether each one is currently usable is
+// a separate question (clientcfg.ListLifelineExits asks it) — collapsing the two
+// here would drop a misconfigured exit off the console instead of showing the
+// operator what to fix.
+func (b *Broker) LifelineExits(context.Context) ([]string, error) {
+	var out []string
+	for _, e := range b.fleet.Exits {
+		if e.LifelineEnabled() {
+			out = append(out, e.Name)
+		}
+	}
+	return out, nil
+}
+
+// ExitEndpointHost resolves the address a client dials for one exit's lifeline.
+//
+// It is the SAME resolution the master↔exit tunnel uses (broker.go, renderMasterSpec)
+// — declared public_ip, then the bootstrap ssh.host, then the address the node
+// registered — and deliberately so: it is one physical endpoint on one node, and
+// two answers would mean the tunnel comes up while the reserve config points
+// somewhere else. Names are skipped rather than returned (firstIPLiteral), because
+// this address also feeds the exit's own kernel-level guards.
+//
+// This is where the lifeline parts company with the master's EndpointHost, which
+// refuses ssh.host outright: for a master that address is typically the management
+// overlay and must never reach an end user. An exit's is not — an exit is
+// hand-declared by the address it is reached at, and the tunnel already dials it.
+//
+// "" is a valid answer meaning "the fleet knows no dialable address for this exit";
+// a node the store has never seen is likewise not an error, since an exit may be
+// declared long before it registers.
+func (b *Broker) ExitEndpointHost(ctx context.Context, exitID string) (string, error) {
+	exit, ok := b.findExit(exitID)
+	if !ok {
+		return "", fmt.Errorf("keybroker: exit %q not found in fleet manifest", exitID)
+	}
+	node, err := b.store.GetNode(ctx, exitID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return "", fmt.Errorf("keybroker: reading %q from the inventory: %w", exitID, err)
+	}
+	if addr, found := firstIPLiteral(exit.PublicIP, exit.SSH.Host, node.PublicIP); found {
+		return addr.String(), nil
+	}
+	return "", nil
 }

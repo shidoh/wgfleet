@@ -818,6 +818,14 @@ func (s portalSource) ListWGClients(ctx context.Context, id string) ([]domain.WG
 	return s.broker.ListWGClients(ctx, id)
 }
 
+func (s portalSource) LifelineExits(ctx context.Context) ([]string, error) {
+	return s.broker.LifelineExits(ctx)
+}
+
+func (s portalSource) ExitEndpointHost(ctx context.Context, exitID string) (string, error) {
+	return s.broker.ExitEndpointHost(ctx, exitID)
+}
+
 // anySubcommand reports whether any of these string flags selected a subcommand.
 // selectedSubcommands returns the names of every mutually exclusive subcommand the
 // operator asked for, sorted so the message is stable.
