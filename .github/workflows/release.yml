@@ -59,14 +59,17 @@ jobs:
       # only, and workflow_dispatch will happily tag HEAD. Publishing binaries that
       # nothing verified — to the fleet AND to testers — is the one place where a
       # green tree is not optional.
-      - name: Build tools (self-hosted runners ship no make or C compiler; -race needs cgo)
+      - name: Build tools (a stock actions-runner image has no make, C compiler or gh; a no-op on our own image)
         if: runner.environment == 'self-hosted'
         run: |
-          if ! command -v gcc >/dev/null || ! command -v make >/dev/null; then
+          if ! command -v gcc >/dev/null || ! command -v make >/dev/null || ! command -v gh >/dev/null; then
+            sudo mkdir -p -m 755 /etc/apt/keyrings
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
             sudo apt-get update -q
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q gcc libc6-dev make
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q gcc libc6-dev make gh
           fi
-          gcc --version | head -1; make --version | head -1
+          gcc --version | head -1; make --version | head -1; gh --version | head -1
       - name: Verify before publishing
         run: |
           unformatted="$(gofmt -l cmd internal)"
