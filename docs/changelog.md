@@ -3,17 +3,6 @@
 What changed for operators in each wgfleet release — behaviour, manifest keys, CLI flags, the console, the scripts in the archive, and the steps an upgrade asks of you.
 Every release archive carries this page as `CHANGELOG.md`.
 
-## Unreleased
-
-### Changed
-
-- Drop design-note references and rationale from console copy, help text and the headers of rendered files; the console now says what a control does, not why it exists.
-
-### Docs
-
-- Rewrite the operator documentation for the closed beta: no internal references, no incident history, every page written for a reader without repository access.
-- Publish the operator documentation as a site at <https://shidoh.github.io/wgfleet-docs/>, built from the same pages the archive ships.
-
 ## v0.2.4 — 2026-09-08
 
 A master still served by wg-easy survives an AmneziaWG module upgrade, the namespace move works on Ubuntu 22.04, and both binaries gain five log levels switchable on a running process.
@@ -30,6 +19,7 @@ A master still served by wg-easy survives an AmneziaWG module upgrade, the names
 
 ### Changed
 
+- Drop design-note references and rationale from console copy, help text and the headers of rendered files; the console now says what a control does, not why it exists.
 - Default the client and exit I-packet prologue to a per-end STUN+QUIC cover, measured across four mobile operators; the previous plain-noise default was the worst of the set on mobile.
 - Earn an exit's auto-suspend with minutes of evidence rather than passes, and measure egress throughput against several independent targets instead of one speed-test page.
 - Name the console buttons Drain and Undrain, label the topology's second group NOT CARRYING instead of RESERVE, and show a decommission the node cannot carry out as stuck, with Delete as the way out.
@@ -45,6 +35,8 @@ A master still served by wg-easy survives an AmneziaWG module upgrade, the names
 
 ### Docs
 
+- Rewrite the operator documentation for the closed beta: no internal references, no incident history, every page written for a reader without repository access.
+- Publish the operator documentation as a site at <https://shidoh.github.io/wgfleet-docs/>, built from the same pages the archive ships.
 - Add `REQUIREMENTS.md`, the system requirements and compatibility page: Ubuntu 24.04 supported, older releases best effort, plus the versions the platform pins.
 - Add "AmneziaWG is down: where to look" and the module upgrade runbook to `OPERATIONS.md`.
 
