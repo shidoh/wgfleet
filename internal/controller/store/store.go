@@ -86,6 +86,12 @@ type Store interface {
 	// node's fleet-internal public key. Returns ErrNotFound if the node is absent.
 	SetNodeClientWGKey(ctx context.Context, id, publicKey string) error
 
+	// SetNodeLifelineKey records the exit's LIFELINE interface WireGuard public
+	// key (the reserve client-facing interface awgl0), separate from the node's
+	// fleet-internal and ordinary client-facing keys. Returns ErrNotFound if the
+	// node is absent.
+	SetNodeLifelineKey(ctx context.Context, id, publicKey string) error
+
 	// ListVLESSClients returns a master's issued VLESS client credentials, ordered
 	// by name. An unknown master yields an empty slice, not ErrNotFound.
 	ListVLESSClients(ctx context.Context, masterID string) ([]domain.VLESSClient, error)

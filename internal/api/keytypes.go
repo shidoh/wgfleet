@@ -22,6 +22,12 @@ const (
 	// the controller needs this one to render the .conf it hands a client.
 	KeyTypeClientWG = "client-wg"
 
+	// KeyTypeLifeline is the exit's LIFELINE interface WireGuard public key — the
+	// reserve client-facing interface (awgl0) an exit may carry alongside its
+	// master↔exit and ordinary client-facing identities. Rendered verbatim into
+	// reserve client configs, so it needs the same validation as the other keys.
+	KeyTypeLifeline = "lifeline"
+
 	// KeyTypeWireGuardTunnelPrefix marks a PER-TUNNEL WireGuard public key
 	// (ADR-0030): "wireguard:<exit-name>" is the master's dedicated identity for the
 	// tunnel to that one exit, as opposed to the unsuffixed KeyTypeWireGuard, which

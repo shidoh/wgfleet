@@ -133,6 +133,11 @@ var migrations = []string{
 		id         TEXT PRIMARY KEY,
 		retired_at TEXT NOT NULL
 	)`,
+	// v15: the exit's LIFELINE WireGuard public key — the identity of the reserve
+	// client-facing interface (awgl0) an exit may carry, published separately from
+	// public_key (the master↔exit tunnel identity) and client_wg_public_key (the
+	// master's own client leg).
+	`ALTER TABLE nodes ADD COLUMN lifeline_public_key TEXT NOT NULL DEFAULT ''`,
 }
 
 // MigrationCount is how many schema migrations this build knows. Exported so a

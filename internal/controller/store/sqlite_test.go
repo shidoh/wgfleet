@@ -414,6 +414,41 @@ func TestSetNodeRealityKey(t *testing.T) {
 	}
 }
 
+func TestSetNodeLifelineKey(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	n := sampleNode()
+	if err := s.UpsertNode(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetNodePublicKey(ctx, n.ID, "WGKEY=="); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetNodeLifelineKey(ctx, n.ID, "LIFELINEKEY"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetNode(ctx, n.ID)
+	// The two key registries are independent.
+	if got.PublicKey != "WGKEY==" {
+		t.Errorf("wg key clobbered: %q", got.PublicKey)
+	}
+	if got.LifelinePublicKey != "LIFELINEKEY" {
+		t.Errorf("lifeline key = %q, want LIFELINEKEY", got.LifelinePublicKey)
+	}
+	// A re-register (GetNode→UpsertNode) preserves both keys.
+	got.PublicIP = "203.0.113.99"
+	if err := s.UpsertNode(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := s.GetNode(ctx, n.ID)
+	if again.LifelinePublicKey != "LIFELINEKEY" || again.PublicKey != "WGKEY==" {
+		t.Errorf("keys lost across upsert: wg=%q lifeline=%q", again.PublicKey, again.LifelinePublicKey)
+	}
+	if err := s.SetNodeLifelineKey(ctx, "ghost", "x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetNodeLifelineKey ghost: want ErrNotFound, got %v", err)
+	}
+}
+
 func TestStatusExitHealthPersists(t *testing.T) {
 	st, err := Open(":memory:")
 	if err != nil {

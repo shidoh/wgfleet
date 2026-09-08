@@ -126,6 +126,13 @@ func (c *Client) PublishClientWGKey(ctx context.Context, publicKey string) error
 	return c.publishKey(ctx, publicKey, api.KeyTypeClientWG)
 }
 
+// PublishLifelineKey registers this exit's LIFELINE interface WireGuard public
+// key (the reserve client-facing interface awgl0), stored separately from the
+// node's fleet-internal and ordinary client-facing keys.
+func (c *Client) PublishLifelineKey(ctx context.Context, publicKey string) error {
+	return c.publishKey(ctx, publicKey, api.KeyTypeLifeline)
+}
+
 // PublishTunnelKey registers the master's per-tunnel WireGuard public key for one
 // master↔exit tunnel (ADR-0030). tunnel is the exit's node name.
 func (c *Client) PublishTunnelKey(ctx context.Context, tunnel, publicKey string) error {

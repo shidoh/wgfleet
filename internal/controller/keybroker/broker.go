@@ -219,6 +219,29 @@ func (b *Broker) RegisterClientWGKey(ctx context.Context, nodeID, publicKey stri
 	return nil
 }
 
+// RegisterLifelineKey records an exit's LIFELINE interface WireGuard public
+// key — the identity of the reserve client-facing interface (awgl0) an exit may
+// carry. Validated as a well-formed WireGuard key before storing: it is
+// rendered verbatim into reserve client configs, so a malformed value from a
+// CA-authenticated-but-rogue node must be refused here (same guard as the other
+// WireGuard-family keys above).
+func (b *Broker) RegisterLifelineKey(ctx context.Context, nodeID, publicKey string) error {
+	if publicKey == "" {
+		return fmt.Errorf("keybroker: empty lifeline public key for %q", nodeID)
+	}
+	if !wg.ValidKey(publicKey) {
+		return fmt.Errorf("keybroker: malformed lifeline public key for %q", nodeID)
+	}
+	if b.keyUnchanged(ctx, nodeID, publicKey, func(n domain.Node) string { return n.LifelinePublicKey }) {
+		return nil
+	}
+	if err := b.store.SetNodeLifelineKey(ctx, nodeID, publicKey); err != nil {
+		return err
+	}
+	b.log.Info("lifeline public key registered", "node", nodeID)
+	return nil
+}
+
 // clientVLESSSpec resolves a master's client-facing VLESS+REALITY+XHTTP inbound
 // desired state, or nil when the transport is disabled. Camouflage falls back
 // per-exit-style (manifest → fleet default → safe built-in); the issued client
