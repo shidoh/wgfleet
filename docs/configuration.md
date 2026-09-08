@@ -342,13 +342,20 @@ to leave the exit unchanged. Requires `masters[].client_awg.managed: true` — t
 is no wg-easy equivalent for a reserve interface, so the controller must own the
 credentials it projects here.
 
+Its peers are the master's own credentials, projected: the same client keys, the
+same host offset carried into this pool (a client at `.7` of the master's pool is
+at `.7` of this one, as a `/32`), and a preshared key derived per exit. Each
+credential then gets one reserve config per lifeline exit, in the console and on
+the self-service page. See [operations.md](operations.md) for what to check on the exit
+and how to hand the configs out.
+
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `fleet.exits[].lifeline.listen_port` | int | **required** | UDP port for the reserve interface. Must differ from the exit's own AmneziaWG port and from any `firewall.public_udp_ports` entry |
 | `fleet.exits[].lifeline.address_pool` | CIDR | **required** | Client address pool for the reserve interface. Must be at least as large as the master's `client_awg.address_pool` and must not overlap any other pool in the fleet |
 | `fleet.exits[].lifeline.egress` | string | `direct` | `direct` or `warp`. `warp` requires WARP to already be in this exit's egress chain (`egress` or `egress_fallback`) |
-| `fleet.exits[].lifeline.dns` | []string | — | Resolvers handed to lifeline clients. **Required** when `dns_filter` is off, since the master's resolvers are unreachable without the master |
-| `fleet.exits[].lifeline.mtu` | int | derived | MTU override for the reserve interface |
+| `fleet.exits[].lifeline.dns` | []string | this exit's blocky | Resolvers handed to lifeline clients. Unset with `dns_filter: true` hands out this interface's own gateway address, which the exit's blocky binds. **Required** when `dns_filter` is off, since the master's resolvers are unreachable without the master |
+| `fleet.exits[].lifeline.mtu` | int | derived | MTU override. Derived otherwise: one AmneziaWG layer over this exit's own link — and with `egress: warp`, the smaller of that and the WARP interface's MTU, since the two hops terminate separately rather than nesting |
 
 ---
 

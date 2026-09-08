@@ -3,6 +3,24 @@
 What changed for operators in each wgfleet release — behaviour, manifest keys, CLI flags, the console, the scripts in the archive, and the steps an upgrade asks of you.
 Every release archive carries this page as `CHANGELOG.md`.
 
+## Unreleased
+
+An exit can carry a reserve client-facing interface, so every credential gets a second profile to switch to when the master stops answering.
+
+### Added
+
+- Give an exit a reserve client-facing AmneziaWG interface with `fleet.exits[].lifeline` (`listen_port`, `address_pool`, `egress: direct|warp`, `dns`, `mtu`); it carries the same credentials the master serves, at the same host offsets shifted into its own pool, with a preshared key derived per exit. Requires `masters[].client_awg.managed: true`.
+- Hand out a reserve config per lifeline exit from each credential's card in the console and from the self-service page a user already holds; the console lists every declared exit with the reason one cannot yet hand out a config, the self-service page lists only the ready ones.
+- Report the reserve interface with a `lifeline` health check on the exit's node page. It reads the agent's own reason for not applying a spec before it looks at the interface, so an `awgl0` still serving an older config is not reported healthy.
+
+### Changed
+
+- The controller↔agent wire moves to v11, carrying the lifeline interface and its firewall port. An agent below v11 is rendered no lifeline at all rather than a firewall hole in front of a listener it cannot raise; the controller says so once per exit in its log.
+
+### Fixed
+
+- Redact the lifeline block in a node's raw spec view: every projected credential's preshared key and the interface's header-protection key were shown in full, where the master's own client interface had been redacted all along.
+
 ## v0.2.4 — 2026-09-08
 
 A master still served by wg-easy survives an AmneziaWG module upgrade, the namespace move works on Ubuntu 22.04, and both binaries gain five log levels switchable on a running process.
