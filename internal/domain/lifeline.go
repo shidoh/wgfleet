@@ -38,11 +38,20 @@ type LifelineSpec struct {
 
 // LifelineAddress shifts a client's address from the master's client pool into
 // the lifeline pool, preserving the host offset: "10.80.0.7/24" in a
-// 10.80.0.0/24 master pool becomes "10.98.77.7/24" in a 10.98.77.0/24 lifeline
+// 10.80.0.0/24 master pool becomes "10.98.77.7/32" in a 10.98.77.0/24 lifeline
 // pool. Deriving the lifeline address this way — rather than allocating it
 // independently — needs no separate allocation state on the exit and keeps a
 // given client's lifeline peer trivially reproducible from its master-side
 // record.
+//
+// The result is always a /32 HOST prefix, whatever masks the two pools carry.
+// The pools are only a base to measure the offset from and a bound to check it
+// against; they are not the peer's mask. This address is written verbatim as the
+// peer's AllowedIPs (see wg/client_render.go and validateClientPeer), so a pool
+// mask here would hand one credential everybody else's traffic — "10.98.77.5/24"
+// claims the whole lifeline pool — and ClientWGSpec.Validate, promoted onto
+// LifelineSpec through the embedding, refuses it outright. The master's own
+// allocator emits /32 for the same reason.
 //
 // addr may carry a mask (as WGClient.Address does) or be bare; either way its
 // host bits, relative to masterPool, are what get carried over. Both pools
@@ -66,7 +75,7 @@ func LifelineAddress(addr string, masterPool, lifelinePool netip.Prefix) (string
 		return "", fmt.Errorf("lifeline address for %s (offset %d) falls outside the lifeline pool %s",
 			addr, offset, lifelinePool)
 	}
-	return netip.PrefixFrom(shifted, lifelinePool.Bits()).String(), nil
+	return netip.PrefixFrom(shifted, shifted.BitLen()).String(), nil
 }
 
 // parseAddrMaybeMasked accepts either a bare address or a masked prefix and

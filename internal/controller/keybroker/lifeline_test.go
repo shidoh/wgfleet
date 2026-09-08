@@ -140,8 +140,8 @@ func TestLifelineSpecProjectsTheMastersClients(t *testing.T) {
 		t.Fatalf("Clients = %+v, want exactly the enabled credential", l.Clients)
 	}
 	peer := l.Clients[0]
-	if peer.Address != "10.98.77.5/24" {
-		t.Errorf("peer address = %q, want the host offset shifted into the lifeline pool", peer.Address)
+	if peer.Address != "10.98.77.5/32" {
+		t.Errorf("peer address = %q, want the host offset shifted into the lifeline pool as a single host", peer.Address)
 	}
 	want, err := domain.LifelinePSK(masterPSK, "e")
 	if err != nil {
@@ -155,6 +155,13 @@ func TestLifelineSpecProjectsTheMastersClients(t *testing.T) {
 	}
 	if spec.Firewall.LifelinePort != 41827 {
 		t.Errorf("Firewall.LifelinePort = %d, want the lifeline listener open", spec.Firewall.LifelinePort)
+	}
+	// The rendered block must satisfy the validation it inherits from ClientWGSpec
+	// through the embedding — the agent runs it before touching the interface, so a
+	// controller that renders something Validate() refuses ships a lifeline that
+	// never comes up. It is also what catches a peer mask wider than a single host.
+	if err := l.Validate(); err != nil {
+		t.Errorf("rendered lifeline does not validate: %v", err)
 	}
 }
 

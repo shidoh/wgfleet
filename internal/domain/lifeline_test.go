@@ -17,7 +17,9 @@ func mustPrefix(t *testing.T, s string) netip.Prefix {
 }
 
 // LifelineAddress must preserve the host offset when shifting a client address
-// from the master's pool into the lifeline pool.
+// from the master's pool into the lifeline pool, and hand back a HOST prefix: the
+// result becomes the peer's AllowedIPs verbatim, so a pool mask would give one
+// credential the whole pool.
 func TestLifelineAddressSameOffset(t *testing.T) {
 	masterPool := mustPrefix(t, "10.80.0.0/24")
 	lifelinePool := mustPrefix(t, "10.98.77.0/24")
@@ -26,12 +28,13 @@ func TestLifelineAddressSameOffset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LifelineAddress() = %v, want nil error", err)
 	}
-	if got != "10.98.77.7/24" {
-		t.Fatalf("LifelineAddress() = %q, want %q", got, "10.98.77.7/24")
+	if got != "10.98.77.7/32" {
+		t.Fatalf("LifelineAddress() = %q, want %q", got, "10.98.77.7/32")
 	}
 }
 
-// The pools may carry different masks; only the host offset matters.
+// The pools may carry different masks; only the host offset matters, and neither
+// pool's mask reaches the result — it is always a /32.
 func TestLifelineAddressDifferentMasks(t *testing.T) {
 	masterPool := mustPrefix(t, "10.80.0.0/24")
 	lifelinePool := mustPrefix(t, "10.98.77.0/28") // small enough to still fit .0/.7? use .0-.15 offsets
@@ -40,8 +43,8 @@ func TestLifelineAddressDifferentMasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LifelineAddress() = %v, want nil error", err)
 	}
-	if got != "10.98.77.3/28" {
-		t.Fatalf("LifelineAddress() = %q, want %q", got, "10.98.77.3/28")
+	if got != "10.98.77.3/32" {
+		t.Fatalf("LifelineAddress() = %q, want %q", got, "10.98.77.3/32")
 	}
 }
 
@@ -54,8 +57,8 @@ func TestLifelineAddressBareAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LifelineAddress() = %v, want nil error", err)
 	}
-	if got != "10.98.77.7/24" {
-		t.Fatalf("LifelineAddress() = %q, want %q", got, "10.98.77.7/24")
+	if got != "10.98.77.7/32" {
+		t.Fatalf("LifelineAddress() = %q, want %q", got, "10.98.77.7/32")
 	}
 }
 
@@ -186,8 +189,8 @@ func TestLifelinePeersOfKeepsNameAndPubkey(t *testing.T) {
 	if got.Name != "laptop" || got.PublicKey != testClientPub1 {
 		t.Fatalf("LifelinePeersOf() = %+v, want name %q and pubkey %q preserved", got, "laptop", testClientPub1)
 	}
-	if got.Address != "10.98.77.7/24" {
-		t.Fatalf("LifelinePeersOf() address = %q, want %q", got.Address, "10.98.77.7/24")
+	if got.Address != "10.98.77.7/32" {
+		t.Fatalf("LifelinePeersOf() address = %q, want %q", got.Address, "10.98.77.7/32")
 	}
 }
 
