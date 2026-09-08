@@ -150,6 +150,10 @@ clients can connect to the master over VLESS as well as AmneziaWG.
 - **DPI-resistant client transport** — clients can connect over VLESS + REALITY
   + XHTTP alongside client AmneziaWG; credentials, QR, subscription and a
   ready-to-import Clash config are issued from the Web UI.
+- **Reserve configs on exits (lifeline)** — an exit can carry a second
+  client-facing AmneziaWG interface holding every issued credential; each person
+  gets a reserve profile per such exit, added in advance, so losing the master
+  does not cut them off ([ADR-0034](docs/adr/0034-lifeline-reserve-configs.md)).
 - **Two-tier DNS filtering** — blocky on the master and on every exit, with
   conditional forwarding for local zones.
 - **Scanner-resistant firewall** — rendered nftables with an auto-refreshed
@@ -298,7 +302,8 @@ build DKMS for you. Full walkthrough: [`docs/onboarding.md`](docs/onboarding.md)
   the controller refuse to renew that certificate — see the gaps note below.
 - **Self-checks drive lifecycle state.** After each apply the agent runs
   role-specific checks — handshake freshness, egress reachability, WARP egress,
-  DNS filter, mihomo API — and the derived state feeds the dashboard and metrics.
+  DNS filter, the lifeline interface, mihomo API — and the derived state feeds
+  the dashboard and metrics.
   If an agent goes silent, a staleness sweep demotes its node to `Degraded`.
 - **Customization without forking renderers.** Operators inject deep-merged
   `overrides` and extra files instead of patching the templates.
@@ -378,6 +383,7 @@ MVP, in active development.
 | Web dashboard, Prometheus metrics, encrypted backup/restore | ✅ |
 | Dual transport — VLESS + REALITY + XHTTP fallback, per-exit, live switch | ✅ |
 | Client VLESS + REALITY + XHTTP — credentials, QR and subscription from the console | ✅ |
+| Lifeline — reserve client interface on exits, reserve profiles in the console and the portal | ✅ |
 | Tiered exit selection, throughput watchdog with auto-suspend, drain by config | ✅ |
 | Console login, certificate self-renewal, node tombstones | ✅ |
 | AmneziaWG 3.x — plumbing shipped, **off by default** | ⏸ |

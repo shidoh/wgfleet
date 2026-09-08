@@ -101,7 +101,8 @@ func NotCollected() []string {
 	return []string{
 		"controller.yaml — node identities, manifest secrets",
 		"agent.yaml — node join material",
-		"awg0.conf, wgcf.conf — AmneziaWG/WARP configs (private keys)",
+		"awg0.conf, awgl0.conf, wgcf.conf — AmneziaWG/WARP configs (private keys)",
+		"lifeline.key — the reserve client interface's private key",
 		"mihomo config.yaml — proxy credentials",
 		"xray config.json — REALITY/VLESS private keys",
 		"wg-easy config and its database — client private keys",

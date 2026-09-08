@@ -166,14 +166,14 @@ spec:
       # regexp is fully anchored, so the narrower pattern excluded it — leaving the
       # one signal for "the client leg is not ours" to fall through to the generic
       # 10-minute warning below.
-      expr: wgfleet_node_health_check{check=~"client-wg.*|client-vless"} == 0
+      expr: wgfleet_node_health_check{check=~"client-wg.*|client-vless|lifeline"} == 0
       for: 5m
       labels:
         severity: critical
         service: wgfleet
       annotations:
         summary: 'Client entry point down on {{ $labels.node }}: {{ $labels.check }}'
-        description: The client-facing inbound '{{ $labels.check }}' on master {{ $labels.node }} has
+        description: The client-facing inbound '{{ $labels.check }}' on {{ $labels.node }} has
           been failing for 5m. New clients cannot connect.
     # wgfleet_agent_egress_reachability and _egress_active are INFO gauges: the
     # agent calls Reset() then Set(1) on the label that is currently true, so the
