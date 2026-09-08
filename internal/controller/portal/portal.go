@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
@@ -63,6 +64,11 @@ func New(src clientcfg.Source, masters func() []string) (*Handler, error) {
 	h.mux.HandleFunc("GET /c/{token}", h.handlePage)
 	h.mux.HandleFunc("GET /c/{token}/config", h.handleConfig)
 	h.mux.HandleFunc("GET /c/{token}/qr", h.handleQR)
+	// The reserve doors, under the same token. They are handed out from the same
+	// page as the main profile — the day the master stops answering is the day
+	// nobody can be told a new URL.
+	h.mux.HandleFunc("GET /c/{token}/l/{exit}/config", h.handleLifelineConfig)
+	h.mux.HandleFunc("GET /c/{token}/l/{exit}/qr", h.handleLifelineQR)
 	// Anything else is a 404 with no hint about what does exist.
 	h.mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -81,6 +87,21 @@ type pageData struct {
 	Endpoint string
 	Enabled  bool
 	Token    string
+	// Reserves are the exits this credential can also be dialled through, and only
+	// the ones that can hand out a config right now. The console lists the others
+	// with the reason they cannot — the operator is who can act on that — but a
+	// person reading this page can do nothing with "the exit has not published its
+	// key yet" except distrust the ones that do work.
+	Reserves []reserveView
+}
+
+// reserveView is one reserve door as the page shows it. Ready is what the fill
+// filters on and is kept on the row so a template that ever ranges over an
+// unfiltered listing still cannot render a link that answers with an error.
+type reserveView struct {
+	Exit     string
+	Endpoint string
+	Ready    bool
 }
 
 // resolve finds the credential a token refers to and renders its config.
@@ -128,6 +149,13 @@ func (h *Handler) handlePage(w http.ResponseWriter, r *http.Request) {
 			endpoint = net.JoinHostPort(host, fmt.Sprint(spec.Master.ClientWG.ListenPort))
 		}
 	}
+	// A paused profile is offered nothing to download, reserve doors included — the
+	// two routes behind them refuse it too — so the listing is not even attempted:
+	// it is a walk over every exit's spec for a section that cannot be rendered.
+	var reserves []reserveView
+	if res.Client.Enabled {
+		reserves = h.reserves(r, res.Master.ID)
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	// The page names a credential; keep it out of any shared cache or referrer.
@@ -138,12 +166,131 @@ func (h *Handler) handlePage(w http.ResponseWriter, r *http.Request) {
 		Endpoint: endpoint,
 		Enabled:  res.Client.Enabled,
 		Token:    r.PathValue("token"),
+		Reserves: reserves,
 	}); err != nil {
 		h.log.Warn("portal: render failed", "err", err)
 	}
 }
 
+// reserves lists the reserve doors this page offers. A listing that fails costs
+// the page nothing: the main profile is what the person came for and is still
+// valid, and a page that 503s because one exit's spec would not render would take
+// away the working config to report a fault only the operator can fix.
+func (h *Handler) reserves(r *http.Request, masterID string) []reserveView {
+	exits, err := clientcfg.ListLifelineExits(r.Context(), h.src, masterID)
+	if err != nil {
+		h.log.Warn("portal: could not list the reserve exits", "err", err)
+		return nil
+	}
+	out := make([]reserveView, 0, len(exits))
+	for _, e := range exits {
+		if !e.Ready {
+			continue
+		}
+		out = append(out, reserveView{Exit: e.ID, Endpoint: e.Endpoint, Ready: true})
+	}
+	return out
+}
+
 var errPaused = errors.New("this profile is paused")
+
+// errNoReserve is a door the fleet HAS but cannot open yet: the exit is in the
+// manifest, its key or its endpoint is not there. It wraps store.ErrNotFound so
+// the caller meets the same page an exit name we have never heard of gets —
+// otherwise the two answers differ and the portal becomes an oracle for which
+// exits exist. It is deliberately never charged to the rate limiter: the
+// condition is ours, and a person who bookmarked a reserve link would lock
+// themselves out of their own working profile by reloading it.
+var errNoReserve = fmt.Errorf("this exit has no reserve config yet: %w", store.ErrNotFound)
+
+// resolveLifeline is resolve for a RESERVE config: the same token, the same
+// limiter, plus the exit named in the path.
+func (h *Handler) resolveLifeline(r *http.Request) (clientcfg.Result, error) {
+	ip := clientIP(r)
+	if !h.limit.Allowed(ip) {
+		return clientcfg.Result{}, errTooManyAttempts
+	}
+	token, exit := r.PathValue("token"), r.PathValue("exit")
+	// Both are caller-supplied strings and both are bounded before anything they
+	// name is looked up. A malformed exit is charged exactly like a malformed
+	// token, or the reserve route would be the cheaper of the two to grind.
+	if !validToken(token) || !validExit(exit) {
+		h.limit.Fail(ip)
+		return clientcfg.Result{}, store.ErrNotFound
+	}
+	master, err := clientcfg.FindByID(r.Context(), h.src, h.masters(), token)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			h.limit.Fail(ip)
+		}
+		return clientcfg.Result{}, err
+	}
+	// Readiness is resolved BEFORE the build so the two cases the build folds into
+	// one error can be told apart here: an exit the fleet does not have is the
+	// caller's doing and is charged, an exit that is not ready is ours and is not.
+	exits, err := clientcfg.ListLifelineExits(r.Context(), h.src, master)
+	if err != nil {
+		return clientcfg.Result{}, err
+	}
+	i := slices.IndexFunc(exits, func(e clientcfg.LifelineExit) bool { return e.ID == exit })
+	if i < 0 {
+		h.limit.Fail(ip)
+		return clientcfg.Result{}, store.ErrNotFound
+	}
+	if !exits[i].Ready {
+		return clientcfg.Result{}, errNoReserve
+	}
+	res, err := clientcfg.BuildLifeline(r.Context(), h.src, master, token, exit)
+	if err != nil {
+		return clientcfg.Result{}, err
+	}
+	h.limit.Reset(ip)
+	return res, nil
+}
+
+// handleLifelineConfig serves one reserve .conf. It gates on Enabled exactly as
+// the primary does — the console does not, because there the operator is handing
+// a file to a person for later, while here the URL is one somebody kept and
+// reloads, which is how a peer the server has already dropped gets re-imported.
+func (h *Handler) handleLifelineConfig(w http.ResponseWriter, r *http.Request) {
+	res, err := h.resolveLifeline(r)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	if !res.Client.Enabled {
+		h.fail(w, errPaused)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	// Named after the exit: a person holds one of these per door, and two files
+	// called laptop.conf in a Downloads folder is how the wrong one is imported on
+	// the day it matters.
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("attachment; filename=%q", clientcfg.LifelineFileName(res.Client, r.PathValue("exit"))))
+	_, _ = w.Write([]byte(res.Config))
+}
+
+func (h *Handler) handleLifelineQR(w http.ResponseWriter, r *http.Request) {
+	res, err := h.resolveLifeline(r)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	if !res.Client.Enabled {
+		h.fail(w, errPaused)
+		return
+	}
+	png, err := qrcode.Encode(res.Config, qrcode.Medium, 1024)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(png)
+}
 
 // handleConfig serves the .conf file the page links to.
 func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -249,6 +396,23 @@ func validToken(s string) bool {
 	return true
 }
 
+// validExit bounds what reaches the store for a RESERVE config: node IDs are
+// lowercase names, and this runs before the lookup for the same reason
+// validToken does — the path segment is a stranger's string until it is checked.
+func validExit(s string) bool {
+	if s == "" || len(s) > 32 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // clientIP is the source address for rate limiting. The transport address only —
 // never a forwarded-for header, which the caller controls and could use to make
 // the limiter forget them.
@@ -311,6 +475,15 @@ a.btn:focus-visible { outline:2px solid #e6edf3; outline-offset:2px; }
   background:#2a1f14; border:1px solid #4a3a24; color:#e8c48a; font-size:15px; }
 .notice b { color:#f5cf9a; }
 .qr-img { display:block; width:100%; height:auto; margin-top:14px; border-radius:9px; background:#fff; padding:8px; box-sizing:border-box; }
+/* The reserve block is separated by a rule rather than a second card: it is the
+   same profile, handed out for a different day, and a card of its own would read
+   as a second product to install. */
+.reserve { margin-top:24px; padding-top:22px; border-top:1px solid #232c39; }
+h2 { margin:0 0 6px; font-size:17px; }
+.reserve > p { margin:0 0 4px; color:#8b98a9; font-size:15px; }
+.reserve-item { margin-top:18px; }
+.reserve-name { margin:0 0 8px; font-size:15px; }
+.reserve-name span { color:#8b98a9; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:13px; }
 `
 
 const portalHTML = `<!doctype html>
@@ -346,6 +519,26 @@ obfuscated so it can get through the block, and the plain WireGuard app cannot r
   <p>On the other device, open AmneziaWG, choose <b>Add tunnel → Scan QR code</b>, and point it here.</p>
   <img class="qr-img" src="/c/{{.Token}}/qr" alt="QR code for this profile" loading="lazy">
 </details>
+{{/* The reserve doors, handed out WITH the main profile and never later: the day
+     the master stops answering is the day nobody can be told a new link. Only the
+     doors that can actually hand out a config are here — see pageData.Reserves —
+     and with none of them the whole section is absent, because a heading
+     promising a fallback that is not there is worse than saying nothing. */}}
+{{if .Reserves}}
+<section class="reserve">
+  <h2>If the main server stops working</h2>
+  <p>Add these profiles now, while everything works. If the main one stops connecting, switch to any of them.</p>
+  {{range .Reserves}}
+  <div class="reserve-item">
+    <p class="reserve-name">{{.Exit}} <span>{{.Endpoint}}</span></p>
+    <div class="actions">
+      <a class="btn" href="/c/{{$.Token}}/l/{{.Exit}}/config">Download reserve profile</a>
+    </div>
+    <img class="qr-img" src="/c/{{$.Token}}/l/{{.Exit}}/qr" alt="QR code for the {{.Exit}} reserve profile" loading="lazy">
+  </div>
+  {{end}}
+</section>
+{{end}}
 <details>
   <summary>Technical details</summary>
   <dl>
