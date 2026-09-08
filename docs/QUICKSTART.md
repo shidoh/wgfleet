@@ -2,9 +2,8 @@
 
 From two blank Ubuntu servers to a working VPN in about 30 minutes.
 
-The annotated long form of each step is in
-[colocated-controller-master.md](colocated-controller-master.md) (master) and
-[onboarding.md](onboarding.md) (exits).
+Annotated long form: [colocated-controller-master.md](colocated-controller-master.md)
+(master), [onboarding.md](onboarding.md) (exits).
 
 ---
 
@@ -15,99 +14,87 @@ The annotated long form of each step is in
                                   (near you)              (abroad)
 ```
 
-- **Master** — the server your devices connect to. It also runs the controller
-  and the Web UI.
-- **Exit** — the server your traffic actually leaves from. You can add more
-  later; the master load-balances between them.
+- **Master** — server your devices connect to; also runs the controller and the
+  Web UI.
+- **Exit** — server your traffic actually leaves from. Add more later; the
+  master load-balances between them.
 
 ## What you need
 
-- **2 servers** (or more), **Ubuntu 24.04**, **root SSH access**, each with a
-  public IP. 1 vCPU / 1 GB RAM is enough for an exit; give the master 2 vCPU.
-  Anything older than 24.04 is best effort — see the
-  [system requirements](requirements.md) before choosing an image.
-- A free **ZeroTier** account — <https://my.zerotier.com>. wgfleet uses it as
-  the private management network; no admin port is exposed to the internet.
-- The release archive for your CPU, from the archive you were sent (the Releases
-  page once the repository is public):
-  `wgfleet-<version>-linux-amd64.tar.gz` (Intel/AMD) or
-  `wgfleet-<version>-linux-arm64.tar.gz` (ARM / Ampere / Graviton). Check with
-  `uname -m` on the server: `x86_64` → amd64, `aarch64` → arm64. The commands
-  below use `<version>` as a stand-in — substitute the release you downloaded
-  (e.g. `v0.2.0`); the folder it unpacks into is always `wgfleet-linux-<arch>`.
-- **`age`** on the master, if you want backups: `apt install age`. `--backup` and
-  `--restore` shell out to it and fail without it. `--check-config` warns when
-  it is missing.
-
-> Every command below runs as **root** on the server (`sudo -i` first).
+- [ ] **2+ servers**, Ubuntu 24.04, root SSH access, each with a public IP.
+      1 vCPU / 1 GB is enough for an exit; give the master 2 vCPU. Older than
+      24.04 is best effort — check [requirements.md](requirements.md) first.
+- [ ] A free **ZeroTier** account: <https://my.zerotier.com> — wgfleet's
+      private management network; no admin port is exposed to the internet.
+- [ ] The **release archive** for each server's CPU:
+      `wgfleet-<version>-linux-amd64.tar.gz` (Intel/AMD) or
+      `wgfleet-<version>-linux-arm64.tar.gz` (ARM/Ampere/Graviton). Check with
+      `uname -m` on the server: `x86_64` → amd64, `aarch64` → arm64. Unpacks
+      into `wgfleet-linux-<arch>`. `<version>` below stands for the release
+      you downloaded (e.g. `v0.2.0`).
+- [ ] Optional, for backups: **`age`** on the master (`apt install age`).
+      `--backup`/`--restore` shell out to it and fail without it;
+      `--check-config` warns when it is missing.
+- [ ] Root shell on every server: `sudo -i`. Every command below runs as root.
 
 ---
 
 ## Step 1 — Create the ZeroTier network
 
-1. Log in to <https://my.zerotier.com> → **Create A Network**.
-2. Copy the 16-character **Network ID** (e.g. `8056c2e21c000001`). You need it
-   on every server.
+1. <https://my.zerotier.com> → **Create A Network**.
+2. Copy the 16-character **Network ID** (e.g. `8056c2e21c000001`) — you need
+   it on every server.
 
-Leave the tab open — you will come back to authorize each server.
+Keep the tab open — you come back to authorize each server (Step 3, Step 7).
 
 ## Step 2 — Install the master
 
-Copy the archive to the master server and unpack it:
-
-```bash
-scp wgfleet-<version>-linux-amd64.tar.gz root@<MASTER-IP>:/root/
-ssh root@<MASTER-IP>
-tar xzf wgfleet-<version>-linux-amd64.tar.gz
-cd wgfleet-linux-amd64
-```
-
-Run the installer. It installs the dependencies (AmneziaWG kernel module,
-ZeroTier, Docker), the two binaries, the systemd services and config templates.
-It does **not** start anything yet.
-
-```bash
-ZT_NETWORK=<NETWORK-ID> PUBLIC_IP=<MASTER-IP> ./install.sh
-```
-
-Takes a few minutes (it compiles a kernel module). Safe to re-run if it fails.
+1. Copy the archive and unpack it:
+   ```bash
+   scp wgfleet-<version>-linux-amd64.tar.gz root@<MASTER-IP>:/root/
+   ssh root@<MASTER-IP>
+   tar xzf wgfleet-<version>-linux-amd64.tar.gz
+   cd wgfleet-linux-amd64
+   ```
+2. Run the installer — installs the AmneziaWG kernel module, ZeroTier,
+   Docker, the two binaries, the systemd services and config templates. Does
+   not start anything yet.
+   ```bash
+   ZT_NETWORK=<NETWORK-ID> PUBLIC_IP=<MASTER-IP> ./install.sh
+   ```
+   Expect: a few minutes (it compiles a kernel module). Safe to re-run if it
+   fails.
 
 ## Step 3 — Authorize the master in ZeroTier
 
-Back in the ZeroTier tab, on your network page → **Members**: a new member
-appeared.
-
-1. Tick **Auth?**.
-2. In the **Managed IPs** column, give it a fixed address — write down
-   `10.147.20.10` (or whatever ZeroTier offers). This is the master's
-   **management address**.
-
-On the server, confirm it arrived:
-
-```bash
-zerotier-cli listnetworks     # should show OK and your 10.147.x.x address
-ip -4 addr show | grep 10.147 # the address is on a zt* interface
-```
+1. ZeroTier Central → your network → **Members** → tick **Auth?** on the new
+   member.
+2. In **Managed IPs**, give it a fixed address — write it down (e.g.
+   `10.147.20.10`). This is the master's **management address**.
+3. Confirm on the server:
+   ```bash
+   zerotier-cli listnetworks     # should show OK and your 10.147.x.x address
+   ip -4 addr show | grep 10.147 # the address is on a zt* interface
+   ```
 
 ## Step 4 — Fill in the config
 
-```bash
-nano /etc/wgfleet/controller.yaml
-```
+1. ```bash
+   nano /etc/wgfleet/controller.yaml
+   ```
+   Replace every `<placeholder>` (every other key you can set is in
+   `CONFIGURATION.md`):
 
-Replace every `<placeholder>` (see `CONFIGURATION.md` for every other key you can set):
+   | Placeholder | Value |
+   |---|---|
+   | `<mgmt-zt-ip>` | the ZeroTier address from Step 3 (e.g. `10.147.20.10`) |
+   | `<public-ip>` | the master's public IP |
+   | `<zt-network-id>` | your ZeroTier Network ID |
 
-| Placeholder | Value |
-|---|---|
-| `<mgmt-zt-ip>` | the ZeroTier address from step 3 (e.g. `10.147.20.10`) |
-| `<public-ip>` | the master's public IP |
-| `<zt-network-id>` | your ZeroTier Network ID |
-
-Then the agent config — the same management address:
-
-```bash
-nano /etc/wgfleet/agent.yaml
-```
+2. Set the same management address in the agent config:
+   ```bash
+   nano /etc/wgfleet/agent.yaml
+   ```
 
 ## Step 5 — Start the master
 
@@ -125,10 +112,10 @@ systemctl enable --now wgfleet-controller wgfleet-agent
 systemctl status wgfleet-controller wgfleet-agent
 ```
 
-Give it 1–2 minutes. The master settles at `Degraded`: with no exit declared,
-mihomo has nothing to balance and its health check fails; the client interface,
-nftables and routing converge normally. It turns `Ready` after Step 7, when the
-first exit registers. Check:
+Expect: `Degraded` for 1–2 minutes — with no exit declared, mihomo has
+nothing to balance and its health check fails; the client interface,
+nftables and routing converge normally. Turns `Ready` once Step 7 registers
+the first exit. Verify:
 
 ```bash
 journalctl -u wgfleet-agent -n 30 --no-pager
@@ -136,106 +123,96 @@ journalctl -u wgfleet-agent -n 30 --no-pager
 
 ## Step 6 — Open the Web UI
 
-The UI is bound to localhost only. Tunnel it from your own machine:
+The UI is bound to localhost only — tunnel it from your own machine:
 
 ```bash
 ssh -L 9000:127.0.0.1:9000 root@<MASTER-IP>
 ```
 
-Then open <http://127.0.0.1:9000> and log in with the password from step 5.
-You should see the master node, `Degraded` until Step 7 adds an exit.
+Open <http://127.0.0.1:9000>, log in with the Step 5 password. Expect: the
+master node, `Degraded` until Step 7 adds an exit.
 
 ## Step 7 — Add an exit server
 
-On the **exit** server, do the OS prep and join the same ZeroTier network:
+1. OS prep on the **exit**, join the same ZeroTier network:
+   ```bash
+   scp wgfleet-<version>-linux-amd64.tar.gz root@<EXIT-IP>:/root/
+   ssh root@<EXIT-IP>
+   tar xzf wgfleet-<version>-linux-amd64.tar.gz
+   ./wgfleet-linux-amd64/prepare-node.sh <NETWORK-ID>
+   ```
+2. Authorize it in ZeroTier Central exactly like Step 3; note its managed IP
+   (e.g. `10.147.20.11`). Nothing else is installed by hand — the master does
+   the rest over SSH.
+3. On the **master**, edit the config:
+   ```bash
+   nano /etc/wgfleet/controller.yaml
+   ```
+   Replace the whole `exits: []` line with the block below (items cannot be
+   pasted under an empty `[]`):
+   ```yaml
+     exits:
+       - name: exit-1
+         region: de                    # free-form label
+         egress: warp                  # leave via Cloudflare WARP
+         # warp_mtu: 1380              # leave unset: the agent probes the path daily; pin only when it is below 1500
+         address_pool: 10.81.0.0/24    # must be unique per exit
+         mgmt_addr: "10.147.20.11"     # the exit's ZeroTier address
+         ssh:
+           host: "<EXIT-IP>"
+           port: 22
+           user: root
+           key_path: "/root/.ssh/id_ed25519"
+           # host_key: "ssh-ed25519 AAAA..."   # recommended, see below
+   ```
+4. Recommended — pin the exit's SSH host key: provisioning ships the node's
+   private identity over this connection.
+   ```bash
+   ssh-keyscan -t ed25519 <EXIT-IP>   # run on the master
+   ```
+   Paste the `ssh-ed25519 AAAA...` part into `host_key`. Without it, wgfleet
+   trusts the key it sees on first connection and logs a warning.
+5. The master needs SSH key access to the exit. If you have no key yet:
+   ```bash
+   ssh-keygen -t ed25519 -N '' -f /root/.ssh/id_ed25519
+   ssh-copy-id -i /root/.ssh/id_ed25519 root@<EXIT-IP>
+   ```
+6. Apply and provision:
+   ```bash
+   wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
+   systemctl restart wgfleet-controller
+   wgfleet-controller --config /etc/wgfleet/controller.yaml --provision exit-1 --plan  # preview
+   wgfleet-controller --config /etc/wgfleet/controller.yaml --provision exit-1         # do it
+   ```
+   Expect: the exit appears in the Web UI and turns `Ready` in a couple of
+   minutes.
 
-```bash
-scp wgfleet-<version>-linux-amd64.tar.gz root@<EXIT-IP>:/root/
-ssh root@<EXIT-IP>
-tar xzf wgfleet-<version>-linux-amd64.tar.gz
-./wgfleet-linux-amd64/prepare-node.sh <NETWORK-ID>
-```
-
-Authorize it in ZeroTier Central exactly like step 3 and note its managed IP
-(e.g. `10.147.20.11`). Nothing else is installed by hand — the master does the
-rest over SSH.
-
-Back on the **master**, add the exit to the config:
-
-```bash
-nano /etc/wgfleet/controller.yaml
-```
-
-Replace the whole `exits: []` line with the block below (items cannot be pasted
-under an empty `[]`):
-
-```yaml
-  exits:
-    - name: exit-1
-      region: de                    # free-form label
-      egress: warp                  # leave via Cloudflare WARP
-      # warp_mtu: 1380              # leave unset: the agent probes the path daily; pin only when it is below 1500
-      address_pool: 10.81.0.0/24    # must be unique per exit
-      mgmt_addr: "10.147.20.11"     # the exit's ZeroTier address
-      ssh:
-        host: "<EXIT-IP>"
-        port: 22
-        user: root
-        key_path: "/root/.ssh/id_ed25519"
-        # host_key: "ssh-ed25519 AAAA..."   # recommended, see below
-```
-
-> **Recommended:** pin the exit's SSH host key. Provisioning ships the node's
-> private identity over this connection. Get the line with
-> `ssh-keyscan -t ed25519 <EXIT-IP>` (run it on the master) and paste the
-> `ssh-ed25519 AAAA...` part into `host_key`. Without it, wgfleet trusts the
-> key it sees on first connection and logs a warning.
-
-The master needs SSH key access to the exit. If you have no key yet:
-
-```bash
-ssh-keygen -t ed25519 -N '' -f /root/.ssh/id_ed25519
-ssh-copy-id -i /root/.ssh/id_ed25519 root@<EXIT-IP>
-```
-
-Apply and provision:
-
-```bash
-wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
-systemctl restart wgfleet-controller
-wgfleet-controller --config /etc/wgfleet/controller.yaml --provision exit-1 --plan  # preview
-wgfleet-controller --config /etc/wgfleet/controller.yaml --provision exit-1         # do it
-```
-
-Watch the Web UI: the exit appears and turns `Ready` in a couple of minutes.
 Repeat this step for every additional exit (new name, new `address_pool`).
 
 ## Step 8 — Connect your devices
 
-wgfleet issues client credentials itself. The template already sets this — check
-the master's `client_awg` block reads:
+wgfleet issues client credentials itself. The template already sets this —
+confirm the master's `client_awg` block reads:
 
 ```yaml
         managed: true   # the agent carries the client interface
 ```
 
-Restart the controller (`--check-config` first — see [CLI.md](cli.md)), then open
-the Web UI, click **AWG CLIENTS** on the master, and issue one. You get a `.conf`
-to download and a QR to scan.
+1. Restart the controller (`--check-config` first — see [CLI.md](cli.md)).
+2. Web UI → master → **AWG CLIENTS** → issue one. You get a `.conf` to
+   download and a QR to scan.
+3. Import it with the **AmneziaWG** app — iOS, Android or desktop, *not* the
+   plain WireGuard app: it cannot read the obfuscation parameters.
 
-Import it with the **AmneziaWG** app — iOS, Android or desktop, *not* the plain
-WireGuard app: the plain app cannot read the obfuscation parameters.
+Optional — a permanent self-service link instead of a file: set
+`controller.client_portal` **together with** `controller.client_portal_url`
+(see `CONFIGURATION.md`). Setting one without the other is a startup error,
+which under `Restart=on-failure` becomes a restart loop — run
+`--check-config` before you restart the controller.
 
-Optionally set `controller.client_portal` **together with**
-`controller.client_portal_url` (see CONFIGURATION.md) and each credential gets a
-permanent self-service link you can send instead of a file. Setting one without
-the other is a startup error, which under `Restart=on-failure` becomes a restart
-loop — run `--check-config` before you restart the controller.
-
-> **Upgrading from a wgfleet that used wg-easy?** Do not set `managed: true`
-> straight away — import the existing credentials first, or every client tunnel
-> stops at the cutover. The procedure is in
-> [CLIENT-MIGRATION.md](client-migration.md).
+Upgrading from a wgfleet that used wg-easy: do not set `managed: true`
+straight away — import the existing credentials first, or every client
+tunnel stops at the cutover. Procedure: [CLIENT-MIGRATION.md](client-migration.md).
 
 Done. Your traffic now goes device → master → exit → internet.
 
@@ -263,22 +240,24 @@ wgfleet-agent --config /etc/wgfleet/agent.yaml --once --plan   # dry run: what w
 
 ## Next: RU / non-RU split tunnel + DNS filtering
 
-The setup above sends **all** client traffic through the exit. To keep Russian
-sites direct and route only the rest abroad, plus filter ads/trackers on DNS,
-use [`controller-split-ru.yaml`](../deploy/examples/controller-split-ru.yaml) and
-its walkthrough, [RU split tunnel + DNS filtering](recipes/ru-split-tunnel-dns-filter.md),
-(both in this archive). It changes only a handful of keys from the setup above.
-Keep `client_awg.managed: true` when you merge it — the example carries it, and a
-manifest without it hands the client interface back to wg-easy with an empty
-database.
+- The setup above sends **all** client traffic through the exit.
+- To keep Russian sites direct and route only the rest abroad, plus filter
+  ads/trackers on DNS, use
+  [`controller-split-ru.yaml`](../deploy/examples/controller-split-ru.yaml)
+  and its walkthrough,
+  [RU split tunnel + DNS filtering](recipes/ru-split-tunnel-dns-filter.md)
+  (both in this archive). It changes only a handful of keys from the setup
+  above.
+- Keep `client_awg.managed: true` when you merge it — the example carries
+  it, and a manifest without it hands the client interface back to wg-easy
+  with an empty database.
 
 ## Every configuration option
 
-`CONFIGURATION.md` in this archive is the complete reference: every key in
-`controller.yaml` and `agent.yaml`, with its type, default and meaning, plus links
-to the upstream documentation of every third-party component wgfleet drives
-(mihomo, blocky, xray/REALITY, wg-easy, wgcf, ZeroTier) for the settings passed
-through via `overrides` and `extra_files`.
-
-Fully annotated reference configs are in `examples/` inside the archive; every key
-listed in `CONFIGURATION.md` appears there too, commented.
+- `CONFIGURATION.md` in this archive is the complete reference: every key in
+  `controller.yaml` and `agent.yaml`, with its type, default and meaning,
+  plus links to the upstream documentation of every third-party component
+  wgfleet drives (mihomo, blocky, xray/REALITY, wg-easy, wgcf, ZeroTier) for
+  the settings passed through via `overrides` and `extra_files`.
+- Fully annotated reference configs are in `examples/` inside the archive;
+  every key listed in `CONFIGURATION.md` appears there too, commented.
