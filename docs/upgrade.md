@@ -1,32 +1,19 @@
 # Upgrading a wgfleet deployment
 
-This is the operator runbook for rolling a new build of wgfleet across a running
-fleet. The controller never pushes: an agent asks for its spec when it is ready
-for one, which is what lets a node that cannot be reached keep serving its last
-good configuration instead of stalling on a delivery it never got.
+Runbook for rolling a new build of wgfleet across a running fleet. The controller
+never pushes: an agent asks for its spec when it is ready for one, so a node that
+cannot be reached keeps serving its last good configuration.
 
 ## Two versions, one of which matters for compatibility
 
 | Version | Where | Purpose |
 |---|---|---|
-| **Build version** | `internal/version`, stamped from git by the Makefile | Human/observability. Shown by `--version`, in the UI, and in `wgfleet_node_agent_info`. |
-| **Wire-contract version** | `internal/api.WireContractVersion` (a constant) | The compatibility key. Controller and agent must agree within `[MinSupportedWire .. WireContractVersion]`. |
+| **Build version** | Stamped from git at build time | Human/observability. Shown by `--version`, in the UI, and in `wgfleet_node_agent_info`. |
+| **Wire-contract version** | A constant in each binary | The compatibility key. Controller and agent must agree within `[MinSupportedWire .. WireContractVersion]`. |
 
-> **`git fetch --tags` before you build for a deployment.** The build version is
-> `git describe --tags --always`, which counts from the newest tag **your clone
-> knows about** — and `git push` does not fetch tags. A clone that missed the last
-> two releases stamps something like `v0.1.7-210-g8d27696`: the commit is right,
-> the release it claims to descend from is two tags stale, and the fleet then
-> reports a version that exists nowhere. Nothing breaks (compatibility rides on
-> the wire contract, not this string), but `--version`, the UI and
-> `wgfleet_node_agent_info` all lie in the same direction, which is exactly where
-> you look first during an incident.
-
-A new release that only changes behaviour the agent already understands keeps the
-same wire version. **Bump `WireContractVersion` whenever an agent must understand
-something new to converge correctly** (a new `NodeSpec` field's semantics, a
-changed field meaning). Forgetting to bump it reintroduces the silent-skew hazard
-the pull-based design exists to prevent.
+A release that only changes behaviour the agent already understands keeps the
+same wire version; the wire version is bumped whenever an agent must understand
+something new to converge correctly.
 
 Check what a binary speaks:
 
@@ -41,29 +28,21 @@ The agent sends its wire + build version as gRPC metadata on every call. The
 controller gates `Register` and `PullSpec`:
 
 - **Compatible** → served normally; the controller records the agent's version
-  (visible in the UI node page and `wgfleet_node_agent_info`).
-- **Agent too old / unknown** (behind the controller) → refused with
+  (UI node page and `wgfleet_node_agent_info`).
+- **Agent too old / unknown** (below `MinSupportedWire`) → refused with
   `FailedPrecondition`, node marked `Degraded` ("agent wire vN …"), and an
-  **auto-upgrade is triggered** (the controller pushes the configured agent
-  binary over SSH and restarts the agent). Requires `controller.agent_bin` set
-  and SSH reach to the node.
+  **auto-upgrade is triggered**: the controller pushes the configured agent binary
+  over SSH and restarts the agent. Requires `controller.agent_bin` and SSH reach.
 - **Agent too new** (controller behind) → refused; **upgrade the controller
   first**. Auto-upgrade cannot fix a too-old controller.
 
-A refused agent keeps its last-good spec and keeps reconciling — the control
-plane refusing service does not break the data plane.
+A refused agent keeps its last-good spec and keeps reconciling.
 
 ## Recommended order: controller first, then agents
 
-1. **Get the new binaries.** From a release archive they are already unpacked
-   beside this file — `wgfleet-controller` and `wgfleet-agent`, built for the
-   architecture named in the archive. From a repo checkout, build them (the
-   version is stamped from git):
-
-   ```
-   make controller-linux ARCH=amd64      # if co-located / self-hosted controller
-   make agent-linux       ARCH=amd64      # agent for the fleet (set ARCH per node)
-   ```
+1. **Get the new binaries.** From a release archive they are unpacked beside this
+   file: `wgfleet-controller` and `wgfleet-agent`, built for the architecture
+   named in the archive.
 
    Point the controller at the new agent binary so auto-upgrade and the
    `--upgrade-agent` / UI button use it:
@@ -71,34 +50,32 @@ plane refusing service does not break the data plane.
    ```yaml
    # controller.yaml
    controller:
-     agent_bin: /opt/wgfleet/dist/wgfleet-agent
+     agent_bin: /usr/local/bin/wgfleet-agent
    ```
 
-2. **Upgrade the controller.** Replace its binary and restart it. While it is
-   down, agents keep reconciling their last spec (and keep failover working).
-   Validate the manifest first — a typo makes the controller exit at startup, and
-   `Restart=on-failure` turns that into a crash loop of the whole control plane
-   that swapping the binary back does **not** fix:
+2. **Upgrade the controller.** Validate the manifest first: a bad manifest makes
+   the controller exit at startup, and `Restart=on-failure` turns that into a
+   crash loop that swapping the binary back does **not** fix.
 
    ```
    wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
    ```
 
-   - If the wire version did **not** change, agents keep talking to it as normal.
-   - If the wire version **did** change, what happens depends on whether the OLD
-     version is still supported. Agents are auto-upgraded only when the controller
-     considers them INCOMPATIBLE — i.e. below `MinSupportedWire`. A bump that keeps
-     the previous version supported upgrades nothing on its own; those agents keep
-     running happily on the old contract until you roll them (next step).
+   Then replace the binary and restart. While it is down, agents keep reconciling
+   their last spec and failover keeps working.
 
-3. **Roll the agents.** Three equivalent ways — pick one:
+   - Wire version unchanged → agents keep talking to it as normal.
+   - Wire version changed → agents are auto-upgraded only when they fall below
+     `MinSupportedWire`. A bump that keeps the previous version supported upgrades
+     nothing on its own; roll those agents in the next step.
 
-   - **Automatic — only below `MinSupportedWire`:** an agent the controller
-     considers incompatible is upgraded on its next `Register` (every
-     `reconcile_interval`, default 30s). A merely *older but still supported*
-     agent is never touched this way, so do not wait for something that will not
-     happen — check `wgfleet_node_agent_info` or the fleet page, and if the
-     versions are not moving, roll them explicitly.
+3. **Roll the agents.** Three equivalent ways:
+
+   - **Automatic — only below `MinSupportedWire`:** an incompatible agent is
+     upgraded on its next `Register` (every `reconcile_interval`, default 30 s).
+     A merely older but still supported agent is never touched this way; if
+     `wgfleet_node_agent_info` or the fleet page shows versions not moving, roll
+     them explicitly.
    - **Per node, explicitly:**
 
      ```
@@ -108,10 +85,10 @@ plane refusing service does not break the data plane.
 
    - **From the UI:** open the node page → **Upgrade agent**.
 
-   The upgrade is *upload new binary + restart the service*, and then **wait for the
-node to say it came back on it**. The data plane
-   (kernel WG interfaces, mihomo/wg-easy/blocky containers) survives the restart,
-   so **no drain is required** and clients are not dropped.
+   The upgrade is *upload new binary + restart the service*, then wait for the
+   node to report back on the new version. The data plane (kernel WG interfaces,
+   mihomo/wg-easy/blocky containers) survives the restart: **no drain is
+   required** and clients are not dropped.
 
 4. **Verify.** Each node's page shows the new **Agent** version and clears the
    `version skew` badge once it re-registers. Watch:
@@ -121,187 +98,60 @@ node to say it came back on it**. The data plane
    wgfleet_nodes{state="Ready"}                               # fleet health
    ```
 
+   Confirm every node reports the wire version the new binaries speak (`--version`
+   prints it) before considering the roll done. An agent on an older but still
+   supported wire keeps reconciling and is neither refused nor auto-upgraded, so it
+   can silently lack behaviour the release relies on — certificate self-renewal,
+   for one (see below).
+
 ## What this release changes on its own
 
-Nothing here asks you to do anything on a node. It is what to expect after the
-binaries land, so a normal change does not read as a fault.
+Each release lists its own behaviour changes in its release notes — read them
+before rolling, so a normal change does not read as a fault. The rules below hold
+across releases:
 
-- **Every AmneziaWG interface rewrites its config once and bounces.** The I1-I5
-  decoy packets are now opaque noise instead of imitation QUIC/STUN/DTLS (a
-  measurement showed the imitation was recognisable AND malformed, which gives a
-  DPI more to work with than random bytes do). I1-I5 may differ
-  between the two ends by design, so **nothing needs reissuing**: expect a few
-  seconds of loss per tunnel on the first pass after the controller restarts, in the
-  same way a Jmin/Jmax change bounces them.
-- **A node that reboots while the controller is unreachable now comes back
-  converged**, from the last spec that applied on it. While it runs that way it
-  reports nothing, so it shows as stale in the console although it is healthy — see
-  "the agent holds its last-good spec" in `operations.md`.
-- **The manifest is validated harder.** Address pools must not overlap anywhere in
-  the fleet, not just between masters. A manifest that has been quietly overlapping
-  is now refused at startup — worth a `--check-config` before the first restart if
-  you have ever copy-pasted an exit block.
-- **`--rolling-upgrade` skips nodes that are not reporting** rather than pushing to
-  them, timing out and rolling them back. They are listed as skipped in the plan; a
-  run can now legitimately leave a node behind.
-- **The alert rules changed** (`monitoring/ (in the release archive; deploy/monitoring/ in the repo)`): four fixed, one added for CA
-  expiry. Apply them whenever convenient — they are written to fail open, so the
-  order relative to the binaries does not matter.
-- **A master still on wg-easy gets the wg-easy image that matches its kernel
-  module.** wg-easy drives the client interface with the amneziawg-tools it bundles,
-  and those must be of the module's generation: the pinned v15.3.0 carries
-  generation-1 tools, so on a 3.x module it fails `awg setconf` and never raises
-  `wg0` — the whole client base gone after a routine module upgrade. The agent now
-  reads the module generation each pass and renders v15.4.0 (generation-3 tools)
-  for a 3.x module, the old pin otherwise. A master whose module is already 3.x
-  sees its wg-easy container recreated once on the first pass; it was not serving
-  anyone before that. An operator-pinned `compose.wg_easy_image` is left alone.
-  Do not downgrade the module afterwards: v15.4.0 migrates wg-easy's database
-  forward, and v15.3.0 will not open it.
-- **The namespace mover no longer spends its attempts while the client interface
-  is down.** A probe that fails because `wg0` does not exist says nothing about
-  the namespace; it used to count as a failed move, three of them parked the
-  interception on the host for good, and the verdict outlived the outage that
-  caused it. If a master of yours shows `udp-return-path` failing and
-  `client interception not moving … reverted 3 times`, that is the old behaviour:
-  toggle `mihomo.client_via_netns` to `off` and back to `auto` once.
-- **The namespace move no longer starts on a master where wg-easy still owns the
-  client interface**, and it no longer counts a pass in which nothing was measured
-  as a failure. There is no client-path prober without the agent's own interface,
-  and a move nobody can watch used to be tried, reverted and parked in three
-  cycles on every such master. Migrate the client leg (client-migration.md) and
-  the move follows.
-- **The namespace readiness gate is satisfied by any reachable exit.** It used to
-  ping the first exit in the manifest and only that one, so a fleet whose first
-  exit was down at its hoster never moved.
-- **The client-path prober resolves where the clients resolve** — the list written
-  into client configs — instead of assuming the master runs its own resolver. A
-  master without `dns_filter` used to fail every tcp/443 probe on name resolution
-  and revert a healthy move.
-- **`fleet.exits[].drain: true`** drains an exit from the manifest; the console
-  shows *drained by config* and refuses to undrain it. The console buttons are now
-  called Drain and Undrain, the topology card's second group is labelled NOT
-  CARRYING (it never was the reserve tier), and a decommissioned node that is not
-  reporting is shown as *decommission stuck* with Delete as the way out rather
-  than as "decommissioning" forever.
-- **The AmneziaWG apt pin no longer fails the reconcile pass on a node where none
-  of the packages is installed** (a module built from source). dpkg's "no such
-  package" exit code was read as a failed probe and took every planner after it
-  down, every pass.
-- **Masters on Ubuntu 22.04 can move client interception into mihomo's namespace.**
-  The moved-state NAT ruleset used a symbolic chain priority nftables 1.0.2 rejects;
-  the agent kept the previous ruleset in silence, the host went on intercepting
-  clients after mihomo had moved, and every attempt reverted. Rendered numerically
-  now, checked statically before every write, and a rejected ruleset reports its
-  component unconverged with the reason instead of a line nobody reads.
-- **A deleted node stays deleted.** Delete used to remove the row and the manifest
-  declaration but not the node's ability to register: an agent that still reached
-  the controller re-created its row on the next pass. A deleted id is refused at
-  registration until you provision it again.
-- **The support bundle carries the versions that decide a diagnosis** (nftables,
-  module, tools, dkms, holds, Docker) and the namespace-move state, and the agent
-  warns when a `type: file` rule provider in `mihomo.overrides` points at a file
-  the node does not have.
-- **`prepare-node.sh --upgrade-awg`** is the supported way to move a node's
-  AmneziaWG module and tools to the newest PPA build; re-running the script
-  without it never did and still does not. Details in `operations.md`,
-  "Upgrading the AmneziaWG module".
+- **Agents renew their own certificates** between 70% and 90% of the one-year
+  lifetime, over the control plane, with no operator step. An agent from before
+  that behaviour never renews: it runs to its certificate's `NotAfter` about a
+  year after provisioning, then falls off the control plane, and the only way back
+  is SSH plus `--certs renew`. Such a node is also invisible to the
+  certificate-expiry alert, because that metric arrives with the same agent
+  generation. Roll stragglers before their certificates age out.
+- **`fleet.awg3_key` is REQUIRED once AmneziaWG 3.x header protection is on**:
+  if `fleet.awg3` or any `exits[].awg3` is true, OR any `masters[].client_awg.awg3`
+  is `full`, the controller refuses to start without it (`client_awg.awg3: timers`
+  needs no secret). Run `--check-config` BEFORE the restart: a missing key is a
+  startup failure and a crash loop. Set it once and never change it — rotating it
+  re-derives the key on every 3.x tunnel and invalidates every client config in
+  the field at once.
 
 ## Notes & gotchas
 
 - **`controller.agent_bin` must be set** for auto-upgrade, `--upgrade-agent`, and
-  the UI button. Without it those paths error clearly ("no agent binary
-  configured").
+  the UI button. Without it those paths error with "no agent binary configured".
 - **"Outdated" is measured against `agent_bin`, not against the controller's own
   build.** The rolling upgrade probes the version of the binary it is about to
-  push and selects nodes against that. So upgrading only the controller — which
-  `deploy-master.sh --controller` does, and warns about — correctly leaves the
-  panel reading "nothing to roll" rather than offering an upgrade that would
-  reinstall the version every node already has. Push the agent binary to the
-  controller host before rolling the fleet.
+  push. Upgrading only the controller (`deploy-master.sh --controller`, which
+  warns about this) leaves the panel reading "nothing to roll". Push the agent
+  binary to the controller host before rolling the fleet.
 - **SSH reach is required to upgrade.** The upgrade reuses the node's manifest
-  SSH target — the same channel bootstrap used. If you decommissioned SSH access
-  after bootstrap, restore it before upgrading (or re-provision).
+  SSH target. If you removed SSH access after bootstrap, restore it before
+  upgrading (or re-provision).
 - **Bumping `MinSupportedWire`** strands any agent older than the new minimum on
-  its last-good spec until it is rolled. Do it deliberately and only after the
-  fleet is known to be past that version.
-- **This release restarts mihomo once on every master.** The per-tunnel keepalive
-  period is now derived instead of fixed at 25 seconds — one interval shared by the
-  whole fleet was a shape a passive observer could join our tunnels on — and
-  keepalive is a proxy-level field, so the change rewrites the `proxies:` block and
-  a hot reload would silently no-op. The agent restarts the container instead: a
-  few seconds of client traffic, once, on the pass that first applies it. Nothing
-  has to be reissued; keepalive is a local decision and an already-installed client
-  config keeps working unchanged.
-- **This release also re-derives the AmneziaWG junk window, on every tunnel.** The
-  floor that keeps a junk packet from underflowing a peer's S4-strip used to CLAMP
-  `Jmin` onto `S4 + 8`; it now SHIFTS the whole band by the same amount. The clamp
-  put 77% of ends on one value and left 17 distinct ones across 2000 tunnels, which
-  made `Jmin` a function of S4 — and S4 is shared and printed in every client config.
-  The shift is the fix, but it changes `Jmin`/`Jmax` for essentially every tunnel end
-  (measured: 486 of 500 seeds), so **every exit rewrites `awg0.conf` and bounces the
-  interface** on the first pass after the CONTROLLER restarts — the values are
-  rendered by the controller, so this happens before any agent is touched. Expect a
-  few seconds per exit; the passes are independently phased, so they normally
-  stagger rather than land together. Nothing has to be reissued: `Jmin`/`Jmax` are
-  local-send parameters, the shared `S`/`H` values do not move, and the safety
-  invariant (`Jmin >= S4 + 8`) holds under both forms, so an already-installed client
-  config keeps working unchanged.
-- **This release also carries client UDP.** Client UDP other than QUIC-on-443 used
-  to traverse the master's forward chain and leave its own uplink, so it never
-  reached an exit; it is now intercepted with TPROXY and proxied like TCP. The
-  master gains an `ip rule`/`ip route` pair and two nft chains, all reconciled and
-  self-healing. Rehearse it before rolling: if mihomo is not listening on the
-  transparent port, intercepted UDP is dropped rather than leaked — better, but a
-  different behaviour from today.
-- **Wire v10 adds `RenewCertificate`, and an agent below it never renews.** Node
-  certificates last a year and agents at v10 renew their own between 70% and 90% of
-  that, over the control plane, with nothing for the operator to do. An agent on an
-  older contract keeps reconciling happily — `MinSupportedWire` is still 1, so it is
-  not refused and not auto-upgraded — and simply runs to `NotAfter`, then falls off
-  the control plane. One node per provisioning anniversary, roughly eleven months
-  after the roll, and the only way back is SSH plus `--certs renew`. So: after any
-  upgrade, confirm every node reports wire 10 before considering it done —
-  `wgfleet_node_agent_info` carries `wire_version`, and a straggler is invisible in
-  the cert alerting too, because the expiry metric arrives at v10 as well.
-- **Wire v9 adds `ClientWGSpec.ipv6_prefix`**, and with it the opt-in
-  `client_awg.ipv6: block`. Default is `off` and nothing changes. Switched on, the
-  controller refuses to render it for an agent below v9 rather than hand a client
-  an IPv6 default route the master cannot answer — the route without the answer is
-  a black hole that reads as an MTU fault for days, so the two halves ship
-  together or not at all. Deploy the controller first, as always.
-- **This release adds a key that is REQUIRED once AmneziaWG 3.x header protection
-  is on.** If `fleet.awg3` or any `exits[].awg3` is true, OR any
-  `masters[].client_awg.awg3` is `full`, the controller now refuses to start
-  without `fleet.awg3_key`. Do not overlook that third trigger: it is the client
-  flag-day setting, so the crash loop described below is exactly what you would hit
-  on the night you have already handed out every new config. (`client_awg.awg3:
-  timers` needs no secret — it turns on no header protection.) The
-  header-protection key it derives is a
-  DIFFERENT value from the one your tunnels use today, because it is now keyed on
-  that secret instead of a salt compiled into the binary. Setting it flips both
-  ends of every 3.x master↔exit tunnel, each on its own pull, so expect up to one
-  `reconcile_interval` of downtime per exit. Run `--check-config` BEFORE the
-  restart, not after: a missing or unresolvable key is a startup failure, and
-  `Restart=on-failure` turns that into a crash loop that swapping the binary back
-  does not fix.
-- **Store schema** evolves via `PRAGMA user_version`-tracked migrations
-  (append-only). A controller upgrade that adds columns migrates the existing DB
-  in place on first open; no manual step.
-  **Rolling the controller BACK is only safe from a build that carries this
-  paragraph.** An older controller stamps the schema version down to its own
-  count, and until the migrations were made replayable, rolling forward again
-  then failed permanently on an `ALTER TABLE` that had already run — a crash loop
-  with no way out but hand-editing `user_version`. Current builds detect a
-  database written by a newer controller and refuse it with a clear message
-  instead, and heal a stamp an older one lowered. If you are rolling back to a
-  release older than that, take a backup first (`--backup`) and expect to restore
-  it rather than to roll forward.
-- **Masters** upgrade exactly like exits — restarting the master agent does not
-  restart its mihomo container (containers only restart on a config change), so
+  its last-good spec until it is rolled. Do it only after the fleet is known to
+  be past that version.
+- **Store schema** evolves via `PRAGMA user_version`-tracked migrations. A
+  controller upgrade migrates the existing DB in place on first open; no manual
+  step. A current controller refuses a database written by a newer controller
+  with a clear message, and heals a version stamp an older one lowered.
+  **Rolling the controller back to an older release** can leave the
+  database unable to roll forward again: take a backup first (`--backup`) and
+  expect to restore it rather than to roll forward.
+- **Masters** upgrade exactly like exits: restarting the master agent does not
+  restart its mihomo container (containers restart only on a config change), so
   client sessions are unaffected.
   **One exception:** on a master where `client_awg.managed` has just been turned
   on, the first pass after the upgrade takes the client interface over from
-  wg-easy and, a pass later, removes the wg-easy container. That is a migration,
-  not an upgrade, and it has its own procedure and its own rollback — read
+  wg-easy and, a pass later, removes the wg-easy container. That is a migration
+  with its own procedure and rollback: read
   [client-migration.md](client-migration.md) BEFORE upgrading such a master.

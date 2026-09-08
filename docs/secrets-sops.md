@@ -4,7 +4,7 @@ The controller resolves `secret://NAME` references through a secret provider. By
 default that is the env provider (`secret://NAME` → `$WGFLEET_SECRET_<NAME>`).
 This runbook sets up the **SOPS/age** provider so secrets — most importantly the
 fleet CA private key — live encrypted at rest and are decrypted only in the
-controller's memory at startup. See ADR-0018 for the design.
+controller's memory at startup.
 
 > The decrypted secrets never touch disk. The age private key is supplied to the
 > controller via its environment; wgfleet never handles it directly.
@@ -53,6 +53,14 @@ shred -u /etc/wgfleet/secrets.yaml /etc/wgfleet/ca.key   # remove the plaintext
 
 `secrets.enc.yaml` is safe to keep on disk (values are encrypted, keys are
 plaintext). `ca.crt` stays a normal file — it is public.
+
+From now on the CA private key exists only inside `secrets.enc.yaml`. `--backup`
+captures that file, but it warns on every run that the CA key is not a file on this
+host and is therefore not in the archive as such — expected, not a fault. Two
+things then keep the CA recoverable: the archive (which carries
+`secrets.enc.yaml`) and `age.key`, which the archive does **not** carry. Back up
+`age.key` separately; without it the encrypted CA is unreadable and a rebuilt host
+cannot issue or renew any certificate.
 
 ## 3. Point the controller at SOPS
 
@@ -103,15 +111,13 @@ warp-token: "abc123..."
 
 `secret://warp-token` then resolves to that value.
 
-Two fields are wired through the provider today: `controller.pki.ca_key` and
-`fleet.awg3_key`. The second one matters more than it looks — whenever header
-protection is on for any node, the controller **refuses to start** until that secret
-resolves to at least 32 bytes, so putting it behind a provider makes the provider a
-startup dependency of the whole control plane. Other fields are a follow-up (ADR-0018).
+Two fields are wired through the provider: `controller.pki.ca_key` and
+`fleet.awg3_key`. Whenever header protection is on for any node, the controller
+**refuses to start** until `fleet.awg3_key` resolves to at least 32 bytes, so a
+provider behind it is a startup dependency of the whole control plane.
 
 ⚠️ **Restoring onto a rebuilt host.** `--restore` preflights every destination in the
 archive against *this* host's `controller.yaml` and writes nothing if one is not a
 place this host keeps files. A fresh host whose config does not yet name
-`controller.secrets.sops_file` will therefore refuse the whole restore rather than
-land it partially. Put the config in place first, then restore — the "restore, then
-configure" order does not work.
+`controller.secrets.sops_file` refuses the whole restore. Put the config in place
+first, then restore.

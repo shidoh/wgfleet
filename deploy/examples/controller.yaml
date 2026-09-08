@@ -1,472 +1,182 @@
 # Example controller config. Real IPs/keys are NOT committed: use *.local.yaml
 # or env/secret references. Every key is documented in CONFIGURATION.md.
 controller:
-  listen: "10.20.25.254:8443" # gRPC/HTTPS API for agents (mTLS); the mgmt/ZT address
-  # agents reach the controller at. This host is baked into each agent's config as its
-  # dial endpoint AND added to the server cert SANs, so it must be the address agents
-  # can actually reach. Bind 0.0.0.0 ONLY together with `advertise` below — otherwise
-  # agents are told to dial "0.0.0.0:8443" (undialable) and the cert has no usable SAN.
-  # advertise: "10.20.25.254:8443" # set when listen is 0.0.0.0 (controller behind a
-  #   NAT/LB/gateway): the address agents DIAL; its host seeds the cert SAN.
-  # The dashboard and /metrics are UNAUTHENTICATED — their only protection is the
-  # bind address. The controller REFUSES to start if either binds 0.0.0.0/:: or a
-  # public IP; use a loopback or mgmt/ZT (RFC1918) address. Override with
-  # WGFLEET_ALLOW_PUBLIC_BIND=1 only behind your own firewall/reverse proxy.
-  webui: "10.20.25.254:9000" # read-only dashboard; bind mgmt/ZT only (empty disables)
-  store: "/var/lib/wgfleet/state.db"
-  metrics: "10.20.25.254:9300" # Prometheus /metrics; bind mgmt/ZT only (empty disables)
-  # The client self-service portal: a per-credential link a person can open to
-  # re-download their own config or QR, so a lost profile is not a message to you.
-  # Both keys or neither — a bound portal with no published URL is startup-fatal,
-  # because the Web UI would have no link to hand out.
-  #
-  # It serves WireGuard PRIVATE KEYS over a token in a URL, so unlike the Web UI it
-  # may never bind a public address — WGFLEET_ALLOW_PUBLIC_BIND does not exempt it.
-  #
-  # Bind it on the MGMT address, not on the master's address inside the client
-  # pool. That is counter-intuitive and was verified the hard way: the pool
-  # gateway address does not work, and masters[].client_admin_ports opens ports on
-  # the mgmt address — which is exactly why wg-easy's own admin page was reachable.
-  # Clients reach it as long as the mgmt subnet is inside their AllowedIPs (see
-  # client_awg.route_through_cidrs below).
-  # client_portal: "10.20.25.254:8080"
-  # client_portal_url: "http://10.20.25.254:8080" # exactly what the person types
-  staleness_after: 3m # demote silent Ready/Reconciling nodes to Degraded after this (0=default, <0 disables)
-  # session_ttl: sliding lifetime of a Web UI login session. 0/unset ⇒ 7 days.
-  # session_ttl: 168h
-  agent_bin: /usr/local/bin/wgfleet-agent # binary installed during UI-triggered provisioning
+  listen: "10.20.25.254:8443" # gRPC/mTLS endpoint agents dial; bind the mgmt/ZT address (0.0.0.0 only with advertise)
+  # advertise: "10.20.25.254:8443" # address agents dial when listen is 0.0.0.0 or behind NAT/LB; seeds the cert SAN
+  webui: "10.20.25.254:9000" # Web UI (unauthenticated transport); mgmt/ZT or loopback only (empty disables)
+  store: "/var/lib/wgfleet/state.db" # SQLite state database
+  metrics: "10.20.25.254:9300" # Prometheus /metrics; mgmt/ZT or loopback only (empty disables)
+  # client_portal: "10.20.25.254:8080" # client self-service portal; bind the mgmt address, never public; needs client_portal_url
+  # client_portal_url: "http://10.20.25.254:8080" # URL clients open the portal at; required together with client_portal
+  staleness_after: 3m # silent node -> Degraded after this (default 3m, <0 disables)
+  # session_ttl: 168h # sliding Web UI session lifetime (default 7 days)
+  agent_bin: /usr/local/bin/wgfleet-agent # agent binary installed by provisioning and rolling upgrade
   pki:
-    ca_cert: "/etc/wgfleet/ca.crt"
-    # CA tooling (--init-pki / --issue-node) needs a file:// path it can read and
-    # write. In production keep this key behind a secret manager and 0600 perms.
-    ca_key: "file:///etc/wgfleet/ca.key"
-    # OR source the CA key from SOPS/age (see secrets below): the controller
-    # decrypts it in memory at startup — the plaintext key never touches disk.
-    # ca_key: "secret://ca-key"
-  # secrets: provider backing secret:// references. Omit for the env provider
-  # (secret://NAME -> $WGFLEET_SECRET_<NAME>). With sops_file, secret://NAME is
-  # resolved by decrypting a SOPS-encrypted YAML file once at startup and looking
-  # NAME up among its keys. Supply the age identity via SOPS_AGE_KEY_FILE in the
-  # controller's environment (systemd: EnvironmentFile). Setup is covered in
-  # docs/secrets-sops.md in the source repository.
+    ca_cert: "/etc/wgfleet/ca.crt" # fleet CA certificate (public)
+    ca_key: "file:///etc/wgfleet/ca.key" # CA private key; file:// (0600) or secret:// (decrypted in memory)
   # secrets:
-  #   sops_file: "/etc/wgfleet/secrets.enc.yaml"
+  #   sops_file: "/etc/wgfleet/secrets.enc.yaml" # SOPS/age file backing secret:// (default: env WGFLEET_SECRET_<NAME>)
 
 fleet:
-  zerotier_network: "8056c2e21c000001" # mgmt overlay nodes join during bootstrap
-  # mgmt_subnet: the ZeroTier overlay CIDR. When set, every exit routes it DIRECT
-  # (never via WARP — otherwise the overlay is unreachable from the exit and the
-  # node can lock itself out) and accepts it in its firewall, automatically.
-  # Leave unset to derive trust from each node's mgmt_addr /32 instead. Either way the
-  # exit firewall also accepts the overlay interface wholesale (iifname "zt*") as a
-  # fail-safe, so a rebooted node stays reachable over ZeroTier regardless of this.
-  mgmt_subnet: 10.20.0.0/16
-  # mgmt_overlay_mss: control-plane insurance. Baked into every agent.yaml at
-  # provisioning; the agent clamps TCP MSS on the ZeroTier interface to this value so
-  # the agent↔controller mTLS handshake keeps working even if the ZeroTier MTU is left
-  # at its 2800 default while the underlay path is smaller (large TLS records would
-  # otherwise be black-holed → "handshake deadline exceeded"). 1240 matches a 1280
-  # overlay MTU. The clamp only lowers an MSS, so it is a no-op when the MTU is already
-  # correct. The real fix is still a correct ZeroTier MTU; this just survives a reset.
-  #
-  # It is also what makes TRANSIT into the overlay work: a client reaching a host that
-  # sits behind a ZeroTier member. Neither end can see the narrow middle — the client
-  # announces its own tunnel leg, the far host its Ethernet — so without this the path
-  # pings fine and stalls on the first full-size segment. Clamped in both directions.
-  mgmt_overlay_mss: 1240
-  # min_egress_throughput_kbytes: egress throughput floor in KB/s. mihomo's
-  # url-test is latency-only and cannot see a throttled exit (a node with 88ms latency
-  # but 25 KB/s gets rated BEST and parked on). Each exit measures real throughput; a
-  # sustained collapse fails over to a fallback egress (if configured) and/or the
-  # controller auto-suspends the exit from the LB (never the last healthy one). A
-  # healthy WARP exit does tens of MB/s, so 250 separates broken nodes with huge margin.
-  # Unset ⇒ 250 (watchdog ON). Set NEGATIVE to disable fleet-wide. Per-exit override
-  # below. Tune up/down freely; it is just a floor.
-  min_egress_throughput_kbytes: 250
-  # egress_throughput_probe_url: what each exit downloads (through its active egress) to
-  # measure throughput. Default is a ~256 KiB Cloudflare speed object. Override for a
-  # stricter, non-Cloudflare target.
-  # egress_throughput_probe_url: "https://speed.cloudflare.com/__down?bytes=262144"
-  # reconcile_interval: the agent reconcile / self-heal cadence baked into every
-  # agent.yaml at provisioning. Lower = faster drift + dead-listener repair (e.g. the
-  # mihomo redirect self-heal) at the cost of more frequent docker/nft/listener probes.
-  # Unset ⇒ 30s. Range 5s..1h. A per-node agent.yaml reconcile_interval still overrides.
-  reconcile_interval: 30s
-  # Scanner-ASN blacklist feed (hides exit WG port/SSH from active VPN scanners).
-  # Baked fleet-wide into every agent.yaml; the per-exit ENABLE toggle is
-  # exits[].firewall.as_blacklist below. The exit agent refreshes the cache on this
-  # cadence and renders it into the nft as_blacklist sets atomically (a failed fetch
-  # keeps the last-good list). Unset URLs ⇒ the C24Be/AS_Network_List defaults;
-  # unset interval ⇒ 24h (range 1m..168h).
-  # as_blacklist_interval: 24h
-  # as_blacklist_v4_url: "https://raw.githubusercontent.com/C24Be/AS_Network_List/main/blacklists/blacklist-v4.txt"
-  # as_blacklist_v6_url: "https://raw.githubusercontent.com/C24Be/AS_Network_List/main/blacklists/blacklist-v6.txt"
-  # Fleet-wide REALITY camouflage target, used by any exit/master that does not set
-  # its own. reality_default_sni is the SNI the ClientHello impersonates;
-  # reality_default_dest is the real "host:port" the inbound borrows a TLS handshake
-  # from (unset ⇒ the SNI on 443).
-  # CRITICAL: the target MUST support X25519MLKEM768, or an otherwise-correct
-  # handshake fails silently (microsoft.com does not support it, python.org does).
-  # Verify with: xray tls ping <host>
-  # Prefer a target whose hosting ASN is plausible for that exit's provider; a single
-  # fleet-wide default is a starting point, ASN-diverse exits should override per-exit.
-  # reality_default_sni: "www.python.org"
-  # reality_default_dest: "www.python.org:443"
-  #
-  # Host hardening — FLEET-WIDE DEFAULT; each master/exit can override it below.
-  # Both subsystems are ON unless you write these keys, so leaving the block out
-  # gives the hardened defaults: an sshd drop-in (key-only auth, no root password,
-  # no X11) and a fail2ban sshd jail, both reconciled every pass — a hand-edit to
-  # either file is reverted within one reconcile interval.
-  # Set a key to false to take that subsystem back: the agent REMOVES the file it
-  # installed and reloads the service, so your own config applies. (It does not
-  # merely stop watching — a drop-in nobody maintains would override your
-  # sshd_config forever.) The removal appears in `wgfleet-agent --plan` first.
-  # PREFER the per-node override to switching this off fleet-wide: the box you
-  # hand-tune is usually just one (the master), and relaxing the whole fleet to
-  # suit it un-hardens every public-facing exit too.
-  # NB: this rides wire v6; an agent older than that ignores the opt-out and keeps
-  # hardening the node. Upgrade the controller first, then roll the agents.
+  zerotier_network: "8056c2e21c000001" # 16-hex ZeroTier network every node joins at bootstrap
+  mgmt_subnet: 10.20.0.0/16 # overlay CIDR; routed DIRECT and trusted on every exit (default: each mgmt_addr/32)
+  mgmt_overlay_mss: 1240 # TCP MSS clamp on the overlay interface, both directions; 0 disables (1240 fits a 1280 MTU)
+  min_egress_throughput_kbytes: 250 # egress throughput floor in KiB/s; below it an exit leaves the LB (default 250, <0 disables)
+  # egress_throughput_probe_url: "https://speed.cloudflare.com/__down?bytes=262144" # ONE target that REPLACES the default list (Cloudflare, then CacheFly, then OVH, tried in order until one clears the floor)
+  reconcile_interval: 30s # agent reconcile cadence, baked into agent.yaml (default 30s, range 5s..1h)
+  # as_blacklist_interval: 24h # scanner-ASN feed refresh (default 24h, range 1m..168h)
+  # as_blacklist_v4_url: "https://raw.githubusercontent.com/C24Be/AS_Network_List/main/blacklists/blacklist-v4.txt" # v4 feed
+  # as_blacklist_v6_url: "https://raw.githubusercontent.com/C24Be/AS_Network_List/main/blacklists/blacklist-v6.txt" # v6 feed
+  # reality_default_sni: "www.python.org" # fleet-wide REALITY camouflage SNI; must support X25519MLKEM768 (xray tls ping)
+  # reality_default_dest: "www.python.org:443" # fleet-wide camouflage host:port (default: the SNI on 443)
   # hardening:
-  #   sshd: true
-  #   fail2ban: true
-
-  # AmneziaWG 3.0 on the master↔exit tunnels (header protection + randomised
-  # rekey/keepalive timers). FLEET-WIDE DEFAULT; each exit can override it.
-  #
-  # Note the polarity is the OPPOSITE of hardening above: omitted means OFF.
-  # Hardening fails safe by being on; this fails safe by being off, because
-  # turning it on changes the wire format of a live tunnel.
-  #
-  # It does NOT affect your clients: client-facing wg0 is served by wg-easy,
-  # which has no AmneziaWG 3.0 support at all (its schema carries only the 2.0
-  # parameters), so client configs are unaffected by construction.
-  #
-  # Two further gates apply per exit, so a premature flip degrades to "that exit
-  # stays on 2.0" rather than to a dead tunnel: the exit's agent must speak wire
-  # v7, and its kernel module must be 3.x (AmneziaWG 3.0 changed the netlink
-  # attribute layout, so a 1.x module rejects the config outright). Check with
-  # `modinfo -F version amneziawg` and `awg --version` before flipping it.
-  # awg3: true
-
-  # The secret the 3.x HEADER-PROTECTION key is derived from. Required the moment
-  # header protection is switched on anywhere — fleet.awg3, exits[].awg3, or a
-  # master's client_awg.awg3: full — and the controller refuses to start without it
-  # rather than fall back to something derivable.
-  #
-  # Why only this one parameter needs a secret: S1-S4, H1-H4, the junk window and
-  # the signature packets all resist DPI by being non-default and per-tunnel, so a
-  # public salt is fine for them. Header protection is a chacha20 key whose entire
-  # purpose is that a passive observer cannot recognise the header — deriving it
-  # from a constant that ships in the source would hand it to everyone.
-  #
-  # Generate: openssl rand -base64 48
-  # The 3.x TIMERS need no secret, so `client_awg.awg3: timers` works without this.
-  # awg3_key: secret://awg3-key
+  #   sshd: true # manage the sshd hardening drop-in (default true; false removes it)
+  #   fail2ban: true # manage the fail2ban sshd jail (default true; false removes it)
+  # awg3: true # AmneziaWG 3.0 on master<->exit tunnels (default false); needs wire v7 on both ends and a 3.x module
+  # awg3_key: file:///etc/wgfleet/awg3.key # 32+ random bytes (openssl rand -base64 48 > /etc/wgfleet/awg3.key; chmod 600); required when header protection is on anywhere. A file, because only a file travels in --backup
 
   masters:
-    - name: master-xa-1
-      mgmt_addr: 10.20.25.254 # ZT overlay address
+    - name: master-xa-1 # node identity; renaming re-issues its certificate
+      mgmt_addr: 10.20.25.254 # ZeroTier/overlay address; binds admin surfaces
       client_awg:
-        listen_port: 443 # standard UDP port is less conspicuous
-        address_pool: 10.80.0.0/24
-        # managed: true  # take the client leg from wg-easy into wgfleet. Transparent —
-        # existing client configs keep working — but do the credential import FIRST.
-        # See CLIENT-MIGRATION.md for the whole procedure.
-        # awg3: off | timers | full  — AmneziaWG 3.x on the leg users dial. Needs
-        # managed: true and a 3.x kernel module. "timers" costs nothing: it removes the
-        # timing fingerprint a fixed keepalive leaves, and every config already handed
-        # out keeps working. "full" adds header protection and requires EVERY client to
-        # re-import, so treat it as a flag day.
-        # awg3: timers
-        # keepalive: 15-25  # PersistentKeepalive in generated client configs. A band
-        # gives each client its own stable interval instead of the whole fleet beaconing
-        # in lockstep. Keep it under the shortest NAT UDP timeout on the path (25 is the
-        # WireGuard default for that reason); unset means 25 for everybody.
-        #
-        # Keep local networks OUT of the tunnel, so a client at home still reaches its
-        # own NAS and printer. WireGuard has no "everything except", so wgfleet expands
-        # this into the explicit AllowedIPs list a client config needs; the result is
-        # shown in the Web UI and in --plan. Unset means the plain 0.0.0.0/0.
-        # exclude_from_tunnel: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
-        #
-        # ...and put back what clients still need to reach THROUGH the tunnel. This is
-        # not optional decoration: the client pool and the exits' mgmt addresses (where
-        # client DNS and the self-service portal live) sit inside 10/8, so excluding it
-        # without these two lines leaves every client connected, unable to resolve
-        # anything, and unable to open its own portal link. Startup validation refuses
-        # that combination rather than let you find out from a person.
-        # route_through_cidrs: [10.80.0.0/24, 10.20.0.0/16]
-      # client_vless: a DPI-resistant alternative client transport (VLESS+REALITY+
-      # XHTTP via xray) that runs ALONGSIDE the client AWG, for users whose AWG is
-      # throttled by DPI (RU TSPU and similar). See CONFIGURATION.md for every key.
-      # Per-client credentials are issued/revoked in the Web UI (vless:// link + QR),
-      # not here. Omit the block to leave it off.
+        listen_port: 443 # UDP port clients dial (default 443)
+        address_pool: 10.80.0.0/24 # client subnet; must not overlap any other pool
+        # managed: true # agent owns the client interface instead of wg-easy (default false); import credentials first, see CLIENT-MIGRATION.md
+        # awg3: timers # off (default) | timers | full; full requires every client to re-import and fleet.awg3_key
+        # keepalive: 15-25 # PersistentKeepalive in client configs: one number or a min-max band (default 25, range 5-120)
+        # exclude_from_tunnel: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] # networks kept OUT of the tunnel (expanded into AllowedIPs)
+        # route_through_cidrs: [10.80.0.0/24, 10.20.0.0/16] # networks put BACK into the tunnel; required if the pool or mgmt overlay is excluded
       client_vless:
-        enabled: true
-        # listen_port: 0 ⇒ a per-master high port derived in [40000,60000]. Unlike the
-        # AWG UDP port, the TLS leg deliberately prefers a HIGH port — RU TSPU inspects
-        # 443 deeply but passes high ports (2026 recon). Set explicitly to pin it.
-        # listen_port: 49443
-        # dest_domain: www.python.org  # camouflage; MUST support X25519MLKEM768
-        # sni: www.python.org          # empty ⇒ dest_domain / fleet default
-        # mode: xhttp                  # xhttp (default) | vision
-        # mux: true                    # DEFAULT on (xhttp only): XMUX reuse amortizes the REALITY handshake — top handshake-freeze mitigation; set false to disable
-        # fingerprint: firefox         # client uTLS ClientHello: firefox (default; off the chrome signature RU TSPU flags first) | chrome | safari | none (omit it)
-        # empty_sni: true              # DEFAULT on: no-SNI ClientHello (RU-TSPU bypass); set false to disable
-        # allow_ipv6: false            # false ⇒ pin xray resolution to IPv4 (IPv4-only data plane)
-        # xhttp_path: "/"              # XHTTP path in the generated client profile; empty ⇒ "/"
-        # dest_port: 443               # camouflage target port; 0 ⇒ 443
-        # image / tag: pin the xray container (empty ⇒ the built-in pinned image)
-        # image: "ghcr.io/xtls/xray-core"
-        # tag: "26.6.22"
-        # route_through_cidrs: internal nets the CLIENT should route THROUGH the tunnel
-        # (clients bypass private/LAN by default, so the master's ZT overlay + nets it
-        # forwards to are otherwise unreachable over the VPN). Delivered to the client via
-        # the subscription's `routing` header (v2rayTun accepts the routing object ONLY
-        # that way, not as a pasted config) and shown in the Web UI. List what the master
-        # can actually reach.
-        # route_through_cidrs:
-        #   - 10.20.0.0/16    # ZeroTier mgmt overlay (master UI, other nodes)
-        #   - 10.0.0.0/8      # example: internal/work nets the master forwards to
+        enabled: true # VLESS+REALITY+XHTTP client transport alongside client AWG (default false)
+        # listen_port: 49443 # TCP port; 0 derives a per-master port in 40000-60000
+        # dest_domain: www.python.org # camouflage host; must support X25519MLKEM768
+        # sni: www.python.org # ClientHello SNI (default: dest_domain / fleet default)
+        # mode: xhttp # xhttp (default) | vision
+        # mux: true # XMUX connection reuse in the client profile (default true, xhttp only)
+        # fingerprint: firefox # client uTLS fingerprint: firefox (default) | chrome | safari | none
+        # empty_sni: true # no-SNI ClientHello (default true)
+        # allow_ipv6: false # let xray resolve over IPv6 (default false; data plane is IPv4-only)
+        # xhttp_path: "/" # XHTTP path (default "/")
+        # dest_port: 443 # camouflage target port (default 443)
+        # image: "ghcr.io/xtls/xray-core" # xray image (default: built-in pinned)
+        # tag: "26.6.22" # explicit xray tag
+        # route_through_cidrs: [10.20.0.0/16, 10.0.0.0/8] # internal nets clients route THROUGH the tunnel (served in the subscription routing header)
       routing:
-        direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
-        direct_geo: [RU]
-        # How the master picks an exit:
-        #   consistent-hashing — same destination always via the same exit. Recommended:
-        #                        a service keeps one egress IP/country, and every exit
-        #                        carries traffic instead of one being saturated.
-        #   sticky-sessions    — same src+dst via the same exit.
-        #   round-robin        — every connection cycles exits (IP changes constantly).
-        #   fallback           — first healthy exit in list order; the rest idle.
-        #   url-test           — lowest-latency exit. NOT recommended: its selection
-        #                        resets whenever the config is reloaded, and the first
-        #                        pick after a reset ignores `tolerance` entirely, so the
-        #                        exit (and the client's apparent country) changes on
-        #                        events that have nothing to do with latency.
-        balance: consistent-hashing
-        # Optional second selection tier: these exits carry traffic ONLY when every
-        # primary exit is down. The primary tier is everything NOT listed here, so a
-        # newly added exit defaults to primary and none can fall out of both tiers.
-        # Use it to keep a slow or unreliable exit as a warm spare. Names are manifest
-        # exit names, never rendered proxy names (no "-reality" suffix).
-        # reserve_exits: [exit-slow-1]
-      # Opt-in: let VPN clients reach admin UIs that bind the mgmt overlay (controller
-      # Web UI :9000, mihomo dashboard :9090). By default the master input firewall
-      # drops client TCP to these — clients get pings/DNS/web but not the dashboards.
-      # Listing ports here adds `iifname <client-iface> tcp dport <p> accept`. This
-      # widens exposure to anyone with a client config; leave unset for strict posture.
-      # The mgmt address must sit under direct_cidrs above (172.16.0.0/12 covers it) so
-      # the traffic bypasses the client→mihomo DNAT and reaches the local port.
-      # client_admin_ports: [9000, 9090]
-      # World-facing TCP ports (NO interface scope) for services that must be
-      # reachable from the public internet — e.g. a decoy web listener on 80.
-      # Unlike client_admin_ports above, anything listed here is reachable from
-      # EVERY source the drop policy would otherwise block, so keep it to services
-      # genuinely meant to be public. Same knob exists per-exit under firewall:.
-      # public_tcp_ports: [80]
-      # World-facing UDP ports (NO interface scope) — the UDP sibling of
-      # public_tcp_ports above, e.g. a second ZeroTier node (a controller) on
-      # 9994 because the host's own member instance holds 9993. Reachable from
-      # every source. NB: the AmneziaWG listen port and ZeroTier 9993 are
-      # opened automatically; they do not belong here.
-      # public_udp_ports: [9994]
-      # Additional SOURCE CIDRs the input firewall always accepts, on any port.
-      # Prefer this over public_tcp_ports when the caller is known: it opens the
-      # service to that source only, not to the internet. Typical case: a local
-      # docker bridge whose container must reach a host-bound service. The
-      # management overlay is merged in automatically and cannot be dropped here.
-      # whitelist: [172.31.255.0/29]
-      # Master-tier blocky resolver: when dns_filter is on, the master runs
-      # a client-facing blocky that becomes the clients' single DNS. It BLOCKS (denylists
-      # below), forwards LOCAL zones to internal DNS (conditional mappings), and forwards
-      # everything else to the ACTIVE exit blockys (auto-discovered — a new exit joins the
-      # upstream set as soon as it registers). The client-pool gateway bind is added
-      # automatically. Off ⇒ clients point at the exit blockys directly.
-      # dns_filter: true
+        direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] # destinations that never enter the tunnel
+        direct_geo: [RU] # geo codes routed DIRECT
+        balance: consistent-hashing # round-robin (default) | consistent-hashing | sticky-sessions | url-test | fallback
+        # reserve_exits: [exit-slow-1] # second tier, used only when every primary exit is down (manifest names)
+      # client_admin_ports: [9000, 9090] # admin ports on the mgmt address opened to VPN clients (default none)
+      # public_tcp_ports: [80] # TCP ports opened to the whole internet (default none)
+      # public_udp_ports: [9994] # UDP ports opened to the whole internet; AWG port and ZeroTier 9993 are opened automatically
+      # whitelist: [172.31.255.0/29] # extra source CIDRs always accepted on any port; mgmt overlay is included automatically
+      # dns_filter: true # run a master-tier blocky that becomes the clients' DNS (default false)
       # dns:
-      #   prometheus: true
-      #   allowlist: ["*.example.com", "*.example.ru"]      # never blocked (platform infra auto-added)
-      #   # upstreams: [...]   # pin DNS upstreams; default = the active exit blockys
-      #   overrides:           # the rich surface (deep-merged into config.yml)
+      #   prometheus: true # expose blocky /metrics (default true)
+      #   allowlist: ["*.example.com", "*.example.ru"] # never-blocked domains
+      #   upstreams: [] # pin upstreams (default: the active exit resolvers)
+      #   overrides: # deep-merged into the rendered blocky config
       #     conditional:
       #       fallbackUpstream: true
       #       mapping:
-      #         corp.internal: 10.20.2.1,10.20.2.2         # local zones → internal DNS (over ZT)
+      #         corp.internal: 10.20.2.1,10.20.2.2
       #         corp.lan: 10.20.2.1
       #     blocking:
       #       denylists:
       #         ads: ["https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.txt"]
       #       clientGroupsBlock: { default: [ads] }
       #     caching: { minTime: 5m, prefetching: true, prefetchThreshold: 15 }
-      mihomo: # master data-plane tuning + custom-config hooks
-        sniffer_skip: ["+.cloudfront.net", "+.akamaized.net"] # CDNs that break under sniffing
-        # health_interval: how often mihomo health-checks the exits in wg-best to detect
-        # and route around dead ones. Unset ⇒ 60s. Range 5s..1h. Lower it to fail over off
-        # a dead exit faster (at the cost of more frequent url-test probes through the tunnels).
-        health_interval: 30s
-        # max_failed_times: consecutive connection failures after which mihomo forces an
-        # out-of-band health check on the selection groups. Unset ⇒ mihomo's default (5).
-        # Raise it where some traffic legitimately fails (blocked destinations), so the
-        # forced re-check is not triggered by noise.
-        # max_failed_times: 10
-        # redir_port: the transparent-proxy redirect port client traffic is DNAT'd to.
-        # Unset ⇒ 7895. Change it only if something else on the master wants that port —
-        # the firewall rule that accepts client TCP on it is derived from this value.
-        # redir_port: 7895
-        # The mihomo web dashboard (zashboard) is auto-served at <external-controller>/ui
-        # whenever the Clash API is enabled; geo databases are auto-configured (jsdelivr
-        # mirror) when direct_geo is set. The RESTful API is UNAUTHENTICATED by default —
-        # set a secret via overrides below (it binds the mgmt/ZT overlay, but anyone on it
-        # can otherwise control mihomo).
-        # mihomo downloads the dashboard zip on first run from GitHub; where that host is
-        # blocked, point dashboard_url at a reachable mirror, or turn the dashboard off:
-        # dashboard_url: "https://your-mirror.example/zashboard-dist.zip"
-        # dashboard_disabled: false
+      mihomo: # master data plane
+        sniffer_skip: ["+.cloudfront.net", "+.akamaized.net"] # domains the sniffer must not rewrite
+        health_interval: 30s # exit health-check cadence (default 60s, range 5s..1h)
+        # max_failed_times: 10 # failures before a forced re-check (default 5)
+        # redir_port: 7895 # transparent-proxy redirect port (default 7895)
+        # dashboard_url: "https://your-mirror.example/zashboard-dist.zip" # dashboard download URL (default: GitHub release)
+        # dashboard_disabled: false # true skips the dashboard download entirely
         overrides: # deep-merged into the rendered mihomo config.yaml
-          log-level: info
-          # secret: "set-a-strong-api-secret-here" # authenticates the Clash API + dashboard
-          # Resolve via the master's blocky (loopback) so PRIVATE domains resolve for proxied
-          # clients: the sniffer rewrites a connection's dst to its SNI domain and mihomo
-          # re-resolves it — public DNS doesn't know blocky's conditional-split internal zones,
-          # so they fail with "dns resolve failed" / ERR_CONNECTION_CLOSED. REQUIRES
-          # dns_filter: true (blocky binds 127.0.0.1:53). Enable both together.
-          # dns:
-          #   nameserver:
-          #     - 127.0.0.1:53
-        extra_files: # provisioned alongside config.yaml (mihomo include files)
-          - path: direct-domains.yaml
+          log-level: info # mihomo log level
+          # secret: "set-a-strong-api-secret-here" # authenticates the Clash API and dashboard (unauthenticated by default)
+          # do NOT override dns.nameserver: with dns_filter on, the rendered config already resolves via the master's blocky
+        extra_files: # managed files written alongside config.yaml
+          - path: direct-domains.yaml # file name under /etc/mihomo
             content: |
               payload:
                 - mycompany.example
-      compose: # master container stack (wg-easy + mihomo); empty fields use defaults
-        # Every dockerized component can pin image + tag. tag (optional) overrides
-        # any tag in the image; either may be omitted to inherit the default.
-        wg_easy_image: "ghcr.io/wg-easy/wg-easy" # default ghcr.io/wg-easy/wg-easy:15
-        wg_easy_tag: "15"
-        # wg-easy admin UI (client management/QR) at http://<mgmt_addr>:<port>, mgmt/ZT only.
-        # The controller dashboard links to it from the master's detail page. On first run
-        # wg-easy shows a SETUP WIZARD (no INIT_USERNAME/INIT_PASSWORD ⇒ you create the admin
-        # there); there is no auto-generated password. Prometheus metrics are auto-enabled in
-        # wg-easy's DB by the agent (endpoint /metrics/prometheus on the port below).
-        # wg_easy_web_port: 44423 # default
-        mihomo_image: "metacubex/mihomo" # default metacubex/mihomo:v1.19.30 (pinned)
-        # Pin a specific version, NOT :latest and NOT "Alpha" (#8) — a moving tag defeats
-        # the pin. The fleet used to override this to "Alpha" because AmneziaWG 2.0 (S3/S4
-        # transport junk) landed there before any release: v1.19.27's amneziawg-go lacks the
-        # S4 length guard and crash-loops on short packets. AWG 2.0 shipped in v1.19.14, so
-        # the default is now v1.19.30 and no override is needed.
-        # mihomo_tag: "v1.19.30"
-        # client_dns: defaults to the exits' mgmt addresses (blocky)
-        # Inverted RFC1918 list for clients — everything except the private ranges,
-        # so a client routes the internet through the tunnel but keeps its own LAN.
-        # Abbreviated here; the full list continues to 224.0.0.0/3. Every entry must
-        # be a real CIDR: it is validated and rendered into client configs.
-        client_allowed_ips: "1.0.0.0/8,8.0.0.0/7,11.0.0.0/8,12.0.0.0/6,16.0.0.0/4,32.0.0.0/3,64.0.0.0/2,128.0.0.0/3"
-      # Per-node override of fleet.hardening above. An omitted key inherits the
-      # fleet default; an explicit true beats a fleet-wide false, so this can
-      # re-harden one node as well as relax one. This is the usual place to use it:
-      # the master is the box you administer by hand.
+      compose: # master container stack
+        wg_easy_image: "ghcr.io/wg-easy/wg-easy" # repository (default ghcr.io/wg-easy/wg-easy:15)
+        wg_easy_tag: "15" # explicit tag, overrides any tag in the image
+        # wg_easy_web_port: 44423 # wg-easy admin UI port on the mgmt address (default 44423)
+        mihomo_image: "metacubex/mihomo" # repository (default metacubex/mihomo:v1.19.30)
+        # mihomo_tag: "v1.19.30" # pin a specific version; never :latest or Alpha
+        # client_dns: [] # DNS servers handed to clients (default: the exits' mgmt addresses)
+        client_allowed_ips: "1.0.0.0/8,8.0.0.0/7,11.0.0.0/8,12.0.0.0/6,16.0.0.0/4,32.0.0.0/3,64.0.0.0/2,128.0.0.0/3" # AllowedIPs in client configs (default 0.0.0.0/0); abbreviated here
       # hardening:
-      #   sshd: false      # I keep my own sshd_config here
-      #   fail2ban: true   # but leave the brute-force jail alone
-      ssh: # bootstrap target (Phase 0/1 only; key path on the controller host)
-        host: 203.0.113.1
-        # port: 22 # SSH port; set it if SSH is not on 22 or reached via a forwarded/bastion port
-        user: root
-        key_path: /etc/wgfleet/bootstrap_ed25519
-        # host_key pins the server's SSH host key (authorized_keys/known_hosts line).
-        # Bootstrap ships the node's mTLS private key over SSH, so without pinning a
-        # MITM can steal the node identity. Get it with `ssh-keyscan -t ed25519 <host>`.
-        # host_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA..."
-        # insecure_ignore_host_key: true  # escape hatch: skip host-key verification
-        #   for THIS node (even if host_key is set). Trades away MITM protection on the
-        #   bootstrap channel. Fleet-wide equivalent: WGFLEET_SSH_INSECURE_HOST_KEY=1.
+      #   sshd: false # per-node override of fleet.hardening (omitted = inherit)
+      #   fail2ban: true # per-node override of fleet.hardening (omitted = inherit)
+      ssh: # bootstrap target; key path is on the controller host
+        host: 203.0.113.1 # address the controller connects to
+        # port: 22 # SSH port (default 22)
+        user: root # login user (root or passwordless sudo)
+        key_path: /etc/wgfleet/bootstrap_ed25519 # private key on the controller host
+        # host_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA..." # pinned host key; strongly recommended (ssh-keyscan -t ed25519 <host>)
+        # insecure_ignore_host_key: true # skip host-key verification for this node (fleet-wide: WGFLEET_SSH_INSECURE_HOST_KEY=1)
 
   exits:
-    - name: exit-de-1
-      region: de
-      egress: warp # warp | direct (preferred)
-      # drain: true # keep this exit out of the load balancer by declaration (tunnel stays up; console shows "drained by config")
-      # egress_fallback: deliberately NOT set. Setting it would auto-switch warp→direct when WARP is blocked/throttled, but DIRECT egress exits under the node's datacenter IP (exposes the server). With no fallback, a blocked/throttled exit is instead auto-suspended from the load balancer — it stops carrying client traffic without ever revealing its IP. Only set egress_fallback once you have a non-exposing fallback transport.
-      # warp_mtu: 1380 # pin the WARP interface MTU when the real path is < 1500 (typically 1320-1420). 0/unset ⇒ default 1380, refined per-exit by an auto-probe (tracepath to the WARP endpoint; capped at 1380, only lowers). Also lowers the client MTU so packets never fragment at egress.
-      # link_mtu: 1400 # physical/path MTU of the MASTER↔EXIT link when it is < 1500 (a DC overlay, PPPoE, narrow transit). Measure from the master: `ping -M do -s N <exit-ip>` — path MTU = largest passing N + 28. Lowers BOTH ends of this exit's master↔exit tunnel AND the client MTU so the AmneziaWG carrier packets fit instead of black-holing (the "tunnel up but intermittently hangs" symptom). 0/unset = assume 1500.
-      # min_egress_throughput_kbytes: 250 # per-exit override of the fleet egress throughput floor. >0 custom floor, 0 inherit the fleet default, NEGATIVE disables the watchdog for this exit (e.g. a deliberately low-bandwidth node).
-      # public_ip: 198.51.100.7 # WG endpoint the master dials this exit at; defaults to ssh.host. Set explicitly when SSH goes via a bastion or a forwarded local port (e.g. Lima).
-      address_pool: 10.81.0.0/24
-      mgmt_addr: 10.20.0.5 # ZT overlay address (admin/metrics/DNS bind)
-      # transports: which master↔exit transport(s) this exit runs and how.
-      # Each section is gated by `enabled`; both on = dual-transport (the inactive one is
-      # a warm standby). active_transport picks the one placed in the load balancer; flip
-      # it live from the Web UI (writes through to here). Omit the whole block ⇒ AWG-only.
-      transports:
-        awg: # kernel AmneziaWG: awg-quick on the exit, a mihomo wireguard proxy on the master
-          enabled: true
-          listen_port: 0 # WG UDP port; 0 ⇒ stable-random, derived from the exit name
-        reality: # VLESS + REALITY over XHTTP (xray-core inbound) — censorship-resistant
-          enabled: true
-          listen_port: 443 # VLESS port (default 443); must differ from the AWG port
-          # Camouflage target the inbound "steals" its TLS handshake from. MUST support
-          # TLS 1.3 + X25519MLKEM768 or the authorized handshake fails —
-          # verify with `xray tls ping <host>`. Pick something inconspicuous and NOT
-          # Cloudflare-fronted (open-forwarder risk). microsoft/apple/yandex lack mlkem768.
-          dest_domain: www.python.org # default
-          dest_port: 443 # default 443
-          sni: www.python.org # ClientHello SNI; empty ⇒ = dest_domain
-          mode: xhttp # xhttp (default; packet-up dodges the foreign-DC volume-freeze) | vision (classic TCP + xtls-rprx-vision, no XHTTP layer)
-          mux: true # XMUX connection reuse — amortizes the per-connection REALITY handshake across requests (xhttp mode only; xray needs no change)
-          fingerprint: chrome # master-side uTLS ClientHello: chrome (default) | firefox | none (omit it → Go default)
-          empty_sni: false # true ⇒ send/accept a ClientHello with NO SNI (an RU-TSPU heuristic bypass)
-          allow_ipv6: false # false ⇒ pin xray's dest/egress resolution to IPv4 (the data plane is IPv4-only)
-          # xhttp_path: "/abc123" # XHTTP path; unset ⇒ /<short-id> (derived per exit)
-          # image: ghcr.io/xtls/xray-core:26.6.22 # xray image; unset ⇒ the pinned default
-      active_transport: awg # transport the master routes to: awg | reality-xhttp
-      # per_tunnel_key: staged migration of THIS exit off the master's single shared
-      # AmneziaWG identity onto a per-tunnel one. Phases IN ORDER, one exit at a time,
-      # verifying between each: off (default, shared key) → dual (exit accepts both) →
-      # switch (master starts using the per-tunnel key) → on (exit accepts only it).
-      # Each step moves exactly ONE side of the tunnel, which is what makes it
-      # rollback-safe. Nothing here is automatic — this is a deliberate operator action.
-      # per_tunnel_key: "off"
-      dns_filter: true # run blocky (Docker); binds loopback + mgmt_addr ONLY (never public)
-      dns: # optional blocky tuning — safety (ZT-only binds) is enforced regardless
-        image: spx01/blocky # repository; pin a tag below or inline as repo:tag
-        tag: latest # explicit tag (overrides any tag in image); default spx01/blocky:latest
-        # upstreams: defaults to Quad9/Mullvad DoT + digitale-gesellschaft DoH
-        allowlist: ["*.example.com", "*.example.net"] # never blocked (platform infra auto-added)
-        # ports: per-protocol blocky listeners, bound on 127.0.0.1 + mgmt_addr only.
-        # Unset ⇒ dns 53, tls 853, http 4000; https is DISABLED unless given a port.
-        # ports: { dns: 53, tls: 853, http: 4000, https: 443 }
-        overrides: # raw blocky YAML, deep-merged onto the rendered base
-          conditional: # split-horizon internal domains
+    - name: exit-de-1 # node identity; also seeds derived ports
+      region: de # free-form label
+      egress: warp # warp | direct
+      # drain: true # keep this exit out of the load balancer; tunnel stays up (default false)
+      # egress_fallback: [direct] # ordered egress fallbacks (default none); direct exposes the node's own IP
+      # warp_mtu: 1380 # WARP interface MTU (default 1380, auto-probed; range 1280-1500)
+      # link_mtu: 1400 # master<->exit path MTU when below 1500; lowers both tunnel ends and the client MTU
+      # min_egress_throughput_kbytes: 250 # per-exit floor: >0 custom, 0 inherit fleet, <0 disables here
+      # public_ip: 198.51.100.7 # endpoint the master dials (default: ssh.host); IP literal only
+      address_pool: 10.81.0.0/24 # tunnel subnet; must be unique per exit
+      mgmt_addr: 10.20.0.5 # ZeroTier/overlay address (admin, metrics, DNS bind)
+      transports: # master<->exit transports; omit the block for AWG-only
+        awg: # kernel AmneziaWG
+          enabled: true # run the AWG server (default true when nothing else is set)
+          listen_port: 0 # UDP port; 0 derives a stable port from the exit name
+        reality: # VLESS+REALITY+XHTTP inbound (xray)
+          enabled: true # run the REALITY inbound (default false)
+          listen_port: 443 # TCP port (default 443); must differ from the AWG port
+          dest_domain: www.python.org # camouflage host; must support X25519MLKEM768 (xray tls ping <host>)
+          dest_port: 443 # camouflage target port (default 443)
+          sni: www.python.org # camouflage SNI (default: dest_domain)
+          mode: xhttp # xhttp (default) | vision
+          mux: true # XMUX connection reuse on the master's proxy (default false, xhttp only)
+          fingerprint: chrome # master-side uTLS fingerprint: chrome (default) | firefox | none
+          empty_sni: false # accept a ClientHello with no SNI (default false)
+          allow_ipv6: false # let xray resolve over IPv6 (default false)
+          # xhttp_path: "/abc123" # XHTTP path (default /<short-id>)
+          # image: ghcr.io/xtls/xray-core:26.6.22 # xray image (default: built-in pinned)
+      active_transport: awg # transport the master routes through: awg | reality-xhttp
+      # per_tunnel_key: "off" # staged per-tunnel key migration: off (default) -> dual -> switch -> on, one exit at a time
+      dns_filter: true # run blocky on this exit; binds loopback and mgmt_addr only (default false)
+      dns: # blocky tuning
+        image: spx01/blocky # repository (default spx01/blocky:latest)
+        tag: latest # explicit tag, overrides any tag in the image
+        # upstreams: [] # upstream resolvers (default: Quad9/Mullvad DoT + digitale-gesellschaft DoH)
+        allowlist: ["*.example.com", "*.example.net"] # never-blocked domains
+        # ports: { dns: 53, tls: 853, http: 4000, https: 443 } # listener ports (defaults 53/853/4000; https off unless set)
+        overrides: # deep-merged into the rendered blocky config
+          conditional: # split-horizon internal zones
             mapping:
               corp.lan: 10.20.2.1,10.20.2.2
-          blocking: # opt in to filtering (empty by default)
+          blocking: # denylists (empty by default)
             denylists:
               ads: [https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.txt]
             clientGroupsBlock:
               default: [ads]
       firewall:
-        # Drop scanning ASNs (the daily C24Be feed, v4+v6) before the WG/SSH accepts,
-        # so active VPN scanners never see the open ports. Source URLs + refresh
-        # cadence are fleet-wide (fleet.as_blacklist_* above); this is the per-exit
-        # on/off switch. Whitelist still wins over the blacklist.
-        as_blacklist: true
-        whitelist: [10.20.0.0/16] # mgmt overlay; real values from local config
-        # World-facing TCP ports (NO interface scope) — e.g. a decoy web listener
-        # on 80. Reachable from every source, so keep it to genuinely public
-        # services. NB: the REALITY inbound port is opened automatically from the
-        # transport config; it does not belong here.
-        # public_tcp_ports: [80]
-        # World-facing UDP ports (NO interface scope) — e.g. a second ZeroTier
-        # node (a controller) on 9994 because the host's own member instance
-        # holds 9993. Reachable from every source. NB: the AmneziaWG listen port
-        # and ZeroTier 9993 are opened automatically; they do not belong here.
-        # public_udp_ports: [9994]
+        as_blacklist: true # drop scanner ASNs from the fleet-wide feed (default false)
+        whitelist: [10.20.0.0/16] # extra source CIDRs always accepted; mgmt overlay is included automatically
+        # public_tcp_ports: [80] # TCP ports opened to the whole internet; the REALITY port is opened automatically
+        # public_udp_ports: [9994] # UDP ports opened to the whole internet; AWG port and ZeroTier 9993 are opened automatically
       ssh:
-        host: 198.51.100.7
-        # port: 22 # set if SSH is not on 22 or via a forwarded/bastion port
-        user: root
-        key_path: /etc/wgfleet/bootstrap_ed25519
-        # host_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA..." # pin to prevent MITM (see master ssh above)
-        # insecure_ignore_host_key: true # skip host-key check for this node (or WGFLEET_SSH_INSECURE_HOST_KEY=1 fleet-wide)
+        host: 198.51.100.7 # address the controller connects to
+        # port: 22 # SSH port (default 22)
+        user: root # login user (root or passwordless sudo)
+        key_path: /etc/wgfleet/bootstrap_ed25519 # private key on the controller host
+        # host_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA..." # pinned host key; strongly recommended
+        # insecure_ignore_host_key: true # skip host-key verification for this node (fleet-wide: WGFLEET_SSH_INSECURE_HOST_KEY=1)

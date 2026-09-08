@@ -33,7 +33,7 @@ VPKG      := github.com/shidoh/wgfleet/internal/version
 EXTRA_LDFLAGS ?=
 LDFLAGS   := -X $(VPKG).Version=$(VERSION) -X $(VPKG).Commit=$(COMMIT) -X $(VPKG).BuildDate=$(DATE) $(EXTRA_LDFLAGS)
 
-.PHONY: all build test race vet fmt lint proto tidy clean agent-linux controller-linux release-archive
+.PHONY: all build test race vet fmt lint proto tidy clean agent-linux controller-linux release-archive docs-site
 
 all: fmt vet test build
 
@@ -110,6 +110,7 @@ perl -pi -e '\
   s{\]\((?:\./|\.\./)?colocated-controller-master\.md}{]($(2)COLOCATED-CONTROLLER-MASTER.md}g; \
   s{\]\((?:\./|\.\./)?onboarding\.md}{]($(2)ONBOARDING.md}g; \
   s{\]\((?:\./|\.\./)?(?:docs/)?requirements\.md}{]($(2)REQUIREMENTS.md}g; \
+  s{\]\((?:\./|\.\./)?(?:docs/)?secrets-sops\.md}{]($(2)SECRETS-SOPS.md}g; \
   s{\]\((?:\./|\.\./)?SECURITY\.md}{]($(2)SECURITY.md}g; \
   s{\]\((?:\./|\.\./)?(?:docs/)?recipes/ru-split-tunnel-dns-filter\.md}{]($(2)examples/RU-SPLIT-TUNNEL.md}g; \
   s{\]\((?:\.\./)*deploy/examples/controller-split-ru\.yaml}{]($(2)examples/controller-split-ru.yaml}g; \
@@ -128,6 +129,7 @@ release-archive: agent-linux controller-linux
 	cp DISCLAIMER.md                            $(DIST)/$(PKG)/DISCLAIMER.md
 	cp docs/QUICKSTART.md                       $(DIST)/$(PKG)/INSTALL.md
 	cp docs/requirements.md                     $(DIST)/$(PKG)/REQUIREMENTS.md
+	cp docs/secrets-sops.md                     $(DIST)/$(PKG)/SECRETS-SOPS.md
 	cp docs/configuration.md                    $(DIST)/$(PKG)/CONFIGURATION.md
 	cp docs/master-migration.md                 $(DIST)/$(PKG)/MASTER-MIGRATION.md
 	cp docs/client-migration.md                 $(DIST)/$(PKG)/CLIENT-MIGRATION.md
@@ -184,3 +186,15 @@ tidy:
 
 clean:
 	rm -rf bin $(DIST)
+
+# docs-site builds the operator documentation site. The build tree mirrors the
+# repository layout (docs/, deploy/examples/, the root pages) so every relative
+# link resolves exactly as it does on GitHub; --strict fails on a broken one.
+docs-site:
+	rm -rf build-docs
+	mkdir -p build-docs/docs build-docs/deploy
+	cp -R docs/. build-docs/docs/
+	cp -R deploy/examples build-docs/deploy/
+	cp SECURITY.md DISCLAIMER.md build-docs/
+	cp docs/index.md build-docs/index.md
+	uvx --from mkdocs-material mkdocs build --strict

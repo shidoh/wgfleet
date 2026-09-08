@@ -4,14 +4,11 @@ Two YAML files: the **controller config** (`controller.yaml`, which embeds the
 **fleet manifest**) and the per-node **agent config** (`agent.yaml`). Flags
 override file values; `WGFLEET_`-prefixed env vars override too (e.g.
 `WGFLEET_CONTROLLER_LISTEN=...` -> `controller.listen`) — but only for keys whose
-every path segment is a single word, because the loader turns every underscore back
-into a dot and cannot tell a separator from a word. Anything under `masters[]` /
-`exits[]` is unreachable that way. See [configuration.md](configuration.md) §1.
+every path segment is a single word. Anything under `masters[]` / `exits[]` is
+unreachable that way. See [configuration.md](configuration.md) §1.
 
-This page is the *annotated example* — every block with the reasoning next to it.
-For the **exhaustive, per-key** list (type, default, meaning) see
-[configuration.md](configuration.md); a test fails the build if a key exists in
-code but is missing there, so it cannot drift.
+This page is the *annotated example*. For the **exhaustive, per-key** list (type,
+default, meaning) see [configuration.md](configuration.md).
 
 For a specific outcome — RU sites direct, everything else abroad, ads filtered on
 DNS — start from [recipes/ru-split-tunnel-dns-filter.md](recipes/ru-split-tunnel-dns-filter.md)
@@ -23,13 +20,12 @@ and its ready-to-adapt [controller-split-ru.yaml](../deploy/examples/controller-
 
 ```yaml
 controller:
-  listen:  "10.20.25.254:8443"    # gRPC/mTLS API for agents — the mgmt/ZT address agents
-                                   # dial; baked into agent configs and the server cert SAN.
-  advertise: "10.20.25.254:8443"  # when listen differs from the dialable address (e.g. controller
-                                   # behind NAT/gateway). becomes the default endpoint baked into
-                                   # agents and seeds an extra SAN on the server cert.
-  webui:   "10.20.25.254:9000"    # admin dashboard (provision/decommission/delete/backup); bind mgmt/ZT only (empty disables)
-  metrics: "10.20.25.254:9300"    # Prometheus /metrics; bind mgmt/ZT only (empty disables)
+  listen:  "10.20.25.254:8443"    # gRPC/mTLS API agents dial: the mgmt/ZT address;
+                                   # baked into agent configs and the server cert SAN
+  advertise: "10.20.25.254:8443"  # address agents dial when it differs from listen (NAT/gateway);
+                                   # seeds an extra SAN on the server cert
+  webui:   "10.20.25.254:9000"    # admin dashboard (provision/decommission/delete/backup); mgmt/ZT only (empty disables)
+  metrics: "10.20.25.254:9300"    # Prometheus /metrics; mgmt/ZT only (empty disables)
   store:   "/var/lib/wgfleet/state.db"
   agent_bin: "/usr/local/bin/wgfleet-agent"  # agent binary installed during UI-triggered provisioning (optional)
   staleness_after: 3m              # silent Ready/Reconciling node → Degraded after this (0=default, <0 disables)
@@ -43,87 +39,57 @@ fleet:
   zerotier_network: "8056c2e21c000001"      # mgmt overlay nodes join at bootstrap
   reconcile_interval: 30s                    # fleet-wide agent reconcile/self-heal cadence
                                              #   (default 30s; baked into each agent.yaml)
-  hardening:                                 # host hardening — FLEET DEFAULT; each master/exit
-    sshd: true                               #   can override it (see master-xa-1 below).
-    fail2ban: true                           # BOTH DEFAULT TO true — omit the block for the
-                                             #   hardened defaults. false ⇒ the agent REMOVES the
-                                             #   file it installed and reloads the service, handing
-                                             #   the subsystem back to you (leaving it in place
-                                             #   would shadow your own config with nothing
-                                             #   maintaining it). Needs wire v6.
-  awg3: false                                # AmneziaWG 3.0 on the master↔exit tunnels — FLEET
-                                             #   DEFAULT; each exit can override it. OPPOSITE
-                                             #   polarity to hardening above: omitted ⇒ OFF, because
-                                             #   enabling it changes a live tunnel's wire format.
-                                             #   Does NOT touch clients — that leg has its own knob,
-                                             #   masters[].client_awg.awg3. Needs wire v7 on BOTH ends
-                                             #   of the tunnel (the master too, and it lags its exits
-                                             #   routinely) AND a 3.x kernel module on the node; the
-                                             #   controller checks the wire versions, the agent checks
-                                             #   its own module, and either refusing degrades to
-                                             #   "that exit stays on 2.0", not to a dead tunnel.
+  hardening:                                 # host hardening — FLEET DEFAULT; each node can override
+    sshd: true                               #   default true; false REMOVES the drop-in and reloads sshd
+    fail2ban: true                           #   default true; false REMOVES the jail. Needs wire v6.
+  awg3: false                                # AmneziaWG 3.0 on the master↔exit tunnels — FLEET DEFAULT,
+                                             #   each exit can override. Omitted ⇒ OFF. Clients have
+                                             #   their own knob (masters[].client_awg.awg3). Needs
+                                             #   wire v7 on BOTH ends and a 3.x kernel module; if
+                                             #   either gate fails, that exit stays on 2.0.
 
   masters:
     - name: master-xa-1
       mgmt_addr: 10.20.25.254              # ZeroTier address
-      public_ip: 203.0.113.10               # the endpoint clients dial, written into every
-                                            # client config. NOT a description of the box:
-                                            # see the note under exits[] below, where the
-                                            # distinction has bitten us. May be a DNS name, so
-                                            # a future move of the master is a record change
-                                            # (docs/master-migration.md); the kernel-level
-                                            # guards then use the provisioned address instead.
-                                            # Unlike an exit's, this does NOT fall back to
-                                            # ssh.host: that is often the mgmt overlay, and it
-                                            # must never reach a client profile.
+      public_ip: 203.0.113.10               # endpoint clients dial, written into every client
+                                            # config. May be a DNS name. Does NOT fall back to
+                                            # ssh.host (that is often the mgmt overlay).
       client_awg:
-        managed: true                       # the AGENT owns the client interface: credentials
-                                            # live in the controller's store, and issue / pause
-                                            # / rename / revoke are console actions. Omit it and
-                                            # the master runs wg-easy instead — the legacy path,
-                                            # kept for existing installs and for rollback.
-        listen_port: 443                    # UDP; standard ports are less conspicuous
+        managed: true                       # the AGENT owns the client interface; credentials
+                                            # live in the controller's store and are managed in
+                                            # the console. Omit ⇒ wg-easy (legacy path).
+        listen_port: 443                    # UDP
         address_pool: 10.80.0.0/24          # client WG subnet
-        # ipv6: block                       # opt-in. Hands clients ::/0 AND answers forwarded
-                                            # v6 with ICMPv6 admin-prohibited, so a dual-stack
-                                            # phone falls back to IPv4 in milliseconds instead
-                                            # of leaving the tunnel via carrier IPv6. Handing
-                                            # the route without the refusal is a black hole —
-                                            # that is why this is one knob and not two.
+        # ipv6: block                       # hand clients ::/0 AND refuse forwarded v6 with
+                                            # ICMPv6, so dual-stack devices fall back to IPv4
         # mtu: 1360                         # client interface MTU; leave unset to derive
-        # keepalive: 25                     # 0/unset ⇒ derived per credential, 15-28s
+        # keepalive: 25                     # one number, or a min-max band per credential
         # backend: kernel                   # kernel (default) | userspace
         # allowed_ips: [0.0.0.0/0]          # what the client routes INTO the tunnel
         # exclude_from_tunnel: [192.168.0.0/16]   # carved back OUT of allowed_ips
-        # awg3: timers                      # off (default) | timers | full. `full` adds the
-                                            # header-protection key and is a FLAG DAY: every
-                                            # client config must be reissued. Needs fleet.awg3_key.
+        # awg3: timers                      # off (default) | timers | full. `full` requires
+                                            # every client config to be reissued. Needs fleet.awg3_key.
       client_vless:                         # DPI-resistant client transport, alongside client_awg
         enabled: true                       # omit the block to leave it off
-        # listen_port: 0 ⇒ per-master high port in [40000,60000] (443 is inspected; high ports pass)
-        # empty_sni: true (default) — no-SNI ClientHello (RU-TSPU bypass)
-        route_through_cidrs:                # internal nets clients route THROUGH the tunnel (else macOS bypasses them)
-          - 172.29.0.0/16                   # e.g. the ZeroTier mgmt overlay
+        # listen_port: 0 ⇒ per-master high port in [40000,60000]
+        # empty_sni: true (default) — no-SNI ClientHello
+        route_through_cidrs:                # internal nets clients route THROUGH the tunnel
+          - 10.20.0.0/16                    # e.g. the ZeroTier mgmt overlay
       routing:
         direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
         direct_geo:   [RU]                  # GEOSITE/GEOIP → DIRECT
         balance:      url-test              # round-robin | consistent-hashing (alias: health) | sticky-sessions | url-test | fallback
       hardening:                            # per-node override of fleet.hardening above
         sshd: false                         #   omitted key ⇒ inherit fleet; explicit true beats a
-                                            #   fleet-wide false. Prefer this to switching the fleet
-                                            #   off: relaxing the whole fleet to suit the one box you
-                                            #   hand-tune un-hardens every public-facing exit too.
+                                            #   fleet-wide false
       mihomo:                               # master data-plane tuning + custom-config hooks
-        health_interval: 30s                # how often mihomo health-checks exits to route around dead ones (default 60s)
+        health_interval: 30s                # how often mihomo health-checks exits (default 60s)
         sniffer_skip: ["+.themoviedb.org", "+.cloudfront.net"]  # CDNs that break under sniffing
         dashboard_url: "https://mirror.example/zashboard"  # override mihomo web-dashboard URL (empty ⇒ default GitHub)
         dashboard_disabled: false           # set true to disable the web dashboard entirely
         overrides:                          # deep-merged into the rendered mihomo config.yaml
           log-level: info
-          # Resolve via the master's blocky so private/internal domains resolve for proxied
-          # clients (the sniffer rewrites dst to the SNI domain and mihomo re-resolves it; public
-          # DNS doesn't know blocky's split → ERR_CONNECTION_CLOSED). Needs dns_filter.
-          # dns: { nameserver: [127.0.0.1:53] }
+          # do not override dns.nameserver: with dns_filter on, the rendered config already resolves via the master's blocky
         extra_files:                        # provisioned alongside config.yaml (mihomo include files)
           - path: direct-domains.yaml
             content: |
@@ -133,9 +99,8 @@ fleet:
         wg_easy_image: ghcr.io/wg-easy/wg-easy   # repository (default …:15)
         wg_easy_tag:   "15"                 # explicit tag overrides any tag in the image
         mihomo_image:  metacubex/mihomo
-        mihomo_tag:    "v1.19.30"           # pin a version (NOT :latest, NOT Alpha — a moving
-                                            #   tag defeats the pin) (#8). Default is v1.19.30.
-      ssh:                                  # bootstrap target (Phase 0/1 only)
+        mihomo_tag:    "v1.19.30"           # pin a version (NOT :latest, NOT Alpha). Default v1.19.30.
+      ssh:                                  # bootstrap target
         host: 203.0.113.1
         port: 22                            # SSH port (optional; default 22)
         user: root
@@ -148,26 +113,16 @@ fleet:
       region: de
       egress: warp                          # preferred egress method: warp | direct
       egress_fallback: [direct]             # ordered fallbacks for censorship-adaptive failover
-      warp_mtu: 0                           # WARP interface MTU; 0 ⇒ default 1380 + auto-probe (tracepath, capped, only lowers). Set if the real path is < that.
+      warp_mtu: 0                           # WARP interface MTU; 0 ⇒ default 1380 + auto-probe (only lowers)
       address_pool: 10.81.0.0/24
       mgmt_addr: 10.20.0.5                 # ZeroTier address (admin/metrics/DNS bind)
-      # public_ip: 198.51.100.7             # ⚠️ This is THE ENDPOINT THE MASTER DIALS, not a
-                                            # description of the node. Unset, it falls back to
-                                            # ssh.host — which is right until the day a node's
-                                            # direct path starts flapping and you repoint ssh
-                                            # at the mgmt overlay. Then the master follows,
-                                            # which may be exactly what you want (a node whose
-                                            # public path is blocked keeps working over the
-                                            # overlay) or exactly what you do not. Set it
-                                            # explicitly whenever ssh and the tunnel should go
-                                            # different ways. It also seeds a /32 DIRECT route
-                                            # so full-tunnel clients can still reach the node.
-                                            # This key wins over the address the store copied
-                                            # at provisioning time: edit it, restart the
-                                            # controller, and the endpoint moves (see
-                                            # docs/operations.md, "A node changed its public
-                                            # address"). Must be an IP literal — a DNS name
-                                            # here is skipped and the next source is used.
+      # public_ip: 198.51.100.7             # THE ENDPOINT THE MASTER DIALS. Unset ⇒ ssh.host,
+                                            # so repointing ssh at the overlay moves the tunnel
+                                            # too. Set it whenever ssh and the tunnel should go
+                                            # different ways. Also seeds a /32 DIRECT route.
+                                            # Wins over the address stored at provisioning: edit,
+                                            # restart the controller, and the endpoint moves.
+                                            # Must be an IP literal.
       transports:                           # master↔exit transport(s); omit ⇒ AWG-only
         awg: { enabled: true, listen_port: 0 }       # primary transport. WG UDP port; 0 ⇒ stable-random derived
         reality:                            # fallback transport (VLESS+REALITY+XHTTP, xray) for when AWG is DPI-blocked
@@ -176,10 +131,10 @@ fleet:
           dest_domain: www.python.org       # camouflage dest — MUST support X25519MLKEM768 (verify `xray tls ping`); not Cloudflare-fronted
           dest_port: 443
           sni: www.python.org               # empty ⇒ = dest_domain
-          mode: xhttp                       # xhttp (default; packet-up dodges volume-freeze) | vision (TCP + xtls-rprx-vision)
-          mux: true                         # XMUX connection reuse — amortizes the per-connection handshake (xhttp only)
+          mode: xhttp                       # xhttp (default) | vision (TCP + xtls-rprx-vision)
+          mux: true                         # XMUX connection reuse (xhttp only)
           fingerprint: chrome               # uTLS fingerprint: chrome | firefox | none
-          empty_sni: false                  # true ⇒ no-SNI ClientHello (RU-TSPU heuristic bypass)
+          empty_sni: false                  # true ⇒ no-SNI ClientHello
           allow_ipv6: false                 # false ⇒ pin xray resolution to IPv4 (IPv4-only data plane)
           # image: ghcr.io/xtls/xray-core:26.6.22   # unset ⇒ pinned default
       active_transport: awg                 # awg (default/primary) | reality-xhttp (fallback); flip live in the Web UI
@@ -197,13 +152,10 @@ fleet:
       firewall:
         as_blacklist: true
         whitelist: [10.20.0.0/16]
-        # public_tcp_ports: [80]           # TCP ports opened to the WORLD (no interface scope),
-                                            #   e.g. a decoy web listener on 80 — keep to genuinely
-                                            #   public services (bypasses the default drop policy)
-        # public_udp_ports: [9994]         # UDP ports opened to the WORLD — the UDP sibling
-                                            #   of public_tcp_ports, e.g. a ZeroTier controller
-                                            #   on a non-default port (9993 is held by the
-                                            #   node's own member instance)
+        # public_tcp_ports: [80]           # TCP ports opened to the WORLD (no interface scope);
+                                            #   keep to genuinely public services
+        # public_udp_ports: [9994]         # UDP ports opened to the WORLD, e.g. a second
+                                            #   ZeroTier instance on a non-default port
       ssh:
         host: 198.51.100.7
         port: 22
@@ -213,19 +165,18 @@ fleet:
 ```
 
 Every dockerized component (wg-easy, mihomo, blocky) exposes an `image` +
-`tag` pair so both can be pinned for reproducible/auditable deployments. An
-explicit `tag` overrides any tag embedded in `image`; either may be omitted to
-inherit the component's default.
+`tag` pair so both can be pinned. An explicit `tag` overrides any tag embedded in
+`image`; either may be omitted to inherit the component's default.
 
 ## `agent.yaml`
 
-The agent is deliberately thin — identity + where the controller is. Everything
-else comes from the `NodeSpec` it pulls.
+The agent only needs its identity and where the controller is. Everything else
+comes from the spec it pulls.
 
 ```yaml
 agent:
   role: exit                       # master | exit
-  controller: "master-xa-1.mgmt:8443"
+  controller: "10.20.25.254:8443"  # the controller's mgmt/ZT IP — the one its certificate SAN covers
   node_id: "exit-de-1"
   mgmt_addr: "10.20.0.5"          # mgmt/ZT address; the agent binds /metrics to
                                    #   <mgmt_addr>:9301 by default (no flag needed)
@@ -251,9 +202,8 @@ that are secret use a scheme reference:
 When `controller.secrets.sops_file` is set to a SOPS-encrypted YAML file (age/PGP/KMS),
 `secret://NAME` is resolved by decrypting the file at startup and looking up the key.
 **CA private keys can use `secret://` and are loaded in-memory** (never written to disk);
-the CA cert still reads from a `file://` path. (Setup is covered in `docs/secrets-sops.md` in the source repository.)
+the CA cert still reads from a `file://` path. Setup steps are in the `secrets-sops.md` guide.
 
 AmneziaWG private keys are generated and persisted **on the node** (0600) and are
 never sent to the controller. `--state-dir <dir>` relocates them (and all managed
 files) for non-root/dev runs.
-

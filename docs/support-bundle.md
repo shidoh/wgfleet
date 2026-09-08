@@ -1,8 +1,8 @@
 # Support bundle: what to send a maintainer with no server access
 
-A read-only diagnostic archive you can hand to someone who cannot log into
-your servers. Plain text, no secrets, and printed to the screen before you
-send it anywhere.
+A read-only diagnostic archive you can hand to someone who cannot log into your
+servers. Plain text, no secrets, and its contents are printed to the screen
+before you send it anywhere.
 
 ## Two invocations
 
@@ -11,91 +11,68 @@ send it anywhere.
 | One node — you have a shell on it | `wgfleet-agent --support-bundle [--note "..."]` |
 | Every exit, plus a fleet inventory — from the controller | `wgfleet-controller --support-bundle --fleet [--note "..."]` |
 
-Run either as root, same as the rest of wgfleet. Both write a `.tar.gz` into
-the current directory:
+Run either as root. Both write a `.tar.gz` into the current directory:
 
 ```
 wgfleet-support-<node>-<timestamp>.tar.gz          # agent
 wgfleet-support-fleet-<timestamp>.tar.gz           # controller --fleet
 ```
 
-The agent form runs locally and never dials the controller — deliberate,
-since a wedged node with no controller connectivity is exactly when you need
-it. The controller form does not require a fully healthy fleet either: an
-exit it cannot reach over SSH becomes one entry in the archive saying so,
-instead of stopping the whole run.
+The agent form runs locally and never dials the controller. The controller form
+does not require a healthy fleet: an exit it cannot reach over SSH becomes one
+entry in the archive saying so.
 
-**`--fleet` does not collect anything about the co-located master itself
-beyond one inventory line** — no network state, no services, no container
-logs for that box (see "What it collects" below for what the inventory line
-does and doesn't carry). If the problem looks master-side, also run
-`wgfleet-agent --support-bundle` on the master, same as you would on any
-other node — that is the existing per-node path, it just has to be run
-locally rather than walked over SSH.
+**`--fleet` collects nothing about the co-located master itself beyond one
+inventory line.** If the problem looks master-side, also run
+`wgfleet-agent --support-bundle` on the master.
 
 ## What it collects
 
-Per node: hostname, uptime, kernel, current time, timezone, the installed
-`wgfleet-agent`/`wgfleet-controller` version — often the single most useful
-field for triaging a report — and the versions a diagnosis turns on:
-nftables, the AmneziaWG module (version and `srcversion`, on disk and loaded),
-the AmneziaWG tools, `dkms status`, the apt holds, Docker and Compose; network
-state (addresses, routes, routing rules, the AmneziaWG routing table, the
-namespace routing table, `awg show`, the nft firewall ruleset, listening
-sockets, conntrack count); the client-interception namespace on a master
-(mihomo's network mode, the move's recorded state, the ruleset and listeners
-inside the namespace); wgfleet's own unit
-status plus every *failed* systemd unit fleet-wide, not just wgfleet's two;
-the list of running containers (`docker ps`); bounded journal tails for
-`wgfleet-agent`/`wgfleet-controller` (last ~300 lines each), journal disk
-usage, root disk headroom, and a per-unit line count over the last hour so a
-noisy unit that isn't wgfleet's still shows up; and bounded log tails from
-the containers wgfleet runs (mihomo, xray, blocky, wg-easy — a missing one
-on a node that doesn't run it is normal, not an error). A master
-additionally reports its ZeroTier overlay status.
+Per node:
 
-Every command is read-only. `awg showconf` / `wg showconf` — the commands that
-dump a whole config including the private key — are never run.
+- hostname, uptime, kernel, current time, timezone, the installed
+  `wgfleet-agent`/`wgfleet-controller` version;
+- the versions a diagnosis turns on: nftables, the AmneziaWG module (version and
+  `srcversion`, on disk and loaded), the AmneziaWG tools, `dkms status`, the apt
+  holds, Docker and Compose;
+- network state: addresses, routes, routing rules, the AmneziaWG routing table,
+  the namespace routing table, `awg show`, the nft firewall ruleset, listening
+  sockets, conntrack count;
+- on a master, the client-interception namespace: mihomo's network mode, the
+  move's recorded state, the ruleset and listeners inside the namespace, and the
+  ZeroTier overlay status;
+- wgfleet's own unit status plus every *failed* systemd unit on the node;
+- running containers (`docker ps`); bounded journal tails for
+  `wgfleet-agent`/`wgfleet-controller` (last ~300 lines each), journal disk
+  usage, root disk headroom, and a per-unit line count over the last hour;
+- bounded log tails from the containers wgfleet runs (mihomo, xray, blocky,
+  wg-easy). A missing one on a node that does not run it is normal.
 
-`awg show` **is** run, and choosing it is not by itself what makes the bundle
-safe. It masks the private key as `(hidden)`, and this document used to cite that
-as proof the command was harmless — but it prints the AmneziaWG 3.x **header
-protection key in full**, and a real bundle from a live fleet carried that live
-key in a tarball this tool tells you to send to a tester. What makes the bundle
-safe is the redaction pass every collected file goes through before the archive
-is written (see below), and the gate that refuses to write an archive when
-something that looks like a secret survives it. Read that as the guarantee, not
-the choice of command.
+Every command is read-only. `awg showconf` / `wg showconf` are never run.
+`awg show` **is** run; it masks the private key but prints the AmneziaWG 3.x
+header protection key in full, which the redaction pass and the refusal gate
+(below) catch.
 
-In `--fleet` mode the controller adds one more section: its own inventory —
-every node's name, role, state, agent version, mgmt address, last-seen time,
-and drain/decommission flags, a strict subset of what the dashboard already
-shows — then walks every *exit's* SSH target from the fleet manifest,
-running the identical per-node collection over SSH. The co-located master
-is not walked; it appears only as one line in that inventory, same as every
-other node.
+In `--fleet` mode the controller adds its own inventory — every node's name,
+role, state, agent version, mgmt address, last-seen time, and drain/decommission
+flags — then walks every *exit's* SSH target from the fleet manifest and runs the
+identical per-node collection over SSH.
 
 Each captured section is capped at 256 KiB and the whole per-node bundle at
-8 MiB; logs are the one thing that can turn "small text bundle" into
-something nobody can read or send, so hitting the cap stops collection early
-and the manifest says so rather than silently growing the archive.
+8 MiB. Hitting the cap stops collection early and the manifest says so.
 
 ## What it never collects
 
 Every file wgfleet manages that carries a secret: `controller.yaml` and
-`agent.yaml` themselves, the AmneziaWG/WARP tunnel configs, mihomo/xray/
-wg-easy configs and databases, this node's own private key, the fleet CA's
-private key, and anything under a sops-encrypted path. The archive's
-`MANIFEST.txt` ends with a NOT COLLECTED section that spells this out
-explicitly — you do not have to take this doc's word for it.
+`agent.yaml`, the AmneziaWG/WARP tunnel configs, mihomo/xray/wg-easy configs and
+databases, this node's own private key, the fleet CA's private key, and anything
+under a sops-encrypted path. `MANIFEST.txt` ends with a NOT COLLECTED section
+listing them.
 
-Beyond that fixed list: anything that *looks* secret-shaped inside output
-the read-only commands above did capture — a `key: ...` or `password: ...`
-line surfacing in a container's log, for instance — is masked to
-`<redacted>` before the archive is written. And if a value this node
-actually holds as a real secret survives verbatim anywhere in the
-assembled output, the tool refuses to write the archive at all rather than
-ship something redacted-in-passing. See "If it refuses" below.
+Anything secret-shaped inside captured output (a `key: ...` or `password: ...`
+line in a container's log) is masked to `<redacted>` before the archive is
+written. If a value this node actually holds as a secret survives verbatim
+anywhere, the tool refuses to write the archive. See "If it refuses" below.
 
 ## Read it before you send it
 
@@ -107,34 +84,23 @@ tar tzf wgfleet-support-<node>-<timestamp>.tar.gz    # list what's inside
 tar xzf wgfleet-support-<node>-<timestamp>.tar.gz    # unpack and read it
 ```
 
-Everything in it is plain text. `MANIFEST.txt` at the top indexes every
-file, and for most entries names the exact command that produced it, so
-what you read matches what actually ran. One entry is built in-process
-instead of shelled out — the fleet inventory in `--fleet` mode — and shows
-no command there; that's expected, not a gap.
+Everything in it is plain text. `MANIFEST.txt` indexes every file and, for most
+entries, names the exact command that produced it (the `--fleet` inventory is
+built in-process and shows no command).
 
 ## Read-only and unencrypted — both on purpose
 
-Every collector is a read command; nothing on the node changes. The archive
-itself is a plain gzip+tar, not encrypted, and that is deliberate: the whole
-point of printing its contents and handing you `tar tzf`/`tar xzf` is that
-you can look at exactly what you are about to send before you send it. An
-encrypted archive would hide that from you as much as from anyone else. It
-carries no secrets by construction (above), so there is nothing an
-encryption layer would be protecting — only friction it would add.
+Every collector is a read command; nothing on the node changes. The archive is a
+plain gzip+tar, not encrypted, so you can inspect exactly what you are about to
+send; it carries no secrets by construction.
 
 ## `--note`
 
-`--note "what you were seeing"` is embedded in the archive's manifest and is
-the fastest way to give a maintainer context. It goes through the same
-mask-then-check pipeline as everything else the tool collects (see "What it
-never collects" above): a note shaped like `password: hunter2` gets
-**silently masked** to `<redacted>` before the archive is written, not
-refused — you'll see the redaction sitting in `MANIFEST.txt` where your
-note used to have the value, and that's expected, not a bug. Refusal is
-reserved for the narrower case: the exact, unlabeled text of a secret this
-node actually holds surviving verbatim in the note, unmasked because it
-didn't have the recognizable `key: value` shape masking looks for.
+`--note "what you were seeing"` is embedded in the archive's manifest. It goes
+through the same mask-then-check pipeline as everything else: a note shaped like
+`password: hunter2` is **silently masked** to `<redacted>` in `MANIFEST.txt`,
+not refused. Refusal is reserved for the exact, unlabeled text of a secret this
+node holds surviving verbatim in the note.
 
 ## If it refuses to write the archive
 
@@ -142,39 +108,27 @@ didn't have the recognizable `key: value` shape masking looks for.
 refusing to write the bundle: <node>/<file>:<line> <reason>
 ```
 
-This is not the same thing as a masked `--note` above — masking already
-handles the ordinary "pasted a config line by accident" case silently.
-Refusal means something stronger got through unmasked: the exact value of a
-secret this node actually holds, found verbatim anywhere in the assembled
-output — including the note, and including a failed command's error text
-(which goes through the same masking pass as everything else before the
-check runs). Either way, nothing partial is left on disk — the file is only
-created after this check passes. That is a bug in a collector, or in the
-check itself, not a limit to work around: report it, quoting the file and
-line from the message (never the value), rather than editing the note or the
-output to get past it.
+The exact value of a secret this node holds was found verbatim in the assembled
+output (including the note and a failed command's error text) after masking.
+Nothing partial is left on disk. This is a bug in a collector or in the check,
+not a limit to work around: report it, quoting the file and line from the message
+(never the value), rather than editing the note or the output to get past it.
 
 ## Fleet mode's secret-check gap
 
-(Separate from the master-collection gap noted above.) The controller's
-exact-secret check covers what the controller itself holds directly — its
-own CA private key and every exit's SSH bootstrap key.
-It cannot check an exit's *own* on-disk secrets (its AmneziaWG key, its
-xray key) against that exit's collected output, because the controller does
-not hold them, and fetching them over SSH just to check them would mean
-collecting exactly the material this tool exists to never collect. The
-secret-shaped masking pass above still runs on every exit's output
-regardless. Running `wgfleet-agent --support-bundle` directly on a node does
-not have this gap: it reads its own key material off local disk to check
-against.
+The controller's exact-secret check covers only what the controller holds: its
+own CA private key and every exit's SSH bootstrap key. It cannot check an exit's
+*own* on-disk secrets (AmneziaWG key, xray key) against that exit's output,
+because it does not hold them and will not fetch them. The secret-shaped masking
+pass still runs on every exit's output. `wgfleet-agent --support-bundle` run
+directly on a node does not have this gap.
 
 ## Client-side problems
 
-If the report is "it connects but nothing works" or "it's slow", and there
-is no shell on any wgfleet node — just a phone or laptop with the tunnel
-up — use `client-diag.sh` instead, run from the client itself. It ships in
-the same release archive, is also read-only, and also prints a plain-text
-report you can read before sharing it:
+If the report is "it connects but nothing works" or "it's slow" and there is no
+shell on any wgfleet node, use `client-diag.sh` from the client itself. It ships
+in the same release archive, is read-only, and prints a plain-text report you can
+read before sharing it:
 
 ```bash
 ./client-diag.sh                 # sensible defaults

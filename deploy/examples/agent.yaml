@@ -1,24 +1,13 @@
 # Example agent config. The agent is thin: identity + where the controller is.
-# Everything else comes from the NodeSpec it pulls. Full key reference:
+# Everything else comes from the spec it pulls. Full key reference:
 # CONFIGURATION.md.
 agent:
   role: exit # master | exit
-  controller: "master-xa-1.mgmt:8443"
-  node_id: "exit-de-1"
-  reconcile_interval: 30s
-  # mgmt_addr: this node's mgmt/overlay (ZeroTier) address. The agent binds its
-  # Prometheus /metrics endpoint to mgmt_addr:9301 by default (no launch flag) and
-  # uses it for other off-public surfaces. Baked in at provisioning. The --metrics
-  # flag overrides the bind; --metrics off disables it.
-  mgmt_addr: "10.20.3.22"
-  # mgmt_overlay_mss: clamp TCP MSS on the ZeroTier interface, both directions
-  # (control-plane insurance — keeps the mTLS handshake working if the overlay MTU is
-  # left at 2800 — and the clamp for traffic this node forwards INTO the overlay,
-  # which the ZeroTier controller cannot do: it pushes MTU, and MTU only governs
-  # locally-originated flows). Usually baked in from the controller's
-  # fleet.mgmt_overlay_mss at provisioning; 1240 matches a 1280 overlay MTU.
-  # Omit / 0 to disable.
-  # mgmt_overlay_mss: 1240
+  controller: "10.20.25.254:8443" # controller mTLS endpoint: the mgmt/ZT IP its certificate SAN covers (controller.listen in controller.yaml)
+  node_id: "exit-de-1" # node identity; must match the certificate CN
+  reconcile_interval: 30s # reconcile cadence (default 30s)
+  mgmt_addr: "10.20.3.22" # mgmt/overlay address; /metrics binds <mgmt_addr>:9301 (override: --metrics, off disables)
+  # mgmt_overlay_mss: 1240 # TCP MSS clamp on the overlay interface, both directions; 0/omit disables (1240 fits a 1280 MTU)
   identity:
     cert: "/etc/wgfleet/node.crt" # issued at bootstrap
     key: "/etc/wgfleet/node.key" # generated on-node, 0600, never leaves the box

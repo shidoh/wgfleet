@@ -2,7 +2,7 @@
 
 From two blank Ubuntu servers to a working VPN in about 30 minutes.
 
-This is the short path. For the reasoning behind each step see
+The annotated long form of each step is in
 [colocated-controller-master.md](colocated-controller-master.md) (master) and
 [onboarding.md](onboarding.md) (exits).
 
@@ -16,7 +16,7 @@ This is the short path. For the reasoning behind each step see
 ```
 
 - **Master** — the server your devices connect to. It also runs the controller
-  (the brain) and the Web UI.
+  and the Web UI.
 - **Exit** — the server your traffic actually leaves from. You can add more
   later; the master load-balances between them.
 
@@ -26,18 +26,18 @@ This is the short path. For the reasoning behind each step see
   public IP. 1 vCPU / 1 GB RAM is enough for an exit; give the master 2 vCPU.
   Anything older than 24.04 is best effort — see the
   [system requirements](requirements.md) before choosing an image.
-- A free **ZeroTier** account — <https://my.zerotier.com>. wgfleet uses it as a
-  private management network so no admin port is ever exposed to the internet.
-- The release archive for your CPU, from the Releases page:
+- A free **ZeroTier** account — <https://my.zerotier.com>. wgfleet uses it as
+  the private management network; no admin port is exposed to the internet.
+- The release archive for your CPU, from the archive you were sent (the Releases
+  page once the repository is public):
   `wgfleet-<version>-linux-amd64.tar.gz` (Intel/AMD) or
   `wgfleet-<version>-linux-arm64.tar.gz` (ARM / Ampere / Graviton). Check with
   `uname -m` on the server: `x86_64` → amd64, `aarch64` → arm64. The commands
   below use `<version>` as a stand-in — substitute the release you downloaded
   (e.g. `v0.2.0`); the folder it unpacks into is always `wgfleet-linux-<arch>`.
-
 - **`age`** on the master, if you want backups: `apt install age`. `--backup` and
-  `--restore` shell out to it and fail without it, which is a bad thing to learn
-  on the day you reach for a backup. `--check-config` warns when it is missing.
+  `--restore` shell out to it and fail without it. `--check-config` warns when
+  it is missing.
 
 > Every command below runs as **root** on the server (`sudo -i` first).
 
@@ -125,11 +125,10 @@ systemctl enable --now wgfleet-controller wgfleet-agent
 systemctl status wgfleet-controller wgfleet-agent
 ```
 
-Give it 1–2 minutes. The master settles at `Degraded`, and at this point that is
-correct: no exit is declared yet, so mihomo has nothing to balance, that one
-component is deferred and its health check fails. Everything else — the client
-interface, nftables, routing — converges normally. It turns `Ready` after Step 7,
-when the first exit registers. Check:
+Give it 1–2 minutes. The master settles at `Degraded`: with no exit declared,
+mihomo has nothing to balance and its health check fails; the client interface,
+nftables and routing converge normally. It turns `Ready` after Step 7, when the
+first exit registers. Check:
 
 ```bash
 journalctl -u wgfleet-agent -n 30 --no-pager
@@ -144,7 +143,7 @@ ssh -L 9000:127.0.0.1:9000 root@<MASTER-IP>
 ```
 
 Then open <http://127.0.0.1:9000> and log in with the password from step 5.
-You should see the master node. It reads `Degraded` until Step 7 adds an exit — see above.
+You should see the master node, `Degraded` until Step 7 adds an exit.
 
 ## Step 7 — Add an exit server
 
@@ -167,15 +166,15 @@ Back on the **master**, add the exit to the config:
 nano /etc/wgfleet/controller.yaml
 ```
 
-Replace the `exits: []` line with the block below — an empty flow list cannot have
-items pasted under it:
+Replace the whole `exits: []` line with the block below (items cannot be pasted
+under an empty `[]`):
 
 ```yaml
   exits:
     - name: exit-1
       region: de                    # free-form label
       egress: warp                  # leave via Cloudflare WARP
-      warp_mtu: 1380
+      # warp_mtu: 1380              # leave unset: the agent probes the path daily; pin only when it is below 1500
       address_pool: 10.81.0.0/24    # must be unique per exit
       mgmt_addr: "10.147.20.11"     # the exit's ZeroTier address
       ssh:
@@ -187,8 +186,7 @@ items pasted under it:
 ```
 
 > **Recommended:** pin the exit's SSH host key. Provisioning ships the node's
-> private identity over this connection, so an unverified first dial could in
-> principle be intercepted. Get the line with
+> private identity over this connection. Get the line with
 > `ssh-keyscan -t ed25519 <EXIT-IP>` (run it on the master) and paste the
 > `ssh-ed25519 AAAA...` part into `host_key`. Without it, wgfleet trusts the
 > key it sees on first connection and logs a warning.
@@ -226,18 +224,17 @@ the Web UI, click **AWG CLIENTS** on the master, and issue one. You get a `.conf
 to download and a QR to scan.
 
 Import it with the **AmneziaWG** app — iOS, Android or desktop, *not* the plain
-WireGuard app: the obfuscation is AmneziaWG-specific and the ordinary app cannot
-read the profile.
+WireGuard app: the plain app cannot read the obfuscation parameters.
 
 Optionally set `controller.client_portal` **together with**
 `controller.client_portal_url` (see CONFIGURATION.md) and each credential gets a
-permanent self-service link you can send instead of a file. Setting one without the
-other is a startup error — with `Restart=on-failure` that is a restart loop, so run
-`--check-config` before you restart the controller.
+permanent self-service link you can send instead of a file. Setting one without
+the other is a startup error, which under `Restart=on-failure` becomes a restart
+loop — run `--check-config` before you restart the controller.
 
 > **Upgrading from a wgfleet that used wg-easy?** Do not set `managed: true`
-> straight away — import the existing credentials first, or everyone's tunnel
-> stops at the cutover. The whole procedure is in
+> straight away — import the existing credentials first, or every client tunnel
+> stops at the cutover. The procedure is in
 > [CLIENT-MIGRATION.md](client-migration.md).
 
 Done. Your traffic now goes device → master → exit → internet.
@@ -250,7 +247,7 @@ Done. Your traffic now goes device → master → exit → internet.
 |---|---|
 | Install failed on the kernel module | `apt-get install -y linux-headers-$(uname -r)` and re-run `./install.sh` |
 | Node stuck at `Reconciling` for >5 min | `journalctl -u wgfleet-agent -n 50 --no-pager` on that node |
-| Node `Error: no exit tunnels yet` right after start | normal for 1–2 minutes while the exit registers |
+| Master `Degraded` right after start, journal says `spec rejected, keeping the last-good config: mihomo render: no exit tunnels` | normal until the first exit registers (step 7); the rest of the master converges meanwhile |
 | Web UI unreachable | the SSH tunnel from step 6 must stay open |
 | Client connects but no websites | you used the plain WireGuard app — use **AmneziaWG** |
 | Exit provisioning fails on SSH | test `ssh -i /root/.ssh/id_ed25519 root@<EXIT-IP>` from the master first |
@@ -266,12 +263,14 @@ wgfleet-agent --config /etc/wgfleet/agent.yaml --once --plan   # dry run: what w
 
 ## Next: RU / non-RU split tunnel + DNS filtering
 
-The setup above sends **all** client traffic through the exit. To instead keep
-Russian sites local (direct, full speed) and route only the rest abroad — plus
-filter ads/trackers on DNS — use the ready-to-adapt
-[`examples/controller-split-ru.yaml`](examples/controller-split-ru.yaml) and its
-walkthrough [`examples/RU-SPLIT-TUNNEL.md`](examples/RU-SPLIT-TUNNEL.md) (both in
-this archive). It changes only a handful of keys from the setup above.
+The setup above sends **all** client traffic through the exit. To keep Russian
+sites direct and route only the rest abroad, plus filter ads/trackers on DNS,
+use [`controller-split-ru.yaml`](../deploy/examples/controller-split-ru.yaml) and
+its walkthrough, [RU split tunnel + DNS filtering](recipes/ru-split-tunnel-dns-filter.md),
+(both in this archive). It changes only a handful of keys from the setup above.
+Keep `client_awg.managed: true` when you merge it — the example carries it, and a
+manifest without it hands the client interface back to wg-easy with an empty
+database.
 
 ## Every configuration option
 

@@ -5,14 +5,11 @@ For a master whose clients are still served by wg-easy.
 ## Read this first
 
 **Parts 1-3 are invisible to your users.** The agent adopts wg-easy's own interface
-key, so every config already on someone's phone keeps working, untouched. Nobody has
-to re-import anything and nobody needs to be told in advance.
+key, so every config already in the field keeps working. Nobody re-imports anything.
 
-**Part 4 is where it gets painful, and only one setting in it.** `awg3: full` adds
-header protection, which every client must re-import before it works again — and you
-cannot send the new config through the tunnel, because after the flip nobody is
-inside the tunnel. That is a step you plan around people, not around the fleet. It is
-optional, it can wait indefinitely, and nothing else in this document depends on it.
+**Part 4 `awg3: full`** adds header protection; every client must re-import before
+it works again, and the new config cannot be delivered through the tunnel. It is
+optional and nothing else depends on it.
 
 Four parts, each a separate decision:
 
@@ -24,32 +21,26 @@ Four parts, each a separate decision:
 | 4 | AmneziaWG 3.x `timers` | yes | a reconnect blip; needs the master's module on 3.x first |
 | 4 | AmneziaWG 3.x `full` | **no** | **every one of them, at once** |
 
-**Stopping after any part is a finished state, not a half-migration.** Most fleets
-should do 1-3 and leave 4 alone until there is a reason. Part 3 is the one worth
-doing: it is what moves credentials into the controller's store, so issuing, pausing,
-renaming and revoking become console actions and each person gets a self-service link
-instead of a file you have to re-send.
+**Stopping after any part is a finished state.** Part 3 is the one that moves
+credentials into the controller's store, so issuing, pausing, renaming and revoking
+become console actions and each person gets a self-service link.
 
 **One check decides everything.** [The key check](#1a-the-key-check--do-not-skip-this)
-at the end of part 1 verifies that the agent will adopt wg-easy's identity rather than
-mint its own. It is two commands, it fails silently, and its failure is the only way
-this migration cuts everyone off at once. Run it even if you stop after part 1.
+at the end of part 1 verifies that the agent will adopt wg-easy's identity rather
+than mint its own. It fails silently, and its failure is the only way this
+migration cuts everyone off at once. Run it even if you stop after part 1.
 
-**If something goes wrong**, [Rollback](#rollback) is in part 3 and it is free right
-up until you issue your first new client. Read it before you start part 3, not after.
-
-**What to tell your users:** nothing, for parts 1-3. For part 4 `full`, see the
-sequence at the end — it is the only step that needs their cooperation, and it needs
-it from every one of them before you flip the switch.
+**If something goes wrong**, [Rollback](#rollback) in part 3 is free until you
+issue your first new client. Read it before starting part 3.
 
 ---
 
 ## Pre-flight
 
-Two blocks. Neither changes anything.
+Neither block changes anything.
 
-**Can this machine do the handover?** Five questions. A "no" to any of them is a
-reason to stop and fix it, not to carry on carefully.
+**Can this machine do the handover?** A "no" to any line is a reason to stop and
+fix it first.
 
 ```bash
 cat /sys/module/amneziawg/version    # kernel module generation
@@ -59,8 +50,7 @@ ls -l /etc/wireguard/wg-easy.db      # must exist, holds your clients
 docker restart wg-easy && sleep 3 && docker logs --tail 20 wg-easy   # rollback must actually work
 ```
 
-**Your way back.** Three copies. Take them even if you are only doing part 1 — the
-cheapest moment to have them is before anything has happened.
+**Your way back.** Take these even if you are only doing part 1:
 
 ```bash
 wgfleet-controller --config /etc/wgfleet/controller.yaml --backup /root/pre-migration.age
@@ -68,38 +58,31 @@ cp /etc/wireguard/wg-easy.db /root/wg-easy.db.bak
 cp /var/lib/wgfleet/state.db  /root/state.db.bak
 ```
 
-**`awg` / `awg-quick` on the HOST.** wg-easy shipped its own copies inside the
-container, so a master that only ever ran wg-easy may never have needed them
-outside it. Without them the handover in part 3 cannot raise the interface at all.
+`--backup` needs the `age` binary on PATH.
 
-**Module 3.x** ⇒ wg-easy needs the v15.4.0 image (generation-3 tools); the pinned
-v15.3.0 fails to raise the interface on a 3.x module. An agent of v0.2.4 or later
-recreates the container from the right image by itself, so wg-easy keeps working
-and rollback in part 3 works. On an older agent wg-easy is already broken and
-the migration is the fix — check `docker ps` for `unhealthy` and
-`docker logs wg-easy` for `Invalid argument`.
+**`awg` / `awg-quick` on the HOST.** wg-easy ships its own copies inside the
+container; without host copies the handover in part 3 cannot raise the interface.
+
+**Module 3.x** ⇒ wg-easy needs the v15.4.0 image (generation-3 tools); v15.3.0
+fails to raise the interface on a 3.x module. An agent of v0.2.4 or later recreates
+the container from the right image by itself. On an older agent wg-easy is already
+broken (`docker ps` shows `unhealthy`, `docker logs wg-easy` shows
+`Invalid argument`) and this migration is the fix.
 
 **Client names** must be letters, digits, `-`, `_`, `.`, max 64. Anything else
-does not migrate. Part 2's dry run names them.
-
-`--backup` needs the `age` binary on PATH.
+does not migrate; part 2's dry run names them.
 
 ---
 
 ## 1. Upgrade the binaries
 
 *Required. Reversible via the `.prev` binaries the deploy script leaves behind.
-Your users see nothing — this part does not touch the client leg at all.*
+Does not touch the client leg.*
 
-This migration was introduced at wire contract 8. **The contract has moved on since —
-a current build reports 10, and that is expected, not a sign you have the wrong
-archive.** What matters is not the number but the order.
-
-**Controller first.** An agent newer than its controller is refused a spec entirely,
-so the reverse order makes the master's reconcile fail on every pass until the
-controller catches up. The deploy script checks both versions and flips the order
-itself when the contract moves forward; if you install by hand, install the
-controller first.
+**Controller first.** An agent newer than its controller is refused a spec, so the
+reverse order makes the master's reconcile fail on every pass until the controller
+catches up. The deploy script orders the two itself when the wire contract moves
+forward; installing by hand, install the controller first.
 
 ```bash
 systemctl stop wgfleet-controller
@@ -107,8 +90,8 @@ cp wgfleet-controller /usr/local/bin/wgfleet-controller
 systemctl start wgfleet-controller
 ```
 
-Store migrations run on first start. Rolling the binary back afterwards is safe —
-they only add columns with defaults.
+Store migrations run on first start and only add columns with defaults; rolling
+the binary back afterwards is safe.
 
 Then the exit agents:
 
@@ -117,30 +100,26 @@ wgfleet-controller --config /etc/wgfleet/controller.yaml --rolling-upgrade --pla
 wgfleet-controller --config /etc/wgfleet/controller.yaml --rolling-upgrade
 ```
 
-**Agents are NOT upgraded automatically.** Auto-upgrade fires only for an agent
-the controller cannot serve; wire 7 is still supported, so nothing happens on its
-own and the exits stay on the old build until you run the command above.
+**Agents are not upgraded automatically** while the controller still serves their
+contract; the exits stay on the old build until you run the command above.
 
-On a co-located master upgrade its agent too — `./deploy-master.sh --both`
-detects the wire bump and orders the two correctly.
+On a co-located master upgrade its agent too — `./deploy-master.sh --both` orders
+the two correctly.
 
-Verify the upgrade itself:
+Verify:
 
 ```bash
-wgfleet-controller --version                            # the wire contract this build speaks
+wgfleet-controller --version                            # build and wire contract
 docker ps --filter name=wg-easy --format '{{.Status}}'  # uptime unchanged: nothing restarted
 ```
 
-**Nothing about the client interface changed here.** `client_awg.managed` defaults
-off and the rendered compose file is byte-identical, so the wg-easy container is not
-recreated. You may stop after this part indefinitely — but not before the next one.
+`client_awg.managed` defaults off and the rendered compose file is unchanged, so
+wg-easy is not recreated. You may stop after this part — but not before the next one.
 
 ### 1a. The key check — do not skip this
 
-*This is the single check whose failure means **every client stops working at once**,
-and it fails silently: nothing looks wrong until part 3, by which point the damage is
-done. It costs two commands. Run it now, at the end of part 1, even if part 3 is
-weeks away.*
+*Failure here means **every client stops working at once** at part 3, and nothing
+looks wrong until then. Run it now, even if part 3 is weeks away.*
 
 ```bash
 awg show wg0 public-key                    # what wg-easy is serving right now
@@ -148,15 +127,10 @@ awg pubkey < /etc/wgfleet/client-wg.key    # what the agent will serve
 ```
 
 **These two MUST print the same key.** Every client config in the field pins the
-first value. The whole handover works precisely because the agent adopts that key
-instead of minting its own — so if the agent has already minted one, the cutover
-swaps the server identity under every device at the same moment.
-
-**Why it can already be wrong by the time you read this:** the agent adopts the key
-on a pass where it does not yet have one of its own, and an existing key file wins on
-every later pass. If it ever generated a fresh identity — because it could not find
-wg-easy's database — nothing will re-adopt on its own. The decision has been made
-before you looked.
+first value. The agent adopts the key on a pass where it has none of its own, and
+an existing key file wins on every later pass — so if it once minted a fresh
+identity (because it could not find wg-easy's database), nothing re-adopts on
+its own.
 
 **If they differ, stop here.** Do not proceed to part 2.
 
@@ -179,14 +153,11 @@ systemctl restart wgfleet-agent
 
 ## 2. Import the credentials
 
-*Reversible, and nothing goes live. This copies wg-easy's clients into the
-controller's store where they sit inert; wg-easy still owns the interface and still
-serves every one of them. You can run it, read the report, and walk away.*
-
-**This is where you find out who will not survive the cutover**, while it is still
-free to fix. Run the dry run, fix what it names, re-run until it is clean.
+*Reversible, nothing goes live. Copies wg-easy's clients into the controller's
+store where they sit inert; wg-easy still owns the interface.*
 
 Reads wg-easy's database, never writes to it. Run on the master, controller live.
+Run the dry run, fix what it names, re-run until it is clean.
 
 The pool must match what wg-easy handed out:
 
@@ -222,41 +193,36 @@ Re-run until clean, then:
 wgfleet-controller --config /etc/wgfleet/controller.yaml --import-wg-easy master-xa-1
 ```
 
-Idempotent. Nothing has happened to the data path — wg-easy still owns the
-interface and the imported credentials are inert.
+Idempotent. wg-easy still owns the interface; the imported credentials are inert.
 
 ---
 
 ## 3. Hand the interface over
 
 *The cutover. Reversible until you issue your first new client — after that a
-rollback strands the people you issued. Your users see nothing: the agent adopts
-wg-easy's interface key, so the configs on their phones keep working.*
+rollback strands the people you issued. Users see nothing: the agent adopts
+wg-easy's interface key.*
 
-**What actually happens:** on the next reconcile pass the agent takes `wg0` over
-with the same key and the peers you imported in part 2, and wg-easy is retired one
-pass later, only after a pass has observed the new interface up and serving. If the
-bring-up fails, wg-easy is still there — that is why it lingers.
+On the next reconcile pass the agent takes `wg0` over with the same key and the
+peers imported in part 2. wg-easy is retired one pass later, only after a pass has
+observed the new interface up and serving; a failed bring-up leaves wg-easy in place.
 
-**Before you do this:** you ran [the key check](#1a-the-key-check--do-not-skip-this)
-at the end of part 1 and the two keys matched. If you did not, go back and run it now
-— it is the difference between a transparent cutover and every client dropping at
-once. And read [Rollback](#rollback) below.
+**Before you do this:** the [key check](#1a-the-key-check--do-not-skip-this)
+passed, and you have read [Rollback](#rollback) below.
 
 ```yaml
         managed: true
 ```
 
-Validate and restart the controller (there is no reload signal — `systemctl
-reload` does not apply; `kill -HUP` is caught and logged, and changes nothing):
+Validate and restart the controller (there is no reload signal; `kill -HUP` is
+logged and changes nothing):
 
 ```bash
 wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
 systemctl restart wgfleet-controller
 ```
 
-On the master's next reconcile the agent claims the interface, adopts wg-easy's
-key and raises it with the imported peers.
+After the master's next reconcile:
 
 ```bash
 awg show wg0 public-key     # SAME key as before the cutover
@@ -267,32 +233,26 @@ ls /etc/amnezia/amneziawg/wg0.conf.claim
 Then connect from a device whose config you did **not** touch. That is the test
 that matters.
 
-**wg-easy is removed one pass LATER**, not in the pass that raises our interface.
-The agent retires it only after a subsequent pass has OBSERVED the interface up
-and serving the right peers — so a bring-up that fails leaves the fallback exactly
-where it was. Expect the container to linger for one reconcile interval; that is
-the design, not a stuck teardown. Your rollback is not the container anyway; it is
-wg-easy's database plus its image, both checked in pre-flight.
+Expect the wg-easy container to linger for one reconcile interval; that is not a
+stuck teardown. Your rollback is wg-easy's database plus its image, both checked
+in pre-flight, not the container.
 
 ### Rollback
 
-*Free until you issue your first new client. After that it strands exactly those
-people — see the warning at the end of this section.*
+*Free until you issue your first new client.*
 
 ```yaml
         managed: false
 ```
 
 Validate, restart, wait one reconcile. The agent releases the interface, compose
-puts wg-easy back and recreates it from the image matching the module's
-generation (v15.4.0 on a 3.x module — pulled if not local); it reads its
-untouched database and takes the client interface again. Imported credentials
-stay in the store.
+puts wg-easy back from the image matching the module's generation (v15.4.0 on a
+3.x module — pulled if not local); it reads its untouched database and takes the
+client interface again. Imported credentials stay in the store.
 
 **Anyone you issued AFTER the cutover exists only in the controller's store.**
-wg-easy has never heard of them, so a rollback strands exactly those people — they
-are not in the database it reads. Rollback is free only until you issue the first
-new client; after that, plan to re-hand-out those configs by hand.
+wg-easy has never heard of them, so a rollback strands exactly those people; plan
+to re-hand-out their configs by hand.
 
 Archive `wg-easy.db` off the box — it is what a rollback reads.
 
@@ -300,93 +260,68 @@ Archive `wg-easy.db` off the box — it is what a rollback reads.
 
 ## 4. AmneziaWG 3.x
 
-*Optional, and there is no deadline. Two settings with very different costs:
-`timers` is invisible and reversible; `full` requires **every** user to re-import
-before their tunnel works again, and you cannot deliver the new config through the
-tunnel. Do not start this part on the same evening as part 3.*
+*Optional, no deadline. `timers` is reversible and needs no re-import; `full`
+requires **every** user to re-import, and the new config cannot be delivered
+through the tunnel. Do not start this part on the same evening as part 3.*
 
-**Which one do you want?** `timers` if you want the 3.x timing behaviour and nothing
-else — it costs your users nothing. `full` only when you have a concrete reason to
-want header protection AND you can reach every single user to coordinate. If you
-cannot list your users by name right now, you are not ready for `full`.
+Requires `managed: true` and a 3.x module on the master. With an older module the
+agent refuses the config and keeps the last-good one rather than taking the leg down.
 
-**The order is forced.** The wg-easy image carries generation-1 tools, so
-upgrading the master's kernel module while that image is still in use breaks it:
+**The order is forced.** The wg-easy image carries generation-1 tools, so upgrading
+the master's kernel module while that image is still in use breaks it:
 
 1. finish part 3 and confirm it
 2. drop the wg-easy image once you no longer want the rollback
 3. upgrade the master's kernel module to 3.x
-4. only then set `awg3` — and validate before restarting, exactly as in part 3:
+4. only then set `awg3`, then validate and restart exactly as in part 3:
+
+```yaml
+        awg3: timers   # off | timers | full
+```
 
 ```bash
 wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
 systemctl restart wgfleet-controller
 ```
 
-```yaml
-        awg3: timers   # off | timers | full
-```
-
-**`timers`** — randomises the 3.x timers. **No client re-imports anything**, and no
-config in the field becomes invalid. Measured against a real 3.1 module (2026-08-31
-rehearsal, two VMs): an untouched 2.0 client kept working across rekeys afterwards.
-
-It is not quite invisible, though. When the change lands the master rewrites and
-reloads its client interface, so clients reconnect: in the rehearsal one ping was
-lost and the tunnel was back within about twenty seconds, on its own, with no user
-action. Expect a blip, not an outage — and do not schedule it during something that
-cannot tolerate one.
-
-**What `full` looks like from the user's side — measure this once and you will write
-the announcement differently.** In the same rehearsal, the moment header protection
-landed on the server the old client stopped passing traffic **within seconds** — not
-at the next rekey, so there is no grace period — and, crucially, *nothing about the
-client says so*. The interface stays **UP**. `awg show` keeps printing a "latest
-handshake" that simply gets older: 1m10s, 2m, 5m. There is no error, no disconnect,
-no reconnect attempt that fails visibly. On a phone the VPN toggle is still green.
-
-So the report you will get is **"the VPN is connected but nothing loads"**, from
-people who have no reason to connect that to an email you sent about importing a
-file. Say in the announcement, in those words, that the tunnel will look connected
-and be dead, and that the fix is to import the new file — otherwise the first hour
-is spent on people re-toggling a switch that was never the problem.
-
-The same is true of going back: reverting to `timers` breaks the config they just
-imported, in exactly the same silent way.
-
-**`full` also needs a fleet secret.** Header protection is keyed on
-`fleet.awg3_key`, and the controller REFUSES TO START without it — so on a night
-when you have already dropped the wg-easy image and handed out every config, a
-missing key takes the control plane down rather than the tunnel up:
-
-```yaml
-fleet:
-  awg3_key: secret://awg3-key   # openssl rand -base64 48
-```
-
-Set it once and never change it. Rotating it re-derives the key on every 3.x
-tunnel: the master↔exit tunnels go dark for up to one reconcile interval each
-(both ends are rendered by one controller but applied by each node's agent on its
-own schedule), and every client config in the field becomes invalid at once, exactly
-as if you were flipping `full` again. `timers` needs no secret.
+**`timers`** — randomises the 3.x timers. No client re-imports anything and no
+config in the field becomes invalid. When the change lands the master rewrites and
+reloads its client interface, so clients reconnect on their own within about twenty
+seconds. Expect a blip, not an outage.
 
 **`full`** — adds header protection. **Every client must re-import before it works
 again.** Do not set it until you can reach every user.
 
-**The portal cannot carry this one.** It binds a mgmt/client-pool address, so it
-is reachable only from inside the tunnel — and after the flip nobody is inside the
-tunnel. Fetching a link *before* the flip is no better: the portal renders from the
-live spec, so it hands out the pre-3.x config. The order that works is:
+What `full` looks like from the user's side: the old client stops passing traffic
+within seconds, not at the next rekey, and nothing on the client says so. The
+interface stays **UP**, `awg show` keeps printing a "latest handshake" that just
+gets older, and on a phone the VPN toggle stays green. The report you will get is
+**"the VPN is connected but nothing loads"**. Say in the announcement, in those
+words, that the tunnel will look connected and be dead, and that the fix is to
+import the new file. Reverting to `timers` breaks the config they just imported in
+the same silent way.
 
-1. **Warn people first, and hand out nothing yet.** Tell them a new file is coming
-   tonight, that the tunnel will look connected and be dead until they import it,
-   and on what channel to expect it. Make sure that channel works for every one of
-   them — the ones it does not reach are the ones you will not be able to reach
-   afterwards either.
-2. **Set `full`, validate, restart.** The configs do not exist until you do: they
-   are rendered from the live spec, so anything downloaded before this moment is a
-   pre-`full` file that will never connect. Verified in the rehearsal — the old file
-   produced no handshake at all, not a degraded one.
+**`full` needs a fleet secret.** The controller refuses to start without it:
+
+```yaml
+fleet:
+  awg3_key: file:///etc/wgfleet/awg3.key   # openssl rand -base64 48 > /etc/wgfleet/awg3.key; chmod 600
+```
+
+A file rather than `secret://`, because only a file travels in `--backup`. Set it
+once and never change it. Rotating it re-derives the key on every 3.x
+tunnel: master↔exit tunnels go dark for up to one reconcile interval each, and
+every client config in the field becomes invalid at once. `timers` needs no secret.
+
+**The self-service portal cannot carry this one.** It is reachable only from inside
+the tunnel, and a link fetched *before* the flip hands out the pre-3.x config. The
+order that works:
+
+1. **Warn people first, and hand out nothing yet.** Tell them a new file is coming,
+   that the tunnel will look connected and be dead until they import it, and on
+   what channel to expect it. That channel must reach every one of them.
+2. **Set `full`, validate, restart.** The configs are rendered from the live spec,
+   so anything downloaded before this moment will never connect.
 
    ```bash
    wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config
@@ -394,45 +329,29 @@ live spec, so it hands out the pre-3.x config. The order that works is:
    ```
 
 3. **Wait for the master to converge, then download.** Confirm header protection is
-   actually live before you hand anything out — otherwise you will send the old file
-   a second time:
+   live before handing anything out:
 
    ```bash
    awg showconf wg0 | grep -c HeaderProtectionKey   # must print 1
    ```
 
    Then download every client's `.conf` from the Web UI and send them out.
-4. **Stay available.** From step 2 until each person imports, they are offline. Whoever
-   imports late, or imports the wrong file, stays offline until you hear from them on
-   another channel.
+4. **Stay available.** From step 2 until each person imports, they are offline.
 
-There is no ordering that avoids the outage window: the file that works cannot exist
-until the flip that breaks the old one. What you are choosing is how short the window
-is and how well people were warned.
-
-Going back does not rescue them either: reverting to `timers` breaks the config they
-have just imported, so a botched flip is two rounds of re-handout, not one.
-
-**Do this when you can afford the evening**, with the fleet otherwise quiet, and not
-straight after part 3. If you have more users than you can personally chase, that is
-the signal to stay on `timers`.
-
-Requires `managed: true` and a 3.x module. With an older module the agent refuses
-the config and keeps the last-good one rather than taking the leg down.
+There is no ordering that avoids the outage window: the file that works cannot
+exist until the flip that breaks the old one. A botched flip is two rounds of
+re-handout, not one.
 
 ---
 
 ## Troubleshooting
-
-First, the two questions people ask at 2am:
 
 - **"Did I just cut everyone off?"** Check `awg show wg0 peers | wc -l` against your
   client count and `awg show wg0 public-key` against what it was before. If the key
   changed, the adoption failed — roll back (part 3) and read the agent log for
   `adopted the client interface key from wg-easy`.
 - **"Can I undo this?"** Yes, until you issued a new client after the cutover. See
-  [Rollback](#rollback). The wg-easy database and image you saved in pre-flight are
-  what it needs; nothing in the store has to be undone.
+  [Rollback](#rollback); it needs the wg-easy database and image from pre-flight.
 
 | Symptom | Cause |
 |---|---|
@@ -441,9 +360,9 @@ First, the two questions people ask at 2am:
 | interface will not come up, log says 3.x refused | module is older than the config asks for |
 | portal times out | bound somewhere other than the master's mgmt address, or its port is missing from `client_admin_ports` |
 | no *Download .conf* button | the master has not published its interface key yet — one reconcile pass |
-| import says a client is `NOT MIGRATED` and you do not know why | the table in part 2 lists every reason and its fix; nothing is live yet, so take your time |
-| wg-easy container still running after the cutover | by design — it is retired one pass after a pass observed the new interface serving. Give it one reconcile interval |
-| a user says "it stopped working" and you did parts 1-3 only | it is not this migration: those parts do not change any config in the field. Check the node's health and the master↔exit tunnels first |
+| import says a client is `NOT MIGRATED` | the table in part 2 lists every reason and its fix; nothing is live yet |
+| wg-easy container still running after the cutover | by design — it is retired one pass after a pass observed the new interface serving |
+| a user says "it stopped working" and you did parts 1-3 only | not this migration: those parts change no config in the field. Check the node's health and the master↔exit tunnels first |
 
 ## See also
 

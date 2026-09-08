@@ -15,8 +15,7 @@
   <a href="docs/operations.md">Operations</a> ·
   <a href="docs/cli.md">CLI</a> ·
   <a href="DISCLAIMER.md">Disclaimer</a> ·
-  <a href="SECURITY.md">Security</a> ·
-  <a href="CONTRIBUTING.md">Contributing</a>
+  <a href="SECURITY.md">Security</a>
 </p>
 
 ---
@@ -27,12 +26,7 @@ You declare the fleet in one config file. wgfleet takes a blank Ubuntu VM,
 provisions it into a working exit node — AmneziaWG server, Cloudflare WARP
 egress, DNS filtering, policy routing, firewall, metrics — joins it to the load
 balancer, and then holds every node at that state with a pull-based reconcile
-loop. Think kubelet or Cluster API, but for censorship-circumvention VPN nodes.
-
-It automates a real, hand-built topology: an in-country gateway, several foreign
-exits, AmneziaWG obfuscation on every internal tunnel, mihomo load-balancing,
-blocky DNS filtering, and a ZeroTier management overlay. The operational lessons
-from running that by hand live in the reconcile logic, not in a wiki.
+loop.
 
 > [!WARNING]
 > wgfleet is research / infrastructure-automation software for **lawful** use
@@ -54,14 +48,12 @@ from running that by hand live in the reconcile logic, not in a wiki.
 
 ## See the change before it happens
 
-Autoprovisioning only earns trust if you can read the diff first. Every reconcile
-runs as a side-effect-free **plan**: it renders every config, prints the exact
-change set with secrets redacted, and writes nothing. One engine enforces this
-for all components, so there is no code path that plans one thing and applies
-another.
+Every reconcile can run as a side-effect-free **plan**: it renders every config,
+prints the exact change set with secrets redacted, and writes nothing. The same
+engine serves every component, so plan and apply cannot diverge.
 
-This is real output from the [two-minute local run](#try-it-locally) below — no
-root, no VPN tools, no servers:
+Output of the [local run](#try-it-locally) below — no root, no VPN tools, no
+servers:
 
 ```console
 $ wgfleet-agent --config exit-agent.yaml --once --plan \
@@ -120,11 +112,10 @@ every managed node; its role (`master` or `exit`) comes from config. It pulls it
 `NodeSpec`, drives the node to it idempotently, and reports health.
 
 All fleet-internal tunnels are **AmneziaWG**, both client↔master and
-master↔exit. The only vanilla-WireGuard leg is the external WARP tunnel to
-Cloudflare, which does not speak AmneziaWG. Each exit can additionally run a
-VLESS + REALITY + XHTTP transport as a **fallback for when AmneziaWG is blocked**
-by DPI — switched per-exit from the Web UI, with AmneziaWG staying the default
-everywhere else.
+master↔exit. The only vanilla-WireGuard tunnel is the external WARP tunnel to
+Cloudflare. Each exit can additionally run a VLESS + REALITY + XHTTP transport
+as a **fallback for when AmneziaWG is blocked** by DPI, switched per-exit from
+the Web UI.
 
 ---
 
@@ -132,20 +123,20 @@ everywhere else.
 
 - **Declarative fleet** — describe masters and exits once; the reconcile loop
   converges every node and keeps it there.
-- **Autoprovisioning** — a blank Ubuntu VM (SSH only) becomes a `Ready` exit
-  node and joins the load balancer, from the CLI or a button in the Web UI.
+- **Autoprovisioning** — a prepared Ubuntu VM (kernel module + ZeroTier join by
+  `prepare-node.sh`, then SSH only) becomes a `Ready` exit node and joins the
+  load balancer, from the CLI or a button in the Web UI.
 - **Key broker for nodes** — a node's own AmneziaWG keys are generated on-node and
-  never leave it, so a compromised controller cannot leak them. This does **not**
-  extend to end-user credentials: since ADR-0032 the controller stores each client's
-  private key, so it can re-issue a config. See [Security model](#security-model).
+  never leave it. This does **not** extend to end-user credentials: the controller
+  stores each client's private key so it can re-issue a config. See
+  [Security model](#security-model).
 - **Dry-run everywhere** — plan mode for reconcile, provisioning, upgrades and
   restore.
 - **Support bundle** — one command produces a plain-text archive of diagnostic
   state for someone who cannot reach your servers. It carries no secrets, is not
   encrypted, and refuses to be written at all if a secret survives into it.
-- **AmneziaWG obfuscation, done right** — collision-safe S1–S4, per-end decoy
-  traffic, real-protocol mimicry, computed MTU. Encoded in the renderer rather
-  than left to guesswork ([details](#amneziawg-done-right)).
+- **AmneziaWG obfuscation** — collision-safe S1–S4, per-end decoy traffic,
+  computed MTU ([details](#amneziawg-done-right)).
 - **Censorship-adaptive egress** — block detection with automatic WARP ↔ direct
   failover and a throughput watchdog that demotes a throttled path.
 - **DPI-resistant client transport** — clients can connect over VLESS + REALITY
@@ -166,7 +157,7 @@ everywhere else.
 
 Runs the whole control plane on your laptop and shows what a node reconcile
 *would* do. No root, no VPN tools, nothing to clean up but a directory. Requires
-**Go 1.26+**.
+**Go 1.26+** and the source tree.
 
 ```sh
 go build -o bin/wgfleet-controller ./cmd/wgfleet-controller
@@ -225,17 +216,16 @@ open http://127.0.0.1:9000                       # dashboard
 curl -s http://127.0.0.1:9300/metrics | grep wgfleet_
 ```
 
-Rendering, dry-run, PKI, transport, store, metrics and UI all run cross-platform.
-Applying is Linux-only — on macOS an apply stops at the first missing tool
-(`nft`, `awg-quick`, `ip`, `wgcf`, `docker`) and reports `Error`, which is why
-the run above stays in plan mode.
+Rendering, dry-run, PKI, transport, store, metrics and UI run cross-platform.
+Applying is Linux-only: on macOS an apply stops at the first missing tool
+(`nft`, `awg-quick`, `ip`, `wgcf`, `docker`) and reports `Error`.
 
 ---
 
 ## Deploy a real fleet
 
 **Start with [`docs/QUICKSTART.md`](docs/QUICKSTART.md)** — two blank Ubuntu
-servers to a working VPN in about 30 minutes, no prior knowledge assumed.
+servers to a working VPN in about 30 minutes.
 
 Each release ships one version-stamped archive per architecture containing both
 binaries, the installer, `INSTALL.md`, reference configs and systemd units.
@@ -268,13 +258,12 @@ wgfleet-controller --config controller.yaml --provision exit-de-1 \
   --agent-bin /usr/local/bin/wgfleet-agent
 ```
 
-Bootstrap order is security-first: hardening and a drop-all-but-SSH/ZT/WG
-baseline firewall land **before** the node accepts traffic; the agent's own
-reconcile later replaces the baseline with the full per-role ruleset.
+sshd hardening and a drop-all-but-SSH/ZT/WG baseline firewall land **before**
+the node accepts traffic; the agent's own reconcile later replaces the baseline
+with the full per-role ruleset.
 
-Each VM needs the environmental bits the provisioner deliberately refuses to do
-itself — the AmneziaWG kernel module and the ZeroTier join. One script per VM
-handles both:
+Each VM needs the AmneziaWG kernel module and the ZeroTier join before
+provisioning. One script per VM handles both:
 
 ```sh
 ssh root@<vm-ip> 'bash prepare-node.sh <zerotier-network-id>'
@@ -291,15 +280,14 @@ build DKMS for you. Full walkthrough: [`docs/onboarding.md`](docs/onboarding.md)
 
 - **Declarative desired state + reconcile.** You describe the fleet; agents
   converge each node toward its rendered `NodeSpec` and keep it there.
-- **Dry-run is first-class.** `Plan()` is side-effect-free by construction;
-  effects run only in apply mode.
-- **The controller brokers NODE keys, never holding them.** Each node's AmneziaWG
-  keys are generated and kept on that node; only the public key is published. End-user
-  credentials are the deliberate exception — see the security model.
+- **Dry-run is first-class.** Plan mode is side-effect-free; effects run only in
+  apply mode.
+- **The controller brokers node keys, never holding them.** Each node's AmneziaWG
+  keys are generated and kept on that node; only the public key is published.
+  End-user credentials are the exception — see the security model.
 - **mTLS identity.** Each node gets a client certificate at bootstrap whose CN
   is its node ID. Removing a node from the inventory, or decommissioning it, makes
-  the controller refuse to renew that certificate — see the gaps note below for what
-  that does and does not buy you.
+  the controller refuse to renew that certificate — see the gaps note below.
 - **Self-checks drive lifecycle state.** After each apply the agent runs
   role-specific checks — handshake freshness, egress reachability, WARP egress,
   DNS filter, mihomo API — and the derived state feeds the dashboard and metrics.
@@ -311,35 +299,21 @@ build DKMS for you. Full walkthrough: [`docs/onboarding.md`](docs/onboarding.md)
 
 ## AmneziaWG, done right
 
-Obfuscation parameters are the part that silently breaks tunnels when they are
-wrong, so wgfleet derives them in code and verifies them against the upstream
-kernel module and tools sources.
+wgfleet derives the obfuscation parameters in code and verifies them against the
+upstream kernel module and tools sources.
 
 - **Identical on both ends:** `S1–S4` (junk prefix sizes) and `H1–H4` (packet
   junk header ranges). **Per-end:** `Jc`, `Jmin`, `Jmax` and `I1–I5`.
 - **`H1–H4` are non-overlapping ranges** — the kernel enforces it.
-- **`S1–S4` must be message-size collision-safe.** The userspace classifier keys
-  on packet size, so a data packet must never collide with a handshake size or
-  shadow an adjacent pair — otherwise roughly half of new TLS connections stall
-  silently. The generator iterates until the sizes are provably safe. Kernel
-  limits are far looser and are *not* sufficient.
-- **`I1–I5` are opaque noise, deliberately.** Each slot is a run of random bytes
-  whose size is derived per end and per slot; the module regenerates the contents on
-  every handshake initiation. They used to imitate QUIC / STUN / DTLS, until a
-  2026-08-28 measurement showed that was worse than noise: the packets were
-  recognised as their protocol **and** malformed, which hands a dissector a cleaner
-  signal than random bytes do. Making them genuinely valid would not have helped —
-  cover only holds while the whole flow speaks the protocol, and the AWG handshake
-  that follows on the same 5-tuple does not. Protocol impersonation belongs on a
-  transport that can sustain it for a whole session, which is what the VLESS +
-  REALITY + XHTTP leg is for
-  ([ADR-0022](docs/adr/0022-awg-collision-safe-params-and-mimicry.md)).
+- **`S1–S4` are message-size collision-safe.** The userspace classifier keys on
+  packet size; a data packet that collides with a handshake size stalls roughly
+  half of new TLS connections. The generator iterates until the sizes are safe.
+- **`I1–I5`:** `I1` is a STUN Binding Request and `I2` a QUIC v1 Initial prefix
+  with per-end sizes; `I3–I5` are empty. The random parts are regenerated by the
+  module on every handshake initiation.
 - **All obfuscation lives in `[Interface]`,** never in `[Peer]`, and shared
   parameters are derived deterministically from a per-tunnel seed so both ends
   compute the same set with no coordination.
-
-Full rules and their rationale: [`docs/adr/`](docs/adr/) and
-[`maintainer notes`](maintainer notes).
 
 ---
 
@@ -347,15 +321,13 @@ Full rules and their rationale: [`docs/adr/`](docs/adr/) and
 
 - Node AmneziaWG private keys are generated and stay **on the node**; the
   controller stores their public keys only.
-- **End-user credentials are different, and this is the sharpest edge in the
-  system.** So the console can re-issue a config someone lost, the controller's
-  SQLite store holds every client's WireGuard **private key** (schema v11
-  `client_wg_credentials.private_key`), alongside the fleet CA key and `awg3_key`
-  when those are `file://` paths. The file is 0600 and not encrypted at rest. Anyone
-  who obtains that one file — seizure, a provider snapshot, a stolen backup —
-  de-anonymises every user, retroactively. If your master sits in a jurisdiction
-  where that is a real risk, weigh it against the convenience it buys, and keep the
-  encrypted backup somewhere the master is not.
+- **End-user credentials are different.** So the console can re-issue a config,
+  the controller's SQLite store holds every client's WireGuard **private key**
+  (`client_wg_credentials.private_key`), alongside the fleet CA key and `awg3_key`
+  when those are `file://` paths. The file is 0600 and not encrypted at rest.
+  Anyone who obtains that one file — seizure, a provider snapshot, a stolen
+  backup — de-anonymises every user, retroactively. Keep the encrypted backup
+  somewhere the master is not.
 - **mTLS** between controller and agents, one client certificate per node
   (CN = node ID), issued at bootstrap. Revocation removes the node.
 - The Web UI, metrics and every node admin endpoint bind the **ZeroTier
@@ -363,21 +335,19 @@ Full rules and their rationale: [`docs/adr/`](docs/adr/) and
 - SSH is used only during bootstrap, key-based; afterwards management is mTLS.
 - A baseline firewall is installed **before** the node accepts traffic.
 - sshd hardening (key-only auth, no root password, no X11) and a fail2ban sshd
-  jail are **continuously reconciled**, not merely installed at bootstrap — a
-  partial overwrite is repaired on the next pass rather than lasting until the
-  node is rebuilt. Each is individually switchable via `fleet.hardening` for
-  operators who manage their own; both default to on.
+  jail are **continuously reconciled**: a partial overwrite is repaired on the
+  next pass. Each is individually switchable via `fleet.hardening`; both default
+  to on.
 - Secrets resolve through a provider (`env://`, a `0600` `file://`, or SOPS/age).
   No keys or real IPs in git.
 
-Known gaps, stated plainly: there is **no certificate revocation list**. Node
-certificates last a year and agents renew their own between 70% and 90% of that,
-so the only thing that ends a node's membership is the controller refusing that
-renewal — which it does for a node that has been decommissioned or deleted. A
-certificate already issued stays valid until it expires; cutting a node off sooner
-than that still means reissuing the CA. The gRPC endpoints are also **not
-rate-limited**, and the Web UI speaks **plain HTTP**. The last two are mitigated by binding to the
-management overlay only, not by the code.
+Known gaps: there is **no certificate revocation list**. Node certificates last
+a year and agents renew their own between 70% and 90% of that; the controller
+refuses renewal for a node that has been decommissioned or deleted, but a
+certificate already issued stays valid until it expires. Cutting a node off
+sooner means reissuing the CA. The gRPC endpoints are **not rate-limited**, and
+the Web UI speaks **plain HTTP**; both are mitigated only by binding to the
+management overlay.
 
 Reporting a vulnerability: [SECURITY.md](SECURITY.md).
 
@@ -385,7 +355,7 @@ Reporting a vulnerability: [SECURITY.md](SECURITY.md).
 
 ## Status
 
-MVP, in active development, `go test -race` green.
+MVP, in active development.
 
 | Area | Status |
 |---|---|
@@ -399,27 +369,21 @@ MVP, in active development, `go test -race` green.
 | Egress-block detection + censorship-adaptive failover | ✅ |
 | Web dashboard, Prometheus metrics, encrypted backup/restore | ✅ |
 | Dual transport — VLESS + REALITY + XHTTP fallback, per-exit, live switch | ✅ |
-| AmneziaWG 3.x — plumbing shipped, **off by default and not enabled on any fleet** | ⏸ |
+| AmneziaWG 3.x — plumbing shipped, **off by default** | ⏸ |
 
-**Phases 1 and 2 are complete.** **Phase 3** (censorship-adaptive egress) has
-block detection and automatic failover done, with traffic-noise remaining.
-**Phase 4** (native Go data plane) and **Phase 5** (HA control plane with leader
-election) are optional and not started.
+Apply-side actions and live SSH are supported on **Linux** (Ubuntu 24.04).
+Automatic AmneziaWG → REALITY failover is not implemented; switching transports
+is a manual, per-exit action.
 
-Apply-side exec actions and live SSH are validated on **Linux** (Ubuntu 24.04,
-live multi-VM runs). Automatic AmneziaWG → REALITY failover is not implemented;
-switching transports is a manual, per-exit action today.
-
-**AmneziaWG 3.x is written but deliberately switched off.** The knobs exist
-(`fleet.awg3`, `fleet.exits[].awg3` for the master↔exit tunnels, and
-`masters[].client_awg.awg3: off | timers | full` for the leg your users dial), and
-they default to off. Two gates stand behind them — the controller requires wire v7
-from **both** ends of a tunnel, and each agent requires a 3.x kernel module on its
-own node — so a premature flip degrades to "stays on 2.0" rather than to a dead
-tunnel. Header protection additionally needs a `fleet.awg3_key` secret, and it is
-the half no 2.0 peer survives: every client must re-import. The timers half costs
-users nothing. What it takes to turn on, and in what order:
-[docs/client-migration.md](docs/client-migration.md) part 4.
+**AmneziaWG 3.x is off by default.** The knobs are `fleet.awg3`,
+`fleet.exits[].awg3` (master↔exit tunnels) and
+`masters[].client_awg.awg3: off | timers | full` (the client interface). Two
+gates stand behind them: the controller requires wire v7 from **both** ends of a
+tunnel, and each agent requires a 3.x kernel module on its own node, so a
+premature flip stays on 2.0 rather than producing a dead tunnel. Header
+protection additionally needs a `fleet.awg3_key` secret and is incompatible with
+2.0 peers: every client must re-import. The timers half needs no client change.
+Enable order: [docs/client-migration.md](docs/client-migration.md) part 4.
 
 ---
 
@@ -430,24 +394,23 @@ users nothing. What it takes to turn on, and in what order:
 | [docs/QUICKSTART.md](docs/QUICKSTART.md) | Two blank servers to a working VPN, start here |
 | [docs/requirements.md](docs/requirements.md) | System requirements and compatibility: supported OS, sizing, pinned versions, controller↔agent contract |
 | [docs/manifest.md](docs/manifest.md) | Annotated `controller.yaml` and `agent.yaml`, with secret schemes |
-| [docs/configuration.md](docs/configuration.md) | Exhaustive per-key reference; a test fails the build if it drifts |
+| [docs/configuration.md](docs/configuration.md) | Exhaustive per-key reference |
 | [docs/cli.md](docs/cli.md) | Every flag on both binaries |
 | [docs/operations.md](docs/operations.md) | Dashboard, VLESS client access, backup/restore, metrics, health |
 | [docs/recipes/](docs/recipes/) | Task-oriented configs, e.g. split-tunnel + DNS filtering |
 | [docs/onboarding.md](docs/onboarding.md) | Node prerequisites and the provisioning walkthrough |
 | [docs/colocated-controller-master.md](docs/colocated-controller-master.md) | Running the controller on the master, the small-fleet default |
 | [docs/upgrade.md](docs/upgrade.md) | Agent upgrades and wire-contract versioning |
-| [docs/client-migration.md](docs/client-migration.md) | Moving the client leg from wg-easy into wgfleet, and the AmneziaWG 3.x path |
+| [docs/client-migration.md](docs/client-migration.md) | Moving the client interface from wg-easy into wgfleet, and the AmneziaWG 3.x path |
+| [docs/master-migration.md](docs/master-migration.md) | Moving the controller and master to another host |
+| [docs/support-bundle.md](docs/support-bundle.md) | Collecting a secret-free diagnostic archive |
 | [docs/secrets-sops.md](docs/secrets-sops.md) | SOPS/age secret provider setup |
-| [docs/adr/](docs/adr/) | Architecture decision records — why each choice was made |
-| [docs/plans/](docs/plans/) | Design and implementation plans, each marked shipped or pending |
-| [docs/DESIGN.md](docs/DESIGN.md) | Full project context and conventions |
-| [maintainer notes](maintainer notes) | Hard-won operational lessons baked into the reconcile logic |
+| [SECURITY.md](SECURITY.md) | Reporting vulnerabilities and operating securely |
 
 ### Build & test
 
-Requires **Go 1.26+**. Regenerating protobuf additionally needs `protoc` on PATH;
-the Go plugins are pinned as `tool` directives in `go.mod`.
+Requires **Go 1.26+** and the source tree. Regenerating protobuf additionally
+needs `protoc` on PATH.
 
 ```sh
 make build                        # go build ./...
@@ -460,12 +423,7 @@ make controller-linux ARCH=amd64  # versioned Linux controller into dist/
 make release-archive ARCH=amd64   # the shippable archive
 ```
 
-No JS toolchain or codegen is needed for the Web UI — stdlib `html/template`
-plus embedded htmx.
-
-> Working language: **all code, comments, identifiers, logs and commits are in
-> English.** Project design notes ([`docs/DESIGN.md`](docs/DESIGN.md)) and
-> discussion are in Russian.
+No JS toolchain or codegen is needed for the Web UI.
 
 ---
 
@@ -476,12 +434,10 @@ wgfleet is licensed under the **GNU Affero General Public License, version 3**
 
 Copyright (C) 2026 John Smith and wgfleet contributors.
 
-The AGPL's network clause (section 13) is deliberate: wgfleet is control-plane
-software whose typical deployment is a **service** rather than a distributed
-binary. If you run a modified wgfleet to operate a fleet for anyone other than
-yourself, you must offer those users the corresponding source of your
-modifications. Running an unmodified wgfleet, or running a modified one purely
-for your own use, triggers no such obligation.
+Under the AGPL's network clause (section 13), if you run a modified wgfleet to
+operate a fleet for anyone other than yourself, you must offer those users the
+corresponding source of your modifications. Running an unmodified wgfleet, or a
+modified one purely for your own use, triggers no such obligation.
 
 This program is distributed in the hope that it will be useful, but **WITHOUT
 ANY WARRANTY**; without even the implied warranty of MERCHANTABILITY or FITNESS

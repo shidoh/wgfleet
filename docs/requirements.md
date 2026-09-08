@@ -2,15 +2,15 @@
 
 What a node must be for wgfleet to run on it, what the platform installs
 itself, and which combinations are supported. "Supported" means the fleet is
-developed and rehearsed on it; "works" means it has run, but nobody promises
-to keep it running.
+developed and tested on it; "works" means it has run, but nobody promises to
+keep it running.
 
 ## Node operating system
 
 | | Status | Notes |
 |---|---|---|
-| **Ubuntu 24.04 LTS** (amd64, arm64) | **Supported** | The fleet, the stands and CI run on it. Kernel 6.8, nftables 1.0.9, Docker from get.docker.com. |
-| Ubuntu 22.04 LTS | Works, not guaranteed | Kernel 5.15 GA (HWE 6.8 available), nftables **1.0.2**. Older nftables accepts less syntax than 1.0.9 — the agent renders for it since v0.2.4 and checks every ruleset for portability, but new rules are still developed against 1.0.9 first. A jammy stand is part of the rehearsal set, not the default. |
+| **Ubuntu 24.04 LTS** (amd64, arm64) | **Supported** | Kernel 6.8, nftables 1.0.9, Docker from get.docker.com. |
+| Ubuntu 22.04 LTS | Works, not guaranteed | Kernel 5.15 GA (HWE 6.8 available), nftables **1.0.2**, which accepts less syntax than 1.0.9. From v0.2.4 the agent renders rulesets for it and checks every ruleset for portability; new rules are still developed against 1.0.9 first. |
 | Anything older, Debian, other distributions | Not supported | The scripts target apt; nothing else has been tried. |
 
 Everything below Ubuntu 24.04 is best effort: a report is welcome, a fix is not
@@ -20,8 +20,8 @@ promised.
 
 - **Root SSH** for bootstrap (`controller --provision`); the agent runs as root.
 - **A public IPv4 address.** The data plane is IPv4-only; IPv6 is refused on the
-  client interface on purpose — a client handed `::/0` over an IPv4-only tunnel
-  black-holes every IPv6 destination instead of falling back.
+  client interface. A client handed `::/0` over an IPv4-only tunnel black-holes
+  every IPv6 destination instead of falling back.
 - **AmneziaWG kernel module** built by DKMS against the running kernel, from
   `ppa:amnezia/ppa` — `prepare-node.sh` does it. Kernel headers must match the
   running kernel; on 22.04 with the HWE kernel that is
@@ -32,8 +32,8 @@ promised.
   wg-easy, the container image follows the module generation automatically
   (v15.3.0 for a 1.x module, v15.4.0 for 3.x).
 - **Docker Engine with the Compose v2 plugin** (installed by the provisioner from
-  get.docker.com). Moving client interception into mihomo's network namespace
-  uses `network_mode: container:…`, which needs Compose v2.
+  get.docker.com). Client interception inside mihomo's network namespace uses
+  `network_mode: container:…`, which needs Compose v2.
 - **ZeroTier** for the management overlay (installed by `prepare-node.sh`; the
   node must be authorised in ZeroTier Central).
 - **nftables** owns the firewall; `nftables.service` is masked by the scripts
@@ -61,7 +61,7 @@ build is refused rather than downgraded.
 | Component | Version | Where |
 |---|---|---|
 | mihomo | `v1.19.30` | `compose.DefaultMihomoImage` |
-| wg-easy (legacy client leg) | `15.3.0` by digest on a 1.x module, `15.4.0` by digest on a 3.x module | `compose.DefaultWGEasyImage`, `DefaultWGEasyImageAWG3` |
+| wg-easy (legacy client interface) | `15.3.0` by digest on a 1.x module, `15.4.0` by digest on a 3.x module | `compose.DefaultWGEasyImage`, `DefaultWGEasyImageAWG3` |
 | xray-core (REALITY) | `26.6.22` | `compose.DefaultXrayImage` |
 | blocky | `latest` (pin it with `dns.tag`) | `compose.DefaultBlockyImage` |
 | AmneziaWG module / tools | whatever `ppa:amnezia/ppa` ships at prep time, then held | `prepare-node.sh` |
@@ -78,15 +78,15 @@ agent outside that window. Upgrade the controller first, then the agents
 
 ## Clients
 
-wgfleet's responsibility ends at the config it hands out. What has actually been
-used against a fleet:
+wgfleet's responsibility ends at the config it hands out. Clients used with a
+fleet:
 
 - **AmneziaWG 2.0 clients** (AmneziaVPN, the `awg` tools) on the client
-  interface. AmneziaWG 3.x on the client leg is opt-in and needs a 3.x module on
-  the master first (`docs/client-migration.md`, part 4).
+  interface. AmneziaWG 3.x on the client interface is opt-in and needs a 3.x
+  module on the master first (`docs/client-migration.md`, part 4).
 - **VLESS + REALITY clients** (v2rayTun and other xray-based apps) on the client
   VLESS inbound. Split-tunnel behaviour is a client-side setting and differs per
   app: a client's tun mode decides whether private ranges go through the tunnel,
   and some apps expose no switch for it.
 
-A client bug is documented, not worked around on the server (`docs/product.md`).
+A client bug is documented, not worked around on the server.
