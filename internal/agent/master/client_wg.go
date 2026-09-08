@@ -7,10 +7,10 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
+	"github.com/shidoh/wgfleet/internal/agent/wgiface"
 	"github.com/shidoh/wgfleet/internal/awgmod"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/wg"
@@ -61,7 +61,7 @@ func (p clientWGPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 				"not managed by the agent (wg-easy owns the client leg)")}, nil
 		}
 		actions := []reconcile.Action{
-			quickAction(domain.ClientWGBackendKernel, "down", p.confPath, true,
+			wgiface.QuickAction(domain.ClientWGBackendKernel, "down", p.confPath, true,
 				"client interface handed back to wg-easy — bring ours down"),
 		}
 		release, err := reconcile.RemoveFileAction(p.claimPath(), "release our claim on the client interface")
@@ -233,11 +233,11 @@ func (p clientWGPlanner) applyActions(backend domain.ClientWGBackend, why string
 	//
 	// OnApplied fires only when the exec really succeeded; BestEffort then keeps a
 	// failure from aborting the pass, which is why the order matters.
-	up := quickAction(backend, "up", p.confPath, false, "bring the client interface up: "+why).
+	up := wgiface.QuickAction(backend, "up", p.confPath, false, "bring the client interface up: "+why).
 		OnApplied(p.recordClaim).
 		BestEffort()
 	return []reconcile.Action{
-		quickAction(backend, "down", p.confPath, true, "bring the client interface down (if up): "+why),
+		wgiface.QuickAction(backend, "down", p.confPath, true, "bring the client interface down (if up): "+why),
 		up,
 	}
 }
@@ -249,9 +249,9 @@ func (p clientWGPlanner) applyActions(backend domain.ClientWGBackend, why string
 func (p clientWGPlanner) livePeerCount() (n int, known bool) {
 	read := p.ifacePeers
 	if read == nil {
-		read = interfacePeers
+		read = wgiface.Peers
 	}
-	live, err := read(clientIfaceName(p.confPath))
+	live, err := read(wgiface.Name(p.confPath))
 	if err != nil {
 		return 0, false
 	}
@@ -299,32 +299,10 @@ func (p clientWGPlanner) recordClaim() {
 	}
 }
 
-// userspaceImplementation is the daemon awg-quick runs when the userspace backend
-// is selected. awg-quick reads it from the environment, which is why the userspace
-// path goes through `sh -c` — the plan then shows the operator the exact command,
-// environment included, that they could paste into a shell themselves.
-const userspaceImplementation = "amneziawg-go"
-
-// quickAction builds one awg-quick invocation for the selected backend.
-func quickAction(backend domain.ClientWGBackend, verb, confPath string, bestEffort bool, summary string) reconcile.Action {
-	cmd := []string{"awg-quick", verb, confPath}
-	if backend == domain.ClientWGBackendUserspace {
-		cmd = []string{"sh", "-c", fmt.Sprintf("WG_QUICK_USERSPACE_IMPLEMENTATION=%s awg-quick %s %s",
-			userspaceImplementation, verb, shQuote(confPath))}
-	}
-	if bestEffort {
-		return reconcile.BestEffortExecAction(summary, cmd...)
-	}
-	return reconcile.ExecAction(summary, cmd...)
-}
-
-// shQuote single-quotes a path for safe interpolation into an `sh -c` command.
-func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-
 func (p clientWGPlanner) isUp() bool {
-	name := clientIfaceName(p.confPath)
+	name := wgiface.Name(p.confPath)
 	if p.up == nil {
-		return ipLinkUp(name)
+		return wgiface.IsUp(name)
 	}
 	return p.up(name)
 }
@@ -367,45 +345,7 @@ func (p clientWGPlanner) claimed() bool {
 // only fallback, even though it is correctly read that way by the caller deciding
 // whether to re-apply (where failing open avoids a pointless interface bounce).
 func (p clientWGPlanner) servesDesiredPeers(cw *domain.ClientWGSpec) (matches, known bool) {
-	read := p.ifacePeers
-	if read == nil {
-		read = interfacePeers
-	}
-	live, err := read(clientIfaceName(p.confPath))
-	if err != nil {
-		return true, false
-	}
-	want := make(map[string]struct{}, len(cw.Clients))
-	for _, c := range cw.Clients {
-		want[c.PublicKey] = struct{}{}
-	}
-	if len(live) != len(want) {
-		return false, true
-	}
-	for _, key := range live {
-		if _, ok := want[key]; !ok {
-			return false, true
-		}
-	}
-	return true, true
-}
-
-// interfacePeers lists the live interface's peer public keys. `awg show <iface>
-// peers` is used rather than `dump` deliberately: dump's first line carries the
-// interface PRIVATE key, and a command whose output might be logged should not
-// have it in hand.
-func interfacePeers(name string) ([]string, error) {
-	out, err := exec.Command("awg", "show", name, "peers").Output()
-	if err != nil {
-		return nil, err
-	}
-	var peers []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			peers = append(peers, line)
-		}
-	}
-	return peers, nil
+	return wgiface.ServesPeers(wgiface.Name(p.confPath), cw.Clients, p.ifacePeers)
 }
 
 // wgEasyPresent reports whether a wg-easy container still exists on this host.
@@ -451,15 +391,15 @@ func (p clientWGPlanner) checkBackendSupportsAWG3(backend domain.ClientWGBackend
 	if lookPath == nil {
 		lookPath = exec.LookPath
 	}
-	if _, err := lookPath(userspaceImplementation); err != nil {
+	if _, err := lookPath(wgiface.UserspaceImplementation); err != nil {
 		return fmt.Errorf("backend is userspace but %s is not installed (%v), and the kernel module cannot carry this config: %w",
-			userspaceImplementation, err, kernelErr)
+			wgiface.UserspaceImplementation, err, kernelErr)
 	}
 	// The daemon is present but the kernel module may still win the race for the
 	// interface. Only a node without a usable module reliably lands on userspace.
 	if !errors.Is(kernelErr, awgmod.ErrGenerationUnknown) {
 		return fmt.Errorf("backend is userspace but this node has a kernel AmneziaWG module that awg-quick will use in preference to %s: %w",
-			userspaceImplementation, kernelErr)
+			wgiface.UserspaceImplementation, kernelErr)
 	}
 	return nil
 }
@@ -491,22 +431,11 @@ func clientWGSpec(spec domain.NodeSpec) *domain.ClientWGSpec {
 	return spec.Master.ClientWG
 }
 
-// clientIfaceName derives the interface name from the config path, the way
-// awg-quick does.
-func clientIfaceName(path string) string {
-	return strings.TrimSuffix(filepath.Base(path), ".conf")
-}
-
-// ipLinkUp reports whether an interface exists (awg-quick creates it on `up`).
-func ipLinkUp(name string) bool {
-	return exec.Command("ip", "link", "show", name).Run() == nil
-}
-
 // ClientInterfaceUp reports whether the master's client-facing interface exists
 // at all. The namespace mover asks before it reads a failing client-path probe as
 // evidence: with no interface there is no client path, in the namespace or out of
 // it, and the probe's failure is about the interface, not about where mihomo is.
-func ClientInterfaceUp() bool { return ipLinkUp(ClientWGInterface) }
+func ClientInterfaceUp() bool { return wgiface.IsUp(ClientWGInterface) }
 
 // syntheticPeer builds the master's own client peer for this spec, or the zero
 // value when there is no key or the pool has no room for one. The address comes
@@ -529,82 +458,15 @@ func (p clientWGPlanner) syntheticPeer(cw domain.ClientWGSpec) domain.WGClient {
 // leaving the device — and every session on it — alone. nil means the difference
 // cannot be applied that way and the caller must fall back to a bring-up.
 //
-// Three conditions, and each is a real limit rather than caution:
-//
-//   - The [Interface] section must be unchanged. Addresses, the listen port, the
-//     MTU and the AmneziaWG obfuscation parameters are fixed when the device is
-//     created; `awg set` cannot move them, and pretending otherwise would leave the
-//     kernel running one configuration while the file on disk claims another.
-//   - No peer being ADDED may carry a preshared key. `awg set` reads one from a
-//     FILE, and the alternatives — a path we would have to create and delete, or
-//     the key on a command line — are worse than a re-handshake.
-//   - The live peer list must be readable, must be a SUBSET of the desired one,
-//     and we must hold the claim.
-//
-// The subset condition is what makes this safe rather than merely cheap. A live
-// interface carrying a peer we do not want is not an interface missing an entry —
-// it is somebody else's peer list, which is how a wg-easy container that recreated
-// wg0 after a reboot presents itself. Its INTERFACE parameters are wg-easy's too,
-// and `awg set` cannot correct those, so patching peers would leave the kernel
-// serving the right people with the wrong obfuscation. That case still recreates
-// the device, which is the only thing that fixes it.
+// The conditions that are about INTERFACES live in wgiface.PeerDelta, which the
+// exit's lifeline shares. The one condition that is about OWNERSHIP stays here:
+// we may only patch an interface we have proof we raised. Without the claim this
+// could be wg-easy's wg0, whose interface parameters are wg-easy's too, and
+// patching its peers would leave the kernel serving the right people with the
+// wrong obfuscation.
 func (p clientWGPlanner) peerDeltaActions(want *domain.ClientWGSpec, prevCfg, newCfg string) []reconcile.Action {
-	if prevCfg == "" || wg.InterfaceSection(prevCfg) != wg.InterfaceSection(newCfg) {
-		return nil
-	}
 	if !p.claimed() {
 		return nil
 	}
-	read := p.ifacePeers
-	if read == nil {
-		read = interfacePeers
-	}
-	iface := clientIfaceName(p.confPath)
-	livePeers, err := read(iface)
-	if err != nil {
-		return nil
-	}
-	live := make(map[string]bool, len(livePeers))
-	for _, k := range livePeers {
-		live[k] = true
-	}
-
-	var actions []reconcile.Action
-	wanted := map[string]bool{}
-	for _, c := range want.Clients {
-		if c.PublicKey == "" {
-			continue
-		}
-		wanted[c.PublicKey] = true
-		if live[c.PublicKey] {
-			continue
-		}
-		if c.PresharedKey != "" {
-			return nil // cannot hand a secret to `awg set` without writing it somewhere
-		}
-		if c.Address == "" {
-			return nil
-		}
-		actions = append(actions, reconcile.ExecAction(
-			"add peer "+c.Name+" without disturbing the interface",
-			"awg", "set", iface, "peer", c.PublicKey, "allowed-ips", hostPrefix(c.Address)))
-	}
-	for key := range live {
-		if !wanted[key] {
-			return nil // not our peer list; only a rebuild puts this interface right
-		}
-	}
-	if len(actions) == 0 {
-		return nil
-	}
-	return actions
-}
-
-// hostPrefix turns a client address into the single-host prefix the server side
-// allows for it. An address that already carries a prefix is used as written.
-func hostPrefix(addr string) string {
-	if strings.Contains(addr, "/") {
-		return addr
-	}
-	return addr + "/32"
+	return wgiface.PeerDelta(wgiface.Name(p.confPath), want.Clients, prevCfg, newCfg, p.ifacePeers)
 }
