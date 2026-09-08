@@ -54,6 +54,9 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+          # actions/cache uploads GOMODCACHE to GitHub after the job (~75 s); our
+          # runners keep it on a persistent volume, so skip that there.
+          cache: ${{ runner.environment != 'self-hosted' }}
 
       # A tag can sit on a commit CI never saw: ci.yml runs on push-to-main and PRs
       # only, and workflow_dispatch will happily tag HEAD. Publishing binaries that

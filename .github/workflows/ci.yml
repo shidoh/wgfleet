@@ -12,8 +12,11 @@ permissions:
   contents: read
 
 jobs:
+  # Format, vet, build and the unprivileged test suite run on the self-hosted
+  # scale set in the sln cluster (label `sln`, gitops apps/gha-runner-sln): a
+  # persistent Go cache turns the nine-minute race run into seconds.
   build-test:
-    runs-on: ubuntu-latest
+    runs-on: sln
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,6 +26,18 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+          # actions/cache uploads GOMODCACHE to GitHub after the job (~75 s); our
+          # runners keep it on a persistent volume, so skip that there.
+          cache: ${{ runner.environment != 'self-hosted' }}
+
+      - name: Build tools (a stock actions-runner image has no make, C compiler or gh; a no-op on our own image)
+        if: runner.environment == 'self-hosted'
+        run: |
+          if ! command -v gcc >/dev/null || ! command -v make >/dev/null; then
+            sudo apt-get update -q
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q gcc libc6-dev make
+          fi
+          gcc --version | head -1
 
       - name: Check formatting
         run: |
@@ -41,11 +56,24 @@ jobs:
       - name: Test (race)
         run: go test -race ./...
 
-      # The data-path rehearsal needs CAP_NET_ADMIN: it opens the IP_TRANSPARENT
-      # reply socket mihomo opens, which is the one call the August 2026 outage
-      # turned on. Unprivileged it skips itself, and a test that always skips is a
-      # test nobody has, so it is run deliberately under sudo rather than left to
-      # the ordinary suite.
+  # The data-path rehearsal needs CAP_NET_ADMIN: it opens the IP_TRANSPARENT
+  # reply socket mihomo opens, which is the one call the August 2026 outage
+  # turned on. Unprivileged it skips itself, and a test that always skips is a
+  # test nobody has, so it is run deliberately under sudo rather than left to
+  # the ordinary suite. A runner pod in the cluster has no such capability, so
+  # this job stays on a GitHub-hosted VM.
+  datapath:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
       - name: Data-path rehearsal (privileged)
         # internal/agent/health is in the same list on purpose. It carries the
         # IP_TRANSPARENT bind tests — the ones that reproduce the actual August
