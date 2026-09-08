@@ -168,9 +168,9 @@ func run() error {
 		supportBundle = flag.Bool("support-bundle", false, "write a read-only diagnostic archive (no secrets, not encrypted) and exit")
 		supportNote   = flag.String("note", "", "with --support-bundle: describe what went wrong, embedded in the archive")
 		dnsProbe      = flag.String(strings.TrimPrefix(master.DNSProbeFlag, "-"), "",
-			"take one UDP DNS query against <host:port> and exit 0/1; used by the client-path prober inside a namespace")
+			"send one UDP DNS query to <host:port> and exit 0/1; used by the agent's own prober inside a namespace")
 		udpReturnScan = flag.Bool(strings.TrimPrefix(master.UDPReturnScanFlag, "-"), false,
-			"print `<port> <0|1>` for every UDP service port this namespace holds and exit; used to run the check inside mihomo's namespace")
+			"print '<port> <0|1>' for every UDP service port this namespace holds and exit; used by the agent's own check inside mihomo's namespace")
 	)
 	flag.Parse()
 

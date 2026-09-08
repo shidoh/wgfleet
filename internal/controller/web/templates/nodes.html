@@ -154,8 +154,8 @@
   {{if .DrainByConfig}}<span class="subbadge drain" title="Drained by the manifest (fleet.exits[].drain: true) — no new traffic; undrain by editing the manifest."><span class="led"></span>drained by config</span>
   {{else if .Drain}}<span class="subbadge drain" title="Drained from the console — out of the load balancer, no new traffic. The node is untouched; Undrain reverses it instantly."><span class="led"></span>drained</span>{{end}}
   {{if .EgressBlocked}}<span class="subbadge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
-  {{if .ActiveEgress}}<span class="subbadge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{.ActiveEgress}}</span>{{end}}
-  {{if .LowThroughput}}<span class="subbadge slow" title="Egress throughput below floor — auto-suspended (ADR-0021)"><span class="led"></span>low throughput</span>{{end}}
+  {{if .ActiveEgress}}<span class="subbadge failover" title="Failed over to a fallback egress; returns to WARP on its own when it is reachable again"><span class="led"></span>egress: {{.ActiveEgress}}</span>{{end}}
+  {{if .LowThroughput}}<span class="subbadge slow" title="Egress throughput below the floor — auto-suspended from the load balancer until it recovers"><span class="led"></span>low throughput</span>{{end}}
   {{if .Decommission}}<span class="subbadge decommission"><span class="led"></span>decommissioning</span>{{end}}
 </span>
 {{end}}

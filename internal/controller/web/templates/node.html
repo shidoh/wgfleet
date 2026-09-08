@@ -8,11 +8,11 @@
   <span class="subbadges">
     {{if .Node.DrainByConfig}}<span class="subbadge drain" title="Drained by the manifest (fleet.exits[].drain: true): no new traffic, the tunnel stays up. Remove that line and restart the controller to bring it back; the console cannot undrain it."><span class="led"></span>drained by config</span>
     {{else if .Node.Drain}}<span class="subbadge drain" title="Drained from the console — out of the load balancer, no new traffic. The node is untouched; Undrain reverses it instantly."><span class="led"></span>drained</span>{{end}}
-    {{if .DecommissionStuck}}<span class="subbadge decommission" title="Decommission was requested, but this node is not reporting: its agent is the one that tears the data plane down, and it is not there to do it. Delete removes the node from the fleet; if the box ever comes back, stop wgfleet-agent on it by hand."><span class="led"></span>decommission stuck: node not reporting</span>
+    {{if .DecommissionStuck}}<span class="subbadge decommission" title="Decommission was requested, but the node is not reporting, so its agent cannot tear the data plane down. Delete removes the node from the fleet; if the box ever comes back, stop wgfleet-agent on it by hand."><span class="led"></span>decommission stuck: node not reporting</span>
     {{else if .Node.Decommission}}<span class="subbadge decommission"><span class="led"></span>decommissioning</span>{{end}}
     {{if and .HasStatus .Status.EgressBlocked}}<span class="subbadge blocked" title="WARP egress unreachable — likely ISP/DPI block"><span class="led"></span>egress blocked</span>{{end}}
-    {{if and .HasStatus .Status.EgressThroughputDegraded}}<span class="subbadge slow" title="Egress throughput below the floor — auto-suspended from the load balancer (ADR-0021)"><span class="led"></span>low egress throughput</span>{{end}}
-    {{if .HasStatus}}{{$e := .Status.ActiveEgress}}{{if and $e (ne $e "warp")}}<span class="subbadge failover" title="Failed over to a fallback egress (ADR-0017)"><span class="led"></span>egress: {{$e}}</span>{{end}}{{end}}
+    {{if and .HasStatus .Status.EgressThroughputDegraded}}<span class="subbadge slow" title="Egress throughput below the floor — auto-suspended from the load balancer until it recovers"><span class="led"></span>low egress throughput</span>{{end}}
+    {{if .HasStatus}}{{$e := .Status.ActiveEgress}}{{if and $e (ne $e "warp")}}<span class="subbadge failover" title="Failed over to a fallback egress; returns to WARP on its own when it is reachable again"><span class="led"></span>egress: {{$e}}</span>{{end}}{{end}}
     {{if .WireSkew}}<span class="subbadge skew" title="{{.WireSkew}}"><span class="led"></span>version skew</span>{{end}}
   </span>
   {{end}}
@@ -67,7 +67,7 @@
   </form>
   {{else}}
   <form method="post" action="/nodes/{{.Node.ID}}/drain" onsubmit="return lockAction(this)"
-        data-confirm="Drain {{.Node.Name}}? It leaves the load balancer: no new client traffic goes to it, existing sessions finish. The node itself is NOT changed or wiped, and the change is a mihomo hot reload so other clients keep their connections. Undrain reverses it instantly. Drain is also the first step before Decommission.">
+        data-confirm="Drain {{.Node.Name}}? It leaves the load balancer: no new client traffic, existing sessions finish. Nothing on the node changes and other clients keep their connections. Undrain reverses it instantly. Drain is also the first step before Decommission.">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     <button type="submit" class="btn caution" data-pending="Draining…" title="Drain: take this node out of routing. Reversible, nothing on the node changes.">Drain</button>
   </form>
@@ -98,7 +98,7 @@
   {{end}}
   {{if .CanDelete}}
   <form method="post" action="/nodes/{{.Node.ID}}/delete" onsubmit="return lockAction(this)"
-        data-confirm="Delete {{.Node.Name}} from inventory? This removes the exit permanently, and removes its declaration from the manifest so it does not come back as a Pending card.{{if .DecommissionStuck}} The node is not reporting, so nothing on the box gets torn down; if it ever comes back, its agent is refused here until you provision it again — stop and disable wgfleet-agent on it when you can.{{else}} If the box still runs its agent, it is refused at registration from now on (Provision re-admits it).{{end}} No client credential lives on an exit, so nobody&#39;s config is deleted by this.">
+        data-confirm="Delete {{.Node.Name}} from inventory? The exit is removed permanently, along with its declaration in the manifest.{{if .DecommissionStuck}} The node is not reporting, so nothing on the box is torn down; if it ever comes back, its agent is refused until you provision it again — stop and disable wgfleet-agent on it when you can.{{else}} If the box still runs its agent, it is refused at registration from now on; Provision re-admits it.{{end}} No client config is deleted by this.">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     {{/* Empty until lockAction fills it in. The server refuses a delete without it
          and asks on its own page instead, because this form's only prompt is

@@ -16,8 +16,7 @@
     <p class="rollout-lead">
       Updates exit agents <strong>one at a time</strong> — reserve tier first, primary last — and moves on only when a
       node reports <em>Ready</em> on the new build. A node that does not come back is restored to its previous binary
-      over SSH and the rollout stops. Exits are never drained: the kernel AWG and xray data planes survive an
-      agent restart, so draining would only force a pointless rehash.
+      over SSH and the rollout stops. Exits are not drained: the AWG and xray data planes survive an agent restart.
     </p>
 
     {{if .State.Nodes}}

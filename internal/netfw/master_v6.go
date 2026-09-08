@@ -45,7 +45,7 @@ func RenderMasterV6Block(clientIface, ipv6Prefix string) (string, error) {
 
 	var b strings.Builder
 	b.WriteString("#!/usr/sbin/nft -f\n")
-	b.WriteString("# Rendered by wgfleet — master client-facing IPv6 (refuse, audibly). Do not edit by hand.\n")
+	b.WriteString("# Rendered by wgfleet — master client-facing IPv6. Do not edit by hand.\n")
 	// Same atomic replace idiom as the NAT table: without it a re-apply appends to
 	// the existing chains and stale rules accumulate forever.
 	fmt.Fprintf(&b, "table ip6 %s\n", MasterV6Table)
