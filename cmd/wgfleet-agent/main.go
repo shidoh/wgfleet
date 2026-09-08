@@ -586,7 +586,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	// the reality proxy the moment the operator flips the active transport — no
 	// chicken-and-egg. The key is exit-local (persisted in apply, ephemeral in plan);
 	// only the pubkey crosses the wire. Unused on AWG-only exits.
-	var realityPriv, clientWGPriv string
+	var realityPriv, clientWGPriv, lifelinePriv string
 	if a.role == domain.RoleExit {
 		rPriv, rPub, rEph, rerr := a.ensureRealityKey(!plan)
 		if rerr != nil {
@@ -599,6 +599,28 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		if !plan && !fromCache {
 			if err := a.client.PublishRealityKey(ctx, rPub); err != nil {
 				return fmt.Errorf("publish reality key: %w", err)
+			}
+		}
+
+		// The LIFELINE interface identity, resolved the same way and for the same
+		// reason. Generated and published on EVERY exit, whether or not the operator
+		// has enabled the reserve leg: a WireGuard keypair is cheap, and having it
+		// already registered is what makes enabling the lifeline a pure manifest edit
+		// with nothing to wait for — the controller can render the reserve peers on
+		// the very next pass instead of a pass after the exit first reports a key.
+		// Exit-local (persisted in apply, ephemeral in plan); only the pubkey crosses
+		// the wire.
+		llKP, llEph, llErr := a.ensureLifelineKey(!plan)
+		if llErr != nil {
+			return fmt.Errorf("ensure lifeline key: %w", llErr)
+		}
+		if llEph && plan {
+			a.log.Info("lifeline key absent; using an ephemeral key for the plan (apply would generate one)")
+		}
+		lifelinePriv = llKP.PrivateKey
+		if !plan && !fromCache {
+			if err := a.client.PublishLifelineKey(ctx, llKP.PublicKey); err != nil {
+				return fmt.Errorf("publish lifeline key: %w", err)
 			}
 		}
 	}
@@ -721,7 +743,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	// the mechanism written to stop that was cancelling itself.
 	a.adoptNetnsMove(ctx, spec)
 
-	engine := reconcile.NewEngine(a.log, a.planners(kp.PrivateKey, realityPriv, clientWGPriv, adminUser, adminPass)...)
+	engine := reconcile.NewEngine(a.log, a.planners(kp.PrivateKey, realityPriv, clientWGPriv, lifelinePriv, adminUser, adminPass)...)
 	start := time.Now()
 	report, reconcileErr := engine.Reconcile(ctx, spec, mode)
 	elapsed := time.Since(start)
@@ -1075,7 +1097,7 @@ func (a *agent) masterPaths() master.Paths {
 // planners returns the role-appropriate reconcile planners. The master's data
 // plane is mihomo + NAT; the exit's is the WG/AWG interface + wgcf + routing +
 // nftables + DNS.
-func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, adminUser, adminPass string) []reconcile.Planner {
+func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, lifelinePrivateKey, adminUser, adminPass string) []reconcile.Planner {
 	var base []reconcile.Planner
 	if a.role == domain.RoleMaster {
 		base = master.Planners(master.Input{
@@ -1098,6 +1120,7 @@ func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, admi
 			Paths:               a.paths,
 			PrivateKey:          privateKey,
 			RealityPrivateKey:   realityPrivateKey,
+			LifelinePrivateKey:  lifelinePrivateKey,
 			OverlayMSS:          a.cfg.Agent.MgmtOverlayMSS,
 			ASBlacklistV4URL:    a.cfg.Agent.ASBlacklistV4URL,
 			ASBlacklistV6URL:    a.cfg.Agent.ASBlacklistV6URL,
@@ -1184,6 +1207,32 @@ func (a *agent) ensureRealityKey(persist bool) (priv, pub string, ephemeral bool
 	}
 	priv, pub, err = xray.GenerateKeypair()
 	return priv, pub, true, err
+}
+
+// ensureLifelineKey returns the exit's LIFELINE interface WireGuard keypair. With
+// persist=true (apply) it loads or creates+persists the private key (0600); with
+// persist=false (plan) it loads an existing key or generates an ephemeral one just
+// for rendering, so dry-run never writes anything.
+//
+// It is a WireGuard key, not an x25519 REALITY one, so it goes through wg's own
+// loader — which also treats a zero-byte file as "no key", the torn-write case
+// that would otherwise wedge a node for good.
+func (a *agent) ensureLifelineKey(persist bool) (kp wg.KeyPair, ephemeral bool, err error) {
+	if persist {
+		kp, _, err = wg.LoadOrCreateKey(a.paths.LifelineKey)
+		return kp, false, err
+	}
+	if data, rerr := os.ReadFile(a.paths.LifelineKey); rerr == nil {
+		if priv := strings.TrimSpace(string(data)); priv != "" {
+			pub, perr := wg.PublicKeyOf(priv)
+			if perr != nil {
+				return wg.KeyPair{}, false, fmt.Errorf("stored lifeline key invalid: %w", perr)
+			}
+			return wg.KeyPair{PrivateKey: priv, PublicKey: pub}, false, nil
+		}
+	}
+	kp, err = wg.GenerateKeyPair()
+	return kp, true, err
 }
 
 // ensureClientVlessKey returns the master's client-facing REALITY x25519 keypair,

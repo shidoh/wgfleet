@@ -33,7 +33,13 @@ type Input struct {
 	// (ADR-0025), persisted in apply mode / ephemeral in plan mode. Empty on exits
 	// that do not run the reality transport (the xray planner then no-ops).
 	RealityPrivateKey string
-	WARP              *egress.WARPConfig
+	// LifelinePrivateKey is the exit's locally-generated LIFELINE interface
+	// WireGuard private key, persisted in apply mode / ephemeral in plan mode. Like
+	// the REALITY key it is generated on every exit whether or not the operator has
+	// enabled the lifeline, so the controller can render the reserve peers the
+	// moment the knob is flipped. Empty ⇒ the lifeline planner defers.
+	LifelinePrivateKey string
+	WARP               *egress.WARPConfig
 	// IfaceUp reports whether a network interface currently exists/is up. It lets
 	// the WG/WARP planners bring an interface up when it is down even though its
 	// config file is unchanged (after a reboot, or a previously failed `up`).
@@ -65,6 +71,10 @@ func Planners(in Input) []reconcile.Planner {
 		tuning.BBRPlanner(),
 		firewallPlanner{path: in.Paths.NFT, wgConf: in.Paths.WGConf, overlayMSS: in.OverlayMSS, asBlacklistCache: in.Paths.ASBlacklist, warpMTUCache: in.Paths.WARPMTUCache},
 		wgPlanner{path: in.Paths.WGConf, privateKey: in.PrivateKey, up: up},
+		// The reserve client leg (LifelineSpec), right behind the exit's own AWG
+		// server: both are interfaces this node raises, and both must exist before the
+		// egress and the policy routing that carry their pools out.
+		lifelinePlanner{confPath: in.Paths.LifelineConf, privateKey: in.LifelinePrivateKey, up: up},
 		warpPlanner{path: in.Paths.WGCF, dir: in.Paths.WARPDir, warp: in.WARP, up: up, warpMTUCache: in.Paths.WARPMTUCache},
 		routingPlanner{statePath: in.Paths.RoutingState},
 		dnsPlanner{configPath: in.Paths.DNS, composePath: in.Paths.DNSCompose},

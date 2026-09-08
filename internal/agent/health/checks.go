@@ -17,6 +17,9 @@ type ExitProbes struct {
 	// RealityInbound checks the xray REALITY inbound is listening (ADR-0025). Run
 	// in place of the WG-handshake check when REALITY is the active transport.
 	RealityInbound Probe
+	// LifelineUp checks the exit's reserve client interface (domain.LifelineInterface)
+	// exists and is up. Only checked on exits whose spec carries a lifeline.
+	LifelineUp Probe
 }
 
 // MasterProbes are the injectable probes for a master node's self-checks.
@@ -60,6 +63,14 @@ func ExitChecks(spec domain.NodeSpec, p ExitProbes) []Check {
 	// Degraded during that startup window.
 	if spec.DNS.Enabled && spec.DNS.MgmtAddr != "" && p.DNSResolves != nil {
 		checks = append(checks, Check{Name: "dns-filter", Probe: p.DNSResolves})
+	}
+	// The reserve client leg. Nothing else on the node notices when it is down: the
+	// master↔exit handshake, WARP egress and the resolver all stay green while the
+	// interface people fall back to when the master is blocked never came up. The
+	// planner is best-effort about raising it precisely so a failure does not freeze
+	// the primary data plane, which makes this check the only thing that reports one.
+	if spec.Lifeline != nil && p.LifelineUp != nil {
+		checks = append(checks, Check{Name: "lifeline", Probe: p.LifelineUp})
 	}
 	return checks
 }

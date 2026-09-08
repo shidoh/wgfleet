@@ -24,6 +24,7 @@ func (exitTeardownPlanner) Component() string { return "exit teardown" }
 func (p exitTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]reconcile.Action, error) {
 	actions := []reconcile.Action{
 		reconcile.BestEffortExecAction("bring AmneziaWG interface down", "awg-quick", "down", p.paths.WGConf),
+		reconcile.BestEffortExecAction("bring the lifeline interface down", "awg-quick", "down", p.paths.LifelineConf),
 		reconcile.BestEffortExecAction("bring WARP interface down", "wg-quick", "down", p.paths.WGCF),
 	}
 	// Undo policy routing (reverse of routing.Render).
@@ -48,6 +49,8 @@ func (p exitTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]recon
 		{p.paths.XrayConfig, "xray (reality) config"},
 		{p.paths.XrayCompose, "xray compose file"},
 		{p.paths.XrayKey, "REALITY private key"},
+		{p.paths.LifelineConf, "lifeline interface config"},
+		{p.paths.LifelineKey, "lifeline private key"},
 		{p.paths.RoutingState, "policy-routing state"},
 		{p.paths.ASBlacklist, "AS-blacklist feed cache"},
 		{p.paths.ASBlacklist + ".attempt", "AS-blacklist refresh marker"},

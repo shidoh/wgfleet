@@ -4,7 +4,11 @@
 // exit node converges from one NodeSpec and every step is dry-run visible.
 package exit
 
-import "path/filepath"
+import (
+	"path/filepath"
+
+	"github.com/shidoh/wgfleet/internal/domain"
+)
 
 // Paths are the on-node file locations the exit reconcilers manage. They are
 // overridable so tests can point them at a temp dir and operators can match
@@ -23,6 +27,17 @@ type Paths struct {
 	XrayKey     string // REALITY x25519 private key (0600, generated on-node)
 	XrayConfig  string // rendered xray config.json
 	XrayCompose string // docker-compose.yml for the xray container
+	// LifelineKey is the exit's LIFELINE interface WireGuard private key (0600,
+	// generated on-node like WGKey). Distinct from WGKey: the lifeline fronts end
+	// users, so its identity must not be the one the master↔exit tunnel peers
+	// against — a lifeline key leaking from a compromised exit would otherwise hand
+	// over that exit's place in the fleet as well.
+	LifelineKey string
+	// LifelineConf is the rendered awg-quick config for domain.LifelineInterface.
+	// Its PRESENCE is also the ownership evidence the disable path reads: nothing
+	// but the agent ever raises awgl0, so there is no claim file to keep (unlike the
+	// master's client leg, which it may inherit from wg-easy).
+	LifelineConf string
 	// ClientVLESSKey is the MASTER's client-facing REALITY x25519 private key (0600,
 	// generated on-node). Distinct from XrayKey (the exit's master↔exit reality key);
 	// a node is either master or exit, so only one is ever used. Empty on plans that
@@ -57,6 +72,8 @@ func DefaultPaths() Paths {
 		XrayKey:        "/etc/wgfleet/reality.key",
 		XrayConfig:     "/etc/wgfleet/xray/config.json",
 		XrayCompose:    "/etc/wgfleet/xray/docker-compose.yml",
+		LifelineKey:    "/etc/wgfleet/lifeline.key",
+		LifelineConf:   "/etc/amnezia/amneziawg/" + domain.LifelineInterface + ".conf",
 		ClientVLESSKey: "/etc/wgfleet/client-vless.key",
 		RoutingState:   "/run/wgfleet/routing.applied",
 		ASBlacklist:    "/var/lib/wgfleet/as-blacklist.lst",
@@ -89,6 +106,8 @@ func PathsUnder(dir string) Paths {
 		XrayKey:        filepath.Join(dir, "reality.key"),
 		XrayConfig:     filepath.Join(dir, "xray", "config.json"),
 		XrayCompose:    filepath.Join(dir, "xray", "docker-compose.yml"),
+		LifelineKey:    filepath.Join(dir, "lifeline.key"),
+		LifelineConf:   filepath.Join(dir, domain.LifelineInterface+".conf"),
 		ClientVLESSKey: filepath.Join(dir, "client-vless.key"),
 		RoutingState:   filepath.Join(dir, "routing.applied"),
 		ASBlacklist:    filepath.Join(dir, "as-blacklist.lst"),

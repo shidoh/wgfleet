@@ -100,6 +100,30 @@ func TestExitChecksRespectSpec(t *testing.T) {
 	}
 }
 
+// An exit that carries a lifeline must report on it: the reserve leg is what the
+// fleet's "survive the block" promise rests on, and an awgl0 that never came up
+// is invisible from every other check on the node — the master↔exit handshake,
+// WARP egress and the resolver are all still green while it is down.
+func TestExitChecksIncludeTheLifelineOnlyWhenTheSpecCarriesOne(t *testing.T) {
+	probes := ExitProbes{HandshakeFresh: passing("hs"), LifelineUp: passing("lifeline")}
+	base := domain.NodeSpec{Role: domain.RoleExit, Egress: domain.EgressDirect}
+
+	if names := checkNames(ExitChecks(base, probes)); contains(names, "lifeline") {
+		t.Errorf("an exit without a lifeline must not be checked for one, got %v", names)
+	}
+
+	withLifeline := base
+	withLifeline.Lifeline = &domain.LifelineSpec{
+		ClientWGSpec: domain.ClientWGSpec{
+			ListenPort: 41827, AddressPool: "10.98.77.0/24", ServerAddress: "10.98.77.1",
+		},
+		Egress: domain.EgressWARP,
+	}
+	if names := checkNames(ExitChecks(withLifeline, probes)); !contains(names, "lifeline") {
+		t.Errorf("an exit carrying a lifeline must be checked for it, got %v", names)
+	}
+}
+
 func TestMasterChecks(t *testing.T) {
 	probes := MasterProbes{MihomoAPI: passing("api"), WGServerUp: passing("wg")}
 	spec := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{ExternalController: "10.20.25.254:9090"}}

@@ -42,6 +42,10 @@ func DefaultExitProbes(spec domain.NodeSpec) ExitProbes {
 		DNSResolves:    dnsResolvesProbe(dnsListenAddr(spec.DNS)),
 		EgressConfirm:  warpHandshakeProbe(egressIface),
 		RealityInbound: realityInboundProbe(realityPort),
+		// The reserve client leg (awgl0). `ip link show` is the right question here
+		// and not, say, a handshake: the lifeline is warm standby by design, so it can
+		// be perfectly healthy with no client on it for weeks.
+		LifelineUp: ifaceUpProbe(domain.LifelineInterface),
 	}
 }
 
