@@ -130,4 +130,4 @@ jobs:
             echo "Telegram secrets not configured — skipping channel announcement."
             exit 0
           fi
-          bash .github/telegram-notify.sh "$TAG" release-notes.md dist
+          bash .github/telegram-notify.sh "$TAG" dist docs/changelog.md

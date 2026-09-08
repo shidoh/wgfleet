@@ -63,4 +63,5 @@ nav:
       - Moving the master: docs/master-migration.md
   - Recipes:
       - RU split tunnel and DNS filtering: docs/recipes/ru-split-tunnel-dns-filter.md
+  - Changelog: docs/changelog.md
   - Security: SECURITY.md

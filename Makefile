@@ -110,6 +110,7 @@ perl -pi -e '\
   s{\]\((?:\./|\.\./)?colocated-controller-master\.md}{]($(2)COLOCATED-CONTROLLER-MASTER.md}g; \
   s{\]\((?:\./|\.\./)?onboarding\.md}{]($(2)ONBOARDING.md}g; \
   s{\]\((?:\./|\.\./)?(?:docs/)?requirements\.md}{]($(2)REQUIREMENTS.md}g; \
+  s{\]\((?:\./|\.\./)?(?:docs/)?changelog\.md}{]($(2)CHANGELOG.md}g; \
   s{\]\((?:\./|\.\./)?(?:docs/)?secrets-sops\.md}{]($(2)SECRETS-SOPS.md}g; \
   s{\]\((?:\./|\.\./)?SECURITY\.md}{]($(2)SECURITY.md}g; \
   s{\]\((?:\./|\.\./)?(?:docs/)?recipes/ru-split-tunnel-dns-filter\.md}{]($(2)examples/RU-SPLIT-TUNNEL.md}g; \
@@ -129,6 +130,7 @@ release-archive: agent-linux controller-linux
 	cp DISCLAIMER.md                            $(DIST)/$(PKG)/DISCLAIMER.md
 	cp docs/QUICKSTART.md                       $(DIST)/$(PKG)/INSTALL.md
 	cp docs/requirements.md                     $(DIST)/$(PKG)/REQUIREMENTS.md
+	cp docs/changelog.md                        $(DIST)/$(PKG)/CHANGELOG.md
 	cp docs/secrets-sops.md                     $(DIST)/$(PKG)/SECRETS-SOPS.md
 	cp docs/configuration.md                    $(DIST)/$(PKG)/CONFIGURATION.md
 	cp docs/master-migration.md                 $(DIST)/$(PKG)/MASTER-MIGRATION.md

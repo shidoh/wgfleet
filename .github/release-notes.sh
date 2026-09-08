@@ -53,6 +53,18 @@ highlights_for() {
 HIGHLIGHTS="$(highlights_for "${RELEASE_TAG:-$CUR}" | sed -e '/./,$!d')"
 HIGHLIGHTS="$(printf '%s' "$HIGHLIGHTS" | sed -e :a -e '/^\n*$/{$d;N;};/\n$/ba')"
 
+# The public changelog on the docs site, linked to this release's section when
+# docs/changelog.md has one (the anchor mirrors mkdocs' slug of "## vX — DATE").
+DOCS_URL="${DOCS_URL:-https://shidoh.github.io/wgfleet-docs}"
+changelog_link() {
+  local tag="$1" heading anchor
+  heading="$(grep -m1 -E "^## ${tag//./\\.}( |$)" docs/changelog.md 2>/dev/null | sed -E 's/^##[[:space:]]+//')"
+  anchor="$(printf '%s' "$heading" | tr '[:upper:]' '[:lower:]' \
+    | sed -E -e 's/[^a-z0-9 -]//g' -e 's/[[:space:]-]+/-/g' -e 's/^-+//' -e 's/-+$//')"
+  printf '%s/docs/changelog/%s' "${DOCS_URL%/}" "${anchor:+#$anchor}"
+}
+printf 'Changelog: %s\n\n' "$(changelog_link "${RELEASE_TAG:-$CUR}")"
+
 if printf '%s' "$HIGHLIGHTS" | grep -q '[^[:space:]]'; then
   printf '## Highlights\n\n%s\n\n' "$HIGHLIGHTS"
 else
