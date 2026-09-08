@@ -28,8 +28,11 @@ permissions:
   contents: write          # needed to create the release and upload assets
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  # Build, verify and publish on the self-hosted scale set in the sln cluster
+  # (label `sln`, deploy: gitops apps/gha-runner-sln). The announcement stays on
+  # a GitHub-hosted runner: Telegram is not reachable from that cluster.
+  build:
+    runs-on: sln
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -120,12 +123,26 @@ jobs:
       # (tags with a suffix, e.g. v0.1.0-rc1) and when the bot secrets are unset.
       #   Repo secrets required: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
       #   (chat id = @channelusername or the numeric -100… id).
+
+  announce:
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - name: Download the release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ github.event.inputs.tag || github.ref_name }}" -D dist --pattern '*.tar.gz' --pattern 'SHA256SUMS'
       - name: Announce on Telegram
-        if: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
           if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_CHAT_ID}" ]; then
             echo "Telegram secrets not configured — skipping channel announcement."
             exit 0
