@@ -501,6 +501,22 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		Exporters: domain.ExportersSpec{Node: true, WG: true, WARP: egress == domain.EgressWARP},
 	}
 
+	// Reserve client-facing interface (lifeline). Rendered BEFORE the peering
+	// section below, because it is not part of the master↔exit tunnel and must not
+	// be lost to that section's early returns: an exit whose master is missing is
+	// precisely the state the lifeline exists for.
+	//
+	// The port is opened only alongside the interface itself — a hole in front of a
+	// listener that never comes up is the one thing worse than no reserve path.
+	lifeline, err := b.lifelineSpec(ctx, exit, exitNode)
+	if err != nil {
+		return domain.NodeSpec{}, err
+	}
+	if lifeline != nil {
+		spec.Lifeline = lifeline
+		spec.Firewall.LifelinePort = lifeline.ListenPort
+	}
+
 	master, ok := b.primaryMaster()
 	if !ok {
 		b.log.Warn("exit has no master to peer with", "exit", exit.Name)
