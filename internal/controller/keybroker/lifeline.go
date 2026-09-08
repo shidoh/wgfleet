@@ -130,7 +130,7 @@ func (b *Broker) lifelineSpec(ctx context.Context, exit config.ExitConfig, exitN
 			// so what those configs route into the tunnel is the master's decision,
 			// not a second one to keep in sync.
 			Keepalive:  master.ClientAWG.Keepalive,
-			AllowedIPs: master.ClientAWGAllowedIPs(),
+			AllowedIPs: lifelineAllowedIPs(master.ClientAWGAllowedIPs()),
 			AWG:        lifelineAWG(exit, master, exitNode, b.awg3Key),
 			// Exits carry the AmneziaWG kernel module by construction (it is what
 			// their own WGServer runs on), so there is no userspace case to resolve.
@@ -139,6 +139,34 @@ func (b *Broker) lifelineSpec(ctx context.Context, exit config.ExitConfig, exitN
 		},
 		Egress: l.ResolvedEgress(),
 	}, nil
+}
+
+// lifelineAllowedIPs is the master's client AllowedIPs with every IPv6 prefix
+// dropped.
+//
+// The IPv6 block is not carried in v1. A master running client_awg.ipv6: block
+// puts the IPv6 default route in this list, and the route is only half of that
+// feature: the other half is an IPv6 prefix the interface addresses itself from
+// so it can answer with an ICMPv6 rejection instead of a black hole. The
+// lifeline spec has no such prefix, so copying the route verbatim makes
+// ClientWGSpec.Validate refuse the whole block — and the exit would then defer
+// its reserve interface forever, over a route it could not have served anyway.
+// Dropping it leaves reserve clients on exactly the documented `off` behaviour:
+// their own IPv6 path stays theirs and stays outside the tunnel.
+//
+// By FAMILY, not by the literal "::/0": a narrower v6 prefix is just as
+// unservable here, and an entry that does not parse is left alone — validation
+// upstream owns that complaint, and silently eating a malformed route would only
+// make the lifeline disagree with the master about what clients were told.
+func lifelineAllowedIPs(allowed []string) []string {
+	out := make([]string, 0, len(allowed))
+	for _, a := range allowed {
+		if p, err := netip.ParsePrefix(a); err == nil && p.Addr().Is6() {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 // lifelineResolvers picks what the lifeline's client configs point at: the

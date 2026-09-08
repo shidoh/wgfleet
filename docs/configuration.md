@@ -349,6 +349,11 @@ credential then gets one reserve config per lifeline exit, in the console and on
 the self-service page. See [operations.md](operations.md) for what to check on the exit
 and how to hand the configs out.
 
+What a reserve config routes into the tunnel is the master's `client_awg`
+decision, minus IPv6: `client_awg.ipv6: block` is not carried here, so the v6
+route is stripped and a reserve client behaves as it would under `off` — its own
+IPv6 path stays outside the tunnel.
+
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `fleet.exits[].lifeline.listen_port` | int | **required** | UDP port for the reserve interface. Must differ from the exit's own AmneziaWG port and from any `firewall.public_udp_ports` entry |

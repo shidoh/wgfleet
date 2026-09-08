@@ -480,3 +480,37 @@ func TestExitEndpointHostRefusesAnUnknownExit(t *testing.T) {
 		t.Fatal("ExitEndpointHost() for an undeclared exit = nil error, want one")
 	}
 }
+
+// A master running client_awg.ipv6: block carries the IPv6 default route in its
+// own allowed_ips, and the lifeline copies that list. It must not copy the v6
+// half: the reserve spec has no IPv6 prefix to pair the route with, so carrying
+// it would make ClientWGSpec.Validate refuse the whole block and the exit would
+// defer its lifeline forever over a route it cannot serve anyway.
+func TestLifelineDropsTheMastersIPv6Route(t *testing.T) {
+	fleet := lifelineFleet()
+	fleet.Masters[0].ClientAWG.IPv6 = config.ClientIPv6Block
+	fleet.Masters[0].ClientAWG.AllowedIPs = []string{"0.0.0.0/0", "::/0"}
+	b, _, ctx := brokerWithLifeline(t, fleet)
+
+	l := renderLifeline(t, b, ctx)
+	if !slices.Equal(l.AllowedIPs, []string{"0.0.0.0/0"}) {
+		t.Errorf("AllowedIPs = %v, want the master's IPv4 half only", l.AllowedIPs)
+	}
+	if err := l.Validate(); err != nil {
+		t.Errorf("a lifeline behind an IPv6-blocking master must validate: %v", err)
+	}
+}
+
+// The filter is by FAMILY, not by literal: a narrower IPv6 prefix is just as
+// unservable on a spec that carries no IPv6 address, and the IPv4 entries around
+// it keep their order.
+func TestLifelineDropsEveryIPv6PrefixNotJustTheDefaultRoute(t *testing.T) {
+	fleet := lifelineFleet()
+	fleet.Masters[0].ClientAWG.AllowedIPs = []string{"10.0.0.0/8", "2001:db8::/32", "192.0.2.0/24"}
+	b, _, ctx := brokerWithLifeline(t, fleet)
+
+	l := renderLifeline(t, b, ctx)
+	if !slices.Equal(l.AllowedIPs, []string{"10.0.0.0/8", "192.0.2.0/24"}) {
+		t.Errorf("AllowedIPs = %v, want the IPv4 entries in manifest order", l.AllowedIPs)
+	}
+}
