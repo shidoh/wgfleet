@@ -6,14 +6,16 @@
 // fresh, and deliberately so: that planner carries the most sensitive interface
 // on the fleet, and every rule in here — read peers with `show`, never `dump`;
 // patch peers instead of bouncing the device when the [Interface] section held
-// still; refuse the patch the moment the live peer list stops being a subset of
-// the wanted one — was paid for by a live outage. A second interface reasoning
+// still; add and remove peers rather than destroying every session over one
+// credential — was paid for by a live outage. A second interface reasoning
 // about the same questions must reach the same answers, which it can only do by
 // running the same code.
 package wgiface
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -123,24 +125,23 @@ func ServesPeers(iface string, want []domain.WGClientPeer, live func(string) ([]
 // the device — and every session on it — alone. nil means the difference cannot be
 // applied that way and the caller must fall back to a bring-up.
 //
-// Three conditions, and each is a real limit rather than caution:
+// Two conditions, and each is a real limit rather than caution:
 //
 //   - The [Interface] section must be unchanged. Addresses, the listen port, the
 //     MTU and the AmneziaWG obfuscation parameters are fixed when the device is
 //     created; `awg set` cannot move them, and pretending otherwise would leave the
 //     kernel running one configuration while the file on disk claims another.
-//   - No peer being ADDED may carry a preshared key. `awg set` reads one from a
-//     FILE, and the alternatives — a path we would have to create and delete, or
-//     the key on a command line — are worse than a re-handshake.
-//   - The live peer list must be readable and must be a SUBSET of the desired one.
+//   - The live peer list must be readable, and must share at least one peer with
+//     the desired one whenever it holds peers we no longer want.
 //
-// The subset condition is what makes this safe rather than merely cheap. A live
-// interface carrying a peer we do not want is not an interface missing an entry —
-// it is somebody else's peer list, which is how a wg-easy container that recreated
-// wg0 after a reboot presents itself. Its INTERFACE parameters are wg-easy's too,
-// and `awg set` cannot correct those, so patching peers would leave the kernel
-// serving the right people with the wrong obfuscation. That case still recreates
-// the device, which is the only thing that fixes it.
+// That second condition is what is left of an older, much stricter one: the live
+// list had to be a SUBSET of the desired one, so a single revoked credential sent
+// the whole device through down/up and dropped every other session with it. What
+// the strict version was really guarding against is a peer list that is not ours
+// at all — a wg-easy container that recreated wg0 after a reboot, whose INTERFACE
+// parameters are wg-easy's too and which `awg set` cannot correct. An entirely
+// disjoint live list still means exactly that and still rebuilds the device; a
+// list that overlaps ours is ours, with somebody removed from it.
 //
 // Any further condition the CALLER owns — the master, for instance, also requires
 // the claim that proves it raised this interface — belongs before the call, not in
@@ -160,33 +161,103 @@ func PeerDelta(iface string, want []domain.WGClientPeer, prevCfg, newCfg string,
 
 	var actions []reconcile.Action
 	wanted := map[string]bool{}
+	overlap := 0
 	for _, c := range want {
 		if c.PublicKey == "" {
 			continue
 		}
 		wanted[c.PublicKey] = true
 		if have[c.PublicKey] {
+			overlap++
 			continue
-		}
-		if c.PresharedKey != "" {
-			return nil // cannot hand a secret to `awg set` without writing it somewhere
 		}
 		if c.Address == "" {
 			return nil
 		}
-		actions = append(actions, reconcile.ExecAction(
-			"add peer "+c.Name+" without disturbing the interface",
-			"awg", "set", iface, "peer", c.PublicKey, "allowed-ips", hostPrefix(c.Address)))
+		actions = append(actions, peerSetAction(iface, c))
 	}
+	// A live peer that is no longer issued is REMOVED, not a reason to rebuild.
+	//
+	// It used to be one, and the cost was out of all proportion: `awg-quick down/up`
+	// destroys every session on the device, so pausing or revoking ONE credential
+	// dropped everybody — on the lifeline, everybody who is there precisely because
+	// their normal path is already gone. The check it replaced was guarding against
+	// a DIFFERENT interface (wg-easy's wg0, whose peers are not ours to edit), and
+	// two conditions already prove that cannot be the case here: the previously
+	// rendered [Interface] section has to match the one we are about to write, and
+	// the master additionally requires its claim before it calls this at all.
+	//
+	// The one thing still worth refusing is a live peer list with NOTHING in common
+	// with the wanted one on an interface that has peers: an entirely foreign set is
+	// better rebuilt than silently emptied one `awg set … remove` at a time.
+	var removals []reconcile.Action
 	for key := range have {
 		if !wanted[key] {
-			return nil // not our peer list; only a rebuild puts this interface right
+			removals = append(removals, reconcile.ExecAction(
+				"remove peer "+shortKey(key)+" (no longer issued) without disturbing the interface",
+				"awg", "set", iface, "peer", key, "remove"))
 		}
 	}
+	if len(removals) > 0 && overlap == 0 {
+		return nil
+	}
+	actions = append(actions, removals...)
 	if len(actions) == 0 {
 		return nil
 	}
 	return actions
+}
+
+// peerSetAction adds or updates ONE peer with `awg set`, leaving the device — and
+// every session on it — alone.
+//
+// A preshared key is handed over a 0600 temp file rather than on the command
+// line, which is what `awg`'s own `preshared-key <file>` argument is for: the
+// alternative used to be refusing the patch outright, and since every credential
+// the controller issues carries a derived preshared key (ADR-0034), that refusal
+// meant the patch path was never taken in production — adding one client bounced
+// the interface and dropped all the others. The file lives only for the duration
+// of the call, and the plan's Display never shows the secret.
+func peerSetAction(iface string, c domain.WGClientPeer) reconcile.Action {
+	allowed := hostPrefix(c.Address)
+	summary := "add peer " + c.Name + " without disturbing the interface"
+	if c.PresharedKey == "" {
+		return reconcile.ExecAction(summary, "awg", "set", iface, "peer", c.PublicKey, "allowed-ips", allowed)
+	}
+	display := strings.Join([]string{
+		"awg", "set", iface, "peer", c.PublicKey, "preshared-key", "<file>", "allowed-ips", allowed,
+	}, " ")
+	psk := c.PresharedKey
+	return reconcile.CustomAction(reconcile.ActionExec, "awg", summary, display, func(ctx context.Context) error {
+		f, err := os.CreateTemp("", "wgfleet-psk-")
+		if err != nil {
+			return fmt.Errorf("preshared key for peer %s: %w", shortKey(c.PublicKey), err)
+		}
+		defer os.Remove(f.Name())
+		if _, err := f.WriteString(psk + "\n"); err != nil {
+			f.Close()
+			return fmt.Errorf("preshared key for peer %s: %w", shortKey(c.PublicKey), err)
+		}
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("preshared key for peer %s: %w", shortKey(c.PublicKey), err)
+		}
+		cmd := exec.CommandContext(ctx, "awg", "set", iface,
+			"peer", c.PublicKey, "preshared-key", f.Name(), "allowed-ips", allowed)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("%s: %w: %s", display, err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	})
+}
+
+// shortKey names a peer in a summary without printing the whole public key. The
+// key is not a secret, but a plan line is read by a person and 44 base64
+// characters are not what makes it legible.
+func shortKey(pub string) string {
+	if len(pub) <= 8 {
+		return pub
+	}
+	return pub[:8] + "…"
 }
 
 // hostPrefix turns a client address into the single-host prefix the server side
@@ -235,6 +306,31 @@ func (d Deferral) Write(reason string) []reconcile.Action {
 		return []reconcile.Action{reconcile.NoChangeAction(d.Component, reason)}
 	}
 	return []reconcile.Action{act, reconcile.NoChangeAction(d.Component, reason)}
+}
+
+// Arm records the marker for a pass that is about to TRY, without the plan line
+// Write adds — this is not a pass that declined to do anything.
+//
+// It exists because the two awg-quick steps that follow are best-effort: neither
+// aborts the pass, so a bounce that fails leaves the interface up on its previous
+// config with a peer list that is no longer the spec's, and nothing else on the
+// node notices. Armed here and cleared by the bring-up itself (ClearedBy), the
+// marker survives exactly that case and the health check reports it.
+func (d Deferral) Arm(reason string) reconcile.Action {
+	act, err := reconcile.FileAction(d.Path, []byte(reason+"\n"), 0o600, nil)
+	if err != nil {
+		return reconcile.NoChangeAction(d.Component, "could not record the deferral at "+d.Path+": "+err.Error())
+	}
+	return act
+}
+
+// ClearedBy removes the marker when a — and only when a — actually succeeds.
+//
+// Compose order matters: the hook goes on before any BestEffort wrapper, so it
+// fires on a real success rather than on the wrapper's unconditional one.
+func (d Deferral) ClearedBy(a reconcile.Action) reconcile.Action {
+	path := d.Path
+	return a.OnApplied(func() { _ = os.Remove(path) })
 }
 
 // Clear removes the marker once the planner is applying or converged.

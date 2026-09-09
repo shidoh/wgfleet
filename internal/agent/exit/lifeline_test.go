@@ -15,14 +15,22 @@ import (
 )
 
 // lifelinePeer mints one reserve peer. The addresses are lifeline-pool /32s, the
-// shape LifelinePeersOf produces.
+// shape LifelinePeersOf produces, and every peer carries a PRESHARED KEY because
+// every real one does: the lifeline derives one per exit from the credential's
+// own (ADR-0034). A helper that left it empty tested a peer the fleet never
+// issues, and hid the fact that a peer edit used to refuse them and bounce the
+// device instead.
 func lifelinePeer(t *testing.T, name, addr string) domain.WGClientPeer {
 	t.Helper()
 	kp, err := wg.GenerateKeyPair()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return domain.WGClientPeer{Name: name, PublicKey: kp.PublicKey, Address: addr}
+	psk, err := wg.GeneratePresharedKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return domain.WGClientPeer{Name: name, PublicKey: kp.PublicKey, Address: addr, PresharedKey: psk}
 }
 
 // lifelineNodeSpec is an exit spec carrying a lifeline interface on the reserve
@@ -214,6 +222,27 @@ func TestLifelineAddingAPeerPatchesInsteadOfBouncing(t *testing.T) {
 	if !strings.Contains(got, "awg set "+domain.LifelineInterface+" peer "+bob.PublicKey) {
 		t.Fatalf("the new peer never reaches the live lifeline:\n%s", got)
 	}
+	if strings.Contains(got, bob.PresharedKey) {
+		t.Fatalf("the peer's preshared key leaked into the plan:\n%s", got)
+	}
+}
+
+// And revoking one must not cost the others either — the same argument, run the
+// other way. This is the case that used to bounce the device unconditionally.
+func TestLifelineRemovingAPeerPatchesInsteadOfBouncing(t *testing.T) {
+	p := lifelinePlannerFor(t, true)
+	alice := lifelinePeer(t, "alice", "10.98.77.7/32")
+	bob := lifelinePeer(t, "bob", "10.98.77.9/32")
+	applyLifeline(t, p, lifelineNodeSpec(alice, bob))
+	p.ifacePeers = func(string) ([]string, error) { return []string{alice.PublicKey, bob.PublicKey}, nil }
+
+	got := planDump(mustLifelinePlan(t, p, lifelineNodeSpec(alice)))
+	if strings.Contains(got, "bring the lifeline interface down") {
+		t.Fatalf("revoking one credential took the whole lifeline down:\n%s", got)
+	}
+	if !strings.Contains(got, "awg set "+domain.LifelineInterface+" peer "+bob.PublicKey+" remove") {
+		t.Fatalf("the revoked peer is never removed from the live lifeline:\n%s", got)
+	}
 }
 
 // A converged lifeline is silent: no re-render, no bounce.
@@ -222,6 +251,9 @@ func TestLifelineSecondPassIsNoChange(t *testing.T) {
 	alice := lifelinePeer(t, "alice", "10.98.77.7/32")
 	spec := lifelineNodeSpec(alice)
 	applyLifeline(t, p, spec)
+	// awg-quick cannot run on a dev box, so the bring-up "failed" and left its
+	// marker behind. Stand in for the success the next pass would have had.
+	_ = os.Remove(p.confPath + ".deferred")
 	p.ifacePeers = func(string) ([]string, error) { return []string{alice.PublicKey}, nil }
 
 	for _, a := range mustLifelinePlan(t, p, spec) {
@@ -308,11 +340,13 @@ func TestLifelineDefersOnAnInvalidSpec(t *testing.T) {
 	}
 }
 
-// Once the planner applies again, the deferral marker must go: a stale reason on
-// disk is a health check reporting a problem that has been fixed.
-func TestLifelineClearsTheDeferralOnceItApplies(t *testing.T) {
+// Once the interface is CONVERGED — up, on the rendered config, serving exactly the
+// spec's peers — the deferral marker must go: a stale reason on disk is a health
+// check reporting a problem that has been fixed.
+func TestLifelineClearsTheDeferralOnceItHasConverged(t *testing.T) {
 	p := lifelinePlannerFor(t, false)
-	spec := lifelineNodeSpec(lifelinePeer(t, "alice", "10.98.77.7/32"))
+	alice := lifelinePeer(t, "alice", "10.98.77.7/32")
+	spec := lifelineNodeSpec(alice)
 	keyless := p
 	keyless.privateKey = ""
 	applyActions(t, mustLifelinePlan(t, keyless, spec))
@@ -321,8 +355,34 @@ func TestLifelineClearsTheDeferralOnceItApplies(t *testing.T) {
 	}
 
 	applyLifeline(t, p, spec)
+	// awg-quick cannot run here, so stand in for the bring-up having worked: the
+	// interface is up and serving the spec's peers.
+	converged := p
+	converged.up = func(string) bool { return true }
+	converged.ifacePeers = func(string) ([]string, error) { return []string{alice.PublicKey}, nil }
+	applyActions(t, mustLifelinePlan(t, converged, spec))
 	if _, err := os.Stat(p.confPath + ".deferred"); !os.IsNotExist(err) {
-		t.Errorf("the deferral marker must be cleared once the planner applies (err=%v)", err)
+		t.Errorf("the deferral marker must be cleared once the interface has converged (err=%v)", err)
+	}
+}
+
+// And until then it must STAY. Both awg-quick steps are best-effort — a failure is
+// a log line, not an aborted pass — so a bounce that did not work leaves the
+// interface up on its previous config, serving a peer list that is no longer the
+// spec's. `ip link show` cannot tell that apart from health; the marker can, and
+// clearing it alongside the config write (as this planner used to) disarmed the
+// only signal that reports it, in the pass that most needed it.
+func TestLifelineFailedBringUpLeavesTheDeferralForTheHealthCheck(t *testing.T) {
+	p := lifelinePlannerFor(t, false)
+	spec := lifelineNodeSpec(lifelinePeer(t, "alice", "10.98.77.7/32"))
+
+	applyLifeline(t, p, spec) // awg-quick does not exist here: the bring-up fails
+	reason, err := os.ReadFile(p.confPath + ".deferred")
+	if err != nil {
+		t.Fatalf("a failed bring-up must leave a reason behind for the check to read: %v", err)
+	}
+	if !strings.Contains(string(reason), "did not complete") {
+		t.Errorf("the recorded reason does not say the apply failed: %q", reason)
 	}
 }
 
@@ -560,6 +620,7 @@ func TestDNSFilterAllowsBindingTheLifelineGatewayBeforeItExists(t *testing.T) {
 		return dnsPlanner{
 			configPath:   filepath.Join(dir, "config.yml"),
 			composePath:  filepath.Join(dir, "docker-compose.yml"),
+			sysctlPath:   filepath.Join(dir, "99-wgfleet-nonlocal-bind.conf"),
 			up:           func(string) bool { return true },
 			nonlocalBind: func() bool { return bound },
 		}
@@ -668,5 +729,62 @@ func TestFirewallOpensNoResolverWithoutALifeline(t *testing.T) {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("no lifeline: ruleset must not carry %q:\n%s", unwanted, out)
 		}
+	}
+}
+
+// A running kernel is not a persisted one. `sysctl -w` is gone after a reboot,
+// and a reboot is exactly when the ordering goes wrong: blocky's container can
+// start before the agent's first pass raises awgl0, fail to bind the gateway, and
+// leave every reserve client without DNS on a node whose dns-filter check is
+// green — that check probes the mgmt address, which is always there. So the
+// setting is written as a sysctl.d drop-in, and only on an exit that has a
+// gateway to bind.
+func TestDNSFilterPersistsNonlocalBindAcrossAReboot(t *testing.T) {
+	dir := t.TempDir()
+	sysctlPath := filepath.Join(dir, "99-wgfleet-nonlocal-bind.conf")
+	p := dnsPlanner{
+		configPath:   filepath.Join(dir, "config.yml"),
+		composePath:  filepath.Join(dir, "docker-compose.yml"),
+		sysctlPath:   sysctlPath,
+		up:           func(string) bool { return true },
+		nonlocalBind: func() bool { return true }, // already on in THIS kernel
+	}
+	acts, err := p.Plan(context.Background(), lifelineExitSpec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(planDump(acts), "net.ipv4.ip_nonlocal_bind = 1") {
+		t.Fatalf("the running value is set but never persisted:\n%s", planDump(acts))
+	}
+	var written bool
+	for _, a := range acts {
+		if a.Target == sysctlPath {
+			written = true
+		}
+	}
+	if !written {
+		t.Fatalf("the drop-in is not written to sysctl.d:\n%s", planDump(acts))
+	}
+}
+
+// An exit with no lifeline has no gateway to bind, so it must not turn a
+// system-wide sysctl on — nor leave a drop-in behind claiming it should be.
+func TestDNSFilterWritesNoSysctlDropInWithoutALifeline(t *testing.T) {
+	dir := t.TempDir()
+	spec, _ := exitSpec(t)
+	spec.DNS.Enabled, spec.DNS.MgmtAddr = true, "10.20.0.9"
+	p := dnsPlanner{
+		configPath:   filepath.Join(dir, "config.yml"),
+		composePath:  filepath.Join(dir, "docker-compose.yml"),
+		sysctlPath:   filepath.Join(dir, "99-wgfleet-nonlocal-bind.conf"),
+		up:           func(string) bool { return true },
+		nonlocalBind: func() bool { return false },
+	}
+	acts, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(planDump(acts), "nonlocal_bind") {
+		t.Fatalf("an exit without a lifeline must not touch ip_nonlocal_bind:\n%s", planDump(acts))
 	}
 }
