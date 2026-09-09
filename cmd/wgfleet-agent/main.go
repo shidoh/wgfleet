@@ -115,12 +115,23 @@ func resolveMetricsBind(flagVal, mgmtAddr string) string {
 
 // wgIfacesForRole returns the WireGuard/AmneziaWG interfaces the WG metrics
 // collector probes for a node's role. An exit terminates the master tunnel on
-// awg0 and egresses via the wgcf WARP interface; a master's client WG runs inside
-// the wg-easy container (wg0 there, not on the host), so wg0 is listed but only
-// reported if it happens to be host-visible — the collector fails soft otherwise.
+// awg0, egresses via the wgcf WARP interface, and may carry the reserve
+// client-facing lifeline on awgl0; a master's client WG runs inside the wg-easy
+// container (wg0 there, not on the host), so wg0 is listed but only reported if it
+// happens to be host-visible — the collector fails soft otherwise.
+//
+// awgl0 is listed for EVERY exit, not only the ones a lifeline is enabled on. The
+// list is fixed at startup and the lifeline is a per-exit manifest knob that can be
+// turned on while the agent runs, so a list that tried to be clever about it would
+// be wrong exactly when the interface appeared. The cost is a permanent
+// wgfleet_wg_collector_up{iface="awgl0"} 0 on an exit that carries no reserve
+// interface — a true statement (there is no peer dump to read) that no alert acts
+// on. What it buys is the peer count on the exits that DO carry one: until this
+// list included awgl0, nothing anywhere reported how many reserve peers the
+// interface was serving, so "up from a week-old peer list" was invisible.
 func wgIfacesForRole(role domain.Role) []string {
 	if role == domain.RoleExit {
-		return []string{"awg0", "wgcf"}
+		return []string{"awg0", "wgcf", domain.LifelineInterface}
 	}
 	return []string{"wg0"}
 }

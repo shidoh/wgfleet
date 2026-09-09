@@ -134,7 +134,7 @@ ones — is documented at the top of that script.
 | `wgfleet_node_info` | `node,role,region,state` | inventory (=1) |
 | `wgfleet_node_last_report_age_seconds` | `node` | staleness of the last status report |
 | `wgfleet_node_reconcile_failed` | `node` | 1 if last reconcile errored |
-| `wgfleet_node_health_check` | `node,check` | 1 ok / 0 failing (incl. `egress-throughput`, `egress-reachability`, `client-vless`) |
+| `wgfleet_node_health_check` | `node,check` | 1 ok / 0 failing (incl. `egress-throughput`, `egress-reachability`, `client-vless`, `lifeline`) |
 | `wgfleet_node_egress_info` | `node,egress_ip` | observed egress IP (=1) |
 | `wgfleet_node_agent_info` | `node,agent_version,wire_version` | reported agent build (=1) |
 | `wgfleet_node_drain` / `wgfleet_node_decommission` | `node` | admin intent (0/1) |
@@ -323,3 +323,12 @@ Two notes worth carrying in your head:
 - **`WgfleetNodeCert{Expiring,Expired}` mean renewal is BROKEN, not that a birthday is
   near.** Agents renew themselves between 70% and 90% of the certificate's life, so by
   the time the 30-day warning fires it has been failing for at least forty days.
+
+## Two different "reserve"s
+
+`WgfleetReserveTierActive` / `wgfleet_agent_reserve_tier_active` are about the
+reserve **tier of exits** — the second-choice group the master's balancer falls
+back to when every primary exit is down. They have nothing to do with the reserve
+**client profiles** an exit's `lifeline` hands out. Those are watched by `wgfleet_node_health_check{check="lifeline"}`
+(`WgfleetClientPathDown` when it fails, `WgfleetLifelineCheckMissing` when it stops
+being reported at all) and by `wgfleet_wg_peers_active{iface="awgl0"}`.

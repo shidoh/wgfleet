@@ -156,6 +156,24 @@ spec:
       annotations:
         summary: Health check {{ $labels.check }} failing on {{ $labels.node }}
         description: Check '{{ $labels.check }}' on node {{ $labels.node }} has been failing for 10m.
+    - alert: WgfleetLifelineCheckMissing
+      # The reserve client leg fails silently by construction: nothing else on the
+      # exit notices when awgl0 is gone, and the health check that reports it is only
+      # BUILT when the controller renders a lifeline into the node spec. So the check
+      # vanishing — an agent below wire v11, a spec that stopped rendering, a manifest
+      # edit — reads exactly like health to WgfleetClientPathDown, which can only fire
+      # on a series that exists. An absent series must be the loudest case, not the
+      # quietest. 30m, because restarts and rolling upgrades drop it briefly.
+      expr: absent(wgfleet_node_health_check{check="lifeline"})
+      for: 30m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: No exit is reporting a lifeline health check
+        description: The 'lifeline' health check has not been reported by any node for 30m.
+          Either no exit carries a reserve client interface any more, or the controller
+          stopped rendering one. Reserve profiles already handed out may no longer work.
     - alert: WgfleetClientPathDown
       # client-wg.* rather than client-wg: the check reporting whether the AGENT
       # carries the client interface is named client-wg-owned, and a Prometheus
@@ -447,10 +465,12 @@ spec:
     interval: 1m
     rules:
     - alert: WgfleetWireGuardHandshakeStale
-      # wg0 is EXCLUDED: it is the client-facing interface, where a stale handshake
-      # is a phone in a pocket, not a fault. Left in, this fired once per sleeping
-      # device. Mass client loss is covered by WgfleetNoClientPeers below.
-      expr: wgfleet_wg_handshake_age_seconds{iface!="wg0"} > 300
+      # wg0 and awgl0 are EXCLUDED: they are the client-facing interfaces, where a
+      # stale handshake is a phone in a pocket, not a fault. Left in, this fired once
+      # per sleeping device — and on awgl0, the RESERVE leg, every healthy peer is one
+      # nobody has needed for months. Mass client loss is covered by
+      # WgfleetNoClientPeers below.
+      expr: wgfleet_wg_handshake_age_seconds{iface!~"wg0|awgl0"} > 300
       for: 5m
       labels:
         severity: warning
