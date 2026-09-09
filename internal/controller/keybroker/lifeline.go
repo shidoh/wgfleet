@@ -134,12 +134,9 @@ func (b *Broker) lifelineSpec(ctx context.Context, exit config.ExitConfig, exitN
 			ServerAddress: gateway.String(),
 			MTU:           lifelineMTU(exit),
 			DNS:           b.lifelineResolvers(exit, gateway),
-			// The lifeline serves the SAME client configs as the master's interface,
-			// so what those configs route into the tunnel is the master's decision,
-			// not a second one to keep in sync.
-			Keepalive:  master.ClientAWG.Keepalive,
-			AllowedIPs: lifelineAllowedIPs(master.ClientAWGAllowedIPs()),
-			AWG:        lifelineAWG(exit, master, exitNode, b.awg3Key),
+			Keepalive:     master.ClientAWG.Keepalive,
+			AllowedIPs:    lifelineAllowedIPs(exit),
+			AWG:           lifelineAWG(exit, master, exitNode, b.awg3Key),
 			// Exits carry the AmneziaWG kernel module by construction (it is what
 			// their own WGServer runs on), so there is no userspace case to resolve.
 			Backend: domain.ClientWGBackendKernel,
@@ -149,26 +146,51 @@ func (b *Broker) lifelineSpec(ctx context.Context, exit config.ExitConfig, exitN
 	}, nil
 }
 
-// lifelineAllowedIPs is the master's client AllowedIPs with every IPv6 prefix
-// dropped.
+// lifelineAllowedIPs is what a reserve config routes into the tunnel: the plain
+// default route, unless the operator overrode it per exit.
 //
-// The IPv6 block is not carried in v1. A master running client_awg.ipv6: block
-// puts the IPv6 default route in this list, and the route is only half of that
-// feature: the other half is an IPv6 prefix the interface addresses itself from
-// so it can answer with an ICMPv6 rejection instead of a black hole. The
-// lifeline spec has no such prefix, so copying the route verbatim makes
-// ClientWGSpec.Validate refuse the whole block — and the exit would then defer
-// its reserve interface forever, over a route it could not have served anyway.
-// Dropping it leaves reserve clients on exactly the documented `off` behaviour:
-// their own IPv6 path stays theirs and stays outside the tunnel.
+// It used to copy the master's list, on the argument that the reserve profile is
+// the same credential and should make the same routing decision. Measured on a
+// real client, that argument costs the profile its ability to connect at all.
 //
-// By FAMILY, not by the literal "::/0": a narrower v6 prefix is just as
-// unservable here, and an entry that does not parse is left alone — validation
-// upstream owns that complaint, and silently eating a malformed route would only
-// make the lifeline disagree with the master about what clients were told.
-func lifelineAllowedIPs(allowed []string) []string {
-	out := make([]string, 0, len(allowed))
-	for _, a := range allowed {
+// The master's list is a SPLIT one whenever `client_awg.exclude_from_tunnel` is
+// set: 0.0.0.0/0 expanded into ~44 prefixes with the private ranges cut out. A
+// client that brings such a config up with wg-quick/awg-quick gets one plain
+// route per prefix in the MAIN table, and two things then go wrong that a single
+// "0.0.0.0/0" avoids entirely:
+//
+//   - The tunnel's own endpoint is swallowed. wg-quick installs its fwmark and
+//     `suppress_prefixlength 0` rules ONLY when it sees a literal /0; with a split
+//     list it does not, so the route covering the server's own address (192.128.0.0/11
+//     for a 192.144.x endpoint, 193.0.0.0/8 for a 193.x one) points at the tunnel
+//     device. The handshake completes — it goes out before the routes are added —
+//     and then every packet loops. Measured: DNS times out, nothing loads, and the
+//     interface counts gigabytes sent in seconds.
+//   - Any prefix the client already has a route for aborts the bring-up. A machine
+//     on the management overlay already owns 172.29.0.0/16, so `ip route add` returns
+//     "File exists", wg-quick rolls the whole thing back, and there is no interface at
+//     all. Measured on a live client, on the main profile and the reserve one alike.
+//
+// With 0.0.0.0/0 neither happens: wg-quick puts the single default in its own
+// table behind the fwmark rules, adds nothing to the main table, and the client's
+// own specific routes — its LAN, its overlay — keep winning because
+// suppress_prefixlength only hides the main table's DEFAULT route. The reserve
+// profile is a fallback that must come up on an unfamiliar machine on the worst
+// day; "everything through the tunnel" is both the simplest thing to get right and
+// what a fallback should do anyway (it already has no geo rules, no balancing and
+// no failover — see the ADR).
+//
+// An operator who does need a split list on the reserve door writes it out in
+// `lifeline.allowed_ips`. IPv6 prefixes are dropped from it by FAMILY: the
+// lifeline spec carries no IPv6 prefix for the interface to answer from, so a v6
+// route here is the black hole an earlier finding is about. An entry that does not parse
+// is left alone for validation to complain about.
+func lifelineAllowedIPs(exit config.ExitConfig) []string {
+	if len(exit.Lifeline.AllowedIPs) == 0 {
+		return []string{"0.0.0.0/0"}
+	}
+	out := make([]string, 0, len(exit.Lifeline.AllowedIPs))
+	for _, a := range exit.Lifeline.AllowedIPs {
 		if p, err := netip.ParsePrefix(a); err == nil && p.Addr().Is6() {
 			continue
 		}

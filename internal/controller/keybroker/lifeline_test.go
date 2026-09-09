@@ -481,12 +481,34 @@ func TestExitEndpointHostRefusesAnUnknownExit(t *testing.T) {
 	}
 }
 
-// A master running client_awg.ipv6: block carries the IPv6 default route in its
-// own allowed_ips, and the lifeline copies that list. It must not copy the v6
-// half: the reserve spec has no IPv6 prefix to pair the route with, so carrying
-// it would make ClientWGSpec.Validate refuse the whole block and the exit would
-// defer its lifeline forever over a route it cannot serve anyway.
-func TestLifelineDropsTheMastersIPv6Route(t *testing.T) {
+// A reserve profile routes EVERYTHING into the tunnel, whatever the master's own
+// client configs do.
+//
+// It used to copy the master's list, and on a master with exclude_from_tunnel that
+// list is 0.0.0.0/0 expanded into ~44 prefixes. Measured on a live client: with a
+// split list awg-quick installs one plain route per prefix, the route covering the
+// server's own address swallows the endpoint, and the profile handshakes and then
+// passes nothing. The same client works with 0.0.0.0/0, because only a literal /0
+// makes wg-quick use its own table behind an fwmark instead.
+func TestLifelineRoutesEverythingRegardlessOfTheMastersSplitTunnel(t *testing.T) {
+	fleet := lifelineFleet()
+	fleet.Masters[0].ClientAWG.AllowedIPs = []string{"0.0.0.0/2", "64.0.0.0/3", "192.128.0.0/11"}
+	b, _, ctx := brokerWithLifeline(t, fleet)
+
+	l := renderLifeline(t, b, ctx)
+	if !slices.Equal(l.AllowedIPs, []string{"0.0.0.0/0"}) {
+		t.Errorf("AllowedIPs = %v, want the plain default route", l.AllowedIPs)
+	}
+	if err := l.Validate(); err != nil {
+		t.Errorf("the rendered reserve spec must validate: %v", err)
+	}
+}
+
+// A master blocking IPv6 puts ::/0 in its own client allowed_ips. The reserve
+// spec carries no IPv6 prefix for the interface to answer from, so that route
+// would be a black hole — and it never reaches here now, because the
+// master's list is not what the reserve profile routes.
+func TestLifelineIgnoresTheMastersIPv6Route(t *testing.T) {
 	fleet := lifelineFleet()
 	fleet.Masters[0].ClientAWG.IPv6 = config.ClientIPv6Block
 	fleet.Masters[0].ClientAWG.AllowedIPs = []string{"0.0.0.0/0", "::/0"}
@@ -494,19 +516,31 @@ func TestLifelineDropsTheMastersIPv6Route(t *testing.T) {
 
 	l := renderLifeline(t, b, ctx)
 	if !slices.Equal(l.AllowedIPs, []string{"0.0.0.0/0"}) {
-		t.Errorf("AllowedIPs = %v, want the master's IPv4 half only", l.AllowedIPs)
+		t.Errorf("AllowedIPs = %v, want IPv4 only", l.AllowedIPs)
 	}
 	if err := l.Validate(); err != nil {
 		t.Errorf("a lifeline behind an IPv6-blocking master must validate: %v", err)
 	}
 }
 
-// The filter is by FAMILY, not by literal: a narrower IPv6 prefix is just as
-// unservable on a spec that carries no IPv6 address, and the IPv4 entries around
-// it keep their order.
-func TestLifelineDropsEveryIPv6PrefixNotJustTheDefaultRoute(t *testing.T) {
+// An operator who does want a split list on the reserve door writes it out, and
+// gets exactly what they wrote, in the order they wrote it.
+func TestLifelineHonoursAnExplicitAllowedIPsOverride(t *testing.T) {
 	fleet := lifelineFleet()
-	fleet.Masters[0].ClientAWG.AllowedIPs = []string{"10.0.0.0/8", "2001:db8::/32", "192.0.2.0/24"}
+	fleet.Exits[0].Lifeline.AllowedIPs = []string{"0.0.0.0/1", "128.0.0.0/1"}
+	b, _, ctx := brokerWithLifeline(t, fleet)
+
+	l := renderLifeline(t, b, ctx)
+	if !slices.Equal(l.AllowedIPs, []string{"0.0.0.0/1", "128.0.0.0/1"}) {
+		t.Errorf("AllowedIPs = %v, want the operator's own list", l.AllowedIPs)
+	}
+}
+
+// Even in an override, an IPv6 prefix is dropped by FAMILY: the reserve interface
+// has no IPv6 address to answer from, so the route would only black-hole.
+func TestLifelineDropsIPv6FromAnAllowedIPsOverride(t *testing.T) {
+	fleet := lifelineFleet()
+	fleet.Exits[0].Lifeline.AllowedIPs = []string{"10.0.0.0/8", "2001:db8::/32", "192.0.2.0/24"}
 	b, _, ctx := brokerWithLifeline(t, fleet)
 
 	l := renderLifeline(t, b, ctx)

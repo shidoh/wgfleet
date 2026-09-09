@@ -20,6 +20,11 @@ type LifelineConfig struct {
 	Egress      string   `koanf:"egress"` // "" | direct | warp
 	DNS         []string `koanf:"dns"`
 	MTU         int      `koanf:"mtu"`
+	// AllowedIPs overrides what a reserve config routes into the tunnel. Unset ⇒
+	// 0.0.0.0/0, which is both the simplest thing for a fallback profile to do and
+	// the only shape wg-quick handles correctly on a client — see
+	// keybroker.lifelineAllowedIPs for what a split list costs there. IPv4 only.
+	AllowedIPs []string `koanf:"allowed_ips"`
 }
 
 // LifelineEnabled reports whether this exit carries a reserve client-facing
@@ -112,6 +117,17 @@ func (c ControllerConfig) validateLifeline() []error {
 		case hasMaster && masterPool.IsValid() && p.Bits() > masterPool.Bits():
 			errs = append(errs, fmt.Errorf("%s.address_pool %s must be at least as large as the master client pool %s",
 				at, p.Masked(), masterPool.Masked()))
+		}
+
+		for _, a := range l.AllowedIPs {
+			switch p, err := netip.ParsePrefix(a); {
+			case err != nil:
+				errs = append(errs, fmt.Errorf("%s.allowed_ips %q: %w", at, a, err))
+			case !p.Addr().Is4():
+				// The lifeline spec carries no IPv6 prefix for the interface to answer
+				// from, so a v6 route here is a route to a black hole.
+				errs = append(errs, fmt.Errorf("%s.allowed_ips %q must be IPv4", at, a))
+			}
 		}
 
 		switch l.ResolvedEgress() {
