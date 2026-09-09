@@ -57,6 +57,9 @@ func (p exitTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]recon
 		// longer exists.
 		{wgiface.DeferredPath(p.paths.LifelineConf), "lifeline deferral marker"},
 		{p.paths.LifelineKey, "lifeline private key"},
+		// The sysctl drop-in only exists for the lifeline gateway bind; a node with no
+		// lifeline left on it has no reason to keep ip_nonlocal_bind on across reboots.
+		{p.paths.NonlocalBindSysctl, "ip_nonlocal_bind drop-in"},
 		{p.paths.RoutingState, "policy-routing state"},
 		{p.paths.ASBlacklist, "AS-blacklist feed cache"},
 		{p.paths.ASBlacklist + ".attempt", "AS-blacklist refresh marker"},

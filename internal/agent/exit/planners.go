@@ -78,7 +78,7 @@ func Planners(in Input) []reconcile.Planner {
 		lifelinePlanner{confPath: in.Paths.LifelineConf, privateKey: in.LifelinePrivateKey, up: up},
 		warpPlanner{path: in.Paths.WGCF, dir: in.Paths.WARPDir, warp: in.WARP, up: up, warpMTUCache: in.Paths.WARPMTUCache},
 		routingPlanner{statePath: in.Paths.RoutingState},
-		dnsPlanner{configPath: in.Paths.DNS, composePath: in.Paths.DNSCompose},
+		dnsPlanner{configPath: in.Paths.DNS, composePath: in.Paths.DNSCompose, sysctlPath: in.Paths.NonlocalBindSysctl},
 		// REALITY/XHTTP inbound (ADR-0025): renders + runs the xray container when the
 		// exit's active transport set includes reality; a no-op otherwise. Its
 		// host-originated outbound is mark-routed to WARP by the routing planner.
@@ -573,6 +573,8 @@ type dnsPlanner struct {
 	configPath  string
 	composePath string
 	up          func(file string) bool // nil ⇒ real `docker compose ps` probe
+	// sysctlPath persists ip_nonlocal_bind for the lifeline gateway bind.
+	sysctlPath string
 	// nonlocalBind reports whether net.ipv4.ip_nonlocal_bind is already on; nil ⇒ real read.
 	nonlocalBind func() bool
 }
@@ -643,6 +645,22 @@ func (p dnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile
 	// without a lifeline binds loopback and the mgmt address, both of which are there
 	// before blocky starts, and its plan must stay exactly what it was.
 	if dns.ClientBindAddr != "" {
+		// Persisted first, so the setting outlives a reboot. `sysctl -w` sets the
+		// running kernel and nothing else; after a restart the resolver's container
+		// can come up before the agent's first pass has raised awgl0, fail to bind
+		// the gateway, and leave reserve clients with no DNS — while the dns-filter
+		// check stays green, because it probes the mgmt address, which is always
+		// there. The drop-in closes that window before the agent is even running.
+		if p.sysctlPath != "" {
+			sysctlFile, err := reconcile.FileAction(p.sysctlPath,
+				[]byte("# Rendered by wgfleet — do not edit by hand.\n"+
+					"# blocky binds the lifeline gateway, which exists only once awgl0 is up.\n"+
+					"net.ipv4.ip_nonlocal_bind = 1\n"), 0o644, nil)
+			if err != nil {
+				return nil, err
+			}
+			actions = append(actions, sysctlFile)
+		}
 		if p.nonlocalBindOn() {
 			actions = append(actions, reconcile.NoChangeAction("ip_nonlocal_bind", "already enabled"))
 		} else {

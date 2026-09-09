@@ -57,6 +57,14 @@ type Paths struct {
 	// network probe never runs in dry-run. Empty ⇒ the wgcf MTU falls back to the
 	// operator override or wg.DefaultWARPMTU.
 	WARPMTUCache string
+	// NonlocalBindSysctl persists net.ipv4.ip_nonlocal_bind=1, which lets blocky
+	// claim the lifeline gateway before awgl0 exists. `sysctl -w` alone does not
+	// survive a reboot, and a reboot is exactly when the ordering goes wrong: the
+	// resolver's container can start before the agent's first pass has raised the
+	// interface, fail to bind the gateway, and leave every reserve client without
+	// DNS on a node whose dns-filter check is green (it probes the mgmt address,
+	// which is always there). Only written on an exit that carries a lifeline.
+	NonlocalBindSysctl string
 }
 
 // DefaultPaths returns the production-default file locations.
@@ -78,6 +86,8 @@ func DefaultPaths() Paths {
 		RoutingState:   "/run/wgfleet/routing.applied",
 		ASBlacklist:    "/var/lib/wgfleet/as-blacklist.lst",
 		WARPMTUCache:   "/var/lib/wgfleet/warp-mtu",
+
+		NonlocalBindSysctl: "/etc/sysctl.d/99-wgfleet-nonlocal-bind.conf",
 	}
 }
 
@@ -112,5 +122,7 @@ func PathsUnder(dir string) Paths {
 		RoutingState:   filepath.Join(dir, "routing.applied"),
 		ASBlacklist:    filepath.Join(dir, "as-blacklist.lst"),
 		WARPMTUCache:   filepath.Join(dir, "warp-mtu"),
+
+		NonlocalBindSysctl: filepath.Join(dir, "99-wgfleet-nonlocal-bind.conf"),
 	}
 }
