@@ -116,8 +116,7 @@ func (p lifelinePlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	if err != nil {
 		return nil, err
 	}
-	// Past every deferral: whatever the last pass declined to do, it is doing now.
-	actions := []reconcile.Action{file, p.clearDeferred()}
+	actions := []reconcile.Action{file}
 
 	name := wgiface.Name(p.confPath)
 	peersMatch, _ := wgiface.ServesPeers(name, ls.Clients, p.ifacePeers)
@@ -128,7 +127,9 @@ func (p lifelinePlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	// are on it precisely because their normal path is already gone.
 	if (file.Changes() || !peersMatch) && p.isUp() {
 		if delta := wgiface.PeerDelta(name, ls.Clients, prevCfg, cfg, p.ifacePeers); delta != nil {
-			return append(actions, delta...), nil
+			// Peer edits are NOT best-effort: a failed one aborts the pass, so the
+			// clear never runs and whatever the last deferral said still stands.
+			return append(append(actions, delta...), p.clearDeferred()), nil
 		}
 	}
 	backend := ls.ResolvedBackend()
@@ -140,20 +141,33 @@ func (p lifelinePlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	case !peersMatch:
 		return append(actions, p.applyActions(backend, "live peers do not match the spec")...), nil
 	}
-	return append(actions, reconcile.NoChangeAction(lifelineComponent, "interface already up")), nil
+	// Converged: interface up, config on disk, live peers equal to the spec. Only
+	// here is it true that there is nothing left undone, so only here is the marker
+	// from any earlier failed attempt safe to clear.
+	return append(actions, p.clearDeferred(),
+		reconcile.NoChangeAction(lifelineComponent, "interface already up")), nil
 }
 
 // applyActions brings the interface to the rendered config. BOTH steps are
 // best-effort on purpose: this planner runs ahead of the WARP egress, policy
 // routing, the DNS filter and the reality inbound, and the reconcile engine stops
 // the whole pass at the first failed action. A reserve interface that will not
-// come up must not take the exit's primary data plane with it. The failure is
-// visible as a warning and as the `lifeline` health check going red, and the next
-// pass retries.
+// come up must not take the exit's primary data plane with it.
+//
+// Which is exactly why the deferral marker is ARMED before the bounce and cleared
+// by the bring-up itself rather than alongside the config write. Best-effort means
+// a failed down/up is a log line and nothing else: the interface stays up on its
+// previous config, serving a peer list that is no longer the spec's, and
+// `ip link show` — all the health check can see once the marker is gone — says
+// green. Clearing the marker up front disarmed the one signal that reports this,
+// in the pass that most needed it.
 func (p lifelinePlanner) applyActions(backend domain.ClientWGBackend, why string) []reconcile.Action {
+	d := p.deferral()
+	up := wgiface.QuickAction(backend, "up", p.confPath, false, "bring the lifeline interface up: "+why)
 	return []reconcile.Action{
+		d.Arm("the last attempt to apply the reserve interface did not complete: " + why),
 		wgiface.QuickAction(backend, "down", p.confPath, true, "bring the lifeline interface down (if up): "+why),
-		wgiface.QuickAction(backend, "up", p.confPath, true, "bring the lifeline interface up: "+why),
+		d.ClearedBy(up).BestEffort(),
 	}
 }
 
