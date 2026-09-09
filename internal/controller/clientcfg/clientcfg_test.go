@@ -21,6 +21,12 @@ type stubSource struct {
 	listErr   error
 	lifelines []string
 	hosts     map[string]string
+	// checks is what each node last reported about itself; absent ⇒ never reported.
+	checks map[string][]domain.HealthCheck
+}
+
+func (s stubSource) NodeChecks(_ context.Context, id string) ([]domain.HealthCheck, error) {
+	return s.checks[id], nil
 }
 
 func (s stubSource) GetNode(_ context.Context, id string) (domain.Node, error) {
@@ -73,12 +79,13 @@ const lifelineKey = "ZXhpdC1saWZlbGluZS1rZXktMDAwMDAwMDAwMDAwMDA="
 // lifelineSpec is an exit carrying a reserve client-facing interface for m1's
 // clients: the same population, a shifted pool, its own port.
 //
-// Its DNS and AllowedIPs deliberately DIFFER from the master's, which the real
-// renderer copies across (keybroker.lifelineSpec takes both from the master, so a
-// client finds the same routing on either door). Here they are made distinct on
-// purpose: every interface-level line in a reserve config must come from the
-// EXIT's spec, and identical fixtures would let a builder that rendered the
-// master's spec pass this test unnoticed.
+// Its DNS and AllowedIPs deliberately DIFFER from the master's: every
+// interface-level line in a reserve config must come from the EXIT's spec, and
+// identical fixtures would let a builder that rendered the master's spec pass this
+// test unnoticed. The AllowedIPs here is the plain default route, which is what
+// keybroker.lifelineSpec renders — a split list is the one shape wg-quick cannot
+// install correctly, and the reserve profile is the one people import on an
+// unfamiliar machine on a bad day.
 func lifelineSpec() domain.NodeSpec {
 	return domain.NodeSpec{
 		Role: domain.RoleExit,
@@ -86,7 +93,7 @@ func lifelineSpec() domain.NodeSpec {
 			ClientWGSpec: domain.ClientWGSpec{
 				ListenPort: 41827, AddressPool: "10.98.77.0/24", ServerAddress: "10.98.77.1",
 				MTU: 1360, DNS: []string{"10.98.77.1"},
-				AllowedIPs: []string{"0.0.0.0/1", "128.0.0.0/1"},
+				AllowedIPs: []string{"0.0.0.0/0"},
 			},
 			Egress: domain.EgressDirect,
 		},
@@ -257,7 +264,10 @@ func TestBuildLifeline(t *testing.T) {
 		"PresharedKey = " + wantPSK,
 		"Endpoint = 203.0.113.9:41827",
 		"DNS = 10.98.77.1",
-		"AllowedIPs = 0.0.0.0/1, 128.0.0.0/1",
+		// Everything into the tunnel, whatever the master's own configs route. A split
+		// list is the one shape wg-quick cannot install correctly, and a reserve
+		// profile is the one people import on an unfamiliar machine on a bad day.
+		"AllowedIPs = 0.0.0.0/0",
 	} {
 		if !strings.Contains(res.Config, want) {
 			t.Errorf("config missing %q:\n%s", want, res.Config)
@@ -267,7 +277,7 @@ func TestBuildLifeline(t *testing.T) {
 	// endpoint, its pool address, its real preshared key or its interface key, and
 	// not its interface-level settings either (resolver, routed prefixes).
 	for _, unwanted := range []string{"203.0.113.1:443", "10.80.0.2/32", testPSK,
-		"c2VydmVyLXB1YmxpYy0wMDAwMDAwMDAwMDAwMDAwMDA=", "10.80.0.1", "AllowedIPs = 0.0.0.0/0"} {
+		"c2VydmVyLXB1YmxpYy0wMDAwMDAwMDAwMDAwMDAwMDA=", "10.80.0.1", "AllowedIPs = 0.0.0.0/1"} {
 		if strings.Contains(res.Config, unwanted) {
 			t.Errorf("config carries the master's %q:\n%s", unwanted, res.Config)
 		}
@@ -403,6 +413,65 @@ func TestListLifelineExits(t *testing.T) {
 	for i, w := range want {
 		if got[i] != w {
 			t.Errorf("exit %d = %+v, want %+v", i, got[i], w)
+		}
+	}
+}
+
+// A door the exit itself says is broken must not be offered. The two facts the
+// listing used to rely on are both one-way — a lifeline key is published once at
+// the first successful render and never withdrawn — so an exit whose agent has
+// been refusing to apply its reserve spec for a week went on showing a download
+// and a QR, and the person walked away with a profile that cannot connect.
+func TestListLifelineExitsHidesAnExitThatReportsItsReserveInterfaceDown(t *testing.T) {
+	src := source()
+	src.checks = map[string][]domain.HealthCheck{
+		"e1": {{Name: "lifeline", OK: false, Detail: "the agent is not applying the lifeline spec: AmneziaWG 3.x refused"}},
+	}
+	exits, err := ListLifelineExits(context.Background(), src, "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exits) != 1 {
+		t.Fatalf("got %d exits, want 1: %+v", len(exits), exits)
+	}
+	if exits[0].Ready {
+		t.Fatalf("an exit reporting its reserve interface down must not be offered: %+v", exits[0])
+	}
+	if !strings.Contains(exits[0].Reason, "AmneziaWG 3.x refused") {
+		t.Errorf("the exit's own reason must reach the page, got %q", exits[0].Reason)
+	}
+}
+
+// And the download must refuse for the same reason, rather than handing out a
+// config the page has just declined to advertise.
+func TestBuildLifelineRefusesAnExitThatReportsItsReserveInterfaceDown(t *testing.T) {
+	src := source()
+	src.checks = map[string][]domain.HealthCheck{
+		"e1": {{Name: "lifeline", OK: false}},
+	}
+	if _, err := BuildLifeline(context.Background(), src, "m1", "abc", "e1"); err == nil {
+		t.Fatal("a reserve config was handed out for an exit whose interface is reported down")
+	}
+}
+
+// A passing check changes nothing, and neither does a node that has never
+// reported: readiness must not collapse because a status row is missing.
+func TestListLifelineExitsIgnoresAHealthyOrSilentNode(t *testing.T) {
+	for name, checks := range map[string][]domain.HealthCheck{
+		"healthy":             {{Name: "lifeline", OK: true}},
+		"never reported":      nil,
+		"other check failing": {{Name: "warp-egress", OK: false, Detail: "warp is down"}},
+	} {
+		src := source()
+		if checks != nil {
+			src.checks = map[string][]domain.HealthCheck{"e1": checks}
+		}
+		exits, err := ListLifelineExits(context.Background(), src, "m1")
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !exits[0].Ready {
+			t.Errorf("%s: the door must stay open, got reason %q", name, exits[0].Reason)
 		}
 	}
 }

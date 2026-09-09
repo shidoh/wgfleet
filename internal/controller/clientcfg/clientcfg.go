@@ -36,6 +36,14 @@ type Source interface {
 	// same resolution the master↔exit tunnel uses, and "" when the fleet knows no
 	// dialable address for it.
 	ExitEndpointHost(ctx context.Context, exitID string) (string, error)
+	// NodeChecks returns what the NODE last said about itself. A door is offered on
+	// the strength of two controller-side facts — a published key and a known
+	// address — and both of them are one-way: the key is published once at the first
+	// successful render and never withdrawn. So without this, an exit whose agent has
+	// been refusing to apply its reserve spec for a week still shows a download and a
+	// QR, and the person walks away with a profile that cannot connect. It is nil,
+	// not an error, for a node that has never reported.
+	NodeChecks(ctx context.Context, nodeID string) ([]domain.HealthCheck, error)
 }
 
 // ErrNotManaged reports that the master's client interface still belongs to
@@ -195,7 +203,39 @@ const (
 	reasonNoLifeline = "no lifeline on this exit"
 	reasonNoKey      = "the exit has not published its lifeline key yet"
 	reasonNoEndpoint = "no public endpoint known for this exit"
+	// reasonUnhealthy is the fallback wording when the exit reports its reserve
+	// interface is not up but says nothing about why.
+	reasonUnhealthy = "the exit reports its reserve interface is not up"
 )
+
+// lifelineCheck is the name of the node-side health check that watches the reserve
+// interface. It reads the planner's own recorded reason first and the state of the
+// world second, which is the only thing that can tell "up and current" apart from
+// "up on a week-old config" — see the agent's lifeline probe.
+const lifelineCheck = "lifeline"
+
+// lifelineUnhealthy returns the exit's own complaint about its reserve interface,
+// or "" when it is not complaining.
+//
+// A node that has never reported, or a store that cannot be read, is NOT a
+// complaint: readiness must not collapse because a status row is missing. The
+// check is a veto on a door we would otherwise offer, not the thing that opens it.
+func lifelineUnhealthy(ctx context.Context, src Source, exitID string) string {
+	checks, err := src.NodeChecks(ctx, exitID)
+	if err != nil {
+		return ""
+	}
+	for _, c := range checks {
+		if c.Name != lifelineCheck || c.OK {
+			continue
+		}
+		if c.Detail != "" {
+			return c.Detail
+		}
+		return reasonUnhealthy
+	}
+	return ""
+}
 
 // LifelineExit is one exit's reserve door as the console sees it: whether a
 // config can be handed out from it and, when it cannot, the single thing that is
@@ -270,11 +310,16 @@ func lifelineState(ctx context.Context, src Source, exitID string) (LifelineExit
 	if host != "" {
 		state.Endpoint = net.JoinHostPort(host, strconv.Itoa(spec.Lifeline.ListenPort))
 	}
-	switch {
+	switch unhealthy := lifelineUnhealthy(ctx, src, exitID); {
 	case node.LifelinePublicKey == "":
 		state.Reason = reasonNoKey
 	case host == "":
 		state.Reason = reasonNoEndpoint
+	case unhealthy != "":
+		// Last, because the two above are "this door was never built" and this one is
+		// "it was, and it is stuck" — which is the more useful thing to read when both
+		// could be said.
+		state.Reason = unhealthy
 	default:
 		state.Ready = true
 	}

@@ -826,6 +826,14 @@ func (s portalSource) ExitEndpointHost(ctx context.Context, exitID string) (stri
 	return s.broker.ExitEndpointHost(ctx, exitID)
 }
 
+func (s portalSource) NodeChecks(ctx context.Context, nodeID string) ([]domain.HealthCheck, error) {
+	st, err := s.st.GetStatus(ctx, nodeID)
+	if err != nil {
+		return nil, nil // never reported: not a reason to withhold a working door
+	}
+	return st.Checks, nil
+}
+
 // anySubcommand reports whether any of these string flags selected a subcommand.
 // selectedSubcommands returns the names of every mutually exclusive subcommand the
 // operator asked for, sorted so the message is stable.

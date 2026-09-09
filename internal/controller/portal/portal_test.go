@@ -27,6 +27,11 @@ type stubSource struct {
 	exitNodes map[string]domain.Node
 	exitSpecs map[string]domain.NodeSpec
 	hosts     map[string]string
+	checks    map[string][]domain.HealthCheck
+}
+
+func (s stubSource) NodeChecks(_ context.Context, id string) ([]domain.HealthCheck, error) {
+	return s.checks[id], nil
 }
 
 func (s stubSource) GetNode(_ context.Context, id string) (domain.Node, error) {

@@ -632,6 +632,14 @@ func (s clientSource) ExitEndpointHost(ctx context.Context, exitID string) (stri
 	return s.h.renderer.ExitEndpointHost(ctx, exitID)
 }
 
+func (s clientSource) NodeChecks(ctx context.Context, nodeID string) ([]domain.HealthCheck, error) {
+	st, err := s.h.store.GetStatus(ctx, nodeID)
+	if err != nil {
+		return nil, nil // never reported: not a reason to withhold a working door
+	}
+	return st.Checks, nil
+}
+
 // qrPNG encodes a client config as a QR image. The config is a credential, so it
 // is served from its own endpoint as bytes rather than embedded in the page as a
 // data: URL — a page the browser may cache should not carry a private key.
