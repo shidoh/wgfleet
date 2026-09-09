@@ -151,9 +151,7 @@ fleet:
             clientGroupsBlock:
               default: [ads]
       lifeline:                             # reserve client interface awgl0: every issued
-        listen_port: 443                    #   credential gets a reserve profile against this exit. Prefer 443/UDP:
-                                            #   a high odd port is the first thing a filtering network drops, and this
-                                            #   is the path that must survive the day the main one is blocked
+        listen_port: 41827                  #   credential gets a reserve profile against this exit
         address_pool: 10.98.77.0/24         #   at least as large as the master's client pool; no overlaps
         egress: direct                      # direct (default) | warp (WARP must be in this exit's chain)
         # dns: [10.98.77.1]                 # required when dns_filter is off (the master's resolvers are gone)

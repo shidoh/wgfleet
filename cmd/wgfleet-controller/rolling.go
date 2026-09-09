@@ -38,7 +38,7 @@ import (
 // exits, never the co-located master this controller runs on. The controller
 // MUST be up for a rollout to confirm anything — the gate reads the node state
 // that the serving controller writes from agent check-ins.
-func rollingUpgrade(cfg *config.ControllerConfig, ca *pki.CA, agentBin string, plan bool) error {
+func rollingUpgrade(cfg *config.ControllerConfig, ca *pki.CA, agentBin string, plan bool, nodeTimeout time.Duration) error {
 	if agentBin == "" {
 		agentBin = cfg.Controller.AgentBin
 	}
@@ -94,7 +94,7 @@ func rollingUpgrade(cfg *config.ControllerConfig, ca *pki.CA, agentBin string, p
 	mgr.SetBaseContext(ctx)
 	defer mgr.Wait()
 
-	co := rollout.New(mgr, st, rollout.Config{}, slog.Default())
+	co := rollout.New(mgr, st, rollout.Config{UpgradeTimeout: nodeTimeout}, slog.Default())
 	if err := co.Start(ctx, rp); err != nil {
 		return err
 	}
@@ -217,7 +217,9 @@ func streamRollout(ctx context.Context, co *rollout.Coordinator) error {
 		if !s.Active {
 			fmt.Printf("\n%d/%d node(s) upgraded\n", s.Done(), s.Total())
 			if s.Err != "" {
-				return fmt.Errorf("rolling upgrade halted: %s", s.Err)
+				// Not "halted": a failure no longer stops the run, so this reports what
+				// did not work while everything else did.
+				return fmt.Errorf("rolling upgrade: %s", s.Err)
 			}
 			return nil
 		}

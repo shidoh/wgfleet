@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -99,6 +100,15 @@ type Config struct {
 	// before it is rolled back. Generous relative to an agent restart (seconds)
 	// because the gate waits for a full status report, not for the process to exist.
 	ConfirmTimeout time.Duration
+	// UpgradeTimeout bounds ONE node's upload + verify + restart.
+	//
+	// Without it a wedged path stops the fleet. The controller dials the exit's
+	// declared address over SSH, and that path can accept a TCP connection and then
+	// black-hole: on 2026-09-09 a rollout sat on the first node for eleven minutes
+	// with twelve bytes stuck in the socket's send queue, upgraded nothing, and said
+	// nothing — every other exit waited behind a node that was never going to answer.
+	// A deadline turns that into one failed node and five upgraded ones.
+	UpgradeTimeout time.Duration
 	// PollInterval is how often the gate re-reads the node.
 	PollInterval time.Duration
 	// FreshWithin bounds how stale the node's LastSeen may be and still count as
@@ -114,6 +124,11 @@ type Config struct {
 
 const (
 	defaultConfirmTimeout = 3 * time.Minute
+	// defaultUpgradeTimeout is deliberately several times the honest worst case
+	// (a ~30 MB binary over a slow uplink) rather than close to it: this bound
+	// exists to catch a path that has stopped moving, and a node killed for being
+	// merely slow is a node rolled back for nothing.
+	defaultUpgradeTimeout = 5 * time.Minute
 	defaultPollInterval   = 5 * time.Second
 	defaultFreshWithin    = 90 * time.Second
 	// DefaultFreshWithin is defaultFreshWithin for callers outside this package
@@ -128,6 +143,9 @@ const (
 func (c Config) withDefaults() Config {
 	if c.ConfirmTimeout <= 0 {
 		c.ConfirmTimeout = defaultConfirmTimeout
+	}
+	if c.UpgradeTimeout <= 0 {
+		c.UpgradeTimeout = defaultUpgradeTimeout
 	}
 	if c.PollInterval <= 0 {
 		c.PollInterval = defaultPollInterval
@@ -288,6 +306,7 @@ func (c *Coordinator) run(ctx context.Context) {
 		c.mu.Unlock()
 	}()
 
+	var failed []string
 	for i := range c.snapshotLen() {
 		if err := ctx.Err(); err != nil {
 			c.markAborted("aborted before " + c.nodeID(i))
@@ -295,17 +314,32 @@ func (c *Coordinator) run(ctx context.Context) {
 			return
 		}
 		if err := c.runNode(ctx, i); err != nil {
-			// Abort the whole rollout on the first failure. The node has already been
-			// rolled back by runNode; everything after it stays untouched, because the
-			// most likely explanation for one node failing on this binary is that every
-			// node will — and one broken exit must never become five.
-			c.log.Error("rolling upgrade halted", "node", c.nodeID(i), "err", err)
-			c.mu.Lock()
-			c.state.Err = fmt.Sprintf("halted at %s: %v", c.state.Nodes[i].Name, err)
-			c.mu.Unlock()
-			c.skipFrom(i + 1)
-			return
+			// One failed node is one failed node: it has already been rolled back by
+			// runNode, and the rollout moves on to the next.
+			//
+			// This used to halt the whole run at the first failure, on the argument
+			// that a node failing on this binary means every node will and one broken
+			// exit must not become five. What that argument missed is the far more
+			// common failure: a node that cannot be REACHED. Halting there leaves every
+			// healthy exit behind on the old build because one host was unreachable —
+			// which is what a rolling upgrade exists to avoid. The trade is real and
+			// deliberate: a genuinely bad binary now costs every node a restart and a
+			// rollback rather than one. Each of them ends up back on the binary it was
+			// already running, and the run reports every failure by name.
+			c.log.Error("node failed its upgrade; moving on to the next one",
+				"node", c.nodeID(i), "err", err)
+			failed = append(failed, c.nodeID(i))
+			continue
 		}
+	}
+	if len(failed) > 0 {
+		total := c.snapshotLen() // takes c.mu itself: read it before locking, not under it
+		c.mu.Lock()
+		c.state.Err = fmt.Sprintf("%d of %d node(s) failed: %s",
+			len(failed), total, strings.Join(failed, ", "))
+		c.mu.Unlock()
+		c.log.Error("rolling upgrade finished with failures", "failed", failed)
+		return
 	}
 	c.log.Info("rolling upgrade complete", "nodes", c.snapshotLen())
 }
@@ -329,8 +363,17 @@ func (c *Coordinator) runNode(ctx context.Context, i int) error {
 	// happens inside, before the restart). The phases are reported around it so the
 	// UI shows movement; the boundary between them is not separately observable.
 	c.setPhase(i, PhaseVerifying, nil)
-	installed, err := c.up.UpgradeAgentVerified(ctx, id)
+	upCtx, cancelUp := context.WithTimeout(ctx, c.cfg.UpgradeTimeout)
+	installed, err := c.up.UpgradeAgentVerified(upCtx, id)
+	timedOut := upCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil
+	cancelUp()
 	if err != nil {
+		if timedOut {
+			// Named rather than left as a bare context error: "no answer" is what the
+			// operator has to act on, and the underlying error from a black-holed SSH
+			// path says nothing an operator can use.
+			err = fmt.Errorf("no answer within %s: %w", c.cfg.UpgradeTimeout, err)
+		}
 		return c.fail(ctx, i, fmt.Errorf("upgrade: %w", err))
 	}
 	c.setPhase(i, PhaseRestarting, func(n *NodeProgress) { n.Installed = installed })

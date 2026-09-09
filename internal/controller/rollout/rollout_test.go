@@ -51,6 +51,11 @@ type fakeUpgrader struct {
 	rollbackEr map[string]error
 	upgraded   []string
 	rolledBack []string
+	// blockOn holds the call for a node until the channel closes or the caller's
+	// context ends — a path that accepts the connection and then goes silent.
+	blockOn map[string]chan struct{}
+	// delay makes a node merely slow rather than silent.
+	delay map[string]time.Duration
 }
 
 func newUpgrader(installed string) *fakeUpgrader {
@@ -61,11 +66,29 @@ func newUpgrader(installed string) *fakeUpgrader {
 	}
 }
 
-func (f *fakeUpgrader) UpgradeAgentVerified(_ context.Context, id string) (string, error) {
+func (f *fakeUpgrader) UpgradeAgentVerified(ctx context.Context, id string) (string, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.upgraded = append(f.upgraded, id)
-	if err := f.failOn[id]; err != nil {
+	err, block, delay := f.failOn[id], f.blockOn[id], f.delay[id]
+	f.mu.Unlock()
+
+	// A node that accepts the call and then never answers — the black-holed SSH path
+	// the per-node deadline exists for. It ends when the caller's context does.
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	if err != nil {
 		return "", err
 	}
 	return f.installed, nil
@@ -233,7 +256,7 @@ func TestNodeThatNeverComesBackIsRolledBack(t *testing.T) {
 	}}
 	c := testCoordinator(up, st, clk)
 
-	if err := c.Start(context.Background(), planOf("anz3", "vn1")); err != nil {
+	if err := c.Start(context.Background(), planOf("anz3")); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	c.Wait()
@@ -270,35 +293,53 @@ func TestRollbackFailureIsSurfacedNotSwallowed(t *testing.T) {
 	}
 }
 
-// --- abort on first failure -------------------------------------------------
+// --- one failure does not stop the rest --------------------------------------
 
-func TestFirstFailureLeavesEveryLaterNodeUntouched(t *testing.T) {
+// A failed node is one failed node.
+//
+// This used to assert the opposite — that the run halts and every later node is
+// left untouched — on the argument that a node failing on this binary means every
+// node will. What that missed is the far more common failure: a node that cannot
+// be REACHED. Halting there leaves every healthy exit on the old build because one
+// host was unreachable, which is the thing a rolling upgrade exists to avoid.
+func TestAFailedNodeDoesNotStopTheOnesAfterIt(t *testing.T) {
 	clk := newClock()
 	up := newUpgrader("new")
 	up.failOn["anz3"] = errors.New("binary corrupt")
-	st := &fakeStore{clock: clk, fn: func(string, int) domain.Node { return domain.Node{} }}
+	// Every node but anz3 comes back healthy on the new build, so the run's ability
+	// to carry on is what is under test rather than the gate.
+	st := &fakeStore{clock: clk, fn: func(id string, _ int) domain.Node {
+		if id == "anz3" {
+			return domain.Node{}
+		}
+		return domain.Node{State: domain.StateReady, AgentVersion: "new", LastSeen: clk.now()}
+	}}
 	c := testCoordinator(up, st, clk)
 
-	// anz3 is first (reserve tier in a real plan); vn1 and vn2 must never be dialled.
 	if err := c.Start(context.Background(), planOf("anz3", "vn1", "vn2")); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	c.Wait()
 
-	if !eq(up.touched(), []string{"anz3"}) {
-		t.Fatalf("upgraded %v — the rollout must stop at the first failure", up.touched())
+	if !eq(up.touched(), []string{"anz3", "vn1", "vn2"}) {
+		t.Fatalf("upgraded %v — every node must still be attempted", up.touched())
 	}
 	got := phases(c.Snapshot())
 	if got["anz3"] != PhaseRolledBack {
 		t.Errorf("anz3 = %q, want %q", got["anz3"], PhaseRolledBack)
 	}
 	for _, n := range []string{"vn1", "vn2"} {
-		if got[n] != PhaseSkipped {
-			t.Errorf("%s = %q, want %q", n, got[n], PhaseSkipped)
+		if got[n] != PhaseDone {
+			t.Errorf("%s = %q, want %q", n, got[n], PhaseDone)
 		}
 	}
-	if s := c.Snapshot(); s.Err == "" {
-		t.Error("rollout state carries no halt reason")
+	// And the run still reports the failure by name rather than passing silently.
+	s := c.Snapshot()
+	if s.Err == "" || !contains(s.Err, "anz3") {
+		t.Errorf("run error = %q, want it to name the failed node", s.Err)
+	}
+	if s.Done() != 2 {
+		t.Errorf("done = %d, want 2", s.Done())
 	}
 }
 
@@ -407,5 +448,70 @@ func TestADegradedNodeThatComesBackDegradedPassesTheGate(t *testing.T) {
 	}
 	if len(up.restored()) != 0 {
 		t.Errorf("a node that came back as it went in was rolled back: %v", up.restored())
+	}
+}
+
+// --- the per-node deadline ---------------------------------------------------
+
+// A node that accepts the connection and then never answers must cost the rollout
+// one node, not the fleet.
+//
+// This is the 2026-09-09 incident: the controller sat on the first exit for eleven
+// minutes with twelve bytes stuck in the socket's send queue, upgraded nothing, and
+// said nothing, while five healthy exits waited behind it. There was no deadline on
+// the upload at all — only on the come-back gate, which is never reached.
+func TestNodeThatNeverAnswersIsGivenUpOnAndTheNextOneProceeds(t *testing.T) {
+	clk := newClock()
+	up := newUpgrader("new")
+	blocked := make(chan struct{})
+	defer close(blocked)
+	up.blockOn = map[string]chan struct{}{"pn8": blocked}
+	st := &fakeStore{clock: clk, fn: func(id string, _ int) domain.Node {
+		if id == "pn8" {
+			return domain.Node{}
+		}
+		return domain.Node{State: domain.StateReady, AgentVersion: "new", LastSeen: clk.now()}
+	}}
+	c := New(up, st, Config{LockPath: "-", UpgradeTimeout: 50 * time.Millisecond},
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c.now, c.sleep = clk.now, clk.sleep
+
+	_ = c.Start(context.Background(), planOf("pn8", "vn0"))
+	c.Wait()
+
+	ph := phases(c.Snapshot())
+	if ph["pn8"] == PhaseDone {
+		t.Fatalf("pn8 = %q, want it given up on", ph["pn8"])
+	}
+	if ph["vn0"] != PhaseDone {
+		t.Fatalf("vn0 = %q, want %q — one silent node must not hold the fleet", ph["vn0"], PhaseDone)
+	}
+	s := c.Snapshot()
+	if s.Err == "" || !contains(s.Err, "pn8") {
+		t.Errorf("run error = %q, want it to name the node that never answered", s.Err)
+	}
+	if got := s.Nodes[0].Err; !contains(got, "no answer within") {
+		t.Errorf("node error = %q, want it to say the deadline expired", got)
+	}
+}
+
+// The deadline must not fire on a node that is merely slow: it exists to catch a
+// path that has stopped moving.
+func TestASlowButAnsweringNodeIsNotGivenUpOn(t *testing.T) {
+	clk := newClock()
+	up := newUpgrader("new")
+	up.delay = map[string]time.Duration{"vn0": 20 * time.Millisecond}
+	st := &fakeStore{clock: clk, fn: func(string, int) domain.Node {
+		return domain.Node{State: domain.StateReady, AgentVersion: "new", LastSeen: clk.now()}
+	}}
+	c := New(up, st, Config{LockPath: "-", UpgradeTimeout: time.Second},
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c.now, c.sleep = clk.now, clk.sleep
+
+	_ = c.Start(context.Background(), planOf("vn0"))
+	c.Wait()
+
+	if ph := phases(c.Snapshot())["vn0"]; ph != PhaseDone {
+		t.Fatalf("vn0 = %q, want %q", ph, PhaseDone)
 	}
 }

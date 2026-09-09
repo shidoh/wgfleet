@@ -77,6 +77,7 @@ func run() error {
 		rollingUp    = flag.Bool("rolling-upgrade", false, "roll every outdated EXIT agent forward one node at a time (reserve tier first), then exit")
 		plan         = flag.Bool("plan", false, "with --provision/--upgrade-agent/--rolling-upgrade/--import-wg-easy/--restore: dry-run, show the plan and change nothing; refused on its own")
 		agentBin     = flag.String("agent-bin", "", "with --provision/--upgrade-agent/--rolling-upgrade: path to the wgfleet-agent binary to install (default controller.agent_bin)")
+		nodeTimeout  = flag.Duration("node-timeout", 0, "with --rolling-upgrade: how long ONE node has to accept the upload and restart before it is given up on and the rollout moves to the next (default 5m)")
 		ctlEndpoint  = flag.String("controller-endpoint", "", "with --provision: controller mTLS endpoint the agent dials (default controller.listen)")
 		backupOut    = flag.String("backup", "", "snapshot controller (+co-located master) state to an age-encrypted archive at this path, then exit")
 		restoreIn    = flag.String("restore", "", "restore controller state from an age-encrypted archive at this path, then exit")
@@ -289,7 +290,7 @@ func run() error {
 		return upgradeAgentNode(cfg, ca, *upgradeAgent, effectiveAgentBin, *plan)
 	}
 	if *rollingUp {
-		return rollingUpgrade(cfg, ca, effectiveAgentBin, *plan)
+		return rollingUpgrade(cfg, ca, effectiveAgentBin, *plan, *nodeTimeout)
 	}
 
 	return serve(cfg, ca, provider, *configPath)

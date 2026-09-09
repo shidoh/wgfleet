@@ -157,11 +157,7 @@ fleet:
       #   reserve profile against it from the console or the portal — to be added
       #   to the phone in advance. Needs client_awg.managed: true on the master.
       lifeline:
-        listen_port: 443                # UDP port reserve clients dial; not this exit's AWG port.
-                                        #   Prefer 443/UDP: a high odd port is the first thing a
-                                        #   filtering network drops, and this is the door that has to
-                                        #   open on the day the main one is shut. TCP/443 on an exit
-                                        #   is REALITY's; UDP/443 is free.
+        listen_port: 41827              # UDP port reserve clients dial; not this exit's AWG port
         address_pool: 10.98.77.0/24     # reserve client pool; at least as large as the master's client pool
         egress: warp                    # direct (default) | warp; here the exit already egresses via WARP
         # dns: [10.98.77.1]             # only needed when dns_filter is off; with it, blocky answers on the gateway

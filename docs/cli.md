@@ -26,7 +26,8 @@ Every flag on both binaries. Subcommands are mutually exclusive: passing two of
 | `--agent-bin <path>` | (from config) | with `--provision`, `--upgrade-agent` or `--rolling-upgrade`: agent binary to install |
 | `--controller-endpoint <addr>` | (from config) | with `--provision`: endpoint the agent will dial |
 | `--upgrade-agent <node>` | | roll the agent binary forward over SSH on the named node, then exit |
-| `--rolling-upgrade` | | roll every outdated EXIT agent forward one node at a time, reserve tier first, then exit. A node whose SSH will not open is left alone rather than downgraded |
+| `--rolling-upgrade` | | roll every outdated EXIT agent forward one node at a time, reserve tier first, then exit. A node whose SSH will not open is left alone rather than downgraded. A node that fails does not stop the run: it is reported by name and the rollout moves to the next one |
+| `--node-timeout <dur>` | `5m` | with `--rolling-upgrade`: how long ONE node has to accept the upload and restart before it is given up on. Guards against a path that accepts the connection and then goes silent, which otherwise holds the whole fleet behind one host |
 | `--import-wg-easy <master>` | | copy the named master's wg-easy client credentials into the controller store, then exit. Run it ON the master (it reads a local SQLite file). Safe with the controller live; use `--plan` first, and read [client-migration.md](client-migration.md) before either |
 | `--wg-easy-db <path>` | `/etc/wireguard/wg-easy.db` | with `--import-wg-easy`: where wg-easy's database lives |
 | `--backup <out>` | | snapshot controller (+co-located master) state to an age-encrypted archive at `<out>`, then exit |

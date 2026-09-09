@@ -71,25 +71,40 @@ func TestRollbackStillRunsWhenTheNodeWasModified(t *testing.T) {
 	}
 }
 
-// TestUntouchedFailureStillHaltsTheRollout — skipping the rollback must not make
-// the failure softer. An unreachable node still means the fleet is not converging
-// as planned, and marching on would upgrade the primary tier while a reserve node
-// silently lags.
-func TestUntouchedFailureStillHaltsTheRollout(t *testing.T) {
+// An unreachable node is skipped, not rolled back, and the rest of the fleet is
+// upgraded anyway.
+//
+// This is the failure the rollout meets most often — a path that accepts a TCP
+// connection and then black-holes — and it says nothing whatsoever about the
+// binary. Holding five healthy exits on the old build because a sixth would not
+// answer is the outcome a rolling upgrade exists to prevent.
+func TestUnreachableNodeIsSkippedAndTheRestAreUpgraded(t *testing.T) {
 	clk := newClock()
 	up := newUpgrader("new")
 	up.failOn["pn8"] = untouchedErr{errors.New("ssh dial: i/o timeout")}
-	st := &fakeStore{clock: clk, fn: func(string, int) domain.Node { return domain.Node{} }}
+	st := &fakeStore{clock: clk, fn: func(id string, _ int) domain.Node {
+		if id == "pn8" {
+			return domain.Node{}
+		}
+		return domain.Node{State: domain.StateReady, AgentVersion: "new", LastSeen: clk.now()}
+	}}
 	c := testCoordinator(up, st, clk)
 
 	_ = c.Start(context.Background(), planOf("pn8", "vn0", "vn1"))
 	c.Wait()
 
 	ph := phases(c.Snapshot())
-	if ph["vn0"] != PhaseSkipped || ph["vn1"] != PhaseSkipped {
-		t.Errorf("later nodes = %v, want both skipped", ph)
+	if ph["pn8"] != PhaseFailed {
+		t.Errorf("pn8 = %q, want %q", ph["pn8"], PhaseFailed)
 	}
-	if got := up.touched(); len(got) != 1 || got[0] != "pn8" {
-		t.Errorf("upgraded %v, want only the failing node attempted", got)
+	if ph["vn0"] != PhaseDone || ph["vn1"] != PhaseDone {
+		t.Errorf("later nodes = %v, want both upgraded", ph)
+	}
+	if !eq(up.touched(), []string{"pn8", "vn0", "vn1"}) {
+		t.Errorf("upgraded %v, want every node attempted", up.touched())
+	}
+	// Still not rolled back: nothing on it was displaced.
+	if got := up.restored(); len(got) != 0 {
+		t.Errorf("restored %v, want no rollback on an untouched node", got)
 	}
 }

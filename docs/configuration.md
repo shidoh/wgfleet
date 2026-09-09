@@ -310,7 +310,7 @@ Checks and hand-out: [operations.md](operations.md).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fleet.exits[].lifeline.listen_port` | int | **required** | UDP port for the reserve interface. Must differ from the exit's own AmneziaWG port and from any `firewall.public_udp_ports` entry. Prefer **443** (or 51820): a non-standard high UDP port is the first thing a filtering network drops, and this is the path that has to work on the day the main one is blocked. TCP/443 on an exit belongs to REALITY; UDP/443 is normally free |
+| `fleet.exits[].lifeline.listen_port` | int | **required** | UDP port for the reserve interface. Must differ from the exit's own AmneziaWG port and from any `firewall.public_udp_ports` entry. Opened in the firewall automatically |
 | `fleet.exits[].lifeline.address_pool` | CIDR | **required** | Client address pool for the reserve interface. Must be at least as large as the master's `client_awg.address_pool` and must not overlap any other pool in the fleet |
 | `fleet.exits[].lifeline.egress` | string | `direct` | `direct` or `warp`. `warp` requires WARP to already be in this exit's egress chain (`egress` or `egress_fallback`) |
 | `fleet.exits[].lifeline.dns` | []string | this exit's blocky | Resolvers in reserve configs. Unset + `dns_filter: true` ⇒ the interface gateway (blocky binds it). **Required** when `dns_filter` is off |

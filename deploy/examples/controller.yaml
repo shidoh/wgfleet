@@ -170,7 +170,7 @@ fleet:
               default: [ads]
       # lifeline: # reserve client interface on this exit: every issued credential gets a reserve profile against it, for the day the master is lost.
       #   # FIRST uncomment masters[].client_awg.managed: true above - the controller cannot project credentials it does not own, and validation refuses the pairing at startup.
-      #   listen_port: 443 # UDP port clients dial; must differ from this exit's AWG port and public_udp_ports. Prefer 443/UDP: a high odd port is the first thing a filtering network drops, and this is the path that must work when the main one is blocked (TCP/443 here is REALITY's; UDP/443 is free)
+      #   listen_port: 41827 # UDP port clients dial; must differ from this exit's AWG port and public_udp_ports; opened in the firewall automatically
       #   address_pool: 10.98.77.0/24 # reserve client pool; at least as large as the master's client pool, no overlaps
       #   egress: direct # direct (default) | warp; warp needs WARP in this exit's egress chain
       #   # dns: [10.98.77.1] # resolvers for reserve clients; required only when dns_filter is off
