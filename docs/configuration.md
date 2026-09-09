@@ -303,23 +303,29 @@ run warm and the live path can be switched instantly.
 Reserve client interface `awgl0` on an exit: peers are the master's credentials (same
 client keys, same host offset in this pool, per-exit preshared key), one reserve config
 per credential per lifeline exit. Requires `masters[].client_awg.managed: true`; exit
-name `[A-Za-z0-9._-]`, max 64; the IPv6 route (`client_awg.ipv6: block`) is not carried.
+name `[A-Za-z0-9._-]`, max 64. A reserve config routes everything (`0.0.0.0/0`)
+regardless of the master's `exclude_from_tunnel`, so it has no split tunnel and no
+IPv6 route.
 Checks and hand-out: [operations.md](operations.md).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fleet.exits[].lifeline.listen_port` | int | **required** | UDP port for the reserve interface. Must differ from the exit's own AmneziaWG port and from any `firewall.public_udp_ports` entry |
+| `fleet.exits[].lifeline.listen_port` | int | **required** | UDP port for the reserve interface. Must differ from the exit's own AmneziaWG port and from any `firewall.public_udp_ports` entry. Prefer **443** (or 51820): a non-standard high UDP port is the first thing a filtering network drops, and this is the path that has to work on the day the main one is blocked. TCP/443 on an exit belongs to REALITY; UDP/443 is normally free |
 | `fleet.exits[].lifeline.address_pool` | CIDR | **required** | Client address pool for the reserve interface. Must be at least as large as the master's `client_awg.address_pool` and must not overlap any other pool in the fleet |
 | `fleet.exits[].lifeline.egress` | string | `direct` | `direct` or `warp`. `warp` requires WARP to already be in this exit's egress chain (`egress` or `egress_fallback`) |
 | `fleet.exits[].lifeline.dns` | []string | this exit's blocky | Resolvers in reserve configs. Unset + `dns_filter: true` ⇒ the interface gateway (blocky binds it). **Required** when `dns_filter` is off |
+| `fleet.exits[].lifeline.allowed_ips` | []string | `0.0.0.0/0` | What a reserve config routes into the tunnel. IPv4 only; IPv6 entries are dropped. Override only if you know you need a split list here — `wg-quick`/`awg-quick` installs its endpoint-exclusion rules **only** for a literal `0.0.0.0/0`, so a split list there routes the exit's own address into its own tunnel and adds one route per prefix to the main table, where any prefix the client already holds aborts the bring-up |
 | `fleet.exits[].lifeline.mtu` | int | derived | MTU override. Derived: link MTU minus one AmneziaWG layer; with `egress: warp` also capped by the WARP interface MTU |
 
 ---
 
 ## 6. DNS (blocky)
 
-Identical shape on masters and exits. Loopback and mgmt-only binds are enforced by
-the renderer regardless of what you write here.
+Identical shape on masters and exits. The renderer enforces the bind addresses
+regardless of what you write here: loopback and `mgmt_addr`, plus — on an exit that
+carries a `lifeline` — that interface's pool gateway, which is the resolver reserve
+clients are handed. Verify with `ss -lunp | grep ':53'` on the node: two addresses on
+a plain exit, three on a lifeline exit.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|

@@ -129,6 +129,8 @@ Console reasons when an exit is not ready:
 |---|---|
 | `the exit has not published its lifeline key yet` | Wait one reconcile pass. |
 | `no public endpoint known for this exit` | Set `public_ip` on the exit. |
+| Ready, but the profile never connects | Check the `Endpoint =` line of a downloaded reserve `.conf`. Unset `public_ip` falls back to `ssh.host`; if that was ever repointed at the management overlay, the profile carries an address no client can dial. Declare `public_ip`. |
+| Connects, but nothing loads and DNS times out | Not the exit. On Linux, `wg-quick`/`awg-quick` routes the profile's own endpoint into the tunnel whenever `AllowedIPs` is a split list rather than `0.0.0.0/0` — `ip route get <endpoint>` shows the tunnel device and `ip rule` has no `fwmark`. Phones are unaffected. |
 | `Reserve configs could not be listed: …` | Listing failed. Credentials and main configs still render. |
 
 Check on the exit:

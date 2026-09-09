@@ -130,7 +130,7 @@ fleet:
       # warp_mtu: 1380 # WARP interface MTU (default 1380, auto-probed; range 1280-1500)
       # link_mtu: 1400 # master<->exit path MTU when below 1500; lowers both tunnel ends and the client MTU
       # min_egress_throughput_kbytes: 250 # per-exit floor: >0 custom, 0 inherit fleet, <0 disables here
-      # public_ip: 198.51.100.7 # endpoint the master dials (default: ssh.host); IP literal only
+      # public_ip: 198.51.100.7 # endpoint the master dials (default: ssh.host); IP literal only. On an exit with a lifeline this is ALSO the endpoint clients dial in their reserve profile - declare it, or they get whatever ssh.host holds (an overlay address if you ever repointed it)
       address_pool: 10.81.0.0/24 # tunnel subnet; must be unique per exit
       mgmt_addr: 10.20.0.5 # ZeroTier/overlay address (admin, metrics, DNS bind)
       transports: # master<->exit transports; omit the block for AWG-only
@@ -168,8 +168,9 @@ fleet:
               ads: [https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.txt]
             clientGroupsBlock:
               default: [ads]
-      # lifeline: # reserve client interface on this exit: every issued credential gets a reserve profile against it, for the day the master is lost. Needs masters[].client_awg.managed: true
-      #   listen_port: 41827 # UDP port clients dial; must differ from this exit's AWG port and public_udp_ports
+      # lifeline: # reserve client interface on this exit: every issued credential gets a reserve profile against it, for the day the master is lost.
+      #   # FIRST uncomment masters[].client_awg.managed: true above - the controller cannot project credentials it does not own, and validation refuses the pairing at startup.
+      #   listen_port: 443 # UDP port clients dial; must differ from this exit's AWG port and public_udp_ports. Prefer 443/UDP: a high odd port is the first thing a filtering network drops, and this is the path that must work when the main one is blocked (TCP/443 here is REALITY's; UDP/443 is free)
       #   address_pool: 10.98.77.0/24 # reserve client pool; at least as large as the master's client pool, no overlaps
       #   egress: direct # direct (default) | warp; warp needs WARP in this exit's egress chain
       #   # dns: [10.98.77.1] # resolvers for reserve clients; required only when dns_filter is off
@@ -177,7 +178,7 @@ fleet:
         as_blacklist: true # drop scanner ASNs from the fleet-wide feed (default false)
         whitelist: [10.20.0.0/16] # extra source CIDRs always accepted; mgmt overlay is included automatically
         # public_tcp_ports: [80] # TCP ports opened to the whole internet; the REALITY port is opened automatically
-        # public_udp_ports: [9994] # UDP ports opened to the whole internet; AWG port and ZeroTier 9993 are opened automatically
+        # public_udp_ports: [9994] # UDP ports opened to the whole internet; the AWG port, ZeroTier 9993 and the lifeline port are opened automatically (listing the lifeline port here is refused at startup)
       ssh:
         host: 198.51.100.7 # address the controller connects to
         # port: 22 # SSH port (default 22)

@@ -138,7 +138,8 @@ fleet:
           allow_ipv6: false                 # false ⇒ pin xray resolution to IPv4 (IPv4-only data plane)
           # image: ghcr.io/xtls/xray-core:26.6.22   # unset ⇒ pinned default
       active_transport: awg                 # awg (default/primary) | reality-xhttp (fallback); flip live in the Web UI
-      dns_filter: true                      # blocky (Docker); binds loopback + mgmt_addr ONLY
+      dns_filter: true                      # blocky (Docker); binds loopback + mgmt_addr (+ the lifeline
+                                            #   pool gateway on an exit that carries one)
       dns:                                  # optional blocky tuning (ZT-only binds enforced regardless)
         image: spx01/blocky                 # repository …
         tag:   latest                       # … + tag (both pin-able; default spx01/blocky:latest)
@@ -150,10 +151,13 @@ fleet:
             clientGroupsBlock:
               default: [ads]
       lifeline:                             # reserve client interface awgl0: every issued
-        listen_port: 41827                  #   credential gets a reserve profile against this exit
+        listen_port: 443                    #   credential gets a reserve profile against this exit. Prefer 443/UDP:
+                                            #   a high odd port is the first thing a filtering network drops, and this
+                                            #   is the path that must survive the day the main one is blocked
         address_pool: 10.98.77.0/24         #   at least as large as the master's client pool; no overlaps
         egress: direct                      # direct (default) | warp (WARP must be in this exit's chain)
         # dns: [10.98.77.1]                 # required when dns_filter is off (the master's resolvers are gone)
+        # allowed_ips: [0.0.0.0/0]          # default; a split list here is the one shape wg-quick cannot install
       firewall:
         as_blacklist: true
         whitelist: [10.20.0.0/16]
