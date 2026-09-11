@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os/exec"
+	"path"
 	"strings"
 	"time"
 
@@ -68,10 +69,14 @@ const (
 	remoteNodeCert     = "/etc/wgfleet/node.crt"
 	remoteNodeKey      = "/etc/wgfleet/node.key"
 	remoteCACert       = "/etc/wgfleet/ca.crt"
-	remoteHardenConf   = hardening.SSHDDropInPath
-	remoteFail2ban     = hardening.Fail2banJailPath
-	remoteNodeExpDef   = nodeexporter.DefaultsPath
-	remoteNodeExpDrop  = nodeexporter.DropInPath
+	// remoteWgcfVersion records which wgcf release the install step put in
+	// /usr/local/bin, so a later provision can tell a stale binary from a current
+	// one. wgcf has no --version of its own.
+	remoteWgcfVersion = "/etc/wgfleet/wgcf.version"
+	remoteHardenConf  = hardening.SSHDDropInPath
+	remoteFail2ban    = hardening.Fail2banJailPath
+	remoteNodeExpDef  = nodeexporter.DefaultsPath
+	remoteNodeExpDrop = nodeexporter.DropInPath
 )
 
 // awgHeldPackages are the AmneziaWG apt packages held back from unattended
@@ -147,9 +152,23 @@ func BuildPlan(in BootstrapInput) Plan {
 	// Phase 1c-3: wgcf for WARP egress (exit nodes). wgcf ships only as a
 	// GitHub-release binary — there is no apt package — so it gets its own step.
 	// Installed on every exit; the agent invokes it only when egress=warp.
-	if in.Node.Role == domain.RoleExit && !in.Facts.HasWgcf {
+	//
+	// The gate is the stamped version, not mere presence: a "wgcf is here, move
+	// on" check freezes whatever release first landed on the node, so a bump to
+	// wgcfVersion would reach new exits only and the fleet would drift apart
+	// forever. Replacing the binary disturbs nothing — wgcf is not a daemon, it
+	// only registers, and the account toml and the live WARP interface are
+	// untouched (an earlier finding: one PrivateKey = one WARP server).
+	if in.Node.Role == domain.RoleExit && in.Facts.WgcfVersion != wgcfVersion {
+		what := "install"
+		if in.Facts.HasWgcf {
+			what = "replace"
+			if in.Facts.WgcfVersion != "" {
+				what += " " + in.Facts.WgcfVersion + " ->"
+			}
+		}
 		steps = append(steps, runStep(
-			"install wgcf "+wgcfVersion+" for WARP egress (GitHub release)",
+			what+" wgcf "+wgcfVersion+" for WARP egress (GitHub release)",
 			wgcfInstallCmd(in.Facts.Arch)))
 	}
 
@@ -369,7 +388,14 @@ func parseAgentVersion(out string) (string, error) {
 
 // wgcfVersion pins the wgcf release the bootstrap installs. Bump deliberately;
 // one PrivateKey = one WARP server, so the binary just registers.
-const wgcfVersion = "2.2.22"
+//
+// Bumped 2.2.22 -> 2.2.32 (2026-09-10). 2.2.22 was built in March 2024 and had
+// been talking to a Cloudflare API that moved under it for two and a half years:
+// 2.2.28 regenerated the API bindings, 2.2.31 made BoundDevice optional (a field
+// Cloudflare stopped always sending), and 2.2.32 restored the TLS fingerprint
+// that registration is matched on. Registration is the one thing this binary
+// does, and it is the step that fails first when the far side drifts.
+const wgcfVersion = "2.2.32"
 
 // wgcfInstallCmd downloads the wgcf release binary for the node's arch into
 // /usr/local/bin and marks it executable. arch is uname -m from the facts.
@@ -383,7 +409,13 @@ func wgcfInstallCmd(arch string) string {
 	}
 	url := fmt.Sprintf("https://github.com/ViRb3/wgcf/releases/download/v%s/wgcf_%s_linux_%s",
 		wgcfVersion, wgcfVersion, a)
-	return fmt.Sprintf("curl -fsSL -o /usr/local/bin/wgcf %q && chmod +x /usr/local/bin/wgcf", url)
+	// Download beside the target and move into place, so a half-fetched asset
+	// never becomes an executable named wgcf; stamp the version only once the
+	// binary is actually there.
+	return fmt.Sprintf("curl -fsSL -o /usr/local/bin/wgcf.new %q && chmod +x /usr/local/bin/wgcf.new "+
+		"&& mv -f /usr/local/bin/wgcf.new /usr/local/bin/wgcf "+
+		"&& mkdir -p %q && printf %%s %q > %q",
+		url, path.Dir(remoteWgcfVersion), wgcfVersion, remoteWgcfVersion)
 }
 
 // renderSystemdUnit fills the agent unit. It carries no per-node launch flags: the

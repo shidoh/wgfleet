@@ -11,21 +11,26 @@ import (
 // any change is made (provisioning Phase 0). They drive both preflight checks
 // and conditional bootstrap steps.
 type Facts struct {
-	OS           string // uname -s, e.g. "Linux"
-	Arch         string // uname -m, e.g. "x86_64" / "aarch64"
-	Kernel       string // uname -r
-	Distro       string // ID from /etc/os-release, e.g. "ubuntu"
-	HasAWGTools  bool   // awg + awg-quick present
-	HasWGTools   bool   // wg + wg-quick present (vanilla WireGuard, needed for wgcf/WARP)
-	HasAWGKmod   bool   // AmneziaWG kernel module available (loaded or modinfo)
-	HasWgcf      bool   // wgcf present (installed from a GitHub release, not apt)
-	HasNft       bool   // nftables present
-	HasConntrack bool   // conntrack present
-	HasTracepath bool   // tracepath present (WARP path-MTU auto-probe)
-	HasZeroTier  bool   // zerotier-cli present
-	HasDocker    bool   // docker engine present (needed for blocky/mihomo/wg-easy)
-	HasFail2ban  bool   // fail2ban present (SSH brute-force protection)
-	HasAge       bool   // age present (controller backup/restore archive encryption)
+	OS          string // uname -s, e.g. "Linux"
+	Arch        string // uname -m, e.g. "x86_64" / "aarch64"
+	Kernel      string // uname -r
+	Distro      string // ID from /etc/os-release, e.g. "ubuntu"
+	HasAWGTools bool   // awg + awg-quick present
+	HasWGTools  bool   // wg + wg-quick present (vanilla WireGuard, needed for wgcf/WARP)
+	HasAWGKmod  bool   // AmneziaWG kernel module available (loaded or modinfo)
+	HasWgcf     bool   // wgcf present (installed from a GitHub release, not apt)
+	// WgcfVersion is the release the install step stamped alongside the binary
+	// (empty when wgcf is absent, or was installed before we started stamping).
+	// wgcf itself has no --version, so the stamp is the only way to tell 2.2.22
+	// from 2.2.32 without re-downloading the asset and comparing hashes.
+	WgcfVersion  string
+	HasNft       bool // nftables present
+	HasConntrack bool // conntrack present
+	HasTracepath bool // tracepath present (WARP path-MTU auto-probe)
+	HasZeroTier  bool // zerotier-cli present
+	HasDocker    bool // docker engine present (needed for blocky/mihomo/wg-easy)
+	HasFail2ban  bool // fail2ban present (SSH brute-force protection)
+	HasAge       bool // age present (controller backup/restore archive encryption)
 	// HasNodeExporter reports the host-metrics exporter (prometheus-node-exporter).
 	HasNodeExporter bool
 }
@@ -55,6 +60,11 @@ func CollectFacts(ctx context.Context, r Runner) (Facts, error) {
 	f.HasAWGTools = commandExists(ctx, r, "awg") && commandExists(ctx, r, "awg-quick")
 	f.HasWGTools = commandExists(ctx, r, "wg") && commandExists(ctx, r, "wg-quick")
 	f.HasWgcf = commandExists(ctx, r, "wgcf")
+	if f.HasWgcf {
+		if out, err := r.Run(ctx, "cat "+remoteWgcfVersion+" 2>/dev/null"); err == nil {
+			f.WgcfVersion = strings.TrimSpace(out)
+		}
+	}
 	f.HasNft = commandExists(ctx, r, "nft")
 	f.HasConntrack = commandExists(ctx, r, "conntrack")
 	f.HasTracepath = commandExists(ctx, r, "tracepath")

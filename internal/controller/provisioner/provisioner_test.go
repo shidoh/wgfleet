@@ -100,15 +100,40 @@ func TestBootstrapInstallsWgcfAndDocker(t *testing.T) {
 	if !strings.Contains(got, "install Docker engine") {
 		t.Errorf("exit bootstrap missing Docker step:\n%s", got)
 	}
-	if !strings.Contains(got, "install wgcf") || !strings.Contains(got, "wgcf_2.2.22_linux_amd64") {
+	if !strings.Contains(got, "install wgcf") || !strings.Contains(got, "wgcf_"+wgcfVersion+"_linux_amd64") {
 		t.Errorf("exit bootstrap missing wgcf GitHub-release step:\n%s", got)
 	}
 
 	// aarch64 picks the arm64 release asset.
 	in.Facts.Arch = "aarch64"
-	if a := planText(BuildPlan(in)); !strings.Contains(a, "wgcf_2.2.22_linux_arm64") {
+	if a := planText(BuildPlan(in)); !strings.Contains(a, "wgcf_"+wgcfVersion+"_linux_arm64") {
 		t.Errorf("aarch64 should download the arm64 wgcf asset:\n%s", a)
 	}
+
+	// An exit that already carries the pinned release is left alone; one carrying
+	// an older release (or one from before we stamped the version at all) is
+	// re-fetched. Presence alone must NOT satisfy the gate — that is what froze
+	// the fleet on 2.2.22 for two and a half years.
+	in.Facts.Arch = "x86_64"
+	in.Facts.HasWgcf = true
+	in.Facts.WgcfVersion = wgcfVersion
+	if cur := planText(BuildPlan(in)); strings.Contains(cur, "wgcf "+wgcfVersion+" for WARP") {
+		t.Errorf("an exit already on %s should not refetch wgcf:\n%s", wgcfVersion, cur)
+	}
+	in.Facts.WgcfVersion = "2.2.22"
+	stale := planText(BuildPlan(in))
+	if !strings.Contains(stale, "replace 2.2.22 -> wgcf "+wgcfVersion) {
+		t.Errorf("a stale wgcf should be replaced:\n%s", stale)
+	}
+	in.Facts.WgcfVersion = ""
+	if unstamped := planText(BuildPlan(in)); !strings.Contains(unstamped, "replace wgcf "+wgcfVersion) {
+		t.Errorf("an unstamped wgcf should be replaced:\n%s", unstamped)
+	}
+	if !strings.Contains(stale, "/etc/wgfleet/wgcf.version") {
+		t.Errorf("the install step must stamp the version it wrote:\n%s", stale)
+	}
+	in.Facts.HasWgcf = false
+	in.Facts.WgcfVersion = ""
 
 	// A master needs docker but NOT wgcf (no WARP egress).
 	in.Node.Role = domain.RoleMaster
