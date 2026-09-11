@@ -41,7 +41,7 @@ func (m *Manager) UpgradeAgentVerified(ctx context.Context, nodeID string) (stri
 		return "", untouchedf("read agent binary: %w", err)
 	}
 
-	runner, err := m.opts.Dial(node.SSH)
+	runner, err := dialCtx(ctx, m.opts.Dial, node.SSH)
 	if err != nil {
 		return "", untouchedf("ssh dial %q: %w", node.Name, err)
 	}
@@ -77,7 +77,7 @@ func (m *Manager) RollbackAgent(ctx context.Context, nodeID string) error {
 		return fmt.Errorf("node %q has no ssh target", nodeID)
 	}
 
-	runner, err := m.opts.Dial(node.SSH)
+	runner, err := dialCtx(ctx, m.opts.Dial, node.SSH)
 	if err != nil {
 		return fmt.Errorf("ssh dial %q: %w", node.Name, err)
 	}

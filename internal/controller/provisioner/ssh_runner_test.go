@@ -3,14 +3,22 @@ package provisioner
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/pem"
 	"net"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
 	"github.com/shidoh/wgfleet/internal/domain"
 )
+
+// encodePEM renders the block ssh.MarshalPrivateKey returns.
+func encodePEM(b *pem.Block) []byte { return pem.EncodeToMemory(b) }
 
 // newHostKey returns a fresh ed25519 ssh.PublicKey and its authorized_keys line.
 func newHostKey(t *testing.T) (ssh.PublicKey, string) {
@@ -98,4 +106,83 @@ func TestHostKeyCallbackInsecureIgnore(t *testing.T) {
 		t.Errorf("insecure-ignore must accept any host key, rejected: %v", err)
 	}
 	_ = pinned
+}
+
+// A TCP connection that opens and then says nothing is not a hypothetical: it is
+// what the fleet's public path does when it wedges (2026-09-09 and again
+// 2026-09-11 — ESTAB to the exit's port 22, 12 bytes in Send-Q, no movement).
+//
+// ssh.ClientConfig.Timeout bounds only the TCP connect, so the handshake that
+// follows had NO bound at all and the dial blocked forever. Every caller inherits
+// that: the rolling upgrade sat 13 minutes on one node with a five-minute
+// per-node deadline it could not enforce, because the deadline can only be
+// noticed by a call that returns.
+func TestDialSSHGivesUpOnAServerThatAcceptsAndSaysNothing(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		accepted <- c // held open, deliberately silent
+	}()
+
+	restore := sshHandshakeTimeout
+	sshHandshakeTimeout = 300 * time.Millisecond
+	defer func() { sshHandshakeTimeout = restore }()
+
+	host, port, _ := net.SplitHostPort(ln.Addr().String())
+	p, _ := strconv.Atoi(port)
+	target := domain.SSHTarget{
+		Host: host, Port: p, User: "root",
+		KeyPath:               writeTestKey(t),
+		InsecureIgnoreHostKey: true,
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := DialSSH(target, nil)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a silent server must not produce a usable client")
+		}
+		if !strings.Contains(err.Error(), "ssh dial") {
+			t.Errorf("the error must name the dial that failed, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("DialSSH hung on a silent server — the handshake is still unbounded")
+	}
+	select {
+	case c := <-accepted:
+		_ = c.Close()
+	default:
+	}
+}
+
+// writeTestKey drops a throwaway private key on disk; DialSSH reads one before it
+// touches the network, and this test is about the network half.
+func writeTestKey(t *testing.T) string {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pem, err := ssh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "id_ed25519")
+	if err := os.WriteFile(path, encodePEM(pem), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

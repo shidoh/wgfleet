@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/controller/provisioner"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -113,5 +115,80 @@ func TestRollbackAgentRestoresAndRestarts(t *testing.T) {
 	}
 	if !mock.RanCommand("systemctl restart wgfleet-agent") {
 		t.Error("agent not restarted after rollback")
+	}
+}
+
+// The per-node deadline has to hold even when the dial itself does not honour it.
+// Bounding the SSH handshake (provisioner.DialSSH) fixes the case we have HIT; it
+// does not make the deadline enforceable, because any Dial implementation — a
+// custom one, a future library change, a DNS resolver with no timeout — can still
+// block past it. A deadline the caller cannot enforce is not a deadline, which is
+// exactly what left a rolling upgrade sitting 13 minutes on one node.
+func TestUpgradeAgentVerifiedAbandonsADialThatOutlivesTheDeadline(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	m, _ := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) {
+		<-release // a dial that never comes back on its own
+		return rollingMock(), nil
+	})
+	withAgentBin(t, m)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := m.UpgradeAgentVerified(ctx, "exit-de-1")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a dial that never returns must not read as a successful upgrade")
+		}
+		// And it must be tagged UNTOUCHED: a node we never reached must not be
+		// "rolled back" onto whatever snapshot an earlier upgrade left there — that
+		// is a silent downgrade, and it is how a dial timeout once put a node back on
+		// a week-old binary.
+		var u interface{ NodeUntouched() bool }
+		if !errors.As(err, &u) || !u.NodeUntouched() {
+			t.Errorf("a dial that timed out never touched the node, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("UpgradeAgentVerified ignored its context and blocked on the dial")
+	}
+
+	// The inflight lock must be released too, or the node is unupgradable until the
+	// controller restarts.
+	if err := m.acquire("exit-de-1"); err != nil {
+		t.Errorf("inflight lock still held after an abandoned dial: %v", err)
+	}
+	m.clearInflight("exit-de-1")
+}
+
+// Same guarantee on the way back: a rollback is the recovery path, and one that
+// can block forever leaves the coordinator unable to finish or report.
+func TestRollbackAgentAbandonsADialThatOutlivesTheDeadline(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	m, _ := newManager(t, func(domain.SSHTarget) (provisioner.Runner, error) {
+		<-release
+		return rollingMock(), nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- m.RollbackAgent(ctx, "exit-de-1") }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a rollback whose dial never returned must not report success")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RollbackAgent ignored its context and blocked on the dial")
 	}
 }

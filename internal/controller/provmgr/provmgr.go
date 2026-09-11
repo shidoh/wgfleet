@@ -223,7 +223,7 @@ func (m *Manager) Provision(ctx context.Context, nodeID string, mode provisioner
 		in.AgentBinary = bin
 	}
 
-	runner, err := m.opts.Dial(node.SSH)
+	runner, err := dialCtx(ctx, m.opts.Dial, node.SSH)
 	if err != nil {
 		return provisioner.Report{}, fmt.Errorf("ssh dial %q: %w", node.Name, err)
 	}
@@ -281,7 +281,7 @@ func (m *Manager) upgradeAgentLocked(ctx context.Context, node domain.Node, mode
 		return provisioner.Report{}, fmt.Errorf("read agent binary: %w", err)
 	}
 
-	runner, err := m.opts.Dial(node.SSH)
+	runner, err := dialCtx(ctx, m.opts.Dial, node.SSH)
 	if err != nil {
 		return provisioner.Report{}, fmt.Errorf("ssh dial %q: %w", node.Name, err)
 	}

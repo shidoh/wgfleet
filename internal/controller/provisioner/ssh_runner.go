@@ -90,15 +90,56 @@ func DialSSH(target domain.SSHTarget, hostKey ssh.HostKeyCallback) (*SSHRunner, 
 		// nil ⇒ crypto/ssh defaults (unpinned/TOFU and injected-callback paths).
 		HostKeyCallback:   hostKey,
 		HostKeyAlgorithms: hostKeyAlgos,
-		Timeout:           15 * time.Second,
+		Timeout:           sshConnectTimeout,
 	}
 	addr := net.JoinHostPort(target.Host, strconv.Itoa(sshPort(target.Port)))
-	client, err := ssh.Dial("tcp", addr, cfg)
+
+	// NOT ssh.Dial. ClientConfig.Timeout bounds the TCP connect and NOTHING after
+	// it, so a path that completes the handshake's three-way and then swallows every
+	// packet leaves this call blocked forever — and every caller with it.
+	//
+	// That is not a thought experiment: it is what the fleet's public master→exit
+	// path does when it wedges (2026-09-09, and again 2026-09-11 with the fix for
+	// the first one in place). The socket sits ESTABLISHED with a dozen bytes in
+	// Send-Q and no movement; the rolling upgrade sat 13 minutes on its first node
+	// under a five-minute per-node deadline, because a deadline can only be noticed
+	// by a call that comes back. Bounding the handshake here fixes it for every dial
+	// path at once — provision, facts, support bundle, upgrade — rather than asking
+	// each caller to wrap this one in a goroutine.
+	conn, err := net.DialTimeout("tcp", addr, sshConnectTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial %s: %w", addr, err)
 	}
-	return &SSHRunner{client: client}, nil
+	if err := conn.SetDeadline(time.Now().Add(sshHandshakeTimeout)); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("ssh dial %s: set handshake deadline: %w", addr, err)
+	}
+	sc, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("ssh dial %s: %w", addr, err)
+	}
+	// Cleared once the handshake is through: the deadline is absolute, and leaving
+	// it set would kill the session mid-command a few seconds later — an upgrade
+	// uploads 30MB over this connection.
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		_ = sc.Close()
+		return nil, fmt.Errorf("ssh dial %s: clear handshake deadline: %w", addr, err)
+	}
+	return &SSHRunner{client: ssh.NewClient(sc, chans, reqs)}, nil
 }
+
+// sshConnectTimeout bounds the TCP connect; sshHandshakeTimeout bounds everything
+// between the connect and a usable session (version exchange, key exchange, auth).
+// Generous enough for a slow satellite link, short enough that a black-holed path
+// is a failure an operator can act on rather than a hang nobody can interrupt.
+//
+// A var, not a const, so the test can drive a wedged server without waiting out
+// the real bound.
+var (
+	sshConnectTimeout   = 15 * time.Second
+	sshHandshakeTimeout = 20 * time.Second
+)
 
 // hostKeyCallback builds the SSH host-key verification callback for a target,
 // plus the host-key algorithms to advertise. A pinned target.HostKey (an
