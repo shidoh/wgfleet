@@ -142,7 +142,7 @@ fleet:
                                             #   pool gateway on an exit that carries one)
       dns:                                  # optional blocky tuning (ZT-only binds enforced regardless)
         image: spx01/blocky                 # repository …
-        tag:   latest                       # … + tag (both pin-able; default spx01/blocky:latest)
+        tag:   v0.35.0                      # … + tag (both pin-able; default spx01/blocky:v0.35.0)
         allowlist: ["*.example.net"]        # never-blocked domains (platform infra auto-added)
         overrides:                          # raw blocky YAML, deep-merged (denylists, conditional, caching)
           blocking:

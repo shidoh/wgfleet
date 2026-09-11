@@ -154,7 +154,7 @@ fleet:
       # per_tunnel_key: "off" # staged per-tunnel key migration: off (default) -> dual -> switch -> on, one exit at a time
       dns_filter: true # run blocky on this exit; binds loopback and mgmt_addr only (default false)
       dns: # blocky tuning
-        image: spx01/blocky # repository (default spx01/blocky:latest)
+        image: spx01/blocky # repository (default spx01/blocky:v0.35.0)
         tag: latest # explicit tag, overrides any tag in the image
         # upstreams: [] # upstream resolvers (default: Quad9/Mullvad DoT + digitale-gesellschaft DoH)
         allowlist: ["*.example.com", "*.example.net"] # never-blocked domains

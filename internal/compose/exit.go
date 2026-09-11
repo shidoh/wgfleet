@@ -8,7 +8,20 @@ import (
 // DefaultBlockyImage (repository:tag) is used when the spec leaves the image
 // unset. Exported so the controller resolves image/tag overrides against the
 // same canonical default the renderer falls back to.
-const DefaultBlockyImage = "spx01/blocky:latest"
+//
+// Pinned, NOT :latest — same rule as mihomo and xray (docs/DESIGN.md #8). The
+// moving tag gave neither reproducibility nor freshness: docker only re-reads a
+// tag when something pulls it, so every exit sat on v0.32.1 (pulled 2026-06-20)
+// while upstream had moved three releases on, and nothing in the fleet said so.
+//
+// Bumped :latest -> v0.35.0 (2026-09-10, upstream released 2026-09-05). What we
+// care about in 0.33-0.35: DoH queries are retried when a pooled connection is
+// stale, fallbackUpstream works again for rewritten queries, NOTFQDN gets a
+// well-formed NXDOMAIN, and EDNS0 cookies are no longer passed through. Note the
+// new "refused" block type is NOT for us — blockType stays nxDomain, because a
+// non-answer is what keeps mihomo's health checks honest (zeroIP once poisoned
+// them with 8400 false failures).
+const DefaultBlockyImage = "spx01/blocky:v0.35.0"
 
 // BlockyInput is everything needed to render the exit node's DNS-filter stack.
 type BlockyInput struct {
