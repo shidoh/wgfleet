@@ -78,6 +78,33 @@ const (
 // API is unreachable), NOT that the member is down.
 type memberProbe func(ctx context.Context, name string) (ok, total int, err error)
 
+// holdRecord is what we know about a member we are holding out: the probe result
+// that produced the verdict, when the spell began, and how many consecutive clean
+// probes it has answered since (the counter release() walks back to zero).
+type holdRecord struct {
+	clean     int
+	reachable int
+	probed    int
+	since     time.Time
+}
+
+// ExitVerdict is the master's own judgement on one exit of the tier that carries
+// traffic — the cause behind an exit vanishing from the load balancer, in the
+// three facts an operator asks for in that order: is it out, on what evidence,
+// and since when.
+type ExitVerdict struct {
+	HeldOut bool
+	// Reachable/Probed are the last multi-destination probe result. Probed == 0
+	// means this member has not been sampled since it was last judged healthy —
+	// the walk stops at the first usable member, so a green tier leaves most of its
+	// members unprobed on most passes. Absent evidence, not evidence of health.
+	Reachable int
+	Probed    int
+	// Since is when the current hold began, NOT when it was last re-confirmed. Zero
+	// when the member is not held out.
+	Since time.Time
+}
+
 // TierSelector decides whether the master routes to the reserve tier, with
 // hysteresis so a flapping exit cannot churn the data plane.
 //
@@ -100,10 +127,10 @@ type TierSelector struct {
 	holdRecover   int
 	now           func() time.Time
 
-	// heldOut are the members our probe last judged unusable, mapped to how many
-	// consecutive passes have since found them usable again. They are re-probed
-	// EVERY pass — see tierUsable for why that is the whole fix and not a detail.
-	heldOut map[string]int
+	// heldOut are the members our probe last judged unusable, mapped to the
+	// substance of that verdict. They are re-probed EVERY pass — see tierUsable for
+	// why that is the whole fix and not a detail.
+	heldOut map[string]holdRecord
 	// inRotation is the tier whose members wg-best actually routes through, as of
 	// the last decision. Kept so Rotation() can answer without probing.
 	inRotation []string
@@ -124,6 +151,10 @@ type TierSelector struct {
 	// but nothing about the tier we are about to move every client onto.
 	standbyUsable int
 	standbyTotal  int
+	// standbyMember is the same warm probe kept PER MEMBER. The tally above cannot
+	// be acted on: one dead reserve exit hides inside "2 of 3 usable", so nothing
+	// alerts and nothing names it until the last one dies too.
+	standbyMember map[string]ExitVerdict
 }
 
 func NewTierSelector(log *slog.Logger) *TierSelector {
@@ -137,7 +168,7 @@ func NewTierSelector(log *slog.Logger) *TierSelector {
 		holdRecover:   defaultHoldRecover,
 		standbyEvery:  defaultStandbyEvery,
 		now:           time.Now,
-		heldOut:       map[string]int{},
+		heldOut:       map[string]holdRecord{},
 	}
 }
 
@@ -235,9 +266,27 @@ func (s *TierSelector) StandbyTransportHealth() map[string]bool {
 // there.
 func (s *TierSelector) Rotation() map[string]bool {
 	out := make(map[string]bool, len(s.inRotation))
+	for m, v := range s.RotationVerdicts() {
+		out[m] = v.HeldOut
+	}
+	return out
+}
+
+// RotationVerdicts is Rotation() with the evidence attached: for every exit in the
+// tier that carries traffic, whether we are holding it out, on what probe result,
+// and since when. The agent puts it in the status report, so the console can say
+// WHY an exit stopped carrying instead of only that it did — the question the
+// journal on the master answered and nothing else could.
+func (s *TierSelector) RotationVerdicts() map[string]ExitVerdict {
+	out := make(map[string]ExitVerdict, len(s.inRotation))
 	for _, m := range s.inRotation {
-		_, held := s.heldOut[m]
-		out[m] = held
+		rec, held := s.heldOut[m]
+		out[m] = ExitVerdict{
+			HeldOut:   held,
+			Reachable: rec.reachable,
+			Probed:    rec.probed,
+			Since:     rec.since,
+		}
 	}
 	return out
 }
@@ -251,22 +300,54 @@ func (s *TierSelector) warmStandby(ctx context.Context, probe memberProbe, membe
 		return
 	}
 	usable, total := 0, 0
+	// Rebuilt from this sweep, not merged into the old map: a member that has left
+	// the reserve tier must stop being reported rather than freeze at its last
+	// verdict, the same rule ProbeStandbyTransports follows.
+	perMember := make(map[string]ExitVerdict, len(members))
 	for _, m := range members {
 		ok, probed, err := probe(ctx, m)
 		if err != nil {
 			continue // blind sample; leave it out of the tally entirely
 		}
 		total++
+		// HeldOut stays false on purpose. This member is in no rotation, so there is
+		// no rotation to be held out of; what we have is evidence, not a verdict.
+		perMember[m] = ExitVerdict{Reachable: ok, Probed: probed}
 		if probed > 0 && ok >= min(s.minReachable, probed) {
 			usable++
 		}
 	}
 	s.standbyUsable, s.standbyTotal = usable, total
+	s.standbyMember = perMember
 	if usable == 0 && total > 0 && s.log != nil {
 		// Worth a warning on its own: it means a failover right now would land every
 		// client on a tier that cannot reach the internet.
 		s.log.Warn("standby tier has no usable member", "probed", total)
 	}
+}
+
+// StandbyVerdicts reports the last warm-probe result for each member of the idle
+// tier, by name. Empty before the first warm sweep; a member absent from it was
+// not sampled, which is not the same as healthy.
+//
+// It is what turns "the standby tier is 2 of 3 usable" — a number nobody can act
+// on — into an exit an operator can go and look at.
+func (s *TierSelector) StandbyVerdicts() map[string]ExitVerdict {
+	out := make(map[string]ExitVerdict, len(s.standbyMember))
+	for k, v := range s.standbyMember {
+		out[k] = v
+	}
+	return out
+}
+
+// StandbyMemberHealth is StandbyVerdicts reduced to the pass/fail the metric and
+// the alert read: did this member reach enough destinations to count as usable.
+func (s *TierSelector) StandbyMemberHealth() map[string]bool {
+	out := make(map[string]bool, len(s.standbyMember))
+	for k, v := range s.standbyMember {
+		out[k] = v.Probed > 0 && v.Reachable >= min(s.minReachable, v.Probed)
+	}
+	return out
 }
 
 // ReserveActive returns the tier decision for this pass: true routes wg-best to
@@ -442,7 +523,7 @@ func (s *TierSelector) tierUsable(ctx context.Context, probe memberProbe, member
 func (s *TierSelector) judge(member string, ok, total int) bool {
 	need := min(s.minReachable, total)
 	if total > 0 && ok >= need {
-		s.release(member)
+		s.release(member, ok, total)
 		return true
 	}
 	s.hold(member, ok, total)
@@ -454,10 +535,18 @@ func (s *TierSelector) judge(member string, ok, total int) bool {
 // traffic — and nothing else in the system says so out loud.
 func (s *TierSelector) hold(member string, ok, total int) {
 	if s.heldOut == nil {
-		s.heldOut = map[string]int{}
+		s.heldOut = map[string]holdRecord{}
 	}
-	_, already := s.heldOut[member]
-	s.heldOut[member] = 0
+	prev, already := s.heldOut[member]
+	// The stamp survives a re-confirmation: it is when this spell BEGAN. Re-stamping
+	// every failing pass would make every hold read as seconds old no matter how
+	// long it had been running, which is the one number that decides whether an
+	// operator waits it out or goes looking.
+	since := prev.since
+	if !already || since.IsZero() {
+		since = s.now()
+	}
+	s.heldOut[member] = holdRecord{reachable: ok, probed: total, since: since}
 	if s.log == nil {
 		return
 	}
@@ -471,18 +560,19 @@ func (s *TierSelector) hold(member string, ok, total int) {
 // release walks a recovering member back to the normal rotating scan once it has
 // answered cleanly holdRecover times running. It does NOT gate the member's return
 // to traffic: the clean probe that got us here already told mihomo it is alive.
-func (s *TierSelector) release(member string) {
-	clean, held := s.heldOut[member]
+func (s *TierSelector) release(member string, ok, total int) {
+	rec, held := s.heldOut[member]
 	if !held {
 		return
 	}
-	clean++
-	if clean < s.holdRecover {
-		s.heldOut[member] = clean
+	rec.clean++
+	rec.reachable, rec.probed = ok, total
+	if rec.clean < s.holdRecover {
+		s.heldOut[member] = rec
 		return
 	}
 	delete(s.heldOut, member)
 	if s.log != nil {
-		s.log.Warn("exit returned to rotation", "exit", member, "clean_passes", clean)
+		s.log.Warn("exit returned to rotation", "exit", member, "clean_passes", rec.clean)
 	}
 }

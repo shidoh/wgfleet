@@ -516,12 +516,21 @@ func (x *HealthCheck) GetLatencyMs() int64 {
 }
 
 type ExitTunnelHealth struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                        // exit node name (== mihomo proxy name)
-	Alive         bool                   `protobuf:"varint,2,opt,name=alive,proto3" json:"alive,omitempty"`                                     // mihomo proxy alive
-	DelayMs       int64                  `protobuf:"varint,3,opt,name=delay_ms,json=delayMs,proto3" json:"delay_ms,omitempty"`                  // last url-test delay (0 = none/failed)
-	LastTestUnix  int64                  `protobuf:"varint,4,opt,name=last_test_unix,json=lastTestUnix,proto3" json:"last_test_unix,omitempty"` // unix seconds of the last delay test (0 = none)
-	Selected      bool                   `protobuf:"varint,5,opt,name=selected,proto3" json:"selected,omitempty"`                               // currently chosen by the wg-best group
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Name         string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                        // exit node name (== mihomo proxy name)
+	Alive        bool                   `protobuf:"varint,2,opt,name=alive,proto3" json:"alive,omitempty"`                                     // mihomo proxy alive
+	DelayMs      int64                  `protobuf:"varint,3,opt,name=delay_ms,json=delayMs,proto3" json:"delay_ms,omitempty"`                  // last url-test delay (0 = none/failed)
+	LastTestUnix int64                  `protobuf:"varint,4,opt,name=last_test_unix,json=lastTestUnix,proto3" json:"last_test_unix,omitempty"` // unix seconds of the last delay test (0 = none)
+	Selected     bool                   `protobuf:"varint,5,opt,name=selected,proto3" json:"selected,omitempty"`                               // currently chosen by the wg-best group
+	// The MASTER'S OWN verdict, from its multi-destination probe — a different and
+	// stricter judgement than mihomo's `alive` above, and the one that actually
+	// pulls an exit out of the load balancer. Additive (ADR-0029 rev 2); an older
+	// controller ignores these and sees the same report it saw before, so no wire
+	// version bump.
+	HeldOut       bool  `protobuf:"varint,6,opt,name=held_out,json=heldOut,proto3" json:"held_out,omitempty"`                     // our probe is holding this exit out of rotation
+	Reachable     int32 `protobuf:"varint,7,opt,name=reachable,proto3" json:"reachable,omitempty"`                                // destinations the last probe reached
+	Probed        int32 `protobuf:"varint,8,opt,name=probed,proto3" json:"probed,omitempty"`                                      // destinations the last probe attempted (0 = not sampled)
+	HeldSinceUnix int64 `protobuf:"varint,9,opt,name=held_since_unix,json=heldSinceUnix,proto3" json:"held_since_unix,omitempty"` // unix seconds the current hold began (0 = not held)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -589,6 +598,34 @@ func (x *ExitTunnelHealth) GetSelected() bool {
 		return x.Selected
 	}
 	return false
+}
+
+func (x *ExitTunnelHealth) GetHeldOut() bool {
+	if x != nil {
+		return x.HeldOut
+	}
+	return false
+}
+
+func (x *ExitTunnelHealth) GetReachable() int32 {
+	if x != nil {
+		return x.Reachable
+	}
+	return 0
+}
+
+func (x *ExitTunnelHealth) GetProbed() int32 {
+	if x != nil {
+		return x.Probed
+	}
+	return 0
+}
+
+func (x *ExitTunnelHealth) GetHeldSinceUnix() int64 {
+	if x != nil {
+		return x.HeldSinceUnix
+	}
+	return 0
 }
 
 type ReportStatusAck struct {
@@ -3327,13 +3364,17 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x02ok\x18\x02 \x01(\bR\x02ok\x12\x16\n" +
 	"\x06detail\x18\x03 \x01(\tR\x06detail\x12\x1d\n" +
 	"\n" +
-	"latency_ms\x18\x04 \x01(\x03R\tlatencyMs\"\x99\x01\n" +
+	"latency_ms\x18\x04 \x01(\x03R\tlatencyMs\"\x92\x02\n" +
 	"\x10ExitTunnelHealth\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05alive\x18\x02 \x01(\bR\x05alive\x12\x19\n" +
 	"\bdelay_ms\x18\x03 \x01(\x03R\adelayMs\x12$\n" +
 	"\x0elast_test_unix\x18\x04 \x01(\x03R\flastTestUnix\x12\x1a\n" +
-	"\bselected\x18\x05 \x01(\bR\bselected\"-\n" +
+	"\bselected\x18\x05 \x01(\bR\bselected\x12\x19\n" +
+	"\bheld_out\x18\x06 \x01(\bR\aheldOut\x12\x1c\n" +
+	"\treachable\x18\a \x01(\x05R\treachable\x12\x16\n" +
+	"\x06probed\x18\b \x01(\x05R\x06probed\x12&\n" +
+	"\x0fheld_since_unix\x18\t \x01(\x03R\rheldSinceUnix\"-\n" +
 	"\x0fReportStatusAck\x12\x1a\n" +
 	"\breceived\x18\x01 \x01(\rR\breceived\"\xf3\x06\n" +
 	"\bNodeSpec\x12\x12\n" +

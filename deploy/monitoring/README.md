@@ -202,6 +202,7 @@ refresh (`as_blacklist_feed`):
 | `wgfleet_agent_exit_held_out` | `exit` | 1 while the master's multi-destination probe holds this exit out of wg-best (master-only). The CAUSE behind `wgfleet_exit_tunnel_alive == 0` |
 | `wgfleet_agent_reserve_tier_active` | — | 1 when wg-best routes to the second-choice (reserve) exit tier instead of the primary one (master-only) |
 | `wgfleet_agent_standby_tier_usable` / `_total` | — | members of the INACTIVE tier the last warm probe found usable, out of those it could sample (master-only) |
+| `wgfleet_agent_standby_tier_member_usable` | `exit` | 1 when the last warm probe reached the internet through this member of the INACTIVE tier, 0 when it did not (master-only). The tally above cannot be acted on — one dead reserve exit hides inside "2 of 3"; this names it. **Absent means never sampled** |
 | `wgfleet_agent_standby_transport_usable` | `exit,transport` | 1 when this exit's INACTIVE transport — the one an operator would switch it onto — reached the internet on the last probe, 0 when it did not (master-only). **Absent means never measured**, which is not the same as healthy |
 | `wgfleet_fw_as_blacklist_size` | `family` | size of the scanner-ASN blacklist set actually loaded in nftables |
 | `wgfleet_agent_client_path_ok` | `probe` | 1 when the master's OWN client can send and receive over this protocol through the full client path (interface, firewall, proxy, exit); 0 when it cannot (master-only). Probes: `icmp/direct`, `icmp/gateway`, `icmp/mgmt`, `tcp/443`, `udp/53`. The one measurement that says whether a client works, as opposed to whether each component looks fine |
@@ -285,6 +286,7 @@ What ships, by severity:
 | `WgfleetExitTunnelHealthStale` | warning |
 | `WgfleetReserveTierActive` | warning |
 | `WgfleetStandbyTierUnusable` | warning |
+| `WgfleetStandbyTierMemberUnusable` | warning |
 | `WgfleetStandbyTransportUnusable` | warning |
 | `WgfleetClientPathDead` | critical |
 | `WgfleetClientUDPBlackHole` | critical |

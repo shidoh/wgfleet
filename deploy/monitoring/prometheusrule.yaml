@@ -434,6 +434,26 @@ spec:
         summary: The standby exit tier on {{ $labels.node }} has no usable member
         description: The warm probe found no reachable exit in the INACTIVE tier. A failover right
           now would land every client on a tier that cannot reach the internet.
+    - alert: WgfleetStandbyTierMemberUnusable
+      # The tally next to this (standby_tier_usable/total) only fires when the LAST
+      # reserve member dies, so one dead member hides inside "2 of 3 usable" and
+      # nothing ever names it. Live 2026-09-11: a reserve exit's active transport
+      # was failing for minutes at a time behind a confident 3/3, invisible in both
+      # the alerts and the console.
+      #
+      # Not an outage and deliberately not critical: the reserve tier carries no
+      # traffic while the primary is healthy. It is a fallback that would not
+      # restore anything, which is worth knowing BEFORE the failover, not during.
+      expr: wgfleet_agent_standby_tier_member_usable == 0
+      for: 15m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Reserve exit {{ $labels.exit }} is unusable on {{ $labels.node }}
+        description: The warm probe reached none of its destinations through {{ $labels.exit }}.
+          It carries no client traffic today, so nothing is broken for users right now — but the
+          reserve tier is one member short of what it claims to be.
     - alert: WgfleetStandbyTransportUnusable
       # A dual-transport exit keeps its inactive transport configured but out of
       # the load-balance group, so nothing dials it and — until the probe behind

@@ -171,6 +171,22 @@ type ExitTunnelHealth struct {
 	// single-carrier group kind (url-test, fallback) exactly one exit is selected;
 	// under load-balance every live member of the active tier is (ADR-0029).
 	Selected bool
+	// HeldOut is the MASTER'S OWN verdict: its multi-destination probe judged this
+	// tunnel unusable and pulled it out of the load balancer. Distinct from Alive
+	// above, which is mihomo's single-URL check — the two write the same flag under
+	// different criteria, and only this one knows WHY an exit left the rotation.
+	//
+	// It is reported only for the tier that carries traffic. An idle reserve member
+	// is in no group, so "held out" would be a claim about a rotation it is not in.
+	HeldOut bool
+	// Reachable/Probed are the probe result behind the verdict. Probed == 0 means
+	// this exit was not sampled on the last pass (the scan stops at the first usable
+	// member), which is absent evidence rather than evidence of health.
+	Reachable int
+	Probed    int
+	// HeldSince is when the current hold began — not when it was last re-confirmed,
+	// so "held out 12 minutes" stays true as the spell runs. Zero when not held.
+	HeldSince time.Time
 }
 
 // EgressReachability classifies WHY an exit's egress is or is not working, so an

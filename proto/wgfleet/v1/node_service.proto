@@ -110,6 +110,15 @@ message ExitTunnelHealth {
   int64 delay_ms = 3; // last url-test delay (0 = none/failed)
   int64 last_test_unix = 4; // unix seconds of the last delay test (0 = none)
   bool selected = 5; // currently chosen by the wg-best group
+  // The MASTER'S OWN verdict, from its multi-destination probe — a different and
+  // stricter judgement than mihomo's `alive` above, and the one that actually
+  // pulls an exit out of the load balancer. Additive (ADR-0029 rev 2); an older
+  // controller ignores these and sees the same report it saw before, so no wire
+  // version bump.
+  bool held_out = 6; // our probe is holding this exit out of rotation
+  int32 reachable = 7; // destinations the last probe reached
+  int32 probed = 8; // destinations the last probe attempted (0 = not sampled)
+  int64 held_since_unix = 9; // unix seconds the current hold began (0 = not held)
 }
 
 message ReportStatusAck {

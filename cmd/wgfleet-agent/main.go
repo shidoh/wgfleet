@@ -890,6 +890,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			usable, total := a.tier.StandbyHealth()
 			a.metrics.ObserveTier(a.tier.ReserveIsActive(), a.tier.Rotation(), usable, total)
 			a.metrics.ObserveStandbyTransports(standbyTransportHealth(a.tier, spec))
+			a.metrics.ObserveStandbyMembers(a.tier.StandbyMemberHealth())
 		}
 		if a.role == domain.RoleMaster {
 			bindable, known := a.udpReturnObservations(spec)
@@ -1571,6 +1572,31 @@ func exitHealthForMaster(proxiesJSON []byte, spec domain.NodeSpec) []domain.Exit
 	return h
 }
 
+// withTierVerdicts joins mihomo's view of the tunnels with the master's own
+// judgement of them. mihomo answers "is this exit in the load balancer"; only the
+// tier selector knows whether OUR probe is what took it out, on what evidence, and
+// since when — and until this join that answer never left the node.
+//
+// Exits with no verdict are left untouched rather than defaulted: the reserve tier
+// is in no rotation, so "not held out" would be a judgement nobody took.
+func withTierVerdicts(health []domain.ExitTunnelHealth, verdicts map[string]master.ExitVerdict) []domain.ExitTunnelHealth {
+	if len(verdicts) == 0 {
+		return health
+	}
+	out := make([]domain.ExitTunnelHealth, len(health))
+	copy(out, health)
+	for i := range out {
+		v, ok := verdicts[out[i].Name]
+		if !ok {
+			continue
+		}
+		out[i].HeldOut = v.HeldOut
+		out[i].Reachable, out[i].Probed = v.Reachable, v.Probed
+		out[i].HeldSince = v.Since
+	}
+	return out
+}
+
 // collectExitHealth fetches the master's mihomo /proxies snapshot and parses it.
 // On any error it logs and returns nil so the status report still sends.
 func (a *agent) collectExitHealth(ctx context.Context, spec domain.NodeSpec) []domain.ExitTunnelHealth {
@@ -1589,7 +1615,18 @@ func (a *agent) collectExitHealth(ctx context.Context, spec domain.NodeSpec) []d
 		a.log.Warn("could not fetch mihomo proxy health", "err", err)
 		return nil
 	}
-	return exitHealthForMaster(js, spec)
+	h := exitHealthForMaster(js, spec)
+	if a.tier == nil {
+		return h
+	}
+	// Both halves of what we know: the rotation's verdicts, and the warm probe's
+	// evidence about the idle tier. The rotation wins where they overlap — it is a
+	// judgement taken every pass, the other is a sample taken on a cadence.
+	verdicts := a.tier.StandbyVerdicts()
+	for name, v := range a.tier.RotationVerdicts() {
+		verdicts[name] = v
+	}
+	return withTierVerdicts(h, verdicts)
 }
 
 // clashAPISecret reads the mihomo Clash API secret from the operator's mihomo

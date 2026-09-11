@@ -1474,3 +1474,157 @@ func TestStuckDecommissionIsNamedAndDeletable(t *testing.T) {
 		t.Fatal("Delete is not offered for a stuck decommission")
 	}
 }
+
+// The console's whole job in an incident is to answer "why is this exit not
+// carrying". Before this, the NOT CARRYING group was the entire answer: an exit
+// held out by our own probes looked exactly like a reserve-tier exit doing its job
+// and like a drained one, and the reason existed only in the master's journal.
+func TestTopologyCarriesTheHeldOutVerdictAndItsAge(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+	for _, n := range []string{"vn1", "vn2", "anz3"} {
+		seed(t, st, domain.Node{ID: n, Name: n, Role: domain.RoleExit, State: domain.StateReady})
+	}
+	since := time.Now().Add(-12 * time.Minute)
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "master-xa-1", State: domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{
+			{Name: "vn1", Alive: false, HeldOut: true, Reachable: 0, Probed: 4, HeldSince: since},
+			{Name: "vn2", Alive: true, Delay: 95 * time.Millisecond, Selected: true, Reachable: 4, Probed: 4},
+			{Name: "anz3", Alive: true, Delay: 201 * time.Millisecond},
+		},
+	})
+
+	rows, err := h.nodeRows(context.Background())
+	if err != nil {
+		t.Fatalf("nodeRows: %v", err)
+	}
+	topo := h.buildTopology(context.Background(), rows)
+	byName := map[string]topoExit{}
+	for _, e := range append(append([]topoExit{}, topo.Carrying...), topo.Reserve...) {
+		byName[e.Name] = e
+	}
+
+	vn1 := byName["vn1"]
+	if !vn1.HeldOut {
+		t.Fatalf("vn1 is held out by the master's probe and must say so: %+v", vn1)
+	}
+	if vn1.Probes != "0/4" {
+		t.Errorf("the row must carry the evidence, got %q", vn1.Probes)
+	}
+	if vn1.HeldFor == "" {
+		t.Errorf("the row must carry how long the hold has run, got %q", vn1.HeldFor)
+	}
+	// A reserve exit nobody judged must NOT read as held out — that is the
+	// conflation this whole change exists to remove.
+	if anz3 := byName["anz3"]; anz3.HeldOut || anz3.Probes != "" {
+		t.Errorf("an unjudged reserve exit must carry no verdict: %+v", anz3)
+	}
+	if vn2 := byName["vn2"]; vn2.HeldOut {
+		t.Errorf("a carrying exit must not read as held out: %+v", vn2)
+	}
+}
+
+// The rendered panel, not just the view model: the badge is the whole point of
+// the change, and a field that never reaches the HTML fixes nothing.
+func TestFleetPanelRendersTheHeldOutReason(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+	seed(t, st, domain.Node{ID: "vn1", Name: "vn1", Role: domain.RoleExit, State: domain.StateReady})
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "master-xa-1", State: domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{
+			{Name: "vn1", Alive: false, HeldOut: true, Probed: 4, HeldSince: time.Now().Add(-12 * time.Minute)},
+		},
+	})
+
+	_, body := get(t, h, "/")
+	if !strings.Contains(body, "out of rotation") {
+		t.Error("a held-out exit must say so on the fleet panel")
+	}
+	if !strings.Contains(body, "probes 0/4") {
+		t.Error("the panel must show the probe result behind the verdict")
+	}
+	if !strings.Contains(body, "12m") {
+		t.Error("the panel must show how long the hold has run")
+	}
+}
+
+// The node page is where an operator lands after clicking a node in an incident,
+// and its state pill is node-local by construction: every self-check of a healthy
+// exit passes while the master's tunnel to it carries nothing. The pill cannot be
+// fixed — it is answering a different question — so the page has to carry the
+// other answer next to it.
+func TestExitNodePageSaysWhenTheMasterHoldsItOutOfRotation(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+	seed(t, st, domain.Node{ID: "vn1", Name: "vn1", Role: domain.RoleExit, State: domain.StateReady})
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "master-xa-1", State: domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{
+			{Name: "vn1", Alive: false, HeldOut: true, Probed: 4, HeldSince: time.Now().Add(-12 * time.Minute)},
+		},
+	})
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{NodeID: "vn1", State: domain.StateReady})
+
+	_, body := get(t, h, "/nodes/vn1")
+	if !strings.Contains(body, "out of rotation") {
+		t.Error("a held-out exit's own page must say the master is not routing to it")
+	}
+	if !strings.Contains(body, "0/4") {
+		t.Error("the page must show the probe result behind the verdict")
+	}
+
+	// A healthy exit must show nothing: a badge that is always there is furniture,
+	// and the reserve tier would wear it permanently by design.
+	seed(t, st, domain.Node{ID: "vn2", Name: "vn2", Role: domain.RoleExit, State: domain.StateReady})
+	if _, b := get(t, h, "/nodes/vn2"); strings.Contains(b, "out of rotation") {
+		t.Error("an exit nobody judged must not read as held out")
+	}
+}
+
+// A reserve exit is out of the rotation by design, so "held out" is the wrong
+// word for it — but an operator still has to know that the tier they are keeping
+// for an emergency contains a member that cannot reach anything. Live 2026-09-11:
+// 1cnode004's active path failed for minutes behind an aggregate "3 of 3 usable"
+// and the console showed a healthy reserve row.
+func TestTopologyFlagsAReserveExitTheWarmProbeCouldNotReachThrough(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+	for _, n := range []string{"1cnode004", "anz3"} {
+		seed(t, st, domain.Node{ID: n, Name: n, Role: domain.RoleExit, State: domain.StateReady})
+	}
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "master-xa-1", State: domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{
+			// The reserve member's proxy carries its transport suffix; the row is the node.
+			{Name: "1cnode004-reality", Alive: true, Reachable: 0, Probed: 4},
+			{Name: "anz3", Alive: true, Reachable: 4, Probed: 4},
+		},
+	})
+
+	rows, err := h.nodeRows(context.Background())
+	if err != nil {
+		t.Fatalf("nodeRows: %v", err)
+	}
+	topo := h.buildTopology(context.Background(), rows)
+	byName := map[string]topoExit{}
+	for _, e := range topo.Reserve {
+		byName[e.Name] = e
+	}
+	bad := byName["1cnode004"]
+	if !bad.Unusable {
+		t.Errorf("a reserve exit the probe could not reach through must be flagged: %+v", bad)
+	}
+	if bad.HeldOut {
+		t.Errorf("it is in no rotation, so it must not claim to be held out of one: %+v", bad)
+	}
+	if good := byName["anz3"]; good.Unusable {
+		t.Errorf("a clean reserve member must not be flagged: %+v", good)
+	}
+
+	_, body := get(t, h, "/")
+	if !strings.Contains(body, "no usable path") {
+		t.Error("the fleet panel must name the unusable reserve member")
+	}
+}

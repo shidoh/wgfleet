@@ -418,3 +418,28 @@ func TestHardeningProtoRoundTripUnset(t *testing.T) {
 		t.Error("an unset policy must read as enabled")
 	}
 }
+
+// The master's own verdict — held out, on what probe result, since when — is the
+// half of a tunnel's story mihomo cannot tell. It used to live only in the
+// master's journal, so the console could say an exit had stopped carrying but
+// never why. Dropping any of these three on the wire puts it back there.
+func TestStatusExitHealthCarriesTheMastersHeldOutVerdict(t *testing.T) {
+	since := time.Unix(1757583219, 0).UTC()
+	in := domain.NodeStatus{
+		NodeID: "master-xa-1",
+		State:  domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{
+			{Name: "vn1", Alive: false, HeldOut: true, Reachable: 0, Probed: 4, HeldSince: since},
+			{Name: "vn2", Alive: true, Selected: true, Reachable: 4, Probed: 4},
+		},
+	}
+	out := StatusFromProto("master-xa-1", StatusToProto(in))
+	vn1 := out.ExitHealth[0]
+	if !vn1.HeldOut || vn1.Reachable != 0 || vn1.Probed != 4 || !vn1.HeldSince.Equal(since) {
+		t.Fatalf("held-out verdict lost on the wire: %+v", vn1)
+	}
+	vn2 := out.ExitHealth[1]
+	if vn2.HeldOut || !vn2.HeldSince.IsZero() || vn2.Probed != 4 {
+		t.Fatalf("a carrying exit must round-trip with no hold: %+v", vn2)
+	}
+}

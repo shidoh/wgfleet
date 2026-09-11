@@ -451,6 +451,10 @@ a:focus-visible,
 .subbadge.muted,
 .subbadge.slow    { color: var(--amber); border-color: rgba(245,177,76,.30); background: rgba(245,177,76,.06); }
 .subbadge.blocked { color: var(--red); border-color: rgba(248,113,113,.30); background: rgba(248,113,113,.06); }
+/* Red, like `blocked`: an exit the master has pulled out of the load balancer is
+   carrying no client traffic right now. It sits next to a green Ready pill on
+   purpose — the node is fine, the path to it is not, and those are two facts. */
+.subbadge.held-out { color: var(--red); border-color: rgba(248,113,113,.30); background: rgba(248,113,113,.06); }
 /* Amber, not red. Decommissioning is a deliberate lifecycle step with a "Cancel
    decommission" button next to it, and the console already spends red on the one
    thing that cannot be undone. Sharing red with `blocked` made an intended

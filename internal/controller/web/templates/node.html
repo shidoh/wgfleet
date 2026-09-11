@@ -4,6 +4,11 @@
   <h1 class="detail-title">{{.Node.Name}}</h1>
   <span class="role {{.Node.Role}}">{{.Node.Role}}</span>
   <span class="state-pill {{lower .Node.State}}"><span class="led"></span>{{.Node.State}}</span>
+  {{/* The state pill is node-local: it reports this node's own self-checks, all of
+       which pass on a healthy exit the master cannot route through. This badge is
+       the other half, and it is why a green Ready next to it is not a contradiction. */}}
+  {{with .HeldOut}}<span class="subbadge held-out" title="The master's multi-destination probe is holding this exit out of the load balancer — it carries no client traffic right now. The node's own checks are about the node; this is about the tunnel to it.">
+    <span class="led"></span>out of rotation{{if .HeldFor}} {{.HeldFor}}{{end}}{{if .Probes}} · probes {{.Probes}}{{end}}</span>{{end}}
   {{if or .Node.Drain .Node.Decommission .WireSkew (and .HasStatus .Status.EgressBlocked) (and .HasStatus .Status.EgressThroughputDegraded) (and .HasStatus (ne .Status.ActiveEgress "") (ne .Status.ActiveEgress "warp"))}}
   <span class="subbadges">
     {{if .Node.DrainByConfig}}<span class="subbadge drain" title="Drained by the manifest (fleet.exits[].drain: true): no new traffic, the tunnel stays up. Remove that line and restart the controller to bring it back; the console cannot undrain it."><span class="led"></span>drained by config</span>

@@ -141,6 +141,15 @@
   {{if .Region}}<span class="topo-tag">{{.Region}}</span>{{end}}
   <span class="state-pill {{lower .State}}"><span class="led"></span>{{.State}}</span>
   {{template "node-subbadges" .}}
+  {{/* The master's own verdict, and the only thing on this panel that answers WHY
+       an exit stopped carrying. Rendered exit-side rather than in node-subbadges
+       because a master is in no rotation and has no verdict to show. An exit with
+       no verdict (the idle reserve tier) renders nothing — silence here means
+       "nobody judged it", which is not the same as healthy. */}}
+  {{if .HeldOut}}<span class="subbadge held-out" title="The master's multi-destination probe is holding this exit out of the load balancer. This is OUR verdict, stricter than mihomo's single-URL check: the exit's own health checks can all be green while the tunnel to it carries nothing.">
+    <span class="led"></span>out of rotation{{if .HeldFor}} {{.HeldFor}}{{end}}{{if .Probes}} · probes {{.Probes}}{{end}}</span>
+  {{else if .Unusable}}<span class="subbadge held-out" title="The warm probe of the reserve tier reached none of its destinations through this exit. It carries no traffic today, so this is not an outage — it means failing over to it would not restore anything.">
+    <span class="led"></span>no usable path{{if .Probes}} · probes {{.Probes}}{{end}}</span>{{end}}
   <span class="xport {{transportSlug .Transport}}" title="Active master↔exit transport{{if .DualTransport}} (switchable on the node page){{end}}">{{transportLabel .Transport}}{{if .DualTransport}} ⇄{{end}}</span>
   {{if .Latency}}<span class="topo-exit-lat{{if .Slow}} slow{{end}}" title="master↔exit url-test latency">{{.Latency}}</span>{{end}}
 </a>

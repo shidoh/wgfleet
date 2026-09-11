@@ -293,3 +293,29 @@ wgfleet_agent_self_heal_throttled{node="master-xa-1",role="master",service="miho
 		}
 	})
 }
+
+// "The standby tier is 2 of 3 usable" is a number nobody can act on: the alert on
+// the tally only fires when the LAST reserve member dies, and until then the one
+// that is broken has no name anywhere. This series is the name.
+func TestStandbyTierMemberMetricNamesTheFailingReserveExit(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewAgentMetrics(reg, "master-xa-1", domain.RoleMaster, time.Unix(1_700_000_000, 0))
+	m.ObserveStandbyMembers(map[string]bool{"1cnode004": false, "anz3": true})
+
+	want := `
+# HELP wgfleet_agent_standby_tier_member_usable 1 when the last warm probe found this member of the INACTIVE exit tier able to reach the internet, 0 when it could not. Absent means never sampled, which is not the same as healthy. Master nodes only.
+# TYPE wgfleet_agent_standby_tier_member_usable gauge
+wgfleet_agent_standby_tier_member_usable{exit="1cnode004",node="master-xa-1",role="master"} 0
+wgfleet_agent_standby_tier_member_usable{exit="anz3",node="master-xa-1",role="master"} 1
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "wgfleet_agent_standby_tier_member_usable"); err != nil {
+		t.Error(err)
+	}
+
+	// An exit that leaves the reserve tier must leave the series with it: a frozen 0
+	// pages forever about a fallback nobody is waiting on.
+	m.ObserveStandbyMembers(map[string]bool{"anz3": true})
+	if n := testutil.CollectAndCount(reg, "wgfleet_agent_standby_tier_member_usable"); n != 1 {
+		t.Errorf("the set must be replaced, not merged; got %d series", n)
+	}
+}

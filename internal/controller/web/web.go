@@ -1050,6 +1050,19 @@ type topoExit struct {
 	Carrying      bool   // currently carrying traffic (every live member of the active tier)
 	Latency       string // preformatted url-test delay ("107ms" / "1.088s"); "" if unknown
 	Slow          bool   // latency above the slow threshold → render amber
+	// HeldOut and the two strings under it are the master's own verdict, and the
+	// reason this panel can now answer "why is it not carrying". Without them a
+	// held-out exit, a reserve-tier exit and a drained one render identically, and
+	// the only place that knew the difference was the master's journal.
+	HeldOut bool
+	Probes  string // "0/4" — destinations the last probe reached; "" when unjudged
+	HeldFor string // "12m" — how long the hold has run; "" when not held
+	// Unusable is the same finding for an exit that is in no rotation to be held
+	// out of: the last warm probe of the reserve tier reached NOTHING through it.
+	// It is not an outage — the tier carries no traffic — it is a fallback that
+	// would not restore anything, which is worth knowing before the failover and
+	// not during it.
+	Unusable bool
 }
 
 // cardOf projects a fleet-list row into the inventory + status fields every
@@ -1234,6 +1247,7 @@ func (h *Handler) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 		data.Status = st
 	}
 	data.DecommissionStuck = decommissionStuck(node, data.HasStatus, data.Status)
+	data.HeldOut = h.exitHoldOf(r.Context(), node)
 	if data.CanDelete && h.renderer != nil && node.Role == domain.RoleMaster {
 		clients, err := h.renderer.ListWGClients(r.Context(), id)
 		switch {
@@ -1327,12 +1341,21 @@ type nodeData struct {
 	// WGClientCountUnknown is set when the count could not be read. The confirm text
 	// must then warn without a number rather than fall back to saying nothing.
 	WGClientCountUnknown bool
-	Flash                string // one-shot error surfaced from a failed action redirect
-	WGEasyURL            string // master only: link to its wg-easy admin UI (mgmt overlay)
-	MihomoURL            string // master only: link to its mihomo (Clash) web dashboard (mgmt overlay)
-	MetricsURL           string // link to the node's agent Prometheus /metrics on the mgmt overlay
-	WireSkew             string // non-empty (reason) when the agent's wire version is incompatible
-	CSRF                 string // CSRF token embedded in the action forms
+	// HeldOut is the master's verdict on the tunnel to THIS exit, set only while it
+	// is being held out of the load balancer. It is deliberately absent the rest of
+	// the time: a badge that is always present is furniture, and the reserve tier
+	// would wear a permanent one by design.
+	//
+	// It sits beside the state pill because the pill cannot answer this. State comes
+	// from the node's own self-checks — handshake, egress, resolver — and every one
+	// of them passes on a healthy exit whose tunnel to the master carries nothing.
+	HeldOut    *exitHoldView
+	Flash      string // one-shot error surfaced from a failed action redirect
+	WGEasyURL  string // master only: link to its wg-easy admin UI (mgmt overlay)
+	MihomoURL  string // master only: link to its mihomo (Clash) web dashboard (mgmt overlay)
+	MetricsURL string // link to the node's agent Prometheus /metrics on the mgmt overlay
+	WireSkew   string // non-empty (reason) when the agent's wire version is incompatible
+	CSRF       string // CSRF token embedded in the action forms
 	// Transport switch (ADR-0025): populated from the rendered spec. A dual-transport
 	// exit (len(Transports) > 1) renders a switch; ActiveTransport is highlighted.
 	Transports      []domain.MasterTransport
@@ -1373,6 +1396,7 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 		data.Status = st
 	}
 	data.DecommissionStuck = decommissionStuck(node, data.HasStatus, data.Status)
+	data.HeldOut = h.exitHoldOf(r.Context(), node)
 	if data.CanDelete && h.renderer != nil && node.Role == domain.RoleMaster {
 		clients, err := h.renderer.ListWGClients(r.Context(), id)
 		switch {
@@ -1553,6 +1577,20 @@ func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
 			te.Latency = formatDelay(d)
 			te.Slow = d >= slowExitLatency
 		}
+		if v, ok := exitVerdict(health, ex.Name); ok {
+			te.HeldOut = v.HeldOut
+			if v.Probed > 0 {
+				te.Probes = fmt.Sprintf("%d/%d", v.Reachable, v.Probed)
+			}
+			if !v.HeldSince.IsZero() {
+				te.HeldFor = shortDuration(time.Since(v.HeldSince))
+			}
+			// Reachable == 0 rather than "below the threshold": the agent owns what
+			// counts as usable (it holds minReachable), and a console that re-derived
+			// the rule would drift from it. Nothing at all came back is unambiguous
+			// under any threshold.
+			te.Unusable = !v.HeldOut && v.Probed > 0 && v.Reachable == 0
+		}
 		if te.Carrying {
 			topo.Carrying = append(topo.Carrying, te)
 			continue
@@ -1602,6 +1640,76 @@ func exitDelay(health []domain.ExitTunnelHealth, exitName string) (d time.Durati
 		}
 	}
 	return d, carrying, ok
+}
+
+// exitVerdict picks the master's own judgement for an exit out of its report.
+// Tunnel names carry a transport suffix on a dual-transport exit, so an exit can
+// have two entries; only the one in the rotation is ever judged, and a held-out
+// verdict wins over a merely-sampled one.
+//
+// ok=false when nothing judged this exit — the idle reserve tier, an exit the scan
+// has not reached, or a master still on a build that does not report the verdict.
+// The caller must render that as "no verdict", never as a clean bill of health.
+func exitVerdict(health []domain.ExitTunnelHealth, exitName string) (domain.ExitTunnelHealth, bool) {
+	var best domain.ExitTunnelHealth
+	found := false
+	for _, e := range health {
+		if e.Name != exitName && !strings.HasPrefix(e.Name, exitName+"-") {
+			continue
+		}
+		if e.HeldOut {
+			return e, true
+		}
+		if e.Probed > 0 && !found {
+			best, found = e, true
+		}
+	}
+	return best, found
+}
+
+// exitHoldView is the master's held-out verdict, rendered.
+type exitHoldView struct {
+	Probes  string // "0/4" — destinations the last probe reached
+	HeldFor string // "12m" — how long the hold has run
+}
+
+// exitHoldOf returns the master's verdict on the tunnel to this exit, or nil when
+// there is none: the node is not an exit, no master has reported, the exit is in
+// no rotation (the idle reserve tier), or it is carrying normally.
+//
+// Read from the MASTER's status report, because that is where the verdict lives:
+// the exit itself has no idea whether the master's probe can reach the internet
+// through it, and its own checks all pass while it cannot.
+func (h *Handler) exitHoldOf(ctx context.Context, node domain.Node) *exitHoldView {
+	if node.Role != domain.RoleExit {
+		return nil
+	}
+	ns, err := h.nodes(ctx)
+	if err != nil {
+		return nil
+	}
+	for _, n := range ns {
+		if n.Role != domain.RoleMaster {
+			continue
+		}
+		st, err := h.store.GetStatus(ctx, n.ID)
+		if err != nil {
+			continue
+		}
+		v, ok := exitVerdict(st.ExitHealth, node.Name)
+		if !ok || !v.HeldOut {
+			continue
+		}
+		out := &exitHoldView{}
+		if v.Probed > 0 {
+			out.Probes = fmt.Sprintf("%d/%d", v.Reachable, v.Probed)
+		}
+		if !v.HeldSince.IsZero() {
+			out.HeldFor = shortDuration(time.Since(v.HeldSince))
+		}
+		return out
+	}
+	return nil
 }
 
 // formatDelay renders a url-test delay the way the design shows it: "107ms" below

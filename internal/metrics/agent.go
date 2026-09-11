@@ -31,6 +31,7 @@ type AgentMetrics struct {
 	reserveTier      prometheus.Gauge     // 1 when wg-best routes to the reserve tier
 	standbyUsable    prometheus.Gauge     // inactive tier: members the warm probe found usable
 	standbyTotal     prometheus.Gauge     // inactive tier: members the warm probe could sample
+	standbyMember    *prometheus.GaugeVec // per exit of the INACTIVE tier: is it usable
 	standbyTransport *prometheus.GaugeVec // per exit: is its INACTIVE transport usable
 	egressThroughput prometheus.Gauge     // last measured egress throughput, bytes/sec
 	guardDrops       *prometheus.GaugeVec // per nft guard chain: packets it has dropped
@@ -178,6 +179,10 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Namespace: namespace, Subsystem: "agent", Name: "self_heal_throttled",
 			Help: "1 while the restart governor is refusing further self-heal restarts of this service because they keep being needed. The defect is still there; only the symptom is muted. Master nodes only.", ConstLabels: cl,
 		}, []string{"service"})
+		m.standbyMember = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "standby_tier_member_usable",
+			Help: "1 when the last warm probe found this member of the INACTIVE exit tier able to reach the internet, 0 when it could not. Absent means never sampled, which is not the same as healthy. Master nodes only.", ConstLabels: cl,
+		}, []string{"exit"})
 		m.standbyTransport = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "standby_transport_usable",
 			Help: "1 when the last probe found this exit's INACTIVE transport able to reach the internet, 0 when it could not. Absent means never measured, which is not the same as healthy. Master nodes only.", ConstLabels: cl,
@@ -204,7 +209,7 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 		reg.MustRegister(m.transportActive)
 	}
 	if m.exitHeldOut != nil {
-		reg.MustRegister(m.exitHeldOut, m.reserveTier, m.standbyUsable, m.standbyTotal, m.standbyTransport,
+		reg.MustRegister(m.exitHeldOut, m.reserveTier, m.standbyUsable, m.standbyTotal, m.standbyMember, m.standbyTransport,
 			m.mihomoStart, m.selfHealRestarts, m.selfHealThrottle)
 	}
 	return m
@@ -285,6 +290,26 @@ func (m *AgentMetrics) ObserveTier(reserveActive bool, rotation map[string]bool,
 	m.reserveTier.Set(boolToFloat(reserveActive))
 	m.standbyUsable.Set(float64(standbyUsable))
 	m.standbyTotal.Set(float64(standbyTotal))
+}
+
+// ObserveStandbyMembers records, per exit of the INACTIVE tier, whether the warm
+// probe found it usable. A no-op on a non-master.
+//
+// It exists because the tally next to it (standby_tier_usable/total) cannot be
+// acted on: one dead reserve exit hides inside "2 of 3", so the alert stays quiet
+// until the last member dies and nothing ever names the one that is broken.
+//
+// REPLACED, not merged, for the same reason as the transport set: an exit that
+// leaves the reserve tier must leave the series rather than freeze at a 0 that
+// pages forever about a fallback nobody is waiting on.
+func (m *AgentMetrics) ObserveStandbyMembers(usable map[string]bool) {
+	if m.standbyMember == nil {
+		return
+	}
+	m.standbyMember.Reset()
+	for exit, ok := range usable {
+		m.standbyMember.WithLabelValues(exit).Set(boolToFloat(ok))
+	}
 }
 
 // StandbyTransport identifies one exit's inactive transport — the path an

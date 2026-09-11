@@ -633,3 +633,138 @@ func TestStandbyTransportForgetsExitsThatNoLongerHaveOne(t *testing.T) {
 		t.Errorf("a vanished standby must stop being reported, got %v", got)
 	}
 }
+
+// Rotation() answers "is this exit held out"; an operator looking at the console
+// needs the two facts that follow from it — how many destinations answered, and
+// how long the spell has been running. Both are already known at the moment the
+// verdict is taken; until now they were dropped on the floor and survived only in
+// the journal, which is why a held-out exit read as an unexplained "not carrying".
+func TestRotationVerdictsCarryTheProbeResultAndWhenTheHoldBegan(t *testing.T) {
+	table := map[string][2]int{"vn1": {4, 4}, "vn2": {0, 4}, "1cnode004": {4, 4}}
+	s := newTestSelector(fixedProbe(table))
+	clock := time.Unix(1000, 0)
+	s.now = func() time.Time { return clock }
+
+	// Two passes: the first may stop at vn1 by rotation, the second reaches vn2.
+	s.active(primary, reserve)
+	s.active(primary, reserve)
+
+	v := s.RotationVerdicts()
+	if len(v) != len(primary) {
+		t.Fatalf("verdicts must cover exactly the tier carrying traffic, got %v", v)
+	}
+	vn2 := v["vn2"]
+	if !vn2.HeldOut {
+		t.Errorf("vn2 fails 0/4 destinations and must read as held out, got %+v", vn2)
+	}
+	if vn2.Reachable != 0 || vn2.Probed != 4 {
+		t.Errorf("the verdict must carry the probe result that produced it, got %+v", vn2)
+	}
+	if !vn2.Since.Equal(clock) {
+		t.Errorf("the hold must be stamped with the time it began, got %+v", vn2)
+	}
+	if vn1 := v["vn1"]; vn1.HeldOut {
+		t.Errorf("vn1 is healthy and must not read as held out, got %+v", vn1)
+	}
+}
+
+// The stamp is when the spell BEGAN, not when it was last re-confirmed. A clock
+// that restarted on every failing pass would report "held out for 30 seconds"
+// forever, which is precisely the reading that makes an operator wait it out.
+func TestRotationVerdictKeepsTheStartOfTheSpellAcrossPasses(t *testing.T) {
+	// vn2 stays healthy so the tier remains usable and no failover moves the
+	// rotation out from under the assertion.
+	s := newTestSelector(fixedProbe(map[string][2]int{"vn1": {0, 4}, "vn2": {4, 4}}))
+	clock := time.Unix(1000, 0)
+	s.now = func() time.Time { return clock }
+
+	// The scan starts at a rotating offset, so give it enough passes to reach vn1.
+	for range 3 {
+		s.active(primary, reserve)
+	}
+	began := s.RotationVerdicts()["vn1"].Since
+	if began.IsZero() {
+		t.Fatal("a held-out member must be stamped on the pass that held it out")
+	}
+
+	clock = clock.Add(9 * time.Minute)
+	s.active(primary, reserve)
+	s.active(primary, reserve)
+	if got := s.RotationVerdicts()["vn1"].Since; !got.Equal(began) {
+		t.Errorf("a still-failing member keeps the start of its spell: began %v, got %v", began, got)
+	}
+}
+
+// A member that comes back must stop reporting a hold: the console reads these
+// fields directly, and a stale "held out since" on a carrying exit is a lie in
+// the one place an operator goes to check.
+func TestRotationVerdictClearsWhenTheMemberRecovers(t *testing.T) {
+	table := map[string][2]int{"vn1": {0, 4}, "vn2": {4, 4}}
+	s := newTestSelector(fixedProbe(table))
+	for range 3 {
+		s.active(primary, reserve)
+	}
+	if !s.RotationVerdicts()["vn1"].HeldOut {
+		t.Fatal("expected vn1 held out after a failing pass")
+	}
+
+	table["vn1"] = [2]int{4, 4}
+	for range defaultHoldRecover {
+		s.active(primary, reserve)
+	}
+	v := s.RotationVerdicts()["vn1"]
+	if v.HeldOut || !v.Since.IsZero() {
+		t.Errorf("a recovered member must carry no hold, got %+v", v)
+	}
+}
+
+// The warm probe of the idle reserve tier knew which member failed and threw the
+// name away, reporting only "1 of 3 usable". An aggregate cannot be acted on: the
+// alert only fires when EVERY reserve member is dead, and until then the console
+// shows a reserve exit that looks exactly like a healthy one. Live 2026-09-11:
+// 1cnode004's active path was failing for minutes at a time behind a 3/3.
+func TestWarmProbeKeepsAPerMemberVerdictNotJustTheTally(t *testing.T) {
+	table := map[string][2]int{
+		"vn1": {4, 4}, "vn2": {4, 4},
+		"1cnode004": {0, 4}, "anz3": {4, 4},
+	}
+	s := newTestSelector(fixedProbe(table))
+	res := []string{"1cnode004", "anz3"}
+
+	// The warm probe runs on a cadence; give it enough passes to land on one.
+	for range defaultWarmEvery + 1 {
+		s.active(primary, res)
+	}
+
+	v := s.StandbyVerdicts()
+	bad, ok := v["1cnode004"]
+	if !ok {
+		t.Fatalf("the failing reserve member must be named, got %v", v)
+	}
+	if bad.HeldOut {
+		t.Errorf("a reserve member is in no rotation and must not read as held out: %+v", bad)
+	}
+	if bad.Reachable != 0 || bad.Probed != 4 {
+		t.Errorf("the verdict must carry the probe result, got %+v", bad)
+	}
+	if good := v["anz3"]; good.Reachable != 4 || good.Probed != 4 {
+		t.Errorf("a healthy reserve member must carry its clean sample, got %+v", good)
+	}
+}
+
+// A member that leaves the reserve set must stop being reported, or the console
+// keeps a verdict about an exit that is no longer there.
+func TestStandbyVerdictsForgetMembersThatLeaveTheTier(t *testing.T) {
+	s := newTestSelector(fixedProbe(map[string][2]int{
+		"vn1": {4, 4}, "vn2": {4, 4}, "1cnode004": {0, 4}, "anz3": {4, 4},
+	}))
+	for range defaultWarmEvery + 1 {
+		s.active(primary, []string{"1cnode004", "anz3"})
+	}
+	for range defaultWarmEvery + 1 {
+		s.active(primary, []string{"anz3"})
+	}
+	if _, ok := s.StandbyVerdicts()["1cnode004"]; ok {
+		t.Error("an exit dropped from the reserve tier must stop being reported")
+	}
+}

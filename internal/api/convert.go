@@ -721,13 +721,19 @@ func StatusFromProto(nodeID string, r *pb.StatusReport) domain.NodeStatus {
 	}
 	for _, e := range r.GetExitHealth() {
 		h := domain.ExitTunnelHealth{
-			Name:     e.GetName(),
-			Alive:    e.GetAlive(),
-			Delay:    time.Duration(e.GetDelayMs()) * time.Millisecond,
-			Selected: e.GetSelected(),
+			Name:      e.GetName(),
+			Alive:     e.GetAlive(),
+			Delay:     time.Duration(e.GetDelayMs()) * time.Millisecond,
+			Selected:  e.GetSelected(),
+			HeldOut:   e.GetHeldOut(),
+			Reachable: int(e.GetReachable()),
+			Probed:    int(e.GetProbed()),
 		}
 		if t := e.GetLastTestUnix(); t > 0 {
 			h.LastTest = time.Unix(t, 0).UTC()
+		}
+		if t := e.GetHeldSinceUnix(); t > 0 {
+			h.HeldSince = time.Unix(t, 0).UTC()
 		}
 		st.ExitHealth = append(st.ExitHealth, h)
 	}
@@ -765,13 +771,19 @@ func StatusToProto(s domain.NodeStatus) *pb.StatusReport {
 	}
 	for _, h := range s.ExitHealth {
 		e := &pb.ExitTunnelHealth{
-			Name:     h.Name,
-			Alive:    h.Alive,
-			DelayMs:  h.Delay.Milliseconds(),
-			Selected: h.Selected,
+			Name:      h.Name,
+			Alive:     h.Alive,
+			DelayMs:   h.Delay.Milliseconds(),
+			Selected:  h.Selected,
+			HeldOut:   h.HeldOut,
+			Reachable: int32(h.Reachable),
+			Probed:    int32(h.Probed),
 		}
 		if !h.LastTest.IsZero() {
 			e.LastTestUnix = h.LastTest.Unix()
+		}
+		if !h.HeldSince.IsZero() {
+			e.HeldSinceUnix = h.HeldSince.Unix()
 		}
 		r.ExitHealth = append(r.ExitHealth, e)
 	}
