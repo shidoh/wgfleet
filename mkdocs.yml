@@ -95,3 +95,4 @@ nav:
       - Changelog: docs/changelog.md
   - Security:
       - Security policy: SECURITY.md
+      - Disclaimer: DISCLAIMER.md

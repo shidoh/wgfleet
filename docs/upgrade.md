@@ -135,6 +135,11 @@ All keys: [configuration.md#3-fleet-fleet-wide-settings](configuration.md#3-flee
 - **SSH reach is required to upgrade.** The upgrade reuses the node's manifest
   SSH target. If you removed SSH access after bootstrap, restore it before
   upgrading (or re-provision).
+- **A wedged SSH path costs one node, not the run.** A path that accepts the
+  connection and then swallows everything is abandoned 20 s into the handshake:
+  the node is reported by name as untouched — it keeps the agent it had, it is
+  never downgraded — and the rollout moves to the next one. `--node-timeout`
+  (default `5m`) bounds everything after the dial: upload, install, restart.
 - **Bumping `MinSupportedWire`** strands any agent older than the new minimum on
   its last-good spec until it is rolled. Do it only after the fleet is known to
   be past that version.

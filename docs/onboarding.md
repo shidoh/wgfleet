@@ -22,7 +22,7 @@ Supported OS, sizing and pinned versions: [system requirements](requirements.md)
 | Stage | Tool | Does |
 |---|---|---|
 | OS prep | `prepare-node.sh` (beside this file) | builds the AmneziaWG kernel module (DKMS); caps the systemd journal; joins the ZeroTier overlay. Run once per VM. |
-| Fleet onboarding | `controller --provision` | hardening, baseline firewall, apt deps, Docker, wgcf, the mTLS identity, installs the agent. Agent then reconciles the node to its spec over mTLS. |
+| Fleet onboarding | `controller --provision` | hardening, baseline firewall, apt deps, Docker, wgcf, the mTLS identity, installs the agent. Agent then reconciles the node to its spec over mTLS. Re-runnable: wgcf is compared against the version this build pins and replaced when it differs, so a node provisioned before a bump catches up instead of staying on whatever it already had. |
 
 Skipping OS prep leaves the journal uncapped: a unit stuck in a log loop can then
 fill the disk and take the data plane down.

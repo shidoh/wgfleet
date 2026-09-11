@@ -64,6 +64,7 @@ build is refused rather than downgraded.
 | wg-easy (legacy client interface) | `15.3.0` by digest on a 1.x module, `15.4.0` by digest on a 3.x module | `compose.DefaultWGEasyImage`, `DefaultWGEasyImageAWG3` |
 | xray-core (REALITY) | `26.6.22` | `compose.DefaultXrayImage` |
 | blocky | `v0.35.0` (override with `dns.tag`) | `compose.DefaultBlockyImage` |
+| wgcf (WARP egress, exits only) | `2.2.32`, stamped on the node at provisioning | `provisioner` bootstrap |
 | AmneziaWG module / tools | whatever `ppa:amnezia/ppa` ships at prep time, then held | `prepare-node.sh` |
 
 Every image and tag is overridable per node in the manifest

@@ -36,12 +36,27 @@ fleet:
 All keys: [configuration.md#2-controller-the-controller-process](configuration.md#2-controller-the-controller-process),
 [configuration.md#identity-and-exposure](configuration.md#identity-and-exposure)
 
-![Fleet view: the master trunk row, CARRYING exits with live latency, NOT CARRYING exits with their reason badges.](assets/img/console-fleet.png)
+![Fleet view: the master trunk row, CARRYING exits with live latency, NOT CARRYING exits with their reason badges — the degraded one held out of rotation for 12 minutes after a probe that reached none of its three destinations.](assets/img/console-fleet.png)
 
 | Surface | Shows |
 |---|---|
 | Fleet list | Per-state summary, live refresh, state badges. |
-| Node detail | Inventory, latest status + health checks, rendered `NodeSpec` preview (AWG params, peers, routing, firewall, DNS, master data plane), and a version-skew badge when the agent's wire version is incompatible. |
+| Topology | The master trunk, then exits split into **CARRYING** and **NOT CARRYING**, each not-carrying exit with the master's verdict on the tunnel to it (below). |
+| Node detail | Inventory, latest status + health checks, rendered `NodeSpec` preview (AWG params, peers, routing, firewall, DNS, master data plane), a version-skew badge when the agent's wire version is incompatible, and the same verdict badge beside the state pill. |
+
+Why an exit is not carrying — the badge on its card and on its node page:
+
+| Badge | Means |
+|---|---|
+| **out of rotation `12m` · probes `0/3`** | The master's own multi-destination probe judged this tunnel unusable and pulled the exit out of the load balancer `12m` ago; the last pass reached 0 of the 3 destinations it sampled. |
+| **no usable path · probes `0/3`** | A member of the idle reserve tier the last warm probe could not reach the internet through. It carries nothing today, so this is not an outage — it means failing over to it would restore nothing. |
+| no badge | Nobody judged this exit: it is carrying, or it sits behind the member the reserve scan stopped at. Absent evidence, not evidence of health. |
+
+**Ready** next to **out of rotation** is not a contradiction: the state pill reports
+the node's own self-checks, the badge reports the master's ability to route through
+it. The same verdicts are exported as `wgfleet_agent_exit_held_out` and
+`wgfleet_agent_standby_tier_member_usable`, with alerts in the archive's
+`monitoring/`.
 
 Actions are confirmed POSTs with CSRF and same-origin checks.
 
@@ -463,16 +478,23 @@ fleet:
 All keys: [configuration.md#2-controller-the-controller-process](configuration.md#2-controller-the-controller-process),
 [configuration.md#identity-and-egress](configuration.md#identity-and-egress)
 
-| Role | Check | Notes |
-|---|---|---|
-| Exit | `wg-handshake` | The freshest handshake must be under 3 m. An older handshake means the tunnel has stopped carrying traffic even though the interface is up. |
-| Exit | `egress-reachability` | Reports ok, degraded or blocked. |
-| Exit | `warp-egress` | Runs when `egress=warp`. |
-| Exit | `dns-filter` | — |
-| Exit | `lifeline` | Runs when the exit has a `lifeline`. Red with a reason ⇒ `awgl0` serves its last good config, not the current spec. |
-| Master | `client-wg` | The client interface is up. |
-| Master | `mihomo-api` | The Clash API `/version` answers. |
-| Master | `client-vless` | Runs when `client_vless.enabled`. The VLESS+REALITY inbound is up; a down inbound shows **Degraded**. |
+| Role | Check | Runs when | Notes |
+|---|---|---|---|
+| Exit | `wg-handshake` | the active master↔exit transport is AmneziaWG | The freshest handshake must be under 3 m. An older handshake means the tunnel has stopped carrying traffic even though the interface is up. |
+| Exit | `reality-inbound` | the active transport is REALITY+XHTTP | Replaces `wg-handshake`: the AWG server is then a warm standby with no handshake, and checking it would mark a healthy exit Degraded. |
+| Exit | `egress-reachability` | always | Reports ok, degraded or blocked — the censorship signal. |
+| Exit | `egress-active` | always | The egress method actually in use (`warp`, `direct`), which is not always the configured one: a blocked WARP fails over on its own. |
+| Exit | `egress-throughput` | a throughput floor is set (`min_egress_throughput_kbytes`, or the fleet floor) | Three consecutive below-floor passes report **Degraded**, two at or above the floor clear it. A sustained collapse also fails the egress over to the next method, the same way a block does. |
+| Exit | `warp-egress` | `egress: warp` | — |
+| Exit | `dns-filter` | `dns.enabled`, once the resolver has its listen address | — |
+| Exit | `lifeline` | the exit has a `lifeline` | Red with a reason ⇒ `awgl0` serves its last good config, not the current spec. |
+| Master | `client-wg` | always | The client interface is up. |
+| Master | `client-wg-owned` | `client_awg.managed: true` | The agent, not wg-easy, carries the interface. An interface named `wg0` exists in both cases, and every deferral the planner can report (no key yet, spec rejected, 3.x refused) leaves it up but unmanaged. |
+| Master | `udp-return-path` | `client_awg.managed: true` | No UDP port this node holds silently black-holes the replies to clients on it. |
+| Master | `mihomo-api` | always | The Clash API on `<mgmt_addr>:9090` answers `/version`. |
+| Master | `dns-filter` | `dns.enabled`, once the resolver has its listen address | The master is the clients' resolver: up-but-not-resolving must read Degraded. |
+| Master | `client-vless` | `client_vless.enabled` | The VLESS+REALITY inbound is up; a down inbound shows **Degraded**. |
+| Any | `spec-valid` | only when the agent rejects a spec | Red with the reason; the node keeps its last good configuration. |
 
 | Condition | Reported state |
 |---|---|

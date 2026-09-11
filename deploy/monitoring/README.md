@@ -177,6 +177,7 @@ per interface):
 | Metric | Labels | Meaning |
 |---|---|---|
 | `wgfleet_wg_handshake_age_seconds` | `iface,peer` | seconds since that peer's last handshake |
+| `wgfleet_wg_peer_rx_bytes` / `_tx_bytes` | `iface,peer` | bytes from and to that peer, cumulative; they reset when the interface is re-created, so read them with `rate()`/`increase()` rather than as a running total |
 | `wgfleet_wg_peers_active` | `iface` | peers with a handshake inside the freshness window |
 | `wgfleet_wg_collector_up` | `iface` | 1 when the peer dump could be read, 0 when it could not |
 
