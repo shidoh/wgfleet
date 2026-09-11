@@ -3,6 +3,32 @@
 What changed for operators in each wgfleet release — behaviour, manifest keys, CLI flags, the console, the scripts in the archive, and the steps an upgrade asks of you.
 Every release archive carries this page as `CHANGELOG.md`.
 
+## v0.2.6 — 2026-09-11
+
+The console says why an exit stopped carrying traffic instead of only that it did, a rolling upgrade can no longer be held hostage by one wedged node, and the reserve configs from v0.2.5 survive a reboot, a split-tunnelled master and a credential being issued.
+
+### Added
+
+- Show the master's own verdict on every exit it is not routing through, on the fleet panel and on the exit's node page: **out of rotation `12m` · probes `0/3`** for an exit its multi-destination probe pulled from the load balancer, **no usable path** for a reserve-tier member the warm probe could not reach the internet through. A green `Ready` beside the badge is not a contradiction — the state pill is the node's own self-checks, the badge is the tunnel to it. An agent older than this release reports no verdict and gets no badge.
+- Report each reserve-tier member's own probe result as `wgfleet_agent_standby_tier_member_usable{exit}`, with the `WgfleetStandbyTierMemberUnusable` alert. One dead reserve exit used to hide inside "2 of 3 usable", which is a tally nobody can act on.
+- Collect the lifeline interface like every other one (`wgfleet_wg_*` per interface) and alert with `WgfleetLifelineCheckMissing` when no exit reports a `lifeline` health check at all — the failure mode a per-node check cannot see.
+- Override what a reserve config routes into the tunnel with `fleet.exits[].lifeline.allowed_ips` (IPv4 only, default `0.0.0.0/0`).
+
+### Changed
+
+- Bound a rolling upgrade at every step: `--node-timeout` (default `5m`) covers one node's upload, install and restart; an SSH dial that connects and then swallows everything is abandoned 20 s into the handshake; a node that fails is reported by name and skipped instead of stopping the run. A node whose SSH never opens keeps the agent it had and is never downgraded.
+- Add and remove client peers on the live interface instead of bouncing it: pausing or revoking one credential no longer takes every other session on that interface down with it — on a lifeline, everyone there because their normal path is already gone.
+- Hand out a reserve config only while the exit reports its lifeline healthy — an offer the exit cannot honour is worse than no offer, because it is taken at the moment the master is already gone.
+- Give a reserve config a full tunnel instead of the master's split-tunnel routes, which wg-quick cannot install on a client.
+- Replace wgcf on re-provision when the version this build pins differs from the one stamped on the node, instead of skipping the install because some wgcf is already there.
+- Pin blocky to `v0.35.0` instead of the moving `latest` tag; override per node with `dns.tag`.
+
+### Fixed
+
+- Keep the lifeline's deferral until the interface actually comes up, so a failed bring-up is reported rather than recorded as done.
+- Persist `ip_nonlocal_bind`, so after a reboot the resolver on a lifeline exit can bind the gateway address again.
+- Update `golang.org/x/*` and gRPC for the reported vulnerabilities.
+
 ## v0.2.5 — 2026-09-08
 
 An exit can carry a reserve client-facing interface, so every credential gets a second profile to switch to when the master stops answering.
