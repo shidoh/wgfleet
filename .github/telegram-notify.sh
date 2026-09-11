@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Announce a wgfleet release in a Telegram channel: one album with the build
-# archives and SHA256SUMS, captioned with the version and a link to the
+# archives and SHA256SUMS, captioned with the version and the URL of the
 # release's section of the public changelog on the docs site. The caption sits
-# on the LAST file so it renders after the files, not between them.
+# on the LAST file so it renders after the files, not between them, and the URL
+# is written out in full because a hidden link is not clickable there.
 #
 #   TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... \
 #     .github/telegram-notify.sh <tag> <dist-dir> [changelog.md]
@@ -45,7 +46,12 @@ PAGE="${DOCS_URL%/}/docs/changelog/"
 ANCHOR="$(anchor_for)"
 LINK="$PAGE${ANCHOR:+#$ANCHOR}"
 
-CAPTION="$(printf '🚀 <b>wgfleet %s</b>\n\nWhat changed: <a href="%s">changelog</a>' \
+# The link is written out in full rather than hidden behind a word. An album
+# caption keeps a <a href=…> entity — it is still there when the message is opened
+# for editing — but the channel view does not make it clickable, so the reader gets
+# dead text. A bare URL is auto-detected instead of parsed, and that entity does
+# render as a link.
+CAPTION="$(printf '🚀 <b>wgfleet %s</b>\n\nWhat changed:\n%s' \
   "$(printf '%s' "$TAG" | escape_html)" "$(printf '%s' "$LINK" | escape_html)")"
 
 FILES=()
