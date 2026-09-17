@@ -40,6 +40,19 @@ type mihomoPlanner struct {
 	// probeBudget bounds the whole probing phase (0 ⇒ mihomo.ProbePhaseBudget).
 	// Injected in tests so the bound can be asserted without waiting out the real one.
 	probeBudget time.Duration
+	// probeAttempt bounds ONE member's probe (0 ⇒ mihomo.ProbeAttemptBudget).
+	//
+	// NOT a free tuning knob the way probeBudget is. It must stay >=
+	// mihomo.ProbeAttemptBudget, which is itself sized to outlive the bound
+	// ProbeMember gives its own HTTP calls. Set it lower and this timeout fires
+	// first, aborting a delay test mid-flight — which is exactly how mihomo comes
+	// to record alive=false on an exit nobody judged unhealthy, i.e. the defect
+	// budgetedProbe exists to prevent, reintroduced one layer up.
+	//
+	// Tests may go below the floor ONLY when their fake Clash API answers (or
+	// refuses to answer) well inside the value they set, so no probe is ever
+	// actually cut short. Production leaves this zero.
+	probeAttempt time.Duration
 	// restart bounces the container (nil ⇒ real `docker compose restart mihomo`);
 	// injected in tests. Used when a wireguard-proxy change can't be hot-reloaded.
 	restart func(ctx context.Context) error
@@ -73,6 +86,53 @@ func (p mihomoPlanner) tunnelKey(tunnel string) (string, error) {
 	return kp.PrivateKey, nil
 }
 
+// budgetedProbe bounds a probing phase by DECIDING BEFORE each member whether the
+// remaining budget still covers a whole attempt, and returning a blind sample for
+// the ones it does not. It never cancels a probe that is already on the wire.
+//
+// That distinction is the whole point. `GET /proxies/{name}/delay` stores
+// `alive = (err == nil)` for every call, so a cancelled probe is a write: it marks
+// an exit dead in mihomo while the agent — reading a transport error — correctly
+// treats the sample as untrustworthy and says nothing. The exit leaves wg-best with
+// no verdict, no log and no metric behind it.
+//
+// The FIRST member is always attempted, whatever the budget: a phase budget set too
+// small is a misconfiguration, and silently probing nobody would turn it into a
+// fleet with no health signal at all rather than a late pass.
+//
+// The bound is therefore still the budget, not budget+attempt: a member only starts
+// when a WHOLE attempt fits before the deadline, so the last one finishes by it. The
+// single exception is that first attempt, which can overrun only when attempt >
+// budget — i.e. only under the misconfiguration above, never with the real values.
+//
+// The returned probe is stateful (it remembers whether it has attempted anyone) and
+// belongs to one pass; a reconcile pass is single-threaded, so it needs no locking.
+func budgetedProbe(
+	ctx context.Context,
+	deadline time.Time,
+	attempt time.Duration,
+	run func(context.Context, string) (int, int, error),
+) func(context.Context, string) (int, int, error) {
+	attempted := false
+	// The caller's ctx is deliberately ignored: threading the phase deadline into the
+	// probe is exactly the mid-flight cancellation this exists to prevent. Cancellation
+	// that MUST propagate — the agent shutting down — rides on ctx, captured here.
+	//
+	// memberProbe still advertises a per-call ctx, so a future caller could pass a
+	// narrower one (a tracing scope, a tighter deadline) and find it silently dropped.
+	// If that ever becomes a real need, the honest fix is to honour it only where it
+	// cannot outlive `attempt`, never to hand it straight to the delay test.
+	return func(_ context.Context, name string) (int, int, error) {
+		if attempted && time.Until(deadline) < attempt {
+			return 0, 0, fmt.Errorf("%w: probing phase out of budget before %q", mihomo.ErrUnreachable, name)
+		}
+		attempted = true
+		probeCtx, cancel := context.WithTimeout(ctx, attempt)
+		defer cancel()
+		return run(probeCtx, name)
+	}
+}
+
 func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
 	if spec.Master == nil {
 		return nil, fmt.Errorf("mihomo: node has no master spec")
@@ -87,23 +147,32 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 		// coincide every 10th pass — 11 members on the live fleet — and each member is
 		// bounded only by its own timeout, so a blocked destination could push the pass
 		// far past the 30s interval and slide the status report toward the staleness
-		// alert. Running out of budget is safe by construction: every probe path here
-		// treats an unanswerable sample as "hold the current verdict".
+		// alert.
+		//
+		// The budget is spent by SKIPPING members, never by cutting one short. It used
+		// to be a context shared by every probe, cancelled when it expired — and that
+		// cancel reached the in-flight delay tests, which is not a read: it makes mihomo
+		// store alive=false on exits nobody judged unhealthy, while the agent reads the
+		// same sample as blind and holds its verdict. Silent eviction, no log line, and
+		// under consistent-hashing an outage for every destination pinned to that exit.
 		budget := p.probeBudget
 		if budget == 0 {
 			budget = mihomo.ProbePhaseBudget
 		}
-		probeCtx, cancelProbes := context.WithTimeout(ctx, budget)
-		defer cancelProbes()
-		probe := func(ctx context.Context, name string) (int, int, error) {
-			return mihomo.ProbeMember(ctx, addr, secret, name, nil)
+		attempt := p.probeAttempt
+		if attempt == 0 {
+			attempt = mihomo.ProbeAttemptBudget
 		}
-		reserveActive = p.tier.ReserveActive(probeCtx, probe, primary, reserve)
+		probe := budgetedProbe(ctx, time.Now().Add(budget), attempt,
+			func(ctx context.Context, name string) (int, int, error) {
+				return mihomo.ProbeMember(ctx, addr, secret, name, nil)
+			})
+		reserveActive = p.tier.ReserveActive(ctx, probe, primary, reserve)
 		// The standby transports are drained on purpose, so they are in neither tier
 		// and nothing above reaches them. Probing them changes no decision here — the
 		// transport switch is the operator's — it only makes the answer available
 		// BEFORE the switch instead of after it.
-		p.tier.ProbeStandbyTransports(probeCtx, probe, mihomo.StandbyProxies(*spec.Master))
+		p.tier.ProbeStandbyTransports(ctx, probe, mihomo.StandbyProxies(*spec.Master))
 	}
 	attached := p.netnsAttached != nil && p.netnsAttached()
 	peerIP := NetnsPeerIP(spec, attached)

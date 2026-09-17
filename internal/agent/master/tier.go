@@ -75,7 +75,13 @@ const (
 
 // memberProbe reports how many of the probe destinations `name` could reach, and
 // how many were attempted. An error means the sample is untrustworthy (the Clash
-// API is unreachable), NOT that the member is down.
+// API is unreachable, or the phase had no budget left to ask), NOT that the member
+// is down. Every caller here must treat a non-nil error as "hold the current
+// verdict" — judging on it is how a member nobody asked ends up out of rotation.
+//
+// The ctx passed per call may be ignored by the implementation: budgetedProbe (the
+// production one) substitutes its own, because handing a probe a deadline that can
+// expire mid-flight is what evicts healthy exits from wg-best.
 type memberProbe func(ctx context.Context, name string) (ok, total int, err error)
 
 // holdRecord is what we know about a member we are holding out: the probe result

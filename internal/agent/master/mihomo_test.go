@@ -100,6 +100,13 @@ func TestMihomoPlannerDefersInsteadOfAbortingThePass(t *testing.T) {
 // blocked probe destination costs 88s against a 30s reconcile interval, and the
 // status report that feeds WgfleetNodeReportStale (critical at 180s) starts
 // sliding behind. A member-sized bound is not a bound on the pass.
+//
+// The bound is "budget plus at most ONE attempt", not "budget". The phase spends
+// its budget by skipping members it has no room for, and a member already on the
+// wire is always allowed to finish — cutting one short is what used to mark healthy
+// exits dead inside mihomo (see TestProbingPhaseNeverAbandonsAnInFlightProbe). So
+// the attempt bound is injected here too, or the one permitted attempt against a
+// server that never answers would be the real 8s.
 func TestMihomoPlannerBoundsTheWholeProbingPhase(t *testing.T) {
 	// A Clash API that accepts and never answers: every probe runs its full timeout.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -118,10 +125,11 @@ func TestMihomoPlannerBoundsTheWholeProbingPhase(t *testing.T) {
 	}()
 
 	p := mihomoPlanner{
-		paths:       PathsUnder(t.TempDir()),
-		privateKey:  "k",
-		tier:        NewTierSelector(nil),
-		probeBudget: 100 * time.Millisecond,
+		paths:        PathsUnder(t.TempDir()),
+		privateKey:   "k",
+		tier:         NewTierSelector(nil),
+		probeBudget:  100 * time.Millisecond,
+		probeAttempt: 200 * time.Millisecond,
 	}
 	spec := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{
 		BindAddress:        "10.80.0.1",
@@ -144,8 +152,9 @@ func TestMihomoPlannerBoundsTheWholeProbingPhase(t *testing.T) {
 		t.Fatalf("the probing phase finished in %v, under its own %v budget — it never ran",
 			elapsed.Truncate(time.Millisecond), p.probeBudget)
 	}
-	// Generous ceiling: the assertion is "bounded by the budget", not "fast". Without
-	// a phase budget this takes one probeTimeout (8s) per member.
+	// Generous ceiling: the assertion is "bounded as a phase", not "fast". Without a
+	// phase budget this takes one attempt per member; with one, it is the budget plus
+	// the single attempt that was allowed to run to completion.
 	if elapsed > 3*time.Second {
 		t.Errorf("the probing phase ran %v with a %v budget — it is not bounded as a phase",
 			elapsed.Truncate(time.Millisecond), p.probeBudget)

@@ -52,6 +52,15 @@ const ProbePhaseBudget = 20 * time.Second
 // enough that a full sweep stays well inside a reconcile pass.
 const probeTimeout = 6 * time.Second
 
+// ProbeAttemptBudget is the wall clock ONE ProbeMember call can occupy: its URLs run
+// concurrently, so the whole member costs one probeOne bound, not len(urls) of them.
+//
+// It exists so the phase can decide whether it still has room for a member BEFORE
+// starting it. That is the only safe way to bound the phase: a delay test cut short
+// is a delay test that writes alive=false (see the result loop in ProbeMember), so
+// the phase must skip a member it has no time for, never abandon one mid-flight.
+const ProbeAttemptBudget = probeTimeout + 2*time.Second
+
 // enough is the reachable count at which a member is considered proven usable. It
 // mirrors the tier selector's threshold; the selector re-checks what it got, so
 // keeping the two in step is a convenience rather than a correctness requirement.
