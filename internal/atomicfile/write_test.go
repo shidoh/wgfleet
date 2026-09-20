@@ -57,3 +57,39 @@ func TestNoTemporaryFileSurvives(t *testing.T) {
 		}
 	}
 }
+
+// A rename is not durable until the DIRECTORY that now names the file is synced.
+// Syncing the file alone survives a process crash but not a power cut: the bytes
+// are on the platter and the directory entry pointing at them may not be, so the
+// node comes back with the OLD identity — or none. The file sync was already here
+// and read as if it covered this; it does not.
+func TestTheDirectoryIsSyncedAfterTheRename(t *testing.T) {
+	dir := t.TempDir()
+	var synced []string
+	restore := syncDir
+	syncDir = func(d string) error {
+		synced = append(synced, d)
+		return restore(d)
+	}
+	t.Cleanup(func() { syncDir = restore })
+
+	if err := Write(filepath.Join(dir, "key"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if len(synced) != 1 || synced[0] != dir {
+		t.Fatalf("the directory holding the file was not synced after the rename: %v", synced)
+	}
+}
+
+// A directory that cannot be synced means the rename may not survive a power cut,
+// and this file is a node's identity: say so rather than report a durable write.
+func TestAFailedDirectorySyncIsReported(t *testing.T) {
+	restore := syncDir
+	syncDir = func(string) error { return os.ErrPermission }
+	t.Cleanup(func() { syncDir = restore })
+
+	err := Write(filepath.Join(t.TempDir(), "key"), []byte("x"), 0o600)
+	if err == nil {
+		t.Fatal("a write whose directory could not be synced reported success")
+	}
+}
