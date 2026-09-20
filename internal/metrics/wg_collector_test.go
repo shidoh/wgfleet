@@ -93,8 +93,14 @@ func gatherValue(t *testing.T, reg *prometheus.Registry, name string, labels map
 				}
 			}
 			if ok {
-				if m.GetGauge() != nil {
-					return m.GetGauge().GetValue()
+				// Gauge OR counter: the helper used to read gauges only, so asking it
+				// about a counter reported "not found" — which reads as "the metric is
+				// missing" when the metric is right there with the wrong type.
+				if g := m.GetGauge(); g != nil {
+					return g.GetValue()
+				}
+				if c := m.GetCounter(); c != nil {
+					return c.GetValue()
 				}
 			}
 		}

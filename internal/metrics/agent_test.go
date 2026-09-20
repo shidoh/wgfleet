@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -318,4 +319,55 @@ wgfleet_agent_standby_tier_member_usable{exit="anz3",node="master-xa-1",role="ma
 	if n := testutil.CollectAndCount(reg, "wgfleet_agent_standby_tier_member_usable"); n != 1 {
 		t.Errorf("the set must be replaced, not merged; got %d series", n)
 	}
+}
+
+// Renewal is the one thing a node does that can take it off the control plane for
+// good, and until now its failures were a log line on the node itself — readable
+// only over the channel the failure is about to close. A counter makes a node that
+// has been failing to renew visible from outside it, while it can still be reached.
+func TestRenewalOutcomesAreCounted(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewAgentMetrics(reg, "exit-de-1", domain.RoleExit, time.Now())
+
+	m.ObserveCertRenew(nil)
+	m.ObserveCertRenew(errors.New("controller refused"))
+	m.ObserveCertRenew(errors.New("controller refused"))
+	RecordCertReloadError()
+
+	lbl := map[string]string{"node": "exit-de-1", "role": "exit"}
+	ok := lbl
+	ok["result"] = "success"
+	if got := gatherValue(t, reg, "wgfleet_agent_cert_renew_total", ok); got != 1 {
+		t.Errorf("successful renewals = %v, want 1", got)
+	}
+	bad := map[string]string{"node": "exit-de-1", "role": "exit", "result": "error"}
+	if got := gatherValue(t, reg, "wgfleet_agent_cert_renew_total", bad); got != 2 {
+		t.Errorf("failed renewals = %v, want 2", got)
+	}
+	if got := gatherValue(t, reg, "wgfleet_agent_cert_reload_errors_total",
+		map[string]string{"node": "exit-de-1", "role": "exit"}); got < 1 {
+		t.Errorf("reload errors = %v, want at least 1", got)
+	}
+}
+
+// The reload counter must publish on an EXIT, with no per-pass wiring to forget.
+// Its first version was drained once per reconcile pass from inside the agent's
+// master-only block, so on every exit — five nodes of six — it stayed at zero
+// while the log said the node was one restart from losing the control plane.
+// Every node authenticates to the controller with this pair; every node must be
+// able to say when it cannot read it.
+func TestTheReloadCounterPublishesOnAnExitWithNoWiring(t *testing.T) {
+	before := gatherFrom(t, domain.RoleExit)
+	RecordCertReloadError()
+	if after := gatherFrom(t, domain.RoleExit); after != before+1 {
+		t.Errorf("an exit published %v then %v: the failure did not reach the metric", before, after)
+	}
+}
+
+func gatherFrom(t *testing.T, role domain.Role) float64 {
+	t.Helper()
+	reg := prometheus.NewRegistry()
+	NewAgentMetrics(reg, "n", role, time.Now())
+	return gatherValue(t, reg, "wgfleet_agent_cert_reload_errors_total",
+		map[string]string{"node": "n", "role": string(role)})
 }

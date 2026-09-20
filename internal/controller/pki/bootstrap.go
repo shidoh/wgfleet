@@ -7,7 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
+	"time"
 )
+
+// reloadRetryDelay is how long a failed re-read waits before its one retry. Long
+// enough to outlast the gap between the key rename and the certificate rename
+// (each preceded by an fsync), short enough to be unnoticed inside a handshake
+// that happens on the order of once per reconnect. A variable so tests do not
+// sleep.
+var reloadRetryDelay = 100 * time.Millisecond
 
 // SaveCA writes the CA certificate (0644) and private key (0600) to disk. The
 // key is a secret; callers must place it on a path covered by .gitignore and,
@@ -97,7 +105,17 @@ func ClientTLS(certPEM, keyPEM, caCertPEM []byte, serverName string) (*tls.Confi
 // after the certificate it renewed had already expired. GetClientCertificate is
 // consulted per handshake, so a reconnect after rotation presents the new pair while
 // connections already open keep the old one, which stays valid until its own expiry.
-func ReloadableClientTLS(load func() (tls.Certificate, error), caCertPEM []byte, serverName string) (*tls.Config, error) {
+//
+// onLoadError is called when a re-read fails TWICE (see the retry below). The handshake still proceeds on the
+// last pair that loaded — dropping the connection over an unreadable FILE would
+// take the node off the control plane for a fault that has not reached the wire
+// yet — but the failure must leave a trace. It used to be discarded by an
+// `if err == nil`, which made the dangerous case the quiet one: the agent keeps
+// authenticating with the certificate it started with, looks healthy for as long as
+// it stays up, and the pair on disk is one the next restart cannot load. That
+// restart is then the first symptom, and it happens at the moment the node stops
+// being reachable to fix it.
+func ReloadableClientTLS(load func() (tls.Certificate, error), caCertPEM []byte, serverName string, onLoadError func(error)) (*tls.Config, error) {
 	cert, err := load()
 	if err != nil {
 		return nil, err
@@ -112,9 +130,25 @@ func ReloadableClientTLS(load func() (tls.Certificate, error), caCertPEM []byte,
 		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
 			// Re-read on every handshake rather than caching: a handshake is rare and a
 			// stale identity is expensive, so the cheap thing to do is the current thing.
-			if fresh, err := load(); err == nil {
-				holder.Store(&fresh)
+			fresh, err := load()
+			if err != nil {
+				// Retry once before calling it a fault. The pair is two files written
+				// by two independent renames, so a handshake landing between them reads
+				// a new key beside an old certificate and fails to pair them — which is
+				// not corruption but the rotation itself, self-correcting within
+				// milliseconds. Renewal is also exactly when handshakes cluster, because
+				// the connection is re-established right after it. Reporting that as
+				// "the next restart will not be able to load this" would cry wolf on the
+				// one event the counter exists to watch.
+				time.Sleep(reloadRetryDelay)
+				if fresh, err = load(); err != nil {
+					if onLoadError != nil {
+						onLoadError(err)
+					}
+					return holder.Load(), nil
+				}
 			}
+			holder.Store(&fresh)
 			return holder.Load(), nil
 		},
 		RootCAs:    pool,

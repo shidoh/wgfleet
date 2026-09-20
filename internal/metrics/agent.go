@@ -27,25 +27,26 @@ type AgentMetrics struct {
 	// multi-destination verdict lives in the agent's memory, and mihomo's own view
 	// (exported by the controller as wgfleet_exit_tunnel_*) shows the effect
 	// without the cause.
-	exitHeldOut      *prometheus.GaugeVec // per exit: 1 while our verdict holds it out of wg-best
-	reserveTier      prometheus.Gauge     // 1 when wg-best routes to the reserve tier
-	standbyUsable    prometheus.Gauge     // inactive tier: members the warm probe found usable
-	standbyTotal     prometheus.Gauge     // inactive tier: members the warm probe could sample
-	standbyMember    *prometheus.GaugeVec // per exit of the INACTIVE tier: is it usable
-	standbyTransport *prometheus.GaugeVec // per exit: is its INACTIVE transport usable
-	egressThroughput prometheus.Gauge     // last measured egress throughput, bytes/sec
-	guardDrops       *prometheus.GaugeVec // per nft guard chain: packets it has dropped
-	udpReturnSocket  *prometheus.GaugeVec // per UDP port: can a TPROXY reply socket still be opened
-	udpReturnKnown   *prometheus.GaugeVec // per UDP port: is a blocked port one we have decided about
-	mihomoErrors     prometheus.Counter   // error lines mihomo wrote about itself
-	mihomoStart      prometheus.Gauge     // when mihomo's container last started (master-only)
-	selfHealRestarts *prometheus.GaugeVec // per service: self-heal restarts since agent start (master-only)
-	selfHealThrottle *prometheus.GaugeVec // per service: 1 while the governor refuses restarts (master-only)
-	clientPathOK     *prometheus.GaugeVec // per probe: does the client path work end to end
-	netnsMoveState   *prometheus.GaugeVec // where the namespace migration is
-	netnsMoveTries   prometheus.Gauge     // reverts spent out of the allowance
-	reconcileChanges prometheus.Gauge     // resources changed in the last pass
-	checkLatency     *prometheus.GaugeVec // per self-check: probe latency, seconds
+	exitHeldOut      *prometheus.GaugeVec   // per exit: 1 while our verdict holds it out of wg-best
+	reserveTier      prometheus.Gauge       // 1 when wg-best routes to the reserve tier
+	standbyUsable    prometheus.Gauge       // inactive tier: members the warm probe found usable
+	standbyTotal     prometheus.Gauge       // inactive tier: members the warm probe could sample
+	standbyMember    *prometheus.GaugeVec   // per exit of the INACTIVE tier: is it usable
+	standbyTransport *prometheus.GaugeVec   // per exit: is its INACTIVE transport usable
+	egressThroughput prometheus.Gauge       // last measured egress throughput, bytes/sec
+	guardDrops       *prometheus.GaugeVec   // per nft guard chain: packets it has dropped
+	udpReturnSocket  *prometheus.GaugeVec   // per UDP port: can a TPROXY reply socket still be opened
+	udpReturnKnown   *prometheus.GaugeVec   // per UDP port: is a blocked port one we have decided about
+	mihomoErrors     prometheus.Counter     // error lines mihomo wrote about itself
+	certRenew        *prometheus.CounterVec // by result: success|error — outcomes of this node's own cert rotation
+	mihomoStart      prometheus.Gauge       // when mihomo's container last started (master-only)
+	selfHealRestarts *prometheus.GaugeVec   // per service: self-heal restarts since agent start (master-only)
+	selfHealThrottle *prometheus.GaugeVec   // per service: 1 while the governor refuses restarts (master-only)
+	clientPathOK     *prometheus.GaugeVec   // per probe: does the client path work end to end
+	netnsMoveState   *prometheus.GaugeVec   // where the namespace migration is
+	netnsMoveTries   prometheus.Gauge       // reverts spent out of the allowance
+	reconcileChanges prometheus.Gauge       // resources changed in the last pass
+	checkLatency     *prometheus.GaugeVec   // per self-check: probe latency, seconds
 	startTime        prometheus.Gauge
 
 	node string
@@ -125,6 +126,10 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Namespace: namespace, Subsystem: "agent", Name: "netns_move_attempts",
 			Help: "Reverts this master has spent out of its allowance. Rising means the namespace is being tried and failing; at the limit the node stops trying and stays on the host path until someone looks.", ConstLabels: cl,
 		}),
+		certRenew: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "cert_renew_total",
+			Help: "Outcomes of this node's own mTLS certificate rotations. Renewal travels over the channel the certificate opens, so a node that keeps failing is heading for a state it cannot repair from — and until this counter existed the only record was a log line on the node itself, readable over exactly the channel that is about to close.", ConstLabels: cl,
+		}, []string{"result"}),
 		mihomoErrors: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "mihomo_errors_total",
 			Help: "Error lines mihomo has written about itself. Deliberately unclassified: the next failure of this kind will have a different message, and the signal is that the data plane is complaining at all.", ConstLabels: cl,
@@ -203,6 +208,7 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 	reg.MustRegister(m.reconcileTotal, m.reconcileDuration, m.stateInfo, m.checkUp, m.checkLatency,
 		m.driftTotal, m.driftResources, m.reconcileChanges, m.egressReach, m.egressActive,
 		m.egressThroughput, m.startTime, m.udpReturnSocket, m.udpReturnKnown, m.mihomoErrors, m.clientPathOK,
+		m.certRenew, newCertReloadCollector(cl),
 		m.guardDrops,
 		m.netnsMoveState, m.netnsMoveTries)
 	if m.transportActive != nil {
@@ -468,4 +474,13 @@ func (m *AgentMetrics) ObserveNetnsMove(state string, attempts int) {
 		m.netnsMoveState.WithLabelValues(s).Set(boolToFloat(s == state))
 	}
 	m.netnsMoveTries.Set(float64(attempts))
+}
+
+// ObserveCertRenew records the outcome of one certificate rotation attempt.
+func (m *AgentMetrics) ObserveCertRenew(err error) {
+	result := "success"
+	if err != nil {
+		result = "error"
+	}
+	m.certRenew.WithLabelValues(result).Inc()
 }

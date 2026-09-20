@@ -1782,7 +1782,17 @@ func buildClientTLS(cfg *config.AgentConfig) (*tls.Config, error) {
 	}
 	_ = certPEM
 	_ = keyPEM
-	return pki.ReloadableClientTLS(load, caPEM, serverNameOf(cfg.Agent.Controller))
+	// A re-read that fails leaves the agent handshaking on the pair it loaded at
+	// startup: healthy on the wire, and unloadable at the next restart. Log it and
+	// count it, so the window between those two moments is not silent.
+	onLoadError := func(err error) {
+		metrics.RecordCertReloadError()
+		slog.Default().Error("cannot re-read this node's certificate and key from disk; "+
+			"continuing on the pair loaded at startup, which the NEXT RESTART will not be able to load — "+
+			"check the files before restarting this agent",
+			"cert", cfg.Agent.Identity.Cert, "key", cfg.Agent.Identity.Key, "err", err)
+	}
+	return pki.ReloadableClientTLS(load, caPEM, serverNameOf(cfg.Agent.Controller), onLoadError)
 }
 
 // renewCertificateIfDue rotates this node's control-plane certificate once it is
@@ -1820,7 +1830,9 @@ func (a *agent) renewCertificateIfDue(ctx context.Context) {
 	paths := certrenew.Paths{
 		Cert: cfg.Agent.Identity.Cert, Key: cfg.Agent.Identity.Key, CA: cfg.Agent.Identity.CA,
 	}
-	if err := certrenew.Rotate(ctx, a.client, paths); err != nil {
+	err = certrenew.Rotate(ctx, a.client, paths)
+	a.metrics.ObserveCertRenew(err)
+	if err != nil {
 		a.renewBackoff = nextRenewBackoff(a.renewBackoff)
 		a.renewNotBefore = time.Now().Add(a.renewBackoff)
 		if time.Now().After(notAfter) {
