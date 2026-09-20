@@ -460,6 +460,14 @@ wgfleet_agent_start_time_seconds                   # for uptime
 
 ## Node lifecycle & health
 
+> **A client's `ping` does not test the exit path.** ICMP is neither TCP nor UDP,
+> so the master's interception does not catch it: a client's echo request is
+> forwarded and leaves the master's own uplink, with the master's address. It
+> therefore succeeds while every exit is down. To test the path a client's traffic
+> actually takes, use TCP or HTTP — `curl -sS -o /dev/null -w '%{http_code}\n'
+> https://cp.cloudflare.com/generate_204` — and compare the exit address with
+> `curl -s https://ifconfig.me`.
+
 ![Exit detail page: live status, six health checks, transport, inventory and what the node carries.](assets/img/console-exit-de-1.png)
 
 After each apply reconcile the agent runs role-specific self-checks and reports
