@@ -122,3 +122,91 @@ type signerFunc func(context.Context, []byte) ([]byte, []byte, error)
 func (f signerFunc) RenewCertificate(ctx context.Context, csr []byte) ([]byte, []byte, error) {
 	return f(ctx, csr)
 }
+
+// The key and the certificate are two files and one identity. If the second write
+// fails after the first succeeded, the node is left holding a key its certificate
+// does not certify — it can no longer authenticate, and renewal travels over the
+// very channel it just lost, so it cannot repair itself either. The previous pair
+// still worked; put it back.
+func TestAFailedCertificateWriteRestoresThePreviousKey(t *testing.T) {
+	ca, err := pki.NewCA("test-ca")
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer := &caSigner{ca: ca, id: "exit-de-1"}
+	p := testPaths(t)
+
+	// A working pair on disk first — this is the one that must survive.
+	if err := Rotate(context.Background(), signer, p); err != nil {
+		t.Fatal(err)
+	}
+	keyBefore, err := os.ReadFile(p.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certBefore, err := os.ReadFile(p.Cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Now make the certificate unwritable: its directory does not exist.
+	broken := p
+	broken.Cert = filepath.Join(filepath.Dir(p.Cert), "gone", "node.crt")
+	if err := Rotate(context.Background(), signer, broken); err == nil {
+		t.Fatal("a rotation whose certificate could not be written reported success")
+	}
+
+	keyAfter, err := os.ReadFile(p.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(keyBefore, keyAfter) {
+		t.Error("the key was replaced although the certificate write failed: the pair on disk no longer matches")
+	}
+	if _, err := tlsPairValid(certBefore, keyAfter); err != nil {
+		t.Errorf("the pair left on disk does not match, so this node cannot authenticate: %v", err)
+	}
+}
+
+// "No previous key" and "the previous key cannot be read" are not the same fact,
+// and treating them alike is how a rotation ends WORSE than not rotating: the
+// overwrite proceeds with nothing held back, and a certificate write that then
+// fails leaves a key no certificate certifies. The node's only way out of that is
+// an operator over SSH. Not rotating costs nothing — the current pair still
+// authenticates and the next pass tries again — so a key that exists and cannot be
+// read must stop the attempt before the first write.
+func TestAnUnreadableCurrentKeyStopsTheRotationBeforeItStarts(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads regardless of mode; this test needs an unprivileged user")
+	}
+	ca, err := pki.NewCA("test-ca")
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer := &caSigner{ca: ca, id: "exit-de-1"}
+	p := testPaths(t)
+	if err := Rotate(context.Background(), signer, p); err != nil {
+		t.Fatal(err)
+	}
+	certBefore, err := os.ReadFile(p.Cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chmod(p.Key, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(p.Key, 0o600) })
+
+	if err := Rotate(context.Background(), signer, p); err == nil {
+		t.Fatal("a rotation that could not read the key it was replacing reported success")
+	}
+	// The certificate must be untouched: nothing was written at all.
+	certAfter, err := os.ReadFile(p.Cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(certBefore, certAfter) {
+		t.Error("the certificate was replaced although the rotation could not be rolled back")
+	}
+}

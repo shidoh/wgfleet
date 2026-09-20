@@ -8,10 +8,13 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
-	"path/filepath"
 	"time"
+
+	"github.com/shidoh/wgfleet/internal/atomicfile"
 )
 
 // Signer asks the controller to sign a certificate request.
@@ -30,14 +33,16 @@ type Paths struct{ Cert, Key, CA string }
 // what keeps this safe to do at any moment — nothing is revoked, the node simply
 // starts using the new pair.
 //
-// The pair has to move together and cannot: two files, two renames, and a crash
-// between them leaves a key the certificate on disk does not certify. So the risk is
-// narrowed rather than pretended away. The pair is verified in memory BEFORE
-// anything is written, each file is written to a temporary and fsynced before its
-// rename, and the window between the two renames is a few microseconds. If a node
-// does land in it, the next start fails to load its identity and the operator
-// re-issues over SSH — the same path an expired certificate takes, and the reason
-// that path is kept.
+// The pair has to move together and cannot: two files, two renames, and a failure
+// between them leaves a key the certificate on disk does not certify. The risk is
+// narrowed from three sides rather than pretended away. The pair is verified in
+// memory BEFORE anything is written; each file is written to a temporary, fsynced,
+// renamed, and the directory fsynced after; and a certificate write that fails
+// puts the PREVIOUS key back, so a failed rotation ends where it began instead of
+// one step worse. What remains is a crash landing between the two renames, which
+// no two-file scheme can close: the next start then fails to load its identity and
+// the operator re-issues over SSH — the same path an expired certificate takes,
+// and the reason that path is kept.
 func Rotate(ctx context.Context, signer Signer, p Paths) error {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -66,14 +71,44 @@ func Rotate(ctx context.Context, signer Signer, p Paths) error {
 	if _, err := tlsPairValid(certPEM, keyPEM); err != nil {
 		return fmt.Errorf("renew: controller returned a certificate that does not match our key: %w", err)
 	}
-	if err := writeAtomic(p.Key, keyPEM, 0o600); err != nil {
+	// Read the key we are about to replace, so the second write has something to
+	// roll back to. ABSENT is fine — a first install has no previous pair — but
+	// "exists and could not be read" must stop the rotation before it starts.
+	// Treating the two alike meant a transient read error let the overwrite proceed
+	// with nothing to restore, and a cert write that then failed left the node
+	// holding a key no certificate on disk certifies: strictly worse than the
+	// working pair it had, on a node whose only way back is an operator over SSH.
+	// Not rotating is free — the current pair still authenticates, and the next
+	// pass tries again.
+	prevKey, readErr := os.ReadFile(p.Key)
+	switch {
+	case readErr == nil:
+	case errors.Is(readErr, fs.ErrNotExist):
+		prevKey = nil
+	default:
+		return fmt.Errorf("renew: refusing to rotate: the current key %q exists but cannot be read, "+
+			"so a failed install could not be rolled back: %w", p.Key, readErr)
+	}
+	if err := atomicfile.Write(p.Key, keyPEM, 0o600); err != nil {
 		return err
 	}
-	if err := writeAtomic(p.Cert, certPEM, 0o644); err != nil {
+	if err := atomicfile.Write(p.Cert, certPEM, 0o644); err != nil {
+		// The new key is on disk and the certificate that certifies it is not, so
+		// what remains is a pair that cannot authenticate anything — and renewal
+		// travels over the mTLS channel this pair opens, which means the node could
+		// not fix this by trying again. The previous pair still worked: put the key
+		// back and let the next pass retry from a state that talks.
+		if prevKey != nil {
+			if rerr := atomicfile.Write(p.Key, prevKey, 0o600); rerr != nil {
+				return fmt.Errorf("renew: installing the certificate failed (%w) AND the previous key could not be "+
+					"restored (%v) — this node now holds a key nothing certifies and must be re-issued out of band "+
+					"with `wgfleet-controller --certs renew`", err, rerr)
+			}
+		}
 		return err
 	}
 	if len(caPEM) > 0 && p.CA != "" {
-		if err := writeAtomic(p.CA, caPEM, 0o644); err != nil {
+		if err := atomicfile.Write(p.CA, caPEM, 0o644); err != nil {
 			return err
 		}
 	}
@@ -116,30 +151,4 @@ func tlsPairValid(certPEM, keyPEM []byte) (*x509.Certificate, error) {
 		return nil, fmt.Errorf("certificate does not certify this key")
 	}
 	return cert, nil
-}
-
-func writeAtomic(path string, data []byte, perm os.FileMode) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".renew-*")
-	if err != nil {
-		return fmt.Errorf("renew: %w", err)
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return fmt.Errorf("renew: write %q: %w", path, err)
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		tmp.Close()
-		return fmt.Errorf("renew: chmod %q: %w", path, err)
-	}
-	// fsync before the rename: this is the node's identity, and a rename that lands
-	// ahead of the bytes leaves a zero-length key that nothing can authenticate with.
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("renew: sync %q: %w", path, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("renew: close %q: %w", path, err)
-	}
-	return os.Rename(tmp.Name(), path)
 }
