@@ -3,10 +3,16 @@
 //
 // The fleet had host metrics on three nodes out of seven — the three whose hoster
 // happened to ship an exporter — and none on the master, which is the client
-// entry point and the known CPU bottleneck. The bootstrap installs the package;
-// both bootstrap and the agent's host planner write THESE files, so a reconcile
-// pass converges exactly what bootstrap laid down (the same pairing as the sshd
-// drop-in and the fail2ban jail).
+// entry point and the known CPU bottleneck. The bootstrap installs the package on
+// a node that has no exporter at all; both bootstrap and the agent's host planner
+// then write THESE files for it.
+//
+// What the platform asserts, though, is the OUTCOME and not the implementation:
+// host metrics are exported, and only over the management overlay. The exporter is
+// an optional component and its version is the operator's to move — a newer
+// upstream binary with the distro unit masked out of its way is a converged node,
+// not a broken one. See Bind in bind.go for how that question is asked, and what
+// it cost to learn that it is the right one.
 //
 // The exporter binds the management overlay only. Its output lists every
 // listening socket, mount and interface on the box, which is a map of the node
