@@ -776,8 +776,9 @@ spec:
         description: Probe '{{ $labels.probe }}' on {{ $labels.node }} has been attempted but never once
           succeeded.
   - name: wgfleet.host
-    # Host metrics come from prometheus-node-exporter, installed by the bootstrap
-    # and bound to the mgmt overlay by the agent's host planner (job wgfleet-node,
+    # Host metrics come from whichever exporter the node runs — the distro package
+    # the bootstrap installs, or a build the operator put there — bound to the mgmt
+    # overlay and adopted as-is by the agent's host planner (job wgfleet-node,
     # one target per node, labelled node/role like the agent job). Three of seven
     # nodes had these by accident of their hoster; the master — the client entry
     # point and the fleet's CPU bottleneck — had none at all.
@@ -796,7 +797,7 @@ spec:
         service: wgfleet
       annotations:
         summary: No host metrics from {{ $labels.node }}
-        description: The controller knows {{ $labels.node }} ({{ $labels.role }}) but no node-exporter target for it has been up for 30m. Re-provision the node or check the prometheus-node-exporter unit; until then CPU, memory and disk on it are invisible.
+        description: The controller knows {{ $labels.node }} ({{ $labels.role }}) but no node-exporter target for it has been up for 30m. Check the exporter unit on the node (whichever one it runs) and that it is bound to the node's mgmt address on 9100; until then CPU, memory and disk on it are invisible.
     - alert: WgfleetHostDiskAlmostFull
       expr: |
         (node_filesystem_avail_bytes{job="wgfleet-node",mountpoint="/",fstype!~"tmpfs|overlay"}

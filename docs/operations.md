@@ -458,6 +458,39 @@ wgfleet_agent_egress_reachability{state}           # ok | degraded | blocked (ce
 wgfleet_agent_start_time_seconds                   # for uptime
 ```
 
+### Host metrics (yours to upgrade)
+
+The exporter on `<mgmt_addr>:9100` is an **optional component**. wgfleet does not
+pin its version and does not stand between you and an upgrade of it: what the
+agent asserts is the outcome — something exports host metrics, and only on the
+management overlay — not which binary produces it.
+
+| Situation | What the agent does |
+|---|---|
+| Something is serving `<mgmt_addr>:9100` and nothing else | Nothing. It is adopted as-is, whatever installed it. |
+| Nothing is serving the port, `prometheus-node-exporter` is installed | Re-asserts its two files and starts the unit. Best-effort: a failure is a log warning, never the node's state. |
+| Nothing is serving the port, no distro package | Says so in the plan. It never installs packages. |
+| The port is served on `0.0.0.0`, `[::]` or another address | Rebinds it to the overlay if the distro package owns it; otherwise reports the exposure. The exporter publishes every listening socket, mount and interface on the box. |
+
+The bootstrap installs `prometheus-node-exporter` on a node that has no exporter,
+and skips both the install and the bind step on a node that already serves the
+port on its overlay address.
+
+```bash
+# Replace the distro exporter with your own build, on your own schedule.
+systemctl mask prometheus-node-exporter          # keep the two off the same port
+apt-get purge -y prometheus-node-exporter prometheus-node-exporter-collectors
+# your unit, bound to the overlay address and nothing else:
+#   ExecStart=/usr/local/bin/node_exporter --web.listen-address=<mgmt_addr>:9100
+systemctl enable --now node_exporter
+```
+
+The one rule that is not yours to change is the bind: `<mgmt_addr>:9100` only.
+An exporter on the wildcard is a map of the node for anyone who can reach the
+port. Missing host metrics are alarmed on the scrape target (30 m), not by the
+node's own state — a node the agent cannot reach at all is exactly the case its
+own report cannot cover.
+
 ## Node lifecycle & health
 
 > **A client's `ping` does not test the exit path.** ICMP is neither TCP nor UDP,
