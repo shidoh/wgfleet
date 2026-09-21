@@ -337,3 +337,37 @@ func keys(m map[string][]byte) []string {
 	}
 	return out
 }
+
+// A node where the operator runs their own exporter — a newer upstream build, the
+// distro package masked out of the way — is re-provisioned without wgfleet trying
+// to put its own back. Host metrics are an optional component: what bootstrap
+// guarantees is that they exist on the overlay, not which binary produces them.
+//
+// Left in, the bind step would run `systemctl restart prometheus-node-exporter`
+// against a masked unit and fail the whole provisioning run over observability.
+func TestBootstrapAdoptsAnExporterAlreadyServingTheOverlay(t *testing.T) {
+	in := testInput()
+	in.Facts = Facts{OS: "Linux", Arch: "x86_64", HasAWGKmod: true,
+		HostMetricsBind: nodeexporter.BindMgmt}
+	got := planText(BuildPlan(in))
+	for _, never := range []string{
+		nodeexporter.DefaultsPath, nodeexporter.DropInPath,
+		"systemctl enable " + nodeexporter.Unit,
+		"systemctl restart " + nodeexporter.Unit,
+	} {
+		if strings.Contains(got, never) {
+			t.Errorf("bootstrap must not touch an adopted exporter, found %q:\n%s", never, got)
+		}
+	}
+}
+
+// …and does not reinstall the package underneath it either: two exporters that
+// both want :9100 is how the masked unit came about in the first place.
+func TestMissingPackagesSkipsTheExporterWhenOneIsServing(t *testing.T) {
+	f := Facts{HostMetricsBind: nodeexporter.BindMgmt}
+	for _, p := range f.MissingPackages() {
+		if p == nodeexporter.Package {
+			t.Fatalf("%s must not be installed over a working exporter: %v", nodeexporter.Package, f.MissingPackages())
+		}
+	}
+}

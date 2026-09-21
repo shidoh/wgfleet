@@ -6,6 +6,9 @@ import (
 	"testing"
 )
 
+// testMgmtAddr is the overlay address the fact collector compares binds against.
+const testMgmtAddr = "10.20.0.5"
+
 func readyRunner() *MockRunner {
 	r := NewMockRunner()
 	r.Responses["uname -s"] = "Linux\n"
@@ -20,7 +23,7 @@ func readyRunner() *MockRunner {
 }
 
 func TestCollectFactsReady(t *testing.T) {
-	f, err := CollectFacts(context.Background(), readyRunner())
+	f, err := CollectFacts(context.Background(), readyRunner(), testMgmtAddr)
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
@@ -41,7 +44,7 @@ func TestCollectFactsReady(t *testing.T) {
 func TestPreflightFailsWithoutAWGModule(t *testing.T) {
 	r := readyRunner()
 	r.PrefixResponses["k=$(uname -r)"] = "AWGKMOD=no (absent, test)" // module absent
-	f, err := CollectFacts(context.Background(), r)
+	f, err := CollectFacts(context.Background(), r, testMgmtAddr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +77,7 @@ func TestMissingPackages(t *testing.T) {
 	r.DefaultResponse = "no"
 	r.PrefixResponses["k=$(uname -r)"] = "AWGKMOD=yes (loaded, test)"
 
-	f, err := CollectFacts(context.Background(), r)
+	f, err := CollectFacts(context.Background(), r, testMgmtAddr)
 	if err != nil {
 		t.Fatal(err)
 	}

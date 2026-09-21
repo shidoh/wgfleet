@@ -27,7 +27,7 @@ func New(log *slog.Logger) *Provisioner {
 // the plan reflects the node's real state). The caller supplies everything in
 // BootstrapInput except Facts, which Provision fills in.
 func (p *Provisioner) Provision(ctx context.Context, r Runner, in BootstrapInput, mode Mode) (Report, error) {
-	facts, err := CollectFacts(ctx, r)
+	facts, err := CollectFacts(ctx, r, in.Node.MgmtAddr)
 	if err != nil {
 		return Report{}, fmt.Errorf("collect facts for %q: %w", in.Node.Name, err)
 	}

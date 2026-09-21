@@ -33,11 +33,18 @@ type Facts struct {
 	HasAge       bool // age present (controller backup/restore archive encryption)
 	// HasNodeExporter reports the host-metrics exporter (prometheus-node-exporter).
 	HasNodeExporter bool
+	// HostMetricsBind is what is ALREADY serving the host-metrics port, read from
+	// the target's socket table. The exporter is an optional component the operator
+	// may upgrade on their own schedule — a newer upstream build with the distro
+	// unit masked out of its way is a normal node, not a broken one — so bootstrap
+	// asks what is being served rather than which package is installed.
+	HostMetricsBind nodeexporter.Bind
 }
 
 // CollectFacts gathers Facts from the target via the Runner. It never mutates
-// the node — every command is read-only.
-func CollectFacts(ctx context.Context, r Runner) (Facts, error) {
+// the node — every command is read-only. mgmtAddr is the node's overlay address,
+// needed to tell an exporter bound where it belongs from one open to the world.
+func CollectFacts(ctx context.Context, r Runner, mgmtAddr string) (Facts, error) {
 	var f Facts
 
 	for _, probe := range []struct {
@@ -73,9 +80,31 @@ func CollectFacts(ctx context.Context, r Runner) (Facts, error) {
 	f.HasFail2ban = commandExists(ctx, r, "fail2ban-client")
 	f.HasAge = commandExists(ctx, r, "age")
 	f.HasNodeExporter = commandExists(ctx, r, "prometheus-node-exporter")
+	f.HostMetricsBind = hostMetricsBind(ctx, r, mgmtAddr)
 	f.HasAWGKmod = awgKmodPresent(ctx, r)
 
 	return f, nil
+}
+
+// hostMetricsBind reads the target's TCP socket tables and classifies whoever
+// holds the host-metrics port. Read from /proc rather than probed with a
+// connection: a dial to <mgmt>:9100 succeeds just as well against an exporter
+// bound to the wildcard, so the one bind that must be caught is the one a dial
+// calls healthy. An unreadable table answers "nothing is serving", which makes
+// bootstrap do its normal work rather than skip it on a guess.
+func hostMetricsBind(ctx context.Context, r Runner, mgmtAddr string) nodeexporter.Bind {
+	var addrs []string
+	for _, src := range []struct {
+		path string
+		v6   bool
+	}{{"/proc/net/tcp", false}, {"/proc/net/tcp6", true}} {
+		out, err := r.Run(ctx, "cat "+src.path+" 2>/dev/null")
+		if err != nil {
+			continue
+		}
+		addrs = append(addrs, nodeexporter.ListenAddrsFrom(strings.NewReader(out), nodeexporter.Port, src.v6)...)
+	}
+	return nodeexporter.ClassifyBind(addrs, mgmtAddr)
 }
 
 // commandExists reports whether a binary is on the target's PATH.
@@ -162,10 +191,14 @@ func (f Facts) MissingPackages() []string {
 		// so disaster-recovery restore works on a freshly provisioned box.
 		pkgs = append(pkgs, "age")
 	}
-	if !f.HasNodeExporter {
+	if !f.HasNodeExporter && f.HostMetricsBind != nodeexporter.BindMgmt {
 		// Host metrics (CPU, memory, disk, network). Without them the master — the
 		// client entry point and the fleet's CPU bottleneck — had no host series at
 		// all. Bound to the mgmt overlay by a dedicated bootstrap step below.
+		//
+		// Skipped when something is already serving them on the overlay: installing a
+		// second exporter that wants the same port is what produced the masked unit
+		// this condition exists to stop us walking into.
 		pkgs = append(pkgs, nodeexporter.Package)
 	}
 	return pkgs

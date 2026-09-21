@@ -187,15 +187,24 @@ func BuildPlan(in BootstrapInput) Plan {
 	// Phase 1c-5: host metrics. The package is installed by the dependency phase;
 	// here it is bound to the mgmt overlay and made to survive booting before the
 	// overlay address exists. The agent's host planner re-asserts both files.
-	nodeExpDefaults := nodeexporter.RenderDefaults(in.Node.MgmtAddr)
-	steps = append(steps,
-		uploadStep("bind the host-metrics exporter to the mgmt address", remoteNodeExpDef,
-			[]byte(nodeExpDefaults), 0o644, nodeExpDefaults),
-		uploadStep("install the host-metrics exporter unit drop-in", remoteNodeExpDrop,
-			[]byte(nodeexporter.DropIn), 0o644, nodeexporter.DropIn),
-		runStep("enable + (re)start the host-metrics exporter",
-			"systemctl daemon-reload && systemctl enable "+nodeexporter.Unit+" && systemctl restart "+nodeexporter.Unit),
-	)
+	//
+	// Skipped entirely when the node already serves host metrics on the overlay.
+	// The exporter is an OPTIONAL component: the operator may upgrade it on their
+	// own schedule, and the usual shape of that — a newer upstream build with the
+	// distro unit masked so the two do not fight over the port — turns this step
+	// into `systemctl restart` against a masked unit, i.e. a whole provisioning run
+	// failed over observability.
+	if in.Facts.HostMetricsBind != nodeexporter.BindMgmt {
+		nodeExpDefaults := nodeexporter.RenderDefaults(in.Node.MgmtAddr)
+		steps = append(steps,
+			uploadStep("bind the host-metrics exporter to the mgmt address", remoteNodeExpDef,
+				[]byte(nodeExpDefaults), 0o644, nodeExpDefaults),
+			uploadStep("install the host-metrics exporter unit drop-in", remoteNodeExpDrop,
+				[]byte(nodeexporter.DropIn), 0o644, nodeexporter.DropIn),
+			runStep("enable + (re)start the host-metrics exporter",
+				"systemctl daemon-reload && systemctl enable "+nodeexporter.Unit+" && systemctl restart "+nodeexporter.Unit),
+		)
+	}
 
 	// Phase 1d: join the mgmt overlay (ZeroTier) if configured.
 	if in.ZeroTierNetwork != "" {
