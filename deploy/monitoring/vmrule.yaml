@@ -751,6 +751,44 @@ spec:
           renew itself either — the renewal RPC needs the handshake the expiry has already closed. It is
           running its last-good configuration until a certificate is installed out of band
           (`wgfleet-controller --certs renew {{ $labels.node }}`, delivered over SSH).'
+    - alert: WgfleetNodeCertRenewFailing
+      # Renewal backs off to one attempt an hour, so a stuck node makes at least two
+      # attempts in any 3h window. Firing here is months ahead of WgfleetNodeCertExpiring,
+      # which only speaks once the renewal window has closed — this rule is the one that
+      # fires while the node can still be reached over the channel it is about to lose.
+      # Both result series exist from agent start, so `== 0` on the success side is a
+      # real zero and not an absent series.
+      expr: increase(wgfleet_agent_cert_renew_total{result="error"}[3h]) >= 2
+        and ignoring(result) increase(wgfleet_agent_cert_renew_total{result="success"}[3h]) == 0
+      for: 1h
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: mTLS certificate renewal is failing on {{ $labels.node }}
+        description: The agent on {{ $labels.node }} is due to renew its control-plane certificate and every
+          attempt in the last 3 hours failed. It keeps authenticating with the current one until it expires.
+          Read the reason in `journalctl -u wgfleet-agent | grep 'renewal failed'` — typically a controller
+          with no CA loaded or below wire 10, or a wrong clock on the node.
+    - alert: WgfleetNodeCertUnloadable
+      # Latched on purpose: the counter lives as long as the agent process, and the
+      # danger it names is the NEXT restart. A pair that failed to re-read once may
+      # read fine the next time, but nobody should restart this agent before looking.
+      # A restart clears it — and if the pair on disk is truly broken, that restart is
+      # when the node leaves the control plane and WgfleetNodeReportStale takes over.
+      expr: wgfleet_agent_cert_reload_errors_total > 0
+      for: 0m
+      labels:
+        severity: critical
+        service: wgfleet
+      annotations:
+        summary: '{{ $labels.node }} could not re-read its certificate and key from disk'
+        description: The agent on {{ $labels.node }} failed to load its own certificate/key pair at a
+          handshake ({{ $value }} times since it started) and is running on the pair it loaded at startup.
+          The next restart may not be able to load the files at all. Before restarting it, read the error and
+          the file paths in `journalctl -u wgfleet-agent | grep 'cannot re-read'` and check that the key matches
+          the certificate (`openssl x509 -noout -pubkey -in <cert>` against `openssl pkey -pubout -in <key>`);
+          if it does not, re-issue with `wgfleet-controller --certs renew --node {{ $labels.node }}`.
     - alert: WgfleetProbeStale
       # Guarded against the never-succeeded case: that probe reports a timestamp of 0
       # BY DESIGN, so an unguarded subtraction claims ~56 years of staleness, fires

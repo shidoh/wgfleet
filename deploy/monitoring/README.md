@@ -161,12 +161,15 @@ ones — is documented at the top of that script.
 | `wgfleet_agent_start_time_seconds` | | process start (for uptime) |
 | `wgfleet_agent_cert_expiry_timestamp_seconds` | | when this node's mTLS certificate expires; **read at every scrape, not at boot** |
 | `wgfleet_agent_cert_expiry_read_errors_total` | | scrapes at which that certificate could not be read or parsed |
+| `wgfleet_agent_cert_renew_total` | `result` | this node's own certificate rotations, `success` or `error`; both series exist from agent start |
+| `wgfleet_agent_cert_reload_errors_total` | | handshakes at which the certificate/key pair could not be re-read from disk; the agent kept the pair loaded at startup |
 
 **Watching the certificate.** Agents renew their own mTLS certificate in place,
 between 70% and 90% of its life, with no restart — so on a healthy node the expiry
 steps forward roughly once a year and otherwise sits still. A node whose remaining
-time **stops going up** is one whose renewal is failing, and by the time
-`WgfleetNodeCertExpiring` fires it has been failing for at least forty days. The
+time **stops going up** is one whose renewal is failing. `WgfleetNodeCertRenewFailing` says so within hours of the
+first failed attempts; by the time `WgfleetNodeCertExpiring` fires it has been
+failing for at least forty days. The
 gauge is re-read on every scrape for exactly this reason: an earlier version read
 the file once at process start, so a node that renewed cleanly and a node whose
 renewal had been broken for months published the identical series.
@@ -274,6 +277,7 @@ What ships, by severity:
 | `WgfleetNoExitInRotation` | critical |
 | `WgfleetNoReadyExit` | critical |
 | `WgfleetNodeCertExpired` | critical |
+| `WgfleetNodeCertUnloadable` | critical |
 | `WgfleetNodeError` | critical |
 | `WgfleetNodeReportStale` | critical |
 | `WgfleetWARPEgressBlocked` | critical |
@@ -298,6 +302,7 @@ What ships, by severity:
 | `WgfleetConfigUnreadable` | warning |
 | `WgfleetHealthCheckFailing` | warning |
 | `WgfleetNodeCertExpiring` | warning |
+| `WgfleetNodeCertRenewFailing` | warning |
 | `WgfleetNodeDrainedTooLong` | warning |
 | `WgfleetNodeNotReady` | warning |
 | `WgfleetNodeReconcileFailed` | warning |

@@ -383,7 +383,9 @@ control plane, with no restart. The moment is spread per node name.
 | See | Meaning |
 |---|---|
 | `wgfleet_agent_cert_expiry_timestamp_seconds` stops going up | Renewal is failing on that node. |
+| `WgfleetNodeCertRenewFailing` fires | Every renewal attempt in the last 3 hours failed; the reason is in `journalctl -u wgfleet-agent`. |
 | `WgfleetNodeCertExpiring` fires | Renewal has been failing for at least forty days. |
+| `WgfleetNodeCertUnloadable` fires | The pair on disk failed to load at a handshake. Do not restart the agent until the key matches the certificate. |
 
 Usual causes: the node was offline, the controller has no CA loaded, or a clock
 is wrong.
