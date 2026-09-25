@@ -82,9 +82,10 @@ Verify targets are `UP` under Prometheus → Status → Targets.
 
 ### Host metrics (node_exporter)
 
-The bootstrap installs `prometheus-node-exporter` on every node and the agent's
-host planner keeps it bound to `<mgmt_addr>:9100` (never the public interface;
-an unknown mgmt address binds loopback). Scrape it as job `wgfleet-node` with a
+Every node exports host metrics on `<mgmt_addr>:9100` only. The bootstrap installs
+`prometheus-node-exporter` on a node that serves nothing there; an exporter you
+already run on that address is adopted as-is — see "Host metrics (yours to upgrade)"
+in `docs/operations.md`. Scrape it as job `wgfleet-node` with a
 `node` label equal to the manifest name, so host series join the fleet series —
 `vmstaticscrape.yaml` carries the template. `WgfleetHostMetricsMissing` names any
 node the controller knows that this job is not scraping; nodes provisioned before

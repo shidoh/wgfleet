@@ -397,6 +397,21 @@ wgfleet-controller --certs check-expiration
 
 Other nodes' certificates are on those nodes.
 
+On a node with `WgfleetNodeCertUnloadable`, before restarting its agent:
+
+```bash
+journalctl -u wgfleet-agent | grep 'cannot re-read'     # the error and the file paths
+# the two lines must be identical; paths are agent.identity.cert / .key
+openssl x509 -noout -pubkey -in /etc/wgfleet/node.crt | sha256sum
+openssl pkey -pubout -in /etc/wgfleet/node.key | sha256sum
+```
+
+Identical — restart the agent to clear the alert. Different or unreadable —
+re-issue the pair out of band (below) and install both files before restarting.
+
+A failed renewal leaves the pair it started with: the new key is only kept once
+its certificate is on disk.
+
 An expired certificate cannot renew itself, because renewal travels over the
 mTLS channel it opens. Use the out-of-band path:
 
