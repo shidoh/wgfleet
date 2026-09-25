@@ -3,6 +3,27 @@
 What changed for operators in each wgfleet release — behaviour, manifest keys, CLI flags, the console, the scripts in the archive, and the steps an upgrade asks of you.
 Every release archive carries this page as `CHANGELOG.md`.
 
+## v0.2.7 — 2026-09-25
+
+A node's own certificate rotation can no longer leave it holding a key nobody certifies, host metrics stop being a reason a node falls into `Error`, and a slow probing phase no longer pulls healthy exits out of the load balancer.
+
+### Added
+
+- Count this node's certificate rotations as `wgfleet_agent_cert_renew_total{result}` and failed re-reads of its certificate and key from disk as `wgfleet_agent_cert_reload_errors_total`. A failed re-read keeps the agent on the pair it loaded at startup and logs that the next restart will not be able to load the files on disk.
+- Alert with `WgfleetNodeCertRenewFailing` when every renewal attempt in 3 hours failed — months before `WgfleetNodeCertExpiring` — and with `WgfleetNodeCertUnloadable` when a node's own pair failed to load from disk. Both are in `deploy/monitoring/`; re-apply the rule file.
+
+### Changed
+
+- Treat host metrics as an optional component: when something already serves node metrics on the node's mgmt-overlay address — the distribution package, a binary of your own, any version — the agent and the provisioner leave it alone instead of installing, enabling or starting `prometheus-node-exporter`. Upgrading that exporter is yours. An exporter of your own listening on a wildcard or public address is named in the node's plan with the address to bind it to; the packaged one is rebound to the mgmt address.
+
+### Fixed
+
+- Keep a failed certificate rotation where it began: the new pair is verified before anything is written, and a certificate write that fails puts the previous key back. A key that exists but cannot be read stops the rotation before it starts; the current pair keeps authenticating and the next pass tries again.
+- Make every file the agent writes atomically durable across a power loss: the directory is fsynced after the rename.
+- Spend the master's probing budget by skipping members that no longer fit, never by cancelling a probe in flight. A cancelled probe was recorded by mihomo as a dead exit and silently removed it from `wg-best`.
+- Stop a masked or missing `prometheus-node-exporter` unit from holding a node in `Error`; in that state every self-check and an exit's egress failover were cancelled with it.
+- Print the changelog link in full in the release announcement.
+
 ## v0.2.6 — 2026-09-11
 
 The console says why an exit stopped carrying traffic instead of only that it did, a rolling upgrade can no longer be held hostage by one wedged node, and the reserve configs from v0.2.5 survive a reboot, a split-tunnelled master and a credential being issued.
