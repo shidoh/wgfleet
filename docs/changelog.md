@@ -2,6 +2,7 @@
 
 What changed for operators in each wgfleet release — behaviour, manifest keys, CLI flags, the console, the scripts in the archive, and the steps an upgrade asks of you.
 Every release archive carries this page as `CHANGELOG.md`.
+New releases are announced, with the archives attached, in the Telegram channel [t.me/wgfleet](https://t.me/wgfleet).
 
 ## v0.2.7 — 2026-09-25
 

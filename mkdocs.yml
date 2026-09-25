@@ -44,6 +44,17 @@ theme:
         icon: material/brightness-4
         name: Light
 
+# Footer links. Telegram is where every release is announced, with the archives
+# attached.
+extra:
+  social:
+    - icon: fontawesome/brands/telegram
+      link: https://t.me/wgfleet
+      name: Release announcements on Telegram
+    - icon: fontawesome/brands/github
+      link: https://github.com/shidoh/wgfleet
+      name: wgfleet on GitHub
+
 extra_css:
   - docs/assets/extra.css
 

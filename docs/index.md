@@ -87,7 +87,8 @@ whole fleet at a glance.
 </div>
 
 Releases ship as an archive with these pages inside; this site is the same
-material, always for the latest release. Manifest walkthrough, SOPS secrets and
+material, always for the latest release; each new one is announced in
+[Telegram](https://t.me/wgfleet). Manifest walkthrough, SOPS secrets and
 the CLI live under **Configuration**; moving a client leg off wg-easy or moving
 the master under **Migrations**; the RU split-tunnel setup under **Recipes**.
 { .wgf-map }
