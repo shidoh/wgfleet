@@ -204,6 +204,10 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 	// that then cannot converge at all.
 	m.reconcileTotal.WithLabelValues("success")
 	m.reconcileTotal.WithLabelValues("error")
+	// Same for renewal, only more so: a rotation happens once in months, so without
+	// this the series do not exist for nearly the whole life of an agent.
+	m.certRenew.WithLabelValues("success")
+	m.certRenew.WithLabelValues("error")
 
 	reg.MustRegister(m.reconcileTotal, m.reconcileDuration, m.stateInfo, m.checkUp, m.checkLatency,
 		m.driftTotal, m.driftResources, m.reconcileChanges, m.egressReach, m.egressActive,

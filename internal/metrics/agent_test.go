@@ -325,6 +325,22 @@ wgfleet_agent_standby_tier_member_usable{exit="anz3",node="master-xa-1",role="ma
 // good, and until now its failures were a log line on the node itself — readable
 // only over the channel the failure is about to close. A counter makes a node that
 // has been failing to renew visible from outside it, while it can still be reached.
+// Rotation happens once in ~9 months, so for almost the whole life of an agent no
+// outcome has been observed yet. The failing-renewal alert compares the error series
+// against the success series; if neither exists until the first rotation, the rule
+// has nothing to evaluate at exactly the moment it was written for.
+func TestRenewalSeriesExistBeforeTheFirstRotation(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	NewAgentMetrics(reg, "exit-de-1", domain.RoleExit, time.Now())
+
+	for _, result := range []string{"success", "error"} {
+		lbl := map[string]string{"node": "exit-de-1", "role": "exit", "result": result}
+		if got := gatherValue(t, reg, "wgfleet_agent_cert_renew_total", lbl); got != 0 {
+			t.Errorf("renewals{result=%q} before any rotation = %v, want 0", result, got)
+		}
+	}
+}
+
 func TestRenewalOutcomesAreCounted(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewAgentMetrics(reg, "exit-de-1", domain.RoleExit, time.Now())
