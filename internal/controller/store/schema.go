@@ -138,6 +138,48 @@ var migrations = []string{
 	// public_key (the master↔exit tunnel identity) and client_wg_public_key (the
 	// master's own client leg).
 	`ALTER TABLE nodes ADD COLUMN lifeline_public_key TEXT NOT NULL DEFAULT ''`,
+	// v16: client DEVICES (ADR-0035) — one physical device of one person, the unit
+	// a mihomo subscription is issued for. Fleet-wide: credentials stay per master
+	// and point here, so one profile can carry every gateway the device holds a
+	// credential on. id is internal and stable (the panel links to it); token is
+	// the portal secret and rotates alone, so a leaked link is cut off without the
+	// device changing identity.
+	`CREATE TABLE IF NOT EXISTS client_devices (
+		id         TEXT PRIMARY KEY,
+		token      TEXT NOT NULL UNIQUE,
+		name       TEXT NOT NULL UNIQUE,
+		created_at TEXT NOT NULL
+	)`,
+	// v17/v18: the credential points at its device, never the reverse — a
+	// credential without a device is ordinary, and deleting a device only unlinks
+	// (SET NULL): revoking stays an explicit act on the credential. SQLite admits a
+	// REFERENCES column via ADD COLUMN only with a NULL default — the shape wanted.
+	`ALTER TABLE client_wg_credentials ADD COLUMN device_id TEXT REFERENCES client_devices(id) ON DELETE SET NULL`,
+	`ALTER TABLE client_vless_credentials ADD COLUMN device_id TEXT REFERENCES client_devices(id) ON DELETE SET NULL`,
+	// v19/v20: at most one credential of each kind per device per master, held by
+	// the schema where no code path can bypass it. Partial, so the unattached
+	// majority is not constrained at all.
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_client_wg_device_master
+		ON client_wg_credentials(device_id, master_id) WHERE device_id IS NOT NULL`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_client_vless_device_master
+		ON client_vless_credentials(device_id, master_id) WHERE device_id IS NOT NULL`,
+	// v21: one-shot data migrations that must never run twice. Not user_version:
+	// that counts SCHEMA steps and is replayed by alreadyApplied after a rollback,
+	// while a data step replayed would re-wrap credentials the operator left
+	// without a device on purpose.
+	`CREATE TABLE IF NOT EXISTS store_markers (
+		name       TEXT PRIMARY KEY,
+		applied_at TEXT NOT NULL
+	)`,
+	// v22: a credential's own portal link (/c/{id}) dies for good the first time
+	// the credential joins a device. Without it, deleting a migrated device —
+	// whose token IS the credential ID — or detaching the credential would make
+	// the ID a working link again: a link the operator believed cut off, handing
+	// out a private key.
+	`ALTER TABLE client_wg_credentials ADD COLUMN legacy_link_retired INTEGER NOT NULL DEFAULT 0`,
+	// v23: the legacy lookup is by credential ID alone, across every master; the
+	// primary key is (master_id, id) and cannot serve it.
+	`CREATE INDEX IF NOT EXISTS idx_client_wg_id ON client_wg_credentials(id)`,
 }
 
 // MigrationCount is how many schema migrations this build knows. Exported so a

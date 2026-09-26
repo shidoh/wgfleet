@@ -109,6 +109,11 @@ type WGClient struct {
 	// config the user holds stays valid.
 	Enabled   bool
 	CreatedAt time.Time
+	// LegacyLinkRetired is set, irreversibly, the first time the credential joins
+	// a device. From then on its own portal link (/c/{id}) is dead for good: a
+	// credential detached from a device — or whose device was deleted or rotated —
+	// must not quietly come back to life through the ID it was once reachable by.
+	LegacyLinkRetired bool
 }
 
 // WGClientPeer is the node-facing view of a credential: everything the agent

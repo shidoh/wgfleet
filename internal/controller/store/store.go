@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/domain"
 )
@@ -133,6 +134,67 @@ type Store interface {
 	// RemoveWGClient revokes a credential outright. Returns ErrNotFound if the
 	// (master, client) pair is absent.
 	RemoveWGClient(ctx context.Context, masterID, clientID string) error
+
+	// CreateDevice inserts one client device (ADR-0035). ID, Token and Name are
+	// required and Name/Token are unique fleet-wide; CreatedAt is stamped by the
+	// caller, never by the store.
+	CreateDevice(ctx context.Context, d domain.ClientDevice) error
+
+	// GetDevice returns a device by its internal, stable ID, with its attached
+	// credentials. Returns ErrNotFound if absent.
+	GetDevice(ctx context.Context, id string) (domain.ClientDevice, error)
+
+	// GetDeviceByToken returns a device by its portal token, with its attached
+	// credentials. Returns ErrNotFound if the token is unknown.
+	GetDeviceByToken(ctx context.Context, token string) (domain.ClientDevice, error)
+
+	// ListDevices returns every device, ordered by name, each with its attached
+	// credentials.
+	ListDevices(ctx context.Context) ([]domain.ClientDevice, error)
+
+	// RenameDevice changes a device's operator-facing label. Returns ErrNotFound
+	// if the device is absent.
+	RenameDevice(ctx context.Context, id, name string) error
+
+	// RotateDeviceToken replaces a device's portal token, cutting off anyone
+	// holding the old one. Returns ErrNotFound if the device is absent.
+	RotateDeviceToken(ctx context.Context, id, token string) error
+
+	// DeleteDevice removes a device. Its credentials are unlinked (ON DELETE SET
+	// NULL), not revoked — deleting a device is not the same act as revoking the
+	// credentials it held. Returns ErrNotFound if the device is absent.
+	DeleteDevice(ctx context.Context, id string) error
+
+	// AttachCredential links an existing credential (kind, masterID, ref) to a
+	// device. Returns ErrNotFound if the device or the credential is absent,
+	// ErrDeviceSlotTaken if the device already holds a credential of this kind on
+	// this master, and ErrCredentialAttached if the credential belongs to another
+	// device. Attaching an AWG credential retires its personal link for good.
+	AttachCredential(ctx context.Context, kind domain.CredentialKind, masterID, ref, deviceID string) error
+
+	// DetachCredential unlinks a credential from its device without revoking it.
+	// newToken is minted by the caller and used only when the device's token IS
+	// this credential's ID (a migrated device): such a device rotates onto
+	// newToken in the same transaction, so it stops answering on an ID it no
+	// longer holds. Returns ErrNotFound if the credential is absent.
+	DetachCredential(ctx context.Context, kind domain.CredentialKind, masterID, ref, newToken string) error
+
+	// AddWGClientToDevice stores one already-minted client-facing WireGuard
+	// credential already linked to a device, retiring its personal link in the
+	// same write. Returns ErrNotFound if the master or the device is absent.
+	AddWGClientToDevice(ctx context.Context, masterID string, c domain.WGClient, deviceID string) error
+
+	// AddVLESSClientToDevice issues one VLESS client credential already linked to
+	// a device. Unlike AddVLESSClient this is a plain insert: it must not
+	// silently re-key a same-named credential someone else is using. Returns
+	// ErrNotFound if the master is absent.
+	AddVLESSClientToDevice(ctx context.Context, masterID string, c domain.VLESSClient, deviceID string, createdAt time.Time) error
+
+	// FindUnattachedWGClient is the legacy portal lookup: it finds a WG credential
+	// by ID alone, across every master, but only when it has never belonged to a
+	// device (device_id IS NULL and its personal link was never retired). Returns
+	// ErrNotFound otherwise.
+	FindUnattachedWGClient(ctx context.Context, id string) (string, domain.WGClient, error)
 
 	// RecordStatus stores the latest status report for a node, overwriting any
 	// previous report, and stamps the node's LastSeen.

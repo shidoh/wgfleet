@@ -16,7 +16,7 @@ import (
 // ListWGClients implements Store.
 func (s *SQLiteStore) ListWGClients(ctx context.Context, masterID string) ([]domain.WGClient, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, address, public_key, private_key, preshared_key, enabled, created_at
+		`SELECT id, name, address, public_key, private_key, preshared_key, enabled, created_at, legacy_link_retired
 		 FROM client_wg_credentials WHERE master_id=? ORDER BY name`, masterID)
 	if err != nil {
 		return nil, fmt.Errorf("list wg clients for %q: %w", masterID, err)
@@ -29,13 +29,15 @@ func (s *SQLiteStore) ListWGClients(ctx context.Context, masterID string) ([]dom
 			c         domain.WGClient
 			enabled   int
 			createdAt string
+			retired   int
 		)
 		if err := rows.Scan(&c.ID, &c.Name, &c.Address, &c.PublicKey, &c.PrivateKey,
-			&c.PresharedKey, &enabled, &createdAt); err != nil {
+			&c.PresharedKey, &enabled, &createdAt, &retired); err != nil {
 			return nil, fmt.Errorf("scan wg client for %q: %w", masterID, err)
 		}
 		c.Enabled = enabled != 0
 		c.CreatedAt = parseTime(createdAt)
+		c.LegacyLinkRetired = retired != 0
 		out = append(out, c)
 	}
 	if err := rows.Err(); err != nil {
@@ -46,6 +48,14 @@ func (s *SQLiteStore) ListWGClients(ctx context.Context, masterID string) ([]dom
 
 // AddWGClient implements Store.
 func (s *SQLiteStore) AddWGClient(ctx context.Context, masterID string, c domain.WGClient) error {
+	return s.addWGClient(ctx, masterID, c, "")
+}
+
+// addWGClient is the shared insert behind AddWGClient and AddWGClientToDevice.
+// deviceID == "" is the ordinary, unattached issue; a non-empty deviceID links
+// the credential to that device and retires its personal link in the same
+// INSERT — no replica can observe the credential without the link already dead.
+func (s *SQLiteStore) addWGClient(ctx context.Context, masterID string, c domain.WGClient, deviceID string) error {
 	switch {
 	case masterID == "":
 		return errors.New("store: master ID is required")
@@ -75,11 +85,15 @@ func (s *SQLiteStore) AddWGClient(ctx context.Context, masterID string, c domain
 	// The UNIQUE constraints turn both collisions into an error the UI reports.
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO client_wg_credentials
-			(master_id, id, name, address, public_key, private_key, preshared_key, enabled, created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?)`,
+			(master_id, id, name, address, public_key, private_key, preshared_key, enabled, created_at,
+			 device_id, legacy_link_retired)
+		 VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?, ''),?)`,
 		masterID, c.ID, c.Name, c.Address, c.PublicKey, c.PrivateKey, c.PresharedKey,
-		boolToInt(c.Enabled), fmtTime(c.CreatedAt.UTC()))
+		boolToInt(c.Enabled), fmtTime(c.CreatedAt.UTC()), deviceID, boolToInt(deviceID != ""))
 	if err != nil {
+		if deviceID != "" && isDeviceSlotViolation(err) {
+			return ErrDeviceSlotTaken
+		}
 		return fmt.Errorf("add wg client %q for %q: %w", c.Name, masterID, err)
 	}
 	return nil
