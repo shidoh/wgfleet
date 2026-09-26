@@ -648,11 +648,17 @@ func TestPortalPausedProfileServesNoReserveConfigOrQR(t *testing.T) {
 // charged the same. The shape is checked before the store is touched, so a
 // grinder cannot use the reserve route as a cheaper oracle than the main one.
 func TestPortalRateLimitsBadExitNames(t *testing.T) {
+	// devTok, not the dead aaaabbbbccccdddd: "exit-nope" is a well-shaped exit
+	// name that simply does not exist, so it only gets charged if the request
+	// actually reaches the exit-existence check — which requires a token that
+	// resolves. A dead token would lock the source out on the TOKEN alone, before
+	// the exit name was ever looked at, and the test would pass without having
+	// tested exit-name grinding at all.
 	for _, exit := range []string{"not!an!exit", "exit-nope"} {
 		h := testPortal(t)
 		var locked bool
 		for i := range 20 {
-			res, _ := fetch(t, h, "/c/aaaabbbbccccdddd/l/"+exit+"/config")
+			res, _ := fetch(t, h, "/c/"+devTok+"/l/"+exit+"/config")
 			if res.StatusCode == http.StatusTooManyRequests {
 				locked = true
 				break

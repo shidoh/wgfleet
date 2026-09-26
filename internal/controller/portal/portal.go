@@ -160,13 +160,19 @@ func (h *Handler) resolveDevice(r *http.Request) (domain.ClientDevice, error) {
 		}
 		return domain.ClientDevice{}, err
 	}
-	h.limit.Reset(ip)
+	// No Reset here: resolveDevice only clears the FIRST guessable field (the
+	// token). resolveLifeline has a SECOND one (the exit name) still to check, and
+	// a Reset here would erase every charge from grinding it before that check
+	// ever ran — see the fix in resolveLifeline's own history. Each caller resets
+	// once ITS OWN full chain of guessable fields has passed, not before.
 	return dev, nil
 }
 
 // selectWG is the device's AWG credential for /config, /qr and the reserve
 // doors — clientcfg.SelectWG, the same choice the page shows. A device without
-// one is not the caller's fault and is not charged.
+// one is not the caller's fault and is not charged. Like resolveDevice, it does
+// not reset the limiter itself — resolveLifeline builds on it with a further
+// guessable field (the exit) and must defer the reset past that check.
 func (h *Handler) selectWG(r *http.Request) (clientcfg.WGSelection, error) {
 	dev, err := h.resolveDevice(r)
 	if err != nil {
@@ -186,6 +192,10 @@ func (h *Handler) handlePage(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
+	// The token is the only guessable field this route has, and resolveDevice
+	// already charged it if it was bad — so once ViewDevice also succeeds, this
+	// source has earned a clean slate.
+	h.limit.Reset(clientIP(r))
 	data := pageData{
 		Name:            dev.Name,
 		Enabled:         v.Active,
@@ -334,6 +344,10 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
+	// The token is the only guessable field this route has, and selectWG (via
+	// resolveDevice) already charged it if it was bad — so once the config also
+	// rendered, this source has earned a clean slate.
+	h.limit.Reset(clientIP(r))
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Disposition",
@@ -352,6 +366,7 @@ func (h *Handler) handleQR(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
+	h.limit.Reset(clientIP(r))
 	// Big enough that a phone camera can resolve the modules. Measured on a real
 	// config (867 bytes): 117x117 modules, so 320px put 2.7 pixels on each one.
 	// This is the surface actual people scan, so it matters more here than in the
@@ -466,6 +481,10 @@ func (h *Handler) handleProfile(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
+	// The token is the only guessable field this route has, and resolveDevice
+	// already charged it if it was bad — so once the profile also rendered, this
+	// source has earned a clean slate.
+	h.limit.Reset(clientIP(r))
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 	// The body carries the device's AWG private key.
 	w.Header().Set("Cache-Control", "no-store")
@@ -488,6 +507,9 @@ func (h *Handler) handleProfileQR(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, fmt.Errorf("portal: no trusted address to build the subscription link: %w", clientcfg.ErrNotReady))
 		return
 	}
+	// The token is the only guessable field this route has, and resolveDevice
+	// already charged it if it was bad.
+	h.limit.Reset(clientIP(r))
 	// The QR of the LINK, not the profile: an app scans it and subscribes, and what
 	// it fetches keeps updating — a QR of the YAML would be a snapshot that never
 	// does, and too large to scan anyway.
