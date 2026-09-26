@@ -46,9 +46,22 @@ type Source interface {
 	NodeChecks(ctx context.Context, nodeID string) ([]domain.HealthCheck, error)
 }
 
+// ErrNotReady marks a master that cannot hand out a config YET — no published
+// interface key, no known endpoint, the leg not handed over. It is ours, not the
+// caller's: the portal answers "try later" (503), never "your link is dead", and
+// a device profile skips that master instead of failing whole.
+var ErrNotReady = errors.New("clientcfg: master not ready")
+
+// notReady keeps each operator-facing sentence as it was while making it match
+// ErrNotReady under errors.Is.
+type notReady string
+
+func (e notReady) Error() string        { return string(e) }
+func (e notReady) Is(target error) bool { return target == ErrNotReady }
+
 // ErrNotManaged reports that the master's client interface still belongs to
 // wg-easy, so there is no config for the controller to render yet.
-var ErrNotManaged = errors.New("this master's client interface is not managed by the agent yet")
+var ErrNotManaged error = notReady("this master's client interface is not managed by the agent yet")
 
 // Result is a rendered config and the credential it belongs to.
 type Result struct {
@@ -61,43 +74,53 @@ type Result struct {
 	Exit domain.Node
 }
 
-// Build renders the config for one credential on one master. Lookup is by
-// credential ID, which is also what the portal uses as its token — the ID is
-// random and stable, so a link keeps working across renames.
-func Build(ctx context.Context, src Source, masterID, clientID string) (Result, error) {
+// BuildInput resolves everything one credential's config is rendered FROM, without
+// rendering it: the .conf and the mihomo profile both consume this, so neither
+// renders the other's format just to throw it away.
+func BuildInput(ctx context.Context, src Source, masterID, clientID string) (wg.ClientConfigInput, domain.Node, error) {
 	node, err := src.GetNode(ctx, masterID)
 	if err != nil {
-		return Result{}, err
+		return wg.ClientConfigInput{}, domain.Node{}, err
 	}
 	spec, err := src.RenderNodeSpec(ctx, masterID)
 	if err != nil {
-		return Result{}, err
+		return wg.ClientConfigInput{}, domain.Node{}, err
 	}
 	if spec.Master == nil || spec.Master.ClientWG == nil {
-		return Result{}, ErrNotManaged
+		return wg.ClientConfigInput{}, domain.Node{}, ErrNotManaged
 	}
 	if node.ClientWGPublicKey == "" {
-		return Result{}, errors.New("the master has not published its client interface key yet")
+		return wg.ClientConfigInput{}, domain.Node{}, notReady("the master has not published its client interface key yet")
 	}
 	host := EndpointHost(node, spec)
 	if host == "" {
-		return Result{}, errors.New("no public endpoint known for this master")
+		return wg.ClientConfigInput{}, domain.Node{}, notReady("no public endpoint known for this master")
 	}
-
 	c, err := findClient(ctx, src, masterID, clientID)
 	if err != nil {
-		return Result{}, err
+		return wg.ClientConfigInput{}, domain.Node{}, err
 	}
-	cfg, err := wg.RenderClientConfig(wg.ClientConfigInput{
+	return wg.ClientConfigInput{
 		Spec:            *spec.Master.ClientWG,
 		Client:          c,
 		ServerPublicKey: node.ClientWGPublicKey,
 		Endpoint:        net.JoinHostPort(host, strconv.Itoa(spec.Master.ClientWG.ListenPort)),
-	})
+	}, node, nil
+}
+
+// Build renders the config for one credential on one master. Lookup is by
+// credential ID, which is also what the portal uses as its token — the ID is
+// random and stable, so a link keeps working across renames.
+func Build(ctx context.Context, src Source, masterID, clientID string) (Result, error) {
+	in, node, err := BuildInput(ctx, src, masterID, clientID)
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Config: cfg, Client: c, Master: node}, nil
+	cfg, err := wg.RenderClientConfig(in)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Config: cfg, Client: in.Client, Master: node}, nil
 }
 
 // findClient resolves one credential on one master, or store.ErrNotFound.
