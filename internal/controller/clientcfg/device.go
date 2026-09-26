@@ -15,6 +15,14 @@ import (
 // paused, or none attached. The portal answers it as "paused", like a paused .conf.
 var ErrNoActiveCredential = errors.New("clientcfg: the device has no active credential")
 
+// ErrNoAWG: the device has no AWG credential at all — a VLESS-only device, or one
+// with nothing attached. Distinct from ErrNoActiveCredential (which means "you had
+// one and it is paused") and from store.ErrNotFound (which means "this token names
+// nothing"): a device token IS real and IS a device, it simply has no .conf to
+// hand out. The portal maps it to 404 without charging the rate limiter — asking
+// for a format the device does not have is not a grind.
+var ErrNoAWG = errors.New("clientcfg: the device has no AWG credential")
+
 // DeviceLookup is what turning a portal token into a device needs, and nothing
 // more: two indexed lookups.
 type DeviceLookup interface {
@@ -126,7 +134,7 @@ func SelectWG(ctx context.Context, src Source, masters []string, dev domain.Clie
 	case sawPaused:
 		return WGSelection{}, ErrNoActiveCredential
 	}
-	return WGSelection{}, store.ErrNotFound
+	return WGSelection{}, ErrNoAWG
 }
 
 // deviceParts is one walk over a device's credentials, shared by page and profile.
@@ -190,12 +198,24 @@ func addVLESS(ctx context.Context, src ProfileSource, m, ref string, pm *mihomo.
 		return nil
 	}
 	p.active++
+	// A master missing from the store — GetNode returns store.ErrNotFound — is not
+	// ready, not absent: node deletion cascades its credentials, so a device can
+	// only ever reference a master that once existed, and the same master routinely
+	// coming back is a store race, not a lost credential. Skip it exactly like the
+	// unpublished-key / no-endpoint cases below, and let it surface as ErrNotReady
+	// only if nothing else on the device contributes either — never as a raw error.
 	node, err := src.GetNode(ctx, m)
-	if err != nil {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return nil
+	case err != nil:
 		return err
 	}
 	spec, err := src.RenderNodeSpec(ctx, m)
-	if err != nil {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return nil
+	case err != nil:
 		return err
 	}
 	host := EndpointHost(node, spec)
@@ -244,7 +264,7 @@ func ViewDevice(ctx context.Context, src ProfileSource, masters []string, dev do
 	switch {
 	case err == nil:
 		v.WG = &sel
-	case errors.Is(err, store.ErrNotFound), errors.Is(err, ErrNotReady), errors.Is(err, ErrNoActiveCredential):
+	case errors.Is(err, ErrNoAWG), errors.Is(err, ErrNotReady), errors.Is(err, ErrNoActiveCredential):
 	default:
 		return DeviceView{}, err
 	}

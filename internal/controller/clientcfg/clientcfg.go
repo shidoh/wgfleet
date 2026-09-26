@@ -79,7 +79,15 @@ type Result struct {
 // renders the other's format just to throw it away.
 func BuildInput(ctx context.Context, src Source, masterID, clientID string) (wg.ClientConfigInput, domain.Node, error) {
 	node, err := src.GetNode(ctx, masterID)
-	if err != nil {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		// A master missing from the store is not-ready, not absent: node deletion
+		// cascades a device's credentials, so a credential can only ever name a
+		// master that once existed here — this is a store race or a not-yet-applied
+		// registration, not evidence the credential itself is gone. wgFor still asks
+		// whether THIS credential is enabled before settling on not-ready vs. paused.
+		return wg.ClientConfigInput{}, domain.Node{}, notReady("this master was not found in the store yet")
+	case err != nil:
 		return wg.ClientConfigInput{}, domain.Node{}, err
 	}
 	spec, err := src.RenderNodeSpec(ctx, masterID)
