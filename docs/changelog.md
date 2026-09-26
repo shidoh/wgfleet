@@ -16,6 +16,8 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 - The Clash config download for VLESS clients resolves over TCP :53 through the tunnel instead of DNS-over-TLS.
 - A credential attached to a device loses its own portal link for good; hand out the device link.
+- `client_admin_ports` now also opens on mihomo's namespace veth, not only the client AWG interface: a VLESS client's connection to those ports (the portal among them) is dialled DIRECT from the namespace and arrives there, not on AWG — so a device on VLESS alone can still reach it.
+- Existing `/c/<id>` portal pages now lead with the mihomo subscription link and QR; the AmneziaWG `.conf` moved under a collapsed "AmneziaWG app instead" details block instead of being the page's main offer.
 
 ### Removed
 
