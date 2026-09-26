@@ -26,12 +26,17 @@ Plan output shows files (secrets redacted), commands, and DB updates.
 ```yaml
 controller:
   webui: 10.20.0.10:9000        # mgmt/overlay address only
+  client_portal: 10.20.0.10:9001
   session_ttl: 168h
 fleet:
   masters:
     - name: master-1
-      client_admin_ports: [9000]   # optional: reach it from the client pool too
+      client_admin_ports: [9001]   # optional: reach the portal from the client pool too
 ```
+
+Any port listed in `client_admin_ports` is reachable by every client credential holder
+(AWG and VLESS alike) — list the portal port there, not the Web UI's, unless client
+access to the admin panel itself is intended.
 
 All keys: [configuration.md#2-controller-the-controller-process](configuration.md#2-controller-the-controller-process),
 [configuration.md#identity-and-exposure](configuration.md#identity-and-exposure)

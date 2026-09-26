@@ -134,7 +134,7 @@ first, see [upgrade.md](upgrade.md).
 | `fleet.masters[].name` | string | **required** | Stable node name. This is the node's identity — renaming means re-issuing its certificate |
 | `fleet.masters[].mgmt_addr` | string | — | ZeroTier/overlay address. Binds admin surfaces and is trusted by construction |
 | `fleet.masters[].public_ip` | string | = `ssh.host` | Public IP clients and peers reach this node at |
-| `fleet.masters[].client_admin_ports` | []int | none | Admin ports (Web UI, mihomo dashboard, client portal) opened **to the VPN client pool** on the mgmt address. Default keeps admin reachable only over the overlay |
+| `fleet.masters[].client_admin_ports` | []int | none | Admin ports (Web UI, mihomo dashboard, client portal) opened **to AWG and VLESS clients** on the mgmt address — a VLESS client's connection to these ports is dialled DIRECT from mihomo's namespace and arrives on its veth, not on the AWG interface, so both are opened together. Default keeps admin reachable only over the overlay |
 | `fleet.masters[].public_tcp_ports` | []int | none | TCP ports opened **to the whole internet** — e.g. `80` for a decoy web listener. Unscoped: keep it to genuinely public services |
 | `fleet.masters[].public_udp_ports` | []int | none | UDP ports opened **to the whole internet** — e.g. a second ZeroTier instance on a non-default port |
 | `fleet.masters[].whitelist` | []CIDR | mgmt scope | Additional source CIDRs the input firewall always accepts, regardless of port. The management overlay is merged in automatically |
