@@ -6,6 +6,20 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 ## Unreleased
 
+!!! warning "Read before upgrading: this release changes what clients see and cannot be rolled back without a backup"
+
+    **Before the upgrade**
+
+    - Take a controller backup: `wgfleet-controller --backup`. The first start migrates the store (existing AmneziaWG credentials become devices); an older controller refuses to open the migrated database, so going back means restoring that backup.
+    - Run `wgfleet-controller --check-config` on your manifest. A new warning names every master whose `exclude_from_tunnel` hides the client portal or the mgmt overlay from AmneziaWG — devices there cannot refresh their subscription over AmneziaWG.
+    - Check what is listed in `client_admin_ports`: those ports are now reachable by VLESS clients too, not only AmneziaWG clients. The portal port must be there for subscriptions to refresh.
+
+    **What your users will notice — tell them**
+
+    - `/sub/<master>/<uuid>` (the v2rayTun subscription) is gone. Hand out a device link or the plain `vless://` link instead.
+    - Their `/c/<id>` portal page now leads with a mihomo subscription link; the AmneziaWG `.conf` is under "AmneziaWG app instead". The links they already have keep working.
+    - A new device's first profile comes as a `.yaml` file from you (console → **devices** → **Download profile (.yaml)**); after connecting they add the subscription link from the portal and remove the file profile.
+
 ### Added
 
 - Client devices: one link per device serves a mihomo profile with AmneziaWG and VLESS proxies on every master, automatic fallback, internal networks and internal names. Console → **devices**; tested apps: FlClash, ClashMetaForAndroid, ClashX Meta, Clash Verge Rev.
