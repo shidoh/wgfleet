@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -54,6 +55,10 @@ type clientRow struct {
 	QR      template.URL // data:image/png;base64,… QR of Link (template.URL so it isn't sanitized to #ZgotmplZ)
 	SubURL  string       // subscription URL (carries the routing header)
 	SubQR   template.URL // QR of SubURL
+	// DeviceID/DeviceName name the device this credential is attached to
+	// (ADR-0035). Both empty ⇒ unattached. VLESS has no personal portal link of
+	// its own to retire, unlike AWG.
+	DeviceID, DeviceName string
 }
 
 // handleClients renders the master's client-VLESS credential management page.
@@ -112,8 +117,12 @@ func (h *Handler) handleClients(w http.ResponseWriter, r *http.Request) {
 		h.render(w, h.clientsTmpl, "layout", data)
 		return
 	}
+	devicesByCred := h.vlessCredentialDevices(r.Context(), id)
 	for _, c := range clients {
 		row := clientRow{Name: c.Name, UUID: c.UUID, ShortID: c.ShortID}
+		if d, ok := devicesByCred[c.Name]; ok {
+			row.DeviceID, row.DeviceName = d.ID, d.Name
+		}
 		if data.Ready {
 			row.Link = buildVlessLink(host, cv.ListenPort, *cv, pubkey, node.Name, c)
 			row.QR = h.qr(row.Link)
@@ -126,6 +135,26 @@ func (h *Handler) handleClients(w http.ResponseWriter, r *http.Request) {
 		data.Clients = append(data.Clients, row)
 	}
 	h.render(w, h.clientsTmpl, "layout", data)
+}
+
+// vlessCredentialDevices maps a VLESS credential's name (its Ref, since
+// client_vless_credentials has no ID of its own) on masterID to the device it is
+// attached to, for the credential cards to link.
+func (h *Handler) vlessCredentialDevices(ctx context.Context, masterID string) map[string]domain.ClientDevice {
+	out := map[string]domain.ClientDevice{}
+	if h.devices == nil {
+		return out
+	}
+	devs, err := h.devices.ListDevices(ctx)
+	if err != nil {
+		return out
+	}
+	for _, d := range devs {
+		if c, ok := d.Credential(domain.CredentialVLESS, masterID); ok {
+			out[c.Ref] = d
+		}
+	}
+	return out
 }
 
 // handleClientClash serves a ready-to-use Clash/mihomo (Clash Verge Rev) YAML

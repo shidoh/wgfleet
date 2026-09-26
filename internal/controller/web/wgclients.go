@@ -134,6 +134,13 @@ type wgClientRow struct {
 	State string
 	// StateKind selects the chip's colour variant: online | idle | never | unreported.
 	StateKind string
+	// DeviceID/DeviceName name the device this credential is attached to (ADR-0035).
+	// Both empty ⇒ unattached (the legacy per-credential portal link may still work).
+	DeviceID, DeviceName string
+	// LinkRetired mirrors domain.WGClient.LegacyLinkRetired: once true the
+	// credential's own /c/{id} link is dead for good, whether or not it is
+	// currently attached to a device.
+	LinkRetired bool
 }
 
 // peerState resolves a credential's live state into the head chip. The two
@@ -293,9 +300,14 @@ func (h *Handler) wgClientsView(w http.ResponseWriter, r *http.Request) (wgClien
 		data.IfaceDown = h.clientInterfaceDown(r, id)
 	}
 	peers := h.clientPeerStatus(r, id)
+	devicesByCred := h.awgCredentialDevices(r.Context(), id)
 	for _, c := range clients {
 		row := wgClientRow{
 			ID: c.ID, Name: c.Name, Address: c.Address, Enabled: c.Enabled,
+			LinkRetired: c.LegacyLinkRetired,
+		}
+		if d, ok := devicesByCred[c.ID]; ok {
+			row.DeviceID, row.DeviceName = d.ID, d.Name
 		}
 		if !c.CreatedAt.IsZero() {
 			row.Created = c.CreatedAt.Format("2006-01-02")
@@ -309,6 +321,26 @@ func (h *Handler) wgClientsView(w http.ResponseWriter, r *http.Request) (wgClien
 		data.Clients = append(data.Clients, row)
 	}
 	return data, nil
+}
+
+// awgCredentialDevices maps an AWG credential's ID (on masterID) to the device
+// it is attached to, for the credential cards to link. Empty (not nil-checked by
+// callers) when devices are not wired up.
+func (h *Handler) awgCredentialDevices(ctx context.Context, masterID string) map[string]domain.ClientDevice {
+	out := map[string]domain.ClientDevice{}
+	if h.devices == nil {
+		return out
+	}
+	devs, err := h.devices.ListDevices(ctx)
+	if err != nil {
+		return out
+	}
+	for _, d := range devs {
+		if c, ok := d.Credential(domain.CredentialAWG, masterID); ok {
+			out[c.Ref] = d
+		}
+	}
+	return out
 }
 
 // clientPeerStatus returns the last reported per-peer status keyed by public key.

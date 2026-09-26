@@ -558,6 +558,7 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 		// The portal's public URL is deployment information the controller cannot
 		// derive from its bind, and without it the client page has no link to show.
 		webHandler.SetPortalBase(cfg.Controller.ClientPortalURL)
+		webHandler.SetDevices(broker)
 		webHandler.SetRoller(&webRoller{
 			co:     rollout.New(provMgr, st, rollout.Config{}, slog.Default()),
 			st:     st,

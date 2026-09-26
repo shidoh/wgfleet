@@ -55,6 +55,7 @@
         <div>
           <div class="client-name">{{.Name}}</div>
           <div class="client-uuid mono">{{.UUID}}</div>
+          {{if .DeviceID}}<div class="dim">device <a href="/devices/{{.DeviceID}}">{{.DeviceName}}</a></div>{{end}}
         </div>
         {{/* The wording, not the mechanism, is what differed from the AWG panel two
              pages over. "Its config stops working after the master reconciles"

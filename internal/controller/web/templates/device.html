@@ -1,0 +1,116 @@
+{{define "content"}}
+<div class="detail-head">
+  <a class="back" href="/devices">← Devices</a>
+  <h1 class="detail-title">{{.Device.Name}}</h1>
+</div>
+{{if .Flash}}<p class="error-note" role="alert">⚠ {{.Flash}}</p>{{end}}
+{{if .FlashOK}}<p class="ok-note" role="status">✓ {{.FlashOK}}</p>{{end}}
+
+<div class="panels cols-2 panels-top">
+  <div class="panel">
+    <h2 class="panel-label">RENAME</h2>
+    <form method="post" action="/devices/{{.Device.ID}}/rename" onsubmit="return lockAction(this)">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <label class="field"><span class="field-label">DEVICE NAME</span>
+        <input class="input" type="text" name="name" value="{{.Device.Name}}" required
+               pattern="[A-Za-z0-9._-]{1,64}" aria-describedby="rename-hint"></label>
+      <p class="cfg-hint" id="rename-hint">letters, digits, dash, underscore or dot — up to 64</p>
+      <button class="btn" type="submit" data-pending="Renaming…">Rename</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2 class="panel-label">LINKS</h2>
+    {{if .Device.PageURL}}
+    <label class="field"><span class="field-label">DEVICE PAGE</span>
+      <input class="input mono" type="text" readonly value="{{.Device.PageURL}}" onclick="this.select()"></label>
+    <label class="field"><span class="field-label">SUBSCRIPTION LINK · send this to the person</span>
+      <input class="input mono" type="text" readonly value="{{.Device.SubURL}}" onclick="this.select()"></label>
+    {{else}}
+    <p class="dim">Set controller.client_portal_url to show links.</p>
+    {{end}}
+    <div class="cfg-actions">
+      <a class="btn go" href="/devices/{{.Device.ID}}/profile.yaml">Download profile (.yaml)</a>
+    </div>
+    <span class="cfg-hint">first import: send this file; once connected, the person switches to the subscription link and deletes the file profile</span>
+  </div>
+</div>
+
+<div class="panel">
+  <h2 class="panel-label">CREDENTIALS BY MASTER</h2>
+  {{range .Slots}}
+  <div class="panels cols-2">
+    <div class="panel">
+      <div class="field-label">AMNEZIAWG · {{.Master}}</div>
+      {{if .AWG}}
+      <p><a href="/nodes/{{.Master}}/wg-clients#client-{{.AWG.Ref}}">{{.AWG.Name}}</a></p>
+      <form method="post" action="/devices/{{$.Device.ID}}/detach" onsubmit="return lockAction(this)">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        <input type="hidden" name="kind" value="awg">
+        <input type="hidden" name="master" value="{{.Master}}">
+        <input type="hidden" name="ref" value="{{.AWG.Ref}}">
+        <button class="btn ghost-red" type="submit" data-pending="Detaching…">Detach</button>
+      </form>
+      {{else}}
+      <p class="dim">empty slot</p>
+      {{end}}
+      {{/* The attach picker stays available even when the slot is occupied: the
+           store — not this page — is what refuses a second AWG credential on the
+           same master (deviceActionError explains it), and hiding the picker here
+           would only make detaching-then-attaching a two-page round trip. */}}
+      <form method="post" action="/devices/{{$.Device.ID}}/attach">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        <input type="hidden" name="kind" value="awg">
+        <input type="hidden" name="master" value="{{.Master}}">
+        <select class="input" name="ref">
+          <option value="new">issue new</option>
+          {{range .FreeAWG}}<option value="{{.Ref}}">attach {{.Name}}{{if .LiveLink}} (personal link will stop){{end}}</option>{{end}}
+        </select>
+        <button class="btn" type="submit" data-pending="Attaching…">Attach</button>
+      </form>
+    </div>
+    <div class="panel">
+      <div class="field-label">VLESS · {{.Master}}</div>
+      {{if .VLESS}}
+      <p><a href="/nodes/{{.Master}}/clients">{{.VLESS.Name}}</a></p>
+      <form method="post" action="/devices/{{$.Device.ID}}/detach" onsubmit="return lockAction(this)">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        <input type="hidden" name="kind" value="vless">
+        <input type="hidden" name="master" value="{{.Master}}">
+        <input type="hidden" name="ref" value="{{.VLESS.Ref}}">
+        <button class="btn ghost-red" type="submit" data-pending="Detaching…">Detach</button>
+      </form>
+      {{else}}
+      <p class="dim">empty slot</p>
+      {{end}}
+      <form method="post" action="/devices/{{$.Device.ID}}/attach">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        <input type="hidden" name="kind" value="vless">
+        <input type="hidden" name="master" value="{{.Master}}">
+        <select class="input" name="ref">
+          <option value="new">issue new</option>
+          {{range .FreeVLS}}<option value="{{.Ref}}">attach {{.Name}}</option>{{end}}
+        </select>
+        <button class="btn" type="submit" data-pending="Attaching…">Attach</button>
+      </form>
+    </div>
+  </div>
+  {{end}}
+</div>
+
+<div class="panel">
+  <h2 class="panel-label">DANGER ZONE</h2>
+  <div class="action-bar">
+    <form method="post" action="/devices/{{.Device.ID}}/rotate" onsubmit="return lockAction(this)">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <input type="hidden" name="confirm" value="">
+      <button class="btn ghost-amber" type="submit" data-pending="Rotating…">Rotate link</button>
+    </form>
+    <form method="post" action="/devices/{{.Device.ID}}/delete" onsubmit="return lockAction(this)">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <input type="hidden" name="confirm" value="">
+      <button class="btn ghost-red" type="submit" data-pending="Deleting…">Delete device</button>
+    </form>
+  </div>
+</div>
+{{end}}

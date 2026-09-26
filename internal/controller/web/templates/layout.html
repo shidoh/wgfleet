@@ -18,6 +18,7 @@
     <span class="spacer"></span>
     <span class="nodecount"><span class="statusdot pulse"></span>{{.NodeCount}} node{{if ne .NodeCount 1}}s{{end}}</span>
     <span class="topbar-account">
+      <a class="account-link" href="/devices" title="Client devices">devices</a>
       <a class="account-link" href="/profile" title="Admin profile">{{.User}}</a>
       <form method="post" action="/logout" class="logout-form"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button class="account-link" type="submit">logout</button></form>
     </span>

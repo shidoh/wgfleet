@@ -27,6 +27,7 @@
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <input type="hidden" name="confirm" value="1">
+      {{range .Hidden}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
       {{/* Filled, not ghost. The destructive control was a borderless .ghost-red
            whose only edge sat at 1.32:1 while Cancel was a filled button — so the
            safe choice was the heavier object on the page, and the two were thrown to

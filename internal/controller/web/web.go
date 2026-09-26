@@ -111,6 +111,8 @@ type Handler struct {
 	clientsTmpl   *template.Template // layout + client-VLESS credential management (master)
 	wgClientsTmpl *template.Template // layout + client-WireGuard credential management (master)
 	confirmTmpl   *template.Template // layout + the server-side confirmation page
+	devicesTmpl   *template.Template // layout + the devices list
+	deviceTmpl    *template.Template // layout + one device's page
 	mux           *http.ServeMux
 	csrf          string       // per-process CSRF token, embedded in forms and double-submit cookie
 	log           *slog.Logger // structured logger; surfaces render failures the page swallows
@@ -138,6 +140,9 @@ type Handler struct {
 	// portalBase is the public base URL of the client self-service portal, used to
 	// show the operator the link they hand to a person. Empty ⇒ no link is shown.
 	portalBase string
+	// devices is the client device registry (ADR-0035). nil ⇒ the Devices section
+	// is absent (404) — same optional-dependency shape as roller.
+	devices DeviceManager
 }
 
 // SetPortalBase wires the client portal's public URL. Optional and set after New
@@ -182,11 +187,19 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	if err != nil {
 		return nil, fmt.Errorf("web: parse wg clients templates: %w", err)
 	}
+	devicesTmpl, err := parsePage("templates/layout.html", "templates/devices.html")
+	if err != nil {
+		return nil, fmt.Errorf("web: parse devices templates: %w", err)
+	}
+	deviceTmpl, err := parsePage("templates/layout.html", "templates/device.html")
+	if err != nil {
+		return nil, fmt.Errorf("web: parse device templates: %w", err)
+	}
 	token, err := newCSRFToken()
 	if err != nil {
 		return nil, fmt.Errorf("web: generate csrf token: %w", err)
 	}
-	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, clientsTmpl: clientsTmpl, wgClientsTmpl: wgClientsTmpl, confirmTmpl: confirmTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, removeFromManifest: removeFromManifest, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute), subLimit: auth.NewIPLimiter(10, time.Minute, 4096)}
+	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, clientsTmpl: clientsTmpl, wgClientsTmpl: wgClientsTmpl, confirmTmpl: confirmTmpl, devicesTmpl: devicesTmpl, deviceTmpl: deviceTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, removeFromManifest: removeFromManifest, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute), subLimit: auth.NewIPLimiter(10, time.Minute, 4096)}
 
 	staticHandler := newStaticAssets(staticFS)
 	h.mux.Handle("GET /static/", staticHandler)
@@ -237,6 +250,18 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	h.mux.HandleFunc("POST /rollout/abort", h.handleRolloutAbort)
 	h.mux.HandleFunc("GET /profile", h.handleProfile)
 	h.mux.HandleFunc("POST /profile/password", h.handleChangePassword)
+	// Client devices (ADR-0035): one device holds credentials across masters.
+	h.mux.HandleFunc("GET /devices", h.handleDevices)
+	h.mux.HandleFunc("POST /devices/create", h.handleDeviceCreate)
+	h.mux.HandleFunc("GET /devices/{id}", h.handleDevice)
+	h.mux.HandleFunc("POST /devices/{id}/rename", h.handleDeviceRename)
+	h.mux.HandleFunc("POST /devices/{id}/rotate", h.handleDeviceRotate)
+	h.mux.HandleFunc("POST /devices/{id}/delete", h.handleDeviceDelete)
+	h.mux.HandleFunc("POST /devices/{id}/attach", h.handleDeviceAttach)
+	h.mux.HandleFunc("POST /devices/{id}/detach", h.handleDeviceDetach)
+	// The first import (ADR-0035): behind the session like every other page here,
+	// so it needs no limiter of its own.
+	h.mux.HandleFunc("GET /devices/{id}/profile.yaml", h.handleDeviceProfile)
 	return h, nil
 }
 
@@ -1835,6 +1860,11 @@ func httpError(w http.ResponseWriter, what string, err error) {
 	http.Error(w, fmt.Sprintf("%s: %v", what, err), http.StatusInternalServerError)
 }
 
+// hiddenField carries one form value through the confirmation page, so an action
+// whose form has more than a button — creating a device with its slots — lands
+// back with everything the operator chose.
+type hiddenField struct{ Name, Value string }
+
 // confirmView is the data behind templates/confirm.html.
 type confirmView struct {
 	Title        string
@@ -1847,6 +1877,10 @@ type confirmView struct {
 	Action       string
 	ConfirmLabel string
 	CancelHref   string
+	// Hidden replays the rest of the original form alongside `confirm=1`, so
+	// confirming does not lose choices the operator already made (device create's
+	// slot selections).
+	Hidden []hiddenField
 }
 
 // needsConfirmation renders the server-side confirmation page and reports true when
