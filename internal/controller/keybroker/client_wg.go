@@ -24,8 +24,8 @@ import (
 // one copy of it on the write path.
 var errBadClientName = fmt.Errorf("keybroker: client name must be 1-%d characters of letters, digits, dot, dash or underscore", domain.MaxClientNameLen)
 
-// IssueWGClient mints a client-facing WireGuard credential for a master and
-// persists it.
+// mintWGClient resolves a fresh client-facing WireGuard credential for a master
+// without storing it.
 //
 // The split between minting and storing is deliberate and load-bearing. The
 // keypair and the address are the only non-deterministic parts of issuing, and
@@ -34,7 +34,7 @@ var errBadClientName = fmt.Errorf("keybroker: client name must be 1-%d character
 // write replicates through raft and every replica applies it; had the store call
 // been "generate a key and take a free address", each replica would have arrived
 // at a different answer and the fleet's view of its own clients would diverge.
-func (b *Broker) IssueWGClient(ctx context.Context, masterID, name string) (domain.WGClient, error) {
+func (b *Broker) mintWGClient(ctx context.Context, masterID, name string) (domain.WGClient, error) {
 	if !domain.ValidClientName(name) {
 		return domain.WGClient{}, errBadClientName
 	}
@@ -89,7 +89,7 @@ func (b *Broker) IssueWGClient(ctx context.Context, masterID, name string) (doma
 		return domain.WGClient{}, fmt.Errorf("keybroker: mint client preshared key: %w", err)
 	}
 
-	c := domain.WGClient{
+	return domain.WGClient{
 		ID:           randomUUID(),
 		Name:         name,
 		Address:      address,
@@ -98,11 +98,20 @@ func (b *Broker) IssueWGClient(ctx context.Context, masterID, name string) (doma
 		PresharedKey: psk,
 		Enabled:      true,
 		CreatedAt:    time.Now().UTC(),
+	}, nil
+}
+
+// IssueWGClient mints a client-facing WireGuard credential for a master and
+// persists it.
+func (b *Broker) IssueWGClient(ctx context.Context, masterID, name string) (domain.WGClient, error) {
+	c, err := b.mintWGClient(ctx, masterID, name)
+	if err != nil {
+		return domain.WGClient{}, err
 	}
 	if err := b.store.AddWGClient(ctx, masterID, c); err != nil {
 		return domain.WGClient{}, err
 	}
-	b.log.Info("client WG credential issued", "master", masterID, "client", name, "address", address)
+	b.log.Info("client WG credential issued", "master", masterID, "client", name, "address", c.Address)
 	return c, nil
 }
 
