@@ -381,6 +381,16 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 	}
 	defer func() { _ = st.Close() }()
 
+	// Devices (ADR-0035): wrap the AWG credentials issued before devices existed,
+	// once. Logged, not fatal — nothing depends on the rows yet: the portal still
+	// finds every unattached credential by its ID, so the links in people's hands
+	// keep working and the next start retries.
+	if n, err := st.AdoptWGCredentialsAsDevices(context.Background(), time.Now().UTC()); err != nil {
+		slog.Error("adopting client credentials as devices failed; portal links keep working, will retry on next start", "err", err)
+	} else if n > 0 {
+		slog.Info("client credentials adopted as devices", "count", n)
+	}
+
 	// The 3.x header-protection secret, resolved once here rather than per render.
 	//
 	// Config validation refuses a missing REFERENCE; this refuses a reference that

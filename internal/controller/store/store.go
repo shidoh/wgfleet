@@ -196,6 +196,11 @@ type Store interface {
 	// ErrNotFound otherwise.
 	FindUnattachedWGClient(ctx context.Context, id string) (string, domain.WGClient, error)
 
+	// AdoptWGCredentialsAsDevices wraps every AWG credential without a device into
+	// a device of its own (token = credential ID), once per database; later calls
+	// return 0. at stamps the marker — the caller reads the clock.
+	AdoptWGCredentialsAsDevices(ctx context.Context, at time.Time) (int, error)
+
 	// RecordStatus stores the latest status report for a node, overwriting any
 	// previous report, and stamps the node's LastSeen.
 	RecordStatus(ctx context.Context, s domain.NodeStatus) error
