@@ -327,8 +327,20 @@ func (h *Handler) handleDeviceDetach(w http.ResponseWriter, r *http.Request) {
 		h.redirectErr(w, r, dest, "detach credential", errors.New("unknown credential kind"))
 		return
 	}
+	dev, err := h.devices.GetDevice(r.Context(), id)
+	if err != nil {
+		h.redirectErr(w, r, dest, "detach credential", err)
+		return
+	}
+	// A stale page can hold a master/ref that has since moved to another device —
+	// attached there directly, or freed and re-issued — so the credential named in
+	// the form must still be THIS device's before anything is touched.
+	if cred, ok := dev.Credential(kind, master); !ok || cred.Ref != ref {
+		h.redirectErr(w, r, dest, "detach credential", errors.New("that credential does not belong to this device — reload the page"))
+		return
+	}
 	consequence := "The profile loses this proxy on its next update. The credential stays on its master; its own personal link does not come back."
-	if dev, err := h.devices.GetDevice(r.Context(), id); err == nil && kind == domain.CredentialAWG && dev.Token == ref {
+	if kind == domain.CredentialAWG && dev.Token == ref {
 		consequence += " This device's link is this credential's ID, so the device gets a NEW link: hand it out again."
 	}
 	if h.needsConfirmation(w, r, confirmView{

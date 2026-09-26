@@ -209,6 +209,25 @@ func TestDeviceDestructiveActionsConfirmFirst(t *testing.T) {
 	}
 }
 
+// A stale page can hold a master/ref that has since moved to another device —
+// attached there directly, or freed and re-issued. Detach must check the
+// credential is still THIS device's before touching it, not just that it exists.
+func TestDeviceDetachRefusesACredentialFromAnotherDevice(t *testing.T) {
+	h, f := deviceHandler(t)
+	f.devs["d2"] = &domain.ClientDevice{ID: "d2", Token: "ffffffffffffffffffffffffffffffff", Name: "bob-tablet", CreatedAt: time.Now()}
+	// "a" is d1's credential on master-xa-1, not d2's.
+	res := postWith(t, h, "/devices/d2/detach", url.Values{"kind": {"awg"}, "master": {"master-xa-1"}, "ref": {"a"}})
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("detached a credential belonging to another device: %v", f.calls)
+	}
+	if body := getWithCookies(t, h, "/devices/d2", res.Cookies()); !strings.Contains(body, "does not belong to this device") {
+		t.Errorf("no readable flash:\n%s", body)
+	}
+}
+
 func TestDeviceDeleteConfirmationTellsTheTruth(t *testing.T) {
 	h, _ := deviceHandler(t)
 	body := readBody(t, postWith(t, h, "/devices/d1/delete", url.Values{}))
