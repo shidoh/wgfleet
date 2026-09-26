@@ -121,6 +121,14 @@ A device is one physical device of one person. Its link serves a mihomo profile 
 
 Console: **devices** (top bar).
 
+Prerequisites:
+
+| Need | Why |
+|---|---|
+| The portal port is in `client_admin_ports` | Otherwise a device can never reach `/c/<token>` or `/c/<token>/mihomo` to fetch its profile, on either transport. |
+| `client_awg.route_through_cidrs` requires `client_awg.exclude_from_tunnel` | The controller refuses the config without it (validation) — a route only makes sense as an exception to something already excluded from the tunnel. |
+| `client_vless.route_through_cidrs` has no such requirement | It feeds the same device-profile routing rules as the AWG list, but the VLESS transport has no `exclude_from_tunnel` of its own to require it against. |
+
 | Action | Effect |
 |---|---|
 | **Create** | New device. Per master: issue a new AWG / VLESS credential, attach an unattached one, or leave the slot empty. |
