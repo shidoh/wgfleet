@@ -317,6 +317,35 @@ func TestDeviceProfileDownloadIsThePortalProfile(t *testing.T) {
 	}
 }
 
+// ProfileFileName is dev.Name + ".yaml", and a device's name is not bounded here
+// by domain.ValidClientName the way a WGClient's own name is — one synthesised
+// from an imported credential inherits whatever that import gave it. The panel's
+// download must escape a hostile name exactly like the portal's does — both
+// routes share clientcfg.AttachmentHeader — so a "/" cannot smuggle a path
+// segment and an embedded quote or CR/LF cannot break the header.
+func TestDeviceProfileDownloadEscapesAHostileDeviceName(t *testing.T) {
+	h, f := deviceHandler(t)
+	dev := f.devs["d1"]
+	dev.Name = "a/b\"c\r\nSet-Cookie: evil"
+	res, _ := get(t, h, "/devices/d1/profile.yaml")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	cd := res.Header.Get("Content-Disposition")
+	if strings.ContainsAny(cd, "\r\n") {
+		t.Fatalf("Content-Disposition carries a raw CR/LF: %q", cd)
+	}
+	if strings.Contains(cd, "/") {
+		t.Errorf("Content-Disposition still carries a path segment: %q", cd)
+	}
+	if n := strings.Count(cd, `"`); n != 2 {
+		t.Errorf("Content-Disposition quoting is broken by the embedded quote (found %d quote chars): %q", n, cd)
+	}
+	if !strings.HasPrefix(cd, `attachment; filename="`) || !strings.HasSuffix(cd, `.yaml"`) {
+		t.Errorf("Content-Disposition is not a single well-formed quoted-string: %q", cd)
+	}
+}
+
 func TestDeviceProfileDownloadRefusesADeviceWithNothingActive(t *testing.T) {
 	h, f := deviceHandler(t)
 	f.devs["d2"] = &domain.ClientDevice{ID: "d2", Token: "22222222222222222222222222222222", Name: "old",

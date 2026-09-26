@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -273,3 +274,35 @@ func ViewDevice(ctx context.Context, src ProfileSource, masters []string, dev do
 
 // ProfileFileName is what a client app names the imported profile.
 func ProfileFileName(dev domain.ClientDevice) string { return dev.Name + ".yaml" }
+
+// AttachmentHeader builds a Content-Disposition: attachment header for name,
+// which — unlike a WGClient's or a legacy device's name — is not bounded by
+// domain.ValidClientName here: a device synthesised from an imported (wg-easy)
+// credential carries whatever name that import gave it. An embedded quote or
+// backslash would let the value escape its own quoted-string, a raw CR/LF could
+// inject a header line of its own, and a "/" could smuggle a path segment into
+// wherever the browser ends up saving it — all four are stripped before the
+// value is quoted, so the familiar `filename="name.ext"` shape is unchanged for
+// every name that was already safe.
+//
+// Shared by the portal and the operator panel: both hand a device's profile out
+// under this header, and a plain %q on the panel side would let a "/" or a
+// control character through that the portal's own route already refuses.
+func AttachmentHeader(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r < 0x20 || r == 0x7f: // control chars, including CR and LF: dropped outright
+			continue
+		case r == '"', r == '\\', r == '/':
+			b.WriteByte('_')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	safe := b.String()
+	if safe == "" {
+		safe = "profile"
+	}
+	return fmt.Sprintf("attachment; filename=%q", safe)
+}

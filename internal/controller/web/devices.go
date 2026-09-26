@@ -504,6 +504,6 @@ func (h *Handler) handleDeviceProfile(w http.ResponseWriter, r *http.Request) {
 	h.audit(r, "download device profile", "device", dev.ID)
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", clientcfg.ProfileFileName(dev)))
+	w.Header().Set("Content-Disposition", clientcfg.AttachmentHeader(clientcfg.ProfileFileName(dev)))
 	_, _ = w.Write([]byte(yml))
 }

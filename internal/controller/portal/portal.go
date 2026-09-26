@@ -492,7 +492,7 @@ func (h *Handler) handleProfile(w http.ResponseWriter, r *http.Request) {
 	// Hours. After a flag day (ADR-0033) this is how long a device can take to
 	// follow without anyone touching it.
 	w.Header().Set("Profile-Update-Interval", "24")
-	w.Header().Set("Content-Disposition", attachmentHeader(clientcfg.ProfileFileName(dev)))
+	w.Header().Set("Content-Disposition", clientcfg.AttachmentHeader(clientcfg.ProfileFileName(dev)))
 	_, _ = w.Write([]byte(yml))
 }
 
@@ -561,34 +561,6 @@ func trustedHost(bind, reqHost string) string {
 		return ""
 	}
 	return reqHost
-}
-
-// attachmentHeader builds a Content-Disposition: attachment header for name,
-// which — unlike a WGClient's or a legacy device's name — is not bounded by
-// domain.ValidClientName here: a device synthesised from an imported (wg-easy)
-// credential carries whatever name that import gave it. An embedded quote or
-// backslash would let the value escape its own quoted-string, a raw CR/LF could
-// inject a header line of its own, and a "/" could smuggle a path segment into
-// wherever the browser ends up saving it — all four are stripped before the
-// value is quoted, so the familiar `filename="name.ext"` shape is unchanged for
-// every name that was already safe.
-func attachmentHeader(name string) string {
-	var b strings.Builder
-	for _, r := range name {
-		switch {
-		case r < 0x20 || r == 0x7f: // control chars, including CR and LF: dropped outright
-			continue
-		case r == '"', r == '\\', r == '/':
-			b.WriteByte('_')
-		default:
-			b.WriteRune(r)
-		}
-	}
-	safe := b.String()
-	if safe == "" {
-		safe = "profile"
-	}
-	return fmt.Sprintf("attachment; filename=%q", safe)
 }
 
 // portalHTML is the whole portal: one page, two buttons, no navigation. Inline
