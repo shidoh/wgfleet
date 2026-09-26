@@ -24,6 +24,18 @@ const (
 	ClientProfileHealthInterval = 300
 )
 
+// isReservedProfileName reports whether name collides with a group this profile
+// already defines for itself, or with a mihomo built-in policy used verbatim as a
+// rule target elsewhere in the same document (clientRules).
+func isReservedProfileName(name string) bool {
+	switch name {
+	case ClientProfileAutoGroup, ClientProfileSelectGroup, "DIRECT", "REJECT":
+		return true
+	default:
+		return false
+	}
+}
+
 // clientPrivateRanges go DIRECT so the device's own LAN keeps working with the
 // tunnel up. Everything that must reach the tunnel and happens to be RFC1918 —
 // the portal on the mgmt overlay, a master's client pool, route_through_cidrs —
@@ -75,6 +87,13 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 	for _, m := range in.Masters {
 		if strings.ContainsAny(m.Name, ",#") {
 			return "", fmt.Errorf("client profile: master name %q contains ',' or '#', which mihomo reads as syntax", m.Name)
+		}
+		// A master's OWN fallback group is named after it (below); reusing one of the
+		// two names this function already reserves for the fleet-wide groups, or one
+		// of mihomo's built-in policies, would collide with the group or the policy
+		// rather than merely look like it.
+		if isReservedProfileName(m.Name) {
+			return "", fmt.Errorf("client profile: master name %q is reserved (mihomo group/policy name)", m.Name)
 		}
 		var own []string
 		if m.AWG != nil {

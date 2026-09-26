@@ -309,6 +309,21 @@ func TestClientProfileNamesAreMarshalledNotSpliced(t *testing.T) {
 	}
 }
 
+// A master literally named "auto" or "wgfleet" would render a second proxy-group
+// under a name RenderClientProfile already reserves for its own fallback/select
+// groups — one of the two silently wins in the YAML map and the other vanishes.
+// "DIRECT"/"REJECT" are mihomo's built-in policies, used verbatim as rule targets
+// elsewhere in this same profile (clientRules' private-range rules); a master
+// group under either name would shadow the built-in for every rule that names it.
+func TestClientProfileRefusesReservedMasterNames(t *testing.T) {
+	for _, bad := range []string{ClientProfileAutoGroup, ClientProfileSelectGroup, "DIRECT", "REJECT"} {
+		if _, err := RenderClientProfile(ClientProfileInput{Masters: []ClientProfileMaster{{Name: bad,
+			VLESS: profileVLESS(domain.RealityModeXHTTP)}}}); err == nil {
+			t.Errorf("master name %q accepted", bad)
+		}
+	}
+}
+
 func TestClientProfileRefusesNothingToDial(t *testing.T) {
 	if _, err := RenderClientProfile(ClientProfileInput{}); err == nil {
 		t.Error("an empty profile rendered")
