@@ -945,6 +945,40 @@ func TestInputChainOpensTheResolverToTheNamespaceAndNothingElse(t *testing.T) {
 	}
 }
 
+// A VLESS client reaches the master's own address through mihomo's namespace: xray
+// hands the connection to mihomo, mihomo dials it DIRECT, and it arrives HERE on the
+// veth, not on wg0. The operator's client_admin_ports opt-in (the client portal
+// among them) must therefore hold on the veth too, or a device whose AWG is blocked
+// cannot refresh its subscription over VLESS — measured on the Lima stand
+// 2026-09-26: `dial DIRECT … 192.168.105.4:9010: i/o timeout` in mihomo's log.
+func TestInputChainOpensTheClientAdminPortsToTheNamespace(t *testing.T) {
+	out, err := RenderRuleset(RenderInput{
+		Firewall:         domain.FirewallSpec{WGPort: 443},
+		Role:             domain.RoleMaster,
+		NetnsHostIface:   "mih-host",
+		ClientAdminPorts: []int{9010},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if want := `iifname "mih-host" tcp dport 9010 accept`; !strings.Contains(out, want) {
+		t.Errorf("a VLESS client cannot reach the admin port it was opted in to; missing %q:\n%s", want, out)
+	}
+
+	// No opt-in ⇒ the veth still opens the resolver and nothing else.
+	strict, err := RenderRuleset(RenderInput{
+		Firewall:       domain.FirewallSpec{WGPort: 443},
+		Role:           domain.RoleMaster,
+		NetnsHostIface: "mih-host",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(strict, `iifname "mih-host" tcp dport 9010`) {
+		t.Errorf("admin port opened on the veth without the opt-in:\n%s", strict)
+	}
+}
+
 // And before the move there is no veth to trust, so nothing is opened.
 func TestInputChainOpensNothingBeforeTheMove(t *testing.T) {
 	out, err := RenderRuleset(RenderInput{

@@ -464,11 +464,20 @@ func RenderRuleset(in RenderInput) (string, error) {
 		// client TCP to those ports (clients get pings/DNS/web but no dashboards). The
 		// destination must also bypass the client→mihomo DNAT, which it does when the
 		// mgmt address sits under the master's DirectCIDRs (e.g. 172.16.0.0/12).
+		//
+		// Once mihomo lives in its namespace, a VLESS client's connection to these
+		// ports is dialled DIRECT from there and arrives on the veth, not on the
+		// client interface — so the same opt-in is rendered for the veth, or the
+		// portal is unreachable exactly when AWG is blocked and VLESS carries the
+		// device.
 		for _, port := range in.ClientAdminPorts {
 			if port <= 0 || port > 65535 {
 				continue
 			}
 			fmt.Fprintf(&b, "\t\tiifname %q tcp dport %d accept\n", redirIface, port)
+			if in.NetnsHostIface != "" {
+				fmt.Fprintf(&b, "\t\tiifname %q tcp dport %d accept\n", in.NetnsHostIface, port)
+			}
 		}
 	}
 	b.WriteString("\t\ticmp type echo-request accept\n")
