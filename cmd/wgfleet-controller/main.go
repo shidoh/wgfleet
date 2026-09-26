@@ -575,14 +575,8 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 	// above). Off unless the operator binds it.
 	var portalSrv *http.Server
 	if cfg.Controller.ClientPortal != "" {
-		masters := func() []string {
-			names := make([]string, 0, len(cfg.Fleet.Masters))
-			for _, m := range cfg.Fleet.Masters {
-				names = append(names, m.Name)
-			}
-			return names
-		}
-		portalHandler, err := portal.New(portalSource{st: st, broker: broker}, masters)
+		portalHandler, err := portal.New(portalSource{st: st, broker: broker}, broker.Masters,
+			portal.Options{PublicURL: cfg.Controller.ClientPortalURL, Bind: cfg.Controller.ClientPortal})
 		if err != nil {
 			return fmt.Errorf("build client portal: %w", err)
 		}
@@ -843,6 +837,22 @@ func (s portalSource) NodeChecks(ctx context.Context, nodeID string) ([]domain.H
 		return nil, nil // never reported: not a reason to withhold a working door
 	}
 	return st.Checks, nil
+}
+
+func (s portalSource) GetDeviceByToken(ctx context.Context, token string) (domain.ClientDevice, error) {
+	return s.broker.GetDeviceByToken(ctx, token)
+}
+
+func (s portalSource) FindUnattachedWGClient(ctx context.Context, id string) (string, domain.WGClient, error) {
+	return s.broker.FindUnattachedWGClient(ctx, id)
+}
+
+func (s portalSource) ListVLESSClients(ctx context.Context, id string) ([]domain.VLESSClient, error) {
+	return s.broker.ListVLESSClients(ctx, id)
+}
+
+func (s portalSource) ClientMasterMeta(ctx context.Context, id string) (domain.ClientMasterMeta, error) {
+	return s.broker.ClientMasterMeta(ctx, id)
 }
 
 // anySubcommand reports whether any of these string flags selected a subcommand.
