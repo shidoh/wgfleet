@@ -649,11 +649,11 @@ const portalHTML = `<!doctype html>
 </ol>
 <input class="sub-url" type="text" readonly value="{{.SubscriptionURL}}" aria-label="Subscription link" onclick="this.select()">
 <img class="qr-img" src="/c/{{.Token}}/mihomo/qr" alt="QR code of the subscription link" loading="lazy">
+<p class="sub">Connected with a profile file you were sent? Add the link above as a new profile, switch to it, then delete the file profile — only the link keeps itself up to date.</p>
 {{else}}
 <p class="sub">The subscription link is not available here — ask whoever sent you this page.</p>
 {{end}}
 <p class="sub">For another device, ask for a separate link — one link belongs to one device.</p>
-<p class="sub">Connected with a profile file you were sent? Add the link above as a new profile, switch to it, then delete the file profile — only the link keeps itself up to date.</p>
 {{if .HasWG}}
 <details>
   <summary>AmneziaWG app instead</summary>

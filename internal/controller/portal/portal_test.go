@@ -864,6 +864,25 @@ func TestSubscriptionURLIgnoresForgedHost(t *testing.T) {
 	}
 }
 
+// The "delete the file profile" hint says "add the link above" — nonsense, and
+// actively misleading, on a page that has no subscription link to add because the
+// request's Host could not be trusted (see TestSubscriptionURLIgnoresForgedHost).
+func TestFileProfileHintOnlyShownWithASubscriptionLink(t *testing.T) {
+	h := testPortal(t)
+	h.opts = Options{Bind: ":9001"} // wildcard bind + an untrusted DNS-name Host ⇒ SubscriptionURL == ""
+	req := httptest.NewRequest(http.MethodGet, "/c/"+devTok, nil)
+	req.RemoteAddr, req.Host = "10.80.0.2:51820", "evil.example:9001"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if strings.Contains(body, "delete the file profile") {
+		t.Errorf("the file-profile hint points at a link the page does not have:\n%s", body)
+	}
+	if !strings.Contains(body, "subscription link is not available here") {
+		t.Errorf("the page did not explain the missing link:\n%s", body)
+	}
+}
+
 func TestPortalDevicePageLeadsWithTheSubscription(t *testing.T) {
 	h := testPortal(t)
 	_, body := fetch(t, h, "/c/"+devTok)
