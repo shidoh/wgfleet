@@ -110,6 +110,67 @@ All keys: [configuration.md#client_awg-the-client-facing-amneziawg-listener](con
 
 A VLESS credential (below) has no pause. Revoking is the only way to cut one off.
 
+## Client devices
+
+A device is one physical device of one person. Its link serves a mihomo profile with a proxy for every credential it holds: AmneziaWG and VLESS, on every master.
+
+Console: **devices** (top bar).
+
+| Action | Effect |
+|---|---|
+| **Create** | New device. Per master: issue a new AWG / VLESS credential, attach an unattached one, or leave the slot empty. |
+| **Attach** | Put an unattached credential into an empty slot. The credential's own personal link (`/c/<credential-id>`) stops working for good; the console asks first. |
+| **Detach** | Empty the slot. The credential stays on its master without a personal link. A device whose link was that credential's ID gets a new link. |
+| **Rotate link** | New link; the old link and subscription stop at once. Credentials unchanged. |
+| **Delete** | Removes the device and its link for good. Credentials stay, unattached, without personal links. |
+
+Limits: one AWG and one VLESS credential per master per device. One AWG credential belongs to one device.
+
+| Link | Content |
+|---|---|
+| `<client_portal_url>/c/<token>` | Page: subscription link + QR, AmneziaWG `.conf`, `vless://`, reserve configs |
+| `<client_portal_url>/c/<token>/mihomo` | Profile, `text/yaml`, `Profile-Update-Interval: 24` |
+
+Without `controller.client_portal_url` the link uses the portal's bind address.
+
+Tested apps (mihomo core ≥ 1.19.30):
+
+| App | Platform |
+|---|---|
+| FlClash | Android, macOS |
+| ClashMetaForAndroid | Android |
+| ClashX Meta | macOS |
+| Clash Verge Rev | macOS |
+
+First import (the portal is reachable only through the tunnel):
+
+| Step | Who | Action |
+|---|---|---|
+| 1 | Operator | Device page → **Download profile (.yaml)**; send the file to the person. |
+| 2 | Person | In the app: import the file, switch on TUN, connect. |
+| 3 | Person | Open the device link, add the subscription link as a new profile from URL, switch to it. |
+| 4 | Person | Delete the file profile. It never updates itself. |
+
+Devices that can already reach the portal skip steps 1–2: add the profile from URL, switch on TUN, connect.
+
+| Profile part | Value |
+|---|---|
+| Proxies | `<master>-awg`, `<master>-vless` for each attached, active credential |
+| `<master>` | `fallback` over that master's proxies |
+| `auto` | `fallback` over all proxies, `generate_204`, every 300 s |
+| `wgfleet` | `select`: `auto` or any proxy |
+| Rules | `route_through_cidrs` (both transports) and `mgmt_subnet` → `wgfleet`; the master's client pool → `<master>`; RFC1918, link-local, loopback → `DIRECT`; rest → `wgfleet` |
+| DNS | each master's client resolvers, `tcp://<addr>:53` through `<master>`; absent when the master has none |
+
+Symptoms:
+
+- Page says **paused** — every credential of the device is paused, or none is attached.
+- **Something is wrong on our side** — a credential is active but its master has no published key or endpoint yet.
+- **This link is no longer working** — the link was rotated, the device deleted, or the credential attached to a device.
+- Profile never changes after a fleet update — the person is still on the file profile (step 4 skipped).
+- Internal names do not resolve — check `dns_filter` on the master and the blocky mapping.
+- AWG throttled but alive — pick `<master>-vless` in the `wgfleet` group.
+
 ## The master is lost: reserve configs
 
 An exit with `lifeline` carries a second client interface `awgl0` with the
@@ -194,12 +255,11 @@ All keys: [configuration.md#client_vless-dpi-resistant-client-transport](configu
 
 | Handout | Notes |
 |---|---|
-| **Clash config (`.yaml`)** | The recommended client on macOS. It bakes in the proxy, tun `strict-route` (without it macOS leaves RFC1918 off the tunnel) and DNS pointed at the master's blocky over the tunnel. Import into **Clash Verge Rev** and enable Tun Mode. |
-| **vless:// link / QR** | For v2rayTun and other clients. To reach internal networks in v2rayTun, also import the routing object (Routing → import from clipboard, `v2rayTun://import_route/…`, shown on the page). |
-| **Subscription URL** | Carries the vless link and the routing rules in a `routing` response header. Reachable over the mgmt/ZT overlay. |
+| **Clash config (`.yaml`)** | The recommended client on macOS. It bakes in the proxy, tun `strict-route` (without it macOS leaves RFC1918 off the tunnel) and DNS resolved over TCP :53 through the tunnel. Import into **Clash Verge Rev** and enable Tun Mode. |
+| **vless:// link / QR** | Any VLESS client. Internal networks: use a device (Client devices). |
 
 `client_vless.route_through_cidrs` in the manifest controls which internal
-networks clients route through the tunnel.
+networks the device profile routes through the tunnel.
 
 ## Break-glass: reaching a node you just cut off
 

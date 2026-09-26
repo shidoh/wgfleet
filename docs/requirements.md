@@ -85,9 +85,10 @@ fleet:
 - **AmneziaWG 2.0 clients** (AmneziaVPN, the `awg` tools) on the client
   interface. AmneziaWG 3.x on the client interface is opt-in and needs a 3.x
   module on the master first (`docs/client-migration.md`, part 4).
-- **VLESS + REALITY clients** (v2rayTun and other xray-based apps) on the client
-  VLESS inbound. Split-tunnel behaviour is a client-side setting and differs per
-  app: a client's tun mode decides whether private ranges go through the tunnel,
-  and some apps expose no switch for it.
+- **VLESS + REALITY clients** (mihomo apps via a device subscription — FlClash,
+  ClashMetaForAndroid, ClashX Meta, Clash Verge Rev; any VLESS client via the
+  `vless://` link) on the client VLESS inbound. Split-tunnel behaviour is a
+  client-side setting and differs per app: a client's tun mode decides whether
+  private ranges go through the tunnel, and some apps expose no switch for it.
 
 A client bug is documented, not worked around on the server.

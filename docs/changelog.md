@@ -4,6 +4,23 @@ What changed for operators in each wgfleet release — behaviour, manifest keys,
 Every release archive carries this page as `CHANGELOG.md`.
 New releases are announced, with the archives attached, in the Telegram channel [t.me/wgfleet](https://t.me/wgfleet).
 
+## Unreleased
+
+### Added
+
+- Client devices: one link per device serves a mihomo profile with AmneziaWG and VLESS proxies on every master, automatic fallback, internal networks and internal names. Console → **devices**; tested apps: FlClash, ClashMetaForAndroid, ClashX Meta, Clash Verge Rev.
+- **Download profile (.yaml)** on a device's page, for the first import on a device that cannot reach the portal yet.
+- Existing AmneziaWG credentials become devices on the first controller start; links already handed out keep working.
+
+### Changed
+
+- The Clash config download for VLESS clients resolves over TCP :53 through the tunnel instead of DNS-over-TLS.
+- A credential attached to a device loses its own portal link for good; hand out the device link.
+
+### Removed
+
+- **Breaking:** `/sub/<master>/<uuid>` and the v2rayTun routing object. Move v2rayTun users to a device link or to the plain `vless://` link.
+
 ## v0.2.7 — 2026-09-25
 
 A node's own certificate rotation can no longer leave it holding a key nobody certifies, host metrics stop being a reason a node falls into `Error`, and a slow probing phase no longer pulls healthy exits out of the load balancer.
