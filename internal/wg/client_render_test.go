@@ -545,3 +545,52 @@ func TestNoIPv6WithoutAPrefix(t *testing.T) {
 		t.Errorf("v6 leaked into the default interface render:\n%s", iface)
 	}
 }
+
+func TestClientAWGParamsIsWhatTheConfCarries(t *testing.T) {
+	spec := clientSpec()
+	c := domain.WGClient{ID: "c1", Name: "laptop", Address: "10.80.0.2/32",
+		PublicKey: "cHViLWxhcHRvcC0wMDAwMDAwMDAwMDAwMDAwMDAwMA=", PrivateKey: "k"}
+	p, err := ClientAWGParams(spec, c)
+	if err != nil || p == nil {
+		t.Fatalf("ClientAWGParams = %v, %v", p, err)
+	}
+	if p.Shared != spec.AWG.Shared {
+		t.Error("shared half differs from the interface's")
+	}
+	if p.Local == spec.AWG.Local {
+		t.Error("local half is the SERVER's decoy, not the credential's own")
+	}
+	cfg, err := RenderClientConfig(ClientConfigInput{Spec: spec, Client: c, ServerPublicKey: "s", Endpoint: "h:443"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := fmt.Sprintf("Jc = %d\n", p.Local.Jc); !strings.Contains(cfg, want) {
+		t.Errorf(".conf does not carry the derived decoy %q", want)
+	}
+	vanilla := spec
+	vanilla.AWG = nil
+	if p, err := ClientAWGParams(vanilla, c); p != nil || err != nil {
+		t.Errorf("vanilla spec: %v, %v", p, err)
+	}
+}
+
+func TestClientConfigInputValidate(t *testing.T) {
+	ok := ClientConfigInput{Spec: clientSpec(), ServerPublicKey: "s", Endpoint: "h:1",
+		Client: domain.WGClient{Name: "n", PrivateKey: "k", PublicKey: "p", Address: "10.80.0.2/32"}}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("valid input refused: %v", err)
+	}
+	for name, mut := range map[string]func(*ClientConfigInput){
+		"no private key": func(i *ClientConfigInput) { i.Client.PrivateKey = "" },
+		"no public key":  func(i *ClientConfigInput) { i.Client.PublicKey = "" },
+		"no address":     func(i *ClientConfigInput) { i.Client.Address = "" },
+		"no server key":  func(i *ClientConfigInput) { i.ServerPublicKey = "" },
+		"no endpoint":    func(i *ClientConfigInput) { i.Endpoint = "" },
+	} {
+		in := ok
+		mut(&in)
+		if err := in.Validate(); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

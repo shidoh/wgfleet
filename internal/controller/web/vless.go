@@ -177,74 +177,10 @@ func (h *Handler) handleClientClash(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(yaml))
 }
 
-// buildClashConfig renders a mihomo (Clash Verge Rev) client config for one
-// credential: a vless+reality+xhttp proxy, a tun with strict-route, DNS via the
-// master's blocky over the tunnel, and MATCH → proxy (the master then routes
-// geo/exits/internal). blockyAddr empty ⇒ plain public DNS (no split).
-func buildClashConfig(host string, cv domain.ClientVLESSServerSpec, pubkey, blockyAddr string, c domain.VLESSClient) string {
-	dns := "  nameserver:\n    - 1.1.1.1\n    - 8.8.8.8\n"
-	if blockyAddr != "" {
-		// redir-host + the master blocky dialed THROUGH the proxy: private-domain
-		// split resolves, real IPs come back and route through the tunnel.
-		//
-		// tls:// (DoT, :853) not a bare IP (UDP :53): this is what the clients already
-		// do in the field — a live capture on the master (2026-09-06) showed every
-		// client DNS flow arriving on blocky's :853 and none on :53, because the app
-		// DNS engines dial DoT regardless of what a bare address looks like. Making the
-		// config say :853 keeps the handed-out config, the namespace firewall (which
-		// must admit :853, see internal/netfw render veth trust) and reality in one
-		// source instead of three that drift. blocky serves DoT on this address, so no
-		// server change is needed.
-		dns = fmt.Sprintf("  enhanced-mode: redir-host\n  default-nameserver:\n    - 1.1.1.1\n    - 8.8.8.8\n  nameserver:\n    - %q\n", "tls://"+blockyAddr+"#wgfleet")
-	}
-	// Empty-SNI (the client-leg default): send the ClientHello with no SNI by setting
-	// servername to the server IP — uTLS omits the SNI extension for a literal IP,
-	// matching the exit realityProxy. Otherwise carry the camouflage SNI. Must mirror
-	// buildVlessLink so the downloaded Clash config and the vless:// link behave alike.
-	servername := cv.ServerName
-	if cv.AllowEmptySNI {
-		servername = host
-	}
-	// Transport must track cv.Mode (mirror of internal/mihomo realityProxy): vision =
-	// classic TCP + xtls-rprx-vision (no XHTTP, incompatible); xhttp (default) =
-	// network xhttp + xhttp-opts, no flow. Emitting xhttp for a vision inbound ships a
-	// config that cannot connect.
-	var transport string
-	if cv.Mode == domain.RealityModeVision {
-		transport = "    network: tcp\n    flow: xtls-rprx-vision\n"
-	} else {
-		path := cv.XHTTPPath
-		if path == "" {
-			path = "/"
-		}
-		mode := cv.XHTTPMode
-		if mode == "" {
-			mode = "packet-up"
-		}
-		transport = fmt.Sprintf("    network: xhttp\n    xhttp-opts:\n      path: %q\n      mode: %s\n", path, mode)
-		// XMUX (mirror of realityProxy's reuse-settings): reuse the underlying XHTTP
-		// connection across requests so the REALITY handshake + dest-steal is amortized
-		// instead of paid per request — the strongest mitigation for the
-		// handshake-parallelism volume-freeze. xhttp-only (vision ignores it).
-		if cv.ResolvedMux() {
-			transport += "      reuse-settings:\n" +
-				"        max-concurrency: \"16-32\"\n" +
-				"        h-max-request-times: \"600-900\"\n" +
-				"        h-max-reusable-secs: \"1800-3000\"\n"
-		}
-	}
-	// client-fingerprint is the uTLS ClientHello fingerprint. "none" omits it (the
-	// client's Go-default fingerprint); otherwise the resolved default is off-chrome
-	// and stable. Mirrors buildVlessLink and the exit realityProxy.
-	var fingerprint string
-	if fp := cv.ResolvedFingerprint(); fp != domain.ClientVLESSFingerprintNone {
-		fingerprint = fmt.Sprintf("    client-fingerprint: %s\n", fp)
-	}
-	// Scalars are %q-quoted: host/uuid/servername/public-key are spec/store-derived and
-	// could otherwise carry a character YAML reads specially (a leading digit, ':', '#',
-	// a bare '*'/'&'), silently corrupting the emitted config. short-id was already
-	// quoted.
-	return fmt.Sprintf(`# wgfleet client — %s
+// clashTemplate is the mihomo (Clash Verge Rev) client config: a vless+reality
+// proxy, a tun with strict-route, DNS via the master's blocky over the tunnel,
+// and MATCH → proxy (the master then routes geo/exits/internal).
+const clashTemplate = `# wgfleet client — %s
 mixed-port: 7890
 mode: rule
 log-level: info
@@ -279,7 +215,59 @@ proxies:
 %s
 rules:
   - MATCH,wgfleet
-`, c.Name, dns, host, cv.ListenPort, c.UUID, servername, fingerprint, pubkey, c.ShortID, transport)
+`
+
+// buildClashConfig renders a mihomo (Clash Verge Rev) client config for one
+// credential. blockyAddr empty ⇒ plain public DNS (no split).
+func buildClashConfig(host string, cv domain.ClientVLESSServerSpec, pubkey, blockyAddr string, c domain.VLESSClient) string {
+	e := cv.EndpointFor(host, pubkey, c)
+	dns := "  nameserver:\n    - 1.1.1.1\n    - 8.8.8.8\n"
+	if blockyAddr != "" {
+		// redir-host + the master blocky dialed THROUGH the proxy: private-domain
+		// split resolves, real IPs come back and route through the tunnel.
+		//
+		// tls:// (DoT, :853) not a bare IP (UDP :53): this is what the clients already
+		// do in the field — a live capture on the master (2026-09-06) showed every
+		// client DNS flow arriving on blocky's :853 and none on :53, because the app
+		// DNS engines dial DoT regardless of what a bare address looks like. Making the
+		// config say :853 keeps the handed-out config, the namespace firewall (which
+		// must admit :853, see internal/netfw render veth trust) and reality in one
+		// source instead of three that drift. blocky serves DoT on this address, so no
+		// server change is needed.
+		dns = fmt.Sprintf("  enhanced-mode: redir-host\n  default-nameserver:\n    - 1.1.1.1\n    - 8.8.8.8\n  nameserver:\n    - %q\n", "tls://"+blockyAddr+"#wgfleet")
+	}
+	// One derivation (domain.ClientVLESSEndpoint) for this download, the vless://
+	// link and the device profile: three hand-written copies of the same defaults
+	// were three chances to disagree.
+	var transport string
+	if e.Vision {
+		transport = "    network: tcp\n    flow: xtls-rprx-vision\n"
+	} else {
+		transport = fmt.Sprintf("    network: xhttp\n    xhttp-opts:\n      path: %q\n      mode: %s\n", e.XHTTPPath, e.XHTTPMode)
+		// XMUX: reuse the underlying XHTTP connection across requests so the REALITY
+		// handshake + dest-steal is amortized instead of paid per request — the
+		// strongest mitigation for the handshake-parallelism volume-freeze. xhttp-only
+		// (vision ignores it). The tuple is domain's, not a local copy: Task 4's device
+		// profile reads the same three values.
+		if e.Mux {
+			transport += "      reuse-settings:\n" +
+				fmt.Sprintf("        max-concurrency: %q\n", domain.ClientVLESSXMUXMaxConcurrency) +
+				fmt.Sprintf("        h-max-request-times: %q\n", domain.ClientVLESSXMUXHMaxRequestTimes) +
+				fmt.Sprintf("        h-max-reusable-secs: %q\n", domain.ClientVLESSXMUXHMaxReusableSecs)
+		}
+	}
+	// client-fingerprint is the uTLS ClientHello fingerprint. "" omits it (operator
+	// chose "none", the client's Go-default fingerprint).
+	var fingerprint string
+	if e.Fingerprint != "" {
+		fingerprint = fmt.Sprintf("    client-fingerprint: %s\n", e.Fingerprint)
+	}
+	// Scalars are %q-quoted: host/uuid/servername/public-key are spec/store-derived and
+	// could otherwise carry a character YAML reads specially (a leading digit, ':', '#',
+	// a bare '*'/'&'), silently corrupting the emitted config. short-id was already
+	// quoted.
+	return fmt.Sprintf(clashTemplate,
+		c.Name, dns, e.Host, e.Port, e.UUID, e.MihomoServerName(), fingerprint, e.PublicKey, e.ShortID, transport)
 }
 
 // handleSubscription serves a client's subscription: the vless link (base64 body,
@@ -492,48 +480,9 @@ func (h *Handler) handleClientRevoke(w http.ResponseWriter, r *http.Request) {
 // the master's inbound (REALITY + xhttp/vision, empty-SNI, path/mode). host:port
 // is the master's public endpoint; the fragment labels the profile in the client.
 func buildVlessLink(host string, port int, cv domain.ClientVLESSServerSpec, pubkey, nodeName string, c domain.VLESSClient) string {
-	q := url.Values{}
-	q.Set("encryption", "none")
-	q.Set("security", "reality")
-	q.Set("pbk", pubkey)
-	// uTLS fingerprint (vless:// `fp`): "none" omits it (the client's Go-default
-	// fingerprint); otherwise the resolved default is off-chrome and stable. Mirrors
-	// buildClashConfig's client-fingerprint.
-	if fp := cv.ResolvedFingerprint(); fp != domain.ClientVLESSFingerprintNone {
-		q.Set("fp", fp)
-	}
-	q.Set("sid", c.ShortID)
-	// Empty-SNI (the client-leg default): send no SNI, the reported RU-TSPU bypass.
-	// Otherwise carry the camouflage SNI (always one of the server's serverNames).
-	if cv.AllowEmptySNI {
-		q.Set("sni", "")
-	} else {
-		q.Set("sni", cv.ServerName)
-	}
-	if cv.Mode == domain.RealityModeVision {
-		q.Set("type", "tcp")
-		q.Set("flow", "xtls-rprx-vision")
-	} else {
-		q.Set("type", "xhttp")
-		path := cv.XHTTPPath
-		if path == "" {
-			path = "/"
-		}
-		q.Set("path", path)
-		mode := cv.XHTTPMode
-		if mode == "" {
-			mode = "packet-up"
-		}
-		q.Set("mode", mode)
-	}
-	u := url.URL{
-		Scheme:   "vless",
-		User:     url.User(c.UUID),
-		Host:     net.JoinHostPort(host, strconv.Itoa(port)),
-		RawQuery: q.Encode(),
-		Fragment: fmt.Sprintf("%s-%s", nodeName, c.Name),
-	}
-	return u.String()
+	e := cv.EndpointFor(host, pubkey, c)
+	e.Port = port
+	return e.Link(fmt.Sprintf("%s-%s", nodeName, c.Name))
 }
 
 // clientIP returns the source IP of the request for per-IP rate limiting. It uses

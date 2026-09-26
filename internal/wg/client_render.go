@@ -133,6 +133,54 @@ func interfaceV6Address(spec domain.ClientWGSpec) (string, error) {
 	return v6.String() + "/64", nil
 }
 
+// Validate refuses an input no client could use. Shared by every renderer of a
+// client's end: the .conf and the mihomo profile must refuse the same things, or
+// one hands out a profile the other would have called broken.
+func (in ClientConfigInput) Validate() error {
+	switch {
+	case in.Client.PrivateKey == "":
+		return fmt.Errorf("wg render: client %q has no private key", in.Client.Name)
+	case in.Client.PublicKey == "":
+		// The per-credential decoy is DERIVED from the public key (see clientDecoy),
+		// so without one there is nothing stable to key on. Refuse rather than fall
+		// back to the server's own profile — the value a client must never send.
+		return fmt.Errorf("wg render: client %q has no public key", in.Client.Name)
+	case in.Client.Address == "":
+		return fmt.Errorf("wg render: client %q has no address", in.Client.Name)
+	case in.ServerPublicKey == "":
+		return fmt.Errorf("wg render: server public key is required")
+	case in.Endpoint == "":
+		return fmt.Errorf("wg render: endpoint is required")
+	}
+	return nil
+}
+
+// ClientAWGParams is the obfuscation ONE credential's end of the client leg
+// carries: the interface's shared half verbatim and the credential's own decoy as
+// the local half, checked against the USERSPACE rule whatever the server's
+// backend — the far end is an app on WireGuard-Go, and <c>/<t> tags a kernel
+// interface may use in its own decoy are a parse error there. nil for a vanilla
+// interface. Exported because the .conf is no longer its only consumer: the
+// mihomo profile must carry the same values, and a second derivation is how the
+// two would drift.
+func ClientAWGParams(spec domain.ClientWGSpec, c domain.WGClient) (*domain.AWGParams, error) {
+	if spec.AWG == nil {
+		return nil, nil
+	}
+	params := *spec.AWG
+	params.Local = clientDecoy(spec, c)
+	if err := params.ValidateUserspace(); err != nil {
+		return nil, fmt.Errorf("wg render: client config: %w", err)
+	}
+	return &params, nil
+}
+
+// ClientTunnelV6 is one credential's address inside the client-facing IPv6
+// prefix ("addr/128"), or "" for an IPv4-only interface.
+func ClientTunnelV6(spec domain.ClientWGSpec, v4 string) (string, error) {
+	return clientV6Address(spec, v4)
+}
+
 // RenderClientConfig renders one end user's .conf.
 //
 // The obfuscation is split by end on purpose: the SHARED params (S1-S4, H1-H4 and
@@ -141,22 +189,8 @@ func interfaceV6Address(spec domain.ClientWGSpec) (string, error) {
 // server's. Mixing the two up produces a config that looks right and never
 // completes a handshake.
 func RenderClientConfig(in ClientConfigInput) (string, error) {
-	switch {
-	case in.Client.PrivateKey == "":
-		return "", fmt.Errorf("wg render: client %q has no private key", in.Client.Name)
-	case in.Client.PublicKey == "":
-		// The per-credential decoy is DERIVED from the public key, so without one
-		// there is nothing stable to key on. The old code fell back to the master's
-		// own profile, which is precisely the value a client must not send — the
-		// whole point of the per-end split. Refuse instead of rendering a config
-		// that looks right and correlates every client with the server.
-		return "", fmt.Errorf("wg render: client %q has no public key", in.Client.Name)
-	case in.Client.Address == "":
-		return "", fmt.Errorf("wg render: client %q has no address", in.Client.Name)
-	case in.ServerPublicKey == "":
-		return "", fmt.Errorf("wg render: server public key is required")
-	case in.Endpoint == "":
-		return "", fmt.Errorf("wg render: endpoint is required")
+	if err := in.Validate(); err != nil {
+		return "", err
 	}
 
 	var b strings.Builder
@@ -178,17 +212,12 @@ func RenderClientConfig(in ClientConfigInput) (string, error) {
 	if in.Spec.MTU > 0 {
 		fmt.Fprintf(&b, "MTU = %d\n", in.Spec.MTU)
 	}
-	if in.Spec.AWG != nil {
-		params := *in.Spec.AWG
-		params.Local = clientDecoy(in.Spec, in.Client)
-		// Unconditionally the USERSPACE rule, whatever the server backend is. The far
-		// end of this leg is somebody's phone running WireGuard-Go, so a kernel-backed
-		// interface may legitimately use <c>/<t> in its own decoy while the config it
-		// hands out may not.
-		if err := params.ValidateUserspace(); err != nil {
-			return "", fmt.Errorf("wg render: client config: %w", err)
-		}
-		writeAWG(&b, params)
+	params, err := ClientAWGParams(in.Spec, in.Client)
+	if err != nil {
+		return "", err
+	}
+	if params != nil {
+		writeAWG(&b, *params)
 	}
 
 	b.WriteString("\n[Peer]\n")
