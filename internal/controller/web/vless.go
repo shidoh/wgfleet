@@ -2,16 +2,12 @@ package web
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
 	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 
@@ -24,27 +20,20 @@ import (
 
 // clientsData is the client-VLESS management page view model.
 type clientsData struct {
-	Title       string
-	NodeCount   int
-	User        string
-	Flash       string
-	CSRF        string
-	NodeID      string
-	NodeName    string
-	Enabled     bool         // the master runs the client VLESS inbound
-	Ready       bool         // endpoint + published key present, so links can be built
-	Notice      string       // why links aren't ready yet (empty when Ready)
-	Endpoint    string       // host:port clients dial
-	Clients     []clientRow  // issued credentials with links + QR
-	RouteThru   []string     // CIDRs routed through the tunnel (config-managed)
-	RoutingLink string       // v2rayTun://import_route/<base64> deep link (clipboard/QR import)
-	RoutingQR   template.URL // QR of RoutingLink
+	Title     string
+	NodeCount int
+	User      string
+	Flash     string
+	CSRF      string
+	NodeID    string
+	NodeName  string
+	Enabled   bool        // the master runs the client VLESS inbound
+	Ready     bool        // endpoint + published key present, so links can be built
+	Notice    string      // why links aren't ready yet (empty when Ready)
+	Endpoint  string      // host:port clients dial
+	Clients   []clientRow // issued credentials with links + QR
+	RouteThru []string    // CIDRs routed through the tunnel (config-managed)
 }
-
-// routingImportPrefix is the v2rayTun deep-link scheme its "import from clipboard"
-// (and QR) expects in front of the base64 routing object. A bare base64 is not
-// recognised — only this deep link imports.
-const routingImportPrefix = "v2rayTun://import_route/"
 
 // clientRow is one issued VLESS credential rendered for the page.
 type clientRow struct {
@@ -53,8 +42,6 @@ type clientRow struct {
 	ShortID string
 	Link    string       // vless:// share link
 	QR      template.URL // data:image/png;base64,… QR of Link (template.URL so it isn't sanitized to #ZgotmplZ)
-	SubURL  string       // subscription URL (carries the routing header)
-	SubQR   template.URL // QR of SubURL
 	// DeviceID/DeviceName name the device this credential is attached to
 	// (ADR-0035). Both empty ⇒ unattached. VLESS has no personal portal link of
 	// its own to retire, unlike AWG.
@@ -103,13 +90,10 @@ func (h *Handler) handleClients(w http.ResponseWriter, r *http.Request) {
 		data.Endpoint = net.JoinHostPort(host, strconv.Itoa(cv.ListenPort))
 	}
 
-	// Routing object (config-managed): the internal nets clients should route THROUGH
-	// the tunnel. Shown as base64 + QR, and served in the subscription's routing header.
+	// Routing (config-managed): the internal nets clients should route THROUGH the
+	// tunnel. Routed through the tunnel in each device's mihomo profile (Devices) —
+	// shown here for visibility only, nothing to import from this page.
 	data.RouteThru = h.renderer.ClientVLESSRouteThrough(id)
-	if len(data.RouteThru) > 0 {
-		data.RoutingLink = routingImportPrefix + buildRoutingObject(id, data.RouteThru)
-		data.RoutingQR = h.qr(data.RoutingLink)
-	}
 
 	clients, err := h.renderer.ListVLESSClients(r.Context(), id)
 	if err != nil {
@@ -126,11 +110,6 @@ func (h *Handler) handleClients(w http.ResponseWriter, r *http.Request) {
 		if data.Ready {
 			row.Link = buildVlessLink(host, cv.ListenPort, *cv, pubkey, node.Name, c)
 			row.QR = h.qr(row.Link)
-			// Subscription URL: fetched by the client, it returns this vless link and
-			// carries the routing object in the `routing` response header. Built from
-			// the host the operator is browsing (the mgmt/ZT overlay).
-			row.SubURL = subscriptionURL(r, id, c.UUID)
-			row.SubQR = h.qr(row.SubURL)
 		}
 		data.Clients = append(data.Clients, row)
 	}
@@ -302,73 +281,6 @@ func buildClashConfig(host string, cv domain.ClientVLESSServerSpec, pubkey, bloc
 		c.Name, dns, e.Host, e.Port, e.UUID, e.MihomoServerName(), fingerprint, e.PublicKey, e.ShortID, transport)
 }
 
-// handleSubscription serves a client's subscription: the vless link (base64 body,
-// standard subscription format) plus the v2rayTun `routing` header carrying the
-// route-through-tunnel rules. Auth-exempt — the client fetches it unauthenticated,
-// identified by its UUID token (already its secret credential).
-func (h *Handler) handleSubscription(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
-	if h.subLimit != nil && !h.subLimit.Allowed(ip) {
-		http.Error(w, "too many requests", http.StatusTooManyRequests)
-		return
-	}
-	master := r.PathValue("master")
-	token := r.PathValue("token")
-	clients, err := h.renderer.ListVLESSClients(r.Context(), master)
-	if err != nil {
-		http.Error(w, "subscription unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	// Constant-time match: the token is a secret credential (the client's UUID), so
-	// compare against every candidate with subtle.ConstantTimeCompare and do NOT break
-	// early — an early return leaks, via response timing, how far down the list a valid
-	// prefix reached. The whole loop runs regardless of where (or whether) it matches.
-	var found domain.VLESSClient
-	for _, c := range clients {
-		if subtle.ConstantTimeCompare([]byte(c.UUID), []byte(token)) == 1 {
-			found = c
-		}
-	}
-	if found.UUID == "" {
-		if h.subLimit != nil {
-			h.subLimit.Fail(ip)
-		}
-		http.NotFound(w, r)
-		return
-	}
-	if h.subLimit != nil {
-		h.subLimit.Reset(ip)
-	}
-	node, err := h.store.GetNode(r.Context(), master)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	spec, err := h.renderer.RenderNodeSpec(r.Context(), master)
-	if err != nil || spec.Master == nil || spec.Master.ClientVLESS == nil {
-		http.Error(w, "subscription not ready", http.StatusServiceUnavailable)
-		return
-	}
-	cv := spec.Master.ClientVLESS
-	host := endpointHost(node, spec)
-	if host == "" || node.ClientVLESSPublicKey == "" {
-		http.Error(w, "subscription not ready", http.StatusServiceUnavailable)
-		return
-	}
-	link := buildVlessLink(host, cv.ListenPort, *cv, node.ClientVLESSPublicKey, node.Name, found)
-
-	if cidrs := h.renderer.ClientVLESSRouteThrough(master); len(cidrs) > 0 {
-		w.Header().Set("routing", buildRoutingObject(master, cidrs))
-	}
-	// The body is the secret — a vless:// link with the UUID in it — and this route
-	// is authExempt, which makes it the most exposed of the three and the one that
-	// had no cache directive at all.
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Profile-Update-Interval", "24")
-	_, _ = w.Write([]byte(base64.StdEncoding.EncodeToString([]byte(link + "\n"))))
-}
-
 // qr renders s as a PNG QR data-URI safe for an <img src>. template.URL keeps
 // html/template from sanitizing the data: URI to "#ZgotmplZ" (a broken image).
 func (h *Handler) qr(s string) template.URL {
@@ -378,75 +290,6 @@ func (h *Handler) qr(s string) template.URL {
 		return ""
 	}
 	return template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(png))
-}
-
-// subscriptionURL builds the client's subscription URL from the request host (so it
-// matches the mgmt/ZT address the operator is browsing). HTTP: the panel rides the
-// ZT overlay without TLS.
-func subscriptionURL(r *http.Request, master, uuid string) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	return fmt.Sprintf("%s://%s/sub/%s/%s", scheme, r.Host, url.PathEscape(master), url.PathEscape(uuid))
-}
-
-// routingObject / routingRule mirror the v2rayTun (Xray) routing schema, INCLUDING
-// the id fields v2rayTun keys its rules by — without them the clipboard/header
-// import is silently dropped (the docs require "exactly as you got from the
-// application"). IP rules with outboundTag "proxy" send those CIDRs THROUGH the
-// tunnel. The ids are derived from the master so re-renders are byte-stable (a
-// re-import updates the same rule instead of duplicating it).
-type routingObject struct {
-	DomainStrategy string        `json:"domainStrategy"`
-	ID             string        `json:"id"`
-	Balancers      []any         `json:"balancers"`
-	DomainMatcher  string        `json:"domainMatcher"`
-	Rules          []routingRule `json:"rules"`
-	Name           string        `json:"name"`
-}
-
-type routingRule struct {
-	ID          string   `json:"id"`
-	OutboundTag string   `json:"outboundTag"`
-	Type        string   `json:"type"`
-	Name        string   `json:"__name__"`
-	IP          []string `json:"ip"`
-}
-
-// buildRoutingObject returns the base64-encoded v2rayTun routing object that routes
-// cidrs through the tunnel (outboundTag "proxy"), for masterID.
-func buildRoutingObject(masterID string, cidrs []string) string {
-	obj := routingObject{
-		DomainStrategy: "AsIs",
-		ID:             routingUUID(masterID + "|wgfleet-routing"),
-		Balancers:      []any{},
-		DomainMatcher:  "hybrid",
-		Rules: []routingRule{{
-			ID:          routingUUID(masterID + "|wgfleet-routing-rule"),
-			OutboundTag: "proxy",
-			Type:        "field",
-			Name:        "wgfleet internal via VPN",
-			IP:          append([]string(nil), cidrs...),
-		}},
-		Name: "wgfleet internal via VPN",
-	}
-	raw, err := json.Marshal(obj)
-	if err != nil {
-		return ""
-	}
-	return base64.StdEncoding.EncodeToString(raw)
-}
-
-// routingUUID derives a stable upper-case UUID from a seed (v2rayTun keys routing
-// rules by id; a stable id makes a re-import update rather than duplicate).
-func routingUUID(seed string) string {
-	sum := sha256.Sum256([]byte(seed))
-	var u [16]byte
-	copy(u[:], sum[:16])
-	u[6] = (u[6] & 0x0f) | 0x40 // version 4
-	u[8] = (u[8] & 0x3f) | 0x80 // variant 10
-	return strings.ToUpper(fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16]))
 }
 
 // handleClientIssue mints a new VLESS credential for the master.
@@ -515,17 +358,6 @@ func buildVlessLink(host string, port int, cv domain.ClientVLESSServerSpec, pubk
 	e := cv.EndpointFor(host, pubkey, c)
 	e.Port = port
 	return e.Link(fmt.Sprintf("%s-%s", nodeName, c.Name))
-}
-
-// clientIP returns the source IP of the request for per-IP rate limiting. It uses
-// the transport RemoteAddr only — NOT X-Forwarded-For / X-Real-IP, which a client
-// can forge to evade the throttle (the endpoint rides the ZT overlay with no trusted
-// proxy in front). Falls back to the raw RemoteAddr if it has no port.
-func clientIP(r *http.Request) string {
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
-	}
-	return r.RemoteAddr
 }
 
 // endpointHost resolves the public host clients dial the master at: the spec's

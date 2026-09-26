@@ -1628,3 +1628,31 @@ func TestTopologyFlagsAReserveExitTheWarmProbeCouldNotReachThrough(t *testing.T)
 		t.Error("the fleet panel must name the unusable reserve member")
 	}
 }
+
+// TestSubscriptionRouteIsGone guards the removal of the v2rayTun /sub endpoint
+// (Task 9): it is no longer auth-exempt, and an authenticated GET does not serve —
+// the mihomo device subscription (Devices) replaces it.
+func TestSubscriptionRouteIsGone(t *testing.T) {
+	if authExempt("/sub/master-xa-1/11111111-1111-4111-8111-111111111111") {
+		t.Error("/sub/ is still reachable without a session")
+	}
+	h, _ := newTestHandler(t, stubRenderer{})
+	if res, _ := get(t, h, "/sub/master-xa-1/11111111-1111-4111-8111-111111111111"); res.StatusCode != http.StatusNotFound {
+		t.Errorf("authenticated GET /sub/…: status %d, want 404", res.StatusCode)
+	}
+}
+
+// TestVLESSPageOffersNoSubscriptionOrRoutingImport guards that the VLESS clients
+// page no longer offers the retired v2rayTun subscription link/QR or routing
+// import — the vless:// link and its QR stay (Task 9).
+func TestVLESSPageOffersNoSubscriptionOrRoutingImport(t *testing.T) {
+	h, st := newTestHandler(t, stubRenderer{routeThrough: []string{"10.20.0.0/16"}, spec: domain.NodeSpec{
+		Role: domain.RoleMaster, Master: &domain.MasterSpec{ClientVLESS: &domain.ClientVLESSServerSpec{ListenPort: 49443, ServerName: "s"}}}})
+	seed(t, st, domain.Node{ID: "m1", Name: "m1", Role: domain.RoleMaster, PublicIP: "203.0.113.1", ClientVLESSPublicKey: "p"})
+	_, body := get(t, h, "/nodes/m1/clients")
+	for _, gone := range []string{"v2rayTun://import_route/", "/sub/", "subscription link"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("page still offers %q", gone)
+		}
+	}
+}

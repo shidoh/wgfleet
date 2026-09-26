@@ -130,10 +130,6 @@ type Handler struct {
 	exportBackup func(ctx context.Context, recipient string) ([]byte, error)
 	sessionTTL   time.Duration
 	loginLimit   *auth.Limiter
-	// subLimit throttles the auth-exempt /sub/{master}/{token} fetch per source IP:
-	// the token is a client's UUID, so a per-IP consecutive-fail lock blunts a
-	// brute-force sweep without one bad caller locking out every legitimate client.
-	subLimit *auth.IPLimiter
 	// roller drives the fleet-wide rolling agent upgrade. nil ⇒ the fleet page
 	// omits the action entirely.
 	roller Roller
@@ -199,7 +195,7 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	if err != nil {
 		return nil, fmt.Errorf("web: generate csrf token: %w", err)
 	}
-	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, clientsTmpl: clientsTmpl, wgClientsTmpl: wgClientsTmpl, confirmTmpl: confirmTmpl, devicesTmpl: devicesTmpl, deviceTmpl: deviceTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, removeFromManifest: removeFromManifest, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute), subLimit: auth.NewIPLimiter(10, time.Minute, 4096)}
+	h := &Handler{store: st, renderer: renderer, prov: prov, listTmpl: listTmpl, nodeTmpl: nodeTmpl, authTmpl: authTmpl, profileTmpl: profileTmpl, clientsTmpl: clientsTmpl, wgClientsTmpl: wgClientsTmpl, confirmTmpl: confirmTmpl, devicesTmpl: devicesTmpl, deviceTmpl: deviceTmpl, mux: http.NewServeMux(), csrf: token, log: slog.Default(), persistTransport: persistTransport, removeFromManifest: removeFromManifest, exportBackup: exportBackup, sessionTTL: sessionTTL, loginLimit: auth.NewLimiter(5, time.Minute)}
 
 	staticHandler := newStaticAssets(staticFS)
 	h.mux.Handle("GET /static/", staticHandler)
@@ -241,9 +237,6 @@ func New(st store.Store, renderer SpecRenderer, prov Provisioner, persistTranspo
 	// interface instead of the master's.
 	h.mux.HandleFunc("GET /nodes/{id}/wg-clients/{client}/lifeline/{exit}/config", h.handleWGClientLifelineConfig)
 	h.mux.HandleFunc("GET /nodes/{id}/wg-clients/{client}/lifeline/{exit}/qr", h.handleWGClientLifelineQR)
-	// Client subscription (auth-exempt; UUID-token in path). Serves the vless link
-	// with the routing object in the `routing` response header.
-	h.mux.HandleFunc("GET /sub/{master}/{token}", h.handleSubscription)
 	h.mux.HandleFunc("POST /nodes/{id}/delete", h.handleDelete)
 	h.mux.HandleFunc("POST /backup", h.handleBackupExport)
 	h.mux.HandleFunc("POST /rollout/start", h.handleRolloutStart)
@@ -954,10 +947,6 @@ func authExempt(p string) bool {
 	case p == "/login", p == "/logout", p == "/setup":
 		return true
 	case strings.HasPrefix(p, "/static/"):
-		return true
-	case strings.HasPrefix(p, "/sub/"):
-		// Client subscription endpoint: fetched unauthenticated by the VPN client,
-		// gated instead by the per-client UUID token in the path (its own secret).
 		return true
 	default:
 		return false

@@ -14,7 +14,7 @@
   <div class="panel">
     <div class="panel-label">ISSUE CLIENT</div>
     {{if .Ready}}
-    <p class="dim">Endpoint <span class="strong">{{.Endpoint}}</span> · REALITY + XHTTP. On macOS use the <span class="strong">Clash config</span> (it bakes in tun strict-route + the DNS split); elsewhere import the subscription or vless link.</p>
+    <p class="dim">Endpoint <span class="strong">{{.Endpoint}}</span> · REALITY + XHTTP. On macOS use the <span class="strong">Clash config</span> (it bakes in tun strict-route + the DNS split); elsewhere import the vless link, or hand out a device link (Devices).</p>
     {{else}}
     <p class="dim">Endpoint not ready yet — you can still issue credentials; configs appear once the master publishes its key.</p>
     {{end}}
@@ -30,13 +30,8 @@
   <div class="panel">
     <div class="panel-label">ROUTING · THROUGH VPN</div>
     {{if .RouteThru}}
-    <p class="dim">These networks route <span class="strong">through the tunnel</span> (manifest <code>route_through_cidrs</code>). Baked into the Clash config; for v2rayTun import the routing object below.</p>
+    <p class="dim">These networks route <span class="strong">through the tunnel</span> (manifest <code>route_through_cidrs</code>). Routed through the tunnel in each device's mihomo profile.</p>
     <ul class="cidr-list">{{range .RouteThru}}<li class="mono">{{.}}</li>{{end}}</ul>
-    {{if .RoutingLink}}
-    <div class="field-label" style="margin-top:16px">ROUTING IMPORT · v2rayTun “import from clipboard”</div>
-    <input class="input mono" type="text" readonly value="{{.RoutingLink}}"
-           onclick="this.select()" aria-label="routing import deep link">
-    {{end}}
     {{else}}
     <p class="dim">No route-through networks configured. Add <code>client_vless.route_through_cidrs</code> to this master in the manifest to reach its internal/ZT nets over the VPN.</p>
     {{end}}
@@ -95,16 +90,6 @@
           </div>
           {{if .QR}}<img class="cfg-qr" src="{{.QR}}" alt="vless QR for {{.Name}}" width="168" height="168">{{end}}
         </div>
-        {{end}}
-        {{if .SubURL}}
-        <details class="cfg-direct">
-          <summary>subscription link · auto-update + routing header</summary>
-          <div class="cfg-row">
-            <div class="cfg-main"><input class="input mono" type="text" readonly value="{{.SubURL}}"
-                   onclick="this.select()" aria-label="subscription url for {{.Name}}"></div>
-            {{if .SubQR}}<img class="cfg-qr" src="{{.SubQR}}" alt="Subscription QR for {{.Name}}" width="168" height="168">{{end}}
-          </div>
-        </details>
         {{end}}
       </div>
       {{end}}
