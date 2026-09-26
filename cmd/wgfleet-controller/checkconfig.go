@@ -99,6 +99,11 @@ func checkManifestOnly(path string) (*config.ControllerConfig, error) {
 			fmt.Printf("\nwarning: mode is %04o, and this file holds private keys — starting the controller tightens it to 0600\n", mode)
 		}
 	}
+	// Advisory, not a load failure: the same warning the running controller logs at
+	// startup, surfaced here so a manifest edit can be checked before it is applied.
+	for _, w := range config.ClientAWGTunnelWarnings(*cfg) {
+		fmt.Printf("\nwarning: %s\n", w)
+	}
 	return cfg, nil
 }
 

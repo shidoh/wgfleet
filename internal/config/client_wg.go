@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
 	"net/url"
 	"strings"
@@ -377,30 +378,59 @@ func (f FleetSection) ClientResolversFromManifest(m MasterConfig) []string {
 	return out
 }
 
+// clientAWGTunnelRoutes parses m's resolved client_awg AllowedIPs into prefixes,
+// shared by every check that needs to ask "is address/subnet X still routed into
+// this master's tunnel". ok=false on a malformed entry — the caller's own parse
+// loop (config.Validate's address_pool/CIDR checks) reports that separately, so
+// every caller here treats it as "nothing to say" rather than a second error.
+func clientAWGTunnelRoutes(m MasterConfig) (routes []netip.Prefix, ok bool) {
+	allowed := m.ClientAWGAllowedIPs()
+	routes = make([]netip.Prefix, 0, len(allowed))
+	for _, a := range allowed {
+		p, err := netip.ParsePrefix(a)
+		if err != nil {
+			return nil, false
+		}
+		routes = append(routes, p)
+	}
+	return routes, true
+}
+
+// routesCoverAddr reports whether addr is reachable through routes.
+func routesCoverAddr(routes []netip.Prefix, addr netip.Addr) bool {
+	for _, r := range routes {
+		if r.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// routesCoverPrefix reports whether the WHOLE of p is reachable through routes —
+// not just its network address, so a route narrower than p (fewer bits, i.e. a
+// wider mask) is required, not merely one that happens to contain p's first
+// address.
+func routesCoverPrefix(routes []netip.Prefix, p netip.Prefix) bool {
+	for _, r := range routes {
+		if r.Bits() <= p.Bits() && r.Contains(p.Addr()) {
+			return true
+		}
+	}
+	return false
+}
+
 func validateTunnelReachesItself(i int, m MasterConfig, fleet FleetSection) []error {
 	if len(m.ClientAWG.ExcludeFromTunnel) == 0 {
 		return nil
 	}
-	routes := make([]netip.Prefix, 0, len(m.ClientAWGAllowedIPs()))
-	for _, a := range m.ClientAWGAllowedIPs() {
-		p, err := netip.ParsePrefix(a)
-		if err != nil {
-			return nil // reported by the caller's own parse loop
-		}
-		routes = append(routes, p)
-	}
-	covered := func(addr netip.Addr) bool {
-		for _, r := range routes {
-			if r.Contains(addr) {
-				return true
-			}
-		}
-		return false
+	routes, ok := clientAWGTunnelRoutes(m)
+	if !ok {
+		return nil // reported by the caller's own parse loop
 	}
 
 	var errs []error
 	if pool, err := netip.ParsePrefix(m.ClientAWG.AddressPool); err == nil {
-		if gw := pool.Masked().Addr().Next(); gw.IsValid() && !covered(gw) {
+		if gw := pool.Masked().Addr().Next(); gw.IsValid() && !routesCoverAddr(routes, gw) {
 			errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.exclude_from_tunnel removes %s "+
 				"(the client pool, and %s is the gateway clients talk to) from the tunnel — add it to "+
 				"client_awg.route_through_cidrs", i, m.ClientAWG.AddressPool, gw))
@@ -411,13 +441,76 @@ func validateTunnelReachesItself(i int, m MasterConfig, fleet FleetSection) []er
 		if err != nil {
 			continue // reported by the caller's own parse loop
 		}
-		if !covered(addr) {
+		if !routesCoverAddr(routes, addr) {
 			errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.exclude_from_tunnel removes the "+
 				"client DNS server %s from the tunnel — clients would resolve nothing; add its network to "+
 				"client_awg.route_through_cidrs", i, d))
 		}
 	}
 	return errs
+}
+
+// ClientAWGTunnelWarnings flags every master whose client_awg.exclude_from_tunnel
+// would leave the client portal (controller.client_portal's own bind address) or
+// the management overlay outside the AllowedIPs a client actually gets — a device
+// that has fallen back to AWG can then never reach the portal to refresh its mihomo
+// subscription (mihomo/clientprofile.go, config/client_wg.go's own exclude_from_tunnel
+// expansion), and nothing else in the manifest would ever say so.
+//
+// Unlike validateTunnelReachesItself, this is advisory only and is NEVER folded
+// into Validate's joined error: a hard refusal here could stop a live controller on
+// upgrade over a tunnel shape that has otherwise run fine for months. Callers log
+// each returned line as a WARN at startup/config load instead.
+func ClientAWGTunnelWarnings(c ControllerConfig) []string {
+	portalAddr, havePortal := portalBindAddr(c.Controller.ClientPortal)
+	mgmtCIDRs := c.Fleet.MgmtCIDRs()
+
+	var warnings []string
+	for i, m := range c.Fleet.Masters {
+		if len(m.ClientAWG.ExcludeFromTunnel) == 0 {
+			continue
+		}
+		routes, ok := clientAWGTunnelRoutes(m)
+		if !ok {
+			continue // reported by the caller's own parse loop
+		}
+		if havePortal && !routesCoverAddr(routes, portalAddr) {
+			warnings = append(warnings, fmt.Sprintf("fleet.masters[%d] (%s): client_awg.exclude_from_tunnel removes "+
+				"the client portal's bind address %s from the tunnel — a device that falls back to AWG can never "+
+				"refresh its mihomo subscription there; add it (or its network) to client_awg.route_through_cidrs",
+				i, m.Name, portalAddr))
+		}
+		for _, cidr := range mgmtCIDRs {
+			p, err := netip.ParsePrefix(cidr)
+			if err != nil {
+				continue
+			}
+			if !routesCoverPrefix(routes, p) {
+				warnings = append(warnings, fmt.Sprintf("fleet.masters[%d] (%s): client_awg.exclude_from_tunnel removes "+
+					"the management overlay %s from the tunnel — a device on AWG alone can never reach the portal or "+
+					"any other admin surface bound there; add it to client_awg.route_through_cidrs", i, m.Name, cidr))
+			}
+		}
+	}
+	return warnings
+}
+
+// portalBindAddr parses controller.client_portal's host into an address to check
+// tunnel coverage against. ok=false when the bind is unset or unparseable — a
+// malformed bind is reported by validateClientPortal, not repeated here.
+func portalBindAddr(bind string) (netip.Addr, bool) {
+	if bind == "" {
+		return netip.Addr{}, false
+	}
+	host, _, err := net.SplitHostPort(bind)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return addr, true
 }
 
 // Client-facing IPv6 modes for client_awg.ipv6.

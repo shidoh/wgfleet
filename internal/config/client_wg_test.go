@@ -467,3 +467,69 @@ func TestDefaultNetnsCIDRIsAccepted(t *testing.T) {
 		t.Fatalf("a healthy fleet was rejected: %v", errs)
 	}
 }
+
+// A subscription refresh over AWG dials the client portal from inside the tunnel.
+// exclude_from_tunnel can take the portal's own bind address (or the management
+// overlay it lives on) out of the AllowedIPs without anything refusing to start —
+// the manifest is well-formed, the pool and DNS checks above pass, and the fleet
+// runs for weeks before someone reports "the app never gets the fleet's new state".
+// This is a WARN, never a hard error: refusing the config could stop a live
+// controller on upgrade over a tunnel shape that has run fine otherwise.
+func TestClientAWGTunnelWarningsFlagsAnUncoveredPortal(t *testing.T) {
+	base := func() ControllerConfig {
+		return ControllerConfig{
+			Controller: ControllerSection{ClientPortal: "10.20.0.10:9001"},
+			Fleet: FleetSection{
+				MgmtSubnet: "10.20.0.0/16",
+				Masters: []MasterConfig{{
+					Name: "master-xa-1", MgmtAddr: "10.20.0.1",
+					ClientAWG: ClientAWGConfig{AddressPool: "10.80.0.0/24"},
+				}},
+			},
+		}
+	}
+
+	// No exclude_from_tunnel at all: the default route covers everything, so there
+	// is nothing to warn about even though the portal is configured.
+	if got := ClientAWGTunnelWarnings(base()); len(got) != 0 {
+		t.Errorf("no exclusion but warnings were raised: %v", got)
+	}
+
+	// Excluding RFC1918 (the operator's LAN, the usual reason to exclude anything)
+	// also takes out the portal's 10.20.0.10 and the mgmt overlay 10.20.0.0/16.
+	c := base()
+	c.Fleet.Masters[0].ClientAWG.ExcludeFromTunnel = []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+	warnings := ClientAWGTunnelWarnings(c)
+	var gotPortal, gotMgmt bool
+	for _, w := range warnings {
+		if strings.Contains(w, "master-xa-1") && strings.Contains(w, "10.20.0.10") {
+			gotPortal = true
+		}
+		if strings.Contains(w, "master-xa-1") && strings.Contains(w, "10.20.0.0/16") {
+			gotMgmt = true
+		}
+	}
+	if !gotPortal {
+		t.Errorf("an uncovered portal bind address was not flagged: %v", warnings)
+	}
+	if !gotMgmt {
+		t.Errorf("an uncovered mgmt overlay was not flagged: %v", warnings)
+	}
+
+	// route_through_cidrs puts both back in: no warnings.
+	c.Fleet.Masters[0].ClientAWG.RouteThroughCIDRs = []string{"10.20.0.0/16"}
+	if got := ClientAWGTunnelWarnings(c); len(got) != 0 {
+		t.Errorf("route_through_cidrs did not resolve the exclusion: %v", got)
+	}
+
+	// No controller.client_portal at all: nothing to warn about on that front, even
+	// with the same exclusion (the mgmt overlay is still flagged on its own).
+	c2 := base()
+	c2.Controller.ClientPortal = ""
+	c2.Fleet.Masters[0].ClientAWG.ExcludeFromTunnel = []string{"10.0.0.0/8"}
+	for _, w := range ClientAWGTunnelWarnings(c2) {
+		if strings.Contains(w, "10.20.0.10") {
+			t.Errorf("warned about a portal that is not configured: %v", w)
+		}
+	}
+}

@@ -129,6 +129,11 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	defer applyConfigLogLevel(logLV, logBase, *logLevel, cfg.Controller.LogLevel)()
+	// Advisory, not a load failure (RULING): a config that would silently strand a
+	// device's mihomo subscription over AWG still starts, it just says so.
+	for _, w := range config.ClientAWGTunnelWarnings(*cfg) {
+		slog.Warn(w)
+	}
 	// --plan on its own used to fall through to serve(). Every subcommand consults it
 	// and none of them was selected, so the flag that means "change nothing" started
 	// the control plane: a port conflict on a live master, and a second unsupervised

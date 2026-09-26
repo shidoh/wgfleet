@@ -173,6 +173,7 @@ Symptoms:
 - **Something is wrong on our side** — a credential is active but its master has no published key or endpoint yet.
 - **This link is no longer working** — the link was rotated, the device deleted, or the credential attached to a device.
 - Profile never changes after a fleet update — the person is still on the file profile (step 4 skipped).
+- Profile never refreshes while on AWG — `client_awg.exclude_from_tunnel` takes the client portal (or the mgmt overlay it binds on) out of AllowedIPs, so a device that has fallen back to AWG can never dial the portal to fetch its subscription. The controller logs a WARN naming the master and the uncovered range at startup; fix by adding it to `client_awg.route_through_cidrs`.
 - Internal names do not resolve — check `dns_filter` on the master and the blocky mapping.
 - AWG throttled but alive — pick `<master>-vless` in the `wgfleet` group.
 
