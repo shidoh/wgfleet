@@ -20,6 +20,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -45,7 +46,16 @@ const (
 	masterMgmt    = "10.20.0.1"
 	masterPublic  = "198.51.100.10"
 	clientPool    = "10.80.0.0/24"
+	portalURL     = "https://vpn.example.org"
 )
+
+// devices are the client devices the console lists: every AWG credential becomes
+// one on adoption, exactly as on a real upgrade; vless names the VLESS credential
+// attached to it, and a device with no AWG credential is created from scratch.
+var devices = []struct{ name, vless string }{
+	{name: "alice-phone", vless: "alice-phone"},
+	{name: "erin-macbook", vless: "erin-macbook"},
+}
 
 // exit is one fictional exit node and the way it should look on the console.
 type exit struct {
@@ -100,6 +110,7 @@ func main() {
 	flag.StringVar(&b.listen, "listen", "127.0.0.1:8443", "controller.listen (gRPC) bind to write into the manifest")
 	flag.StringVar(&b.webui, "webui", "127.0.0.1:9000", "controller.webui bind to write into the manifest")
 	flag.StringVar(&b.metrics, "metrics", "127.0.0.1:9300", "controller.metrics bind to write into the manifest")
+	flag.StringVar(&b.portal, "portal", "127.0.0.1:9001", "controller.client_portal bind to write into the manifest")
 	flag.Parse()
 	if *dir == "" {
 		fmt.Fprintln(os.Stderr, "demo-fleet: -dir is required")
@@ -113,7 +124,7 @@ func main() {
 
 // binds are the three listeners the manifest declares; flags so a host that
 // already uses the defaults can still run the demo.
-type binds struct{ listen, webui, metrics string }
+type binds struct{ listen, webui, metrics, portal string }
 
 func run(dir, agentBin string, b binds, keep bool, interval time.Duration) error {
 	abs, err := filepath.Abs(dir)
@@ -154,13 +165,17 @@ func run(dir, agentBin string, b binds, keep bool, interval time.Duration) error
 	if err != nil {
 		return err
 	}
+	if err := seedDevices(ctx, st); err != nil {
+		return err
+	}
 	if err := recordStatuses(ctx, st, clientKeys); err != nil {
 		return err
 	}
 
 	fmt.Printf("demo fleet seeded in %s\n\n", abs)
 	fmt.Printf("  bin/wgfleet-controller --config %s\n", manifest)
-	fmt.Printf("  open http://%s   (login %s / %s)\n\n", b.webui, adminUser, adminPassword)
+	fmt.Printf("  open http://%s   (login %s / %s)\n", b.webui, adminUser, adminPassword)
+	fmt.Printf("  portal http://%s/c/<token>   (links in the console show %s)\n\n", b.portal, portalURL)
 	if !keep {
 		return nil
 	}
@@ -185,10 +200,12 @@ controller:
   # Nothing reports over gRPC here, so the staleness sweep would demote every
   # node within minutes; the seeder's -keep loop stands in for the agents.
   staleness_after: -1s
+  client_portal: %q
+  client_portal_url: %q
   pki:
     ca_cert: %q
     ca_key:  "file://%s"
-`, b.listen, b.webui, b.metrics, filepath.Join(dir, "state.db"), filepath.Join(dir, "ca.crt"), filepath.Join(dir, "ca.key"))
+`, b.listen, b.webui, b.metrics, filepath.Join(dir, "state.db"), b.portal, portalURL, filepath.Join(dir, "ca.crt"), filepath.Join(dir, "ca.key"))
 	if agentBin != "" {
 		m += fmt.Sprintf("  agent_bin: %q\n", agentBin)
 	}
@@ -200,6 +217,7 @@ controller:
       public_ip: %s
       client_awg: { listen_port: 443, address_pool: %s, managed: true }
       client_vless: { enabled: true, listen_port: 8443 }
+      client_admin_ports: [9001]
       routing:
         direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
         direct_geo:   [RU]
@@ -338,6 +356,40 @@ func seedClients(ctx context.Context, st store.Store, broker *keybroker.Broker) 
 		}
 	}
 	return keys, nil
+}
+
+// seedDevices runs the one-shot adoption the controller runs on its first start —
+// so the device pages exist before the console opens — then attaches the VLESS
+// credentials. IDs and tokens of created devices are fixed so a re-run finds them.
+func seedDevices(ctx context.Context, st store.Store) error {
+	if _, err := st.AdoptWGCredentialsAsDevices(ctx, time.Now()); err != nil {
+		return fmt.Errorf("adopt: %w", err)
+	}
+	wgs, err := st.ListWGClients(ctx, masterName)
+	if err != nil {
+		return err
+	}
+	wgID := map[string]string{}
+	for _, c := range wgs {
+		wgID[c.Name] = c.ID
+	}
+	for i, d := range devices {
+		id := store.AdoptedDeviceID(masterName, wgID[d.name])
+		if _, ok := wgID[d.name]; !ok {
+			id = fmt.Sprintf("d0000000000000000000000000000%03d", i)
+			if _, err := st.GetDevice(ctx, id); errors.Is(err, store.ErrNotFound) {
+				dev := domain.ClientDevice{ID: id, Token: fmt.Sprintf("7e57%028d", i), Name: d.name, CreatedAt: time.Now()}
+				if err := st.CreateDevice(ctx, dev); err != nil {
+					return fmt.Errorf("create device %s: %w", d.name, err)
+				}
+			}
+		}
+		err := st.AttachCredential(ctx, domain.CredentialVLESS, masterName, d.vless, id)
+		if err != nil && !errors.Is(err, store.ErrDeviceSlotTaken) && !errors.Is(err, store.ErrCredentialAttached) {
+			return fmt.Errorf("attach vless %s: %w", d.vless, err)
+		}
+	}
+	return nil
 }
 
 // recordStatuses writes one fresh status report per node, as the agents would
