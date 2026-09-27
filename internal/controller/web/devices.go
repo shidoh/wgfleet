@@ -60,6 +60,49 @@ type devicesData struct {
 	Devices                           []deviceRow
 	Device                            *deviceRow
 	Slots                             []masterSlots
+	// MultiMaster prefixes each connection badge in the list with its master;
+	// with one master the prefix repeats the same name on every row.
+	MultiMaster bool
+}
+
+// connCellView is one transport on one master on the device page: the credential
+// holding the slot, or the credentials that could fill it.
+type connCellView struct {
+	DeviceID, CSRF, Master, Kind string
+	Label, Slug, Href            string
+	Cred                         *domain.DeviceCredential
+	Free                         []credChoice
+}
+
+func connCell(d devicesData, s masterSlots, kind string) connCellView {
+	v := connCellView{DeviceID: d.Device.ID, CSRF: d.CSRF, Master: s.Master, Kind: kind}
+	k := domain.CredentialKind(kind)
+	v.Label, v.Slug = credLabel(k), credSlug(k)
+	if k == domain.CredentialVLESS {
+		v.Cred, v.Free, v.Href = s.VLESS, s.FreeVLS, "/nodes/"+s.Master+"/clients"
+	} else {
+		v.Cred, v.Free = s.AWG, s.FreeAWG
+		if s.AWG != nil {
+			v.Href = "/nodes/" + s.Master + "/wg-clients#client-" + s.AWG.Ref
+		}
+	}
+	return v
+}
+
+// credLabel and credSlug reuse the transport badge of the fleet page: AWG blue,
+// VLESS (REALITY underneath) violet — the same colour means the same thing.
+func credLabel(k domain.CredentialKind) string {
+	if k == domain.CredentialVLESS {
+		return "VLESS"
+	}
+	return "AWG"
+}
+
+func credSlug(k domain.CredentialKind) string {
+	if k == domain.CredentialVLESS {
+		return "reality"
+	}
+	return "amnezia"
 }
 
 // deviceLinks are the two URLs a person is handed, built from the configured
@@ -76,7 +119,8 @@ func (h *Handler) deviceLinks(d domain.ClientDevice) (page, sub string) {
 func (h *Handler) devicesData(w http.ResponseWriter, r *http.Request, title string) devicesData {
 	user, _ := h.currentUser(r)
 	return devicesData{Title: title, User: user, CSRF: h.csrf, NodeCount: h.fleetCount(r.Context()),
-		PortalBase: h.portalBase, Flash: h.takeFlash(w, r), FlashOK: h.takeFlashOK(w, r)}
+		PortalBase: h.portalBase, Flash: h.takeFlash(w, r), FlashOK: h.takeFlashOK(w, r),
+		MultiMaster: h.devices != nil && len(h.devices.Masters()) > 1}
 }
 
 func (h *Handler) handleDevices(w http.ResponseWriter, r *http.Request) {

@@ -44,3 +44,14 @@ window.addEventListener('DOMContentLoaded', function () {
   if (d) d.open = true;
   card.scrollIntoView({ block: 'center' });
 });
+
+// markSection: highlight the header section the current page belongs to. By path,
+// not by page title: confirmation pages are POST responses under /devices/… and
+// belong to Devices even though their titles say "Delete device".
+window.addEventListener('DOMContentLoaded', function () {
+  var section = window.location.pathname.indexOf('/devices') === 0 ? 'devices'
+    : (window.location.pathname === '/' || window.location.pathname.indexOf('/nodes') === 0 ? 'nodes' : '');
+  if (!section) return;
+  var link = document.querySelector('.mainnav-link[data-section="' + section + '"]');
+  if (link) link.setAttribute('aria-current', 'page');
+});

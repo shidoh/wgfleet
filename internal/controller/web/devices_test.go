@@ -166,14 +166,27 @@ func TestAttachingACredentialWithALiveLinkAsksFirst(t *testing.T) {
 	}
 }
 
-func TestDevicePageOffersOnlyUnattachedCredentials(t *testing.T) {
+func TestDeviceFormsOfferOnlyUnattachedCredentials(t *testing.T) {
 	h, _ := deviceHandler(t)
-	_, body := get(t, h, "/devices/d1")
+	_, body := get(t, h, "/devices")
 	if !strings.Contains(body, `value="spare"`) || !strings.Contains(body, `value="old"`) {
 		t.Error("unattached credentials are not offered")
 	}
 	if strings.Contains(body, `<option value="a"`) {
 		t.Error("an attached credential is offered for attaching")
+	}
+}
+
+// An occupied slot offers Detach only: the store holds one credential per kind
+// per master, so a picker there could only ever end in "detach it first".
+func TestDevicePageOffersNoPickerForAnOccupiedSlot(t *testing.T) {
+	h, _ := deviceHandler(t)
+	_, body := get(t, h, "/devices/d1")
+	if !strings.Contains(body, `name="ref" value="a"`) {
+		t.Fatal("the attached credential has no Detach form")
+	}
+	if n := strings.Count(body, `name="kind" value="awg"`); n != 1 {
+		t.Errorf("%d AmneziaWG forms on master-xa-1, want 1 (Detach only)", n)
 	}
 }
 

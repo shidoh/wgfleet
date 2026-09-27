@@ -313,11 +313,6 @@ a:focus-visible,
 .wordmark, .auth-brand { display: inline-flex; align-items: center; gap: 10px; }
 .wordmark .mark { flex: none; }
 .auth-brand { justify-content: center; }
-.tagline {
-  font-size: var(--fs-meta);
-  color: var(--text-label);
-  letter-spacing: var(--track-label);
-}
 .nodecount {
   display: flex;
   align-items: center;
@@ -1964,4 +1959,128 @@ details.hand-out[open] > .client-cfg { margin-top: var(--sp-5); }
   .roll-planrow,
   .roll-planrow.skipped { grid-template-columns: 1fr auto; }
   .roll-tier, .roll-idx { display: none; }
+}
+
+/* ============================================================
+   MAIN NAVIGATION
+   Two sections an operator moves between: the nodes and the people's devices.
+   Devices used to sit among the account links (admin · logout) and read as a
+   setting, not a place — it was the hardest page in the console to find.
+   ============================================================ */
+.topbar > .spacer { flex: 1; }
+.mainnav { display: flex; align-items: center; gap: var(--sp-2); margin-left: var(--sp-5); }
+.mainnav-link {
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-pill-sm);
+  font-size: var(--fs-body);
+  color: var(--text-muted);
+  text-decoration: none;
+  border: 1px solid transparent;
+}
+.mainnav-link:hover { color: var(--text-strong); border-color: var(--border-badge); }
+.mainnav-link[aria-current="page"] { color: var(--text-strong); background: var(--panel-2); border-color: var(--border-badge); }
+.mainnav-link[aria-current="page"]::before { content: "● "; color: var(--green); font-size: 8px; vertical-align: 2px; }
+.mainnav-link:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+/* ============================================================
+   DEVICES
+   ============================================================ */
+.device-block + .device-block { margin-top: var(--sp-6); }
+
+/* Hand over: two numbered steps, each a sentence on the left and the thing to
+   hand out on the right. */
+.handover { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+.handover-step {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.4fr);
+  align-items: center;
+  gap: var(--sp-5);
+  padding: var(--sp-5) 0;
+  border-top: 1px solid var(--border-rule);
+}
+.handover-step:first-child { border-top: none; padding-top: 0; }
+.handover-step::before {
+  content: counter(step);
+  display: inline-grid; place-items: center;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--green-30);
+  color: var(--green);
+  font-size: var(--fs-meta);
+}
+.handover-text { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+.handover-title { font-size: var(--fs-subject); color: var(--text-strong); }
+.handover-step > .btn { justify-self: start; }
+.handover-link { width: 100%; }
+.handover-page { margin: var(--sp-4) 0 0; padding-top: var(--sp-4); border-top: 1px solid var(--border-rule); }
+.handover-page a { color: var(--blue); word-break: break-all; }
+
+/* Connections matrix: rows are masters, columns are transports. */
+.conn-intro { margin: calc(-1 * var(--sp-4)) 0 var(--sp-5); }
+.conn-table th[scope="row"] {
+  text-align: left; font-weight: 500;
+  font-size: var(--fs-body); color: var(--text-bright);
+  padding: var(--sp-4) var(--sp-5) var(--sp-4) 0;
+  border-bottom: 1px solid var(--border-rule);
+  white-space: nowrap;
+  text-transform: none; letter-spacing: normal;
+}
+/* Fixed layout: the columns must not jump when a slot switches between a held
+   credential and a picker. */
+.conn-table { table-layout: fixed; }
+.conn-table th:first-child { width: 22%; }
+.conn-table th[scope="row"] { overflow: hidden; text-overflow: ellipsis; }
+.conn-table td { padding: var(--sp-4) var(--sp-5) var(--sp-4) 0; }
+.conn-table td.conn-add { display: table-cell; }
+.conn-table td.conn-add > * { vertical-align: middle; }
+.conn-table td.conn-add select { width: calc(100% - 8ch); margin-left: var(--sp-2); }
+.conn-table tr:last-child th[scope="row"] { border-bottom: none; }
+.conn-held, .conn-add { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin: 0; }
+.conn-held form { margin: 0 0 0 auto; }
+/* Each slot is its own box: side by side, a held AWG credential's Detach and the
+   VLESS badge next to it read as one row of four things otherwise. */
+.conn-slot {
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-mini);
+  background: var(--panel-2);
+}
+.conn-slot.is-empty { background: none; border-style: dashed; border-color: var(--border-badge); }
+.conn-table:has(.conn-slot) td { padding-right: var(--sp-4); }
+.conn-table:has(.conn-slot) td:last-child { padding-right: 0; }
+.conn-name { color: var(--text-strong); font-size: var(--fs-body); text-decoration: none; }
+.conn-name:hover { color: var(--blue); text-decoration: underline; }
+.conn-add select { flex: 1; min-width: 12ch; }
+.xport.is-empty { color: var(--text-label); background: none; border-color: var(--border-badge); border-style: dashed; }
+.btn.btn-sm { min-height: 30px; padding: var(--sp-1) var(--sp-4); font-size: var(--fs-meta); }
+.input.input-sm { min-height: 30px; padding-top: var(--sp-1); padding-bottom: var(--sp-1); font-size: var(--fs-meta); }
+
+/* Device settings: rename on the left, the two irreversible actions on the right. */
+.device-settings { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--sp-6); flex-wrap: wrap; }
+.rename-form { display: grid; grid-template-columns: minmax(0, 320px) auto; align-items: end; gap: var(--sp-2) var(--sp-3); }
+.rename-form .field { margin: 0; }
+.device-danger { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
+.device-danger form { margin: 0; }
+
+/* Devices list. */
+.device-name { color: var(--text-strong); font-size: var(--fs-body); }
+.conn-badges { display: inline-flex; gap: var(--sp-2); flex-wrap: wrap; }
+.devices-table td { vertical-align: middle; }
+.devices-link { width: 55%; }
+.devices-link .input { width: 100%; }
+.new-device .conn-table { margin-top: var(--sp-4); }
+.form-actions { margin-top: var(--sp-6); }
+
+@media (max-width: 720px) {
+  .handover-step { grid-template-columns: auto minmax(0, 1fr); }
+  .handover-step > :last-child { grid-column: 2; }
+  .mainnav { margin-left: 0; }
+  .conn-table, .conn-table tbody, .conn-table tr, .conn-table th[scope="row"], .conn-table td { display: block; width: auto; }
+  .conn-table thead { display: none; }
+  .conn-table th[scope="row"] { border-bottom: none; padding-bottom: 0; }
+  .conn-table td, .conn-table td.conn-add { display: block; border-bottom: none; }
+  .conn-table tr { border-bottom: 1px solid var(--border-rule); padding-bottom: var(--sp-3); }
+  .conn-table tr:last-child { border-bottom: none; }
+  .device-settings { align-items: stretch; }
 }

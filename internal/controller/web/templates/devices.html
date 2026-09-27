@@ -5,24 +5,28 @@
 {{if .Flash}}<p class="error-note" role="alert">⚠ {{.Flash}}</p>{{end}}
 {{if .FlashOK}}<p class="ok-note" role="status">✓ {{.FlashOK}}</p>{{end}}
 
-<div class="panel">
-  <h2 class="panel-label">DEVICES · {{len .Devices}}</h2>
+<section class="panel device-block" aria-labelledby="list-h">
+  <h2 class="panel-label" id="list-h">DEVICES · {{len .Devices}}</h2>
   {{if not .Devices}}
-  <p class="dim">No devices yet — create one below.</p>
+  <p class="dim">No devices yet. Create the first one below: it gets one subscription link that carries every connection you add.</p>
   {{else}}
   <div class="spec-table-wrap">
-  <table class="spec-table">
-    <thead><tr><th>Name</th><th>Credentials</th><th>Subscription link</th></tr></thead>
+  <table class="spec-table devices-table">
+    <thead><tr><th scope="col">Device</th><th scope="col">Connections</th><th scope="col">Subscription link</th></tr></thead>
     <tbody>
       {{range .Devices}}
       <tr>
-        <td><a href="/devices/{{.ID}}">{{.Name}}</a></td>
-        <td>{{if .Creds}}{{range .Creds}}<span class="mono">{{.MasterID}} · {{.Kind}}</span> {{end}}{{else}}<span class="dim">none</span>{{end}}</td>
+        <td><a class="device-name" href="/devices/{{.ID}}">{{.Name}}</a></td>
         <td>
+          {{if .Creds}}
+          <span class="conn-badges">{{range .Creds}}<span class="xport {{credSlug .Kind}}" title="{{credLabel .Kind}} on {{.MasterID}}">{{if $.MultiMaster}}{{.MasterID}} · {{end}}{{credLabel .Kind}}</span>{{end}}</span>
+          {{else}}<span class="dim">none: the profile is empty</span>{{end}}
+        </td>
+        <td class="devices-link">
           {{if $.PortalBase}}
           <input class="input mono" type="text" readonly value="{{.SubURL}}" onclick="this.select()" aria-label="subscription link for {{.Name}}">
           {{else}}
-          <span class="dim">Set controller.client_portal_url to show links</span>
+          <span class="dim">set controller.client_portal_url to show links</span>
           {{end}}
         </td>
       </tr>
@@ -31,35 +35,51 @@
   </table>
   </div>
   {{end}}
-</div>
+</section>
 
-<div class="panel">
-  <h2 class="panel-label">NEW DEVICE</h2>
-  <form method="post" action="/devices/create" onsubmit="return lockAction(this)">
+<section class="panel device-block" aria-labelledby="new-h">
+  <h2 class="panel-label" id="new-h">NEW DEVICE</h2>
+  <form class="new-device" method="post" action="/devices/create" onsubmit="return lockAction(this)">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-    <label class="field"><span class="field-label">DEVICE NAME</span>
+    <label class="field"><span class="field-label">NAME</span>
       <input class="input" type="text" name="name" placeholder="bob-laptop" required
              pattern="[A-Za-z0-9._-]{1,64}" aria-describedby="device-name-hint"></label>
-    <p class="cfg-hint" id="device-name-hint">letters, digits, dash, underscore or dot — up to 64</p>
-    {{range .Slots}}
-    <div class="panels cols-2">
-      <label class="field"><span class="field-label">AMNEZIAWG · {{.Master}}</span>
-        <select class="input" name="awg_{{.Master}}">
-          <option value="">none</option>
-          <option value="new">issue new</option>
-          {{range .FreeAWG}}<option value="{{.Ref}}">attach {{.Name}}{{if .LiveLink}} (personal link will stop){{end}}</option>{{end}}
-        </select>
-      </label>
-      <label class="field"><span class="field-label">VLESS · {{.Master}}</span>
-        <select class="input" name="vless_{{.Master}}">
-          <option value="">none</option>
-          <option value="new">issue new</option>
-          {{range .FreeVLS}}<option value="{{.Ref}}">attach {{.Name}}</option>{{end}}
-        </select>
-      </label>
+    <p class="cfg-hint" id="device-name-hint">one device of one person · letters, digits, dash, underscore or dot — up to 64</p>
+    <div class="spec-table-wrap">
+    <table class="spec-table conn-table">
+      <thead><tr><th scope="col">Master</th><th scope="col">AmneziaWG</th><th scope="col">VLESS</th></tr></thead>
+      <tbody>
+      {{range .Slots}}
+        <tr>
+          <th scope="row" class="conn-master">{{.Master}}</th>
+          <td class="conn-add">
+            <span class="xport amnezia is-empty">AWG</span>
+            <select class="input input-sm" name="awg_{{.Master}}" aria-label="AmneziaWG on {{.Master}}">
+              <option value="new" selected>issue a new credential</option>
+              <option value="">none</option>
+              {{if .FreeAWG}}<optgroup label="attach an existing one">
+                {{range .FreeAWG}}<option value="{{.Ref}}">{{.Name}}{{if .LiveLink}} (its personal link will stop){{end}}</option>{{end}}
+              </optgroup>{{end}}
+            </select>
+          </td>
+          <td class="conn-add">
+            <span class="xport reality is-empty">VLESS</span>
+            <select class="input input-sm" name="vless_{{.Master}}" aria-label="VLESS on {{.Master}}">
+              <option value="new" selected>issue a new credential</option>
+              <option value="">none</option>
+              {{if .FreeVLS}}<optgroup label="attach an existing one">
+                {{range .FreeVLS}}<option value="{{.Ref}}">{{.Name}}</option>{{end}}
+              </optgroup>{{end}}
+            </select>
+          </td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
     </div>
-    {{end}}
-    <button class="btn go" type="submit" data-pending="Creating…">Create device</button>
+    <div class="form-actions">
+      <button class="btn go" type="submit" data-pending="Creating…">Create device</button>
+    </div>
   </form>
-</div>
+</section>
 {{end}}
