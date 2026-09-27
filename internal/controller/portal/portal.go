@@ -579,7 +579,12 @@ const portalCSS = `
 body { margin:0; min-height:100vh; display:grid; justify-items:center; align-items:start;
   padding:32px 16px 48px; box-sizing:border-box;
   background:#11151c; color:#e6edf3; font:16px/1.5 system-ui, -apple-system, sans-serif; }
-.card { width:min(420px, 92vw); background:#171d26; border:1px solid #232c39;
+/* border-box: the 28px padding sits INSIDE the width. Without it the card was
+   min(420px, 92vw) PLUS 56px of padding, wider than a 390px phone after the body's
+   own 16px gutters — every phone scrolled sideways and clipped the right edge.
+   Sized by the viewport, not 100%: body's grid column is as wide as its content,
+   so a percentage would follow the long link and the QR back out of the screen. */
+.card { box-sizing:border-box; width:min(420px, calc(100vw - 32px)); background:#171d26; border:1px solid #232c39;
   border-radius:14px; padding:28px; }
 h1 { margin:0 0 4px; font-size:20px; }
 .sub { margin:0 0 20px; color:#8b98a9; font-size:15px; }
@@ -646,6 +651,7 @@ const portalHTML = `<!doctype html>
   <li>Install one of the apps above on this device.</li>
   <li>Add a profile <b>from URL</b> and paste the link below — or scan the QR.</li>
   <li>Switch on <b>TUN</b> mode in the app, then connect.</li>
+  {{if .HasWG}}<li>Using the <b>AmneziaWG</b> app now? Turn it off once the new app connects. Both share one key: running them together cuts the connection every few seconds.</li>{{end}}
 </ol>
 <input class="sub-url" type="text" readonly value="{{.SubscriptionURL}}" aria-label="Subscription link" onclick="this.select()">
 <img class="qr-img" src="/c/{{.Token}}/mihomo/qr" alt="QR code of the subscription link" loading="lazy">
@@ -654,10 +660,18 @@ const portalHTML = `<!doctype html>
 <p class="sub">The subscription link is not available here — ask whoever sent you this page.</p>
 {{end}}
 <p class="sub">For another device, ask for a separate link — one link belongs to one device.</p>
+{{if .SubscriptionURL}}
+<details>
+  <summary>Your own changes to the profile</summary>
+  <p>The profile is replaced whole at every update (once a day, or when you tap update). Edits made inside it are lost.</p>
+  <p>Keep your own rules in the app's layer on top of the profile: <b>Clash Verge Rev</b> — the profile's <b>Merge</b> or its Rules / Proxies / Groups editors.</p>
+</details>
+{{end}}
 {{if .HasWG}}
 <details>
   <summary>AmneziaWG app instead</summary>
   <p>Install <b>AmneziaWG</b>, not the ordinary WireGuard app: this profile is obfuscated and the plain app cannot read it.</p>
+  <p>Use it <b>instead of</b> the mihomo app, never alongside: both share one key, and together they cut each other off.</p>
   <div class="actions"><a class="btn" href="/c/{{.Token}}/config">Download profile</a></div>
   <img class="qr-img" src="/c/{{.Token}}/qr" alt="QR code for the AmneziaWG profile" loading="lazy">
 </details>

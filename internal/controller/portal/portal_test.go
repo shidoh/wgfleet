@@ -467,7 +467,7 @@ func TestPortalPagesShareOneStylesheet(t *testing.T) {
 	h := testPortal(t)
 	_, ok := fetch(t, h, "/c/"+devTok)
 	_, bad := fetch(t, h, "/c/ffffffffffffffff")
-	for _, marker := range []string{"align-items:start", ".card { width:min(420px, 92vw)"} {
+	for _, marker := range []string{"align-items:start", ".card { box-sizing:border-box; width:min(420px, calc(100vw - 32px))"} {
 		if !strings.Contains(ok, marker) || !strings.Contains(bad, marker) {
 			t.Errorf("the two portal pages do not share %q", marker)
 		}
@@ -896,6 +896,34 @@ func TestPortalDevicePageLeadsWithTheSubscription(t *testing.T) {
 	}
 	if strings.Contains(body, "Set up a second device") {
 		t.Error("the page still teaches installing one key on two devices")
+	}
+}
+
+// The subscription and the AmneziaWG .conf carry the same key, so running both
+// apps at once makes the server answer whichever spoke last — the connection
+// breaks every few seconds (seen live, 2026-09-27). And a subscription update
+// replaces the profile whole, so edits made inside it are lost. The page says
+// both before the person finds out.
+func TestPortalDevicePageWarnsAboutTwoAppsAndLocalEdits(t *testing.T) {
+	h := testPortal(t)
+	_, body := fetch(t, h, "/c/"+devTok)
+	for _, want := range []string{"Turn it off once the new app connects", "never alongside", "Edits made inside it are lost", "Merge"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+}
+
+// The card's padding must sit inside its width: content-box made it 56px wider
+// than min(420px, 92vw), and a 390px phone scrolled sideways (found 2026-09-27).
+func TestPortalCardFitsAPhone(t *testing.T) {
+	i := strings.Index(portalCSS, ".card {")
+	if i < 0 {
+		t.Fatal("no .card rule")
+	}
+	rule := portalCSS[i : i+strings.Index(portalCSS[i:], "}")]
+	if !strings.Contains(rule, "box-sizing:border-box") || !strings.Contains(rule, "calc(100vw - 32px)") {
+		t.Errorf(".card must be border-box and no wider than the viewport minus body's gutters, got: %s", rule)
 	}
 }
 
