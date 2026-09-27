@@ -1784,6 +1784,7 @@ func funcMap() template.FuncMap {
 		// lower accepts any stringish value (string, domain.Role, domain.NodeState).
 		"lower":   func(v any) string { return strings.ToLower(fmt.Sprint(v)) },
 		"relTime": relTime,
+		"asset":   assetURL,
 		// add1 renders a 1-based index for range positions (rollout step numbers).
 		"add1": func(i int) int { return i + 1 },
 		// transportLabel renders a human label for a master↔exit transport.

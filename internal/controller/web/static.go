@@ -69,8 +69,9 @@ func (s *staticAssets) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Vary", "Accept-Encoding")
 	// Content sniffing matters most on exactly these files, and nothing else sets it.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	// Long max-age is safe BECAUSE the tag is a content hash: a changed file gets
-	// a new tag, and until then a revalidation is a 304 with no body.
+	// For the hour of max-age the browser does not ask at all, so a page must link
+	// the file through assetURL (content hash in the query) to see a new release
+	// at once. After that hour a revalidation is a 304 with no body.
 	w.Header().Set("Cache-Control", "public, max-age=3600, must-revalidate")
 	w.Header().Set("Content-Type", rep.contentType)
 
@@ -162,4 +163,39 @@ func contentTypeFor(name string) string {
 	default:
 		return "application/octet-stream"
 	}
+}
+
+// assetVersions maps a static file to a short hash of its bytes, computed once.
+var (
+	assetVersionsOnce sync.Once
+	assetVersions     map[string]string
+)
+
+// assetURL is the URL a page uses for a static file, with the content hash in the
+// query. The files are served with max-age=3600, so without it a browser keeps the
+// OLD stylesheet for up to an hour after an upgrade and draws the new markup with
+// it — a release that changes the header shows a broken header until then. The
+// handler routes by path, so the query is only a cache key.
+func assetURL(name string) string {
+	assetVersionsOnce.Do(func() {
+		assetVersions = map[string]string{}
+		sub, err := fs.Sub(staticFS, "static")
+		if err != nil {
+			return
+		}
+		_ = fs.WalkDir(sub, ".", func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if raw, rerr := fs.ReadFile(sub, path); rerr == nil {
+				sum := sha256.Sum256(raw)
+				assetVersions[path] = base64.RawURLEncoding.EncodeToString(sum[:])[:12]
+			}
+			return nil
+		})
+	})
+	if v, ok := assetVersions[name]; ok {
+		return "/static/" + name + "?v=" + v
+	}
+	return "/static/" + name
 }

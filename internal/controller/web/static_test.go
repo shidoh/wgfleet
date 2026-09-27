@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -178,5 +179,20 @@ func TestStaticAssetsHonourAnExplicitGzipRefusal(t *testing.T) {
 	}
 	if acceptsGzip("") || acceptsGzip("identity") || acceptsGzip("br") {
 		t.Error("gzip was inferred from a header that never mentions it")
+	}
+}
+
+// A page must name its stylesheet by content, not by path alone: the files are
+// cached for an hour, and an upgrade that changes the markup would otherwise be
+// drawn with the previous release's CSS until that hour runs out.
+func TestPagesReferenceAssetsByContentHash(t *testing.T) {
+	h, _ := newTestHandler(t, nil)
+	_, body := get(t, h, "/")
+	m := regexp.MustCompile(`href="(/static/app\.css\?v=[A-Za-z0-9_-]{12})"`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("fleet page links app.css without a content hash:\n%s", body)
+	}
+	if res, _ := get(t, h, m[1]); res.StatusCode != http.StatusOK {
+		t.Errorf("GET %s = %d, want 200", m[1], res.StatusCode)
 	}
 }
