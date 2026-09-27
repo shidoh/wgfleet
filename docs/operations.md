@@ -119,7 +119,11 @@ A VLESS credential (below) has no pause. Revoking is the only way to cut one off
 
 A device is one physical device of one person. Its link serves a mihomo profile with a proxy for every credential it holds: AmneziaWG and VLESS, on every master.
 
-Console: **devices** (top bar).
+Console: **Devices** in the top bar.
+
+![Devices list: each device with its connections and subscription link; below it, the form for a new device.](assets/img/console-devices.png)
+
+![Device page: hand-over steps, one slot per transport and master, rename, link rotation and deletion.](assets/img/console-device.png)
 
 Prerequisites:
 
@@ -131,8 +135,8 @@ Prerequisites:
 
 | Action | Effect |
 |---|---|
-| **Create** | New device. Per master: issue a new AWG / VLESS credential, attach an unattached one, or leave the slot empty. |
-| **Attach** | Put an unattached credential into an empty slot. The credential's own personal link (`/c/<credential-id>`) stops working for good; the console asks first. |
+| **Create** | New device. Per master: issue a new AWG / VLESS credential (default), attach an unattached one, or `none`. |
+| **Add** | Empty slot on the device page: issue a new credential or attach an unattached one. Attaching kills the credential's own personal link (`/c/<credential-id>`) for good; the console asks first. An occupied slot offers only **Detach**. |
 | **Detach** | Empty the slot. The credential stays on its master without a personal link. A device whose link was that credential's ID gets a new link. |
 | **Rotate link** | New link; the old link and subscription stop at once. Credentials unchanged. |
 | **Delete** | Removes the device and its link for good. Credentials stay, unattached, without personal links. |
@@ -143,6 +147,8 @@ Limits: one AWG and one VLESS credential per master per device. One AWG credenti
 |---|---|
 | `<client_portal_url>/c/<token>` | Page: subscription link + QR, AmneziaWG `.conf`, `vless://`, reserve configs |
 | `<client_portal_url>/c/<token>/mihomo` | Profile, `text/yaml`, `Profile-Update-Interval: 24` |
+| `<client_portal_url>/c/<token>/mihomo/qr` | QR of the subscription link (not of the profile) |
+| `<client_portal_url>/c/<token>/config`, `/qr`, `/l/<exit>/…` | AmneziaWG `.conf`, its QR, reserve configs. `404` on a device without an AWG credential |
 
 Without `controller.client_portal_url` the link uses the portal's bind address.
 
@@ -166,13 +172,26 @@ First import (the portal is reachable only through the tunnel):
 
 Devices that can already reach the portal skip steps 1–2: add the profile from URL, switch on TUN, connect.
 
+![Portal page of a device: subscription link and QR, the steps, and the AmneziaWG profile folded below.](assets/img/portal-device.png){ width="320" loading=lazy }
+
+One app per device. The AmneziaWG `.conf` and the subscription's `<master>-awg` proxy carry the **same key**; with both running, the master answers whichever sent last and the tunnel breaks every few seconds. A mihomo app does this even with TUN off: its health check brings the AWG proxy up.
+
+Local changes to the profile:
+
+| Where the change is made | After a subscription update |
+|---|---|
+| Inside the subscription profile | Lost: the profile is replaced whole |
+| Clash Verge Rev: the profile's **Merge** / **Script**, or its Rules / Proxies / Groups editors | Kept, applied on top of every update |
+| Own local profile with the device link as a `proxy-providers` entry | Kept; proxies update, rules and DNS are the person's own and no longer follow the fleet |
+
 | Profile part | Value |
 |---|---|
 | Proxies | `<master>-awg`, `<master>-vless` for each attached, active credential |
+| `<master>-awg` with `client_awg.awg3` | `timers`: `version: 3` and the 3.x timers. `full`: also `header-protection-key` |
 | `<master>` | `fallback` over that master's proxies |
 | `auto` | `fallback` over all proxies, `generate_204`, every 300 s |
 | `wgfleet` | `select`: `auto` or any proxy |
-| Rules | `route_through_cidrs` (both transports) and `mgmt_subnet` → `wgfleet`; the master's client pool → `<master>`; RFC1918, link-local, loopback → `DIRECT`; rest → `wgfleet` |
+| Rules | `route_through_cidrs` (both transports, every master — keep the lists identical across masters) and `mgmt_subnet` → `wgfleet`; the master's client pool → `<master>`; RFC1918, link-local, loopback → `DIRECT`; rest → `wgfleet` |
 | DNS | each master's client resolvers, `tcp://<addr>:53` through `<master>`; absent when the master has none |
 
 Symptoms:
@@ -181,8 +200,13 @@ Symptoms:
 - **Something is wrong on our side** — a credential is active but its master has no published key or endpoint yet.
 - **This link is no longer working** — the link was rotated, the device deleted, or the credential attached to a device.
 - Profile never changes after a fleet update — the person is still on the file profile (step 4 skipped).
+- One master's proxies missing from the profile — that master was not ready when the profile was fetched; update the profile in the app.
+- No AmneziaWG block on the page, `/config` answers `404` — the device holds no AWG credential (VLESS only).
 - Profile never refreshes while on AWG — `client_awg.exclude_from_tunnel` takes the client portal (or the mgmt overlay it binds on) out of AllowedIPs, so a device that has fallen back to AWG can never dial the portal to fetch its subscription. The controller logs a WARN naming the master and the uncovered range at startup; fix by adding it to `client_awg.route_through_cidrs`.
 - Internal names do not resolve — check `dns_filter` on the master and the blocky mapping.
+- Connection drops every few seconds, handshakes every 10–20 s, the peer's endpoint port flips on the master (`awg show wg0 endpoints`) — the AmneziaWG app and a mihomo app with this device's profile run at once. Quit one of them.
+- Rules the person added in the app vanish after an update — they were edited inside the subscription profile; move them to the app's override layer (table above).
+- Clash Verge Rev shows the profile as `\"name.yaml\` — imported from a controller before `filename*` was sent; delete the profile and import the link again.
 - AWG throttled but alive — pick `<master>-vless` in the `wgfleet` group.
 
 ## The master is lost: reserve configs

@@ -15,7 +15,7 @@ Four parts, each a separate decision. Stopping after any part is a finished stat
 | 4 | AmneziaWG 3.x `full` | **no** | **every one of them, at once** |
 
 - Parts 1-3 are invisible to your users: the agent adopts wg-easy's own interface key, every config already in the field keeps working, nobody re-imports anything.
-- Part 4 `awg3: full` adds header protection; every client must re-import before it works again, and the new config cannot be delivered through the tunnel. It is optional and nothing else depends on it.
+- Part 4 `awg3: full` adds header protection; every AmneziaWG `.conf` holder must re-import before it works again, and the new config cannot be delivered through the tunnel. A device with a VLESS credential refreshes its subscription over VLESS and follows on its own. It is optional and nothing else depends on it.
 - Part 3 is the one that moves credentials into the controller's store, so issuing, pausing, renaming and revoking become console actions and each person gets a self-service link.
 - [The key check](#1a-the-key-check-do-not-skip-this) at the end of part 1 verifies that the agent will adopt wg-easy's identity rather than mint its own. It fails silently, and its failure is the only way this migration cuts everyone off at once. Run it even if you stop after part 1.
 - [Rollback](#rollback) in part 3 is free until you issue your first new client. Read it before starting part 3.
@@ -281,7 +281,8 @@ All keys: [configuration.md#3-fleet-fleet-wide-settings](configuration.md#3-flee
 ### The `full` rollout
 
 - Do not set `full` until you can reach every user.
-- The self-service portal cannot carry this one: it is reachable only from inside the tunnel, and a link fetched *before* the flip hands out the pre-3.x config.
+- The self-service portal cannot carry this one to `.conf` holders: it is reachable only from inside the tunnel, and a link fetched *before* the flip hands out the pre-3.x config.
+- Devices with a VLESS credential are the exception: the subscription refreshes over `<master>-vless` (within `Profile-Update-Interval: 24` h, or at once on a manual update) and brings the new AWG settings.
 - What it looks like from the user's side: the old client stops passing traffic within seconds, not at the next rekey, and nothing on the client says so. The interface stays **UP**, `awg show` keeps printing a "latest handshake" that just gets older, and on a phone the VPN toggle stays green. The report you will get is **"the VPN is connected but nothing loads"**.
 - There is no ordering that avoids the outage window: the file that works cannot exist until the flip that breaks the old one. A botched flip is two rounds of re-handout, not one.
 

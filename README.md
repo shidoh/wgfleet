@@ -148,8 +148,10 @@ clients can connect to the master over VLESS as well as AmneziaWG.
 - **Censorship-adaptive egress** — block detection with automatic WARP ↔ direct
   failover and a throughput watchdog that demotes a throttled path.
 - **DPI-resistant client transport** — clients can connect over VLESS + REALITY
-  + XHTTP alongside client AmneziaWG; credentials, QR, subscription and a
-  ready-to-import Clash config are issued from the Web UI.
+  + XHTTP alongside client AmneziaWG; credentials, QR and a ready-to-import
+  Clash config are issued from the Web UI.
+- **Client devices** — one link per device serves a mihomo subscription with
+  AmneziaWG and VLESS on every master and switches between them on its own.
 - **Reserve configs on exits (lifeline)** — an exit can carry a second
   client-facing AmneziaWG interface holding every issued credential; each person
   gets a reserve profile per such exit, added in advance, so losing the master
@@ -382,7 +384,8 @@ MVP, in active development.
 | Egress-block detection + censorship-adaptive failover | ✅ |
 | Web dashboard, Prometheus metrics, encrypted backup/restore | ✅ |
 | Dual transport — VLESS + REALITY + XHTTP fallback, per-exit, live switch | ✅ |
-| Client VLESS + REALITY + XHTTP — credentials, QR and subscription from the console | ✅ |
+| Client VLESS + REALITY + XHTTP — credentials and QR from the console | ✅ |
+| Client devices — one mihomo subscription per device, AWG + VLESS with automatic fallback | ✅ |
 | Lifeline — reserve client interface on exits, reserve profiles in the console and the portal | ✅ |
 | Tiered exit selection, throughput watchdog with auto-suspend, drain by config | ✅ |
 | Console login, certificate self-renewal, node tombstones | ✅ |

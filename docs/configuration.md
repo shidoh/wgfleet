@@ -70,7 +70,7 @@ SOPS/age setup: `secrets-sops.md`.
 | `controller.webui` | string | disabled | Web UI bind. **Must be a mgmt/overlay address** unless `WGFLEET_ALLOW_PUBLIC_BIND=1` |
 | `controller.metrics` | string | disabled | Prometheus `/metrics` bind (conventionally `<mgmt>:9300`). Same mgmt-only restriction |
 | `controller.client_portal_url` | string | — | Base URL clients reach the portal on, e.g. `https://vpn.example.org`. Required together with `client_portal` |
-| `controller.client_portal` | string | disabled | Bind for the client self-service portal (per-client profile and QR). Bind it on the master's **mgmt address** and list its port in `fleet.masters[].client_admin_ports`; a bind on the client-pool gateway address does not work, and a public bind is refused |
+| `controller.client_portal` | string | disabled | Bind for the client self-service portal: device pages, the mihomo subscription and its QR, AmneziaWG profiles and QR. Bind it on the master's **mgmt address** and list its port in `fleet.masters[].client_admin_ports`; a bind on the client-pool gateway address does not work, and a public bind is refused |
 | `controller.agent_bin` | string | — | Path to the `wgfleet-agent` binary installed during UI-triggered provisioning. Also the rolling upgrade's target: nodes are compared against **this binary's** version, not the controller's |
 | `controller.staleness_after` | duration | `3m` | Mark a node Degraded after this long with no status report. Negative disables the sweep |
 | `controller.session_ttl` | duration | `168h` (7d) | Web panel sliding session lifetime |
@@ -131,7 +131,7 @@ first, see [upgrade.md](upgrade.md).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fleet.masters[].name` | string | **required** | Stable node name. This is the node's identity — renaming means re-issuing its certificate |
+| `fleet.masters[].name` | string | **required** | Stable node name. This is the node's identity — renaming means re-issuing its certificate. `auto`, `wgfleet`, `DIRECT`, `REJECT` are reserved by the device profile: a master named so cannot serve devices |
 | `fleet.masters[].mgmt_addr` | string | — | ZeroTier/overlay address. Binds admin surfaces and is trusted by construction |
 | `fleet.masters[].public_ip` | string | = `ssh.host` | Public IP clients and peers reach this node at |
 | `fleet.masters[].client_admin_ports` | []int | none | Admin ports (Web UI, mihomo dashboard, client portal) opened **to AWG and VLESS clients** on the mgmt address — a VLESS client's connection to these ports is dialled DIRECT from mihomo's namespace and arrives on its veth, not on the AWG interface, so both are opened together. Default keeps admin reachable only over the overlay |
@@ -151,7 +151,7 @@ first, see [upgrade.md](upgrade.md).
 | `fleet.masters[].client_awg.ipv6` | `off` \| `block` | `off` | What a client is told about IPv6. `off` says nothing, so a dual-stack client keeps its own IPv6 route. `block` hands the client `::/0` and answers forwarded IPv6 with ICMPv6 administratively-prohibited, so the device falls back to IPv4. The data plane stays IPv4-only. Requires `managed: true` and an agent on wire v9; the controller refuses to render the route for an older agent |
 | `fleet.masters[].client_awg.mtu` | int | derived | Override the client interface MTU. Unset derives it from the hop chain |
 | `fleet.masters[].client_awg.keepalive` | int or `min-max` | `25` | `PersistentKeepalive` in generated client configs. A bare number pins one interval; a band gives each credential its own stable value. Keep it under the shortest NAT UDP timeout on the path (commonly 30s). Range 5-120 |
-| `fleet.masters[].client_awg.exclude_from_tunnel` | []CIDR | none | Networks a client must NOT send into the tunnel (its own LAN, for example). The controller expands "everything except these" into the explicit `AllowedIPs` list. Empty leaves the default route alone. Ignored when `allowed_ips` is set |
+| `fleet.masters[].client_awg.exclude_from_tunnel` | []CIDR | none | Networks a client must NOT send into the tunnel (its own LAN, for example). The controller expands "everything except these" into the explicit `AllowedIPs` list. Empty leaves the default route alone. Ignored when `allowed_ips` is set. Hiding the client portal or `mgmt_subnet` here logs a WARN (startup and `--check-config`): devices on AWG cannot refresh their subscription — add the range to `route_through_cidrs` |
 | `fleet.masters[].client_awg.route_through_cidrs` | []CIDR | none | Networks put back into the tunnel after `exclude_from_tunnel` — a work subnet inside an excluded range, or the management overlay. Rejected without `exclude_from_tunnel` |
 | `fleet.masters[].client_awg.dns` | list | `compose.client_dns` | Resolvers written into generated client configs |
 | `fleet.masters[].client_awg.allowed_ips` | list | `compose.client_allowed_ips` | What client configs route into the tunnel. An IPv6 default route is rejected: the data plane is IPv4-only |

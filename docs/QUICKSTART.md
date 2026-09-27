@@ -226,6 +226,12 @@ fleet:
 
 All keys: [configuration.md#2-controller-the-controller-process](configuration.md#2-controller-the-controller-process)
 
+With the portal set, prefer a **device** over a bare credential: Web UI →
+**Devices** → create one. It gets one subscription link for a mihomo app
+(FlClash, ClashMetaForAndroid, ClashX Meta, Clash Verge Rev) that carries
+AmneziaWG and VLESS and switches between them. Procedure:
+[operations.md#client-devices](operations.md#client-devices).
+
 Upgrading from a wgfleet that used wg-easy: do not set `managed: true`
 straight away — import the existing credentials first, or every client
 tunnel stops at the cutover. Procedure: [CLIENT-MIGRATION.md](client-migration.md).

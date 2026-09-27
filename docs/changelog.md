@@ -18,7 +18,9 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
     - `/sub/<master>/<uuid>` (the v2rayTun subscription) is gone. Hand out a device link or the plain `vless://` link instead.
     - Their `/c/<id>` portal page now leads with a mihomo subscription link; the AmneziaWG `.conf` is under "AmneziaWG app instead". The links they already have keep working.
-    - A new device's first profile comes as a `.yaml` file from you (console → **devices** → **Download profile (.yaml)**); after connecting they add the subscription link from the portal and remove the file profile.
+    - A new device's first profile comes as a `.yaml` file from you (console → **Devices** → **Download profile (.yaml)**); after connecting they add the subscription link from the portal and remove the file profile.
+    - **One app at a time.** The AmneziaWG app and a mihomo app with the device's profile share one key. Running both — even with the mihomo app's TUN off — breaks the connection every few seconds. Once the mihomo app connects, turn the AmneziaWG app off.
+    - Edits made inside the subscription profile are lost at the next update. Own rules go into the app's layer on top of the profile (Clash Verge Rev: Merge).
 
 ### Added
 
@@ -32,6 +34,12 @@ New releases are announced, with the archives attached, in the Telegram channel 
 - A credential attached to a device loses its own portal link for good; hand out the device link.
 - `client_admin_ports` now also opens on mihomo's namespace veth, not only the client AWG interface: a VLESS client's connection to those ports (the portal among them) is dialled DIRECT from the namespace and arrives there, not on AWG — so a device on VLESS alone can still reach it.
 - Existing `/c/<id>` portal pages now lead with the mihomo subscription link and QR; the AmneziaWG `.conf` moved under a collapsed "AmneziaWG app instead" details block instead of being the page's main offer.
+- Console: **Nodes** and **Devices** are the top bar's sections; devices moved out of the account links.
+- Device page: hand-over steps, then one slot per transport and master. An occupied slot offers only **Detach**; an empty one offers **Add** (issue new or attach). A new device issues both credentials by default.
+- The portal page warns against running the AmneziaWG app together with the mihomo app, and that edits inside the profile are lost on update.
+- The portal page fits a phone screen: it was wider than a 390 px screen and scrolled sideways.
+- The profile download carries `filename*` (RFC 6266) next to `filename`: Clash Verge Rev names an imported profile correctly instead of `\"name.yaml\`.
+- The console links its stylesheet and scripts by content hash: after an upgrade the browser loads the new ones at once instead of drawing the new pages with the cached old stylesheet for up to an hour.
 
 ### Removed
 
