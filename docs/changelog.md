@@ -6,6 +6,10 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 ## Unreleased
 
+### Added
+
+- `fleet.client_sites`: the operator's own networks (home, office) in the device profile get a switch — `DIRECT` while a probe inside the site answers directly, through the tunnel when it does not, with a manual override in the app. Without it those networks stay `DIRECT` as before. mihomo apps only; the AmneziaWG `.conf` is unchanged.
+
 ### Changed
 
 - Client DNS is `fake-ip` in the device profile and in the Clash `.yaml` download (was `redir-host`). On macOS, Clash Verge Rev moves the system resolver into the tunnel only under `fake-ip`; with `redir-host` a router's DNS stayed in place and every name the OS looked up went past the tunnel. Users update the profile in the app.

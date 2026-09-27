@@ -159,6 +159,9 @@ type FleetSection struct {
 	// ) and accept it in their firewall. Empty ⇒ the broker derives the scope
 	// from the individual mgmt_addr /32s of every fleet node (see MgmtCIDRs).
 	MgmtSubnet string `koanf:"mgmt_subnet"`
+	// ClientSites are the operator's own networks a device is sometimes on and
+	// sometimes away from; see ClientSiteConfig.
+	ClientSites []ClientSiteConfig `koanf:"client_sites"`
 	// MgmtOverlayMSS, when > 0, is baked into every node's agent.yaml at provisioning
 	// time (agent.mgmt_overlay_mss) so the agent clamps TCP MSS on the ZeroTier
 	// interface. Control-plane insurance: keeps the agent↔controller mTLS handshake
@@ -1286,6 +1289,7 @@ func (c ControllerConfig) Validate() error {
 	// authorise unauthenticated key downloads on 0.0.0.0.
 	errs = append(errs, validateClientPortal(c.Controller.ClientPortal, c.Controller.ClientPortalURL)...)
 	errs = append(errs, validateClientPoolsDisjoint(c.Fleet.Masters)...)
+	errs = append(errs, validateClientSites(c.Fleet)...)
 	errs = append(errs, validateAddressPoolsDisjoint(c.Fleet)...)
 	errs = append(errs, validateAWG3Secret(c)...)
 	for i, e := range c.Fleet.Exits {

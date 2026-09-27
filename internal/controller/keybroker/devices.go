@@ -148,5 +148,6 @@ func (b *Broker) ClientMasterMeta(ctx context.Context, masterID string) (domain.
 		Resolvers:    b.clientResolvers(ctx, m),
 		ClientPool:   m.ClientAWG.AddressPool,
 		MgmtCIDRs:    b.fleet.MgmtCIDRs(),
+		Sites:        b.fleet.ClientSitesSpec(),
 	}, nil
 }

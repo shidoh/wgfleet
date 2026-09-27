@@ -71,4 +71,21 @@ type ClientMasterMeta struct {
 	// MgmtCIDRs is the fleet's management overlay (FleetSection.MgmtCIDRs) — where
 	// the portal itself lives.
 	MgmtCIDRs []string
+	// Sites is fleet.client_sites, the same for every master.
+	Sites []ClientSite
+}
+
+// ClientSite is a network the operator owns that is sometimes the device's own
+// LAN and sometimes far away: home, office. The device profile reaches it
+// DIRECT when a probe inside it answers directly, through the tunnel when not —
+// and hands the person a switch for when the guess is wrong. Fleet-wide, like
+// the mgmt overlay; none of it crosses the wire.
+type ClientSite struct {
+	Name  string
+	CIDRs []string
+	// ProbeURL is an http:// URL on an address inside CIDRs; "" leaves only the
+	// manual switch.
+	ProbeURL string
+	// ProbeInterval is in seconds; 0 means the default.
+	ProbeInterval int
 }

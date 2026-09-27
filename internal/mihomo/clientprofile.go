@@ -78,6 +78,7 @@ type ClientProfileMaster struct {
 type ClientProfileInput struct {
 	Masters   []ClientProfileMaster
 	MgmtCIDRs []string
+	Sites     []domain.ClientSite
 }
 
 // ClientNameserver is how every client config the controller hands out names a
@@ -97,6 +98,9 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 		pools           []string
 		nameservers     []string
 	)
+	if err := validateSiteNames(in.Sites, in.Masters); err != nil {
+		return "", err
+	}
 	through := append([]string(nil), in.MgmtCIDRs...)
 	for _, m := range in.Masters {
 		if strings.ContainsAny(m.Name, ",#") {
@@ -138,6 +142,7 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 	if len(proxies) == 0 {
 		return "", errors.New("client profile: no proxy to render")
 	}
+	groups = append(groups, siteGroups(in.Sites)...)
 	groups = append(groups,
 		fallbackGroup(ClientProfileAutoGroup, all),
 		map[string]any{
@@ -155,7 +160,7 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 		"ipv6":         false,
 		"proxies":      proxies,
 		"proxy-groups": groups,
-		"rules":        clientRules(dedupe(through), pools),
+		"rules":        append(toAnySlice(siteRules(in.Sites)), clientRules(dedupe(through), pools)...),
 	}
 	if len(nameservers) > 0 {
 		doc["dns"] = map[string]any{

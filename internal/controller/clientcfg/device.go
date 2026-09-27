@@ -142,6 +142,7 @@ func SelectWG(ctx context.Context, src Source, masters []string, dev domain.Clie
 type deviceParts struct {
 	masters []mihomo.ClientProfileMaster
 	mgmt    []string
+	sites   []domain.ClientSite
 	links   []string
 	active  int
 }
@@ -176,7 +177,7 @@ func collectDevice(ctx context.Context, src ProfileSource, masters []string, dev
 			return deviceParts{}, fmt.Errorf("clientcfg: routing metadata of %q: %w", m, err)
 		}
 		pm.RouteThrough, pm.DNS, pm.ClientPool = meta.RouteThrough, meta.Resolvers, meta.ClientPool
-		p.mgmt = meta.MgmtCIDRs
+		p.mgmt, p.sites = meta.MgmtCIDRs, meta.Sites
 		p.masters = append(p.masters, pm)
 	}
 	return p, nil
@@ -242,7 +243,7 @@ func BuildDeviceProfile(ctx context.Context, src ProfileSource, masters []string
 	case len(p.masters) == 0:
 		return "", fmt.Errorf("device %q: %w", dev.Name, ErrNotReady)
 	}
-	return mihomo.RenderClientProfile(mihomo.ClientProfileInput{Masters: p.masters, MgmtCIDRs: p.mgmt})
+	return mihomo.RenderClientProfile(mihomo.ClientProfileInput{Masters: p.masters, MgmtCIDRs: p.mgmt, Sites: p.sites})
 }
 
 // DeviceView is what the portal page shows.

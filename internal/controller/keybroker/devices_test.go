@@ -119,6 +119,20 @@ func TestClientMasterMeta(t *testing.T) {
 	}
 }
 
+// Sites are fleet-wide: every master's metadata carries the same list.
+func TestClientMasterMetaCarriesSites(t *testing.T) {
+	f := deviceFleet()
+	f.ClientSites = []config.ClientSiteConfig{{Name: "home", CIDRs: []string{"192.168.88.0/24"}, ProbeURL: "http://192.168.88.1/"}}
+	b, _ := newBrokerWithFleet(t, f)
+	m, err := b.ClientMasterMeta(context.Background(), "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Sites) != 1 || m.Sites[0].Name != "home" || m.Sites[0].ProbeURL != "http://192.168.88.1/" {
+		t.Errorf("sites = %+v", m.Sites)
+	}
+}
+
 func TestMastersFollowTheManifest(t *testing.T) {
 	f := deviceFleet()
 	f.Masters = append(f.Masters, config.MasterConfig{Name: "m0",

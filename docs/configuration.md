@@ -89,6 +89,10 @@ provisioning, so changing them requires re-provisioning the node.
 |---|---|---|---|
 | `fleet.zerotier_network` | string | — | ZeroTier network ID (exactly 16 hex chars) every node joins during bootstrap. Validated strictly: it is interpolated into a root shell command |
 | `fleet.mgmt_subnet` | CIDR | derived | The management overlay's CIDR. When set, exits route it DIRECT (never through WARP) and accept it in the firewall without per-node listing. Empty ⇒ derived from each node's `mgmt_addr` as /32s |
+| `fleet.client_sites[].name` | string | — | Name of the site's switch in the mihomo app. Not `auto`, `wgfleet`, `DIRECT`, `REJECT`, a master's name or `<master>-awg`/`-vless`; no `,` or `#` |
+| `fleet.client_sites[].cidrs` | list of CIDR | — | The site's networks. Must not overlap `fleet.mgmt_subnet` or any `client_awg.address_pool`. Their rules precede every other rule of the device profile |
+| `fleet.client_sites[].probe_url` | URL | none | `http://<IP inside cidrs>/…` answering over HTTP. Answers directly ⇒ the site goes `DIRECT`; does not ⇒ through the tunnel. Empty ⇒ manual switch only, `DIRECT` by default |
+| `fleet.client_sites[].probe_interval` | int, s | `60` | How often the probe is re-checked. Valid `10`–`3600`; only with `probe_url` |
 | `fleet.mgmt_overlay_mss` | int | `0` (off) | **baked.** TCP MSS clamp on the ZeroTier interface, both directions. Recommended `1240` (a 1280 overlay); valid `536`–`1460` |
 | `fleet.reconcile_interval` | duration | `30s` | **baked.** How often every agent reconciles. Valid `5s`–`1h`. A node's own `agent.reconcile_interval` still wins |
 | `fleet.min_egress_throughput_kbytes` | int | `250` | Egress throughput floor in KiB/s below which an exit is pulled from the load balancer. Negative disables the watchdog fleet-wide |

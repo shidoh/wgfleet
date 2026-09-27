@@ -191,7 +191,9 @@ Local changes to the profile:
 | `<master>` | `fallback` over that master's proxies |
 | `auto` | `fallback` over all proxies, `generate_204`, every 300 s |
 | `wgfleet` | `select`: `auto` or any proxy |
-| Rules | `route_through_cidrs` (both transports, every master — keep the lists identical across masters) and `mgmt_subnet` → `wgfleet`; the master's client pool → `<master>`; RFC1918, link-local, loopback → `DIRECT`; rest → `wgfleet` |
+| `<site>-auto` (per `fleet.client_sites` entry with `probe_url`) | `fallback`: `DIRECT`, `wgfleet`, checked against `probe_url` |
+| `<site>` | `select`: `<site>-auto` (when present), `DIRECT`, `wgfleet` — the person's override |
+| Rules | each site's `cidrs` → `<site>` first; then `route_through_cidrs` (both transports, every master — keep the lists identical across masters) and `mgmt_subnet` → `wgfleet`; the master's client pool → `<master>`; RFC1918, link-local, loopback → `DIRECT`; rest → `wgfleet` |
 | DNS | each master's client resolvers, `tcp://<addr>:53` through `<master>`; absent when the master has none |
 | DNS mode | `fake-ip`; `+.lan`, `+.local`, `+.home.arpa` get real answers from the same resolvers |
 | IP rules | without `no-resolve`: a name is resolved through the tunnel and routed by its real address |
@@ -213,6 +215,8 @@ Symptoms:
 - Rules the person added in the app vanish after an update — they were edited inside the subscription profile; move them to the app's override layer (table above).
 - Clash Verge Rev shows the profile as `\"name.yaml\` — imported from a controller before `filename*` was sent; delete the profile and import the link again.
 - AWG throttled but alive — pick `<master>-vless` in the `wgfleet` group.
+- At home, a site's hosts go through the master (slow, `chains` shows `wgfleet`) — the probe did not answer directly: check `probe_url` from the device, or pick `DIRECT` in the `<site>` group.
+- Away, a site's hosts time out — `<site>` is pinned to `DIRECT`; pick `<site>-auto`.
 
 ## The master is lost: reserve configs
 
