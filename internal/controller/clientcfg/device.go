@@ -304,5 +304,25 @@ func AttachmentHeader(name string) string {
 	if safe == "" {
 		safe = "profile"
 	}
-	return fmt.Sprintf("attachment; filename=%q", safe)
+	// Both forms, as RFC 6266 §4.3 recommends: filename* carries the name exactly
+	// (UTF-8, percent-encoded), filename stays for anything that knows only that.
+	// Clash Verge Rev needs the extended one — it reads the plain form through
+	// Rust's Debug formatting and keeps the escaped quotes in the profile name.
+	return fmt.Sprintf("attachment; filename=%q; filename*=UTF-8''%s", safe, rfc5987Escape(safe))
+}
+
+// rfc5987Escape percent-encodes s as an RFC 5987 ext-value: everything but the
+// attr-char set is written as %XX of its UTF-8 bytes.
+func rfc5987Escape(s string) string {
+	const attrPunct = "!#$&+-.^_`|~"
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.IndexByte(attrPunct, c) >= 0 {
+			b.WriteByte(c)
+			continue
+		}
+		fmt.Fprintf(&b, "%%%02X", c)
+	}
+	return b.String()
 }

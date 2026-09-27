@@ -770,7 +770,7 @@ func TestPortalServesTheMihomoProfile(t *testing.T) {
 		"Cache-Control":           "no-store",
 		"Profile-Update-Interval": "24",
 		"Referrer-Policy":         "no-referrer",
-		"Content-Disposition":     `attachment; filename="laptop.yaml"`,
+		"Content-Disposition":     `attachment; filename="laptop.yaml"; filename*=UTF-8''laptop.yaml`,
 	} {
 		if got := res.Header.Get(k); got != want {
 			t.Errorf("%s = %q, want %q", k, got, want)
@@ -982,7 +982,10 @@ func TestPortalProfileFilenameEscapesAHostileDeviceName(t *testing.T) {
 	if n := strings.Count(cd, `"`); n != 2 {
 		t.Errorf("Content-Disposition quoting is broken by the embedded quote (found %d quote chars): %q", n, cd)
 	}
-	if !strings.HasPrefix(cd, `attachment; filename="`) || !strings.HasSuffix(cd, `.yaml"`) {
+	// One quoted filename, then the RFC 6266 extended form — which carries no
+	// quotes at all, so the count above still holds.
+	if !strings.HasPrefix(cd, `attachment; filename="`) ||
+		!strings.Contains(cd, `.yaml"; filename*=UTF-8''`) || !strings.HasSuffix(cd, ".yaml") {
 		t.Errorf("Content-Disposition is not a single well-formed quoted-string: %q", cd)
 	}
 }

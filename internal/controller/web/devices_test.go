@@ -332,7 +332,7 @@ func TestDeviceProfileDownloadIsThePortalProfile(t *testing.T) {
 		t.Fatalf("status %d: %s", res.StatusCode, file)
 	}
 	if res.Header.Get("Cache-Control") != "no-store" ||
-		res.Header.Get("Content-Disposition") != `attachment; filename="alice-phone.yaml"` ||
+		res.Header.Get("Content-Disposition") != `attachment; filename="alice-phone.yaml"; filename*=UTF-8''alice-phone.yaml` ||
 		res.Header.Get("Content-Type") != "text/yaml; charset=utf-8" {
 		t.Errorf("headers = %v", res.Header)
 	}
@@ -373,7 +373,10 @@ func TestDeviceProfileDownloadEscapesAHostileDeviceName(t *testing.T) {
 	if n := strings.Count(cd, `"`); n != 2 {
 		t.Errorf("Content-Disposition quoting is broken by the embedded quote (found %d quote chars): %q", n, cd)
 	}
-	if !strings.HasPrefix(cd, `attachment; filename="`) || !strings.HasSuffix(cd, `.yaml"`) {
+	// One quoted filename, then the RFC 6266 extended form — which carries no
+	// quotes at all, so the count above still holds.
+	if !strings.HasPrefix(cd, `attachment; filename="`) ||
+		!strings.Contains(cd, `.yaml"; filename*=UTF-8''`) || !strings.HasSuffix(cd, ".yaml") {
 		t.Errorf("Content-Disposition is not a single well-formed quoted-string: %q", cd)
 	}
 }
