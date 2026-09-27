@@ -209,7 +209,6 @@ Symptoms:
 - macOS: the system DNS reads `114.114.114.114` while TUN is on — expected. Clash Verge Rev sets it under `fake-ip` so the OS resolver's queries enter the tun; it restores the previous DNS when TUN goes off.
 - macOS: `nslookup` answers from the router's DNS — the profile was fetched before the `fake-ip` switch; update it in the app; if `scutil --dns` still shows the router, toggle TUN off and on.
 - Names of the network the device sits on (router, printer, hotel portal) do not resolve — the fleet resolver does not know them. Use the address.
-- `*.local` names do not resolve under TUN on macOS — they go to mDNS, not to the tunnel. Serve such hosts under a unicast zone the master's blocky maps.
 - Connection drops every few seconds, handshakes every 10–20 s, the peer's endpoint port flips on the master (`awg show wg0 endpoints`) — the AmneziaWG app and a mihomo app with this device's profile run at once. Quit one of them.
 - Rules the person added in the app vanish after an update — they were edited inside the subscription profile; move them to the app's override layer (table above).
 - Clash Verge Rev shows the profile as `\"name.yaml\` — imported from a controller before `filename*` was sent; delete the profile and import the link again.
