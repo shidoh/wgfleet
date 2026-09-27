@@ -12,8 +12,9 @@ wgfleet is a controller and per-node agents that turn blank Ubuntu servers into
 a small fleet of AmneziaWG exit nodes behind one master, then keep them that way:
 a reconcile loop renders interfaces, routes, firewall and DNS from one manifest,
 REALITY/VLESS stands in as a second transport when AmneziaWG is blocked, egress
-failover moves clients off a bad exit on its own, and a web console shows the
-whole fleet at a glance.
+failover moves clients off a bad exit on its own, each client device gets one
+mihomo subscription that switches between AmneziaWG and VLESS by itself, and a
+web console shows the whole fleet at a glance.
 { .wgf-lead }
 
 <div class="wgf-pills" markdown>
@@ -52,8 +53,8 @@ whole fleet at a glance.
 
     ---
 
-    Day-to-day fleet work: dry-run, the dashboard, client credentials,
-    break-glass access, backups, node health and module upgrades.
+    Day-to-day fleet work: dry-run, the dashboard, client credentials and
+    devices, break-glass access, backups, node health and module upgrades.
 
     [:octicons-arrow-right-24: Operations](docs/operations.md)
 
