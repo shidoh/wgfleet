@@ -89,7 +89,7 @@ func TestBuildClashConfig(t *testing.T) {
 		`uuid: "u-1"`, `public-key: "PBK"`, `short-id: "0badc0de"`, `servername: "www.python.org"`,
 		"mode: packet-up", "- MATCH,wgfleet", `"tcp://172.29.3.10:53#wgfleet"`,
 		// Clash Verge Rev hijacks the macOS system resolver only under fake-ip.
-		"enhanced-mode: fake-ip", `- "+.lan"`,
+		"enhanced-mode: fake-ip", "fake-ip-filter-mode: rule", `- "MATCH,real-ip"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("clash config missing %q\n---\n%s", want, out)

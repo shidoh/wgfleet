@@ -56,10 +56,12 @@ var clientBootstrapResolvers = []string{"77.88.8.8", "1.1.1.1"}
 // cannot tell which app fetched it; fake-ip is the others' usual mode anyway.
 const ClientDNSMode = "fake-ip"
 
-// ClientFakeIPFilter: names of whatever network the device sits on get a real
-// answer rather than a fake address. The fleet resolver cannot know them, so
-// they fail fast with NXDOMAIN instead of as a connection into the tunnel.
-var ClientFakeIPFilter = []string{"+.lan", "+.local", "+.home.arpa"}
+// ClientFakeIPFilterMode and ClientFakeIPFilter keep the mode's NAME and drop
+// its placeholders: every name gets its real address, so dig and nslookup on
+// the device show what a host really is, and rules route on it as before.
+const ClientFakeIPFilterMode = "rule"
+
+var ClientFakeIPFilter = []string{"MATCH,real-ip"}
 
 // ClientProfileMaster is one master's share of a device's profile. AWG is the
 // very input the .conf renders from — not a copy of its fields — so the two
@@ -167,6 +169,7 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 			"enable":                  true,
 			"ipv6":                    false,
 			"enhanced-mode":           ClientDNSMode,
+			"fake-ip-filter-mode":     ClientFakeIPFilterMode,
 			"fake-ip-filter":          toAnySlice(ClientFakeIPFilter),
 			"default-nameserver":      toAnySlice(clientBootstrapResolvers),
 			"proxy-server-nameserver": toAnySlice(clientBootstrapResolvers),
@@ -190,9 +193,10 @@ func fallbackGroup(name string, members []string) map[string]any {
 
 // clientRules: internal nets and the mgmt overlay through the tunnel, each
 // master's pool through that master, the device's own LAN direct, the rest to
-// the master — which does the geo split itself. No no-resolve: under fake-ip the
-// app hands mihomo a name, and an IP rule that skips names would send a work
-// host resolving to 10.x past its route-through rule to MATCH.
+// the master — which does the geo split itself. No no-resolve: should a name
+// ever reach mihomo as a name (a fake address, a proxy-mode request), an IP rule
+// that skips names would send a work host resolving to 10.x past its
+// route-through rule to MATCH.
 func clientRules(through, pools []string) []any {
 	var rules []string
 	for _, c := range through {

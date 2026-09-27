@@ -12,7 +12,7 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 ### Changed
 
-- Client DNS is `fake-ip` in the device profile and in the Clash `.yaml` download (was `redir-host`). On macOS, Clash Verge Rev moves the system resolver into the tunnel only under `fake-ip`; with `redir-host` a router's DNS stayed in place and every name the OS looked up went past the tunnel. Users update the profile in the app.
+- Client DNS is `enhanced-mode: fake-ip` in the device profile and in the Clash `.yaml` download (was `redir-host`), with a filter that still answers every name with its real address. On macOS, Clash Verge Rev moves the system resolver into the tunnel only under `fake-ip`; with `redir-host` a router's DNS stayed in place and every name the OS looked up went past the tunnel. `dig` and `nslookup` keep showing real addresses. Users update the profile in the app.
 - Device profile IP rules no longer carry `no-resolve`, so a name that resolves to a private address still follows `route_through_cidrs` or the local-network rule.
 
 ## v0.3.0 — 2026-09-27

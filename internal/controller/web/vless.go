@@ -232,7 +232,8 @@ func buildClashConfig(host string, cv domain.ClientVLESSServerSpec, pubkey, bloc
 	e := cv.EndpointFor(host, pubkey, c)
 	// fake-ip for Clash Verge Rev's sake (mihomo.ClientDNSMode): only then does it
 	// move the macOS system resolver off a LAN address the tun cannot catch.
-	dns := fmt.Sprintf("  enhanced-mode: %s\n  fake-ip-filter:\n", mihomo.ClientDNSMode)
+	dns := fmt.Sprintf("  enhanced-mode: %s\n  fake-ip-filter-mode: %s\n  fake-ip-filter:\n",
+		mihomo.ClientDNSMode, mihomo.ClientFakeIPFilterMode)
 	for _, f := range mihomo.ClientFakeIPFilter {
 		dns += fmt.Sprintf("    - %q\n", f)
 	}

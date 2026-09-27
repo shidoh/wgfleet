@@ -307,19 +307,21 @@ func TestClientProfileIPRulesResolveNames(t *testing.T) {
 // only way the OS resolver's queries enter the tun — ONLY when the profile's
 // enhanced-mode is fake-ip (src-tauri/src/enhance/tun.rs). Under redir-host a
 // router-handed LAN resolver stays in place, its route never enters the tun, and
-// every name the OS looks up leaves beside the tunnel.
-func TestClientProfileDNSIsFakeIP(t *testing.T) {
+// every name the OS looks up leaves beside the tunnel. The filter then hands out
+// real addresses for every name: dig and nslookup must show what a host really
+// is, not a 198.18.x placeholder.
+func TestClientProfileDNSIsFakeIPModeWithRealAnswers(t *testing.T) {
 	doc := renderProfile(t, ClientProfileInput{Masters: []ClientProfileMaster{{Name: "m1", AWG: profileAWG(t, "2.0"), DNS: []string{"10.80.0.1"}}}})
 	dns := doc["dns"].(map[string]any)
 	if dns["enhanced-mode"] != "fake-ip" {
 		t.Errorf("enhanced-mode = %v, want fake-ip", dns["enhanced-mode"])
 	}
+	if dns["fake-ip-filter-mode"] != "rule" {
+		t.Errorf("fake-ip-filter-mode = %v, want rule", dns["fake-ip-filter-mode"])
+	}
 	raw, _ := dns["fake-ip-filter"].([]any)
-	filter := toStrings(raw)
-	for _, want := range []string{"+.lan", "+.local", "+.home.arpa"} {
-		if !slices.Contains(filter, want) {
-			t.Errorf("fake-ip-filter %v lacks %q", filter, want)
-		}
+	if got := toStrings(raw); !slices.Equal(got, []string{"MATCH,real-ip"}) {
+		t.Errorf("fake-ip-filter = %v, want [MATCH,real-ip]", got)
 	}
 }
 

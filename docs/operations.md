@@ -195,7 +195,7 @@ Local changes to the profile:
 | `<site>` | `select`: `<site>-auto` (when present), `DIRECT`, `wgfleet` — the person's override |
 | Rules | each site's `cidrs` → `<site>` first; then `route_through_cidrs` (both transports, every master — keep the lists identical across masters) and `mgmt_subnet` → `wgfleet`; the master's client pool → `<master>`; RFC1918, link-local, loopback → `DIRECT`; rest → `wgfleet` |
 | DNS | each master's client resolvers, `tcp://<addr>:53` through `<master>`; absent when the master has none |
-| DNS mode | `fake-ip`; `+.lan`, `+.local`, `+.home.arpa` get real answers from the same resolvers |
+| DNS mode | `enhanced-mode: fake-ip` with `fake-ip-filter-mode: rule` and `MATCH,real-ip`: every name gets its real address, no `198.18.x` placeholders |
 | IP rules | without `no-resolve`: a name is resolved through the tunnel and routed by its real address |
 
 Symptoms:
@@ -208,8 +208,9 @@ Symptoms:
 - No AmneziaWG block on the page, `/config` answers `404` — the device holds no AWG credential (VLESS only).
 - Profile never refreshes while on AWG — `client_awg.exclude_from_tunnel` takes the client portal (or the mgmt overlay it binds on) out of AllowedIPs, so a device that has fallen back to AWG can never dial the portal to fetch its subscription. The controller logs a WARN naming the master and the uncovered range at startup; fix by adding it to `client_awg.route_through_cidrs`.
 - Internal names do not resolve — check `dns_filter` on the master and the blocky mapping.
-- macOS: the system DNS reads `114.114.114.114` while TUN is on — expected. Clash Verge Rev sets it under `fake-ip` so the OS resolver's queries enter the tun; it restores the previous DNS when TUN goes off.
-- macOS: `nslookup` answers from the router's DNS — the profile was fetched before the `fake-ip` switch; update it in the app; if `scutil --dns` still shows the router, toggle TUN off and on.
+- macOS: the system DNS reads `114.114.114.114` while TUN is on — expected. Clash Verge Rev sets it under `enhanced-mode: fake-ip` so the OS resolver's queries enter the tun; it restores the previous DNS when TUN goes off. `dig`/`nslookup` still show real addresses: the query is answered by the fleet resolver through the tunnel.
+- macOS: `nslookup` answers from the router's DNS (`Server:` is the router) — the profile was fetched before the `fake-ip` switch; update it in the app; if `scutil --dns` still shows the router, toggle TUN off and on.
+- `nslookup` answers `198.18.x` — the profile predates `MATCH,real-ip`; update it in the app.
 - Names of the network the device sits on (router, printer, hotel portal) do not resolve — the fleet resolver does not know them. Use the address.
 - Connection drops every few seconds, handshakes every 10–20 s, the peer's endpoint port flips on the master (`awg show wg0 endpoints`) — the AmneziaWG app and a mihomo app with this device's profile run at once. Quit one of them.
 - Rules the person added in the app vanish after an update — they were edited inside the subscription profile; move them to the app's override layer (table above).
