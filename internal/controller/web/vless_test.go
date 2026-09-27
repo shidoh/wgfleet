@@ -88,15 +88,17 @@ func TestBuildClashConfig(t *testing.T) {
 		"strict-route: true", "type: vless", `server: "203.0.113.1"`, "port: 47252",
 		`uuid: "u-1"`, `public-key: "PBK"`, `short-id: "0badc0de"`, `servername: "www.python.org"`,
 		"mode: packet-up", "- MATCH,wgfleet", `"tcp://172.29.3.10:53#wgfleet"`,
+		// Clash Verge Rev hijacks the macOS system resolver only under fake-ip.
+		"enhanced-mode: fake-ip", `- "+.lan"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("clash config missing %q\n---\n%s", want, out)
 		}
 	}
-	// No blocky ⇒ public DNS, no redir-host.
+	// No blocky ⇒ public DNS, still fake-ip: the OS resolver's leak is the same.
 	out2 := buildClashConfig("h", cv, "PBK", "", c)
-	if strings.Contains(out2, "redir-host") || strings.Contains(out2, "#wgfleet") {
-		t.Errorf("empty blockyAddr should yield plain DNS:\n%s", out2)
+	if strings.Contains(out2, "#wgfleet") || !strings.Contains(out2, "enhanced-mode: fake-ip") {
+		t.Errorf("empty blockyAddr should yield public DNS under fake-ip:\n%s", out2)
 	}
 }
 

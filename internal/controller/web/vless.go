@@ -230,10 +230,16 @@ rules:
 // credential. blockyAddr empty ⇒ plain public DNS (no split).
 func buildClashConfig(host string, cv domain.ClientVLESSServerSpec, pubkey, blockyAddr string, c domain.VLESSClient) string {
 	e := cv.EndpointFor(host, pubkey, c)
-	dns := "  nameserver:\n    - 1.1.1.1\n    - 8.8.8.8\n"
+	// fake-ip for Clash Verge Rev's sake (mihomo.ClientDNSMode): only then does it
+	// move the macOS system resolver off a LAN address the tun cannot catch.
+	dns := fmt.Sprintf("  enhanced-mode: %s\n  fake-ip-filter:\n", mihomo.ClientDNSMode)
+	for _, f := range mihomo.ClientFakeIPFilter {
+		dns += fmt.Sprintf("    - %q\n", f)
+	}
+	nameservers := "  nameserver:\n    - 1.1.1.1\n    - 8.8.8.8\n"
 	if blockyAddr != "" {
-		// redir-host + the master blocky dialed THROUGH the proxy: private-domain
-		// split resolves, real IPs come back and route through the tunnel.
+		// The master blocky dialed THROUGH the proxy: private-domain split
+		// resolves, and a name's real address is what the tunnel routes on.
 		//
 		// TCP :53, not DoT (:853): the resolver is the pool's own gateway (blocky,
 		// ADR-0024), and the master's client interface (wg0) only opens ClientDNSPort
@@ -244,9 +250,10 @@ func buildClashConfig(host string, cv domain.ClientVLESSServerSpec, pubkey, bloc
 		// is the one place that spells the scheme explicitly. Same function the mihomo
 		// device profile uses (mihomo.ClientNameserver), so this download and every
 		// per-device profile read one definition of "how a client names its resolver".
-		dns = fmt.Sprintf("  enhanced-mode: redir-host\n  default-nameserver:\n    - 1.1.1.1\n    - 8.8.8.8\n  nameserver:\n    - %q\n",
+		nameservers = fmt.Sprintf("  default-nameserver:\n    - 1.1.1.1\n    - 8.8.8.8\n  nameserver:\n    - %q\n",
 			mihomo.ClientNameserver(blockyAddr, "wgfleet"))
 	}
+	dns += nameservers
 	// One derivation (domain.ClientVLESSEndpoint) for this download, the vless://
 	// link and the device profile: three hand-written copies of the same defaults
 	// were three chances to disagree.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -267,21 +268,58 @@ func TestClientProfileTunnelRulesPrecedePrivateDirect(t *testing.T) {
 		t.Fatalf("rule %q missing from %v", r, rules)
 		return -1
 	}
-	firstDirect := index("IP-CIDR,10.0.0.0/8,DIRECT,no-resolve")
+	firstDirect := index("IP-CIDR,10.0.0.0/8,DIRECT")
 	for _, r := range []string{
-		"IP-CIDR,10.20.0.0/16,wgfleet,no-resolve",
-		"IP-CIDR,172.29.0.0/16,wgfleet,no-resolve",
-		"IP-CIDR,10.80.0.0/24,m1,no-resolve",
+		"IP-CIDR,10.20.0.0/16,wgfleet",
+		"IP-CIDR,172.29.0.0/16,wgfleet",
+		"IP-CIDR,10.80.0.0/24,m1",
 	} {
 		if index(r) > firstDirect {
 			t.Errorf("%q comes after the private DIRECT rules: %v", r, rules)
 		}
 	}
 	for _, cidr := range []string{"172.16.0.0/12", "192.168.0.0/16"} {
-		index("IP-CIDR," + cidr + ",DIRECT,no-resolve")
+		index("IP-CIDR," + cidr + ",DIRECT")
 	}
 	if rules[len(rules)-1] != "MATCH,wgfleet" {
 		t.Errorf("last rule = %q", rules[len(rules)-1])
+	}
+}
+
+// Under fake-ip an app hands mihomo a NAME, not an address. An IP rule with
+// no-resolve skips every name, so a work host that resolves to 10.x would fall
+// through to MATCH instead of its route-through rule, and a name that resolves
+// into the device's own LAN would leave the DIRECT rule behind.
+func TestClientProfileIPRulesResolveNames(t *testing.T) {
+	doc := renderProfile(t, ClientProfileInput{
+		MgmtCIDRs: []string{"172.29.0.0/16"},
+		Masters: []ClientProfileMaster{{Name: "m1", AWG: profileAWG(t, "2.0"), DNS: []string{"10.80.0.1"},
+			RouteThrough: []string{"10.20.0.0/16"}, ClientPool: "10.80.0.0/24"}},
+	})
+	for _, r := range toStrings(doc["rules"].([]any)) {
+		if strings.HasSuffix(r, ",no-resolve") {
+			t.Errorf("rule %q skips names: under fake-ip every hostname misses it", r)
+		}
+	}
+}
+
+// Clash Verge Rev on macOS points the system resolver at a public address — the
+// only way the OS resolver's queries enter the tun — ONLY when the profile's
+// enhanced-mode is fake-ip (src-tauri/src/enhance/tun.rs). Under redir-host a
+// router-handed LAN resolver stays in place, its route never enters the tun, and
+// every name the OS looks up leaves beside the tunnel.
+func TestClientProfileDNSIsFakeIP(t *testing.T) {
+	doc := renderProfile(t, ClientProfileInput{Masters: []ClientProfileMaster{{Name: "m1", AWG: profileAWG(t, "2.0"), DNS: []string{"10.80.0.1"}}}})
+	dns := doc["dns"].(map[string]any)
+	if dns["enhanced-mode"] != "fake-ip" {
+		t.Errorf("enhanced-mode = %v, want fake-ip", dns["enhanced-mode"])
+	}
+	raw, _ := dns["fake-ip-filter"].([]any)
+	filter := toStrings(raw)
+	for _, want := range []string{"+.lan", "+.local", "+.home.arpa"} {
+		if !slices.Contains(filter, want) {
+			t.Errorf("fake-ip-filter %v lacks %q", filter, want)
+		}
 	}
 }
 

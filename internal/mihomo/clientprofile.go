@@ -47,6 +47,20 @@ var clientPrivateRanges = []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/1
 // THROUGH a proxy, which cannot be dialled before its server resolves.
 var clientBootstrapResolvers = []string{"77.88.8.8", "1.1.1.1"}
 
+// ClientDNSMode is fake-ip for one reason outside mihomo: Clash Verge Rev on
+// macOS points the system resolver at a public address — the only way the OS
+// resolver's queries enter the tun — ONLY under fake-ip (its enhance/tun.rs).
+// Under redir-host a resolver the router handed out over DHCP stays in place;
+// its LAN route never enters the tun, so every name the OS looks up leaves
+// beside the tunnel. Measured 2026-09-27 on the mihomo debug log. The profile
+// cannot tell which app fetched it; fake-ip is the others' usual mode anyway.
+const ClientDNSMode = "fake-ip"
+
+// ClientFakeIPFilter: names of whatever network the device sits on get a real
+// answer rather than a fake address. The fleet resolver cannot know them, so
+// they fail fast with NXDOMAIN instead of as a connection into the tunnel.
+var ClientFakeIPFilter = []string{"+.lan", "+.local", "+.home.arpa"}
+
 // ClientProfileMaster is one master's share of a device's profile. AWG is the
 // very input the .conf renders from — not a copy of its fields — so the two
 // cannot disagree about anything but spelling.
@@ -115,7 +129,7 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 		groups = append(groups, fallbackGroup(m.Name, own))
 		through = append(through, m.RouteThrough...)
 		if m.ClientPool != "" {
-			pools = append(pools, "IP-CIDR,"+m.ClientPool+","+m.Name+",no-resolve")
+			pools = append(pools, "IP-CIDR,"+m.ClientPool+","+m.Name)
 		}
 		for _, d := range m.DNS {
 			nameservers = append(nameservers, ClientNameserver(d, m.Name))
@@ -147,7 +161,8 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 		doc["dns"] = map[string]any{
 			"enable":                  true,
 			"ipv6":                    false,
-			"enhanced-mode":           "redir-host",
+			"enhanced-mode":           ClientDNSMode,
+			"fake-ip-filter":          toAnySlice(ClientFakeIPFilter),
 			"default-nameserver":      toAnySlice(clientBootstrapResolvers),
 			"proxy-server-nameserver": toAnySlice(clientBootstrapResolvers),
 			// Queried in parallel, first answer wins: a dead master's resolver costs
@@ -170,15 +185,17 @@ func fallbackGroup(name string, members []string) map[string]any {
 
 // clientRules: internal nets and the mgmt overlay through the tunnel, each
 // master's pool through that master, the device's own LAN direct, the rest to
-// the master — which does the geo split itself.
+// the master — which does the geo split itself. No no-resolve: under fake-ip the
+// app hands mihomo a name, and an IP rule that skips names would send a work
+// host resolving to 10.x past its route-through rule to MATCH.
 func clientRules(through, pools []string) []any {
 	var rules []string
 	for _, c := range through {
-		rules = append(rules, "IP-CIDR,"+c+","+ClientProfileSelectGroup+",no-resolve")
+		rules = append(rules, "IP-CIDR,"+c+","+ClientProfileSelectGroup)
 	}
 	rules = append(rules, pools...)
 	for _, c := range clientPrivateRanges {
-		rules = append(rules, "IP-CIDR,"+c+",DIRECT,no-resolve")
+		rules = append(rules, "IP-CIDR,"+c+",DIRECT")
 	}
 	rules = append(rules, "MATCH,"+ClientProfileSelectGroup)
 	return toAnySlice(rules)
