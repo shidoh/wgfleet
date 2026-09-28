@@ -768,3 +768,114 @@ func TestStandbyVerdictsForgetMembersThatLeaveTheTier(t *testing.T) {
 		t.Error("an exit dropped from the reserve tier must stop being reported")
 	}
 }
+
+// budgetProbe answers from table like fixedProbe, but only for the first n calls:
+// after that every call is blind, the way budgetedProbe turns a member it has no
+// time left for into an error. Build a fresh one per pass — the budget is per pass.
+func budgetProbe(table map[string][2]int, n int) memberProbe {
+	calls := 0
+	return func(ctx context.Context, name string) (int, int, error) {
+		calls++
+		if calls > n {
+			return 0, 0, errors.New("probing phase out of budget")
+		}
+		return fixedProbe(table)(ctx, name)
+	}
+}
+
+func (s *testSelector) budgetedPass(table map[string][2]int, n int, primary, reserve []string) bool {
+	s.probe = budgetProbe(table, n)
+	return s.active(primary, reserve)
+}
+
+// Live 2026-09-28: vn0 and vn0-reality were dead and held out, and each burned a
+// full probe timeout every pass. The phase budget ran out on them, the healthy
+// member was never asked, and the pass counted as "primary unusable" — so the
+// recovery streak reset every minute or two and the fleet sat on the reserve.
+func TestDeadHeldMembersDoNotStarveAHealthyOne(t *testing.T) {
+	members := []string{"vn0", "vn0-reality", "vn1", "vn2"}
+	table := map[string][2]int{"vn0": {0, 4}, "vn0-reality": {0, 4}, "vn1": {4, 4}, "vn2": {0, 4}}
+	s := newTestSelector(nil)
+	s.warmEvery = 0
+	s.minHold = 0
+	s.reserveActive = true
+	s.heldOut = map[string]holdRecord{"vn0": {}, "vn0-reality": {}, "vn2": {}}
+
+	for i := range s.recoverStreak {
+		// Two attempts per pass: exactly what two dead members' timeouts leave room for.
+		if !s.budgetedPass(table, 2, members, reserve) {
+			return // recovered
+		}
+		if s.consecOK != i+1 {
+			t.Fatalf("pass %d: the healthy member must be sampled every pass, consec_ok = %d", i, s.consecOK)
+		}
+	}
+	t.Fatalf("still on the reserve after %d passes with a healthy primary member", s.recoverStreak)
+}
+
+// Live 2026-09-28 10:34: the failover was decided while vn2 had not been probed at
+// all. A member the budget never reached is unknown, not down.
+func TestUnprobedMemberIsNotCountedAsDown(t *testing.T) {
+	members := []string{"vn0", "vn0-reality", "vn1", "vn2"}
+	table := map[string][2]int{"vn0": {0, 4}, "vn0-reality": {0, 4}, "vn1": {0, 4}, "vn2": {4, 4}}
+	s := newTestSelector(nil)
+	s.warmEvery = 0
+	s.minHold = 0
+	s.heldOut = map[string]holdRecord{"vn0": {}, "vn0-reality": {}}
+
+	for i := range 10 {
+		if s.budgetedPass(table, 2, members, reserve) {
+			t.Fatalf("pass %d: failed over while a healthy member was never probed", i)
+		}
+	}
+}
+
+// The other side of the same rule: a tier that really is dead must still fail over
+// when the budget cannot cover every member in one pass. Held-out members keep
+// their verdict when skipped, so the tier becomes fully known within a pass or two.
+func TestDeadTierStillFailsOverWhenBudgetCannotCoverIt(t *testing.T) {
+	members := []string{"vn0", "vn0-reality", "vn1", "vn2"}
+	table := map[string][2]int{"vn0": {0, 4}, "vn0-reality": {0, 4}, "vn1": {0, 4}, "vn2": {0, 4}}
+	s := newTestSelector(nil)
+	s.warmEvery = 0
+	s.minHold = 0
+
+	for range s.failStreak + 2 {
+		if s.budgetedPass(table, 3, members, reserve) {
+			return
+		}
+	}
+	t.Fatalf("a dead tier did not fail over within %d passes", s.failStreak+2)
+}
+
+// Held-out members standing in for a blind member must not turn an unreachable
+// Clash API into a failover: with nothing observed this pass, nothing is known.
+func TestBlindPassWithHeldMembersHoldsTheDecision(t *testing.T) {
+	s := newTestSelector(fixedProbe(nil))
+	s.warmEvery = 0
+	s.minHold = 0
+	s.heldOut = map[string]holdRecord{"vn1": {}, "vn2": {}}
+	for i := range 5 {
+		if s.active(primary, reserve) {
+			t.Fatalf("pass %d: failed over on a blind pass", i)
+		}
+	}
+	if s.consecFail != 0 {
+		t.Fatalf("blind passes must not build a failure streak, got %d", s.consecFail)
+	}
+}
+
+// Live 2026-09-28: after vd* moved from AWG to REALITY the selector kept holding
+// the AWG proxy names, which were no longer in any tier and were never probed again.
+func TestHeldOutForgetsMembersThatLeaveTheTiers(t *testing.T) {
+	s := newTestSelector(fixedProbe(map[string][2]int{"vn1": {0, 4}, "vn1-reality": {4, 4}}))
+	s.warmEvery = 0
+	s.active([]string{"vn1"}, reserve)
+	if _, held := s.heldOut["vn1"]; !held {
+		t.Fatalf("setup: vn1 must be held, got %v", s.heldOut)
+	}
+	s.active([]string{"vn1-reality"}, reserve)
+	if _, held := s.heldOut["vn1"]; held {
+		t.Fatalf("vn1 left every tier but is still held: %v", s.heldOut)
+	}
+}

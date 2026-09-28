@@ -361,6 +361,7 @@ func (s *TierSelector) StandbyMemberHealth() map[string]bool {
 // nowhere to fail over to, so probing would burn API calls for no decision.
 func (s *TierSelector) ReserveActive(ctx context.Context, probe memberProbe, primary, reserve []string) (active bool) {
 	s.pass++
+	s.forgetDeparted(primary, reserve)
 	// Record which tier this decision puts in front of client traffic, at whichever
 	// of the several exits below we leave by. Rotation() then answers without
 	// probing — a metrics read must never burn Clash API calls or move hysteresis.
@@ -484,44 +485,81 @@ func (s *TierSelector) flip(toReserve bool, why string) {
 // (vn2 x13, vn0 x9, vn1 x5) and a broken exit that flapped in and out of rotation
 // instead of leaving it.
 //
-// Held-out members are therefore re-probed FIRST and ALL of them, every pass. A
+// Held-out members are therefore re-probed ALL of them, every pass — right after
+// one member of the live rotation (see below for why not before it). A
 // still-failing member has its verdict re-written before mihomo's next interval,
 // so our stricter judgement is the one that sticks. On a healthy tier the set is
-// empty and this costs nothing — the early exit below is untouched.
+// empty and this costs nothing — the early exit is untouched.
 func (s *TierSelector) tierUsable(ctx context.Context, probe memberProbe, members []string) (usable, known bool) {
-	anyKnown, anyUsable := false, false
-	for _, m := range members {
-		if _, held := s.heldOut[m]; !held {
-			continue
+	var free, held []string
+	for i := range members {
+		m := members[(s.pass+i)%len(members)]
+		if _, isHeld := s.heldOut[m]; isHeld {
+			held = append(held, m)
+		} else {
+			free = append(free, m)
 		}
+	}
+
+	// A member the phase budget never reached is UNKNOWN, not down. Counting it as
+	// down is how the live fleet failed over on 2026-09-28 without vn2 ever being
+	// asked. A skipped held-out member keeps its standing verdict instead — it was
+	// judged unusable and nothing since says otherwise — which is what still lets a
+	// genuinely dead tier fail over when one pass cannot cover every member.
+	anyKnown, anyUsable, freeBlind := false, false, false
+	sample := func(m string, isHeld bool) bool {
 		ok, total, err := probe(ctx, m)
 		if err != nil {
-			continue // blind: neither hold nor release on a sample we cannot trust
+			if !isHeld {
+				freeBlind = true
+			}
+			return false
 		}
 		anyKnown = true
-		if s.judge(m, ok, total) {
+		return s.judge(m, ok, total)
+	}
+
+	// One member of the live rotation goes FIRST. Held-out members are usually dead
+	// and each burns a whole probe timeout; asked first, two of them exhausted the
+	// phase budget every pass, the healthy members were never sampled, and the
+	// recovery streak reset forever (live, 2026-09-28). A healthy member answers in
+	// milliseconds, so going first costs the held-out re-probe almost nothing.
+	if len(free) > 0 {
+		anyUsable = sample(free[0], false)
+		free = free[1:]
+	}
+	for _, m := range held {
+		if sample(m, true) {
 			anyUsable = true
 		}
 	}
 	if anyUsable {
 		return true, true
 	}
-
-	for i := range members {
-		m := members[(s.pass+i)%len(members)]
-		if _, held := s.heldOut[m]; held {
-			continue // already re-probed above this pass
-		}
-		ok, total, err := probe(ctx, m)
-		if err != nil {
-			continue // this sample is blind; try the other members
-		}
-		anyKnown = true
-		if s.judge(m, ok, total) {
+	for _, m := range free {
+		if sample(m, false) {
 			return true, true
 		}
 	}
-	return false, anyKnown
+	return false, anyKnown && !freeBlind
+}
+
+// forgetDeparted drops held-out records for members that are in neither tier any
+// more — a transport switch renames every proxy, and the old names were otherwise
+// held (and counted) forever without ever being probed again.
+func (s *TierSelector) forgetDeparted(primary, reserve []string) {
+	current := make(map[string]bool, len(primary)+len(reserve))
+	for _, m := range primary {
+		current[m] = true
+	}
+	for _, m := range reserve {
+		current[m] = true
+	}
+	for m := range s.heldOut {
+		if !current[m] {
+			delete(s.heldOut, m)
+		}
+	}
 }
 
 // judge turns one member's probe result into a usable/unusable verdict and keeps
