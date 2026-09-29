@@ -4,7 +4,7 @@ What changed for operators in each wgfleet release — behaviour, manifest keys,
 Every release archive carries this page as `CHANGELOG.md`.
 New releases are announced, with the archives attached, in the Telegram channel [t.me/wgfleet](https://t.me/wgfleet).
 
-## Unreleased
+## v0.3.1 — 2026-09-29
 
 ### Added
 
@@ -14,6 +14,11 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 - Client DNS is `enhanced-mode: fake-ip` in the device profile and in the Clash `.yaml` download (was `redir-host`), with a filter that still answers every name with its real address. On macOS, Clash Verge Rev moves the system resolver into the tunnel only under `fake-ip`; with `redir-host` a router's DNS stayed in place and every name the OS looked up went past the tunnel. `dig` and `nslookup` keep showing real addresses. Users update the profile in the app.
 - Device profile IP rules no longer carry `no-resolve`, so a name that resolves to a private address still follows `route_through_cidrs` or the local-network rule.
+
+### Fixed
+
+- The master returns from the reserve tier once the primary tier is alive again. Before, dead primary exits used up the probe time and the live ones were counted as down, so traffic could stay on the reserve tier indefinitely.
+- A new exit, or one whose WARP account is re-registered, brings its `wgcf` interface up. Current `wgcf` writes both addresses on one `Address` line, which the agent rejected as an incomplete profile and then failed every pass.
 
 ## v0.3.0 — 2026-09-27
 
