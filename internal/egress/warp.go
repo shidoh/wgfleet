@@ -112,10 +112,17 @@ func ParseWGCFProfile(data []byte) (WARPConfig, error) {
 		case "Endpoint":
 			c.Endpoint = val
 		case "Address":
-			if strings.Contains(val, ":") {
-				c.Address6 = val
-			} else {
-				c.Address4 = val
+			// Older wgcf writes one Address line per family, newer ones a single
+			// comma-separated line.
+			for _, a := range strings.Split(val, ",") {
+				a = strings.TrimSpace(a)
+				switch {
+				case a == "":
+				case strings.Contains(a, ":"):
+					c.Address6 = a
+				default:
+					c.Address4 = a
+				}
 			}
 		}
 	}

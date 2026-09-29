@@ -96,6 +96,32 @@ Endpoint = engage.cloudflareclient.com:2408
 	}
 }
 
+// Newer wgcf writes both addresses on one comma-separated line; the v6 half used
+// to swallow the whole value and leave Address4 empty, so a fresh exit never got
+// its WARP interface.
+func TestParseWGCFProfileCommaSeparatedAddress(t *testing.T) {
+	profile := `[Interface]
+PrivateKey = aPrivKeyBase64ExampleForTestingPurposesOnly=
+Address = 172.16.0.2/32, 2606:4700:110:8beb:679b:e540:1a83:4227/128
+DNS = 1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001
+MTU = 1280
+[Peer]
+PublicKey = bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=
+AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = engage.cloudflareclient.com:2408
+`
+	c, err := ParseWGCFProfile([]byte(profile))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if c.Address4 != "172.16.0.2/32" {
+		t.Errorf("Address4 = %q, want 172.16.0.2/32", c.Address4)
+	}
+	if c.Address6 != "2606:4700:110:8beb:679b:e540:1a83:4227/128" {
+		t.Errorf("Address6 = %q", c.Address6)
+	}
+}
+
 func TestParseWGCFProfileIncomplete(t *testing.T) {
 	if _, err := ParseWGCFProfile([]byte("[Interface]\nAddress = 172.16.0.2/32\n")); err == nil {
 		t.Fatal("expected error for profile missing private/peer keys")
