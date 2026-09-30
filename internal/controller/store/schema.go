@@ -180,6 +180,10 @@ var migrations = []string{
 	// v23: the legacy lookup is by credential ID alone, across every master; the
 	// primary key is (master_id, id) and cannot serve it.
 	`CREATE INDEX IF NOT EXISTS idx_client_wg_id ON client_wg_credentials(id)`,
+	// v24: the endpoint an exit's awg0 holds for the master (exit-initiated AWG
+	// flow). The controller arms the master's gate only once it equals the pinned
+	// address, so the exit's last report has to survive a controller restart.
+	`ALTER TABLE node_status ADD COLUMN awg_master_endpoint TEXT NOT NULL DEFAULT ''`,
 }
 
 // MigrationCount is how many schema migrations this build knows. Exported so a

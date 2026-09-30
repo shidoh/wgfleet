@@ -71,8 +71,14 @@ func checkKnockableAddress(v string) error {
 	if err != nil {
 		return nil
 	}
-	if !addr.Is4() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || cgnat.Contains(addr) {
+	if !IsKnockableIPv4(addr) {
 		return fmt.Errorf("public_ip %s is not a public IPv4 address an exit can reach (transports.awg.exit_initiated)", v)
 	}
 	return nil
+}
+
+// IsKnockableIPv4 reports whether an exit on the internet can send to addr: a
+// public IPv4, not private, loopback, link-local or carrier-NAT space.
+func IsKnockableIPv4(addr netip.Addr) bool {
+	return addr.Is4() && !addr.IsPrivate() && !addr.IsLoopback() && !addr.IsLinkLocalUnicast() && !cgnat.Contains(addr)
 }

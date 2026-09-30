@@ -599,3 +599,28 @@ func TestDeleteRetiresTheNodeUntilReadmitted(t *testing.T) {
 		t.Fatal("readmitted node still retired")
 	}
 }
+
+// The controller arms the master's gate for an exit-initiated tunnel only after
+// the exit reported the pinned endpoint; a value lost between report and render
+// would leave the gate unarmed forever.
+func TestStatusAWGMasterEndpointPersists(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if err := st.UpsertNode(ctx, domain.Node{ID: "vn0", Name: "vn0", Role: domain.RoleExit, State: domain.StateReady}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordStatus(ctx, domain.NodeStatus{NodeID: "vn0", State: domain.StateReady, AWGMasterEndpoint: "192.0.2.10:48310"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetStatus(ctx, "vn0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AWGMasterEndpoint != "192.0.2.10:48310" {
+		t.Fatalf("AWGMasterEndpoint = %q after round trip, want 192.0.2.10:48310", got.AWGMasterEndpoint)
+	}
+}

@@ -527,6 +527,17 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		return domain.NodeSpec{}, err
 	}
 	phase := exit.PerTunnelKeyPhase()
+	// Exit-initiated AWG flow: the exit dials the master's pinned address, on the
+	// ONE peer whose identity the master actually uses in this phase.
+	pinned, pinnedOK := b.exitInitiatedAddr(exit, master, exitNode, masterNode)
+	legacyEndpoint, perTunnelEndpoint := "", ""
+	if pinnedOK {
+		if phase.MasterUsesPerTunnelKey() {
+			perTunnelEndpoint = pinned
+		} else {
+			legacyEndpoint = pinned
+		}
+	}
 
 	// Legacy shared-identity peer. Kept in every phase but `on`, so the master always
 	// has a working way in until the operator has verified the per-tunnel one.
@@ -536,9 +547,10 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 				"exit", exit.Name, "master", master.Name)
 		} else {
 			spec.Peers = append(spec.Peers, domain.PeerSpec{
-				Name:       master.Name,
-				PublicKey:  masterPub,
-				Endpoint:   "", // master dials the exit; exit is the server side
+				Name:      master.Name,
+				PublicKey: masterPub,
+				// Empty: the master dials the exit. Set: the exit starts the flow.
+				Endpoint:   legacyEndpoint,
 				AllowedIPs: []string{host32(masterAddr)},
 				// Per-tunnel, not the fleet-wide 25: a keepalive is a beacon whose
 				// PERIOD joined every tunnel we run into one set for a passive
@@ -573,7 +585,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 			spec.Peers = append(spec.Peers, domain.PeerSpec{
 				Name:       master.Name + " (per-tunnel)",
 				PublicKey:  perTunnelPub,
-				Endpoint:   "",
+				Endpoint:   perTunnelEndpoint,
 				AllowedIPs: []string{host32(perTunnelAddr)},
 				Keepalive:  wg.KeepaliveFor("master-exit|exit|per-tunnel|" + exit.Name),
 				MTU:        serverMTU,
@@ -909,6 +921,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 				MasterKeyTunnel: keyTunnel,
 				Drained:         baseDrained || realityActive,
 				Reserve:         isReserve,
+				MasterAddr:      b.armedMasterAddr(ctx, exit, master, exitNode, masterNode),
 			})
 		}
 		if realityRenderable {
