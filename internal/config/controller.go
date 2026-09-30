@@ -961,6 +961,14 @@ type TransportsConfig struct {
 type AWGTransportConfig struct {
 	Enabled    bool `koanf:"enabled"`
 	ListenPort int  `koanf:"listen_port"` // WG server UDP port; 0 ⇒ stable-random derived from the exit name (as on other exits)
+	// ExitInitiated makes the exit start the master↔exit AWG flow: the exit dials the
+	// master's pinned port and the master answers only once it has heard the exit.
+	// For paths whose filter cuts flows the master opens but passes flows the exit
+	// opens. Default false.
+	ExitInitiated bool `koanf:"exit_initiated"`
+	// MasterPort pins the master's external UDP port for this tunnel; 0 ⇒ derived
+	// from the master and exit names (wg.MasterPortFor). Only with ExitInitiated.
+	MasterPort int `koanf:"master_port"`
 }
 
 // RealityTransportConfig is the operator's per-exit tuning for the VLESS+REALITY+
@@ -1374,6 +1382,7 @@ func (c ControllerConfig) Validate() error {
 		errs = append(errs, err)
 	}
 	errs = append(errs, c.validateLifeline()...)
+	errs = append(errs, c.validateExitInitiated()...)
 	return errors.Join(errs...)
 }
 

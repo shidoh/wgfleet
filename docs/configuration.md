@@ -268,6 +268,8 @@ run warm and the live path can be switched instantly.
 | `fleet.exits[].active_transport` | string | first enabled | Which transport the master routes through: `awg` or `reality-xhttp`. Also switchable live from the Web UI |
 | `fleet.exits[].transports.awg.enabled` | bool | `true` when neither is set | Run the kernel AmneziaWG server |
 | `fleet.exits[].transports.awg.listen_port` | int | derived from name | UDP port. Derived per exit so the fleet does not share one port |
+| `fleet.exits[].transports.awg.exit_initiated` | bool | `false` | The exit starts the master↔exit AWG flow; the master answers from a pinned port. Master needs a public IPv4 reachable by the exit. Single master only. No effect on REALITY. Client configs unchanged |
+| `fleet.exits[].transports.awg.master_port` | int | derived from master and exit names, `20000`–`32767` | Master's pinned UDP port for this tunnel. Only with `exit_initiated`. Range `1024`–`65535` |
 | `fleet.exits[].transports.reality.enabled` | bool | `false` | Run the VLESS+REALITY+XHTTP inbound |
 | `fleet.exits[].transports.reality.listen_port` | int | `443` | TCP port. Must differ from the AWG port |
 | `fleet.exits[].transports.reality.dest_domain` | string | fleet default | Camouflage target host. **Must support X25519MLKEM768** — check with `xray tls ping <host>` |
