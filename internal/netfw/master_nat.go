@@ -68,6 +68,9 @@ type MasterNATInput struct {
 	// have come up — which is also why the namespace never passed its readiness
 	// gate and why this never reached a client.
 	NetnsLinkCIDR string
+	// PinnedExits are the AWG tunnels whose flow the exit starts: the master
+	// answers each only from its pinned address and only after hearing the exit.
+	PinnedExits []PinnedExit
 }
 
 // TProxyMark is the fwmark TPROXY'd client packets carry so policy routing can
@@ -153,6 +156,10 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("netfw master NAT: invalid client CIDR %q: %w", in.ClientCIDR, err)
 	}
+	pins, err := parsePins(in.PinnedExits)
+	if err != nil {
+		return "", err
+	}
 
 	var b strings.Builder
 	b.WriteString("#!/usr/sbin/nft -f\n")
@@ -167,6 +174,7 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	fmt.Fprintf(&b, "table ip %s\n", MasterNATTable)
 	fmt.Fprintf(&b, "delete table ip %s\n", MasterNATTable)
 	fmt.Fprintf(&b, "table ip %s {\n", MasterNATTable)
+	renderPinGate(&b, pins)
 
 	// The gateway's OWN address in the client pool is never a proxy destination:
 	// traffic a client sends there is a request to a service the master runs FOR
@@ -346,6 +354,7 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 
 	b.WriteString("\n\tchain postrouting {\n")
 	b.WriteString("\t\ttype nat hook postrouting priority srcnat; policy accept;\n")
+	renderPinSNAT(&b, pins)
 	// MASQUERADE client traffic on EVERY egress except back into the client
 	// interface itself. Client packets leave by more than one uplink: the public
 	// link (internet) AND the mgmt/ZT overlay (DNS to the exits' blocky, internal

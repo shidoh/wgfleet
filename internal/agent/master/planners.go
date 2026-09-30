@@ -725,7 +725,21 @@ func NATInput(spec domain.NodeSpec, clientIface string, netnsAttached bool) netf
 		NetnsLinkCIDR:    spec.Master.NetnsLinkCIDR(),
 		ClashAPI:         spec.Master.ExternalController,
 		ClientAdminPorts: spec.Master.ClientAdminPorts,
+		PinnedExits:      pinnedExits(spec),
 	}
+}
+
+// pinnedExits lists the AWG tunnels the controller armed for an exit-initiated
+// flow. Empty Transport is AWG (ADR-0025 back-compat).
+func pinnedExits(spec domain.NodeSpec) []netfw.PinnedExit {
+	var pins []netfw.PinnedExit
+	for _, t := range spec.Master.ExitTunnels {
+		if t.MasterAddr == "" || t.Transport.OrDefault() != domain.TransportAWG {
+			continue
+		}
+		pins = append(pins, netfw.PinnedExit{Exit: t.Endpoint, Master: t.MasterAddr})
+	}
+	return pins
 }
 
 func (masterNATPlanner) Component() string { return "master NAT (nftables)" }
