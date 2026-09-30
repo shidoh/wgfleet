@@ -252,6 +252,8 @@ type wgPlanner struct {
 	// real modinfo probe. Only consulted for a spec that asks for AmneziaWG 3.0
 	// (see awgmod.CheckAWG3Supported).
 	awgGen func() (int, error)
+	// endpoints reads the live endpoint of each peer; nil ⇒ `awg show endpoints`.
+	endpoints func(iface string) (map[string]string, bool)
 }
 
 func (wgPlanner) Component() string { return "amneziawg interface" }
@@ -317,7 +319,17 @@ func (p wgPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Ac
 		return nil, err
 	}
 	actions := []reconcile.Action{file}
+	iface := ifaceName(p.path)
+	current, _ := os.ReadFile(p.path)
 	switch {
+	case file.Changes() && p.isUp() && onlyEndpointsDiffer(string(current), cfg):
+		// Only a peer endpoint moved (exit-initiated AWG flow switched on or its
+		// port changed): set it on the running interface. A down/up here would drop
+		// the tunnel the master is carrying traffic on. An endpoint REMOVED from the
+		// config stays in the kernel until the next restart — WireGuard cannot
+		// clear one — which is harmless: the master's packets move it anyway.
+		actions = append(actions, setMasterEndpoints(iface, spec.Peers, nil,
+			"set the master endpoint on the running interface")...)
 	case file.Changes():
 		// Config changed: re-apply. down is best-effort (the interface does not
 		// exist on the first run, and `awg-quick down` errors on a missing one).
@@ -330,9 +342,28 @@ func (p wgPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Ac
 		actions = append(actions,
 			reconcile.ExecAction("bring interface up (interface was down)", "awg-quick", "up", p.path))
 	default:
-		actions = append(actions, reconcile.NoChangeAction("awg-quick", "interface already up"))
+		actions = append(actions, p.restoreRoamedEndpoints(iface, spec.Peers)...)
 	}
 	return actions, nil
+}
+
+// restoreRoamedEndpoints puts back a master endpoint WireGuard roamed away from.
+// One packet from the master off its pinned port and the kernel follows it;
+// every keepalive after that misses the master's gate, and nothing else would
+// ever move it back.
+func (p wgPlanner) restoreRoamedEndpoints(iface string, peers []domain.PeerSpec) []reconcile.Action {
+	read := p.endpoints
+	if read == nil {
+		read = readLiveEndpoints
+	}
+	live, ok := read(iface)
+	if !ok {
+		return []reconcile.Action{reconcile.NoChangeAction("awg-quick", "interface already up (endpoints unreadable)")}
+	}
+	if fix := setMasterEndpoints(iface, peers, live, "restore the master endpoint WireGuard roamed away from"); len(fix) > 0 {
+		return fix
+	}
+	return []reconcile.Action{reconcile.NoChangeAction("awg-quick", "interface already up")}
 }
 
 func (p wgPlanner) isUp() bool {

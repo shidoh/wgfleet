@@ -404,13 +404,17 @@ func (a *agent) decisionChanged() bool {
 }
 
 type agent struct {
-	cfg      *config.AgentConfig
-	role     domain.Role
-	publicIP string
-	mgmtAddr string
-	stateDir string // non-empty roots managed files outside /etc (non-root/dev)
-	paths    exit.Paths
-	metrics  *metrics.AgentMetrics // nil when /metrics is disabled
+	cfg  *config.AgentConfig
+	role domain.Role
+	// awgMasterEndpoint is what this exit's awg0 held for the master on the last
+	// applied pass (exit-initiated AWG flow); reported so the controller can arm
+	// the master's gate. Kept across passes so an error report still carries it.
+	awgMasterEndpoint string
+	publicIP          string
+	mgmtAddr          string
+	stateDir          string // non-empty roots managed files outside /etc (non-root/dev)
+	paths             exit.Paths
+	metrics           *metrics.AgentMetrics // nil when /metrics is disabled
 	// mihomoLogCursor is how far into mihomo's log the error counter has read.
 	// Kept here rather than in a planner: planners are rebuilt every pass and would
 	// re-count the same window forever.
@@ -965,6 +969,9 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	// timed-out apply must still report the node's state, or it sticks in Provisioning.
 	// A cached pass has nobody to report to — that is why it is a cached pass — and
 	// failing here would throw away a convergence that just succeeded.
+	if a.role == domain.RoleExit {
+		a.awgMasterEndpoint = exit.MasterEndpoint(a.paths.WGConf, spec.Peers)
+	}
 	if !fromCache {
 		repCtx, repCancel := context.WithTimeout(base, statusReportTimeout)
 		defer repCancel()
@@ -1496,6 +1503,9 @@ func (a *agent) readWARPProfile() *egress.WARPConfig {
 // (the WARP IP for warp egress, the node's own IP for direct) — surfaced in the UI.
 func (a *agent) reportStatus(ctx context.Context, state domain.NodeState, checks []domain.HealthCheck, reconcileErr error, egressIP string, exitHealth []domain.ExitTunnelHealth) error {
 	st := domain.NodeStatus{State: state, Checks: checks, EgressIP: egressIP, ExitHealth: exitHealth, LastHandshake: a.latestHandshake(ctx)}
+	if a.role == domain.RoleExit {
+		st.AWGMasterEndpoint = a.awgMasterEndpoint
+	}
 	// A master reports its live client peers so the controller's client page shows
 	// the kernel's view rather than the desired state's. Best-effort by design: an
 	// interface that is not up yet (or still wg-easy's) simply contributes none.
