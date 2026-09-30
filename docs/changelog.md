@@ -4,7 +4,7 @@ What changed for operators in each wgfleet release — behaviour, manifest keys,
 Every release archive carries this page as `CHANGELOG.md`.
 New releases are announced, with the archives attached, in the Telegram channel [t.me/wgfleet](https://t.me/wgfleet).
 
-## Unreleased
+## v0.3.2 — 2026-09-30
 
 !!! note "New: the exit can start the master↔exit AmneziaWG tunnel"
 
