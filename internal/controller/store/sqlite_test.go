@@ -624,3 +624,39 @@ func TestStatusAWGMasterEndpointPersists(t *testing.T) {
 		t.Fatalf("AWGMasterEndpoint = %q after round trip, want 192.0.2.10:41234", got.AWGMasterEndpoint)
 	}
 }
+
+// An exit reports an empty endpoint whenever it cannot read its interface — right
+// after an agent restart, on an error report, when `awg show` fails. The master's
+// gate is armed from this column, so an empty report must not erase what the exit
+// last confirmed; a DIFFERENT endpoint still replaces it.
+func TestStatusAWGMasterEndpointSurvivesAnEmptyReport(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if err := st.UpsertNode(ctx, domain.Node{ID: "exit-a", Name: "exit-a", Role: domain.RoleExit, State: domain.StateReady}); err != nil {
+		t.Fatal(err)
+	}
+	record := func(ep string) string {
+		t.Helper()
+		if err := st.RecordStatus(ctx, domain.NodeStatus{NodeID: "exit-a", State: domain.StateReady, AWGMasterEndpoint: ep}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := st.GetStatus(ctx, "exit-a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.AWGMasterEndpoint
+	}
+	if got := record("192.0.2.10:41234"); got != "192.0.2.10:41234" {
+		t.Fatalf("first report: %q", got)
+	}
+	if got := record(""); got != "192.0.2.10:41234" {
+		t.Fatalf("empty report erased the confirmed endpoint: %q", got)
+	}
+	if got := record("192.0.2.10:51514"); got != "192.0.2.10:51514" {
+		t.Fatalf("a different endpoint must replace it: %q", got)
+	}
+}

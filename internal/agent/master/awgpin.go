@@ -3,6 +3,7 @@ package master
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"os/exec"
 	"strconv"
@@ -36,6 +37,8 @@ type awgPinPlanner struct {
 	list func(ctx context.Context, exitIP string, port int) (string, error)
 	// tableExists probes an nft table in family ip; nil ⇒ netfw.TableLoaded.
 	tableExists func(name string) bool
+	// heard reports whether the exit is in the gate's heard set; nil ⇒ nft.
+	heard func(exitIP string) bool
 }
 
 func (awgPinPlanner) Component() string { return "exit-initiated AWG conntrack" }
@@ -53,20 +56,19 @@ func (p awgPinPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 	if len(pins) == 0 {
 		return []reconcile.Action{reconcile.NoChangeAction("exit-initiated AWG conntrack", "no armed tunnel")}, nil
 	}
-	list, exists := p.list, p.tableExists
+	list, exists, heard := p.list, p.tableExists, p.heard
 	if list == nil {
 		list = listConntrackUDP
 	}
 	if exists == nil {
 		exists = func(name string) bool { return netfw.TableLoaded("ip", name) }
 	}
+	if heard == nil {
+		heard = exitHeard
+	}
 
 	var actions []reconcile.Action
-	if exists(legacyAWGPinTable) {
-		actions = append(actions, reconcile.BestEffortExecAction(
-			"remove the hand-made pin table; the agent's own pin is armed",
-			"nft", "delete", "table", "ip", legacyAWGPinTable))
-	}
+	legacyRetired := false
 	for _, pin := range pins {
 		exit, err := netip.ParseAddrPort(pin.Exit)
 		if err != nil {
@@ -76,8 +78,26 @@ func (p awgPinPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 		if err != nil {
 			continue
 		}
+		// Nothing moves until the exit has knocked since the table was last built.
+		// The set starts empty on every render, and a flow deleted before the knock
+		// is a NEW flow the gate holds back until the next keepalive.
+		if !heard(exit.Addr().String()) {
+			actions = append(actions, reconcile.NoChangeAction("exit-initiated AWG conntrack",
+				"waiting for "+pin.Exit+" to knock on its pinned port"))
+			continue
+		}
+		if !legacyRetired && exists(legacyAWGPinTable) {
+			legacyRetired = true
+			actions = append(actions, reconcile.BestEffortExecAction(
+				"remove the hand-made pin table; the agent's own pin is armed",
+				"nft", "delete", "table", "ip", legacyAWGPinTable))
+		}
 		out, err := list(ctx, exit.Addr().String(), int(exit.Port()))
 		if err != nil {
+			// Loud, not a quiet no-change: a tunnel stuck behind a stale entry is the
+			// one case this planner exists for, and it would otherwise read as clean.
+			slog.Warn("exit-initiated AWG: conntrack unreadable, stale entries cannot be cleared",
+				"exit", pin.Exit, "err", err)
 			actions = append(actions, reconcile.NoChangeAction("exit-initiated AWG conntrack",
 				"conntrack unreadable for "+pin.Exit+": "+err.Error()))
 			continue
@@ -177,4 +197,10 @@ func listConntrackUDP(ctx context.Context, exitIP string, port int) (string, err
 		return "", fmt.Errorf("conntrack -L: %w", err)
 	}
 	return string(out), nil
+}
+
+// exitHeard asks the kernel whether the exit is in the gate's heard set.
+func exitHeard(exitIP string) bool {
+	return exec.Command("nft", "get", "element", "ip", netfw.MasterNATTable, netfw.AWGHeardSet,
+		"{", exitIP, "}").Run() == nil
 }

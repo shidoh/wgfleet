@@ -165,3 +165,40 @@ func TestReportedMasterEndpoint(t *testing.T) {
 		t.Fatalf("no peer with a spec endpoint: want empty, got %q", got)
 	}
 }
+
+// Same endpoint written two ways must not read as roamed: a mismatch in format
+// would be an `awg set` on every pass, forever.
+func TestSameEndpoint(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"203.0.113.1:41234", "203.0.113.1:41234", true},
+		{"203.0.113.1:41234", "203.0.113.1:51514", false},
+		{"[::ffff:203.0.113.1]:41234", "203.0.113.1:41234", true},
+		{"", "203.0.113.1:41234", false},
+	}
+	for _, tc := range cases {
+		if got := sameEndpoint(tc.a, tc.b); got != tc.want {
+			t.Errorf("sameEndpoint(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
+	}
+}
+
+// An unreadable interface is "don't know", not "holds none": the caller keeps
+// the last value it reported instead of sending an empty one.
+func TestMasterEndpointFromSaysWhenItCannotRead(t *testing.T) {
+	peers := []domain.PeerSpec{{PublicKey: "k=", Endpoint: pinnedMaster}}
+	if _, ok := masterEndpointFrom(peers, func(string) (map[string]string, bool) { return nil, false }, "awg0"); ok {
+		t.Fatal("unreadable interface reported as known")
+	}
+	got, ok := masterEndpointFrom(peers, func(string) (map[string]string, bool) {
+		return map[string]string{"k=": pinnedMaster}, true
+	}, "awg0")
+	if !ok || got != pinnedMaster {
+		t.Fatalf("masterEndpointFrom = %q, %v", got, ok)
+	}
+	if got, ok := masterEndpointFrom([]domain.PeerSpec{{PublicKey: "k="}}, nil, "awg0"); !ok || got != "" {
+		t.Fatalf("no peer with an endpoint: want known-empty, got %q, %v", got, ok)
+	}
+}

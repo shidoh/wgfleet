@@ -537,7 +537,10 @@ func (s *SQLiteStore) RecordStatus(ctx context.Context, st domain.NodeStatus) er
 			reconcile_error=excluded.reconcile_error, checks_json=excluded.checks_json,
 			exit_health_json=excluded.exit_health_json,
 			client_peers_json=excluded.client_peers_json,
-			awg_master_endpoint=excluded.awg_master_endpoint`,
+			-- An empty report means "could not read", not "holds none": keep what
+			-- the exit last confirmed, since the master's gate is armed from it.
+			awg_master_endpoint=CASE WHEN excluded.awg_master_endpoint = ''
+				THEN node_status.awg_master_endpoint ELSE excluded.awg_master_endpoint END`,
 		st.NodeID, string(st.State), fmtTime(orDefault(st.ReportedAt, s.now().UTC())),
 		fmtTime(st.LastHandshake), st.EgressIP, st.ReconcileError, string(checks), string(exitHealth),
 		string(clientPeers), st.AWGMasterEndpoint,

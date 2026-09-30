@@ -75,6 +75,7 @@ func TestAWGPinPlannerDeletesStaleAndTheManualTable(t *testing.T) {
 	p := awgPinPlanner{
 		list:        func(context.Context, string, int) (string, error) { return ctStaleAssured + "\n" + ctFreshWaiting, nil },
 		tableExists: func(string) bool { return true },
+		heard:       func(string) bool { return true },
 	}
 	actions, err := p.Plan(context.Background(), spec)
 	if err != nil {
@@ -120,5 +121,28 @@ func TestAWGPinPlannerDoesNothingWithoutAnArmedTunnel(t *testing.T) {
 	var _ reconcile.DependentPlanner = p
 	if p.DependsOn() != (masterNATPlanner{}).Component() {
 		t.Fatalf("DependsOn = %q: conntrack must only be cleared once the pin is in the kernel", p.DependsOn())
+	}
+}
+
+// Right after arming, the heard set is empty until the exit's next keepalive.
+// Deleting the working entry then turns mihomo's next packet into a NEW flow the
+// gate holds back — up to one keepalive of outage for nothing. Wait for the knock.
+func TestAWGPinPlannerWaitsForTheExitToBeHeard(t *testing.T) {
+	spec := domain.NodeSpec{Master: &domain.MasterSpec{ExitTunnels: []domain.ExitTunnel{
+		{Name: "exit-a", Endpoint: "198.51.100.7:35555", Transport: domain.TransportAWG, MasterAddr: "203.0.113.1:41234"},
+	}}}
+	p := awgPinPlanner{
+		list:        func(context.Context, string, int) (string, error) { return ctUnpinned, nil },
+		tableExists: func(string) bool { return true },
+		heard:       func(string) bool { return false },
+	}
+	actions, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range actions {
+		if a.Changes() {
+			t.Fatalf("acted before the exit was heard: %s", a.Display)
+		}
 	}
 }

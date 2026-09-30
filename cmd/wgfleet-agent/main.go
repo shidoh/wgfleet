@@ -977,7 +977,9 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	// A cached pass has nobody to report to — that is why it is a cached pass — and
 	// failing here would throw away a convergence that just succeeded.
 	if a.role == domain.RoleExit {
-		a.awgMasterEndpoint = exit.MasterEndpoint(a.paths.WGConf, spec.Peers)
+		if ep, ok := exit.MasterEndpoint(a.paths.WGConf, spec.Peers); ok {
+			a.awgMasterEndpoint = ep
+		}
 	}
 	if a.role == domain.RoleMaster && spec.Master != nil {
 		names := exitNamesByIP(spec.Master.ExitTunnels)
