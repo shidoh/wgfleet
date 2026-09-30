@@ -125,7 +125,7 @@ All keys: [configuration.md#3-fleet-fleet-wide-settings](configuration.md#3-flee
 
 ### Exit-initiated AmneziaWG flow
 
-`transports.awg.exit_initiated` needs the controller, the master agent and the exit agent on wire 12. Order: controller, master agent, exit agents, then the key. Before all three are upgraded the key changes nothing. Client configs do not change.
+`transports.awg.exit_initiated` needs the controller, the master agent and the exit agent on wire 12. Order: controller, master agent, exit agents, then the key. Before all three are upgraded the key changes nothing. Client configs do not change. Nodes prepared before this release may lack `conntrack`: `apt-get install conntrack` on the master.
 
 ## Notes & gotchas
 

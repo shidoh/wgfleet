@@ -818,6 +818,7 @@ Requirements:
 | A single master in the fleet | Refused by `--check-config` otherwise |
 | `masters[].public_ip` (or the stored address) is a public IPv4 | The exit dials it from the internet. A master behind NAT is not supported |
 | The provider's firewall in front of the master passes UDP from the exit to the pinned port | The exit's first packet must reach the master |
+| `conntrack` installed on the master (`prepare-node.sh` does it; nodes prepared earlier: `apt-get install conntrack`) | The agent clears stale flows with it; without it the tunnel can stay down after a mihomo restart |
 
 Client configs do not change. Nothing to reissue.
 
@@ -857,6 +858,8 @@ The tunnel is not restarted: the exit sets the new endpoint on the running inter
 | Endpoint is right, still not heard | on the master: `tcpdump -ni any udp and src host <exit IP>` | nothing arrives: the path from the exit or the provider firewall drops it; switch the flag off for this exit |
 | `awg_exit_heard 1`, handshake stale | on the master: `conntrack -L -p udp -d <exit IP> --dport <exit AWG port>` | more than one entry or a reply port other than the pinned one: the agent clears them within one pass |
 | `awg_pin_armed` absent | controller journal: `exit-initiated AWG` | an agent below wire 12, or no public IPv4 for the master |
+| Tunnel down right after switching a transport in the console | in mihomo's namespace: `nsenter -t $(docker inspect -f '{{.State.Pid}}' mihomo) -n ss -unaH dst <exit IP>:<exit AWG port>` | two sockets: a mihomo reload leaked a device; the agent restarts mihomo within one pass (journal: `leaked AmneziaWG device(s)`), clients reconnect |
+| Agent journal: `conntrack unreadable, stale entries cannot be cleared` | `which conntrack` on the master | install `conntrack` |
 
 ### Port rotation
 
@@ -864,6 +867,7 @@ The controller moves the pinned port by itself when all of these hold:
 
 | Condition | Value |
 |---|---|
+| AmneziaWG is the exit's active transport and the exit is not drained | a standby tunnel carries nothing, so its silence proves nothing |
 | The exit confirmed the current pinned address | at least 5 min ago |
 | The exit's AmneziaWG handshake | older than 5 min |
 | The exit and the master | both reported within the last 2 min |

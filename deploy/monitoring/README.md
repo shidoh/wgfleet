@@ -205,6 +205,10 @@ refresh (`as_blacklist_feed`):
 | `wgfleet_controller_config_drift` | — | 1 when the manifest on disk differs from the one the controller loaded, 0 when they match, **absent when it cannot be read** — which is what `WgfleetConfigUnreadable` watches |
 | `wgfleet_agent_transport_active` | `transport` | which master↔exit transport this exit is serving (exit-only) |
 | `wgfleet_agent_exit_held_out` | `exit` | 1 while the master's multi-destination probe holds this exit out of wg-best (master-only). The CAUSE behind `wgfleet_exit_tunnel_alive == 0` |
+| `wgfleet_agent_awg_pin_armed` | `exit` | 1 when the master answers this exit's AmneziaWG tunnel only from its pinned port and only after hearing the exit (`transports.awg.exit_initiated`). Master-only |
+| `wgfleet_agent_awg_exit_heard` | `exit` | 1 while the exit's knocks on its pinned master port keep it in the gate's heard set, 0 when armed and silent. Master-only |
+| `wgfleet_agent_awg_exit_heard_age_seconds` | `exit` | seconds since the exit's last knock; absent while not heard. Master-only |
+| `wgfleet_agent_awg_gate_drops_total` | `exit` | packets the master's gate held back from a new flow because the exit had not knocked yet. Master-only |
 | `wgfleet_agent_reserve_tier_active` | — | 1 when wg-best routes to the second-choice (reserve) exit tier instead of the primary one (master-only) |
 | `wgfleet_agent_standby_tier_usable` / `_total` | — | members of the INACTIVE tier the last warm probe found usable, out of those it could sample (master-only) |
 | `wgfleet_agent_standby_tier_member_usable` | `exit` | 1 when the last warm probe reached the internet through this member of the INACTIVE tier, 0 when it did not (master-only). The tally above cannot be acted on — one dead reserve exit hides inside "2 of 3"; this names it. **Absent means never sampled** |

@@ -4,6 +4,35 @@ What changed for operators in each wgfleet release — behaviour, manifest keys,
 Every release archive carries this page as `CHANGELOG.md`.
 New releases are announced, with the archives attached, in the Telegram channel [t.me/wgfleet](https://t.me/wgfleet).
 
+## Unreleased
+
+!!! note "New: the exit can start the master↔exit AmneziaWG tunnel"
+
+    For exits whose path cuts flows the master opens and passes flows the exit opens. Measured from a master in Russia on 2026-09-30: a flow the master starts gets 1 packet of 10 through, a flow the exit starts gets 10 of 10.
+
+    - Per exit, off by default: `fleet.exits[].transports.awg.exit_initiated: true`.
+    - The exit knocks on a pinned UDP port of the master; the master answers only from that port and only after it has heard the exit.
+    - The tunnel comes back on its own after a mihomo restart, an agent restart, a master reboot and a ban on the path.
+    - When the path poisons or freezes the pinned flow, the controller moves the port itself after 5 minutes without a handshake, and the exit opens a new flow. Recovery took 4–6 minutes on a test bench that emulated those filters.
+    - Needs: controller, master agent and exit agents on this release; one master with a public IPv4; `conntrack` on the master.
+    - REALITY is not affected. Client configs do not change, nothing to reissue.
+    - How to switch it on, check it and switch it off: Operations, section "Exit-initiated AmneziaWG flow".
+
+### Added
+
+- `fleet.exits[].transports.awg.exit_initiated` and `fleet.exits[].transports.awg.master_port` (the pinned port; derived from the master and exit names when unset).
+- Master metrics `wgfleet_agent_awg_pin_armed`, `wgfleet_agent_awg_exit_heard`, `wgfleet_agent_awg_exit_heard_age_seconds`, `wgfleet_agent_awg_gate_drops_total`, and the `WgfleetAWGExitNotHeard` alert in the archive's rules.
+
+### Changed
+
+- Wire contract 12. Upgrade the controller first, then the master agent, then the exit agents.
+- `prepare-node.sh` installs `conntrack`. On nodes prepared earlier: `apt-get install conntrack` on the master.
+- The master's REALITY XHTTP proxy to an exit with `transports.reality.mux: true` holds at most 3 connections to it. The Russian filter was reported to ban an address for minutes once a client holds more than about 4 parallel connections to it.
+
+### Fixed
+
+- The master agent finds leaked mihomo WireGuard devices again while mihomo runs in its own network namespace, and restarts mihomo to clear them. Before, a reload that leaked a second device to an exit went unnoticed and the tunnel to that exit flapped.
+
 ## v0.3.1 — 2026-09-29
 
 ### Added
