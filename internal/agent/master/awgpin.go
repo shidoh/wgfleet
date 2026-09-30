@@ -14,7 +14,7 @@ import (
 )
 
 // legacyAWGPinTable is the table an operator added by hand on 2026-09-30 to pin
-// vn0's AWG flow before this feature existed. Removed once the agent's own pin is
+// one exit's AWG flow before this feature existed. Removed once the agent's own pin is
 // armed, so the two never compete and nobody has to remember it.
 const legacyAWGPinTable = "wgf_awg_pin"
 

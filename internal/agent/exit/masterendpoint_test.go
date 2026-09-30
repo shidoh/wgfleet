@@ -11,7 +11,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/wg"
 )
 
-const pinnedMaster = "203.0.113.1:48310"
+const pinnedMaster = "203.0.113.1:41234"
 
 // writeCurrentConfig renders spec into the planner's path, as a previous pass
 // would have, so the next Plan sees it as the live config.

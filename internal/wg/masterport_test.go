@@ -20,14 +20,14 @@ func TestMasterPortForStaysBelowTheEphemeralRange(t *testing.T) {
 }
 
 func TestMasterPortForIsStableAndPerPair(t *testing.T) {
-	a := MasterPortFor("m1", "vn0")
-	if b := MasterPortFor("m1", "vn0"); a != b {
+	a := MasterPortFor("m1", "exit-a")
+	if b := MasterPortFor("m1", "exit-a"); a != b {
 		t.Fatalf("MasterPortFor is not stable: %d then %d", a, b)
 	}
 	// The pair, not the exit alone: a second master must get its own tuple (ADR-0027).
 	seen := map[int]bool{}
 	for _, m := range []string{"m1", "m2", "m3", "m4"} {
-		seen[MasterPortFor(m, "vn0")] = true
+		seen[MasterPortFor(m, "exit-a")] = true
 	}
 	if len(seen) < 3 {
 		t.Fatalf("MasterPortFor ignores the master name: %d distinct ports for 4 masters", len(seen))

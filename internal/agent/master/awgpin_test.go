@@ -11,10 +11,10 @@ import (
 
 // Lines as `conntrack -L -p udp -d <exit> --dport <awg>` prints them.
 const (
-	ctStaleAssured = "udp      17 117 src=100.127.255.2 dst=198.51.100.7 sport=48310 dport=30670 src=198.51.100.7 dst=203.0.113.1 sport=30670 dport=48310 [ASSURED] mark=0 use=1"
-	ctFreshWaiting = "udp      17 28 src=100.127.255.2 dst=198.51.100.7 sport=50446 dport=30670 [UNREPLIED] src=198.51.100.7 dst=203.0.113.1 sport=30670 dport=48310 mark=0 use=1"
-	ctUnpinned     = "udp      17 117 src=100.127.255.2 dst=198.51.100.7 sport=50446 dport=30670 src=198.51.100.7 dst=203.0.113.1 sport=30670 dport=50446 [ASSURED] mark=0 use=1"
-	ctLive         = "udp      17 117 src=100.127.255.2 dst=198.51.100.7 sport=50446 dport=30670 src=198.51.100.7 dst=203.0.113.1 sport=30670 dport=48310 [ASSURED] mark=0 use=1"
+	ctStaleAssured = "udp      17 117 src=100.127.255.2 dst=198.51.100.7 sport=41234 dport=35555 src=198.51.100.7 dst=203.0.113.1 sport=35555 dport=41234 [ASSURED] mark=0 use=1"
+	ctFreshWaiting = "udp      17 28 src=100.127.255.2 dst=198.51.100.7 sport=50446 dport=35555 [UNREPLIED] src=198.51.100.7 dst=203.0.113.1 sport=35555 dport=41234 mark=0 use=1"
+	ctUnpinned     = "udp      17 117 src=100.127.255.2 dst=198.51.100.7 sport=50446 dport=35555 src=198.51.100.7 dst=203.0.113.1 sport=35555 dport=50446 [ASSURED] mark=0 use=1"
+	ctLive         = "udp      17 117 src=100.127.255.2 dst=198.51.100.7 sport=50446 dport=35555 src=198.51.100.7 dst=203.0.113.1 sport=35555 dport=41234 [ASSURED] mark=0 use=1"
 )
 
 func TestParseConntrackUDP(t *testing.T) {
@@ -23,7 +23,7 @@ func TestParseConntrackUDP(t *testing.T) {
 		t.Fatalf("parsed %d entries, want 1: %+v", len(got), got)
 	}
 	e := got[0]
-	if e.origSrc != "100.127.255.2" || e.origSport != 50446 || e.replyDport != 48310 || !e.unreplied {
+	if e.origSrc != "100.127.255.2" || e.origSport != 50446 || e.replyDport != 41234 || !e.unreplied {
 		t.Fatalf("parsed entry = %+v", e)
 	}
 }
@@ -41,11 +41,11 @@ func TestStaleAWGPinEntries(t *testing.T) {
 		{"a flow mapped to another port", []string{ctUnpinned}, []int{50446}},
 		// mihomo restarted: the old entry keeps taking the exit's replies (its
 		// keepalives refresh it forever) while the new one waits unreplied.
-		{"stale entry beside mihomo's new attempt", []string{ctStaleAssured, ctFreshWaiting}, []int{48310}},
+		{"stale entry beside mihomo's new attempt", []string{ctStaleAssured, ctFreshWaiting}, []int{41234}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			stale := staleAWGPinEntries(parseConntrackUDP(strings.Join(tc.lines, "\n")), 48310)
+			stale := staleAWGPinEntries(parseConntrackUDP(strings.Join(tc.lines, "\n")), 41234)
 			if len(stale) != len(tc.wantPorts) {
 				t.Fatalf("stale = %+v, want sports %v", stale, tc.wantPorts)
 			}
@@ -62,7 +62,7 @@ func TestStaleAWGPinEntries(t *testing.T) {
 // so all go and the next packet starts one clean entry.
 func TestStaleAWGPinEntriesClearsCompetingAttempts(t *testing.T) {
 	second := strings.Replace(ctFreshWaiting, "sport=50446", "sport=50999", 1)
-	stale := staleAWGPinEntries(parseConntrackUDP(ctFreshWaiting+"\n"+second), 48310)
+	stale := staleAWGPinEntries(parseConntrackUDP(ctFreshWaiting+"\n"+second), 41234)
 	if len(stale) != 2 {
 		t.Fatalf("stale = %+v, want both unreplied attempts", stale)
 	}
@@ -70,7 +70,7 @@ func TestStaleAWGPinEntriesClearsCompetingAttempts(t *testing.T) {
 
 func TestAWGPinPlannerDeletesStaleAndTheManualTable(t *testing.T) {
 	spec := domain.NodeSpec{Master: &domain.MasterSpec{ExitTunnels: []domain.ExitTunnel{
-		{Name: "vn0", Endpoint: "198.51.100.7:30670", Transport: domain.TransportAWG, MasterAddr: "203.0.113.1:48310"},
+		{Name: "exit-a", Endpoint: "198.51.100.7:35555", Transport: domain.TransportAWG, MasterAddr: "203.0.113.1:41234"},
 	}}}
 	p := awgPinPlanner{
 		list:        func(context.Context, string, int) (string, error) { return ctStaleAssured + "\n" + ctFreshWaiting, nil },
@@ -89,7 +89,7 @@ func TestAWGPinPlannerDeletesStaleAndTheManualTable(t *testing.T) {
 	joined := strings.Join(shown, "\n")
 	for _, want := range []string{
 		"nft delete table ip " + legacyAWGPinTable,
-		"conntrack -D -p udp -s 100.127.255.2 -d 198.51.100.7 --sport 48310 --dport 30670",
+		"conntrack -D -p udp -s 100.127.255.2 -d 198.51.100.7 --sport 41234 --dport 35555",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in %v", want, shown)
@@ -101,7 +101,7 @@ func TestAWGPinPlannerDeletesStaleAndTheManualTable(t *testing.T) {
 }
 
 // With no armed tunnel there is no pin to protect, and the manual table is the
-// only thing keeping a tunnel like vn0 alive until the controller arms it.
+// only thing keeping a tunnel alive until the controller arms it.
 func TestAWGPinPlannerDoesNothingWithoutAnArmedTunnel(t *testing.T) {
 	spec := domain.NodeSpec{Master: &domain.MasterSpec{}}
 	p := awgPinPlanner{

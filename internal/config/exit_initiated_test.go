@@ -26,7 +26,7 @@ func TestValidateExitInitiatedAcceptsTheSupportedShape(t *testing.T) {
 		"awg only":                  func(*FleetSection) {},
 		"no transport section":      func(f *FleetSection) { f.Exits[0].Transports.AWG.Enabled = false },
 		"dual transport":            func(f *FleetSection) { f.Exits[0].Transports.Reality.Enabled = true },
-		"master port override":      func(f *FleetSection) { f.Exits[0].Transports.AWG.MasterPort = 48310 },
+		"master port override":      func(f *FleetSection) { f.Exits[0].Transports.AWG.MasterPort = 41234 },
 		"master address is a name":  func(f *FleetSection) { f.Masters[0].PublicIP = "master.example.net" },
 		"master address left empty": func(f *FleetSection) { f.Masters[0].PublicIP = "" },
 	}
@@ -59,7 +59,7 @@ func TestValidateExitInitiatedRejects(t *testing.T) {
 			name: "master port without the flag",
 			mutate: func(f *FleetSection) {
 				f.Exits[0].Transports.AWG.ExitInitiated = false
-				f.Exits[0].Transports.AWG.MasterPort = 48310
+				f.Exits[0].Transports.AWG.MasterPort = 41234
 			},
 			wantFrag: "master_port is set but exit_initiated is off",
 		},
@@ -107,12 +107,12 @@ func TestValidateExitInitiatedRejects(t *testing.T) {
 }
 
 func TestAWGMasterPort(t *testing.T) {
-	e := ExitConfig{Name: "vn0"}
-	if got, want := e.AWGMasterPort("m"), wg.MasterPortFor("m", "vn0"); got != want {
+	e := ExitConfig{Name: "exit-a"}
+	if got, want := e.AWGMasterPort("m"), wg.MasterPortFor("m", "exit-a"); got != want {
 		t.Fatalf("derived AWGMasterPort = %d, want %d", got, want)
 	}
-	e.Transports.AWG.MasterPort = 48310
-	if got := e.AWGMasterPort("m"); got != 48310 {
-		t.Fatalf("override AWGMasterPort = %d, want 48310", got)
+	e.Transports.AWG.MasterPort = 41234
+	if got := e.AWGMasterPort("m"); got != 41234 {
+		t.Fatalf("override AWGMasterPort = %d, want 41234", got)
 	}
 }

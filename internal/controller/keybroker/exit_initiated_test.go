@@ -176,7 +176,7 @@ func TestExitInitiatedArmsTheGateOnlyAfterTheExitConfirms(t *testing.T) {
 func TestExitInitiatedHonoursThePortOverride(t *testing.T) {
 	fleet := fleetWithPhase(domain.PerTunnelKeyOff)
 	fleet.Exits[0].Transports.AWG.ExitInitiated = true
-	fleet.Exits[0].Transports.AWG.MasterPort = 48310
+	fleet.Exits[0].Transports.AWG.MasterPort = 41234
 	b, st := newBrokerWithFleet(t, fleet)
 	masterKey, err := wg.GenerateKeyPair()
 	if err != nil {
@@ -192,8 +192,8 @@ func TestExitInitiatedHonoursThePortOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy, _ := peerByKey(spec.Peers, masterKey.PublicKey)
-	if legacy.Endpoint != eiMasterIP+":48310" {
-		t.Fatalf("endpoint = %q, want %s:48310", legacy.Endpoint, eiMasterIP)
+	if legacy.Endpoint != eiMasterIP+":41234" {
+		t.Fatalf("endpoint = %q, want %s:41234", legacy.Endpoint, eiMasterIP)
 	}
 }
 

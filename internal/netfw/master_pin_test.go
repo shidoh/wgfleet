@@ -16,7 +16,7 @@ func pinnedNATInput(pins ...PinnedExit) MasterNATInput {
 	}
 }
 
-var vd0Pin = PinnedExit{Exit: "198.51.100.7:30670", Master: "203.0.113.1:48310"}
+var exitPin = PinnedExit{Exit: "198.51.100.7:35555", Master: "203.0.113.1:41234"}
 
 func TestMasterNATWithoutPinsRendersNoneOfTheGate(t *testing.T) {
 	out, err := RenderMasterNAT(pinnedNATInput())
@@ -31,7 +31,7 @@ func TestMasterNATWithoutPinsRendersNoneOfTheGate(t *testing.T) {
 }
 
 func TestMasterNATPinsTheExitInitiatedFlow(t *testing.T) {
-	out, err := RenderMasterNAT(pinnedNATInput(vd0Pin))
+	out, err := RenderMasterNAT(pinnedNATInput(exitPin))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,20 +42,20 @@ func TestMasterNATPinsTheExitInitiatedFlow(t *testing.T) {
 		"set " + AWGHeardSet + " {",
 		"flags dynamic,timeout",
 		"type filter hook prerouting priority mangle",
-		"ip saddr 198.51.100.7 udp sport 30670 udp dport 48310 update @" + AWGHeardSet + " { ip saddr }",
+		"ip saddr 198.51.100.7 udp sport 35555 udp dport 41234 update @" + AWGHeardSet + " { ip saddr }",
 		// The knock itself is refused before the master's whitelist can accept it:
 		// an accepted knock is a confirmed conntrack entry occupying the tuple the
 		// SNAT below needs.
 		"type filter hook input priority filter - 10",
-		"ip saddr 198.51.100.7 udp sport 30670 udp dport 48310 ct state new drop",
+		"ip saddr 198.51.100.7 udp sport 35555 udp dport 41234 ct state new drop",
 		// The gate: only a NEW flow waits for the exit, so a re-render that empties
 		// the set never cuts a tunnel already carrying traffic.
 		"type filter hook forward priority filter - 10",
 		"type filter hook output priority filter - 10",
-		"ip daddr 198.51.100.7 udp dport 30670 ct state new ip daddr != @" + AWGHeardSet + " counter drop",
+		"ip daddr 198.51.100.7 udp dport 35555 ct state new ip daddr != @" + AWGHeardSet + " counter drop",
 		// And the pin, to an explicit address: masquerade would take the
 		// interface's primary address, not the one the exit knocks on.
-		"ip daddr 198.51.100.7 udp dport 30670 snat to 203.0.113.1:48310",
+		"ip daddr 198.51.100.7 udp dport 35555 snat to 203.0.113.1:41234",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("pinned ruleset missing %q:\n%s", want, out)
@@ -66,11 +66,11 @@ func TestMasterNATPinsTheExitInitiatedFlow(t *testing.T) {
 // NAT is decided by the first rule that matches; the pin must come before the
 // masquerade that would otherwise take mihomo's namespace traffic.
 func TestMasterNATPinPrecedesTheMasquerade(t *testing.T) {
-	out, err := RenderMasterNAT(pinnedNATInput(vd0Pin))
+	out, err := RenderMasterNAT(pinnedNATInput(exitPin))
 	if err != nil {
 		t.Fatal(err)
 	}
-	pin := strings.Index(out, "snat to 203.0.113.1:48310")
+	pin := strings.Index(out, "snat to 203.0.113.1:41234")
 	masq := strings.Index(out, `ip saddr 100.127.255.0/30 oifname != "mih-host" masquerade`)
 	if pin < 0 || masq < 0 || pin > masq {
 		t.Fatalf("pin at %d must precede the namespace masquerade at %d:\n%s", pin, masq, out)
@@ -79,10 +79,10 @@ func TestMasterNATPinPrecedesTheMasquerade(t *testing.T) {
 
 func TestMasterNATRejectsMalformedPins(t *testing.T) {
 	for name, pin := range map[string]PinnedExit{
-		"exit without port":     {Exit: "198.51.100.7", Master: "203.0.113.1:48310"},
-		"master without port":   {Exit: "198.51.100.7:30670", Master: "203.0.113.1"},
-		"ipv6 exit":             {Exit: "[2001:db8::7]:30670", Master: "203.0.113.1:48310"},
-		"nft syntax in address": {Exit: "198.51.100.7:30670; flush ruleset", Master: "203.0.113.1:48310"},
+		"exit without port":     {Exit: "198.51.100.7", Master: "203.0.113.1:41234"},
+		"master without port":   {Exit: "198.51.100.7:35555", Master: "203.0.113.1"},
+		"ipv6 exit":             {Exit: "[2001:db8::7]:35555", Master: "203.0.113.1:41234"},
+		"nft syntax in address": {Exit: "198.51.100.7:35555; flush ruleset", Master: "203.0.113.1:41234"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := RenderMasterNAT(pinnedNATInput(pin)); err == nil {
@@ -96,7 +96,7 @@ func TestMasterNATRejectsMalformedPins(t *testing.T) {
 // and every pass would empty the heard set — so the set block and the rule that
 // ends in `{ ip saddr }` must each be read exactly as the kernel counts them.
 func TestPinnedRulesetCountsAsTheKernelWould(t *testing.T) {
-	out, err := RenderMasterNAT(pinnedNATInput(vd0Pin))
+	out, err := RenderMasterNAT(pinnedNATInput(exitPin))
 	if err != nil {
 		t.Fatal(err)
 	}
