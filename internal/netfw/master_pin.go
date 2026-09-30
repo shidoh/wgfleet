@@ -15,9 +15,11 @@ const AWGHeardSet = "awg_exit_heard"
 // AWGHeardTimeout is how long one knock keeps an exit in AWGHeardSet. It must
 // stay SHORTER than the time the path filter remembers a flow: an exit gone quiet
 // longer than the filter remembers is an exit whose next packet on the tuple is
-// the MASTER's, and the filter then records the master as the initiator. Twice
-// the widest keepalive (wg.KeepaliveFor draws 15–28 s) keeps one lost keepalive
-// from closing the gate.
+// the MASTER's, and the filter then records the master as the initiator.
+// Measured on the RU path 2026-09-30: an exit-started flow still passed after
+// 300 s of silence and was forgotten by 600 s. Twice the widest keepalive
+// (wg.KeepaliveFor draws 15–28 s) sits far under that, and one lost keepalive
+// does not close the gate.
 const AWGHeardTimeout = 60 * time.Second
 
 // PinnedExit is one master↔exit AWG tunnel whose flow the exit starts: the exit's

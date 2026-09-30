@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -315,6 +316,9 @@ func run() error {
 			slog.Warn("certificate expiry gauge unavailable", "node", cfg.Agent.NodeID, "err", err)
 		}
 		metrics.NewFWCollector(reg, cfg.Agent.NodeID, string(role), nil)
+		if role == domain.RoleMaster {
+			metrics.NewAWGPinCollector(reg, cfg.Agent.NodeID, string(role), nil, a.exitNameByIP)
+		}
 		// Scheduled probes degrade silently by design (a failure keeps the last-good
 		// value and only WARNs), so without this a probe that fails 100% of the time
 		// looks exactly like one that works — which is how the WARP path-MTU probe
@@ -410,11 +414,14 @@ type agent struct {
 	// applied pass (exit-initiated AWG flow); reported so the controller can arm
 	// the master's gate. Kept across passes so an error report still carries it.
 	awgMasterEndpoint string
-	publicIP          string
-	mgmtAddr          string
-	stateDir          string // non-empty roots managed files outside /etc (non-root/dev)
-	paths             exit.Paths
-	metrics           *metrics.AgentMetrics // nil when /metrics is disabled
+	// exitNames maps an exit's endpoint IP to its node name, from the last spec a
+	// master applied; the exit-initiated AWG metrics label exits by name with it.
+	exitNames atomic.Pointer[map[string]string]
+	publicIP  string
+	mgmtAddr  string
+	stateDir  string // non-empty roots managed files outside /etc (non-root/dev)
+	paths     exit.Paths
+	metrics   *metrics.AgentMetrics // nil when /metrics is disabled
 	// mihomoLogCursor is how far into mihomo's log the error counter has read.
 	// Kept here rather than in a planner: planners are rebuilt every pass and would
 	// re-count the same window forever.
@@ -971,6 +978,10 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	// failing here would throw away a convergence that just succeeded.
 	if a.role == domain.RoleExit {
 		a.awgMasterEndpoint = exit.MasterEndpoint(a.paths.WGConf, spec.Peers)
+	}
+	if a.role == domain.RoleMaster && spec.Master != nil {
+		names := exitNamesByIP(spec.Master.ExitTunnels)
+		a.exitNames.Store(&names)
 	}
 	if !fromCache {
 		repCtx, repCancel := context.WithTimeout(base, statusReportTimeout)
@@ -2339,4 +2350,26 @@ func (a *agent) clientPathVerdict(probes []master.ClientPathProbe) master.PathVe
 		return master.PathVerdict{OK: false, Known: true, Why: strings.Join(failed, "; ")}
 	}
 	return master.PathVerdict{OK: true, Known: true}
+}
+
+// exitNameByIP labels an exit-initiated AWG metric with the exit's name.
+func (a *agent) exitNameByIP(ip string) string {
+	if m := a.exitNames.Load(); m != nil {
+		return (*m)[ip]
+	}
+	return ""
+}
+
+// exitNamesByIP maps each AWG tunnel's endpoint IP to its exit name.
+func exitNamesByIP(tunnels []domain.ExitTunnel) map[string]string {
+	names := map[string]string{}
+	for _, t := range tunnels {
+		if t.Transport.OrDefault() != domain.TransportAWG {
+			continue
+		}
+		if ap, err := netip.ParseAddrPort(t.Endpoint); err == nil {
+			names[ap.Addr().String()] = t.Name
+		}
+	}
+	return names
 }
