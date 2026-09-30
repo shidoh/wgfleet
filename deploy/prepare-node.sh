@@ -105,7 +105,9 @@ awg_pkg_versions() {
 # through: both packages move together, and the agent re-pins the new version.
 awg_install() {
   # shellcheck disable=SC2086
-  apt-get install -y --allow-change-held-packages dkms build-essential \
+  # conntrack: the agent clears stale flows with it (exit routing changes, the
+  # master's exit-initiated AWG pin); without it those repairs never run.
+  apt-get install -y --allow-change-held-packages dkms build-essential conntrack \
     "linux-headers-$(uname -r)" linux-headers-generic \
     $AWG_PKGS \
     || die "AmneziaWG DKMS build failed — check that linux-headers-$(uname -r) is available for this kernel (DKMS log: /var/lib/dkms/amneziawg/1.0.0/build/make.log)"

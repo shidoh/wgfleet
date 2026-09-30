@@ -38,6 +38,10 @@ promised.
   node must be authorised in ZeroTier Central).
 - **nftables** owns the firewall; `nftables.service` is masked by the scripts
   because its distro default flushes the ruleset on boot.
+- **conntrack** (the `conntrack` package, installed by `prepare-node.sh`): the
+  agent deletes stale flows with it after routing changes and on masters with
+  `transports.awg.exit_initiated`. Without it those repairs are skipped with a
+  warning in the agent journal.
 
 ## Sizing
 

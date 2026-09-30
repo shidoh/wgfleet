@@ -35,6 +35,9 @@ const legacyAWGPinTable = "wgf_awg_pin"
 type awgPinPlanner struct {
 	// list returns `conntrack -L` output for UDP to exitIP:port; nil ⇒ real exec.
 	list func(ctx context.Context, exitIP string, port int) (string, error)
+	// listKnocks returns `conntrack -L` output for UDP FROM exitIP:port to the
+	// pinned port — the exit's knocks; nil ⇒ real exec.
+	listKnocks func(ctx context.Context, exitIP string, exitPort, pinnedPort int) (string, error)
 	// tableExists probes an nft table in family ip; nil ⇒ netfw.TableLoaded.
 	tableExists func(name string) bool
 	// heard reports whether the exit is in the gate's heard set; nil ⇒ nft.
@@ -56,9 +59,12 @@ func (p awgPinPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 	if len(pins) == 0 {
 		return []reconcile.Action{reconcile.NoChangeAction("exit-initiated AWG conntrack", "no armed tunnel")}, nil
 	}
-	list, exists, heard := p.list, p.tableExists, p.heard
+	list, knocks, exists, heard := p.list, p.listKnocks, p.tableExists, p.heard
 	if list == nil {
 		list = listConntrackUDP
+	}
+	if knocks == nil {
+		knocks = listConntrackKnocks
 	}
 	if exists == nil {
 		exists = func(name string) bool { return netfw.TableLoaded("ip", name) }
@@ -102,6 +108,21 @@ func (p awgPinPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 				"conntrack unreadable for "+pin.Exit+": "+err.Error()))
 			continue
 		}
+		// A knock the master ever ACCEPTED (a whitelisted exit, before the gate was
+		// armed) is a confirmed entry holding the tuple the SNAT needs, and every
+		// later knock keeps it alive even once dropped: mihomo's writes then fail
+		// NAT with EPERM for good. Found on the stand; every such entry goes.
+		kout, kerr := knocks(ctx, exit.Addr().String(), int(exit.Port()), int(master.Port()))
+		if kerr != nil {
+			slog.Warn("exit-initiated AWG: conntrack unreadable, stale entries cannot be cleared",
+				"exit", pin.Exit, "err", kerr)
+		}
+		for _, e := range parseConntrackUDP(kout) {
+			actions = append(actions, reconcile.BestEffortExecAction(
+				fmt.Sprintf("drop a confirmed knock from %s that holds its pinned tuple", pin.Exit),
+				"conntrack", "-D", "-p", "udp", "-s", e.origSrc, "-d", e.origDst,
+				"--sport", strconv.Itoa(e.origSport), "--dport", strconv.Itoa(e.origDport)))
+		}
 		for _, e := range staleAWGPinEntries(parseConntrackUDP(out), int(master.Port())) {
 			actions = append(actions, reconcile.BestEffortExecAction(
 				fmt.Sprintf("drop a conntrack entry that keeps %s off its pinned port", pin.Exit),
@@ -118,7 +139,9 @@ func (p awgPinPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 // ctEntry is the part of a UDP conntrack entry this planner decides on.
 type ctEntry struct {
 	origSrc    string
+	origDst    string
 	origSport  int
+	origDport  int
 	replyDport int
 	unreplied  bool
 }
@@ -133,7 +156,7 @@ func parseConntrackUDP(out string) []ctEntry {
 			continue
 		}
 		var e ctEntry
-		var srcs, sports, dports []string
+		var srcs, dsts, sports, dports []string
 		for _, f := range strings.Fields(line) {
 			k, v, ok := strings.Cut(f, "=")
 			switch {
@@ -142,17 +165,20 @@ func parseConntrackUDP(out string) []ctEntry {
 			case !ok:
 			case k == "src":
 				srcs = append(srcs, v)
+			case k == "dst":
+				dsts = append(dsts, v)
 			case k == "sport":
 				sports = append(sports, v)
 			case k == "dport":
 				dports = append(dports, v)
 			}
 		}
-		if len(srcs) < 2 || len(sports) < 2 || len(dports) < 2 {
+		if len(srcs) < 2 || len(dsts) < 2 || len(sports) < 2 || len(dports) < 2 {
 			continue
 		}
-		e.origSrc = srcs[0]
+		e.origSrc, e.origDst = srcs[0], dsts[0]
 		e.origSport, _ = strconv.Atoi(sports[0])
+		e.origDport, _ = strconv.Atoi(dports[0])
 		e.replyDport, _ = strconv.Atoi(dports[1])
 		entries = append(entries, e)
 	}
@@ -203,4 +229,13 @@ func listConntrackUDP(ctx context.Context, exitIP string, port int) (string, err
 func exitHeard(exitIP string) bool {
 	return exec.Command("nft", "get", "element", "ip", netfw.MasterNATTable, netfw.AWGHeardSet,
 		"{", exitIP, "}").Run() == nil
+}
+
+func listConntrackKnocks(ctx context.Context, exitIP string, exitPort, pinnedPort int) (string, error) {
+	out, err := exec.CommandContext(ctx, "conntrack", "-L", "-p", "udp", "-s", exitIP,
+		"--sport", strconv.Itoa(exitPort), "--dport", strconv.Itoa(pinnedPort)).Output()
+	if err != nil {
+		return "", fmt.Errorf("conntrack -L: %w", err)
+	}
+	return string(out), nil
 }

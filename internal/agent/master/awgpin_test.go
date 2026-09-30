@@ -74,6 +74,7 @@ func TestAWGPinPlannerDeletesStaleAndTheManualTable(t *testing.T) {
 	}}}
 	p := awgPinPlanner{
 		list:        func(context.Context, string, int) (string, error) { return ctStaleAssured + "\n" + ctFreshWaiting, nil },
+		listKnocks:  func(context.Context, string, int, int) (string, error) { return "", nil },
 		tableExists: func(string) bool { return true },
 		heard:       func(string) bool { return true },
 	}
@@ -145,4 +146,34 @@ func TestAWGPinPlannerWaitsForTheExitToBeHeard(t *testing.T) {
 			t.Fatalf("acted before the exit was heard: %s", a.Display)
 		}
 	}
+}
+
+// Found on the stand: the exit starts knocking the moment it has the endpoint,
+// before the master has armed its gate and its knock-drop rule. A whitelisted
+// exit's knock is then ACCEPTED, its conntrack entry confirmed, and every later
+// knock refreshes it even once it is dropped. That entry holds the tuple the
+// SNAT needs: mihomo's packets fail NAT (insert_failed) and its writes return
+// EPERM, forever. The planner must delete it too.
+func TestAWGPinPlannerDeletesAConfirmedKnock(t *testing.T) {
+	spec := domain.NodeSpec{Master: &domain.MasterSpec{ExitTunnels: []domain.ExitTunnel{
+		{Name: "exit-a", Endpoint: "198.51.100.7:35555", Transport: domain.TransportAWG, MasterAddr: "203.0.113.1:41234"},
+	}}}
+	const knock = "udp      17 24 src=198.51.100.7 dst=203.0.113.1 sport=35555 dport=41234 [UNREPLIED] src=203.0.113.1 dst=198.51.100.7 sport=41234 dport=35555 mark=0 use=1"
+	p := awgPinPlanner{
+		list:        func(context.Context, string, int) (string, error) { return "", nil },
+		listKnocks:  func(context.Context, string, int, int) (string, error) { return knock, nil },
+		tableExists: func(string) bool { return false },
+		heard:       func(string) bool { return true },
+	}
+	actions, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "conntrack -D -p udp -s 198.51.100.7 -d 203.0.113.1 --sport 35555 --dport 41234"
+	for _, a := range actions {
+		if a.Changes() && a.Display == want {
+			return
+		}
+	}
+	t.Fatalf("confirmed knock not deleted; actions: %+v", actions)
 }
