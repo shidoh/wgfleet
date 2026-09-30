@@ -134,6 +134,9 @@ type NodeStatus struct {
 	// only appears once the agent owns that interface; while wg-easy holds it, the
 	// same numbers come from wg-easy's own metrics endpoint.
 	ClientPeers []ClientPeerStatus
+	// AWGMasterEndpoint is the endpoint an exit's awg0 currently holds for the
+	// master peer given one (exit-initiated AWG flow). Empty when none has one.
+	AWGMasterEndpoint string
 }
 
 // ClientPeerStatus is one end user's live peer on the master's client interface.

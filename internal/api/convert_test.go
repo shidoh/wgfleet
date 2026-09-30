@@ -443,3 +443,18 @@ func TestStatusExitHealthCarriesTheMastersHeldOutVerdict(t *testing.T) {
 		t.Fatalf("a carrying exit must round-trip with no hold: %+v", vn2)
 	}
 }
+
+func TestExitInitiatedFieldsRoundTrip(t *testing.T) {
+	spec := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{
+		ExitTunnels: []domain.ExitTunnel{{Name: "vn0", Endpoint: "198.51.100.7:30670", MasterAddr: "192.0.2.10:48310"}},
+	}}
+	got := SpecFromProto(SpecToProto(spec))
+	if a := got.Master.ExitTunnels[0].MasterAddr; a != "192.0.2.10:48310" {
+		t.Fatalf("ExitTunnel.MasterAddr = %q after round trip, want 192.0.2.10:48310", a)
+	}
+
+	st := StatusFromProto("vn0", StatusToProto(domain.NodeStatus{AWGMasterEndpoint: "192.0.2.10:48310"}))
+	if st.AWGMasterEndpoint != "192.0.2.10:48310" {
+		t.Fatalf("NodeStatus.AWGMasterEndpoint = %q after round trip", st.AWGMasterEndpoint)
+	}
+}

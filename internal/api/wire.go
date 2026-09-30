@@ -81,7 +81,12 @@ const (
 	// exact fallback it was configured to have precisely when the master is
 	// unreachable — the one moment nobody is there to notice. Deploy the controller
 	// FIRST.
-	WireContractVersion uint32 = 11
+	// v12 adds ExitTunnel.master_addr and StatusReport.awg_master_endpoint — the
+	// exit-initiated AWG flow. A v11 master drops master_addr and keeps opening the
+	// flow itself; a v11 exit applies an endpoint only on a config rewrite and
+	// never reports it, so the controller would never arm the master's gate. Both
+	// ends must be v12 before the controller turns the feature on for a tunnel.
+	WireContractVersion uint32 = 12
 
 	// WireClientWG is the wire version that introduced MasterSpec.client_wg. The
 	// controller refuses to render the client interface for a master below it: such
@@ -127,6 +132,13 @@ const (
 	// rather than compared against WireContractVersion so a later bump for an
 	// unrelated feature does not silently re-close AWG 3.0 to the whole fleet.
 	WireAWG3 uint32 = 7
+
+	// WireAWGExitInitiated is the wire version that introduced the exit-initiated
+	// AWG flow (ExitTunnel.master_addr, StatusReport.awg_master_endpoint). The
+	// controller gives an exit the master's pinned endpoint only when the master
+	// and the exit are both at or above it. Named rather than compared against
+	// WireContractVersion so a later bump does not re-close it to the fleet.
+	WireAWGExitInitiated uint32 = 12
 
 	// MinSupportedWire is the oldest agent wire version the controller will serve
 	// a spec to. Agents below it are refused (fail-safe) and, where possible,

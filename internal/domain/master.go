@@ -165,6 +165,10 @@ type ExitTunnel struct {
 	// traffic only when every primary tunnel is down (ADR-0029). Orthogonal to
 	// Drained — a drained reserve tunnel is excluded from its tier like any other.
 	Reserve bool
+	// MasterAddr is the master's pinned external "ip:port" for an exit-initiated
+	// AWG flow. Non-empty ⇒ the master answers this tunnel only from that address
+	// and only after hearing the exit first. Empty ⇒ the master opens the flow.
+	MasterAddr string
 }
 
 // RealityProxySuffix is what the controller appends to an exit's name to form the

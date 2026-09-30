@@ -338,6 +338,7 @@ func masterToProto(m *domain.MasterSpec) *pb.MasterSpec {
 			Reality:         realityTunnelToProto(t.Reality),
 			Reserve:         t.Reserve,
 			MasterKeyTunnel: t.MasterKeyTunnel,
+			MasterAddr:      t.MasterAddr,
 		})
 	}
 	return out
@@ -381,6 +382,7 @@ func masterFromProto(m *pb.MasterSpec) *domain.MasterSpec {
 			Reality:         realityTunnelFromProto(t.GetReality()),
 			Reserve:         t.GetReserve(),
 			MasterKeyTunnel: t.GetMasterKeyTunnel(),
+			MasterAddr:      t.GetMasterAddr(),
 		})
 	}
 	return out
@@ -748,15 +750,17 @@ func StatusFromProto(nodeID string, r *pb.StatusReport) domain.NodeStatus {
 		}
 		st.ClientPeers = append(st.ClientPeers, cp)
 	}
+	st.AWGMasterEndpoint = r.GetAwgMasterEndpoint()
 	return st
 }
 
 // StatusToProto converts a domain NodeStatus into a wire StatusReport.
 func StatusToProto(s domain.NodeStatus) *pb.StatusReport {
 	r := &pb.StatusReport{
-		State:          string(s.State),
-		EgressIp:       s.EgressIP,
-		ReconcileError: s.ReconcileError,
+		State:             string(s.State),
+		EgressIp:          s.EgressIP,
+		ReconcileError:    s.ReconcileError,
+		AwgMasterEndpoint: s.AWGMasterEndpoint,
 	}
 	if !s.LastHandshake.IsZero() {
 		r.LastHandshakeUnix = s.LastHandshake.Unix()

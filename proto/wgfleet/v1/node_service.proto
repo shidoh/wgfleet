@@ -80,6 +80,12 @@ message StatusReport {
   // controller ignores it, and a master that does not own that interface simply
   // sends none — no wire bump needed for either direction.
   repeated ClientPeerStatus client_peers = 7;
+  // awg_master_endpoint is the endpoint an exit's awg0 currently holds for the
+  // master peer the controller gave an endpoint to (exit-initiated AWG flow).
+  // The controller arms the master's gate only once this equals the pinned
+  // address, so an exit that never received or applied it is never cut off.
+  // Additive and observational; empty when no master peer has an endpoint.
+  string awg_master_endpoint = 8;
 }
 
 // ClientPeerStatus is one end user's live peer on the master's client interface,
@@ -374,6 +380,11 @@ message ExitTunnel {
   // "-reality" suffix. Additive; an older agent ignores it and keeps using the
   // shared key — backward-compatible, no wire-version bump.
   string master_key_tunnel = 12;
+  // Exit-initiated AWG flow: the master's pinned external "ip:port" the exit knocks
+  // on. Non-empty ⇒ the master answers this tunnel only from that address and only
+  // after hearing the exit. Set by the controller only once the exit has reported
+  // that it holds this endpoint (wire >= 12). Empty ⇒ off.
+  string master_addr = 13;
 }
 
 // RealityTunnel is the master-side mihomo vless+reality proxy descriptor for a
