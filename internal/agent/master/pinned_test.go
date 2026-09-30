@@ -14,7 +14,7 @@ func TestPinnedExitsTakesOnlyArmedAWGTunnels(t *testing.T) {
 	spec := domain.NodeSpec{Master: &domain.MasterSpec{ExitTunnels: []domain.ExitTunnel{
 		{Name: "exit-a", Endpoint: "198.51.100.7:35555", Transport: domain.TransportAWG, MasterAddr: "203.0.113.1:41234"},
 		{Name: "exit-a-reality", Endpoint: "198.51.100.7:443", Transport: domain.TransportRealityXHTTP, MasterAddr: "203.0.113.1:41234"},
-		{Name: "vn1", Endpoint: "198.51.100.8:30671", Transport: domain.TransportAWG},
+		{Name: "exit-b", Endpoint: "198.51.100.8:30671", Transport: domain.TransportAWG},
 		{Name: "legacy", Endpoint: "198.51.100.9:30672", MasterAddr: "203.0.113.1:22000"},
 	}}}
 	got := pinnedExits(spec)

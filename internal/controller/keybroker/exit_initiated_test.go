@@ -208,7 +208,7 @@ func TestExitInitiatedRefusesAMasterWithoutAPublicAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedNode(t, st, eiMaster, eiMasterMgmt, "172.29.3.10", masterKey.PublicKey, domain.RoleMaster)
+	seedNode(t, st, eiMaster, eiMasterMgmt, "172.16.99.10", masterKey.PublicKey, domain.RoleMaster)
 	seedNode(t, st, eiExit, "10.20.25.1", "198.51.100.1", "", domain.RoleExit)
 	setWireVersion(t, st, eiMaster, api.WireAWGExitInitiated)
 	setWireVersion(t, st, eiExit, api.WireAWGExitInitiated)

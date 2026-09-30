@@ -82,7 +82,7 @@ func TestValidateExitInitiatedRejects(t *testing.T) {
 			// The exit would knock on an address the internet cannot reach, and the
 			// master's gate — closed until the exit is heard — would never open.
 			name:     "master address is private",
-			mutate:   func(f *FleetSection) { f.Masters[0].PublicIP = "172.29.3.10" },
+			mutate:   func(f *FleetSection) { f.Masters[0].PublicIP = "172.16.99.10" },
 			wantFrag: "is not a public IPv4 address",
 		},
 		{
