@@ -8,7 +8,7 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 !!! note "New: the exit can start the master↔exit AmneziaWG tunnel"
 
-    For exits whose path cuts flows the master opens and passes flows the exit opens. Measured from a master in Russia on 2026-09-30: a flow the master starts gets 1 packet of 10 through, a flow the exit starts gets 10 of 10.
+    For exits whose path cuts flows the master opens and passes flows the exit opens. Measured: a flow the master starts gets 1 packet of 10 through, a flow the exit starts gets 10 of 10.
 
     - Per exit, off by default: `fleet.exits[].transports.awg.exit_initiated: true`.
     - The exit knocks on a pinned UDP port of the master; the master answers only from that port and only after it has heard the exit.
@@ -27,7 +27,7 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 - Wire contract 12. Upgrade the controller first, then the master agent, then the exit agents.
 - `prepare-node.sh` installs `conntrack`. On nodes prepared earlier: `apt-get install conntrack` on the master.
-- The master's REALITY XHTTP proxy to an exit with `transports.reality.mux: true` holds at most 3 connections to it. The Russian filter was reported to ban an address for minutes once a client holds more than about 4 parallel connections to it.
+- The master's REALITY XHTTP proxy to an exit with `transports.reality.mux: true` holds at most 3 connections to it. Some path filters ban an address for minutes once a client holds more than about 4 parallel connections to it.
 
 ### Fixed
 
