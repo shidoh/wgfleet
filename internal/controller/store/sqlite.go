@@ -728,3 +728,33 @@ func (s *SQLiteStore) SetAuthPassword(ctx context.Context, passwordHash string, 
 	}
 	return nil
 }
+
+// GetAWGPortRotation implements Store.
+func (s *SQLiteStore) GetAWGPortRotation(ctx context.Context, exit string) (int, time.Time, error) {
+	var gen int
+	var at string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT generation, rotated_at FROM awg_port_rotation WHERE node_id = ?`, exit).Scan(&gen, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, time.Time{}, nil
+	}
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("get awg port rotation %q: %w", exit, err)
+	}
+	return gen, parseTime(at), nil
+}
+
+// SetAWGPortRotation implements Store.
+func (s *SQLiteStore) SetAWGPortRotation(ctx context.Context, exit string, gen int, at time.Time) error {
+	if exit == "" {
+		return errors.New("store: exit name is required")
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO awg_port_rotation (node_id, generation, rotated_at) VALUES (?,?,?)
+		 ON CONFLICT(node_id) DO UPDATE SET generation=excluded.generation, rotated_at=excluded.rotated_at`,
+		exit, gen, fmtTime(at.UTC()))
+	if err != nil {
+		return fmt.Errorf("set awg port rotation %q: %w", exit, err)
+	}
+	return nil
+}

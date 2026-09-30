@@ -184,6 +184,15 @@ var migrations = []string{
 	// flow). The controller arms the master's gate only once it equals the pinned
 	// address, so the exit's last report has to survive a controller restart.
 	`ALTER TABLE node_status ADD COLUMN awg_master_endpoint TEXT NOT NULL DEFAULT ''`,
+	// v25: the generation of an exit-initiated tunnel's pinned master port. A path
+	// filter can poison or freeze the pinned flow for good; the controller then
+	// moves to the next generation and the exit opens a fresh flow. Kept across
+	// restarts: generation 0 again would hand the exit back the poisoned tuple.
+	`CREATE TABLE IF NOT EXISTS awg_port_rotation (
+		node_id    TEXT PRIMARY KEY,
+		generation INTEGER NOT NULL,
+		rotated_at TEXT NOT NULL
+	)`,
 }
 
 // MigrationCount is how many schema migrations this build knows. Exported so a

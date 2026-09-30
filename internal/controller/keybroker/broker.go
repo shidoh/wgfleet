@@ -54,9 +54,13 @@ type Broker struct {
 	warned map[string]string
 
 	// Auto-suspend hysteresis (see throughputAutoSuspend). now is injected by tests.
-	now       func() time.Time
-	suspendMu sync.Mutex
-	suspend   map[string]*suspendTrack
+	now func() time.Time
+	// pinConfirmed remembers which pinned address each exit-initiated exit has
+	// confirmed holding (see armedMasterAddr).
+	pinMu        sync.Mutex
+	pinConfirmed map[string]pinConfirmation
+	suspendMu    sync.Mutex
+	suspend      map[string]*suspendTrack
 }
 
 // suspendTrack is one exit's auto-suspend history: how long it has been degraded
@@ -85,7 +89,7 @@ func New(st store.Store, fleet config.FleetSection, log *slog.Logger, opts ...Op
 		log = slog.Default()
 	}
 	b := &Broker{store: st, fleet: fleet, log: log, warned: make(map[string]string),
-		now: time.Now, suspend: make(map[string]*suspendTrack)}
+		now: time.Now, suspend: make(map[string]*suspendTrack), pinConfirmed: make(map[string]pinConfirmation)}
 	for _, o := range opts {
 		o(b)
 	}
@@ -529,13 +533,18 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	phase := exit.PerTunnelKeyPhase()
 	// Exit-initiated AWG flow: the exit dials the master's pinned address, on the
 	// ONE peer whose identity the master actually uses in this phase.
-	pinned, pinnedOK := b.exitInitiatedAddr(exit, master, exitNode, masterNode)
+	pinned, pinnedOK := b.exitInitiatedAddr(ctx, exit, master, exitNode, masterNode)
 	legacyEndpoint, perTunnelEndpoint := "", ""
+	legacyKeepalive := wg.KeepaliveFor("master-exit|exit|" + exit.Name)
+	perTunnelKeepalive := wg.KeepaliveFor("master-exit|exit|per-tunnel|" + exit.Name)
 	if pinnedOK {
+		// The exit speaks every few seconds on the flow it opened, so a path filter
+		// never sees it idle long enough to forget who started it.
+		fast := wg.ExitInitiatedKeepaliveFor("master-exit|exit|" + exit.Name)
 		if phase.MasterUsesPerTunnelKey() {
-			perTunnelEndpoint = pinned
+			perTunnelEndpoint, perTunnelKeepalive = pinned, fast
 		} else {
-			legacyEndpoint = pinned
+			legacyEndpoint, legacyKeepalive = pinned, fast
 		}
 	}
 
@@ -555,7 +564,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 				// Per-tunnel, not the fleet-wide 25: a keepalive is a beacon whose
 				// PERIOD joined every tunnel we run into one set for a passive
 				// observer. It is a local decision, so the two ends need not agree.
-				Keepalive: wg.KeepaliveFor("master-exit|exit|" + exit.Name),
+				Keepalive: legacyKeepalive,
 				MTU:       serverMTU,
 			})
 		}
@@ -587,7 +596,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 				PublicKey:  perTunnelPub,
 				Endpoint:   perTunnelEndpoint,
 				AllowedIPs: []string{host32(perTunnelAddr)},
-				Keepalive:  wg.KeepaliveFor("master-exit|exit|per-tunnel|" + exit.Name),
+				Keepalive:  perTunnelKeepalive,
 				MTU:        serverMTU,
 			})
 		}

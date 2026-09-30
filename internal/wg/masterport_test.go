@@ -33,3 +33,31 @@ func TestMasterPortForIsStableAndPerPair(t *testing.T) {
 		t.Fatalf("MasterPortFor ignores the master name: %d distinct ports for 4 masters", len(seen))
 	}
 }
+
+// Generation 0 is the port a tunnel already has; a rotation must not move a
+// tunnel that never rotated, and each later generation must land somewhere new.
+func TestMasterPortForGen(t *testing.T) {
+	if MasterPortForGen("m", "exit-a", 0) != MasterPortFor("m", "exit-a") {
+		t.Fatal("generation 0 moved an existing tunnel's port")
+	}
+	seen := map[int]bool{MasterPortFor("m", "exit-a"): true}
+	for gen := 1; gen <= 5; gen++ {
+		p := MasterPortForGen("m", "exit-a", gen)
+		if p < MasterPortLow || p > MasterPortHigh {
+			t.Fatalf("gen %d port %d out of band", gen, p)
+		}
+		seen[p] = true
+	}
+	if len(seen) < 5 {
+		t.Fatalf("rotations reuse ports: %d distinct over 6 generations", len(seen))
+	}
+}
+
+func TestExitInitiatedKeepaliveFor(t *testing.T) {
+	for i := range 500 {
+		k := ExitInitiatedKeepaliveFor(fmt.Sprintf("exit-%d", i))
+		if k < 5 || k > 9 {
+			t.Fatalf("keepalive %d outside 5-9 s", k)
+		}
+	}
+}

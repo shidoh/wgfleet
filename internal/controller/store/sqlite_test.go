@@ -660,3 +660,26 @@ func TestStatusAWGMasterEndpointSurvivesAnEmptyReport(t *testing.T) {
 		t.Fatalf("a different endpoint must replace it: %q", got)
 	}
 }
+
+// The pinned port's generation must survive a controller restart: falling back to
+// generation 0 would hand the exit back a tuple the path may have poisoned.
+func TestAWGPortRotationPersists(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	gen, at, err := st.GetAWGPortRotation(ctx, "exit-a")
+	if err != nil || gen != 0 || !at.IsZero() {
+		t.Fatalf("unrotated exit: gen=%d at=%v err=%v", gen, at, err)
+	}
+	when := time.Unix(1_800_000_000, 0).UTC()
+	if err := st.SetAWGPortRotation(ctx, "exit-a", 2, when); err != nil {
+		t.Fatal(err)
+	}
+	gen, at, err = st.GetAWGPortRotation(ctx, "exit-a")
+	if err != nil || gen != 2 || !at.Equal(when) {
+		t.Fatalf("after rotation: gen=%d at=%v err=%v", gen, at, err)
+	}
+}

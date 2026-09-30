@@ -3,7 +3,10 @@ package keybroker
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/controller/store"
@@ -219,5 +222,157 @@ func TestExitInitiatedRefusesAMasterWithoutAPublicAddress(t *testing.T) {
 	}
 	if legacy, _ := peerByKey(spec.Peers, masterKey.PublicKey); legacy.Endpoint != "" {
 		t.Fatalf("endpoint = %q rendered for a master with only a private address", legacy.Endpoint)
+	}
+}
+
+// eiFleet is the one-master, one-exit fleet with the flag on and a clock the test
+// moves, seeded at wire 12 on both ends.
+func eiFleet(t *testing.T, clock *time.Time) (*Broker, store.Store, string) {
+	t.Helper()
+	fleet := fleetWithPhase(domain.PerTunnelKeyOff)
+	fleet.Exits[0].Transports.AWG.ExitInitiated = true
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	b := New(st, fleet, slog.New(slog.NewTextHandler(io.Discard, nil)), WithClock(func() time.Time { return *clock }))
+	masterKey, err := wg.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	exitKey, err := wg.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedNode(t, st, eiMaster, eiMasterMgmt, eiMasterIP, masterKey.PublicKey, domain.RoleMaster)
+	seedNode(t, st, eiExit, "10.20.25.1", "198.51.100.1", exitKey.PublicKey, domain.RoleExit)
+	setWireVersion(t, st, eiMaster, api.WireAWGExitInitiated)
+	setWireVersion(t, st, eiExit, api.WireAWGExitInitiated)
+	return b, st, masterKey.PublicKey
+}
+
+func report(t *testing.T, st store.Store, node string, at, handshake time.Time, endpoint string) {
+	t.Helper()
+	if err := st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: node, State: domain.StateReady, ReportedAt: at, LastHandshake: handshake, AWGMasterEndpoint: endpoint,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func masterTunnel(t *testing.T, b *Broker) domain.ExitTunnel {
+	t.Helper()
+	spec, err := b.RenderNodeSpec(context.Background(), eiMaster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, et := range spec.Master.ExitTunnels {
+		if et.Name == eiExit {
+			return et
+		}
+	}
+	t.Fatal("no tunnel for the exit")
+	return domain.ExitTunnel{}
+}
+
+func exitPeer(t *testing.T, b *Broker, masterPub string) domain.PeerSpec {
+	t.Helper()
+	spec, err := b.RenderNodeSpec(context.Background(), eiExit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := peerByKey(spec.Peers, masterPub)
+	return p
+}
+
+// Once the exit has confirmed the pinned address, a report of another endpoint
+// is WireGuard roaming, which the exit's own watchdog undoes within a pass.
+// Disarming on it flapped the gate on the stand while a port changed.
+func TestExitInitiatedStaysArmedWhileTheExitRoams(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	b, st, _ := eiFleet(t, &now)
+	report(t, st, eiExit, now, now, eiPinned)
+	if got := masterTunnel(t, b).MasterAddr; got != eiPinned {
+		t.Fatalf("not armed after confirmation: %q", got)
+	}
+	report(t, st, eiExit, now, now, eiMasterIP+":40000")
+	if got := masterTunnel(t, b).MasterAddr; got != eiPinned {
+		t.Fatalf("disarmed on a roamed report: %q", got)
+	}
+}
+
+// The exit speaks often enough that a path filter never sees the flow idle.
+func TestExitInitiatedPeerKeepsTheFlowBusy(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	b, _, pub := eiFleet(t, &now)
+	if k := exitPeer(t, b, pub).Keepalive; k < 5 || k > 9 {
+		t.Fatalf("exit-initiated peer keepalive = %d, want 5-9 s", k)
+	}
+}
+
+// Measured on the stand: a pinned flow the filter poisoned or froze never comes
+// back — every keepalive keeps the bad state alive. Only a new port helps, and
+// the exit then opens the new flow itself.
+func TestExitInitiatedRotatesAStaleTunnel(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	b, st, pub := eiFleet(t, &now)
+	start := now
+	report(t, st, eiExit, now, now, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	_ = masterTunnel(t, b) // confirmation seen
+
+	now = start.Add(AWGRotateAfter + time.Minute)
+	report(t, st, eiExit, now, start, eiPinned) // alive, reporting, handshake stale
+	report(t, st, eiMaster, now, now, "")
+	rotated := fmt.Sprintf("%s:%d", eiMasterIP, wg.MasterPortForGen(eiMaster, eiExit, 1))
+	if got := exitPeer(t, b, pub).Endpoint; got != rotated {
+		t.Fatalf("stale tunnel not rotated: endpoint %q, want %q", got, rotated)
+	}
+	// The new address needs its own confirmation before the gate arms on it.
+	if got := masterTunnel(t, b).MasterAddr; got != "" {
+		t.Fatalf("armed on the new port before the exit confirmed it: %q", got)
+	}
+	// One rotation per interval, however many renders come in between.
+	if got := exitPeer(t, b, pub).Endpoint; got != rotated {
+		t.Fatalf("rotated twice in one interval: %q", got)
+	}
+	gen, _, err := st.GetAWGPortRotation(context.Background(), eiExit)
+	if err != nil || gen != 1 {
+		t.Fatalf("generation = %d (%v), want 1", gen, err)
+	}
+}
+
+func TestExitInitiatedLeavesHealthyAndSilentTunnelsAlone(t *testing.T) {
+	cases := map[string]func(start, now time.Time, st store.Store){
+		"handshake fresh": func(start, now time.Time, st store.Store) {
+			report(t, st, eiExit, now, now, eiPinned)
+			report(t, st, eiMaster, now, now, "")
+		},
+		// A silent exit is down, not filtered: a new port would not help, and the
+		// operator's alerts cover a node that stopped reporting.
+		"exit not reporting": func(start, now time.Time, st store.Store) {
+			report(t, st, eiExit, start, start, eiPinned)
+			report(t, st, eiMaster, now, now, "")
+		},
+		"master not reporting": func(start, now time.Time, st store.Store) {
+			report(t, st, eiExit, now, start, eiPinned)
+			report(t, st, eiMaster, start, start, "")
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			now := time.Unix(1_800_000_000, 0)
+			b, st, pub := eiFleet(t, &now)
+			start := now
+			report(t, st, eiExit, now, now, eiPinned)
+			report(t, st, eiMaster, now, now, "")
+			_ = masterTunnel(t, b)
+			now = start.Add(AWGRotateAfter + time.Minute)
+			setup(start, now, st)
+			if got := exitPeer(t, b, pub).Endpoint; got != eiPinned {
+				t.Fatalf("rotated: endpoint %q, want %q", got, eiPinned)
+			}
+		})
 	}
 }

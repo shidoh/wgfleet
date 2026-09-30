@@ -858,6 +858,21 @@ The tunnel is not restarted: the exit sets the new endpoint on the running inter
 | `awg_exit_heard 1`, handshake stale | on the master: `conntrack -L -p udp -d <exit IP> --dport <exit AWG port>` | more than one entry or a reply port other than the pinned one: the agent clears them within one pass |
 | `awg_pin_armed` absent | controller journal: `exit-initiated AWG` | an agent below wire 12, or no public IPv4 for the master |
 
+### Port rotation
+
+The controller moves the pinned port by itself when all of these hold:
+
+| Condition | Value |
+|---|---|
+| The exit confirmed the current pinned address | at least 5 min ago |
+| The exit's AmneziaWG handshake | older than 5 min |
+| The exit and the master | both reported within the last 2 min |
+| The last rotation | more than 10 min ago |
+
+The exit then knocks on the new port and opens a new flow. Controller journal: `tunnel silent on its pinned port, moving to a new one` with `from`, `to` and `generation`. The generation survives a controller restart. `master_port` is generation 0; later generations are derived.
+
+The exit's keepalive on an exit-initiated tunnel is 5–9 s (15–28 s otherwise).
+
 ### Switch off
 
 Remove `exit_initiated` (and `master_port`) and restart the controller. The master stops pinning on its next pass; the endpoint stays in the exit's kernel until the next interface restart, which does no harm.

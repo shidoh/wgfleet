@@ -3,6 +3,7 @@ package wg
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"fmt"
 )
 
 // The band a master's pinned AWG port is drawn from when an exit starts the flow
@@ -23,4 +24,24 @@ func MasterPortFor(master, exit string) int {
 	sum := sha256.Sum256([]byte("wgfleet|master-port|v1|" + master + "|" + exit))
 	span := uint32(MasterPortHigh - MasterPortLow + 1)
 	return MasterPortLow + int(binary.BigEndian.Uint32(sum[:4])%span)
+}
+
+// MasterPortForGen is MasterPortFor after gen rotations. Generation 0 is the
+// port the tunnel already has; each later one is drawn afresh, so a flow the
+// path filter poisoned or froze is replaced by one the exit opens anew.
+func MasterPortForGen(master, exit string, gen int) int {
+	if gen <= 0 {
+		return MasterPortFor(master, exit)
+	}
+	return MasterPortFor(master, fmt.Sprintf("%s|gen%d", exit, gen))
+}
+
+// ExitInitiatedKeepaliveFor is the exit's keepalive toward a master it pins. A
+// path filter forgets an idle flow, and after that whichever end speaks first
+// becomes the flow's initiator; with the exit speaking every few seconds the
+// flow never goes quiet long enough to be forgotten. Per-exit within 5–9 s so
+// the period is no fleet-wide signature either.
+func ExitInitiatedKeepaliveFor(identity string) int {
+	sum := sha256.Sum256([]byte("wgfleet|keepalive-exit-initiated|v1|" + identity))
+	return 5 + int(binary.BigEndian.Uint32(sum[:4])%5)
 }
