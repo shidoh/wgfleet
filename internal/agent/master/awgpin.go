@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/netip"
 	"os/exec"
 	"strconv"
@@ -42,6 +43,10 @@ type awgPinPlanner struct {
 	tableExists func(name string) bool
 	// heard reports whether the exit is in the gate's heard set; nil ⇒ nft.
 	heard func(exitIP string) bool
+	// sockets returns the local "ip:port" of every mihomo UDP socket to the exit,
+	// read inside mihomo's own network namespace; ok=false when unreadable.
+	// nil ⇒ docker + nsenter + ss.
+	sockets func(ctx context.Context, exit string) (map[string]bool, bool)
 }
 
 func (awgPinPlanner) Component() string { return "exit-initiated AWG conntrack" }
@@ -65,6 +70,10 @@ func (p awgPinPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 	}
 	if knocks == nil {
 		knocks = listConntrackKnocks
+	}
+	socks := p.sockets
+	if socks == nil {
+		socks = mihomoExitSockets
 	}
 	if exists == nil {
 		exists = func(name string) bool { return netfw.TableLoaded("ip", name) }
@@ -123,7 +132,12 @@ func (p awgPinPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 				"conntrack", "-D", "-p", "udp", "-s", e.origSrc, "-d", e.origDst,
 				"--sport", strconv.Itoa(e.origSport), "--dport", strconv.Itoa(e.origDport)))
 		}
-		for _, e := range staleAWGPinEntries(parseConntrackUDP(out), int(master.Port())) {
+		entries := parseConntrackUDP(out)
+		stale := staleAWGPinEntries(entries, int(master.Port()))
+		if owned, ok := socks(ctx, pin.Exit); ok {
+			stale = staleAWGPinEntriesOwned(entries, int(master.Port()), owned)
+		}
+		for _, e := range stale {
 			actions = append(actions, reconcile.BestEffortExecAction(
 				fmt.Sprintf("drop a conntrack entry that keeps %s off its pinned port", pin.Exit),
 				"conntrack", "-D", "-p", "udp", "-s", e.origSrc, "-d", exit.Addr().String(),
@@ -238,4 +252,46 @@ func listConntrackKnocks(ctx context.Context, exitIP string, exitPort, pinnedPor
 		return "", fmt.Errorf("conntrack -L: %w", err)
 	}
 	return string(out), nil
+}
+
+// staleAWGPinEntriesOwned is staleAWGPinEntries with the one fact conntrack alone
+// cannot give: which entries a live mihomo socket still owns. On kernel 5.15 the
+// new socket's flow never reaches conntrack after a restart — the NAT clash fails
+// its insert — so the old entry is the only one listed, ASSURED, answered by the
+// exit's keepalives, and owned by nobody. Found on the stand 2026-09-30.
+func staleAWGPinEntriesOwned(entries []ctEntry, pinnedPort int, owned map[string]bool) []ctEntry {
+	var stale []ctEntry
+	for _, e := range entries {
+		if e.replyDport != pinnedPort || !owned[net.JoinHostPort(e.origSrc, strconv.Itoa(e.origSport))] {
+			stale = append(stale, e)
+		}
+	}
+	return stale
+}
+
+// mihomoExitSockets reads mihomo's UDP sockets to exit inside mihomo's own network
+// namespace — the host's when it runs on the host network, the holder's when it
+// has moved — by entering it through the container's PID.
+func mihomoExitSockets(ctx context.Context, exit string) (map[string]bool, bool) {
+	pid, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Pid}}", "mihomo").Output()
+	if err != nil || strings.TrimSpace(string(pid)) == "0" {
+		return nil, false
+	}
+	out, err := exec.CommandContext(ctx, "nsenter", "-t", strings.TrimSpace(string(pid)), "-n",
+		"ss", "-unaH", "dst", exit).Output()
+	if err != nil {
+		return nil, false
+	}
+	return parseSSLocal(string(out)), true
+}
+
+// parseSSLocal collects the local-address column of `ss -unaH` output.
+func parseSSLocal(out string) map[string]bool {
+	local := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) >= 5 {
+			local[f[3]] = true
+		}
+	}
+	return local
 }

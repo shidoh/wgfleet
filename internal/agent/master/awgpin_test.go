@@ -77,6 +77,7 @@ func TestAWGPinPlannerDeletesStaleAndTheManualTable(t *testing.T) {
 		listKnocks:  func(context.Context, string, int, int) (string, error) { return "", nil },
 		tableExists: func(string) bool { return true },
 		heard:       func(string) bool { return true },
+		sockets:     func(context.Context, string) (map[string]bool, bool) { return nil, false },
 	}
 	actions, err := p.Plan(context.Background(), spec)
 	if err != nil {
@@ -164,6 +165,7 @@ func TestAWGPinPlannerDeletesAConfirmedKnock(t *testing.T) {
 		listKnocks:  func(context.Context, string, int, int) (string, error) { return knock, nil },
 		tableExists: func(string) bool { return false },
 		heard:       func(string) bool { return true },
+		sockets:     func(context.Context, string) (map[string]bool, bool) { return nil, false },
 	}
 	actions, err := p.Plan(context.Background(), spec)
 	if err != nil {
@@ -176,4 +178,31 @@ func TestAWGPinPlannerDeletesAConfirmedKnock(t *testing.T) {
 		}
 	}
 	t.Fatalf("confirmed knock not deleted; actions: %+v", actions)
+}
+
+// Found on the stand (kernel 5.15): after a mihomo restart the new socket's flow
+// never reaches conntrack at all — the NAT clash fails its insert — so the old
+// ASSURED entry is the ONLY one listed and looks healthy: the exit's keepalives
+// keep answering it. What gives it away is that no mihomo socket owns it.
+func TestStaleAWGPinEntriesUsesMihomosSockets(t *testing.T) {
+	entries := parseConntrackUDP(ctLive) // orig sport 50446
+	if got := staleAWGPinEntriesOwned(entries, 41234, map[string]bool{"100.127.255.2:50446": true}); len(got) != 0 {
+		t.Fatalf("entry owned by a live socket deleted: %+v", got)
+	}
+	got := staleAWGPinEntriesOwned(entries, 41234, map[string]bool{"192.0.2.4:53703": true})
+	if len(got) != 1 || got[0].origSport != 50446 {
+		t.Fatalf("orphaned entry not selected: %+v", got)
+	}
+	// No live socket at all (mihomo between restarts): an orphan is still an orphan.
+	if got := staleAWGPinEntriesOwned(entries, 41234, map[string]bool{}); len(got) != 1 {
+		t.Fatalf("with no sockets the entry is orphaned, got %+v", got)
+	}
+}
+
+func TestParseSSLocal(t *testing.T) {
+	out := "ESTAB 0 0 192.0.2.4:53703 198.51.100.7:35555\nUNCONN 0 0 0.0.0.0:9993 0.0.0.0:*\n"
+	got := parseSSLocal(out)
+	if !got["192.0.2.4:53703"] || !got["0.0.0.0:9993"] || len(got) != 2 {
+		t.Fatalf("parseSSLocal = %v", got)
+	}
 }
