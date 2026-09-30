@@ -123,6 +123,10 @@ fleet:
 
 All keys: [configuration.md#3-fleet-fleet-wide-settings](configuration.md#3-fleet-fleet-wide-settings)
 
+### Exit-initiated AmneziaWG flow
+
+`transports.awg.exit_initiated` needs the controller, the master agent and the exit agent on wire 12. Order: controller, master agent, exit agents, then the key. Before all three are upgraded the key changes nothing. Client configs do not change.
+
 ## Notes & gotchas
 
 - **`controller.agent_bin` must be set** for auto-upgrade, `--upgrade-agent`, and

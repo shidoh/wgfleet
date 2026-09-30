@@ -791,6 +791,77 @@ Causes, in order of likelihood:
 When it is none of those, take a support bundle
 (`wgfleet-agent --support-bundle --note "..."` on the node) and send it.
 
+## Exit-initiated AmneziaWG flow
+
+For an exit whose AmneziaWG tunnel dies when the master opens the flow and lives when the exit opens it. The exit knocks on a pinned port of the master; the master answers only from that port and only after it has heard the exit.
+
+### When to switch it on
+
+All of these on one exit:
+
+- AmneziaWG to the exit goes down after a mihomo or master restart and does not come back.
+- The exit is reachable over the management overlay (ZeroTier).
+- On the exit, `tcpdump -ni any udp and src host <master public IP>` shows one packet from the master per attempt and nothing after it.
+
+### Keys
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `fleet.exits[].transports.awg.exit_initiated` | bool | `false` | Per exit. AmneziaWG only; REALITY is unaffected |
+| `fleet.exits[].transports.awg.master_port` | int | derived, `20000`–`32767` | The master's pinned UDP port for this exit. Only with `exit_initiated` |
+
+Requirements:
+
+| Requirement | Why |
+|---|---|
+| Controller, master agent and exit agent on the same release (wire 12) | Below it the controller leaves the tunnel as it was |
+| A single master in the fleet | Refused by `--check-config` otherwise |
+| `masters[].public_ip` (or the stored address) is a public IPv4 | The exit dials it from the internet. A master behind NAT is not supported |
+| The provider's firewall in front of the master passes UDP from the exit to the pinned port | The exit's first packet must reach the master |
+
+Client configs do not change. Nothing to reissue.
+
+### Switch on
+
+```yaml
+fleet:
+  exits:
+    - name: <exit>
+      transports:
+        awg:
+          enabled: true
+          exit_initiated: true
+```
+
+```bash
+wgfleet-controller --check-config -config /etc/wgfleet/controller.yaml
+systemctl restart wgfleet-controller
+```
+
+The tunnel is not restarted: the exit sets the new endpoint on the running interface, the master arms its gate once the exit reports that endpoint.
+
+### Check
+
+| Where | Command | Expect |
+|---|---|---|
+| Exit | `awg show awg0 endpoints` | the master's public IP and pinned port |
+| Master | `curl -s <mgmt>:9301/metrics \| grep awg_` | `awg_pin_armed{exit=…} 1`, `awg_exit_heard{exit=…} 1` |
+| Master | `nft list set ip wgfleet_master awg_exit_heard` | the exit's address with `expires` under 60 s |
+| Master | `conntrack -L -p udp -d <exit IP> --dport <exit AWG port>` | one entry, reply `dport=<pinned port>` |
+
+### Symptoms
+
+| Symptom | Look at | Do |
+|---|---|---|
+| Alert `WgfleetAWGExitNotHeard` | on the exit: `awg show awg0 endpoints` | not the pinned port: wait one agent pass, the agent restores it |
+| Endpoint is right, still not heard | on the master: `tcpdump -ni any udp and src host <exit IP>` | nothing arrives: the path from the exit or the provider firewall drops it; switch the flag off for this exit |
+| `awg_exit_heard 1`, handshake stale | on the master: `conntrack -L -p udp -d <exit IP> --dport <exit AWG port>` | more than one entry or a reply port other than the pinned one: the agent clears them within one pass |
+| `awg_pin_armed` absent | controller journal: `exit-initiated AWG` | an agent below wire 12, or no public IPv4 for the master |
+
+### Switch off
+
+Remove `exit_initiated` (and `master_port`) and restart the controller. The master stops pinning on its next pass; the endpoint stays in the exit's kernel until the next interface restart, which does no harm.
+
 ## Client interception in mihomo's network namespace
 
 mihomo runs in its own network namespace so its transparent-proxy reply sockets
