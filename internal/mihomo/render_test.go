@@ -985,8 +985,13 @@ func TestRenderRealityFingerprintAndEmptySNI(t *testing.T) {
 	}
 	pm := mk(func(rt *domain.RealityTunnel) { rt.Mux = true })
 	rs, _ := pm["xhttp-opts"].(map[string]any)["reuse-settings"].(map[string]any)
-	if rs == nil || rs["max-concurrency"] != "16-32" {
-		t.Errorf("Mux must add XMUX reuse-settings: %+v", pm["xhttp-opts"])
+	if rs == nil || rs["max-connections"] != "3" {
+		t.Errorf("Mux must cap XMUX at 3 connections (TSPU connection limit): %+v", pm["xhttp-opts"])
+	}
+	// mihomo opens a new connection whenever every entry is at max-concurrency, so a
+	// concurrency limit alongside max-connections would lift the cap under load.
+	if _, has := rs["max-concurrency"]; has {
+		t.Errorf("max-concurrency must be unset or the connection cap leaks: %+v", rs)
 	}
 	// Vision mode ignores Mux (no xhttp-opts at all).
 	pmv := mk(func(rt *domain.RealityTunnel) { rt.Mode = domain.RealityModeVision; rt.Mux = true })

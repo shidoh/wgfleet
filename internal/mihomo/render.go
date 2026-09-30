@@ -609,10 +609,13 @@ func realityProxy(t domain.ExitTunnel, host string, port int) (map[string]any, e
 		// XMUX: reuse the underlying XHTTP connection across requests so the REALITY
 		// handshake + dest-steal is amortized (without it mihomo opens a fresh
 		// connection — and a fresh handshake — per request). Server-compatible: xray
-		// needs no change. Defaults mirror the documented XMUX template.
+		// needs no change. TSPU bans an address for minutes once a client holds more
+		// than ~4 parallel connections to it (Xray #6376), so the cap is 3, as in
+		// Xray's own client default. max-concurrency stays unset: mihomo opens a new
+		// connection whenever every entry is at that limit, which lifts the cap.
 		if r.Mux {
 			xhttp["reuse-settings"] = map[string]any{
-				"max-concurrency":     "16-32",
+				"max-connections":     "3",
 				"h-max-request-times": "600-900",
 				"h-max-reusable-secs": "1800-3000",
 			}
