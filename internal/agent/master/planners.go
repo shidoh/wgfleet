@@ -200,6 +200,10 @@ func Planners(in Input) []reconcile.Planner {
 		// exits. Gated on an observed duplicate, never on config change, because the
 		// repair is a connection-dropping restart.
 		mihomoWGDupPlanner{compose: in.Paths.Compose, gov: in.Restart, disturbed: in.OnMihomoDisturbed},
+		// After everything that can restart mihomo in this pass, and only once the
+		// master NAT holds the pin and the gate (DependsOn): clears the conntrack
+		// entries a restart leaves stuck on an exit-initiated tunnel's pinned port.
+		awgPinPlanner{},
 	}
 }
 
