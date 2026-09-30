@@ -269,20 +269,20 @@ func staleAWGPinEntriesOwned(entries []ctEntry, pinnedPort int, owned map[string
 	return stale
 }
 
-// mihomoExitSockets reads mihomo's UDP sockets to exit inside mihomo's own network
-// namespace — the host's when it runs on the host network, the holder's when it
-// has moved — by entering it through the container's PID.
+// mihomoExitSockets reads mihomo's UDP sockets to exit inside mihomo's own
+// network namespace (see mihomoUDPSockets).
 func mihomoExitSockets(ctx context.Context, exit string) (map[string]bool, bool) {
-	pid, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Pid}}", "mihomo").Output()
-	if err != nil || strings.TrimSpace(string(pid)) == "0" {
+	out, ok := mihomoUDPSockets(ctx)
+	if !ok {
 		return nil, false
 	}
-	out, err := exec.CommandContext(ctx, "nsenter", "-t", strings.TrimSpace(string(pid)), "-n",
-		"ss", "-unaH", "dst", exit).Output()
-	if err != nil {
-		return nil, false
+	var mine []string
+	for line := range strings.SplitSeq(out, "\n") {
+		if f := strings.Fields(line); len(f) >= 5 && f[4] == exit {
+			mine = append(mine, line)
+		}
 	}
-	return parseSSLocal(string(out)), true
+	return parseSSLocal(strings.Join(mine, "\n")), true
 }
 
 // parseSSLocal collects the local-address column of `ss -unaH` output.

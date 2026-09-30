@@ -71,7 +71,7 @@ func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, 
 		gen, rotatedAt = 0, time.Time{}
 	}
 	addr := pinnedAddr(exit, master, ip, gen)
-	if b.pinPoisoned(ctx, exit.Name, master.Name, addr, rotatedAt) {
+	if awgCarries(exit, exitNode) && b.pinPoisoned(ctx, exit.Name, master.Name, addr, rotatedAt) {
 		now := b.now()
 		if err := b.store.SetAWGPortRotation(ctx, exit.Name, gen+1, now); err != nil {
 			b.log.Warn("exit-initiated AWG: could not record a port rotation; keeping the port",
@@ -84,6 +84,17 @@ func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, 
 		addr = next
 	}
 	return addr, true
+}
+
+// awgCarries reports whether the exit's AWG tunnel is the one carrying its
+// traffic. A standby transport or a drained exit sees no traffic, so a stale
+// handshake there says nothing about the path: rotating it every ten minutes
+// was pure noise on the live fleet 2026-09-30.
+func awgCarries(exit config.ExitConfig, node domain.Node) bool {
+	if exit.Drain || node.Drain {
+		return false
+	}
+	return resolveActiveTransport(exit, node).OrDefault() == domain.TransportAWG
 }
 
 // pinnedAddr is the master's pinned address in generation gen. Generation 0 is

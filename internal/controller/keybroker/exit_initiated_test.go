@@ -230,7 +230,9 @@ func TestExitInitiatedRefusesAMasterWithoutAPublicAddress(t *testing.T) {
 func eiFleet(t *testing.T, clock *time.Time) (*Broker, store.Store, string) {
 	t.Helper()
 	fleet := fleetWithPhase(domain.PerTunnelKeyOff)
+	fleet.Exits[0].Transports.AWG.Enabled = true
 	fleet.Exits[0].Transports.AWG.ExitInitiated = true
+	fleet.Exits[0].Transports.Reality.Enabled = true
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -372,6 +374,41 @@ func TestExitInitiatedLeavesHealthyAndSilentTunnelsAlone(t *testing.T) {
 			setup(start, now, st)
 			if got := exitPeer(t, b, pub).Endpoint; got != eiPinned {
 				t.Fatalf("rotated: endpoint %q, want %q", got, eiPinned)
+			}
+		})
+	}
+}
+
+// Measured on the live fleet 2026-09-30: an exit whose active transport was
+// REALITY had its standby AWG rotated every ten minutes — a standby tunnel
+// carries no traffic, so a stale handshake there says nothing about the path.
+func TestExitInitiatedDoesNotRotateATunnelThatCarriesNothing(t *testing.T) {
+	cases := map[string]func(n *domain.Node){
+		"reality is the active transport": func(n *domain.Node) { n.ActiveTransport = domain.TransportRealityXHTTP },
+		"exit drained":                    func(n *domain.Node) { n.Drain = true },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			now := time.Unix(1_800_000_000, 0)
+			b, st, pub := eiFleet(t, &now)
+			ctx := context.Background()
+			node, err := st.GetNode(ctx, eiExit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutate(&node)
+			if err := st.UpsertNode(ctx, node); err != nil {
+				t.Fatal(err)
+			}
+			start := now
+			report(t, st, eiExit, now, now, eiPinned)
+			report(t, st, eiMaster, now, now, "")
+			_ = masterTunnel(t, b)
+			now = start.Add(AWGRotateAfter + time.Minute)
+			report(t, st, eiExit, now, start, eiPinned)
+			report(t, st, eiMaster, now, now, "")
+			if got := exitPeer(t, b, pub).Endpoint; got != eiPinned {
+				t.Fatalf("rotated a tunnel that carries nothing: endpoint %q, want %q", got, eiPinned)
 			}
 		})
 	}

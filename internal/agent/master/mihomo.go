@@ -605,24 +605,52 @@ func (p mihomoWGDupPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]rec
 			"docker compose restart mihomo", restart))}, nil
 }
 
-// udpPeerSocketCount counts connected UDP sockets whose PEER address is addr, read
-// passively from the kernel socket table. Only mihomo dials an exit's AWG port from
-// the master, so the peer address alone identifies its devices without needing to
-// resolve the container's PID. Reports ok=false when the table cannot be read, so
+// udpPeerSocketCount counts connected UDP sockets whose PEER address is addr in
+// mihomo's socket table. Only mihomo dials an exit's AWG port from the master, so
+// the peer address alone identifies its devices. The table is read inside
+// mihomo's own network namespace: read from the host, a mihomo that has moved
+// into its namespace has no sockets at all, and a leaked device went unseen on
+// the live master 2026-09-30. Reports ok=false when the table cannot be read, so
 // callers can fail safe rather than act on a guess.
 func udpPeerSocketCount(addr string) (int, bool) {
-	out, err := exec.Command("ss", "-unaH").CombinedOutput()
-	if err != nil {
+	out, ok := mihomoUDPSockets(context.Background())
+	if !ok {
 		return 0, false
 	}
+	return countUDPPeer(out, addr), true
+}
+
+// countUDPPeer counts `ss -unaH` lines whose peer column is addr.
+func countUDPPeer(out, addr string) int {
 	n := 0
-	for line := range strings.SplitSeq(string(out), "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		// ss udp columns: State Recv-Q Send-Q LocalAddress:Port PeerAddress:Port
 		if f := strings.Fields(line); len(f) >= 5 && f[4] == addr {
 			n++
 		}
 	}
-	return n, true
+	return n
+}
+
+// mihomoSocketTimeout bounds the docker+nsenter+ss read of mihomo's sockets.
+const mihomoSocketTimeout = 5 * time.Second
+
+// mihomoUDPSockets returns `ss -unaH` as seen from inside mihomo's network
+// namespace — the host's when it runs on the host network, the holder's when it
+// has moved — entered through the container's PID.
+func mihomoUDPSockets(ctx context.Context) (string, bool) {
+	ctx, cancel := context.WithTimeout(ctx, mihomoSocketTimeout)
+	defer cancel()
+	pid, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Pid}}", "mihomo").Output()
+	p := strings.TrimSpace(string(pid))
+	if err != nil || p == "" || p == "0" {
+		return "", false
+	}
+	out, err := exec.CommandContext(ctx, "nsenter", "-t", p, "-n", "ss", "-unaH").Output()
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
 }
 
 // composeRestartMihomo returns an apply closure that bounces the mihomo container.

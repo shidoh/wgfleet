@@ -133,3 +133,19 @@ func TestWGDupPlannerRejectsNonMasterSpec(t *testing.T) {
 		t.Fatal("expected an error for a node with no master spec")
 	}
 }
+
+// Measured on the live master 2026-09-30: mihomo lives in its own network
+// namespace, the host's `ss` never saw its sockets, and a leaked second device
+// to one exit sat undetected — which, once that exit's port is pinned, is an
+// outage rather than a flap. The count now reads mihomo's own socket table.
+func TestCountUDPPeer(t *testing.T) {
+	out := "ESTAB 0 0 100.127.255.2:43723 198.51.100.7:35555\n" +
+		"ESTAB 0 0 100.127.255.2:50446 198.51.100.7:35555\n" +
+		"ESTAB 0 0 100.127.255.2:41000 198.51.100.8:35556\n"
+	if n := countUDPPeer(out, "198.51.100.7:35555"); n != 2 {
+		t.Fatalf("countUDPPeer = %d, want 2", n)
+	}
+	if n := countUDPPeer(out, "198.51.100.9:1"); n != 0 {
+		t.Fatalf("countUDPPeer for an absent peer = %d", n)
+	}
+}
