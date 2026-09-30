@@ -376,6 +376,23 @@ spec:
         description: mihomo on {{ $labels.node }} has {{ $labels.exit }} marked down, so wg-best is
           not routing client traffic to it. Check wgfleet_agent_exit_held_out{exit="{{ $labels.exit }}"}
           to tell our multi-destination verdict from mihomo's own check.
+    - alert: WgfleetAWGExitNotHeard
+      # Exit-initiated AWG flow (transports.awg.exit_initiated): the master answers
+      # such an exit only after hearing it knock on its pinned port, and the gate is
+      # closed until then by design — opening it on a timeout would make the master
+      # the flow's initiator, which is what the path filter cuts. So a quiet exit is
+      # a tunnel that stays down, and nothing else on the fleet says why. The exit's
+      # keepalive is 15-28 s; ten minutes is long past any lost packet.
+      expr: wgfleet_agent_awg_pin_armed == 1 and on(node, exit) wgfleet_agent_awg_exit_heard == 0
+      for: 10m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Master {{ $labels.node }} has not heard exit {{ $labels.exit }} knock on its pinned port
+        description: The AWG tunnel to {{ $labels.exit }} waits for the exit to start the flow and the
+          exit is silent. On the exit check `awg show awg0 endpoints` points at the master's pinned
+          port; on the master check `tcpdump -ni any udp and src host <exit>` for its knocks.
     - alert: WgfleetNoExitInRotation
       # `or vector(0)` makes the empty case reachable, exactly as in
       # WgfleetNoReadyExit — count() over an empty selector returns no series, so
