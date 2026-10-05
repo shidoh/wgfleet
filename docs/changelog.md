@@ -4,6 +4,12 @@ What changed for operators in each wgfleet release — behaviour, manifest keys,
 Every release archive carries this page as `CHANGELOG.md`.
 New releases are announced, with the archives attached, in the Telegram channel [t.me/wgfleet](https://t.me/wgfleet).
 
+## Unreleased
+
+### Fixed
+
+- The device profile for mihomo apps gives the AmneziaWG proxy `allowed-ips: 0.0.0.0/0` instead of the split list of the `.conf`. Before, with `client_awg.exclude_from_tunnel` set, a `fleet.client_sites` network was unreachable while the device was on AmneziaWG, and `<site>-auto` fell to `DIRECT` away from the site. Update the profile in the app to pick it up.
+
 ## v0.3.2 — 2026-09-30
 
 !!! note "New: the exit can start the master↔exit AmneziaWG tunnel"

@@ -114,7 +114,8 @@ func parseConf(t *testing.T, cfg string) (iface, peer map[string]string) {
 	return iface, peer
 }
 
-// The spec's invariant: the AWG proxy says exactly what the .conf says.
+// The spec's invariant: the AWG proxy says exactly what the .conf says — except
+// AllowedIPs, see TestClientProfileAWGCarriesWhateverTheRulesSend.
 func TestClientProfileAWGEqualsTheConf(t *testing.T) {
 	awgKeys := map[string]string{
 		"Jc": "jc", "Jmin": "jmin", "Jmax": "jmax", "S1": "s1", "S2": "s2", "S3": "s3", "S4": "s4",
@@ -147,7 +148,6 @@ func TestClientProfileAWGEqualsTheConf(t *testing.T) {
 			eq("MTU", iface["MTU"], px["mtu"])
 			eq("PublicKey", peer["PublicKey"], pp["public-key"])
 			eq("PresharedKey", peer["PresharedKey"], pp["pre-shared-key"])
-			eq("AllowedIPs", peer["AllowedIPs"], strings.Join(toStrings(pp["allowed-ips"].([]any)), ", "))
 			eq("Endpoint", peer["Endpoint"], net.JoinHostPort(fmt.Sprint(pp["server"]), fmt.Sprint(pp["port"])))
 			eq("PersistentKeepalive", peer["PersistentKeepalive"], px["persistent-keepalive"])
 			for confKey, optKey := range awgKeys {
@@ -169,6 +169,33 @@ func TestClientProfileAWGEqualsTheConf(t *testing.T) {
 				t.Errorf("DNS: conf %q, profile nameserver %s", iface["DNS"], ns)
 			}
 		})
+	}
+}
+
+// A split AllowedIPs (client_awg.exclude_from_tunnel) is a ROUTING table for
+// wg-quick; in mihomo the rules route, and the same list on the proxy is a
+// filter: whatever a rule sends to the proxy outside it is dropped, not sent
+// DIRECT. A site's networks are exactly that — RFC1918, cut out of the .conf's
+// list, sent to the tunnel by the site's rule — so on AWG the site was dead and
+// its own probe through the tunnel never answered.
+func TestClientProfileAWGCarriesWhateverTheRulesSend(t *testing.T) {
+	in := profileAWG(t, "2.0")
+	in.Spec.AllowedIPs = []string{"0.0.0.0/5", "8.0.0.0/7", "11.0.0.0/8", "172.29.0.0/16"}
+	doc := renderProfile(t, ClientProfileInput{
+		Masters: []ClientProfileMaster{{Name: "m1", AWG: in, DNS: in.Spec.DNS}},
+		Sites: []domain.ClientSite{{Name: "home", CIDRs: []string{"172.18.0.0/21"},
+			ProbeURL: "http://172.18.0.1/", ProbeInterval: 60}},
+	})
+	pp := proxyNamed(t, doc, "m1-awg")["peers"].([]any)[0].(map[string]any)
+	if got := strings.Join(toStrings(pp["allowed-ips"].([]any)), ", "); got != "0.0.0.0/0" {
+		t.Errorf("allowed-ips = %q, want 0.0.0.0/0: the site rule sends 172.18.0.0/21 to this proxy", got)
+	}
+	conf, err := wg.RenderClientConfig(*in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, peer := parseConf(t, conf); peer["AllowedIPs"] != strings.Join(in.Spec.AllowedIPs, ", ") {
+		t.Errorf(".conf AllowedIPs = %q, the split list must stay there", peer["AllowedIPs"])
 	}
 }
 

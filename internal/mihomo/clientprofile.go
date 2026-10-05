@@ -237,15 +237,13 @@ func clientWireguardProxy(name string, in wg.ClientConfigInput) (map[string]any,
 	if err != nil {
 		return nil, fmt.Errorf("client %q address %q: %w", in.Client.Name, in.Client.Address, err)
 	}
-	allowed := in.Spec.AllowedIPs
-	if len(allowed) == 0 {
-		allowed = []string{"0.0.0.0/0"}
-	}
 	peer := map[string]any{
-		"server":      host,
-		"port":        port,
-		"public-key":  in.ServerPublicKey,
-		"allowed-ips": toAnySlice(allowed),
+		"server":     host,
+		"port":       port,
+		"public-key": in.ServerPublicKey,
+		// Not the .conf's list: there a split AllowedIPs routes, here the rules do,
+		// and the list would only drop what a rule (a site, MATCH) sends this way.
+		"allowed-ips": []any{"0.0.0.0/0"},
 	}
 	if in.Client.PresharedKey != "" {
 		peer["pre-shared-key"] = in.Client.PresharedKey
