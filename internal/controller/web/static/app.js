@@ -4,7 +4,8 @@
 // so a slow ZT link can't be double-submitted. Moved verbatim from the old inline
 // <script> in layout.html. The topology connector lines are rendered server-side
 // (inline SVG in the flexbox connector column), and the collapsibles are native
-// <details>, so no other JS is needed — the page is fully usable without it.
+// <details>; keepDetailsOpen (below) only stops a poll from closing one that is open.
+// The page is fully usable without any of it.
 
 // lockAction gates an action form, then locks its submit button so a slow ZT
 // link can't be double-submitted. confirm() (from the form's data-confirm) runs
@@ -55,3 +56,26 @@ window.addEventListener('DOMContentLoaded', function () {
   var link = document.querySelector('.mainnav-link[data-section="' + section + '"]');
   if (link) link.setAttribute('aria-current', 'page');
 });
+
+// keepDetailsOpen: carry the open/closed state of a <details id="…"> across an htmx
+// poll swap.
+//
+// A polled fragment is re-rendered from scratch, and the server only knows its own
+// default for `open` — so a panel the operator opened to read snapped shut on the
+// next poll (the rollout panel: every 15 s idle, and at once when a run ended, which
+// is the moment its per-node errors are worth reading). Only elements with an id
+// are tracked: without one there is nothing to match the new node to the old.
+(function () {
+  var remembered = {};
+  document.addEventListener('htmx:beforeSwap', function (e) {
+    remembered = {};
+    var open = e.detail.target.querySelectorAll('details[id]');
+    for (var i = 0; i < open.length; i++) remembered[open[i].id] = open[i].open;
+  });
+  document.addEventListener('htmx:afterSwap', function (e) {
+    var fresh = e.detail.target.querySelectorAll('details[id]');
+    for (var i = 0; i < fresh.length; i++) {
+      if (fresh[i].id in remembered) fresh[i].open = remembered[fresh[i].id];
+    }
+  });
+})();

@@ -55,3 +55,35 @@ func dialCtx(ctx context.Context, dial DialFunc, target domain.SSHTarget) (provi
 		return nil, fmt.Errorf("ssh dial abandoned: %w", ctx.Err())
 	}
 }
+
+// dialNode opens SSH to a node: its manifest ssh target first, and when that
+// fails, the node's mgmt (overlay) address with the same port, user and key.
+//
+// The public master→exit path and the overlay fail independently, and the public
+// one fails in a way that looks alive — the TCP connection opens and the SSH
+// handshake then times out. Field case 2026-10-07: a rollout skipped two exits on
+// exactly that while the controller held a working control channel to both over
+// the overlay. Pointing ssh.host at the overlay by hand fixes one node and is a
+// step the operator has to know to take; the fallback makes it unnecessary.
+//
+// The order is deliberate. A first bootstrap has no overlay yet, so the manifest
+// target is the only path that can work there; and for a node already managed
+// over its mgmt address there is no second path, so it is dialled once.
+func (m *Manager) dialNode(ctx context.Context, node domain.Node) (provisioner.Runner, error) {
+	runner, err := dialCtx(ctx, m.opts.Dial, node.SSH)
+	if err == nil {
+		return runner, nil
+	}
+	if node.MgmtAddr == "" || node.MgmtAddr == node.SSH.Host || ctx.Err() != nil {
+		return nil, err
+	}
+	m.log.Warn("ssh to the node's manifest address failed; trying its mgmt address",
+		"node", node.Name, "host", node.SSH.Host, "mgmt_addr", node.MgmtAddr, "err", err)
+	overlay := node.SSH
+	overlay.Host = node.MgmtAddr
+	runner, mgmtErr := dialCtx(ctx, m.opts.Dial, overlay)
+	if mgmtErr != nil {
+		return nil, fmt.Errorf("%w; mgmt address: %w", err, mgmtErr)
+	}
+	return runner, nil
+}

@@ -284,3 +284,17 @@ func TestRolloutPanelReportsAnUnidentifiableBinary(t *testing.T) {
 		t.Error("panel offers a roll it cannot describe")
 	}
 }
+
+// TestRolloutPanelCarriesAnIDForOpenStateTracking — the panel is re-rendered by a
+// poll, and app.js can only carry "the operator opened this" across the swap for a
+// <details> it can match by id. Without it the panel shut every 15 s while being read.
+func TestRolloutPanelCarriesAnIDForOpenStateTracking(t *testing.T) {
+	h := rollerHandler(t, &fakeRoller{})
+
+	w := httptest.NewRecorder()
+	h.mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/partials/rollout", nil))
+
+	if !strings.Contains(w.Body.String(), `<details id="rollout-section"`) {
+		t.Errorf("rollout panel has no id on its <details>: %s", w.Body.String())
+	}
+}

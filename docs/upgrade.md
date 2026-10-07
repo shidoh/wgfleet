@@ -136,12 +136,14 @@ All keys: [configuration.md#3-fleet-fleet-wide-settings](configuration.md#3-flee
   push. Upgrading only the controller (`deploy-master.sh --controller`, which
   warns about this) leaves the panel reading "nothing to roll". Push the agent
   binary to the controller host before rolling the fleet.
-- **SSH reach is required to upgrade.** The upgrade reuses the node's manifest
-  SSH target. If you removed SSH access after bootstrap, restore it before
+- **SSH reach is required to upgrade.** The upgrade dials the node's manifest
+  SSH target, and when that fails, the node's `mgmt_addr` with the same port,
+  user and key. If you removed SSH access after bootstrap, restore it before
   upgrading (or re-provision).
 - **A wedged SSH path costs one node, not the run.** A path that accepts the
   connection and then swallows everything is abandoned 20 s into the handshake:
-  the node is reported by name as untouched — it keeps the agent it had, it is
+  the node's `mgmt_addr` is tried next, and only when that fails too is
+  the node reported by name as untouched — it keeps the agent it had, it is
   never downgraded — and the rollout moves to the next one. `--node-timeout`
   (default `5m`) bounds everything after the dial: upload, install, restart.
 - **Bumping `MinSupportedWire`** strands any agent older than the new minimum on

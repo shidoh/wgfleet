@@ -5,7 +5,7 @@
      unit — the same shape as the nodes-table partial. */}}
 {{define "rollout-panel"}}
 {{if .}}
-<details class="rollout-section"{{if .State.Active}} open{{end}}>
+<details id="rollout-section" class="rollout-section"{{if .State.Active}} open{{end}}>
   <summary class="rollout-summary">
     ROLLING AGENT UPDATE
     {{if .State.Active}}<span class="live"><span class="statusdot pulse"></span>RUNNING {{.State.Done}}/{{.State.Total}}</span>
