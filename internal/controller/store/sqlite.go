@@ -520,6 +520,10 @@ func (s *SQLiteStore) RecordStatus(ctx context.Context, st domain.NodeStatus) er
 	if err != nil {
 		return fmt.Errorf("marshal client peers: %w", err)
 	}
+	masterPeers, err := json.Marshal(nonNilPeers(st.MasterPeers))
+	if err != nil {
+		return fmt.Errorf("marshal master peers: %w", err)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin status tx: %w", err)
@@ -529,21 +533,24 @@ func (s *SQLiteStore) RecordStatus(ctx context.Context, st domain.NodeStatus) er
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO node_status (node_id, state, reported_at, last_handshake,
 			egress_ip, reconcile_error, checks_json, exit_health_json, client_peers_json,
-			awg_master_endpoint)
-		VALUES (?,?,?,?,?,?,?,?,?,?)
+			awg_master_endpoint, master_peers_json)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(node_id) DO UPDATE SET
 			state=excluded.state, reported_at=excluded.reported_at,
 			last_handshake=excluded.last_handshake, egress_ip=excluded.egress_ip,
 			reconcile_error=excluded.reconcile_error, checks_json=excluded.checks_json,
 			exit_health_json=excluded.exit_health_json,
 			client_peers_json=excluded.client_peers_json,
+			-- Overwritten on every report, never sticky: a peer list that outlived
+			-- its report would read as live handshakes.
+			master_peers_json=excluded.master_peers_json,
 			-- An empty report means "could not read", not "holds none": keep what
 			-- the exit last confirmed, since the master's gate is armed from it.
 			awg_master_endpoint=CASE WHEN excluded.awg_master_endpoint = ''
 				THEN node_status.awg_master_endpoint ELSE excluded.awg_master_endpoint END`,
 		st.NodeID, string(st.State), fmtTime(orDefault(st.ReportedAt, s.now().UTC())),
 		fmtTime(st.LastHandshake), st.EgressIP, st.ReconcileError, string(checks), string(exitHealth),
-		string(clientPeers), st.AWGMasterEndpoint,
+		string(clientPeers), st.AWGMasterEndpoint, string(masterPeers),
 	); err != nil {
 		return fmt.Errorf("record status for %q: %w", st.NodeID, err)
 	}
@@ -559,7 +566,7 @@ func (s *SQLiteStore) RecordStatus(ctx context.Context, st domain.NodeStatus) er
 // GetStatus implements Store.
 func (s *SQLiteStore) GetStatus(ctx context.Context, id string) (domain.NodeStatus, error) {
 	const q = `SELECT node_id, state, reported_at, last_handshake, egress_ip,
-		reconcile_error, checks_json, exit_health_json, client_peers_json, awg_master_endpoint
+		reconcile_error, checks_json, exit_health_json, client_peers_json, awg_master_endpoint, master_peers_json
 		FROM node_status WHERE node_id = ?`
 	var (
 		st                                domain.NodeStatus
@@ -567,11 +574,12 @@ func (s *SQLiteStore) GetStatus(ctx context.Context, id string) (domain.NodeStat
 		checksJSON                        string
 		exitHealthJSON                    string
 		clientPeersJSON                   string
+		masterPeersJSON                   string
 	)
 	err := s.db.QueryRowContext(ctx, q, id).Scan(
 		&st.NodeID, &stateS, &reportedAt, &lastHandshake,
 		&st.EgressIP, &st.ReconcileError, &checksJSON, &exitHealthJSON, &clientPeersJSON,
-		&st.AWGMasterEndpoint)
+		&st.AWGMasterEndpoint, &masterPeersJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.NodeStatus{}, ErrNotFound
 	}
@@ -590,7 +598,19 @@ func (s *SQLiteStore) GetStatus(ctx context.Context, id string) (domain.NodeStat
 	if err := json.Unmarshal([]byte(clientPeersJSON), &st.ClientPeers); err != nil {
 		return domain.NodeStatus{}, fmt.Errorf("unmarshal client peers for %q: %w", id, err)
 	}
+	if err := json.Unmarshal([]byte(masterPeersJSON), &st.MasterPeers); err != nil {
+		return domain.NodeStatus{}, fmt.Errorf("unmarshal master peers for %q: %w", id, err)
+	}
 	return st, nil
+}
+
+// nonNilPeers makes a missing list serialise as [] rather than null, matching
+// the column default.
+func nonNilPeers(p []domain.MasterPeerStatus) []domain.MasterPeerStatus {
+	if p == nil {
+		return []domain.MasterPeerStatus{}
+	}
+	return p
 }
 
 // rowScanner is satisfied by both *sql.Row and *sql.Rows.
@@ -730,31 +750,32 @@ func (s *SQLiteStore) SetAuthPassword(ctx context.Context, passwordHash string, 
 }
 
 // GetAWGPortRotation implements Store.
-func (s *SQLiteStore) GetAWGPortRotation(ctx context.Context, exit string) (int, time.Time, error) {
+func (s *SQLiteStore) GetAWGPortRotation(ctx context.Context, master, exit string) (int, time.Time, error) {
 	var gen int
 	var at string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT generation, rotated_at FROM awg_port_rotation WHERE node_id = ?`, exit).Scan(&gen, &at)
+		`SELECT generation, rotated_at FROM awg_pin_rotation WHERE master_id = ? AND exit_id = ?`,
+		master, exit).Scan(&gen, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, time.Time{}, nil
 	}
 	if err != nil {
-		return 0, time.Time{}, fmt.Errorf("get awg port rotation %q: %w", exit, err)
+		return 0, time.Time{}, fmt.Errorf("get awg port rotation %q/%q: %w", master, exit, err)
 	}
 	return gen, parseTime(at), nil
 }
 
 // SetAWGPortRotation implements Store.
-func (s *SQLiteStore) SetAWGPortRotation(ctx context.Context, exit string, gen int, at time.Time) error {
-	if exit == "" {
-		return errors.New("store: exit name is required")
+func (s *SQLiteStore) SetAWGPortRotation(ctx context.Context, master, exit string, gen int, at time.Time) error {
+	if master == "" || exit == "" {
+		return errors.New("store: master and exit names are required")
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO awg_port_rotation (node_id, generation, rotated_at) VALUES (?,?,?)
-		 ON CONFLICT(node_id) DO UPDATE SET generation=excluded.generation, rotated_at=excluded.rotated_at`,
-		exit, gen, fmtTime(at.UTC()))
+		`INSERT INTO awg_pin_rotation (master_id, exit_id, generation, rotated_at) VALUES (?,?,?,?)
+		 ON CONFLICT(master_id, exit_id) DO UPDATE SET generation=excluded.generation, rotated_at=excluded.rotated_at`,
+		master, exit, gen, fmtTime(at.UTC()))
 	if err != nil {
-		return fmt.Errorf("set awg port rotation %q: %w", exit, err)
+		return fmt.Errorf("set awg port rotation %q/%q: %w", master, exit, err)
 	}
 	return nil
 }

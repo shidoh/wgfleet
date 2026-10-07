@@ -64,7 +64,7 @@ func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, 
 			"exit", exit.Name, "master", master.Name, "public_ip", master.PublicIP, "stored", masterNode.PublicIP)
 		return "", false
 	}
-	gen, rotatedAt, err := b.store.GetAWGPortRotation(ctx, exit.Name)
+	gen, rotatedAt, err := b.store.GetAWGPortRotation(ctx, master.Name, exit.Name)
 	if err != nil {
 		b.warnOnce("exit-initiated-rotation-read:"+exit.Name, err.Error(),
 			"exit-initiated AWG: port generation unreadable, using the base port", "exit", exit.Name, "err", err)
@@ -73,7 +73,7 @@ func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, 
 	addr := pinnedAddr(exit, master, ip, gen)
 	if awgCarries(exit, exitNode) && b.pinPoisoned(ctx, exit.Name, master.Name, addr, rotatedAt) {
 		now := b.now()
-		if err := b.store.SetAWGPortRotation(ctx, exit.Name, gen+1, now); err != nil {
+		if err := b.store.SetAWGPortRotation(ctx, master.Name, exit.Name, gen+1, now); err != nil {
 			b.log.Warn("exit-initiated AWG: could not record a port rotation; keeping the port",
 				"exit", exit.Name, "err", err)
 			return addr, true

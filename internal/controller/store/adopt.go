@@ -15,6 +15,10 @@ import (
 // MarkerDevicesFromWG records that the one-shot adoption has run.
 const MarkerDevicesFromWG = "devices-from-wg-credentials"
 
+// MarkerAWGRotationByMaster records that the pinned-port generations have been
+// carried over to the base master.
+const MarkerAWGRotationByMaster = "awg-rotation-by-master"
+
 // AdoptedDeviceID is the ID an adopted credential's device gets. DERIVED, not
 // random: the adoption must be a pure function of the store's state, so every
 // replica that replays it (ADR-0027, phase B) arrives at the same rows.
@@ -146,4 +150,45 @@ func uniqueDeviceName(name, master string, taken map[string]bool) string {
 			return cand
 		}
 	}
+}
+
+// AdoptAWGPortRotation implements Store.
+//
+// The generations of the single-master days belong to the one master there was;
+// starting them over at 0 would hand an exit back the port a path filter already
+// poisoned. One transaction, and marked: a second run with another master would
+// hand it a history its tunnels never had.
+func (s *SQLiteStore) AdoptAWGPortRotation(ctx context.Context, master string) (int, error) {
+	if master == "" {
+		return 0, errors.New("store: master name is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("adopt awg rotation: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var marker string
+	switch err := tx.QueryRowContext(ctx, `SELECT name FROM store_markers WHERE name=?`, MarkerAWGRotationByMaster).Scan(&marker); {
+	case err == nil:
+		return 0, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return 0, fmt.Errorf("adopt awg rotation: read marker: %w", err)
+	}
+	// OR IGNORE: a tunnel that already has a row of its own is newer than the copy.
+	res, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO awg_pin_rotation (master_id, exit_id, generation, rotated_at)
+		 SELECT ?, node_id, generation, rotated_at FROM awg_port_rotation`, master)
+	if err != nil {
+		return 0, fmt.Errorf("adopt awg rotation for %q: %w", master, err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO store_markers (name, applied_at) VALUES (?,?)`,
+		MarkerAWGRotationByMaster, fmtTime(s.now().UTC())); err != nil {
+		return 0, fmt.Errorf("adopt awg rotation: mark: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("adopt awg rotation: commit: %w", err)
+	}
+	return int(n), nil
 }

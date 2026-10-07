@@ -670,16 +670,90 @@ func TestAWGPortRotationPersists(t *testing.T) {
 	}
 	defer st.Close()
 	ctx := context.Background()
-	gen, at, err := st.GetAWGPortRotation(ctx, "exit-a")
+	gen, at, err := st.GetAWGPortRotation(ctx, "master-xa-1", "exit-a")
 	if err != nil || gen != 0 || !at.IsZero() {
 		t.Fatalf("unrotated exit: gen=%d at=%v err=%v", gen, at, err)
 	}
 	when := time.Unix(1_800_000_000, 0).UTC()
-	if err := st.SetAWGPortRotation(ctx, "exit-a", 2, when); err != nil {
+	if err := st.SetAWGPortRotation(ctx, "master-xa-1", "exit-a", 2, when); err != nil {
 		t.Fatal(err)
 	}
-	gen, at, err = st.GetAWGPortRotation(ctx, "exit-a")
+	gen, at, err = st.GetAWGPortRotation(ctx, "master-xa-1", "exit-a")
 	if err != nil || gen != 2 || !at.Equal(when) {
 		t.Fatalf("after rotation: gen=%d at=%v err=%v", gen, at, err)
+	}
+}
+
+func TestAWGPortRotationIsPerMasterAndExit(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	at := time.Unix(1_800_000_000, 0).UTC()
+	if err := s.SetAWGPortRotation(ctx, "master-xa-1", "exit-de-1", 3, at); err != nil {
+		t.Fatal(err)
+	}
+	if gen, _, err := s.GetAWGPortRotation(ctx, "master-xa-2", "exit-de-1"); err != nil || gen != 0 {
+		t.Errorf("another master's generation = %d, %v; want 0 (its own tunnel never rotated)", gen, err)
+	}
+	gen, rotated, err := s.GetAWGPortRotation(ctx, "master-xa-1", "exit-de-1")
+	if err != nil || gen != 3 || !rotated.Equal(at) {
+		t.Errorf("got gen=%d at=%v err=%v", gen, rotated, err)
+	}
+	if err := s.SetAWGPortRotation(ctx, "", "exit-de-1", 1, at); err == nil {
+		t.Error("a rotation without a master must be refused")
+	}
+}
+
+// The generations recorded before tunnels were keyed by master belong to the one
+// master there was. Starting them again at 0 would hand an exit back the port a
+// path filter already poisoned.
+func TestAdoptAWGPortRotationKeepsThePoisonedPortRetired(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	at := time.Unix(1_800_000_000, 0).UTC()
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO awg_port_rotation (node_id, generation, rotated_at) VALUES ('exit-de-1', 4, ?)`,
+		fmtTime(at)); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.AdoptAWGPortRotation(ctx, "master-xa-1")
+	if err != nil || n != 1 {
+		t.Fatalf("adopted %d, %v; want 1", n, err)
+	}
+	if gen, _, _ := s.GetAWGPortRotation(ctx, "master-xa-1", "exit-de-1"); gen != 4 {
+		t.Errorf("generation after adoption = %d, want 4", gen)
+	}
+	// One-shot: a later run with another master must not hand it the same history.
+	if n, err := s.AdoptAWGPortRotation(ctx, "master-xa-2"); err != nil || n != 0 {
+		t.Errorf("second adoption = %d, %v; want 0", n, err)
+	}
+	if gen, _, _ := s.GetAWGPortRotation(ctx, "master-xa-2", "exit-de-1"); gen != 0 {
+		t.Errorf("a second master inherited generation %d", gen)
+	}
+}
+
+// Every report overwrites the last: a peer list that outlived the report it came
+// from would be read as live handshakes, and a frozen handshake reads as a dead
+// tunnel.
+func TestStatusMasterPeersFollowTheLatestReport(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	node := sampleNode()
+	if err := s.UpsertNode(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	peers := []domain.MasterPeerStatus{{PublicKey: "keyA", Endpoint: "203.0.113.1:23456", LastHandshake: time.Unix(1_800_000_000, 0).UTC()}}
+	if err := s.RecordStatus(ctx, domain.NodeStatus{NodeID: node.ID, State: domain.StateReady, MasterPeers: peers}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetStatus(ctx, node.ID)
+	if err != nil || len(got.MasterPeers) != 1 || got.MasterPeers[0].Endpoint != "203.0.113.1:23456" {
+		t.Fatalf("stored peers = %+v, %v", got.MasterPeers, err)
+	}
+	if err := s.RecordStatus(ctx, domain.NodeStatus{NodeID: node.ID, State: domain.StateReady}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetStatus(ctx, node.ID)
+	if err != nil || len(got.MasterPeers) != 0 {
+		t.Errorf("peers after a report without any = %+v, %v; want none", got.MasterPeers, err)
 	}
 }

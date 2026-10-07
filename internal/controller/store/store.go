@@ -209,9 +209,13 @@ type Store interface {
 	GetStatus(ctx context.Context, id string) (domain.NodeStatus, error)
 	// GetAWGPortRotation returns the generation of an exit-initiated tunnel's
 	// pinned master port and when it last moved; 0 and zero time when it never has.
-	GetAWGPortRotation(ctx context.Context, exit string) (int, time.Time, error)
+	GetAWGPortRotation(ctx context.Context, master, exit string) (int, time.Time, error)
 	// SetAWGPortRotation records a move to generation gen at time at.
-	SetAWGPortRotation(ctx context.Context, exit string, gen int, at time.Time) error
+	SetAWGPortRotation(ctx context.Context, master, exit string, gen int, at time.Time) error
+	// AdoptAWGPortRotation gives the generations recorded before tunnels were keyed
+	// by master to master — the one master there was — and reports how many it
+	// moved. One-shot: it runs once per database, whoever is passed later.
+	AdoptAWGPortRotation(ctx context.Context, master string) (int, error)
 
 	// AuthConfigured reports whether the single web-panel admin credential exists.
 	AuthConfigured(ctx context.Context) (bool, error)

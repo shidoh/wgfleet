@@ -339,7 +339,7 @@ func TestExitInitiatedRotatesAStaleTunnel(t *testing.T) {
 	if got := exitPeer(t, b, pub).Endpoint; got != rotated {
 		t.Fatalf("rotated twice in one interval: %q", got)
 	}
-	gen, _, err := st.GetAWGPortRotation(context.Background(), eiExit)
+	gen, _, err := st.GetAWGPortRotation(context.Background(), eiMaster, eiExit)
 	if err != nil || gen != 1 {
 		t.Fatalf("generation = %d (%v), want 1", gen, err)
 	}

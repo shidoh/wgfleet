@@ -396,6 +396,20 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 		slog.Info("client credentials adopted as devices", "count", n)
 	}
 
+	// The pinned-port generations of the single-master days belong to the base
+	// master. Fatal on failure, unlike the device adoption above: carrying on would
+	// start every exit-initiated tunnel at generation 0 again — the port a path
+	// filter has already poisoned.
+	if base, ok := cfg.Fleet.BaseMaster(); ok {
+		n, err := st.AdoptAWGPortRotation(context.Background(), base.Name)
+		if err != nil {
+			return fmt.Errorf("adopt pinned-port generations for master %q: %w", base.Name, err)
+		}
+		if n > 0 {
+			slog.Info("pinned-port generations adopted for the base master", "master", base.Name, "tunnels", n)
+		}
+	}
+
 	// The 3.x header-protection secret, resolved once here rather than per render.
 	//
 	// Config validation refuses a missing REFERENCE; this refuses a reference that

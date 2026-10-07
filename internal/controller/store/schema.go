@@ -193,6 +193,20 @@ var migrations = []string{
 		generation INTEGER NOT NULL,
 		rotated_at TEXT NOT NULL
 	)`,
+	// v26: the pinned-port generation is a property of one master↔exit tunnel, not
+	// of the exit: with several masters each has its own pinned address and its own
+	// poisoned-flow history. The rows of awg_port_rotation, keyed by exit alone,
+	// are carried over by AdoptAWGPortRotation — a data move is not a schema step
+	// (see store_markers above), and the old table is left in place.
+	`CREATE TABLE IF NOT EXISTS awg_pin_rotation (
+		master_id  TEXT NOT NULL,
+		exit_id    TEXT NOT NULL,
+		generation INTEGER NOT NULL,
+		rotated_at TEXT NOT NULL,
+		PRIMARY KEY (master_id, exit_id)
+	)`,
+	// v27: an exit's per-master-peer report (StatusReport.master_peers, wire 13).
+	`ALTER TABLE node_status ADD COLUMN master_peers_json TEXT NOT NULL DEFAULT '[]'`,
 }
 
 // MigrationCount is how many schema migrations this build knows. Exported so a
