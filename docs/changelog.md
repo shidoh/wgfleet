@@ -6,6 +6,23 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 ## Unreleased
 
+### Added
+
+- Several masters: `fleet.masters` accepts more than one. Each master is a peer on every exit's single AmneziaWG interface, on the addresses of its `slot`. With two or more, `fleet.interface_anchor` is required — the validation message gives the value that keeps existing tunnels as they are.
+- `fleet.interface_anchor` and `fleet.masters[].slot`. A fleet with one master sets neither and renders as before.
+- The console shows every master with its own view of the exits.
+- An exit reports each master peer's endpoint and handshake (wire 13). Upgrade the controller first.
+
+### Changed
+
+- Wire contract 13. Upgrade the controller first, then the agents; an exit on an older agent keeps serving the master in slot 0 only.
+- An exit edits its master peers in place and checks them against the kernel on every pass; adding or removing a master no longer restarts the interface.
+- A reserve (lifeline) config is offered only to clients of the master in slot 0.
+- `transports.awg.exit_initiated` works with several masters: the state is kept per master and exit. Every master needs a public IPv4; `master_port` applies to the master in slot 0.
+- The rolling upgrade rolls an exit first as "reserve" only when every master lists it in `routing.reserve_exits`.
+- The "no exit in rotation" alert is per master (label `node`); tunnel alerts join on master and exit.
+- A direct route coming or going on an exit no longer flushes conntrack.
+
 ### Fixed
 
 - The device profile for mihomo apps gives the AmneziaWG proxy `allowed-ips: 0.0.0.0/0` instead of the split list of the `.conf`. Before, with `client_awg.exclude_from_tunnel` set, a `fleet.client_sites` network was unreachable while the device was on AmneziaWG, and `<site>-auto` fell to `DIRECT` away from the site. Update the profile in the app to pick it up.

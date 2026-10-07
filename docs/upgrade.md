@@ -123,6 +123,16 @@ fleet:
 
 All keys: [configuration.md#3-fleet-fleet-wide-settings](configuration.md#3-fleet-fleet-wide-settings)
 
+### Several masters
+
+| Rule | Detail |
+|---|---|
+| Wire 13 | Controller first, then agents. An exit on the older agent keeps serving the master in slot 0 only |
+| Non-base master on an exit with an older agent | No AmneziaWG tunnel. If that exit's active transport is AmneziaWG, the master does not route through it until the exit's agent is upgraded |
+| A remote master | Upgraded by the upgrade action on its node page; a fleet-wide rolling upgrade skips masters |
+
+Adding a master: [operations.md](operations.md#several-masters).
+
 ### Exit-initiated AmneziaWG flow
 
 `transports.awg.exit_initiated` needs the controller, the master agent and the exit agent on wire 12. Order: controller, master agent, exit agents, then the key. Before all three are upgraded the key changes nothing. Client configs do not change. Nodes prepared before this release may lack `conntrack`: `apt-get install conntrack` on the master.

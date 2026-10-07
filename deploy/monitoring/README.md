@@ -326,6 +326,8 @@ What ships, by severity:
 | `WgfleetHostMemoryPressure` | warning |
 | `WgfleetHostCPUSaturated` | warning |
 
+With several masters, `WgfleetNoExitInRotation` is evaluated per master (label `node`); tunnel alerts join on master and exit. Re-apply the rules after upgrading: rules in the cluster do not update themselves.
+
 Two notes worth carrying in your head:
 
 - **`WgfleetWARPEgress{Blocked,Degraded}` only fire on an exit running WARP.** The
