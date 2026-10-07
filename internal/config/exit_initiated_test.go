@@ -120,11 +120,23 @@ func TestValidateExitInitiatedRejects(t *testing.T) {
 
 func TestAWGMasterPort(t *testing.T) {
 	e := ExitConfig{Name: "exit-a"}
-	if got, want := e.AWGMasterPort("m"), wg.MasterPortFor("m", "exit-a"); got != want {
+	if got, want := e.AWGMasterPort("m", true), wg.MasterPortFor("m", "exit-a"); got != want {
 		t.Fatalf("derived AWGMasterPort = %d, want %d", got, want)
 	}
 	e.Transports.AWG.MasterPort = 41234
-	if got := e.AWGMasterPort("m"); got != 41234 {
+	if got := e.AWGMasterPort("m", true); got != 41234 {
 		t.Fatalf("override AWGMasterPort = %d, want 41234", got)
+	}
+}
+
+// The operator's master_port is the recovery lever for ONE poisoned flow. Applied
+// to every master it would also move the healthy ones.
+func TestMasterPortPinIsTheBaseMastersAlone(t *testing.T) {
+	e := ExitConfig{Name: "exit-de-1", Transports: TransportsConfig{AWG: AWGTransportConfig{MasterPort: 41234}}}
+	if got := e.AWGMasterPort("master-xa-1", true); got != 41234 {
+		t.Errorf("base master port = %d, want the pin", got)
+	}
+	if got := e.AWGMasterPort("master-xa-2", false); got != wg.MasterPortFor("master-xa-2", "exit-de-1") {
+		t.Errorf("another master's port = %d, want its own derivation", got)
 	}
 }

@@ -413,3 +413,265 @@ func TestExitInitiatedDoesNotRotateATunnelThatCarriesNothing(t *testing.T) {
 		})
 	}
 }
+
+// eiTwoMasters is twoMasterFleet with the exit starting its own AWG flow, in the
+// given per-tunnel-key phase, and a clock the test moves.
+func eiTwoMasters(t *testing.T, phase domain.PerTunnelKeyPhase, clock *time.Time) seededFleet {
+	t.Helper()
+	fleet := twoMasterFleet()
+	fleet.Exits[0].Transports.AWG.ExitInitiated = true
+	fleet.Exits[0].PerTunnelKey = string(phase)
+	s := seedTwoMasters(t, fleet)
+	s.b.now = func() time.Time { return *clock }
+	return s
+}
+
+func pinnedFor(master, ip string) string {
+	return fmt.Sprintf("%s:%d", ip, wg.MasterPortFor(master, "exit-de-1"))
+}
+
+// tunnelKeyIn is the key a master dials with in phase — the peer that speaks for
+// its tunnel.
+func (s seededFleet) tunnelKeyIn(phase domain.PerTunnelKeyPhase, master string) string {
+	if phase.MasterUsesPerTunnelKey() {
+		return s.tunnelPubs[master]
+	}
+	return s.sharedPubs[master]
+}
+
+func recordExit(t *testing.T, st store.Store, at time.Time, legacy string, peers ...domain.MasterPeerStatus) {
+	t.Helper()
+	if err := st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "exit-de-1", State: domain.StateReady, ReportedAt: at, LastHandshake: at,
+		AWGMasterEndpoint: legacy, MasterPeers: peers,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func recordMasters(t *testing.T, st store.Store, at time.Time) {
+	t.Helper()
+	for _, m := range []string{"master-xa-1", "master-xa-2"} {
+		if err := st.RecordStatus(context.Background(), domain.NodeStatus{NodeID: m, State: domain.StateReady, ReportedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func gateOf(t *testing.T, b *Broker, master string) string {
+	t.Helper()
+	tun, _ := tunnelByName(mustRender(t, b, master).Master.ExitTunnels, "exit-de-1")
+	return tun.MasterAddr
+}
+
+// Each master's gate arms from ITS OWN peer's reported endpoint — the peer that
+// carries its traffic in the exit's current phase — and one master's confirmation
+// neither arms nor disarms the other's.
+func TestEachMasterArmsFromItsOwnPeer(t *testing.T) {
+	for _, phase := range []domain.PerTunnelKeyPhase{domain.PerTunnelKeyOff, domain.PerTunnelKeyOn} {
+		t.Run(string(phase), func(t *testing.T) {
+			now := time.Unix(1_800_000_000, 0)
+			s := eiTwoMasters(t, phase, &now)
+			pinA, pinB := pinnedFor("master-xa-1", "203.0.113.1"), pinnedFor("master-xa-2", "203.0.113.2")
+			keyA, keyB := s.tunnelKeyIn(phase, "master-xa-1"), s.tunnelKeyIn(phase, "master-xa-2")
+
+			exitSpec := mustRender(t, s.b, "exit-de-1")
+			pa, _ := peerByKey(exitSpec.Peers, keyA)
+			pb, _ := peerByKey(exitSpec.Peers, keyB)
+			if pa.Endpoint != pinA || pb.Endpoint != pinB {
+				t.Fatalf("exit endpoints = %q, %q; want %q, %q", pa.Endpoint, pb.Endpoint, pinA, pinB)
+			}
+
+			// Only master-xa-2's peer holds its pinned address so far.
+			recordExit(t, s.st, now, "",
+				domain.MasterPeerStatus{PublicKey: keyA, Endpoint: "203.0.113.1:40000"},
+				domain.MasterPeerStatus{PublicKey: keyB, Endpoint: pinB})
+			if got := gateOf(t, s.b, "master-xa-1"); got != "" {
+				t.Errorf("master-xa-1 armed on %q while its own peer holds another endpoint", got)
+			}
+			if got := gateOf(t, s.b, "master-xa-2"); got != pinB {
+				t.Errorf("master-xa-2 gate = %q, want %q", got, pinB)
+			}
+			// Now master-xa-1 confirms too; neither confirmation may displace the other.
+			recordExit(t, s.st, now, "",
+				domain.MasterPeerStatus{PublicKey: keyA, Endpoint: pinA},
+				domain.MasterPeerStatus{PublicKey: keyB, Endpoint: pinB})
+			for i := 0; i < 2; i++ {
+				if got := gateOf(t, s.b, "master-xa-1"); got != pinA {
+					t.Errorf("round %d: master-xa-1 gate = %q, want %q", i, got, pinA)
+				}
+				if got := gateOf(t, s.b, "master-xa-2"); got != pinB {
+					t.Errorf("round %d: master-xa-2 gate = %q, want %q", i, got, pinB)
+				}
+			}
+		})
+	}
+}
+
+// One master's healthy handshake must not hide another's poisoned flow, one
+// master's rotation must not move the other's port — and both rotate when both
+// are silent, however their renders interleave.
+func TestRotationJudgesAndMovesOneTunnel(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	phase := domain.PerTunnelKeyOff
+	s := eiTwoMasters(t, phase, &now)
+	ctx := context.Background()
+	pinA, pinB := pinnedFor("master-xa-1", "203.0.113.1"), pinnedFor("master-xa-2", "203.0.113.2")
+	keyA, keyB := s.tunnelKeyIn(phase, "master-xa-1"), s.tunnelKeyIn(phase, "master-xa-2")
+	gen := func(master string) int {
+		g, _, err := s.st.GetAWGPortRotation(ctx, master, "exit-de-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return g
+	}
+	report := func(hsA time.Time, epA, epB string) {
+		recordExit(t, s.st, now, "",
+			domain.MasterPeerStatus{PublicKey: keyA, Endpoint: epA, LastHandshake: hsA},
+			domain.MasterPeerStatus{PublicKey: keyB, Endpoint: epB})
+		recordMasters(t, s.st, now)
+	}
+	renderAll := func() {
+		for _, id := range []string{"master-xa-1", "master-xa-2", "exit-de-1", "master-xa-2", "master-xa-1"} {
+			mustRender(t, s.b, id)
+		}
+	}
+
+	report(now, pinA, pinB)
+	renderAll() // both confirm
+	now = now.Add(AWGRotateAfter + time.Minute)
+	report(now, pinA, pinB) // master-xa-1 handshakes; master-xa-2 holds its pin and never does
+	renderAll()
+	if gen("master-xa-2") != 1 {
+		t.Errorf("silent tunnel generation = %d, want 1: the other master's handshake masked it", gen("master-xa-2"))
+	}
+	if gen("master-xa-1") != 0 {
+		t.Errorf("healthy tunnel generation = %d, want 0", gen("master-xa-1"))
+	}
+
+	// Second round: master-xa-1 goes silent as well, on the address it confirmed.
+	silentSince := now
+	now = now.Add(AWGRotateAfter + AWGRotateMinInterval + time.Minute)
+	report(silentSince, pinA, pinB)
+	renderAll()
+	if gen("master-xa-1") != 1 {
+		t.Errorf("master-xa-1 generation = %d, want 1 once its own tunnel went silent", gen("master-xa-1"))
+	}
+}
+
+// Review Focus 4. The exit's agent is rolled back below wire 13: it stops sending
+// peers. The controller must read it the way it reads any old exit — one
+// endpoint, the base master's — not judge the base master on the absence of a
+// list it will never get again.
+func TestExitRolledBackBelowWire13FallsBackToTheSingleField(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	phase := domain.PerTunnelKeyOff
+	s := eiTwoMasters(t, phase, &now)
+	ctx := context.Background()
+	pinA := pinnedFor("master-xa-1", "203.0.113.1")
+	keyA := s.tunnelKeyIn(phase, "master-xa-1")
+
+	recordExit(t, s.st, now, pinA, domain.MasterPeerStatus{PublicKey: keyA, Endpoint: pinA, LastHandshake: now})
+	recordMasters(t, s.st, now)
+	if got := gateOf(t, s.b, "master-xa-1"); got != pinA {
+		t.Fatalf("gate before the rollback = %q, want %q", got, pinA)
+	}
+
+	setWireVersion(t, s.st, "exit-de-1", api.WireAWGExitInitiated)
+	for i := 0; i < 3; i++ {
+		now = now.Add(AWGRotateAfter)
+		recordExit(t, s.st, now, pinA) // wire 12: the single field and a fresh handshake, no peers
+		recordMasters(t, s.st, now)
+		mustRender(t, s.b, "exit-de-1")
+		if got := gateOf(t, s.b, "master-xa-1"); got != pinA {
+			t.Fatalf("pass %d after the rollback: gate = %q, want it still armed on %q", i, got, pinA)
+		}
+	}
+	if g, _, _ := s.st.GetAWGPortRotation(ctx, "master-xa-1", "exit-de-1"); g != 0 {
+		t.Errorf("a healthy tunnel's port was rotated %d time(s) after the exit was rolled back", g)
+	}
+}
+
+// A wire-13 exit whose awg0 could not be read this pass sends no peers. That is
+// not a silent tunnel: nothing rotates, and a gate already armed stays armed.
+func TestAnUnreadablePassRotatesNothing(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	phase := domain.PerTunnelKeyOff
+	s := eiTwoMasters(t, phase, &now)
+	ctx := context.Background()
+	pinB := pinnedFor("master-xa-2", "203.0.113.2")
+	keyB := s.tunnelKeyIn(phase, "master-xa-2")
+
+	recordExit(t, s.st, now, "", domain.MasterPeerStatus{PublicKey: keyB, Endpoint: pinB, LastHandshake: now})
+	recordMasters(t, s.st, now)
+	if got := gateOf(t, s.b, "master-xa-2"); got != pinB {
+		t.Fatalf("gate = %q, want %q", got, pinB)
+	}
+	now = now.Add(AWGRotateAfter + time.Minute)
+	// A readable status from an unreadable interface: no peers. The single field
+	// and the freshest handshake are filled with what would mislead a controller
+	// that fell back to them — another address, and a handshake long gone.
+	if err := s.st.RecordStatus(ctx, domain.NodeStatus{
+		NodeID: "exit-de-1", State: domain.StateReady, ReportedAt: now,
+		LastHandshake: now.Add(-2 * AWGRotateAfter), AWGMasterEndpoint: "203.0.113.1:40000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recordMasters(t, s.st, now)
+	mustRender(t, s.b, "exit-de-1")
+	if got := gateOf(t, s.b, "master-xa-2"); got != pinB {
+		t.Errorf("gate after an unreadable pass = %q, want it still armed", got)
+	}
+	if g, _, _ := s.st.GetAWGPortRotation(ctx, "master-xa-2", "exit-de-1"); g != 0 {
+		t.Errorf("port rotated %d time(s) on a pass that could not read the interface", g)
+	}
+}
+
+// The gate stays armed while the exit roams (see armedMasterAddr), and that
+// memory is one tunnel's: with it keyed by the exit alone, the other master's
+// next confirmation would overwrite it and disarm a gate nobody disproved.
+func TestAnotherMastersConfirmationDoesNotDisarmARoamingTunnel(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	phase := domain.PerTunnelKeyOff
+	s := eiTwoMasters(t, phase, &now)
+	pinA, pinB := pinnedFor("master-xa-1", "203.0.113.1"), pinnedFor("master-xa-2", "203.0.113.2")
+	keyA, keyB := s.tunnelKeyIn(phase, "master-xa-1"), s.tunnelKeyIn(phase, "master-xa-2")
+
+	recordExit(t, s.st, now, "",
+		domain.MasterPeerStatus{PublicKey: keyA, Endpoint: pinA},
+		domain.MasterPeerStatus{PublicKey: keyB, Endpoint: pinB})
+	if got := gateOf(t, s.b, "master-xa-1"); got != pinA {
+		t.Fatalf("master-xa-1 gate = %q, want %q", got, pinA)
+	}
+	// master-xa-1's peer roams; master-xa-2's keeps confirming its own address.
+	recordExit(t, s.st, now, "",
+		domain.MasterPeerStatus{PublicKey: keyA, Endpoint: "203.0.113.1:40000"},
+		domain.MasterPeerStatus{PublicKey: keyB, Endpoint: pinB})
+	if got := gateOf(t, s.b, "master-xa-2"); got != pinB {
+		t.Fatalf("master-xa-2 gate = %q, want %q", got, pinB)
+	}
+	if got := gateOf(t, s.b, "master-xa-1"); got != pinA {
+		t.Errorf("master-xa-1 gate = %q after master-xa-2 confirmed, want it still armed on %q", got, pinA)
+	}
+}
+
+// The confirmation lives in the controller's memory, so a controller restarted
+// after the exit was rolled back below wire 13 has to arm the base master's gate
+// again — from the single field, the only thing such an exit sends.
+func TestRolledBackExitArmsAgainAfterAControllerRestart(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	s := eiTwoMasters(t, domain.PerTunnelKeyOff, &now)
+	pinA := pinnedFor("master-xa-1", "203.0.113.1")
+
+	setWireVersion(t, s.st, "exit-de-1", api.WireAWGExitInitiated)
+	recordExit(t, s.st, now, pinA)
+	s.b.pinMu.Lock()
+	s.b.pinConfirmed = make(map[string]pinConfirmation)
+	s.b.pinMu.Unlock()
+	if got := gateOf(t, s.b, "master-xa-1"); got != pinA {
+		t.Errorf("base master gate = %q, want %q from the exit's single field", got, pinA)
+	}
+	if got := gateOf(t, s.b, "master-xa-2"); got != "" {
+		t.Errorf("master-xa-2 gate = %q, want it unarmed: the single field is not about it", got)
+	}
+}

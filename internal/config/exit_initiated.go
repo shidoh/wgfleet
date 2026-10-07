@@ -18,10 +18,12 @@ const masterPortMin = 1024
 // and an exit cannot knock on an address behind a carrier NAT either.
 var cgnat = netip.MustParsePrefix("100.64.0.0/10")
 
-// AWGMasterPort is the master's external UDP port for this exit's AWG tunnel when
-// the exit starts the flow: the operator's pin, or a stable per-pair derivation.
-func (e ExitConfig) AWGMasterPort(master string) int {
-	if p := e.Transports.AWG.MasterPort; p > 0 {
+// AWGMasterPort is a master's external UDP port for this exit's AWG tunnel when
+// the exit starts the flow: a stable per-pair derivation, or — for the base
+// master only — the operator's pin. The pin is the recovery lever for one
+// poisoned flow; applied to every master it would also move the healthy ones.
+func (e ExitConfig) AWGMasterPort(master string, base bool) int {
+	if p := e.Transports.AWG.MasterPort; p > 0 && base {
 		return p
 	}
 	return wg.MasterPortFor(master, e.Name)

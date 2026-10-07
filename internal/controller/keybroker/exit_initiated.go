@@ -40,6 +40,47 @@ type pinConfirmation struct {
 	since time.Time
 }
 
+// pinKey names one master↔exit tunnel in the broker's in-memory state. Every
+// master has its own pinned address on every exit, so nothing here may be keyed
+// by the exit alone.
+func pinKey(master, exit string) string { return master + "|" + exit }
+
+// masterTunnelKey is the public key master dials exit with in the exit's current
+// per-tunnel-key phase — the key of the one peer that carries its traffic, and so
+// the one whose endpoint and handshake speak for this tunnel. "" when that key
+// has not been published yet.
+func (b *Broker) masterTunnelKey(ctx context.Context, exit config.ExitConfig, master config.MasterConfig, masterNode domain.Node) (string, error) {
+	if exit.PerTunnelKeyPhase().MasterUsesPerTunnelKey() {
+		return b.tunnelPubKey(ctx, master.Name, exit.Name)
+	}
+	return masterNode.PublicKey, nil
+}
+
+// tunnelPeer is what the exit last said about ONE master's tunnel, and whether
+// it said anything usable.
+//
+// How to read the status is decided by the exit's WIRE VERSION, never by whether
+// the peer list is empty. Below api.WireMasterPeers the exit reports one endpoint
+// and its freshest handshake; exitCarries renders such an exit the base master
+// alone, so both describe the base master. At or above it the peer list is the
+// answer, and an empty one is a pass that could not read the interface — not a
+// tunnel gone silent, and not a reason to fall back to fields that describe
+// somebody else.
+func (b *Broker) tunnelPeer(ctx context.Context, st domain.NodeStatus, exit config.ExitConfig, exitNode domain.Node,
+	master config.MasterConfig, masterNode domain.Node) (domain.MasterPeerStatus, bool) {
+	if exitNode.WireVersion < api.WireMasterPeers {
+		if !master.IsBase() {
+			return domain.MasterPeerStatus{}, false
+		}
+		return domain.MasterPeerStatus{Endpoint: st.AWGMasterEndpoint, LastHandshake: st.LastHandshake}, true
+	}
+	key, err := b.masterTunnelKey(ctx, exit, master, masterNode)
+	if err != nil || key == "" {
+		return domain.MasterPeerStatus{}, false
+	}
+	return st.MasterPeer(key)
+}
+
 // exitInitiatedAddr is the master's pinned "ip:port" the exit knocks on when the
 // exit starts the master↔exit AWG flow, or ok=false when the feature is not live
 // for this pair: the flag is off, either agent is below wire 12, or the master
@@ -50,8 +91,11 @@ func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, 
 	if !exit.Transports.AWG.ExitInitiated {
 		return "", false
 	}
+	if !b.exitCarries(exit, exitNode, master) {
+		return "", false
+	}
 	if exitNode.WireVersion < api.WireAWGExitInitiated || masterNode.WireVersion < api.WireAWGExitInitiated {
-		b.warnOnce("exit-initiated-wire:"+exit.Name, fmt.Sprintf("%d|%d", masterNode.WireVersion, exitNode.WireVersion),
+		b.warnOnce("exit-initiated-wire:"+pinKey(master.Name, exit.Name), fmt.Sprintf("%d|%d", masterNode.WireVersion, exitNode.WireVersion),
 			"exit-initiated AWG flow not rendered: an agent is too old to hold its half",
 			"exit", exit.Name, "master_wire", masterNode.WireVersion, "exit_wire", exitNode.WireVersion,
 			"need_wire", api.WireAWGExitInitiated)
@@ -59,19 +103,19 @@ func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, 
 	}
 	ip, ok := masterRoutableIP(master, masterNode)
 	if !ok || !config.IsKnockableIPv4(ip) {
-		b.warnOnce("exit-initiated-no-public-ip:"+exit.Name, master.PublicIP+"|"+masterNode.PublicIP,
+		b.warnOnce("exit-initiated-no-public-ip:"+pinKey(master.Name, exit.Name), master.PublicIP+"|"+masterNode.PublicIP,
 			"exit-initiated AWG flow not rendered: the master has no public IPv4 the exit could knock on",
 			"exit", exit.Name, "master", master.Name, "public_ip", master.PublicIP, "stored", masterNode.PublicIP)
 		return "", false
 	}
 	gen, rotatedAt, err := b.store.GetAWGPortRotation(ctx, master.Name, exit.Name)
 	if err != nil {
-		b.warnOnce("exit-initiated-rotation-read:"+exit.Name, err.Error(),
+		b.warnOnce("exit-initiated-rotation-read:"+pinKey(master.Name, exit.Name), err.Error(),
 			"exit-initiated AWG: port generation unreadable, using the base port", "exit", exit.Name, "err", err)
 		gen, rotatedAt = 0, time.Time{}
 	}
 	addr := pinnedAddr(exit, master, ip, gen)
-	if awgCarries(exit, exitNode) && b.pinPoisoned(ctx, exit.Name, master.Name, addr, rotatedAt) {
+	if awgCarries(exit, exitNode) && b.pinPoisoned(ctx, exit, exitNode, master, masterNode, addr, rotatedAt) {
 		now := b.now()
 		if err := b.store.SetAWGPortRotation(ctx, master.Name, exit.Name, gen+1, now); err != nil {
 			b.log.Warn("exit-initiated AWG: could not record a port rotation; keeping the port",
@@ -100,7 +144,7 @@ func awgCarries(exit config.ExitConfig, node domain.Node) bool {
 // pinnedAddr is the master's pinned address in generation gen. Generation 0 is
 // the operator's master_port or the derived port; later ones are drawn afresh.
 func pinnedAddr(exit config.ExitConfig, master config.MasterConfig, ip netip.Addr, gen int) string {
-	port := exit.AWGMasterPort(master.Name)
+	port := exit.AWGMasterPort(master.Name, master.IsBase())
 	if gen > 0 {
 		port = wg.MasterPortForGen(master.Name, exit.Name, gen)
 	}
@@ -110,24 +154,31 @@ func pinnedAddr(exit config.ExitConfig, master config.MasterConfig, ip netip.Add
 // pinPoisoned reports whether the tunnel on addr is dead in the way only a new
 // port can fix: the exit confirmed this address long enough ago, both ends are
 // alive and reporting, the last rotation is not recent, and still no handshake.
-// A node that stopped reporting is down, not filtered, and is left alone.
-func (b *Broker) pinPoisoned(ctx context.Context, exit, master, addr string, rotatedAt time.Time) bool {
+// A node that stopped reporting is down, not filtered, and is left alone. The
+// judgement is of one master's tunnel: its own confirmation, its own peer's
+// handshake — another master's healthy flow on the same exit says nothing here.
+func (b *Broker) pinPoisoned(ctx context.Context, exit config.ExitConfig, exitNode domain.Node,
+	master config.MasterConfig, masterNode domain.Node, addr string, rotatedAt time.Time) bool {
 	now := b.now()
-	c := b.confirmation(exit)
+	c := b.confirmation(pinKey(master.Name, exit.Name))
 	if c.addr != addr || now.Sub(c.since) < AWGRotateAfter {
 		return false
 	}
 	if !rotatedAt.IsZero() && now.Sub(rotatedAt) < AWGRotateMinInterval {
 		return false
 	}
-	st, err := b.store.GetStatus(ctx, exit)
+	st, err := b.store.GetStatus(ctx, exit.Name)
 	if err != nil || now.Sub(st.ReportedAt) > awgReportFresh {
 		return false
 	}
-	if !st.LastHandshake.IsZero() && now.Sub(st.LastHandshake) < AWGRotateAfter {
+	peer, ok := b.tunnelPeer(ctx, st, exit, exitNode, master, masterNode)
+	if !ok {
 		return false
 	}
-	mst, err := b.store.GetStatus(ctx, master)
+	if !peer.LastHandshake.IsZero() && now.Sub(peer.LastHandshake) < AWGRotateAfter {
+		return false
+	}
+	mst, err := b.store.GetStatus(ctx, master.Name)
 	return err == nil && now.Sub(mst.ReportedAt) <= awgReportFresh
 }
 
@@ -141,37 +192,40 @@ func (b *Broker) armedMasterAddr(ctx context.Context, exit config.ExitConfig, ma
 	if !ok {
 		return ""
 	}
-	if b.exitReports(ctx, exit.Name, addr) {
+	if b.exitReports(ctx, exit, exitNode, master, masterNode, addr) {
 		b.pinMu.Lock()
-		if b.pinConfirmed[exit.Name].addr != addr {
-			b.pinConfirmed[exit.Name] = pinConfirmation{addr: addr, since: b.now()}
+		if b.pinConfirmed[pinKey(master.Name, exit.Name)].addr != addr {
+			b.pinConfirmed[pinKey(master.Name, exit.Name)] = pinConfirmation{addr: addr, since: b.now()}
 		}
 		b.pinMu.Unlock()
 	}
-	if b.confirmation(exit.Name).addr != addr {
+	if b.confirmation(pinKey(master.Name, exit.Name)).addr != addr {
 		return ""
 	}
 	return addr
 }
 
-func (b *Broker) confirmation(exit string) pinConfirmation {
+func (b *Broker) confirmation(key string) pinConfirmation {
 	b.pinMu.Lock()
 	defer b.pinMu.Unlock()
-	return b.pinConfirmed[exit]
+	return b.pinConfirmed[key]
 }
 
 // exitReports reports whether the exit's last status says its awg0 holds addr
-// for the master. A store error confirms nothing — the master keeps opening the
+// for THIS master. A store error confirms nothing — the master keeps opening the
 // flow, as before.
-func (b *Broker) exitReports(ctx context.Context, exit, addr string) bool {
-	st, err := b.store.GetStatus(ctx, exit)
+func (b *Broker) exitReports(ctx context.Context, exit config.ExitConfig, exitNode domain.Node,
+	master config.MasterConfig, masterNode domain.Node, addr string) bool {
+	st, err := b.store.GetStatus(ctx, exit.Name)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return false
 	case err != nil:
-		b.warnOnce("exit-initiated-status:"+exit, err.Error(),
-			"exit-initiated AWG gate not armed: the exit's last status is unreadable", "exit", exit, "err", err)
+		b.warnOnce("exit-initiated-status:"+pinKey(master.Name, exit.Name), err.Error(),
+			"exit-initiated AWG gate not armed: the exit's last status is unreadable",
+			"exit", exit.Name, "master", master.Name, "err", err)
 		return false
 	}
-	return st.AWGMasterEndpoint == addr
+	peer, ok := b.tunnelPeer(ctx, st, exit, exitNode, master, masterNode)
+	return ok && peer.Endpoint == addr
 }

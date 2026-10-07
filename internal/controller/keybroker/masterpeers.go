@@ -52,7 +52,8 @@ func (b *Broker) masterPeers(ctx context.Context, exit config.ExitConfig, exitNo
 	// has a working way in until the operator has verified the per-tunnel one.
 	if phase.ExitAcceptsLegacyKey() {
 		if masterPub == "" {
-			b.log.Warn("master public key not yet registered; rendering exit without master peer",
+			b.warnOnce("master-key-unpublished:"+master.Name+"/"+exit.Name, "",
+				"master public key not yet registered; rendering exit without master peer",
 				"exit", exit.Name, "master", master.Name)
 		} else {
 			peers = append(peers, domain.PeerSpec{
@@ -88,7 +89,8 @@ func (b *Broker) masterPeers(ctx context.Context, exit config.ExitConfig, exitNo
 			// Refusing to render the phase would be wrong; the legacy peer is still
 			// there in dual/switch. In `on` there would be NO peer at all, which is why
 			// the rollout requires confirming the key is registered before `on`.
-			b.log.Warn("master per-tunnel public key not yet registered; rendering exit without the per-tunnel peer",
+			b.warnOnce("master-tunnel-key-unpublished:"+master.Name+"/"+exit.Name, string(phase),
+				"master per-tunnel public key not yet registered; rendering exit without the per-tunnel peer",
 				"exit", exit.Name, "master", master.Name, "phase", phase)
 		default:
 			peers = append(peers, domain.PeerSpec{
@@ -120,12 +122,12 @@ func keepaliveIdentity(prefix, exit string, master config.MasterConfig) string {
 // exit agent that can take a new peer without restarting awg0 and report every
 // peer back (api.WireMasterPeers): below it, one more master would bounce the
 // interface the base master's traffic is on, on every such exit at once.
-func (b *Broker) exitCarries(exitNode domain.Node, master config.MasterConfig) bool {
+func (b *Broker) exitCarries(exit config.ExitConfig, exitNode domain.Node, master config.MasterConfig) bool {
 	if master.IsBase() || exitNode.WireVersion >= api.WireMasterPeers {
 		return true
 	}
-	b.warnOnce("master-waits-for-exit:"+master.Name+"/"+exitNode.Name, fmt.Sprint(exitNode.WireVersion),
+	b.warnOnce("master-waits-for-exit:"+master.Name+"/"+exit.Name, fmt.Sprint(exitNode.WireVersion),
 		"master not rendered onto this exit yet: the exit's agent is too old to carry a second master",
-		"exit", exitNode.Name, "master", master.Name, "exit_wire", exitNode.WireVersion, "need_wire", api.WireMasterPeers)
+		"exit", exit.Name, "master", master.Name, "exit_wire", exitNode.WireVersion, "need_wire", api.WireMasterPeers)
 	return false
 }

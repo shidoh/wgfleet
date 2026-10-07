@@ -57,8 +57,7 @@ type Broker struct {
 
 	// Auto-suspend hysteresis (see throughputAutoSuspend). now is injected by tests.
 	now func() time.Time
-	// pinConfirmed remembers which pinned address each exit-initiated exit has
-	// confirmed holding (see armedMasterAddr).
+	// pinConfirmed remembers which pinned address each master↔exit tunnel (pinKey) has been confirmed holding.
 	pinMu        sync.Mutex
 	pinConfirmed map[string]pinConfirmation
 	suspendMu    sync.Mutex
@@ -544,7 +543,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	}
 	var hosts []hostRoute
 	for _, master := range b.fleet.Masters {
-		if !b.exitCarries(exitNode, master) {
+		if !b.exitCarries(exit, exitNode, master) {
 			continue
 		}
 		peers, masterNode, perr := b.masterPeers(ctx, exit, exitNode, master, serverMTU)
@@ -862,7 +861,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		// The exit holds no peer for this master yet (its agent is too old to take
 		// one in place): an AWG proxy to it would never handshake, and would sit in
 		// the group being probed and held out. REALITY needs no peer on the exit.
-		if hasAWG && !b.exitCarries(exitNode, master) {
+		if hasAWG && !b.exitCarries(exit, exitNode, master) {
 			hasAWG = false
 		}
 		realityRenderable := hasReality && haveIP && exitNode.RealityPublicKey != ""
