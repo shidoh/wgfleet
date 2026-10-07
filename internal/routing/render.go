@@ -195,6 +195,54 @@ func Script(steps []Step) string {
 	return b.String()
 }
 
+// isDirectRule reports whether one line of a routing script is an `ip rule` at a
+// direct-CIDR priority — `to <cidr> lookup main`, which pins a destination to the
+// main table and moves no existing flow anywhere. Both the add and the
+// delete-by-pref line of such a rule carry the priority after `pref`.
+func isDirectRule(line string) bool {
+	f := strings.Fields(line)
+	for i := 0; i+1 < len(f); i++ {
+		if f[i] != "pref" && f[i] != "priority" {
+			continue
+		}
+		n, err := strconv.Atoi(f[i+1])
+		return err == nil && n >= prefDirect0 && n < prefFwmark
+	}
+	return false
+}
+
+func withoutDirectRules(script string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(script, "\n") {
+		if !isDirectRule(line) {
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}
+
+// OnlyDirectRulesDiffer reports whether two routing scripts differ in nothing but
+// their direct-CIDR rules. Such a change needs no conntrack flush: an earlier finding is
+// about flows remembering an egress path that changed, and a destination pinned
+// to the main table changes no flow's egress. prev=="" is a first apply and is
+// never "only direct rules".
+func OnlyDirectRulesDiffer(prev, next string) bool {
+	return prev != "" && prev != next && withoutDirectRules(prev) == withoutDirectRules(next)
+}
+
+// WithoutConntrackFlush is steps without the conntrack flush.
+func WithoutConntrackFlush(steps []Step) []Step {
+	out := make([]Step, 0, len(steps))
+	for _, s := range steps {
+		if len(s.Argv) > 0 && s.Argv[0] == "conntrack" {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
 // TeardownActions reverses Render: it flushes the egress routing table and
 // deletes the ip rules pointing at it, plus flushes conntrack so the old WARP
 // path is forgotten immediately (an earlier finding, in reverse).

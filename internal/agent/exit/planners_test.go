@@ -908,3 +908,60 @@ func planDump(actions []reconcile.Action) string {
 	}
 	return b.String()
 }
+
+// applyRoutingOnce records the routing intent in a fresh state file, as the first
+// pass of TestRoutingIdempotentAfterApply does, and returns the spec and planner.
+func applyRoutingOnce(t *testing.T) (domain.NodeSpec, routingPlanner) {
+	t.Helper()
+	paths := testPaths(t)
+	spec, _ := exitSpec(t)
+	eng := reconcile.NewEngine(nil, routingPlanner{statePath: paths.RoutingState})
+	_, _ = eng.Reconcile(context.Background(), spec, reconcile.ModeApply)
+	if _, err := os.Stat(paths.RoutingState); err != nil {
+		t.Fatalf("routing state file should be written on first apply: %v", err)
+	}
+	return spec, routingPlanner{statePath: paths.RoutingState}
+}
+
+// hasExec reports whether a changing exec action's command contains frag. The
+// state-file action's Display carries the whole script, conntrack line included,
+// so only the exec actions say what would actually run.
+func hasExec(actions []reconcile.Action, frag string) bool {
+	for _, a := range actions {
+		if a.Kind == reconcile.ActionExec && a.Changes() && strings.Contains(a.Display, frag) {
+			return true
+		}
+	}
+	return false
+}
+
+// A second master appears as one more `to <ip> lookup main` rule on every exit.
+// Flushing conntrack for it would stall every long-lived flow on the fleet inside
+// one reconcile interval, for a rule that reroutes none of them.
+func TestAddingADirectRuleDoesNotFlushConntrack(t *testing.T) {
+	spec, pl := applyRoutingOnce(t)
+	spec.Routing.DirectCIDRs = append(append([]string(nil), spec.Routing.DirectCIDRs...), "203.0.113.2/32")
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasExec(actions, "conntrack") {
+		t.Errorf("an appended direct rule flushed conntrack: %q", displays(actions))
+	}
+	if !hasExec(actions, "203.0.113.2/32") {
+		t.Errorf("the new rule was not applied: %q", displays(actions))
+	}
+}
+
+// …and a change that does reroute flows still flushes.
+func TestChangingTheClientPoolStillFlushesConntrack(t *testing.T) {
+	spec, pl := applyRoutingOnce(t)
+	spec.WGServer.AddressPool = "10.82.0.0/24"
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasExec(actions, "conntrack") {
+		t.Errorf("a changed client pool did not flush conntrack: %q", displays(actions))
+	}
+}

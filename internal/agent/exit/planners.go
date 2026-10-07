@@ -571,12 +571,19 @@ func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 	// conntrack on route CHANGE, not on a timer. The state file lives on tmpfs
 	// (/run), so a reboot clears it alongside the kernel rules and the next pass
 	// re-applies from scratch.
-	file, err := reconcile.FileAction(p.statePath, []byte(routing.Script(steps)), 0o644, nil)
+	script := routing.Script(steps)
+	prev, _ := os.ReadFile(p.statePath) // absent on a first apply: "" takes the full set
+	file, err := reconcile.FileAction(p.statePath, []byte(script), 0o644, nil)
 	if err != nil {
 		return nil, err
 	}
 	actions := []reconcile.Action{file}
 	switch {
+	case file.Changes() && routing.OnlyDirectRulesDiffer(string(prev), script):
+		// Only a `to <cidr> lookup main` rule came or went — another master's
+		// address, say. No flow's egress moved, so there is nothing for a flush to
+		// make take effect, and plenty for it to break.
+		actions = append(actions, routingExecActions(routing.WithoutConntrackFlush(steps))...)
 	case file.Changes():
 		// Intent changed: apply the full set (incl. the conntrack flush).
 		actions = append(actions, routingExecActions(steps)...)

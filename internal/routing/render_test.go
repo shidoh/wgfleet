@@ -459,3 +459,59 @@ func TestTeardownActionsRemovesEveryEgressRule(t *testing.T) {
 		}
 	}
 }
+
+func warpSpec(direct ...string) domain.RoutingSpec {
+	return domain.RoutingSpec{EgressInterface: "wgcf", MasterIP: "203.0.113.1",
+		ClientCIDR: "10.81.0.0/24", DirectCIDRs: direct}
+}
+
+func scriptOf(t *testing.T, spec domain.RoutingSpec) string {
+	t.Helper()
+	steps, err := Render(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Script(steps)
+}
+
+func TestOnlyDirectRulesDiffer(t *testing.T) {
+	base := scriptOf(t, warpSpec("10.0.0.0/8"))
+	cases := []struct {
+		name string
+		next domain.RoutingSpec
+		want bool
+	}{
+		{"a direct rule appended", warpSpec("10.0.0.0/8", "203.0.113.2/32"), true},
+		{"a direct rule removed", warpSpec(), true},
+		{"nothing changed", warpSpec("10.0.0.0/8"), false},
+		{"the client pool changed", func() domain.RoutingSpec { s := warpSpec("10.0.0.0/8"); s.ClientCIDR = "10.82.0.0/24"; return s }(), false},
+		{"the egress interface changed", func() domain.RoutingSpec { s := warpSpec("10.0.0.0/8"); s.EgressInterface = "wgcf2"; return s }(), false},
+		{"the master changed", func() domain.RoutingSpec { s := warpSpec("10.0.0.0/8"); s.MasterIP = "203.0.113.9"; return s }(), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := OnlyDirectRulesDiffer(base, scriptOf(t, c.next)); got != c.want {
+				t.Errorf("got %v, want %v", got, c.want)
+			}
+		})
+	}
+	if OnlyDirectRulesDiffer("", base) {
+		t.Error("a first apply has nothing to compare with and must take the full set")
+	}
+}
+
+func TestWithoutConntrackFlush(t *testing.T) {
+	steps, err := Render(warpSpec("10.0.0.0/8"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := WithoutConntrackFlush(steps)
+	if len(kept) != len(steps)-1 {
+		t.Fatalf("kept %d of %d steps, want exactly the flush dropped", len(kept), len(steps))
+	}
+	for _, s := range kept {
+		if s.Argv[0] == "conntrack" {
+			t.Errorf("the flush survived: %v", s.Argv)
+		}
+	}
+}
