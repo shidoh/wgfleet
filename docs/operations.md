@@ -800,7 +800,7 @@ Keys and rules: [manifest.md](manifest.md#several-masters). Each master is a pee
 1. Set `fleet.mgmt_subnet` if it is unset. Without it, adding the node changes the direct routes and the firewall whitelist on every exit.
 2. Upgrade every exit to an agent that supports several masters (the console shows the agent version). A non-base master gets no AmneziaWG tunnel to an exit on an older agent; if that exit's active transport is AmneziaWG, the master does not route through it at all.
 3. In the manifest, add `interface_anchor` (the name of the master in slot 0) and the new master with its own `slot`. Check that each exit `address_pool` holds host `3 + 2 × slot`.
-4. Validate: `wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config`
+4. Validate: `wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config`. Check the printed `anchor`, `base` and every `master … slot` line against the running fleet.
 5. Restart the controller.
 6. Provision the new master's node.
 7. Check:
@@ -861,7 +861,8 @@ Requirements:
 
 | Requirement | Why |
 |---|---|
-| Controller, master agent and exit agent on the same release (wire 12) | Below it the controller leaves the tunnel as it was |
+| Controller, master agent and exit agent on wire 12 or later | Below it the controller leaves the tunnel as it was |
+| With several masters: the exit agent on the release that reports per-master peers (wire 13) | An exit below it carries the master in slot 0 only |
 | A public IPv4 on every master | Refused by `--check-config` otherwise |
 | `masters[].public_ip` (or the stored address) is a public IPv4 | The exit dials it from the internet. A master behind NAT is not supported |
 | The provider's firewall in front of the master passes UDP from the exit to the pinned port | The exit's first packet must reach the master |
@@ -904,7 +905,7 @@ The tunnel is not restarted: the exit sets the new endpoint on the running inter
 | Alert `WgfleetAWGExitNotHeard` | on the exit: `awg show awg0 endpoints` | not the pinned port: wait one agent pass, the agent restores it |
 | Endpoint is right, still not heard | on the master: `tcpdump -ni any udp and src host <exit IP>` | nothing arrives: the path from the exit or the provider firewall drops it; switch the flag off for this exit |
 | `awg_exit_heard 1`, handshake stale | on the master: `conntrack -L -p udp -d <exit IP> --dport <exit AWG port>` | more than one entry or a reply port other than the pinned one: the agent clears them within one pass |
-| `awg_pin_armed` absent | controller journal: `exit-initiated AWG` | an agent below wire 12, or no public IPv4 for the master |
+| `awg_pin_armed` absent | controller journal: `exit-initiated AWG` | an agent below wire 12 (with several masters: the exit agent below wire 13), or no public IPv4 for the master |
 | Tunnel down right after switching a transport in the console | in mihomo's namespace: `nsenter -t $(docker inspect -f '{{.State.Pid}}' mihomo) -n ss -unaH dst <exit IP>:<exit AWG port>` | two sockets: a mihomo reload leaked a device; the agent restarts mihomo within one pass (journal: `leaked AmneziaWG device(s)`), clients reconnect |
 | Agent journal: `conntrack unreadable, stale entries cannot be cleared` | `which conntrack` on the master | install `conntrack` |
 

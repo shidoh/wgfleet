@@ -16,12 +16,19 @@ New releases are announced, with the archives attached, in the Telegram channel 
 ### Changed
 
 - Wire contract 13. Upgrade the controller first, then the agents; an exit on an older agent keeps serving the master in slot 0 only.
-- An exit edits its master peers in place and checks them against the kernel on every pass; adding or removing a master no longer restarts the interface.
+- An exit on the new agent edits its master peers in place and checks them against the kernel on every pass; adding or removing a master no longer restarts the interface. An exit on an older agent still restarts it.
 - A reserve (lifeline) config is offered only to clients of the master in slot 0.
 - `transports.awg.exit_initiated` works with several masters: the state is kept per master and exit. Every master needs a public IPv4; `master_port` applies to the master in slot 0.
 - The rolling upgrade rolls an exit first as "reserve" only when every master lists it in `routing.reserve_exits`.
 - The "no exit in rotation" alert is per master (label `node`); tunnel alerts join on master and exit.
-- A direct route coming or going on an exit no longer flushes conntrack.
+- A direct route coming or going on an exit on the new agent no longer flushes all of conntrack: only the flows to that destination are dropped. An exit on an older agent still flushes everything.
+- Two masters with one WireGuard key (a master built from a copy of another's disk): the later one in the manifest is refused at registration, is not peered on the exits and gets no AmneziaWG tunnel; the controller logs `two masters present the same WireGuard key`. Before, the two took each other's tunnel down on every exit. Generate a new key on the copy.
+- A master removed from the manifest is listed on the fleet page under NOT IN MANIFEST and can be deleted from its node page. The delete removes its client credentials (WireGuard and VLESS) and their device attachments. A master that is still in the manifest cannot be deleted.
+- The address an exit confirmed for `exit_initiated` is stored. A controller restart no longer disarms the master's gate or restarts the wait before a silent tunnel's port is moved.
+- A store read error while rendering an `exit_initiated` tunnel fails the render; the node keeps its last spec. Before, the tunnel was handed its first port again.
+- `--check-config` prints the anchor label, the base master and every master's slot, and warns when several masters run without `fleet.mgmt_subnet`.
+- The manifest is refused when `fleet.interface_anchor` is `clients`, `lifeline` or holds whitespace or `|`, and when an exit would be given more than 80 direct rules (`routing.direct_cidrs` of the master in slot 0, the management CIDRs and one per other master).
+- The controller logs which master holds an exit at AmneziaWG 2.0 when `awg3` is on.
 
 ### Fixed
 

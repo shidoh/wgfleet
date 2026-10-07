@@ -88,8 +88,8 @@ provisioning, so changing them requires re-provisioning the node.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `fleet.zerotier_network` | string | — | ZeroTier network ID (exactly 16 hex chars) every node joins during bootstrap. Validated strictly: it is interpolated into a root shell command |
-| `fleet.interface_anchor` | string | base master name | Label that seeds everything belonging to an exit's interface rather than to one peer on it (AmneziaWG S/H parameters, REALITY identifiers), so every master derives the same values. Required with several masters, and when no master holds slot 0; set it to the base master's name to keep existing tunnels unchanged. Not a node: it outlives the master it names. `clients` and `lifeline` are reserved node names |
-| `fleet.mgmt_subnet` | CIDR | derived | The management overlay's CIDR. When set, exits route it DIRECT (never through WARP) and accept it in the firewall without per-node listing. Empty ⇒ derived from each node's `mgmt_addr` as /32s |
+| `fleet.interface_anchor` | string | base master name | Label that seeds everything belonging to an exit's interface rather than to one peer on it (AmneziaWG S/H parameters, REALITY identifiers), so every master derives the same values. Required with several masters, and when no master holds slot 0; set it to the base master's name to keep existing tunnels unchanged. Not a node: it outlives the master it names. Must not be `clients` or `lifeline` (also reserved as node names) and must not contain whitespace or `\|` |
+| `fleet.mgmt_subnet` | CIDR | derived | The management overlay's CIDR. When set, exits route it DIRECT (never through WARP) and accept it in the firewall without per-node listing. Empty ⇒ derived from each node's `mgmt_addr` as /32s; adding or removing any node then changes the direct routes and the firewall whitelist on every exit |
 | `fleet.client_sites[].name` | string | — | Name of the site's switch in the mihomo app. Not `auto`, `wgfleet`, `DIRECT`, `REJECT`, a master's name or `<master>-awg`/`-vless`; no `,` or `#` |
 | `fleet.client_sites[].cidrs` | list of CIDR | — | The site's networks. Must not overlap `fleet.mgmt_subnet` or any `client_awg.address_pool`. Their rules precede every other rule of the device profile |
 | `fleet.client_sites[].probe_url` | URL | none | `http://<IP inside cidrs>/…` answering over HTTP. Answers directly ⇒ the site goes `DIRECT`; does not ⇒ through the tunnel. Empty ⇒ manual switch only, `DIRECT` by default |
@@ -435,7 +435,11 @@ Both files are validated at startup and the process refuses to run on a bad valu
 - `controller.webui` and `controller.metrics` must bind a management address unless
   `WGFLEET_ALLOW_PUBLIC_BIND=1`.
 - `fleet.masters[].slot` must be unique and within 0-63; `fleet.interface_anchor` is
-  required with several masters; no master or exit may be named `clients` or `lifeline`.
+  required with several masters and when no master holds slot 0; no master, exit or
+  anchor label may be named `clients` or `lifeline`, and the label holds no whitespace
+  and no `|`.
+- The direct rules of an exit — `routing.direct_cidrs` of the master in slot 0, the
+  management CIDRs and one per other master — must number 80 at most.
 - Durations, MTUs and MSS values are range-checked; the error names the key and the
   accepted band.
 

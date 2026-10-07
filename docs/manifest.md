@@ -194,17 +194,19 @@ fleet:
 
 | Key | Level | Type | Default | Meaning |
 |---|---|---|---|---|
-| `interface_anchor` | fleet | string | name of the master in slot 0 | Label every exit's interface parameters are derived from. Required with two or more masters. Never change it on a running fleet |
+| `interface_anchor` | fleet | string | name of the master in slot 0 | Label every exit's interface parameters are derived from. Required with two or more masters, and when no master holds slot 0. Not `clients` or `lifeline`; no whitespace, no `\|`. Never change it on a running fleet |
 | `slot` | master | int 0-63 | `0` | The master's addresses inside every exit pool. Unique per master. Never reuse a slot for a different master while the old one's keys are still on exits |
 
 | Rule | Detail |
 |---|---|
 | Exit `address_pool` size | Must hold host `3 + 2 × (highest slot)` |
 | Reserved node names | `clients` and `lifeline` |
+| Two masters with one WireGuard key | The later one in the manifest is refused at registration, gets no peer on the exits and no AmneziaWG tunnel. A master built from a copy of another's disk needs a new key |
+| Direct rules per exit | `direct_cidrs` of the master in slot 0 + management CIDRs + one per other master: 80 at most |
 | `transports.awg.exit_initiated` | Needs a public IPv4 on every master |
 | `transports.awg.master_port` | Applies to the master in slot 0 |
 | Master in slot 0 | The one whose clients a lifeline carries and whose `routing.direct_cidrs` exits inherit |
-| `mgmt_subnet` unset | Adding any node, a master included, changes the direct routes and the firewall whitelist on every exit |
+| `mgmt_subnet` unset | Adding or removing any node, a master included, changes the direct routes and the firewall whitelist on every exit |
 | Exit on an older agent | Serves the master in slot 0 only |
 
 Procedures: [operations.md](operations.md#several-masters).
