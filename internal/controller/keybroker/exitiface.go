@@ -24,10 +24,12 @@ type exitInterface struct {
 // has nobody to peer with and nothing to derive from.
 //
 // AmneziaWG 3.0 is on when the operator opted in and every end that IS on the
-// interface can speak it: the exit, and each master that has ever reported. A
-// master with no record, or one that never sent a wire version, is left out — it
-// is either not deployed yet or gone, and in both cases counting it as "too old"
-// would downgrade and restart every exit over a node that is not there.
+// interface can speak it: the exit, and each master that has registered a key or
+// reported a wire version. A master with no record, or a stub that has done
+// neither, is left out — it is either not deployed yet or gone, and counting it as
+// "too old" would downgrade and restart every exit over a node that is not there.
+// A registered master that sends no wire version is an agent too old for 3.0, and
+// counts.
 func (b *Broker) exitInterface(ctx context.Context, exit config.ExitConfig, exitNode domain.Node) (exitInterface, bool, error) {
 	anchor := b.fleet.AnchorLabel()
 	if anchor == "" {
@@ -35,11 +37,11 @@ func (b *Broker) exitInterface(ctx context.Context, exit config.ExitConfig, exit
 	}
 	ends := []domain.Node{exitNode}
 	for _, m := range b.fleet.Masters {
-		node, _, err := b.lookupPubKey(ctx, m.Name)
+		node, pub, err := b.lookupPubKey(ctx, m.Name)
 		if err != nil {
 			return exitInterface{}, false, err
 		}
-		if node.WireVersion != 0 {
+		if node.WireVersion != 0 || pub != "" {
 			ends = append(ends, node)
 		}
 	}

@@ -125,17 +125,51 @@ func TestAnOldMasterTakesEveryEndToAWG2(t *testing.T) {
 	}
 }
 
-// RED before this task. A master with no record in the store — not deployed yet,
-// or dead and cleaned out — has no say in the generation. Reading its absence as
-// "wire 0, too old" would drop a working fleet to 2.0 and restart awg0 on every
-// exit, both when an operator writes a master in and when one is buried.
+// Guard (green before and after). A master with no record in the store — not
+// deployed yet, or dead and cleaned out — or a provisioning stub that has neither
+// registered a key nor reported a wire version, has no say in the generation.
+// Reading its absence as "wire 0, too old" would drop a working fleet to 2.0 and
+// restart awg0 on every exit, both when an operator writes a master in and when
+// one is buried.
 func TestAMasterWithoutARecordHasNoSayInTheGeneration(t *testing.T) {
+	t.Run("no record", func(t *testing.T) {
+		one := twoMasterFleet()
+		one.Masters = one.Masters[:1]
+		s := seedTwoMasters(t, one) // master-xa-2 never registers
+		b := New(s.st, twoMasterFleet(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+		if !mustRender(t, b, "exit-de-1").WGServer.AWG.AWG3Enabled() {
+			t.Error("AmneziaWG 3.0 was dropped for a master that has never reported")
+		}
+	})
+	t.Run("provisioning stub", func(t *testing.T) {
+		one := twoMasterFleet()
+		one.Masters = one.Masters[:1]
+		s := seedTwoMasters(t, one)
+		seedNode(t, s.st, "master-xa-2", "10.20.25.253", "203.0.113.2", "", domain.RoleMaster)
+		b := New(s.st, twoMasterFleet(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+		if !mustRender(t, b, "exit-de-1").WGServer.AWG.AWG3Enabled() {
+			t.Error("AmneziaWG 3.0 was dropped for a master stub with no key and no wire version")
+		}
+	})
+}
+
+// RED before the fix. A master that HAS registered (published its key) but runs
+// an agent so old it sends no wire version is too old for 3.0, as it was before
+// multi-master: it keeps the whole interface on 2.0.
+func TestARegisteredMasterWithoutAWireVersionStillForcesAWG2(t *testing.T) {
 	one := twoMasterFleet()
 	one.Masters = one.Masters[:1]
-	s := seedTwoMasters(t, one) // master-xa-2 never registers
-	b := New(s.st, twoMasterFleet(), slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if !mustRender(t, b, "exit-de-1").WGServer.AWG.AWG3Enabled() {
-		t.Error("AmneziaWG 3.0 was dropped for a master that has never reported")
+	s := seedTwoMasters(t, one)
+	setWireVersion(t, s.st, "master-xa-1", 0)
+	if mustRender(t, s.b, "exit-de-1").WGServer.AWG.AWG3Enabled() {
+		t.Error("the exit interface went to 3.0 against a registered master with no wire version")
+	}
+	tun, ok := tunnelByName(mustRender(t, s.b, "master-xa-1").Master.ExitTunnels, "exit-de-1")
+	if !ok {
+		t.Fatal("no AWG tunnel on master-xa-1")
+	}
+	if tun.AWG.AWG3Enabled() {
+		t.Error("the master end renders 3.0 against its own too-old agent")
 	}
 }
 
