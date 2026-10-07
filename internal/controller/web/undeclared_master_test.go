@@ -171,3 +171,32 @@ func TestADeclaredMasterIsStillNotDeletable(t *testing.T) {
 		})
 	}
 }
+
+// The store row's role is what the node said about itself. A node the manifest
+// declares — as an exit here — is a node of this fleet whatever its row says: it
+// is not a leftover master, is not listed as one, and is not deletable as one
+// (that path skips the drain→decommission order an exit is owed).
+func TestADeclaredNodeWithAMasterRowIsNotAnUndeclaredMaster(t *testing.T) {
+	prov := &stubProv{manifest: []domain.Node{
+		{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StatePending},
+		{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StatePending},
+	}}
+	h, st := newProvHandler(t, prov)
+	h.SetDevices(&fakeDevices{masters: []string{"master-xa-1"}})
+	seed(t, st, masterNode("master-xa-1"))
+	seed(t, st, masterNode("exit-de-1")) // declared an exit; its row says master
+
+	if body := fleetBody(t, h); strings.Contains(body, notInManifest) {
+		t.Error("a node the manifest declares is listed under NOT IN MANIFEST")
+	}
+	if _, page := get(t, h, "/nodes/exit-de-1"); strings.Contains(page, `action="/nodes/exit-de-1/delete"`) {
+		t.Error("its page offers the undeclared-master Delete")
+	}
+	res := postWith(t, h, "/nodes/exit-de-1/delete", url.Values{"confirm": {"1"}})
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/nodes/exit-de-1" {
+		t.Fatalf("delete: status %d to %q, want a refusal back to its page", res.StatusCode, res.Header.Get("Location"))
+	}
+	if _, err := st.GetNode(context.Background(), "exit-de-1"); err != nil {
+		t.Fatal("a node the manifest declares was deleted as an undeclared master")
+	}
+}

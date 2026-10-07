@@ -700,12 +700,13 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		CancelHref:   "/nodes/" + id,
 	}
 	if leftover {
-		// Worded from what the store cascades on a master's row (schema: node_status,
+		// Worded from what the store deletes with a master's row (schema: node_status,
 		// node_tunnel_keys, client_vless_credentials, client_wg_credentials — all ON
-		// DELETE CASCADE). A device is not a row of the master and stays; what goes
+		// DELETE CASCADE — and awg_pin_confirmed, by DeleteNode itself; the
+		// awg_pin_rotation generations are kept on purpose). A device is not a row of the master and stays; what goes
 		// is each credential it held on this master, and with it the attachment.
-		confirm.Consequence = "This master is registered but not declared in the manifest. Deleting it removes it from the fleet inventory permanently, together with everything stored for it: all client credentials issued on it, WireGuard and VLESS, and their attachments to devices. The devices themselves stay, without their credential on this master."
-		confirm.Detail = "Its last status report and its per-tunnel keys go too. The configs those clients hold stop being re-issuable from the console; the only way back is a backup taken before this. If the box is still running its agent, its registration is refused from now on. The node's own files are not touched, and the manifest is not edited — it does not declare this master. Nothing here can be undone from the console."
+		confirm.Consequence = "This master is registered but not declared in the manifest. Deleting it removes it from the fleet inventory permanently, together with all client credentials issued on it, WireGuard and VLESS, and their attachments to devices. The devices themselves stay, without their credential on this master."
+		confirm.Detail = "Its last status report, its per-tunnel keys and the addresses exits confirmed for it go too; the port generations of its tunnels are kept. The configs those clients hold stop being re-issuable from the console; the only way back is a backup taken before this. If the box is still running its agent, its registration is refused from now on. The node's own files are not touched, and the manifest is not edited — it does not declare this master. Nothing here can be undone from the console."
 	}
 	if h.needsConfirmation(w, r, confirm) {
 		return
@@ -1665,9 +1666,18 @@ func (h *Handler) manifestMasters() ([]string, bool) {
 // be in the manifest. It is the one master the console may delete: the others
 // are client gateways of this fleet, and with no manifest to check against every
 // master is treated as one of them.
+//
+// The caller has checked the store row's role, and that is only what the node
+// said about itself. So the manifest must not declare the node AT ALL, in any
+// role: a declared exit whose row says master is still an exit of this fleet,
+// and deleting it down this path would skip the drain→decommission order.
 func (h *Handler) undeclaredMaster(name string) bool {
 	names, ok := h.manifestMasters()
-	return ok && !slices.Contains(names, name)
+	if !ok || slices.Contains(names, name) {
+		return false
+	}
+	_, declared := h.manifestNode(name)
+	return !declared
 }
 
 // partitionExits splits the exits into carrying and reserve by one master's

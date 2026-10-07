@@ -127,7 +127,7 @@
        more, so the one routing-lifecycle action that makes sense for it is the
        last: remove the row. The count is of what the store deletes with it. */}}
   <form method="post" action="/nodes/{{.Node.ID}}/delete" onsubmit="return lockAction(this)"
-        data-confirm="Delete {{.Node.Name}} from inventory? It is registered as a master but not declared in the manifest. Everything stored for it is deleted with it: {{if .WGClientCountUnknown}}its WireGuard client credentials (the count could not be read){{else}}{{.WGClientCount}} WireGuard client credential{{if ne .WGClientCount 1}}s{{end}}{{end}}, its VLESS client credentials, and their attachments to devices. The devices themselves stay. If the box still runs its agent, it is refused at registration from now on.">
+        data-confirm="Delete {{.Node.Name}} from inventory? It is registered as a master but not declared in the manifest. Deleted with it: {{if .WGClientCountUnknown}}its WireGuard client credentials (the count could not be read){{else}}{{.WGClientCount}} WireGuard client credential{{if ne .WGClientCount 1}}s{{end}}{{end}}, its VLESS client credentials, and their attachments to devices. The devices themselves stay. If the box still runs its agent, it is refused at registration from now on.">
     <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     <input type="hidden" name="confirm" value="">
     <button type="submit" class="btn ghost-red" data-pending="Deleting…">Delete</button>
