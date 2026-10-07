@@ -24,7 +24,28 @@ func readLiveDump(iface string) ([]wg.DumpPeer, bool) {
 	if err != nil {
 		return nil, false
 	}
-	return wg.ParseShowDump(string(out)), true
+	peers := wg.ParseShowDump(string(out))
+	if !dumpReadable(string(out), peers) {
+		return nil, false
+	}
+	return peers, true
+}
+
+// dumpReadable says whether a dump was understood. Peer lines that all failed to
+// parse would read as "the kernel holds no peers" — and every pass would then
+// restate every peer and remove nothing. More than the interface line with no
+// peer out of it is a dump we cannot read, not an empty one.
+func dumpReadable(out string, peers []wg.DumpPeer) bool {
+	if len(peers) > 0 {
+		return true
+	}
+	lines := 0
+	for _, l := range strings.Split(out, "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines++
+		}
+	}
+	return lines <= 1
 }
 
 // MasterPeers is what an exit reports as StatusReport.master_peers: for every

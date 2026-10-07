@@ -153,6 +153,9 @@ func TestWGPlannerRepairsAPeerWhoseAllowedIPsWereStolen(t *testing.T) {
 	if !hasDisplay(actions, "peer "+b.PublicKey+" allowed-ips 10.81.0.4/32") {
 		t.Errorf("actions = %q, want the peer's allowed-ips restated", displays(actions))
 	}
+	if hasDisplay(actions, "awg-quick") {
+		t.Fatalf("repairing a peer restarted the interface: %q", displays(actions))
+	}
 }
 
 func TestWGPlannerTurnsKeepaliveOff(t *testing.T) {
@@ -164,6 +167,9 @@ func TestWGPlannerTurnsKeepaliveOff(t *testing.T) {
 	actions := planFor(t, spec, priv, prev, live, true)
 	if !hasDisplay(actions, "persistent-keepalive off") {
 		t.Errorf("actions = %q, want the keepalive switched off, not left at 25", displays(actions))
+	}
+	if hasDisplay(actions, "awg-quick") {
+		t.Fatalf("switching a keepalive off restarted the interface: %q", displays(actions))
 	}
 }
 
@@ -188,17 +194,50 @@ func TestWGPlannerConvergedIsQuiet(t *testing.T) {
 	}
 }
 
-// With the kernel unreadable there is no telling what an edit would leave behind:
-// a changed config falls back to the restart that is known to converge, and an
-// unchanged one is left alone.
+// With the kernel unreadable there is no telling what an edit would leave
+// behind, but a restart is worse: the [Interface] section is unchanged, so only
+// peers differ, and a down/up would drop every master's tunnel because one read
+// timed out. The peers are restated blind; the first readable pass removes any
+// that departed. An unchanged config is left alone.
 func TestWGPlannerWithAnUnreadableKernel(t *testing.T) {
 	prev, priv := exitSpec(t)
 	spec := prev
-	spec.Peers = append(append([]domain.PeerSpec(nil), prev.Peers...), secondMaster(t))
-	if !hasDisplay(planFor(t, spec, priv, prev, nil, false), "awg-quick up") {
-		t.Error("a changed config with an unreadable kernel must restart")
+	b := secondMaster(t)
+	spec.Peers = append(append([]domain.PeerSpec(nil), prev.Peers...), b)
+	actions := planFor(t, spec, priv, prev, nil, false)
+	if hasDisplay(actions, "awg-quick") {
+		t.Fatalf("an unreadable kernel restarted the interface: %q", displays(actions))
+	}
+	if !hasDisplay(actions, "awg set awg0 peer "+b.PublicKey+" allowed-ips 10.81.0.4/32 persistent-keepalive 23") {
+		t.Errorf("actions = %q, want the new peer set", displays(actions))
+	}
+	if !hasDisplay(actions, "awg set awg0 peer "+prev.Peers[0].PublicKey+" allowed-ips") {
+		t.Errorf("actions = %q, want the existing peer restated", displays(actions))
+	}
+	if hasDisplay(actions, "remove") {
+		t.Errorf("a peer was removed without reading the kernel: %q", displays(actions))
 	}
 	if d := displays(planFor(t, prev, priv, prev, nil, false)); len(d) != 0 {
 		t.Errorf("an unchanged config with an unreadable kernel produced actions: %q", d)
+	}
+}
+
+func TestDumpReadable(t *testing.T) {
+	iface := "privkey\tpubkey\t51820\toff\n"
+	peer := "peerkey\t(none)\t203.0.113.1:1\t10.81.0.2/32\t0\t0\t0\t25\n"
+	cases := []struct {
+		name  string
+		out   string
+		peers []wg.DumpPeer
+		want  bool
+	}{
+		{"interface line only", iface, nil, true},
+		{"malformed peer line", iface + "garbage\n", nil, false},
+		{"good peer line", iface + peer, []wg.DumpPeer{{PublicKey: "peerkey"}}, true},
+	}
+	for _, c := range cases {
+		if got := dumpReadable(c.out, c.peers); got != c.want {
+			t.Errorf("%s: dumpReadable = %v, want %v", c.name, got, c.want)
+		}
 	}
 }

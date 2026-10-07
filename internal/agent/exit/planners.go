@@ -365,7 +365,12 @@ func (p wgPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Ac
 	live, readable := p.liveDump(iface)
 	if !readable {
 		if file.Changes() {
-			return append(actions, restart...), nil
+			// Only peers differ here ([Interface] is unchanged), and a restart would
+			// drop every master's tunnel because one read timed out. Restate every
+			// spec peer blind — `awg set` is idempotent — and leave removals to the
+			// first pass that can read the kernel.
+			blind, _ := masterPeerEdits(iface, spec.Peers, nil)
+			return append(actions, blind...), nil
 		}
 		return append(actions, p.restoreRoamedEndpoints(iface, spec.Peers)...), nil
 	}
