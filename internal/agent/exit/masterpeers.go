@@ -3,7 +3,12 @@ package exit
 import (
 	"context"
 	"os/exec"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
 
+	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/wg"
 )
@@ -49,4 +54,64 @@ func masterPeersFrom(peers []domain.PeerSpec, read liveDump, iface string) ([]do
 		})
 	}
 	return out, true
+}
+
+// masterPeerEdits brings the kernel's master peers to the spec with `awg set`.
+//
+// It compares the SPEC with the KERNEL, never file with file. The config is
+// written before any command runs and the engine stops a component at its first
+// failed action, so after one failed `awg set` the file matches the spec and the
+// interface does not — and a file comparison would call that converged for good.
+// On a re-slotted fleet that is a peer whose /32 another peer took: it handshakes
+// and carries nothing until someone restarts awg0 by hand.
+//
+// A peer is restated whole — allowed-ips, keepalive, and its endpoint when the
+// spec gives one — because `awg set` is idempotent and a half-set peer is the
+// failure this exists to repair. Removals come first, so an address moving from
+// a departed peer is free before its new owner claims it. A live peer the spec
+// does not name is removed.
+//
+// rebuild=true says the live list has nothing in common with the spec's on an
+// interface that has peers: an entirely foreign set is better recreated than
+// emptied one `remove` at a time.
+func masterPeerEdits(iface string, want []domain.PeerSpec, live []wg.DumpPeer) (edits []reconcile.Action, rebuild bool) {
+	have := make(map[string]wg.DumpPeer, len(live))
+	for _, p := range live {
+		have[p.PublicKey] = p
+	}
+	wanted := make(map[string]struct{}, len(want))
+	overlap := 0
+	var sets []reconcile.Action
+	for _, p := range want {
+		wanted[p.PublicKey] = struct{}{}
+		l, present := have[p.PublicKey]
+		if present {
+			overlap++
+		}
+		ips := append([]string(nil), p.AllowedIPs...)
+		sort.Strings(ips)
+		if present && slices.Equal(ips, l.AllowedIPs) && p.Keepalive == l.Keepalive {
+			continue // endpoints are restoreRoamedEndpoints' business
+		}
+		keepalive := "off"
+		if p.Keepalive > 0 {
+			keepalive = strconv.Itoa(p.Keepalive)
+		}
+		cmd := []string{"awg", "set", iface, "peer", p.PublicKey,
+			"allowed-ips", strings.Join(p.AllowedIPs, ","), "persistent-keepalive", keepalive}
+		if p.Endpoint != "" {
+			cmd = append(cmd, "endpoint", p.Endpoint)
+		}
+		sets = append(sets, reconcile.ExecAction("set master peer "+p.Name+" on the running interface", cmd...))
+	}
+	if len(live) > 0 && len(want) > 0 && overlap == 0 {
+		return nil, true
+	}
+	for _, l := range live {
+		if _, keep := wanted[l.PublicKey]; !keep {
+			edits = append(edits, reconcile.ExecAction("remove a master peer the spec no longer names",
+				"awg", "set", iface, "peer", l.PublicKey, "remove"))
+		}
+	}
+	return append(edits, sets...), false
 }

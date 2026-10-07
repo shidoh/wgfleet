@@ -254,6 +254,16 @@ type wgPlanner struct {
 	awgGen func() (int, error)
 	// endpoints reads the live endpoint of each peer; nil ⇒ `awg show endpoints`.
 	endpoints func(iface string) (map[string]string, bool)
+	// dump reads the interface's peers as the kernel holds them; nil ⇒ `awg show
+	// <iface> dump`.
+	dump liveDump
+}
+
+func (p wgPlanner) liveDump(iface string) ([]wg.DumpPeer, bool) {
+	if p.dump != nil {
+		return p.dump(iface)
+	}
+	return readLiveDump(iface)
 }
 
 func (wgPlanner) Component() string { return "amneziawg interface" }
@@ -321,30 +331,52 @@ func (p wgPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Ac
 	actions := []reconcile.Action{file}
 	iface := ifaceName(p.path)
 	current, _ := os.ReadFile(p.path)
+	restart := []reconcile.Action{
+		// down is best-effort (the interface does not exist on the first run, and
+		// `awg-quick down` errors on a missing one).
+		reconcile.BestEffortExecAction("bring interface down (if up)", "awg-quick", "down", p.path),
+		reconcile.ExecAction("bring interface up with new config", "awg-quick", "up", p.path),
+	}
 	switch {
-	case file.Changes() && p.isUp() && onlyEndpointsDiffer(string(current), cfg):
+	case !p.isUp() && !file.Changes():
+		// Config unchanged but the interface is down (reboot, or a prior up failed):
+		// bring it up so reconcile converges to the running state, not just config.
+		return append(actions,
+			reconcile.ExecAction("bring interface up (interface was down)", "awg-quick", "up", p.path)), nil
+	case !p.isUp():
+		return append(actions, restart...), nil
+	case file.Changes() && onlyEndpointsDiffer(string(current), cfg):
 		// Only a peer endpoint moved (exit-initiated AWG flow switched on or its
 		// port changed): set it on the running interface. A down/up here would drop
 		// the tunnel the master is carrying traffic on. An endpoint REMOVED from the
 		// config stays in the kernel until the next restart — WireGuard cannot
 		// clear one — which is harmless: the master's packets move it anyway.
-		actions = append(actions, setMasterEndpoints(iface, spec.Peers, nil,
-			"set the master endpoint on the running interface")...)
-	case file.Changes():
-		// Config changed: re-apply. down is best-effort (the interface does not
-		// exist on the first run, and `awg-quick down` errors on a missing one).
-		actions = append(actions,
-			reconcile.BestEffortExecAction("bring interface down (if up)", "awg-quick", "down", p.path),
-			reconcile.ExecAction("bring interface up with new config", "awg-quick", "up", p.path))
-	case !p.isUp():
-		// Config unchanged but the interface is down (reboot, or a prior up failed):
-		// bring it up so reconcile converges to the running state, not just config.
-		actions = append(actions,
-			reconcile.ExecAction("bring interface up (interface was down)", "awg-quick", "up", p.path))
-	default:
-		actions = append(actions, p.restoreRoamedEndpoints(iface, spec.Peers)...)
+		return append(actions, setMasterEndpoints(iface, spec.Peers, nil,
+			"set the master endpoint on the running interface")...), nil
+	case file.Changes() && wg.InterfaceSection(string(current)) != wg.InterfaceSection(cfg):
+		// S/H, the port, the MTU, the AmneziaWG generation: none of it can be set
+		// on a live device.
+		return append(actions, restart...), nil
 	}
-	return actions, nil
+	// The interface is up and its [Interface] section is what the spec asks for.
+	// What is left is peers, and peers are judged against the kernel on EVERY pass,
+	// changed file or not — every master's tunnel runs on this one interface, so
+	// the alternative to an in-place edit is dropping all of them.
+	live, readable := p.liveDump(iface)
+	if !readable {
+		if file.Changes() {
+			return append(actions, restart...), nil
+		}
+		return append(actions, p.restoreRoamedEndpoints(iface, spec.Peers)...), nil
+	}
+	edits, rebuild := masterPeerEdits(iface, spec.Peers, live)
+	switch {
+	case rebuild:
+		return append(actions, restart...), nil
+	case len(edits) > 0:
+		return append(actions, edits...), nil
+	}
+	return append(actions, p.restoreRoamedEndpoints(iface, spec.Peers)...), nil
 }
 
 // restoreRoamedEndpoints puts back a master endpoint WireGuard roamed away from.
