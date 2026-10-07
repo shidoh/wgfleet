@@ -21,6 +21,8 @@ type stubSource struct {
 	listErr   error
 	lifelines []string
 	hosts     map[string]string
+	// lifelineMaster is the one master whose clients the reserve interfaces carry.
+	lifelineMaster string
 	// checks is what each node last reported about itself; absent ⇒ never reported.
 	checks map[string][]domain.HealthCheck
 }
@@ -53,6 +55,10 @@ func (s stubSource) ListWGClients(_ context.Context, id string) ([]domain.WGClie
 
 func (s stubSource) LifelineExits(context.Context) ([]string, error) {
 	return s.lifelines, nil
+}
+
+func (s stubSource) LifelineMaster(context.Context) (string, error) {
+	return s.lifelineMaster, nil
 }
 
 func (s stubSource) ExitEndpointHost(_ context.Context, exitID string) (string, error) {
@@ -118,8 +124,9 @@ func source() stubSource {
 			{ID: "abc", Name: "laptop", Address: "10.80.0.2/32",
 				PublicKey: "pub", PrivateKey: "Y2xpZW50LWtleQ==", PresharedKey: testPSK, Enabled: true},
 		}},
-		lifelines: []string{"e1"},
-		hosts:     map[string]string{"e1": "203.0.113.9"},
+		lifelines:      []string{"e1"},
+		lifelineMaster: "m1",
+		hosts:          map[string]string{"e1": "203.0.113.9"},
 	}
 }
 
@@ -473,5 +480,60 @@ func TestListLifelineExitsIgnoresAHealthyOrSilentNode(t *testing.T) {
 		if !exits[0].Ready {
 			t.Errorf("%s: the door must stay open, got reason %q", name, exits[0].Reason)
 		}
+	}
+}
+
+// sourceWithSecondMaster is source() plus a second master m2 with its own client.
+func sourceWithSecondMaster(t *testing.T) stubSource {
+	t.Helper()
+	src := source()
+	nodes := map[string]domain.Node{}
+	for id, n := range src.nodes {
+		nodes[id] = n
+	}
+	nodes["m2"] = domain.Node{
+		ID: "m2", Name: "m2", Role: domain.RoleMaster, PublicIP: "203.0.113.2",
+		ClientWGPublicKey: "c2VydmVyLXB1YmxpYy0wMDAwMDAwMDAwMDAwMDAwMDA=",
+	}
+	clients := map[string][]domain.WGClient{}
+	for id, cs := range src.clients {
+		clients[id] = cs
+	}
+	clients["m2"] = []domain.WGClient{
+		{ID: "xyz", Name: "tablet", Address: "10.80.0.2/32",
+			PublicKey: "pub2", PrivateKey: "Y2xpZW50LWtleQ==", PresharedKey: testPSK, Enabled: true},
+	}
+	src.nodes, src.clients = nodes, clients
+	return src
+}
+
+// Review Focus 6. A reserve interface carries the base master's clients. A
+// device whose credential lives on another master must not be offered — or
+// handed — a config the exit has no peer for: it would import cleanly and never
+// connect.
+func TestLifelineIsNotOfferedForANonBaseMaster(t *testing.T) {
+	src := sourceWithSecondMaster(t)
+	ctx := context.Background()
+
+	if ok, err := LifelineCarries(ctx, src, "m2"); err != nil || ok {
+		t.Errorf("LifelineCarries(m2) = %v, %v; want false", ok, err)
+	}
+	if exits, err := ListLifelineExits(ctx, src, "m2"); err != nil || len(exits) != 0 {
+		t.Errorf("reserve exits for a non-base master = %v, %v; want none", exits, err)
+	}
+	if _, err := BuildLifeline(ctx, src, "m2", "xyz", "e1"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("reserve config for a non-base master's credential: err = %v, want ErrNotFound", err)
+	}
+	if exits, err := ListLifelineExits(ctx, src, "m1"); err != nil || len(exits) == 0 {
+		t.Errorf("the base master's reserve exits disappeared: %v, %v", exits, err)
+	}
+}
+
+// With no base master there is nobody the lifeline carries.
+func TestLifelineCarriesNobodyWithoutABaseMaster(t *testing.T) {
+	src := source()
+	src.lifelineMaster = ""
+	if ok, err := LifelineCarries(context.Background(), src, "m1"); err != nil || ok {
+		t.Errorf("LifelineCarries = %v, %v; want false", ok, err)
 	}
 }

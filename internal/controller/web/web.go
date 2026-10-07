@@ -83,6 +83,8 @@ type SpecRenderer interface {
 	// exits declare one, and the address a client dials for it. Both feed
 	// clientcfg's reserve-config builder — see clientcfg.Source.
 	LifelineExits(ctx context.Context) ([]string, error)
+	// LifelineMaster names the master whose clients the reserve interfaces carry.
+	LifelineMaster(ctx context.Context) (string, error)
 	ExitEndpointHost(ctx context.Context, exitID string) (string, error)
 }
 
@@ -1553,12 +1555,13 @@ func (h *Handler) manifestNode(id string) (domain.Node, bool) {
 	return domain.Node{}, false
 }
 
-// buildTopology assembles the fleet-list routing diagram from the joined rows: the
-// (first) master, the exits it balances, and each exit's live latency/carrying flag
-// taken from the master's latest ExitHealth report. It returns nil only for an
-// empty fleet (the template then shows the empty state). With no master it still
-// returns the exits (Master nil) so removing the flat table hides no node; with a
-// master but no exits it returns just the master. Read-only.
+// buildTopology assembles the fleet-list routing diagram from the joined rows: one
+// block per master the manifest declares (manifest order), each with the exits it
+// balances and each exit's live latency/carrying flag taken from THAT master's
+// latest ExitHealth report. It returns nil only for an empty fleet (the template
+// then shows the empty state). With no declared master it still returns the exits,
+// under Unattached, so removing the flat table hides no node; a master with no
+// exits is just its block. Read-only.
 func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
 	if len(rows) == 0 {
 		return nil

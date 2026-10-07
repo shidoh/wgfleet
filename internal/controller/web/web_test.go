@@ -43,6 +43,16 @@ type stubRenderer struct {
 	// output it throws away.
 	lifelineErr   error
 	lifelineCalls *int
+	// lifelineMaster is the master the reserve interfaces carry; empty means
+	// master-xa-1, the fixture's usual master.
+	lifelineMaster string
+}
+
+func (s stubRenderer) LifelineMaster(context.Context) (string, error) {
+	if s.lifelineMaster != "" {
+		return s.lifelineMaster, nil
+	}
+	return "master-xa-1", nil
 }
 
 func (s stubRenderer) RenderNodeSpec(_ context.Context, id string) (domain.NodeSpec, error) {
@@ -1738,7 +1748,20 @@ func TestFleetIgnoresAMasterTheManifestDoesNotDeclare(t *testing.T) {
 	h.SetDevices(&fakeDevices{masters: []string{"master-xa-1"}})
 	seed(t, st, masterNode("master-xa-1"))
 	seed(t, st, masterNode("aaa-rogue"))
-	if n := strings.Count(fleetBody(t, h), `class="topo-trunk"`); n != 1 {
+	body := fleetBody(t, h)
+	if n := strings.Count(body, `class="topo-trunk"`); n != 1 {
 		t.Errorf("want exactly one trunk, got %d", n)
+	}
+	// The one trunk is master-xa-1's, not the undeclared node's.
+	i := strings.Index(body, `class="topo-trunk"`)
+	if i < 0 {
+		t.Fatal("no trunk rendered")
+	}
+	trunk := body[i:]
+	if j := strings.Index(trunk, "</a>"); j >= 0 {
+		trunk = trunk[:j]
+	}
+	if !strings.Contains(trunk, "master-xa-1") || strings.Contains(trunk, "aaa-rogue") {
+		t.Errorf("the rendered trunk is not master-xa-1's:\n%s", trunk)
 	}
 }

@@ -272,6 +272,16 @@ func (h *Handler) resolveLifeline(r *http.Request) (clientcfg.Result, error) {
 	if err != nil {
 		return clientcfg.Result{}, err
 	}
+	// The fleet's reserve interfaces carry one master's clients. For a device on
+	// another master there is no reserve to find — that is ours, not a guessed
+	// URL, and is not charged.
+	carried, err := clientcfg.LifelineCarries(r.Context(), h.src, sel.MasterID)
+	if err != nil {
+		return clientcfg.Result{}, err
+	}
+	if !carried {
+		return clientcfg.Result{}, store.ErrNotFound
+	}
 	// Readiness is resolved BEFORE the build so the two cases the build folds into
 	// one error can be told apart here: an exit the fleet does not have is the
 	// caller's doing and is charged, an exit that is not ready is ours and is not.

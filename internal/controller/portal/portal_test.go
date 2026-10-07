@@ -44,6 +44,16 @@ type stubSource struct {
 	// s.node/s.spec — a second master sharing the fixture's fleet state, needed to
 	// test a device with credentials on more than one master.
 	aliases map[string]bool
+	// lifelineMaster overrides the master the reserve interfaces carry; empty means
+	// the fixture's own master, so the one-master tests need not set it.
+	lifelineMaster string
+}
+
+func (s stubSource) LifelineMaster(context.Context) (string, error) {
+	if s.lifelineMaster != "" {
+		return s.lifelineMaster, nil
+	}
+	return s.node.ID, nil
 }
 
 func (s stubSource) NodeChecks(_ context.Context, id string) ([]domain.HealthCheck, error) {
@@ -670,6 +680,31 @@ func TestPortalRateLimitsBadExitNames(t *testing.T) {
 		if !locked {
 			t.Errorf("the portal never rate-limited a source grinding exit names (%s)", exit)
 		}
+	}
+}
+
+// A device on a non-base master asking for a reserve config is not guessing URLs:
+// the fleet simply has none for it. It gets a 404 and is not charged. Modelled on
+// TestPortalRateLimitsBadExitNames, with the opposite expectation: there a made-up
+// exit name locks the source out, here a real, ready exit must not.
+func TestReserveConfigForANonBaseMasterIsNotCharged(t *testing.T) {
+	h := testPortal(t)
+	src := h.src.(stubSource)
+	src.lifelineMaster = "master-other"
+	h.src = src
+
+	for i := range 20 {
+		res, _ := fetch(t, h, "/c/"+devTok+"/l/exit-ready/config")
+		if res.StatusCode != http.StatusNotFound {
+			t.Fatalf("reserve config #%d for a non-base master's device = %d, want 404", i, res.StatusCode)
+		}
+	}
+	if res, _ := fetch(t, h, "/c/"+devTok+"/config"); res.StatusCode == http.StatusTooManyRequests {
+		t.Error("asking for a reserve the fleet has none of locked the source out")
+	}
+	_, body := fetch(t, h, "/c/"+devTok)
+	if strings.Contains(body, "If the main server stops working") {
+		t.Errorf("the page offers a reserve section to a non-base master's device:\n%s", body)
 	}
 }
 

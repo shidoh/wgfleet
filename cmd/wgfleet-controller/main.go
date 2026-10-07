@@ -847,6 +847,10 @@ func (s portalSource) LifelineExits(ctx context.Context) ([]string, error) {
 	return s.broker.LifelineExits(ctx)
 }
 
+func (s portalSource) LifelineMaster(ctx context.Context) (string, error) {
+	return s.broker.LifelineMaster(ctx)
+}
+
 func (s portalSource) ExitEndpointHost(ctx context.Context, exitID string) (string, error) {
 	return s.broker.ExitEndpointHost(ctx, exitID)
 }

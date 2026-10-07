@@ -292,6 +292,18 @@ func (b *Broker) LifelineExits(context.Context) ([]string, error) {
 	return out, nil
 }
 
+// LifelineMaster names the master whose clients every reserve interface carries:
+// the base master. An exit's lifeline projects one master's credentials into one
+// pool, and two masters' clients at the same pool offset would land on one
+// address there. "" when no master holds slot 0.
+func (b *Broker) LifelineMaster(context.Context) (string, error) {
+	base, ok := b.fleet.BaseMaster()
+	if !ok {
+		return "", nil
+	}
+	return base.Name, nil
+}
+
 // ExitEndpointHost resolves the address a client dials for one exit's lifeline.
 //
 // It is the SAME resolution the master↔exit tunnel uses (broker.go, renderMasterSpec)
