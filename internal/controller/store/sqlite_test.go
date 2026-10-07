@@ -802,3 +802,55 @@ func TestAWGPinConfirmationPersistsPerMasterAndExit(t *testing.T) {
 		t.Errorf("after forgetting: addr=%q key=%q since=%v err=%v; want zero values", addr, key, since, err)
 	}
 }
+
+// Deleting a node takes what was confirmed for it, as master or as exit — and
+// leaves the port generations, which retire ports a path already poisoned.
+func TestDeleteNodeForgetsItsPinConfirmations(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	at := time.Unix(1_800_000_000, 0).UTC()
+	for _, id := range []string{"master-xa-1", "master-xa-2", "exit-de-1", "exit-de-2"} {
+		if err := s.UpsertNode(ctx, domain.Node{ID: id, Name: id, Role: domain.RoleExit, State: domain.StateReady}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, m := range []string{"master-xa-1", "master-xa-2"} {
+		for _, e := range []string{"exit-de-1", "exit-de-2"} {
+			if err := s.SetAWGPinConfirmation(ctx, m, e, "203.0.113.1:40001", "key", at); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.SetAWGPortRotation(ctx, m, e, 3, at); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	confirmed := func(m, e string) bool {
+		addr, _, _, err := s.GetAWGPinConfirmation(ctx, m, e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return addr != ""
+	}
+
+	if err := s.DeleteNode(ctx, "master-xa-2"); err != nil {
+		t.Fatal(err)
+	}
+	if confirmed("master-xa-2", "exit-de-1") || confirmed("master-xa-2", "exit-de-2") {
+		t.Error("the deleted master's confirmations survived it")
+	}
+	if !confirmed("master-xa-1", "exit-de-1") || !confirmed("master-xa-1", "exit-de-2") {
+		t.Error("another master's confirmations were deleted with it")
+	}
+	if err := s.DeleteNode(ctx, "exit-de-2"); err != nil {
+		t.Fatal(err)
+	}
+	if confirmed("master-xa-1", "exit-de-2") {
+		t.Error("the confirmation for a deleted exit survived it")
+	}
+	if !confirmed("master-xa-1", "exit-de-1") {
+		t.Error("the confirmation for another exit was deleted with it")
+	}
+	if gen, _, _ := s.GetAWGPortRotation(ctx, "master-xa-2", "exit-de-1"); gen != 3 {
+		t.Errorf("port generation after the delete = %d, want 3 kept: generation 0 is a port already judged poisoned", gen)
+	}
+}

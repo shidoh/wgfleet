@@ -268,6 +268,16 @@ func (s *SQLiteStore) DeleteNode(ctx context.Context, id string) error {
 	if err := requireAffected(res); err != nil {
 		return err
 	}
+	// What an exit confirmed for a master is about the two nodes that were there.
+	// No foreign key reaches it (the pair is two names), so it goes here, for the
+	// node as either end: a node re-admitted under the same name must earn its own.
+	// awg_pin_rotation is deliberately LEFT, as awg_port_rotation always was: its
+	// generation retires ports a path already poisoned, and starting again at 0
+	// would hand the pair back the first of them.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM awg_pin_confirmed WHERE master_id = ? OR exit_id = ?`, id, id); err != nil {
+		return fmt.Errorf("delete node %q: pin confirmations: %w", id, err)
+	}
 	// The tombstone, in the same transaction: a delete that succeeded without it
 	// is the bug this table exists to close.
 	if _, err := tx.ExecContext(ctx,
