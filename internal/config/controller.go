@@ -151,6 +151,11 @@ type PKISection struct {
 type FleetSection struct {
 	Masters []MasterConfig `koanf:"masters"`
 	Exits   []ExitConfig   `koanf:"exits"`
+	// InterfaceAnchor labels everything that belongs to an exit's interface rather
+	// than to one peer on it (AmneziaWG S/H parameters, REALITY identifiers), so
+	// every master derives the same values. Unset, it follows the slot-0 master's
+	// name; required once there are several masters (see AnchorLabel).
+	InterfaceAnchor string `koanf:"interface_anchor"`
 	// ZeroTierNetwork is the mgmt overlay network nodes join during bootstrap.
 	ZeroTierNetwork string `koanf:"zerotier_network"`
 	// MgmtSubnet is the CIDR of the management overlay (ZeroTier). When set it is
@@ -421,7 +426,10 @@ type SSHConfig struct {
 
 // MasterConfig describes one master node in the fleet manifest.
 type MasterConfig struct {
-	Name        string            `koanf:"name"`
+	Name string `koanf:"name"`
+	// Slot places this master in every exit's address pool and makes slot 0 the
+	// base master (see FleetSection.BaseMaster). Unique per master, 0-domain.MaxMasterSlot.
+	Slot        int               `koanf:"slot"`
 	MgmtAddr    string            `koanf:"mgmt_addr"`
 	PublicIP    string            `koanf:"public_ip"` // public IP peers/clients reach this node at; defaults to ssh.host when empty
 	ClientAWG   ClientAWGConfig   `koanf:"client_awg"`
@@ -1181,12 +1189,6 @@ func (c ControllerConfig) Validate() error {
 			errs = append(errs, fmt.Errorf("masters[%q].mihomo.health_interval %s out of range (0 for default, else 5s..1h)", m.Name, d))
 		}
 	}
-	// The keybroker topology is single-master on MVP (open question #11): it peers
-	// every exit to Masters[0] only, so a second master would render specs that
-	// silently never establish. Fail loudly until multi-master lands.
-	if len(c.Fleet.Masters) > 1 {
-		errs = append(errs, fmt.Errorf("fleet: %d masters configured, but multi-master is not yet supported (keybroker peers exits to the first master only)", len(c.Fleet.Masters)))
-	}
 	// The Web UI and /metrics endpoints have no authentication; their only
 	// protection is binding the mgmt/ZT overlay (docs/DESIGN.md §9/§10). Refuse a
 	// public/unspecified bind so a misconfigured manifest can't silently expose
@@ -1383,6 +1385,7 @@ func (c ControllerConfig) Validate() error {
 	}
 	errs = append(errs, c.validateLifeline()...)
 	errs = append(errs, c.validateExitInitiated()...)
+	errs = append(errs, c.validateMasterFanout()...)
 	return errors.Join(errs...)
 }
 

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"slices"
@@ -52,8 +53,8 @@ func (c ControllerConfig) validateExitInitiated() []error {
 	if !anyOn {
 		return errs
 	}
-	if len(c.Fleet.Masters) != 1 {
-		errs = append(errs, fmt.Errorf("transports.awg.exit_initiated supports a single master (fleet has %d)", len(c.Fleet.Masters)))
+	if len(c.Fleet.Masters) == 0 {
+		errs = append(errs, errors.New("transports.awg.exit_initiated needs a master (fleet has none)"))
 	}
 	for _, m := range c.Fleet.Masters {
 		if err := checkKnockableAddress(m.PublicIP); err != nil {

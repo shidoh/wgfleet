@@ -14,7 +14,7 @@ package domain
 // would be perverse.
 //
 // The fix is that the per-tunnel identity gets its OWN address in the exit's pool
-// (masterHostIndex for the legacy peer, masterPerTunnelHostIndex for the new one),
+// (MasterTunnelHostIndex gives the pair: one host for the legacy peer, one for the new),
 // so the two peers are disjoint in the trie and genuinely coexist. Given that,
 // each phase moves exactly ONE side of the tunnel:
 //
@@ -71,4 +71,21 @@ func (p PerTunnelKeyPhase) ExitAcceptsLegacyKey() bool {
 // master's per-tunnel identity in this phase.
 func (p PerTunnelKeyPhase) ExitAcceptsPerTunnelKey() bool {
 	return p != PerTunnelKeyOff
+}
+
+// MaxMasterSlot is the highest master slot. Two hosts per slot plus the exit's own
+// fit a /24 exit pool many times over; the bound exists so a typo cannot ask for
+// host 20001.
+const MaxMasterSlot = 63
+
+// MasterTunnelHostIndex is where the master in slot lives inside an exit's address
+// pool: one host for its legacy shared identity and one for its per-tunnel
+// identity (ADR-0030). The exit is host 1.
+//
+// Two hosts per master, never shared between masters: WireGuard's AllowedIPs is a
+// routing trie, so two peers claiming one /32 do not coexist — the second steals
+// it and the first loses its return path while its handshakes keep succeeding.
+// Slot 0 keeps hosts 2 and 3, which is what a one-master fleet has always used.
+func MasterTunnelHostIndex(slot int) (legacy, perTunnel int) {
+	return 2 + 2*slot, 3 + 2*slot
 }

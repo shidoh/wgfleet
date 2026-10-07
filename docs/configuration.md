@@ -88,6 +88,7 @@ provisioning, so changing them requires re-provisioning the node.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `fleet.zerotier_network` | string | — | ZeroTier network ID (exactly 16 hex chars) every node joins during bootstrap. Validated strictly: it is interpolated into a root shell command |
+| `fleet.interface_anchor` | string | base master name | Label that seeds everything belonging to an exit's interface rather than to one peer on it (AmneziaWG S/H parameters, REALITY identifiers), so every master derives the same values. Required with several masters, and when no master holds slot 0; set it to the base master's name to keep existing tunnels unchanged. Not a node: it outlives the master it names. `clients` and `lifeline` are reserved node names |
 | `fleet.mgmt_subnet` | CIDR | derived | The management overlay's CIDR. When set, exits route it DIRECT (never through WARP) and accept it in the firewall without per-node listing. Empty ⇒ derived from each node's `mgmt_addr` as /32s |
 | `fleet.client_sites[].name` | string | — | Name of the site's switch in the mihomo app. Not `auto`, `wgfleet`, `DIRECT`, `REJECT`, a master's name or `<master>-awg`/`-vless`; no `,` or `#` |
 | `fleet.client_sites[].cidrs` | list of CIDR | — | The site's networks. Must not overlap `fleet.mgmt_subnet` or any `client_awg.address_pool`. Their rules precede every other rule of the device profile |
@@ -136,6 +137,7 @@ first, see [upgrade.md](upgrade.md).
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `fleet.masters[].name` | string | **required** | Stable node name. This is the node's identity — renaming means re-issuing its certificate. `auto`, `wgfleet`, `DIRECT`, `REJECT` are reserved by the device profile: a master named so cannot serve devices |
+| `fleet.masters[].slot` | int | `0` | The master's place in every exit's address pool (hosts `2+2·slot` and `3+2·slot`). Unique, 0-63. The master in slot 0 is the base master: the exit's single master address, the lifeline's client population and the inherited `direct_cidrs` follow it. With a non-zero slot, each exit `address_pool` must hold the highest slot's hosts |
 | `fleet.masters[].mgmt_addr` | string | — | ZeroTier/overlay address. Binds admin surfaces and is trusted by construction |
 | `fleet.masters[].public_ip` | string | = `ssh.host` | Public IP clients and peers reach this node at |
 | `fleet.masters[].client_admin_ports` | []int | none | Admin ports (Web UI, mihomo dashboard, client portal) opened **to AWG and VLESS clients** on the mgmt address — a VLESS client's connection to these ports is dialled DIRECT from mihomo's namespace and arrives on its veth, not on the AWG interface, so both are opened together. Default keeps admin reachable only over the overlay |
@@ -432,7 +434,8 @@ Both files are validated at startup and the process refuses to run on a bad valu
   entries must parse as CIDRs.
 - `controller.webui` and `controller.metrics` must bind a management address unless
   `WGFLEET_ALLOW_PUBLIC_BIND=1`.
-- More than one entry in `fleet.masters[]` is rejected.
+- `fleet.masters[].slot` must be unique and within 0-63; `fleet.interface_anchor` is
+  required with several masters; no master or exit may be named `clients` or `lifeline`.
 - Durations, MTUs and MSS values are range-checked; the error names the key and the
   accepted band.
 

@@ -29,6 +29,10 @@ func TestValidateExitInitiatedAcceptsTheSupportedShape(t *testing.T) {
 		"master port override":      func(f *FleetSection) { f.Exits[0].Transports.AWG.MasterPort = 41234 },
 		"master address is a name":  func(f *FleetSection) { f.Masters[0].PublicIP = "master.example.net" },
 		"master address left empty": func(f *FleetSection) { f.Masters[0].PublicIP = "" },
+		"second master with a public address": func(f *FleetSection) {
+			f.InterfaceAnchor = "m"
+			f.Masters = append(f.Masters, MasterConfig{Name: "m2", Slot: 1, PublicIP: "192.0.2.11"})
+		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -74,9 +78,17 @@ func TestValidateExitInitiatedRejects(t *testing.T) {
 			wantFrag: "master_port 70000 out of range",
 		},
 		{
-			name:     "second master",
-			mutate:   func(f *FleetSection) { f.Masters = append(f.Masters, MasterConfig{Name: "m2"}) },
-			wantFrag: "supports a single master",
+			name: "second master the exit could not knock on",
+			mutate: func(f *FleetSection) {
+				f.InterfaceAnchor = "m"
+				f.Masters = append(f.Masters, MasterConfig{Name: "m2", Slot: 1, PublicIP: "172.16.99.11"})
+			},
+			wantFrag: "is not a public IPv4 address",
+		},
+		{
+			name:     "no master at all",
+			mutate:   func(f *FleetSection) { f.Masters = nil },
+			wantFrag: "needs a master",
 		},
 		{
 			// The exit would knock on an address the internet cannot reach, and the
