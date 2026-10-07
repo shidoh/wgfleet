@@ -57,7 +57,8 @@ type Broker struct {
 
 	// Auto-suspend hysteresis (see throughputAutoSuspend). now is injected by tests.
 	now func() time.Time
-	// pinConfirmed remembers which pinned address each master↔exit tunnel (pinKey) has been confirmed holding.
+	// pinConfirmed caches, per master↔exit tunnel (pinKey), the pinned address the
+	// exit confirmed holding; the store has the durable copy. See confirmation.
 	pinMu        sync.Mutex
 	pinConfirmed map[string]pinConfirmation
 	suspendMu    sync.Mutex
@@ -868,6 +869,10 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		realityActive := active == domain.TransportRealityXHTTP && realityRenderable
 
 		if hasAWG {
+			armed, aerr := b.armedMasterAddr(ctx, exit, master, exitNode, masterNode)
+			if aerr != nil {
+				return domain.NodeSpec{}, aerr
+			}
 			// The exit's interface decides the shared parameters and the generation;
 			// this end only chooses its own local decoy. mihomo is userspace
 			// WireGuard-Go, so kernel=false keeps the signatures free of <c>/<t>.
@@ -888,7 +893,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 				MasterKeyTunnel: keyTunnel,
 				Drained:         baseDrained || realityActive,
 				Reserve:         isReserve,
-				MasterAddr:      b.armedMasterAddr(ctx, exit, master, exitNode, masterNode),
+				MasterAddr:      armed,
 			})
 		}
 		if realityRenderable {

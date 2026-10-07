@@ -216,6 +216,12 @@ type Store interface {
 	// by master to master — the one master there was — and reports how many it
 	// moved. One-shot: it runs once per database, whoever is passed later.
 	AdoptAWGPortRotation(ctx context.Context, master string) (int, error)
+	// GetAWGPinConfirmation returns the pinned address the exit last confirmed
+	// holding for master, the public key of the master's peer the confirmation is
+	// about, and when it was earned; zero values when there is none.
+	GetAWGPinConfirmation(ctx context.Context, master, exit string) (addr, peerKey string, since time.Time, err error)
+	// SetAWGPinConfirmation records that confirmation, replacing the previous one.
+	SetAWGPinConfirmation(ctx context.Context, master, exit, addr, peerKey string, since time.Time) error
 
 	// AuthConfigured reports whether the single web-panel admin credential exists.
 	AuthConfigured(ctx context.Context) (bool, error)

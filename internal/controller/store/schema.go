@@ -207,6 +207,21 @@ var migrations = []string{
 	)`,
 	// v27: an exit's per-master-peer report (StatusReport.master_peers, wire 13).
 	`ALTER TABLE node_status ADD COLUMN master_peers_json TEXT NOT NULL DEFAULT '[]'`,
+	// v28: the address an exit confirmed holding for one master, which of the
+	// master's peers said so, and since when. The gate on the master is armed from
+	// it, and a wire-13 exit's per-peer report is deliberately not sticky — so held
+	// in memory alone, a controller restart followed by one pass that could not read
+	// the interface disarmed the gate and had the master speak first on a filtered
+	// path. since is the silence clock: it has to survive too, or a tunnel that was
+	// already dead gets a fresh AWGRotateAfter on every restart.
+	`CREATE TABLE IF NOT EXISTS awg_pin_confirmed (
+		master_id TEXT NOT NULL,
+		exit_id   TEXT NOT NULL,
+		addr      TEXT NOT NULL,
+		peer_key  TEXT NOT NULL,
+		since     TEXT NOT NULL,
+		PRIMARY KEY (master_id, exit_id)
+	)`,
 }
 
 // MigrationCount is how many schema migrations this build knows. Exported so a

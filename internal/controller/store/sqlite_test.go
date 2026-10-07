@@ -757,3 +757,38 @@ func TestStatusMasterPeersFollowTheLatestReport(t *testing.T) {
 		t.Errorf("peers after a report without any = %+v, %v; want none", got.MasterPeers, err)
 	}
 }
+
+// The address an exit confirmed for one master, the peer the confirmation is
+// about and the moment it was earned must survive a controller restart: a gate
+// that forgets it has the master speak first on a filtered path.
+func TestAWGPinConfirmationPersistsPerMasterAndExit(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	addr, key, since, err := s.GetAWGPinConfirmation(ctx, "master-xa-1", "exit-de-1")
+	if err != nil || addr != "" || key != "" || !since.IsZero() {
+		t.Fatalf("unconfirmed tunnel: addr=%q key=%q since=%v err=%v; want zero values", addr, key, since, err)
+	}
+	at := time.Unix(1_800_000_000, 0).UTC()
+	if err := s.SetAWGPinConfirmation(ctx, "master-xa-1", "exit-de-1", "203.0.113.1:40001", "key-a", at); err != nil {
+		t.Fatal(err)
+	}
+	addr, key, since, err = s.GetAWGPinConfirmation(ctx, "master-xa-1", "exit-de-1")
+	if err != nil || addr != "203.0.113.1:40001" || key != "key-a" || !since.Equal(at) {
+		t.Errorf("got addr=%q key=%q since=%v err=%v", addr, key, since, err)
+	}
+	if addr, _, _, err := s.GetAWGPinConfirmation(ctx, "master-xa-2", "exit-de-1"); err != nil || addr != "" {
+		t.Errorf("another master's confirmation = %q, %v; want none", addr, err)
+	}
+	// A later confirmation replaces the earlier one whole.
+	later := at.Add(time.Hour)
+	if err := s.SetAWGPinConfirmation(ctx, "master-xa-1", "exit-de-1", "203.0.113.1:40002", "", later); err != nil {
+		t.Fatal(err)
+	}
+	addr, key, since, err = s.GetAWGPinConfirmation(ctx, "master-xa-1", "exit-de-1")
+	if err != nil || addr != "203.0.113.1:40002" || key != "" || !since.Equal(later) {
+		t.Errorf("after replacing: addr=%q key=%q since=%v err=%v", addr, key, since, err)
+	}
+	if err := s.SetAWGPinConfirmation(ctx, "", "exit-de-1", "203.0.113.1:40001", "key-a", at); err == nil {
+		t.Error("a confirmation without a master must be refused")
+	}
+}

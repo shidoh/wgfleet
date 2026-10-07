@@ -476,7 +476,9 @@ func wantNoTunnel(t *testing.T, b *Broker, master string) {
 	}
 }
 
-// forgetConfirmations is a controller restart: the confirmations live in memory.
+// forgetConfirmations empties the broker's cache of confirmations, as a
+// controller restart does; whatever the store holds is read back on the next
+// render.
 func forgetConfirmations(b *Broker) {
 	b.pinMu.Lock()
 	defer b.pinMu.Unlock()
@@ -597,8 +599,9 @@ func TestExitRolledBackBelowWire13FallsBackToTheSingleField(t *testing.T) {
 	}
 
 	setWireVersion(t, s.st, "exit-de-1", api.WireAWGExitInitiated)
-	// The controller restarts too, so nothing it remembered from the peer list
-	// holds the gate: it has to arm again from the single field alone.
+	// The controller restarts too. What it stored is about the wire-13 peer; below
+	// wire 13 the single field speaks for the tunnel, and the gate has to hold on
+	// that alone.
 	forgetConfirmations(s.b)
 	for i := 0; i < 3; i++ {
 		now = now.Add(AWGRotateAfter)

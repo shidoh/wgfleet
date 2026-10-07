@@ -779,3 +779,33 @@ func (s *SQLiteStore) SetAWGPortRotation(ctx context.Context, master, exit strin
 	}
 	return nil
 }
+
+// GetAWGPinConfirmation implements Store.
+func (s *SQLiteStore) GetAWGPinConfirmation(ctx context.Context, master, exit string) (string, string, time.Time, error) {
+	var addr, key, since string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT addr, peer_key, since FROM awg_pin_confirmed WHERE master_id = ? AND exit_id = ?`,
+		master, exit).Scan(&addr, &key, &since)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", time.Time{}, nil
+	}
+	if err != nil {
+		return "", "", time.Time{}, fmt.Errorf("get awg pin confirmation %q/%q: %w", master, exit, err)
+	}
+	return addr, key, parseTime(since), nil
+}
+
+// SetAWGPinConfirmation implements Store.
+func (s *SQLiteStore) SetAWGPinConfirmation(ctx context.Context, master, exit, addr, peerKey string, since time.Time) error {
+	if master == "" || exit == "" {
+		return errors.New("store: master and exit names are required")
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO awg_pin_confirmed (master_id, exit_id, addr, peer_key, since) VALUES (?,?,?,?,?)
+		 ON CONFLICT(master_id, exit_id) DO UPDATE SET addr=excluded.addr, peer_key=excluded.peer_key, since=excluded.since`,
+		master, exit, addr, peerKey, fmtTime(since.UTC()))
+	if err != nil {
+		return fmt.Errorf("set awg pin confirmation %q/%q: %w", master, exit, err)
+	}
+	return nil
+}

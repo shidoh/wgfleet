@@ -107,48 +107,57 @@ func (b *Broker) speakingKey(ctx context.Context, exit config.ExitConfig, exitNo
 // the exit could reach. Every refusal leaves the tunnel as it
 // is today — the master opens the flow — which is the safe side of each case.
 // It also moves the port when the current one is judged poisoned.
-func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, master config.MasterConfig, exitNode, masterNode domain.Node) (string, bool) {
+//
+// A refusal is ("", false, nil). An error is something else: the store could not
+// say which generation the port is in, or what the exit confirmed. Rendering on
+// regardless would hand out generation 0 — the port already judged poisoned — and
+// disarm the master's gate for the pass, so the render fails instead and the node
+// keeps its last-good spec. Same rule as tunnelPubKey.
+func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, master config.MasterConfig, exitNode, masterNode domain.Node) (string, bool, error) {
 	if !exit.Transports.AWG.ExitInitiated {
-		return "", false
+		return "", false, nil
 	}
 	if !b.exitCarries(exit, exitNode, master) {
-		return "", false
+		return "", false, nil
 	}
 	if exitNode.WireVersion < api.WireAWGExitInitiated || masterNode.WireVersion < api.WireAWGExitInitiated {
 		b.warnOnce("exit-initiated-wire:"+pinKey(master.Name, exit.Name), fmt.Sprintf("%d|%d", masterNode.WireVersion, exitNode.WireVersion),
 			"exit-initiated AWG flow not rendered: an agent is too old to hold its half",
 			"exit", exit.Name, "master", master.Name, "master_wire", masterNode.WireVersion, "exit_wire", exitNode.WireVersion,
 			"need_wire", api.WireAWGExitInitiated)
-		return "", false
+		return "", false, nil
 	}
 	ip, ok := masterRoutableIP(master, masterNode)
 	if !ok || !config.IsKnockableIPv4(ip) {
 		b.warnOnce("exit-initiated-no-public-ip:"+pinKey(master.Name, exit.Name), master.PublicIP+"|"+masterNode.PublicIP,
 			"exit-initiated AWG flow not rendered: the master has no public IPv4 the exit could knock on",
 			"exit", exit.Name, "master", master.Name, "public_ip", master.PublicIP, "stored", masterNode.PublicIP)
-		return "", false
+		return "", false, nil
 	}
 	gen, rotatedAt, err := b.store.GetAWGPortRotation(ctx, master.Name, exit.Name)
 	if err != nil {
-		b.warnOnce("exit-initiated-rotation-read:"+pinKey(master.Name, exit.Name), err.Error(),
-			"exit-initiated AWG: port generation unreadable, using the base port",
-			"exit", exit.Name, "master", master.Name, "err", err)
-		gen, rotatedAt = 0, time.Time{}
+		return "", false, fmt.Errorf("exit %q: pinned port generation for master %q: %w", exit.Name, master.Name, err)
 	}
 	addr := pinnedAddr(exit, master, ip, gen)
-	if awgCarries(exit, exitNode) && b.pinPoisoned(ctx, exit, exitNode, master, masterNode, addr, rotatedAt) {
+	poisoned := false
+	if awgCarries(exit, exitNode) {
+		if poisoned, err = b.pinPoisoned(ctx, exit, exitNode, master, masterNode, addr, rotatedAt); err != nil {
+			return "", false, err
+		}
+	}
+	if poisoned {
 		now := b.now()
 		if err := b.store.SetAWGPortRotation(ctx, master.Name, exit.Name, gen+1, now); err != nil {
 			b.log.Warn("exit-initiated AWG: could not record a port rotation; keeping the port",
 				"exit", exit.Name, "master", master.Name, "err", err)
-			return addr, true
+			return addr, true, nil
 		}
 		next := pinnedAddr(exit, master, ip, gen+1)
 		b.log.Warn("exit-initiated AWG: tunnel silent on its pinned port, moving to a new one",
 			"exit", exit.Name, "master", master.Name, "from", addr, "to", next, "generation", gen+1)
 		addr = next
 	}
-	return addr, true
+	return addr, true, nil
 }
 
 // awgCarries reports whether the exit's AWG tunnel is the one carrying its
@@ -178,35 +187,40 @@ func pinnedAddr(exit config.ExitConfig, master config.MasterConfig, ip netip.Add
 // A node that stopped reporting is down, not filtered, and is left alone. The
 // judgement is of one master's tunnel: its own confirmation, its own peer's
 // handshake — another master's healthy flow on the same exit says nothing here.
+//
+// The only error is a confirmation the store could not read (see confirmation).
 func (b *Broker) pinPoisoned(ctx context.Context, exit config.ExitConfig, exitNode domain.Node,
-	master config.MasterConfig, masterNode domain.Node, addr string, rotatedAt time.Time) bool {
+	master config.MasterConfig, masterNode domain.Node, addr string, rotatedAt time.Time) (bool, error) {
 	now := b.now()
-	c := b.confirmation(pinKey(master.Name, exit.Name))
+	c, err := b.confirmation(ctx, master.Name, exit.Name)
+	if err != nil {
+		return false, err
+	}
 	if c.addr != addr || now.Sub(c.since) < AWGRotateAfter {
-		return false
+		return false, nil
 	}
 	// The peer that speaks for the tunnel changed (a per-tunnel-key phase change)
 	// and armedMasterAddr has not restarted the clock for it yet — the exit's
 	// render can get here first. The confirmation's age is the old peer's.
 	if c.key != b.speakingKey(ctx, exit, exitNode, master, masterNode) {
-		return false
+		return false, nil
 	}
 	if !rotatedAt.IsZero() && now.Sub(rotatedAt) < AWGRotateMinInterval {
-		return false
+		return false, nil
 	}
 	st, err := b.store.GetStatus(ctx, exit.Name)
 	if err != nil || now.Sub(st.ReportedAt) > awgReportFresh {
-		return false
+		return false, nil
 	}
 	peer, ok := b.tunnelPeer(ctx, st, exit, exitNode, master, masterNode)
 	if !ok {
-		return false
+		return false, nil
 	}
 	if !peer.LastHandshake.IsZero() && now.Sub(peer.LastHandshake) < AWGRotateAfter {
-		return false
+		return false, nil
 	}
 	mst, err := b.store.GetStatus(ctx, master.Name)
-	return err == nil && now.Sub(mst.ReportedAt) <= awgReportFresh
+	return err == nil && now.Sub(mst.ReportedAt) <= awgReportFresh, nil
 }
 
 // armedMasterAddr is the pinned address the master's spec carries for this
@@ -214,16 +228,20 @@ func (b *Broker) pinPoisoned(ctx context.Context, exit config.ExitConfig, exitNo
 // has reported holding the address and STAYS armed while it is the current one:
 // a later report of another endpoint is WireGuard roaming, which the exit's
 // watchdog undoes; disarming on it flapped the gate on the stand.
-func (b *Broker) armedMasterAddr(ctx context.Context, exit config.ExitConfig, master config.MasterConfig, exitNode, masterNode domain.Node) string {
-	addr, ok := b.exitInitiatedAddr(ctx, exit, master, exitNode, masterNode)
-	if !ok {
-		return ""
+//
+// "" with a nil error is an unarmed gate. An error is a store that could not be
+// read, and fails the master's render (see exitInitiatedAddr).
+func (b *Broker) armedMasterAddr(ctx context.Context, exit config.ExitConfig, master config.MasterConfig, exitNode, masterNode domain.Node) (string, error) {
+	addr, ok, err := b.exitInitiatedAddr(ctx, exit, master, exitNode, masterNode)
+	if err != nil || !ok {
+		return "", err
 	}
 	key := b.speakingKey(ctx, exit, exitNode, master, masterNode)
 	reports := b.exitReports(ctx, exit, exitNode, master, masterNode, addr)
-	pk := pinKey(master.Name, exit.Name)
-	b.pinMu.Lock()
-	c := b.pinConfirmed[pk]
+	c, err := b.confirmation(ctx, master.Name, exit.Name)
+	if err != nil {
+		return "", err
+	}
 	// A new address is confirmed when the exit reports holding it. The same
 	// address with another peer speaking for the tunnel is the exit's phase
 	// changing: the address the exit knocks on has not moved, so the gate stays
@@ -233,19 +251,58 @@ func (b *Broker) armedMasterAddr(ctx context.Context, exit config.ExitConfig, ma
 	// of its own.
 	if (reports && c.addr != addr) || (c.addr == addr && c.key != key) {
 		c = pinConfirmation{addr: addr, since: b.now(), key: key}
-		b.pinConfirmed[pk] = c
+		b.confirm(ctx, master.Name, exit.Name, c)
 	}
-	b.pinMu.Unlock()
 	if c.addr != addr {
-		return ""
+		return "", nil
 	}
-	return addr
+	return addr, nil
 }
 
-func (b *Broker) confirmation(key string) pinConfirmation {
+// confirmation is what the exit last confirmed for one master↔exit tunnel. The
+// map is a cache over the store: the confirmation has to outlive the process (a
+// manifest edit restarts the controller, and a wire-13 exit's per-peer report is
+// not sticky, so a pass with no peer list would otherwise find the gate
+// disarmed), and a render must not pay a query per tunnel for it. Each tunnel is
+// read once; "nothing confirmed" is cached like any other answer.
+//
+// An unreadable store is an error, never "nothing confirmed": that would disarm
+// a gate nobody disproved. pinMu is not held across the read.
+func (b *Broker) confirmation(ctx context.Context, master, exit string) (pinConfirmation, error) {
+	pk := pinKey(master, exit)
+	b.pinMu.Lock()
+	c, cached := b.pinConfirmed[pk]
+	b.pinMu.Unlock()
+	if cached {
+		return c, nil
+	}
+	addr, key, since, err := b.store.GetAWGPinConfirmation(ctx, master, exit)
+	if err != nil {
+		return pinConfirmation{}, fmt.Errorf("exit %q: pinned address confirmed for master %q: %w", exit, master, err)
+	}
 	b.pinMu.Lock()
 	defer b.pinMu.Unlock()
-	return b.pinConfirmed[key]
+	// A render that confirmed while this one was reading knows more than the store did.
+	if c, cached := b.pinConfirmed[pk]; cached {
+		return c, nil
+	}
+	c = pinConfirmation{addr: addr, since: since, key: key}
+	b.pinConfirmed[pk] = c
+	return c, nil
+}
+
+// confirm records a new confirmation, in memory first and then in the store. A
+// failed write must not disarm the gate — the exit did confirm, and this process
+// saw it — so it is logged and the in-memory value stands; what is lost is only
+// what a restart would have read back. pinMu is not held across the write.
+func (b *Broker) confirm(ctx context.Context, master, exit string, c pinConfirmation) {
+	b.pinMu.Lock()
+	b.pinConfirmed[pinKey(master, exit)] = c
+	b.pinMu.Unlock()
+	if err := b.store.SetAWGPinConfirmation(ctx, master, exit, c.addr, c.key, c.since); err != nil {
+		b.log.Warn("exit-initiated AWG: could not record the confirmed address; it will not survive a controller restart",
+			"exit", exit, "master", master, "addr", c.addr, "err", err)
+	}
 }
 
 // exitReports reports whether the exit's last status says its awg0 holds addr

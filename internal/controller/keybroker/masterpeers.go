@@ -33,7 +33,10 @@ func (b *Broker) masterPeers(ctx context.Context, exit config.ExitConfig, exitNo
 	phase := exit.PerTunnelKeyPhase()
 	// Exit-initiated AWG flow: the exit dials the master's pinned address, on the
 	// ONE peer whose identity the master actually uses in this phase.
-	pinned, pinnedOK := b.exitInitiatedAddr(ctx, exit, master, exitNode, masterNode)
+	pinned, pinnedOK, err := b.exitInitiatedAddr(ctx, exit, master, exitNode, masterNode)
+	if err != nil {
+		return nil, domain.Node{}, err
+	}
 	legacyEndpoint, perTunnelEndpoint := "", ""
 	legacyKeepalive := wg.KeepaliveFor(keepaliveIdentity("master-exit|exit|", exit.Name, master))
 	perTunnelKeepalive := wg.KeepaliveFor(keepaliveIdentity("master-exit|exit|per-tunnel|", exit.Name, master))
