@@ -104,10 +104,18 @@ func checkManifestOnly(path string) (*config.ControllerConfig, error) {
 	}
 	// Advisory, not a load failure: the same warning the running controller logs at
 	// startup, surfaced here so a manifest edit can be checked before it is applied.
-	for _, w := range config.ClientAWGTunnelWarnings(*cfg) {
+	for _, w := range manifestWarnings(*cfg) {
 		fmt.Printf("\nwarning: %s\n", w)
 	}
 	return cfg, nil
+}
+
+// manifestWarnings is everything about a valid manifest that is worth saying and
+// not worth refusing to start over. One list for both places that say it — the
+// check, before the restart, and the controller's startup log, after it — so a
+// warning cannot be added to one and forgotten in the other.
+func manifestWarnings(cfg config.ControllerConfig) []string {
+	return append(config.ClientAWGTunnelWarnings(cfg), config.ExitDirectRuleWarnings(cfg)...)
 }
 
 // printMasterModel prints what places every master on every exit: the anchor

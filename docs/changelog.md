@@ -27,7 +27,8 @@ New releases are announced, with the archives attached, in the Telegram channel 
 - The address an exit confirmed for `exit_initiated` is stored. A controller restart no longer disarms the master's gate or restarts the wait before a silent tunnel's port is moved.
 - A store read error while rendering an `exit_initiated` tunnel fails the render; the node keeps its last spec. Before, the tunnel was handed its first port again.
 - `--check-config` prints the anchor label, the base master and every master's slot, and warns when several masters run without `fleet.mgmt_subnet`.
-- The manifest is refused when `fleet.interface_anchor` is `clients`, `lifeline` or holds whitespace or `|`, and when an exit would be given more than 80 direct rules (`routing.direct_cidrs` of the master in slot 0, the management CIDRs and one per other master).
+- The manifest is refused when `fleet.interface_anchor` is `clients`, `lifeline` or holds whitespace or `|`.
+- `--check-config` and the controller's startup log warn when an exit is given more than 80 direct rules (`routing.direct_cidrs` of the master in slot 0, the management CIDRs and one per other master). The manifest still loads; an exit with WARP egress cannot apply its routing past that count.
 - The controller logs which master holds an exit at AmneziaWG 2.0 when `awg3` is on.
 
 ### Fixed

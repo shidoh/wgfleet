@@ -131,7 +131,7 @@ func run() error {
 	defer applyConfigLogLevel(logLV, logBase, *logLevel, cfg.Controller.LogLevel)()
 	// Advisory, not a load failure (RULING): a config that would silently strand a
 	// device's mihomo subscription over AWG still starts, it just says so.
-	for _, w := range config.ClientAWGTunnelWarnings(*cfg) {
+	for _, w := range manifestWarnings(*cfg) {
 		slog.Warn(w)
 	}
 	// --plan on its own used to fall through to serve(). Every subcommand consults it

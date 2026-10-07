@@ -438,10 +438,13 @@ Both files are validated at startup and the process refuses to run on a bad valu
   required with several masters and when no master holds slot 0; no master, exit or
   anchor label may be named `clients` or `lifeline`, and the label holds no whitespace
   and no `|`.
-- The direct rules of an exit — `routing.direct_cidrs` of the master in slot 0, the
-  management CIDRs and one per other master — must number 80 at most.
 - Durations, MTUs and MSS values are range-checked; the error names the key and the
   accepted band.
+
+Not refused, only warned about (by `--check-config` and in the startup log): more
+than 80 direct rules per exit — `routing.direct_cidrs` of the master in slot 0, the
+management CIDRs and one per other master. An exit with WARP egress cannot apply its
+routing past that count.
 
 `--check-config` validates a manifest without touching the fleet: it parses the file,
 prints its digest and the master/exit counts, then makes the checks a restart makes —

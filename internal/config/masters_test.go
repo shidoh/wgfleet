@@ -135,13 +135,14 @@ func directCIDRs(n int) []string {
 
 // An exit's direct rules are the base master's direct_cidrs, the management
 // CIDRs and one host route per other master, each on its own priority. Past the
-// cap they would walk into the fwmark rule; the per-master check alone lets a
-// manifest through that no exit can then apply.
-func TestValidateExitDirectListSize(t *testing.T) {
+// cap a policy-routed exit cannot apply its routing at all. That is said, loudly
+// — and never refused: such a manifest starts today (a fleet of direct-egress
+// exits runs fine over the count), so it has to start after the upgrade too.
+func TestExitDirectRuleWarnings(t *testing.T) {
 	cases := []struct {
-		name    string
-		mutate  func(*FleetSection)
-		wantErr string
+		name     string
+		mutate   func(*FleetSection)
+		wantWarn string
 	}{
 		{"at the cap: 78 direct + 1 mgmt subnet + 1 other master",
 			func(f *FleetSection) {
@@ -183,15 +184,30 @@ func TestValidateExitDirectListSize(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			cfg := twoMasters()
 			c.mutate(&cfg.Fleet)
-			err := cfg.Validate()
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("the manifest was refused; the count is a warning, never a load failure: %v", err)
+			}
+			warns := ExitDirectRuleWarnings(cfg)
 			switch {
-			case c.wantErr == "" && err != nil:
-				t.Fatalf("rejected: %v", err)
-			case c.wantErr != "" && (err == nil || !strings.Contains(err.Error(), c.wantErr)):
-				t.Fatalf("want an error containing %q, got %v", c.wantErr, err)
-			case c.wantErr != "" && !strings.Contains(err.Error(), "fleet"):
-				t.Fatalf("the error does not name the fleet-level cause: %v", err)
+			case c.wantWarn == "" && len(warns) != 0:
+				t.Fatalf("warned: %q", warns)
+			case c.wantWarn == "":
+				return
+			case len(warns) != 1 || !strings.Contains(warns[0], c.wantWarn):
+				t.Fatalf("want one warning containing %q, got %q", c.wantWarn, warns)
+			}
+			for _, cause := range []string{"routing.direct_cidrs", "fleet.mgmt_subnet", "80"} {
+				if !strings.Contains(warns[0], cause) {
+					t.Errorf("the warning does not name %q: %s", cause, warns[0])
+				}
 			}
 		})
+	}
+	// No exits: nothing is rendered a direct rule.
+	cfg := twoMasters()
+	cfg.Fleet.Exits = nil
+	cfg.Fleet.Masters[0].Routing.DirectCIDRs = directCIDRs(80)
+	if warns := ExitDirectRuleWarnings(cfg); len(warns) != 0 {
+		t.Errorf("warned about a fleet with no exits: %q", warns)
 	}
 }

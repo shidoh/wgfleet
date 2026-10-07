@@ -279,3 +279,25 @@ func TestCheckConfigPrintsTheMasterModel(t *testing.T) {
 		})
 	}
 }
+
+// More direct rules than an exit can hold is said by the check and by the
+// startup log, from one list — and is not a reason to refuse the manifest.
+func TestManifestWarningsCarryTheDirectRuleCount(t *testing.T) {
+	cidrs := make([]string, 80)
+	for i := range cidrs {
+		cidrs[i] = fmt.Sprintf("10.%d.0.0/16", i)
+	}
+	cfg := config.ControllerConfig{Fleet: config.FleetSection{
+		MgmtSubnet: "10.200.0.0/24",
+		Masters:    []config.MasterConfig{{Name: "master-xa-1", Routing: config.MasterRouting{DirectCIDRs: cidrs}}},
+		Exits:      []config.ExitConfig{{Name: "exit-de-1", AddressPool: "10.81.0.0/24", Egress: "warp"}},
+	}}
+	warns := manifestWarnings(cfg)
+	if len(warns) != 1 || !strings.Contains(warns[0], "81 direct rules") {
+		t.Fatalf("warnings = %q, want the one about 81 direct rules", warns)
+	}
+	cfg.Fleet.Masters[0].Routing.DirectCIDRs = cidrs[:10]
+	if warns := manifestWarnings(cfg); len(warns) != 0 {
+		t.Errorf("a manifest under the cap was warned about: %q", warns)
+	}
+}

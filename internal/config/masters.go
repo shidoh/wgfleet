@@ -102,9 +102,6 @@ func (c ControllerConfig) validateMasterFanout() []error {
 			errs = append(errs, fmt.Errorf("fleet.interface_anchor: %q must not contain whitespace or '|'", a))
 		}
 	}
-	if err := f.validateExitDirectRules(); err != nil {
-		errs = append(errs, err)
-	}
 	_, lastHost := domain.MasterTunnelHostIndex(maxSlot)
 	for i, e := range f.Exits {
 		if _, bad := reservedNodeNames[e.Name]; bad {
@@ -126,16 +123,23 @@ func (c ControllerConfig) validateMasterFanout() []error {
 	return errs
 }
 
-// validateExitDirectRules checks that the direct rules every exit is rendered
+// ExitDirectRuleWarnings says when the direct rules every exit is rendered do not
 // fit under routing.MaxDirectCIDRs. Each takes its own ip-rule priority, and past
 // the cap they would walk into the fwmark rule — so routing.Render refuses the
-// whole set, on every exit, on every pass, and the fleet runs without policy
-// routing while the manifest that caused it loaded clean.
+// whole set, and an exit whose egress is policy-routed runs without its routing,
+// on every pass, while the manifest that caused it loaded clean.
+//
+// Advisory, like ClientAWGTunnelWarnings, and NEVER folded into Validate. The
+// limit bites only policy-routed exits: routing.Render has nothing to render for
+// a direct-egress exit, so a fleet of those over the count works today, and a
+// manifest that starts today must start after an upgrade. Callers print it from
+// --check-config and log it once at startup.
 //
 // The count mirrors keybroker.renderExitSpec: the base master's direct_cidrs and
 // the management CIDRs, de-duplicated, plus one host route for every other
-// master. It is the same for every exit, which is why the error is the fleet's.
-func (f FleetSection) validateExitDirectRules() error {
+// master. It is the same for every exit, which is why the cause is the fleet's.
+func ExitDirectRuleWarnings(c ControllerConfig) []string {
+	f := c.Fleet
 	if len(f.Exits) == 0 {
 		return nil
 	}
@@ -160,10 +164,11 @@ func (f FleetSection) validateExitDirectRules() error {
 	if total <= routing.MaxDirectCIDRs {
 		return nil
 	}
-	return fmt.Errorf("fleet: every exit would be given %d direct rules, over the max of %d: "+
+	return []string{fmt.Sprintf("fleet: every exit is given %d direct rules, over the max of %d — "+
+		"an exit whose egress is policy-routed (WARP) cannot apply its routing: "+
 		"%d from the base master's routing.direct_cidrs, %d management CIDRs (fleet.mgmt_subnet, or one per node's mgmt_addr without it) "+
-		"and %d for the other masters — shorten direct_cidrs, or declare fleet.mgmt_subnet",
-		total, routing.MaxDirectCIDRs, direct, mgmt, others)
+		"and %d for the other masters; shorten direct_cidrs, or declare fleet.mgmt_subnet",
+		total, routing.MaxDirectCIDRs, direct, mgmt, others)}
 }
 
 // poolHoldsHost reports whether the nth address after the network address is
