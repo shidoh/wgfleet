@@ -761,14 +761,22 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		if eerr != nil {
 			return domain.NodeSpec{}, eerr
 		}
+		// An exit this master renders no tunnel to at all has no pinned flow either
+		// (see forgetConfirmation); each skip below drops the pair's confirmation.
 		if exitPub == "" {
 			b.log.Warn("exit public key not yet registered; omitting from master mihomo proxies",
 				"master", master.Name, "exit", exit.Name)
+			if ferr := b.forgetConfirmation(ctx, master.Name, exit.Name); ferr != nil {
+				return domain.NodeSpec{}, ferr
+			}
 			continue
 		}
 		if exitNode.Decommission {
 			// A decommissioning exit is going away — drop it from the master
 			// entirely (not just out of the LB group, which is what Drain does).
+			if ferr := b.forgetConfirmation(ctx, master.Name, exit.Name); ferr != nil {
+				return domain.NodeSpec{}, ferr
+			}
 			continue
 		}
 		iface, _, ierr := b.exitInterface(ctx, exit, exitNode)
@@ -838,6 +846,9 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 					"address parses as one); omitting from master proxies",
 				"exit", exit.Name, "public_ip", exit.PublicIP, "ssh_host", exit.SSH.Host,
 				"stored", exitNode.PublicIP)
+			if ferr := b.forgetConfirmation(ctx, master.Name, exit.Name); ferr != nil {
+				return domain.NodeSpec{}, ferr
+			}
 			continue
 		default:
 			// Every source empty. Left to fail the render rather than silently dropping
@@ -887,9 +898,6 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		// the group being probed and held out. REALITY needs no peer on the exit.
 		if hasAWG && !b.exitCarries(exit, exitNode, master) {
 			hasAWG = false
-			if ferr := b.forgetConfirmation(ctx, master.Name, exit.Name); ferr != nil {
-				return domain.NodeSpec{}, ferr
-			}
 		}
 		// Nor does it hold one under a key an earlier master presents there too (see
 		// keyOwners): this master would dial with a key whose peer answers on the
@@ -900,6 +908,14 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 				return domain.NodeSpec{}, perr
 			}
 			hasAWG = peered
+		}
+		// No AmneziaWG tunnel from this master to this exit, for whichever reason
+		// above: armedMasterAddr is not reached, so the pair's confirmation is
+		// dropped here (see forgetConfirmation).
+		if !hasAWG {
+			if ferr := b.forgetConfirmation(ctx, master.Name, exit.Name); ferr != nil {
+				return domain.NodeSpec{}, ferr
+			}
 		}
 		realityRenderable := hasReality && haveIP && exitNode.RealityPublicKey != ""
 		realityActive := active == domain.TransportRealityXHTTP && realityRenderable

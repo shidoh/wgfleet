@@ -476,13 +476,21 @@ func wantNoTunnel(t *testing.T, b *Broker, master string) {
 	}
 }
 
-// forgetConfirmations empties the broker's cache of confirmations, as a
-// controller restart does; whatever the store holds is read back on the next
-// render.
-func forgetConfirmations(b *Broker) {
+// forgetConfirmations leaves the broker with no confirmation for any pair,
+// remembered or stored: every gate has to be earned again from what the exit
+// reports next.
+func forgetConfirmations(t *testing.T, b *Broker) {
+	t.Helper()
 	b.pinMu.Lock()
-	defer b.pinMu.Unlock()
 	b.pinConfirmed = make(map[string]pinConfirmation)
+	b.pinMu.Unlock()
+	for _, m := range b.fleet.Masters {
+		for _, e := range b.fleet.Exits {
+			if err := b.store.DeleteAWGPinConfirmation(context.Background(), m.Name, e.Name); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 }
 
 // Each master's gate arms from ITS OWN peer's reported endpoint — the peer that
@@ -599,10 +607,9 @@ func TestExitRolledBackBelowWire13FallsBackToTheSingleField(t *testing.T) {
 	}
 
 	setWireVersion(t, s.st, "exit-de-1", api.WireAWGExitInitiated)
-	// The controller restarts too. What it stored is about the wire-13 peer; below
-	// wire 13 the single field speaks for the tunnel, and the gate has to hold on
-	// that alone.
-	forgetConfirmations(s.b)
+	// Nothing confirmed from the peer list is left, in memory or in the store: the
+	// gate has to arm again from the single field alone.
+	forgetConfirmations(t, s.b)
 	for i := 0; i < 3; i++ {
 		now = now.Add(AWGRotateAfter)
 		recordExit(t, s.st, now, pinA) // wire 12: the single field and a fresh handshake, no peers

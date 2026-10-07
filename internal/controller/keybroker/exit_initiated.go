@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/api"
@@ -108,31 +109,49 @@ func (b *Broker) speakingKey(ctx context.Context, exit config.ExitConfig, exitNo
 // is today — the master opens the flow — which is the safe side of each case.
 // It also moves the port when the current one is judged poisoned.
 //
-// A refusal is ("", false, nil). An error is something else: the store could not
+// A refusal is ("", false) with no error. An error is something else: the store could not
 // say which generation the port is in, or what the exit confirmed. Rendering on
 // regardless would hand out generation 0 — the port already judged poisoned — and
 // disarm the master's gate for the pass, so the render fails instead and the node
 // keeps its last-good spec. Same rule as tunnelPubKey.
+//
+// Every refusal also forgets what the exit confirmed for the pair (see
+// forgetConfirmation): a confirmation exists only while the pinned flow is being
+// asked for. While it is not, the master dials from an ephemeral port and the
+// exit's endpoint follows it; a confirmation kept across that would arm the gate
+// the moment the flow is asked for again, on an address the exit is not knocking
+// on yet. Both renderers come through here, so they cannot disagree about it.
 func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, master config.MasterConfig, exitNode, masterNode domain.Node) (string, bool, error) {
-	if !exit.Transports.AWG.ExitInitiated {
-		return "", false, nil
+	refuse := func() (string, bool, error) {
+		return "", false, b.forgetConfirmation(ctx, master.Name, exit.Name)
+	}
+	if !exit.Transports.AWG.ExitInitiated || !slices.Contains(exit.EnabledTransports(), domain.TransportAWG) {
+		return refuse()
 	}
 	if !b.exitCarries(exit, exitNode, master) {
-		return "", false, nil
+		return refuse()
+	}
+	// The master holds no peer on this exit under the key it dials with — an
+	// earlier master presents the same one (see keyOwners). There is no tunnel to
+	// pin, and nothing here may judge or move a port for it.
+	if peered, err := b.peeredOn(ctx, exit, exitNode, master, masterNode); err != nil {
+		return "", false, err
+	} else if !peered {
+		return refuse()
 	}
 	if exitNode.WireVersion < api.WireAWGExitInitiated || masterNode.WireVersion < api.WireAWGExitInitiated {
 		b.warnOnce("exit-initiated-wire:"+pinKey(master.Name, exit.Name), fmt.Sprintf("%d|%d", masterNode.WireVersion, exitNode.WireVersion),
 			"exit-initiated AWG flow not rendered: an agent is too old to hold its half",
 			"exit", exit.Name, "master", master.Name, "master_wire", masterNode.WireVersion, "exit_wire", exitNode.WireVersion,
 			"need_wire", api.WireAWGExitInitiated)
-		return "", false, nil
+		return refuse()
 	}
 	ip, ok := masterRoutableIP(master, masterNode)
 	if !ok || !config.IsKnockableIPv4(ip) {
 		b.warnOnce("exit-initiated-no-public-ip:"+pinKey(master.Name, exit.Name), master.PublicIP+"|"+masterNode.PublicIP,
 			"exit-initiated AWG flow not rendered: the master has no public IPv4 the exit could knock on",
 			"exit", exit.Name, "master", master.Name, "public_ip", master.PublicIP, "stored", masterNode.PublicIP)
-		return "", false, nil
+		return refuse()
 	}
 	gen, rotatedAt, err := b.store.GetAWGPortRotation(ctx, master.Name, exit.Name)
 	if err != nil {
@@ -305,14 +324,17 @@ func (b *Broker) confirm(ctx context.Context, master, exit string, c pinConfirma
 	}
 }
 
-// forgetConfirmation drops what the exit confirmed for a pair it no longer
-// carries. A confirmation is about a tunnel that exists: while the exit holds no
-// peer for the master nothing is pinned, and when it carries the master again the
-// old record's age would be read as that long of silence — the returning peer,
-// which has rightly never handshaken, judged a poisoned flow and its port moved
-// on the first render (seen on the stand). The pair confirms afresh on return.
+// forgetConfirmation drops what the exit confirmed for a pair whose pinned flow
+// the controller is not rendering: the flag is off, the exit has no AmneziaWG
+// transport, an agent is too old, the master has no address to knock on, the
+// exit does not carry the master, or holds no peer for it. A confirmation is
+// about a pinned flow that exists. Kept across a gap it does two wrong things on
+// return: it arms the gate before the exit has reported the pinned endpoint, and
+// its age is read as that long of silence — the returning peer, which has rightly
+// never handshaken there, judged a poisoned flow and its port moved on the first
+// render (seen on the stand). The pair confirms afresh on return.
 //
-// Every render of an uncarried pair comes through here, so it must cost nothing
+// Every render of such a pair comes through here, so it must cost nothing
 // when there is nothing to forget: the cache answers, and the store is written
 // only when a confirmation is actually dropped. pinMu is not held across I/O. A
 // failed delete is logged, not fatal — this process has already forgotten; the

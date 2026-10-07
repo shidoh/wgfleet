@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/api"
+	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
 )
@@ -216,5 +217,174 @@ func TestForgettingAnUncarriedPairCostsOneWrite(t *testing.T) {
 	// One read per pair, ever: the cache answers the rest.
 	if counted.reads > 2 {
 		t.Errorf("confirmation reads = %d over 15 renders, want at most one per pair", counted.reads)
+	}
+}
+
+// withExitInitiated is b's fleet with the flag set as given on its first exit —
+// the manifest edit, and the controller restart it takes, between two Brokers.
+func withExitInitiated(st store.Store, b *Broker, on bool, clock *time.Time) *Broker {
+	fleet := b.fleet
+	fleet.Exits = append([]config.ExitConfig(nil), b.fleet.Exits...)
+	fleet.Exits[0].Transports.AWG.ExitInitiated = on
+	return New(st, fleet, slog.New(slog.NewTextHandler(io.Discard, nil)), WithClock(func() time.Time { return *clock }))
+}
+
+func generationOf(t *testing.T, st store.Store, master string) int {
+	t.Helper()
+	g, _, err := st.GetAWGPortRotation(context.Background(), master, "exit-de-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g
+}
+
+// A confirmation exists only while the pinned flow is asked for. With the flag
+// off the master dials from an ephemeral port and the exit's endpoint follows it;
+// switched on again, a confirmation kept from before would arm the gate at once —
+// the master answering only an address the exit is not knocking on yet — and its
+// age would move the port of a peer that has simply not handshaken there. The
+// gate arms on the exit's report, as it did before anything was stored.
+func TestSwitchingTheFlowOffForgetsItsConfirmation(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	b, st, pub := eiFleet(t, &now)
+	ctx := context.Background()
+	report(t, st, eiExit, now, now, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	if got := masterTunnel(t, b).MasterAddr; got != eiPinned {
+		t.Fatalf("gate = %q, want %q", got, eiPinned)
+	}
+
+	off := withExitInitiated(st, b, false, &now)
+	for _, id := range []string{eiExit, eiMaster} {
+		mustRender(t, off, id)
+	}
+	if addr, _, _, err := st.GetAWGPinConfirmation(ctx, eiMaster, eiExit); err != nil || addr != "" {
+		t.Errorf("stored confirmation with the flow switched off = %q, %v; want none", addr, err)
+	}
+
+	// On again, long after; the exit's endpoint is wherever the master last dialled from.
+	now = now.Add(AWGRotateAfter + AWGRotateMinInterval + 10*time.Minute)
+	on := withExitInitiated(st, b, true, &now)
+	roamed := eiMasterIP + ":40000"
+	report(t, st, eiExit, now, time.Time{}, roamed)
+	report(t, st, eiMaster, now, now, "")
+	if got := exitPeer(t, on, pub).Endpoint; got != eiPinned {
+		t.Errorf("exit endpoint = %q, want the generation-0 port %q: the port was moved on a confirmation from before", got, eiPinned)
+	}
+	if got := masterTunnel(t, on).MasterAddr; got != "" {
+		t.Errorf("gate = %q before the exit reported the pinned endpoint, want it unarmed", got)
+	}
+	if g := generationOf(t, st, eiMaster); g != 0 {
+		t.Errorf("generation = %d, want 0", g)
+	}
+	report(t, st, eiExit, now, time.Time{}, eiPinned)
+	if got := masterTunnel(t, on).MasterAddr; got != eiPinned {
+		t.Errorf("gate = %q after the exit reported the pinned endpoint, want %q", got, eiPinned)
+	}
+}
+
+// The same cycle for a non-base master on an exit that reports per peer.
+func TestSwitchingTheFlowOffForgetsANonBaseMastersConfirmation(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	phase := domain.PerTunnelKeyOff
+	s := eiTwoMasters(t, phase, &now)
+	ctx := context.Background()
+	pinB := pinnedFor("master-xa-2", "203.0.113.2")
+	keyB := s.tunnelKeyIn(phase, "master-xa-2")
+	peerB := func(endpoint string, hs time.Time) {
+		recordExit(t, s.st, now, "", domain.MasterPeerStatus{PublicKey: keyB, Endpoint: endpoint, LastHandshake: hs})
+		recordMasters(t, s.st, now)
+	}
+	renderAll := func(b *Broker) {
+		for _, id := range []string{"exit-de-1", "master-xa-1", "master-xa-2"} {
+			mustRender(t, b, id)
+		}
+	}
+
+	peerB(pinB, now)
+	if got := gateOf(t, s.b, "master-xa-2"); got != pinB {
+		t.Fatalf("gate = %q, want %q", got, pinB)
+	}
+	renderAll(withExitInitiated(s.st, s.b, false, &now))
+	if addr, _, _, err := s.st.GetAWGPinConfirmation(ctx, "master-xa-2", "exit-de-1"); err != nil || addr != "" {
+		t.Errorf("stored confirmation with the flow switched off = %q, %v; want none", addr, err)
+	}
+
+	now = now.Add(AWGRotateAfter + AWGRotateMinInterval + 10*time.Minute)
+	on := withExitInitiated(s.st, s.b, true, &now)
+	peerB("203.0.113.2:40000", time.Time{})
+	renderAll(on)
+	if got := gateOf(t, on, "master-xa-2"); got != "" {
+		t.Errorf("gate = %q before the exit reported the pinned endpoint, want it unarmed", got)
+	}
+	if g := generationOf(t, s.st, "master-xa-2"); g != 0 {
+		t.Errorf("generation = %d, want 0", g)
+	}
+	peerB(pinB, time.Time{})
+	if got := gateOf(t, on, "master-xa-2"); got != pinB {
+		t.Errorf("gate = %q after the exit reported the pinned endpoint, want %q", got, pinB)
+	}
+}
+
+// Most exits never switch the flow on. Having nothing to forget must cost them
+// no write, on any render.
+func TestAFlowThatWasNeverOnCostsNoWrite(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	s := eiTwoMasters(t, domain.PerTunnelKeyOff, &now)
+	counted := &countingConfirmations{Store: s.st}
+	off := withExitInitiated(counted, s.b, false, &now)
+	for i := 0; i < 5; i++ {
+		for _, id := range []string{"exit-de-1", "master-xa-1", "master-xa-2"} {
+			mustRender(t, off, id)
+		}
+	}
+	if counted.deletes != 0 {
+		t.Errorf("deletes = %d for a flow that was never on, want 0", counted.deletes)
+	}
+	if counted.reads > 2 {
+		t.Errorf("confirmation reads = %d over 15 renders, want at most one per pair", counted.reads)
+	}
+}
+
+// The other refusals forget too, wherever they are decided: an agent that went
+// back below the wire the flow needs, a master left without an address to knock
+// on, a master that lost its peer to a duplicate key.
+func TestEveryRefusalForgetsTheConfirmation(t *testing.T) {
+	cases := map[string]func(t *testing.T, s seededFleet){
+		"the master's agent is too old": func(t *testing.T, s seededFleet) {
+			setWireVersion(t, s.st, "master-xa-2", api.WireAWGExitInitiated-1)
+		},
+		"the master has no public IPv4": func(t *testing.T, s seededFleet) {
+			s.b.fleet.Masters = append([]config.MasterConfig(nil), s.b.fleet.Masters...)
+			s.b.fleet.Masters[1].PublicIP = "10.9.9.9"
+		},
+		"the master's key is another master's": func(t *testing.T, s seededFleet) { cloneMasterKeys(t, s) },
+	}
+	for name, breakIt := range cases {
+		t.Run(name, func(t *testing.T) {
+			now := time.Unix(1_800_000_000, 0)
+			phase := domain.PerTunnelKeyOff
+			s := eiTwoMasters(t, phase, &now)
+			ctx := context.Background()
+			pinB := pinnedFor("master-xa-2", "203.0.113.2")
+			recordExit(t, s.st, now, "", domain.MasterPeerStatus{PublicKey: s.tunnelKeyIn(phase, "master-xa-2"), Endpoint: pinB, LastHandshake: now})
+			recordMasters(t, s.st, now)
+			if got := gateOf(t, s.b, "master-xa-2"); got != pinB {
+				t.Fatalf("gate = %q, want %q", got, pinB)
+			}
+			breakIt(t, s)
+			now = now.Add(AWGRotateAfter + AWGRotateMinInterval + 10*time.Minute)
+			recordExit(t, s.st, now, "", domain.MasterPeerStatus{PublicKey: s.sharedPubs["master-xa-1"], Endpoint: "203.0.113.9:40000"})
+			recordMasters(t, s.st, now)
+			for _, id := range []string{"exit-de-1", "master-xa-2"} {
+				mustRender(t, s.b, id)
+			}
+			if addr, _, _, err := s.st.GetAWGPinConfirmation(ctx, "master-xa-2", "exit-de-1"); err != nil || addr != "" {
+				t.Errorf("stored confirmation = %q, %v; want none", addr, err)
+			}
+			if g := generationOf(t, s.st, "master-xa-2"); g != 0 {
+				t.Errorf("generation = %d, want 0: a port was moved for a flow that is not rendered", g)
+			}
+		})
 	}
 }
