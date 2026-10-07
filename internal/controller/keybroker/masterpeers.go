@@ -134,3 +134,106 @@ func (b *Broker) exitCarries(exit config.ExitConfig, exitNode domain.Node, maste
 		"exit", exit.Name, "master", master.Name, "exit_wire", exitNode.WireVersion, "need_wire", api.WireMasterPeers)
 	return false
 }
+
+// keyOwners maps every public key the masters present on exit's interface to the
+// master that keeps it: the first in manifest order.
+//
+// The kernel knows a peer by its public key and nothing else. Two masters with
+// one key — the second built from a copy of the first's disk, so the shared key
+// and every derived per-tunnel key match — would render as two peers on two
+// addresses, and the exit agent, which keys its view of the kernel the same way,
+// would move the one real peer's allowed-ips back and forth: the healthy master
+// loses its return path every other pass. So a key is peered once. The renderer
+// of the exit and the renderer of each master both decide from this map, or the
+// loser would be handed a tunnel whose peer answers on another master's address.
+//
+// A one-master fleet has nobody to collide with and reads nothing.
+func (b *Broker) keyOwners(ctx context.Context, exit config.ExitConfig, exitNode domain.Node) (map[string]string, error) {
+	if len(b.fleet.Masters) < 2 {
+		return nil, nil
+	}
+	phase := exit.PerTunnelKeyPhase()
+	owners := make(map[string]string)
+	claim := func(key, master string) {
+		if _, taken := owners[key]; key != "" && !taken {
+			owners[key] = master
+		}
+	}
+	for _, m := range b.fleet.Masters {
+		if !b.exitCarries(exit, exitNode, m) {
+			continue
+		}
+		if phase.ExitAcceptsLegacyKey() {
+			_, pub, err := b.lookupPubKey(ctx, m.Name)
+			if err != nil {
+				return nil, err
+			}
+			claim(pub, m.Name)
+		}
+		if phase.ExitAcceptsPerTunnelKey() {
+			pub, err := b.tunnelPubKey(ctx, m.Name, exit.Name)
+			if err != nil {
+				return nil, fmt.Errorf("exit %q: %w", exit.Name, err)
+			}
+			claim(pub, m.Name)
+		}
+	}
+	return owners, nil
+}
+
+// ownsKey reports whether master is the one peered on exit under key, and says
+// so — once — when an earlier master is.
+func (b *Broker) ownsKey(owners map[string]string, exit, master, key string) bool {
+	owner, claimed := owners[key]
+	if !claimed || owner == master {
+		return true
+	}
+	// The key is part of the once-key, not its detail: in dual and switch a copied
+	// master collides twice, and two details taking turns would log on every render.
+	b.errorOnce("duplicate-master-key:"+exit+"/"+owner+"/"+master+"/"+key, "",
+		"two masters present the same WireGuard key; the later one is not peered",
+		"exit", exit, "peered", owner, "not_peered", master, "public_key", key)
+	return false
+}
+
+// peeredOn reports whether the exit holds a peer for the key master dials it with
+// in the exit's current phase. A key not published yet is not a refusal: the peer
+// appears when it is.
+func (b *Broker) peeredOn(ctx context.Context, exit config.ExitConfig, exitNode domain.Node,
+	master config.MasterConfig, masterNode domain.Node) (bool, error) {
+	owners, err := b.keyOwners(ctx, exit, exitNode)
+	if err != nil || len(owners) == 0 {
+		return true, err
+	}
+	key, err := b.masterTunnelKey(ctx, exit, master, masterNode)
+	if err != nil {
+		return false, fmt.Errorf("exit %q: %w", exit.Name, err)
+	}
+	return b.ownsKey(owners, exit.Name, master.Name, key), nil
+}
+
+// refuseAnotherMastersKey returns an error when nodeID is a manifest master and
+// another manifest master already holds publicKey in the slot keyOf reads. The
+// render would leave the later of the two without a peer (see keyOwners); told at
+// registration, the operator learns it from the node that has the problem.
+func (b *Broker) refuseAnotherMastersKey(ctx context.Context, nodeID, publicKey, kind string,
+	keyOf func(ctx context.Context, master string) (string, error)) error {
+	if _, ok := b.findMaster(nodeID); !ok {
+		return nil
+	}
+	for _, m := range b.fleet.Masters {
+		if m.Name == nodeID {
+			continue
+		}
+		held, err := keyOf(ctx, m.Name)
+		if err != nil {
+			return fmt.Errorf("checking the %s key of %q against master %q: %w", kind, nodeID, m.Name, err)
+		}
+		if held == publicKey {
+			return fmt.Errorf("%q published the %s WireGuard public key master %q already holds: "+
+				"two masters with one key cannot share an exit — generate a new key on %q (a copied disk carries the other master's)",
+				nodeID, kind, m.Name, nodeID)
+		}
+	}
+	return nil
+}

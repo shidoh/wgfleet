@@ -132,6 +132,12 @@ func (b *Broker) RegisterPublicKey(ctx context.Context, nodeID, publicKey string
 	if b.keyUnchanged(ctx, nodeID, publicKey, func(n domain.Node) string { return n.PublicKey }) {
 		return nil
 	}
+	if err := b.refuseAnotherMastersKey(ctx, nodeID, publicKey, "shared", func(ctx context.Context, master string) (string, error) {
+		_, pub, err := b.lookupPubKey(ctx, master)
+		return pub, err
+	}); err != nil {
+		return err
+	}
 	if err := b.store.SetNodePublicKey(ctx, nodeID, publicKey); err != nil {
 		return err
 	}
@@ -368,6 +374,11 @@ func (b *Broker) RegisterTunnelKey(ctx context.Context, nodeID, tunnel, publicKe
 	if cur, err := b.store.ListNodeTunnelKeys(ctx, nodeID); err == nil && cur[tunnel] == publicKey {
 		return nil
 	}
+	if err := b.refuseAnotherMastersKey(ctx, nodeID, publicKey, "per-tunnel", func(ctx context.Context, master string) (string, error) {
+		return b.tunnelPubKey(ctx, master, tunnel)
+	}); err != nil {
+		return err
+	}
 	if err := b.store.SetNodeTunnelKey(ctx, nodeID, tunnel, publicKey); err != nil {
 		return err
 	}
@@ -530,6 +541,11 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	}
 	directCIDRs := mergeUnique(baseDirect, mgmtCIDRs)
 
+	owners, err := b.keyOwners(ctx, exit, exitNode)
+	if err != nil {
+		return domain.NodeSpec{}, err
+	}
+
 	// One peer set per master, in manifest order.
 	//
 	// MasterIP resolves from the node record masterPeers ALREADY read: a second
@@ -551,7 +567,11 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		if perr != nil {
 			return domain.NodeSpec{}, perr
 		}
-		spec.Peers = append(spec.Peers, peers...)
+		for _, p := range peers {
+			if b.ownsKey(owners, exit.Name, master.Name, p.PublicKey) {
+				spec.Peers = append(spec.Peers, p)
+			}
+		}
 		ip, ok := masterRoutableIP(master, masterNode)
 		switch {
 		case !ok:
@@ -864,6 +884,16 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		// the group being probed and held out. REALITY needs no peer on the exit.
 		if hasAWG && !b.exitCarries(exit, exitNode, master) {
 			hasAWG = false
+		}
+		// Nor does it hold one under a key an earlier master presents there too (see
+		// keyOwners): this master would dial with a key whose peer answers on the
+		// other's address.
+		if hasAWG {
+			peered, perr := b.peeredOn(ctx, exit, exitNode, master, masterNode)
+			if perr != nil {
+				return domain.NodeSpec{}, perr
+			}
+			hasAWG = peered
 		}
 		realityRenderable := hasReality && haveIP && exitNode.RealityPublicKey != ""
 		realityActive := active == domain.TransportRealityXHTTP && realityRenderable
@@ -1492,6 +1522,15 @@ func (b *Broker) inMgmtOverlay(addr netip.Addr) bool {
 // real events under thousands of identical lines a day. That is the same churn
 // Register was fixed for; do not reintroduce it by warning in a render loop.
 func (b *Broker) warnOnce(key, detail, msg string, args ...any) {
+	b.logOnce(slog.LevelWarn, key, detail, msg, args...)
+}
+
+// errorOnce is warnOnce for a standing condition that has a node cut off.
+func (b *Broker) errorOnce(key, detail, msg string, args ...any) {
+	b.logOnce(slog.LevelError, key, detail, msg, args...)
+}
+
+func (b *Broker) logOnce(level slog.Level, key, detail, msg string, args ...any) {
 	b.warnMu.Lock()
 	if prev, seen := b.warned[key]; seen && prev == detail {
 		b.warnMu.Unlock()
@@ -1499,7 +1538,7 @@ func (b *Broker) warnOnce(key, detail, msg string, args ...any) {
 	}
 	b.warned[key] = detail
 	b.warnMu.Unlock()
-	b.log.Warn(msg, args...)
+	b.log.Log(context.Background(), level, msg, args...)
 }
 
 // isIPLiteral reports whether s is an IP address rather than a DNS name.
