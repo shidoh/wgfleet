@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"sort"
 	"sync"
 	"time"
 
@@ -513,37 +514,67 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		spec.Firewall.LifelinePort = lifeline.ListenPort
 	}
 
-	master, ok := b.fleet.BaseMaster()
-	if !ok {
+	if len(b.fleet.Masters) == 0 {
 		b.log.Warn("exit has no master to peer with", "exit", exit.Name)
 		return spec, nil
 	}
-	peers, masterNode, err := b.masterPeers(ctx, exit, exitNode, master, serverMTU)
-	if err != nil {
-		return domain.NodeSpec{}, err
-	}
-	spec.Peers = append(spec.Peers, peers...)
-
 	// Routing intent: client traffic egresses via WARP, but management and the
-	// path back to the master must stay direct (an earlier finding–#5).
+	// path back to every master must stay direct (an earlier finding–#5).
 	//
-	// MasterIP resolves from the node record lookupPubKey ALREADY read: a second
+	// The direct list an exit inherits is the base master's, exactly as before:
+	// taking every master's would change where the OTHER masters' clients leave
+	// from. With no base master there is none.
+	var baseDirect []string
+	if base, ok := b.fleet.BaseMaster(); ok {
+		baseDirect = b.masterDirectCIDRs(base)
+	}
+	directCIDRs := mergeUnique(baseDirect, mgmtCIDRs)
+
+	// One peer set per master, in manifest order.
+	//
+	// MasterIP resolves from the node record masterPeers ALREADY read: a second
 	// store read here would have to swallow its own error, and "the store is
 	// briefly busy" would then render, apply and report a spec with no route back
 	// to the master — the return path silently falling into WARP, which is the
 	// failure an earlier finding exists to prevent. It is also an IP literal or nothing:
 	// routing.Render feeds it to `ip rule add to <X>`, which cannot resolve a name.
-	spec.Routing = domain.RoutingSpec{
-		DirectCIDRs: mergeUnique(b.masterDirectCIDRs(master), mgmtCIDRs),
+	type hostRoute struct {
+		slot int
+		cidr string
 	}
-	if ip, ok := masterRoutableIP(master, masterNode); ok {
-		spec.Routing.MasterIP = ip.String()
-	} else {
-		b.warnOnce("master-no-routable-ip:"+master.Name+"/"+exit.Name, master.PublicIP+"|"+masterNode.PublicIP,
-			"master has no usable IP literal (public_ip is unset or a DNS name and the store has none); "+
-				"the exit's direct route back to the master is omitted and its replies will follow the egress",
-			"exit", exit.Name, "master", master.Name, "public_ip", master.PublicIP)
+	var hosts []hostRoute
+	for _, master := range b.fleet.Masters {
+		if !b.exitCarries(exitNode, master) {
+			continue
+		}
+		peers, masterNode, perr := b.masterPeers(ctx, exit, exitNode, master, serverMTU)
+		if perr != nil {
+			return domain.NodeSpec{}, perr
+		}
+		spec.Peers = append(spec.Peers, peers...)
+		ip, ok := masterRoutableIP(master, masterNode)
+		switch {
+		case !ok:
+			b.warnOnce("master-no-routable-ip:"+master.Name+"/"+exit.Name, master.PublicIP+"|"+masterNode.PublicIP,
+				"master has no usable IP literal (public_ip is unset or a DNS name and the store has none); "+
+					"the exit's direct route back to the master is omitted and its replies will follow the egress",
+				"exit", exit.Name, "master", master.Name, "public_ip", master.PublicIP)
+		case master.IsBase():
+			spec.Routing.MasterIP = ip.String()
+		default:
+			// RoutingSpec carries one MasterIP. Every other master's return path is
+			// kept off the egress by a host route, which renders to the same `ip
+			// rule … lookup main`.
+			hosts = append(hosts, hostRoute{master.Slot, host32(ip)})
+		}
 	}
+	// Appended, in slot order: the rules already on the exit keep their priorities,
+	// and a master coming or going is one rule coming or going.
+	sort.Slice(hosts, func(i, j int) bool { return hosts[i].slot < hosts[j].slot })
+	for _, h := range hosts {
+		directCIDRs = mergeUnique(directCIDRs, []string{h.cidr})
+	}
+	spec.Routing.DirectCIDRs = directCIDRs
 	if egress == domain.EgressWARP {
 		spec.Routing.EgressInterface = "wgcf"
 	}
@@ -637,6 +668,8 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	if err != nil {
 		return domain.NodeSpec{}, err
 	}
+	// Where this master lives in every exit's pool; see the loop over exits below.
+	legacyHost, perTunnelHost := domain.MasterTunnelHostIndex(master.Slot)
 
 	// Route client traffic to the master's OWN public IP DIRECT, exactly as each
 	// exit's public IP is handled below. Without it the prerouting DNAT catches
@@ -719,7 +752,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		if ierr != nil {
 			return domain.NodeSpec{}, ierr
 		}
-		masterAddr, err := nthHost(exit.AddressPool, masterHostIndex)
+		masterAddr, err := nthHost(exit.AddressPool, legacyHost)
 		if err != nil {
 			return domain.NodeSpec{}, err
 		}
@@ -729,7 +762,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		// Address and key flip together, in the single manifest step `dual`→`switch`.
 		keyTunnel := ""
 		if exit.PerTunnelKeyPhase().MasterUsesPerTunnelKey() {
-			perTunnelAddr, aerr := nthHost(exit.AddressPool, masterPerTunnelHostIndex)
+			perTunnelAddr, aerr := nthHost(exit.AddressPool, perTunnelHost)
 			if aerr != nil {
 				return domain.NodeSpec{}, fmt.Errorf("exit %q: per-tunnel master address: %w", exit.Name, aerr)
 			}
@@ -825,6 +858,12 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			case domain.TransportRealityXHTTP:
 				hasReality = true
 			}
+		}
+		// The exit holds no peer for this master yet (its agent is too old to take
+		// one in place): an AWG proxy to it would never handshake, and would sit in
+		// the group being probed and held out. REALITY needs no peer on the exit.
+		if hasAWG && !b.exitCarries(exitNode, master) {
+			hasAWG = false
 		}
 		realityRenderable := hasReality && haveIP && exitNode.RealityPublicKey != ""
 		realityActive := active == domain.TransportRealityXHTTP && realityRenderable

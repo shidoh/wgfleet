@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/wg"
@@ -19,9 +20,10 @@ import (
 // others' peers with it.
 func (b *Broker) masterPeers(ctx context.Context, exit config.ExitConfig, exitNode domain.Node,
 	master config.MasterConfig, mtu int) ([]domain.PeerSpec, domain.Node, error) {
-	masterAddr, err := nthHost(exit.AddressPool, masterHostIndex)
+	legacyHost, perTunnelHost := domain.MasterTunnelHostIndex(master.Slot)
+	masterAddr, err := nthHost(exit.AddressPool, legacyHost)
 	if err != nil {
-		return nil, domain.Node{}, err
+		return nil, domain.Node{}, fmt.Errorf("exit %q: master %q address: %w", exit.Name, master.Name, err)
 	}
 	var peers []domain.PeerSpec
 	masterNode, masterPub, err := b.lookupPubKey(ctx, master.Name)
@@ -33,12 +35,12 @@ func (b *Broker) masterPeers(ctx context.Context, exit config.ExitConfig, exitNo
 	// ONE peer whose identity the master actually uses in this phase.
 	pinned, pinnedOK := b.exitInitiatedAddr(ctx, exit, master, exitNode, masterNode)
 	legacyEndpoint, perTunnelEndpoint := "", ""
-	legacyKeepalive := wg.KeepaliveFor("master-exit|exit|" + exit.Name)
-	perTunnelKeepalive := wg.KeepaliveFor("master-exit|exit|per-tunnel|" + exit.Name)
+	legacyKeepalive := wg.KeepaliveFor(keepaliveIdentity("master-exit|exit|", exit.Name, master))
+	perTunnelKeepalive := wg.KeepaliveFor(keepaliveIdentity("master-exit|exit|per-tunnel|", exit.Name, master))
 	if pinnedOK {
 		// The exit speaks every few seconds on the flow it opened, so a path filter
 		// never sees it idle long enough to forget who started it.
-		fast := wg.ExitInitiatedKeepaliveFor("master-exit|exit|" + exit.Name)
+		fast := wg.ExitInitiatedKeepaliveFor(keepaliveIdentity("master-exit|exit|", exit.Name, master))
 		if phase.MasterUsesPerTunnelKey() {
 			perTunnelEndpoint, perTunnelKeepalive = pinned, fast
 		} else {
@@ -71,7 +73,7 @@ func (b *Broker) masterPeers(ctx context.Context, exit config.ExitConfig, exitNo
 	// Per-tunnel identity peer (ADR-0030), on its OWN address so it does not contend
 	// with the legacy peer for the same /32 in the AllowedIPs trie.
 	if phase.ExitAcceptsPerTunnelKey() {
-		perTunnelAddr, aerr := nthHost(exit.AddressPool, masterPerTunnelHostIndex)
+		perTunnelAddr, aerr := nthHost(exit.AddressPool, perTunnelHost)
 		if aerr != nil {
 			return nil, domain.Node{}, fmt.Errorf("exit %q: per-tunnel master address: %w", exit.Name, aerr)
 		}
@@ -101,4 +103,29 @@ func (b *Broker) masterPeers(ctx context.Context, exit config.ExitConfig, exitNo
 	}
 
 	return peers, masterNode, nil
+}
+
+// keepaliveIdentity names one end's keepalive period. The base master keeps the
+// identity a one-master fleet has always used; every other master adds its name,
+// so two masters do not beacon one exit on the same period.
+func keepaliveIdentity(prefix, exit string, master config.MasterConfig) string {
+	if master.IsBase() {
+		return prefix + exit
+	}
+	return prefix + exit + "|" + master.Name
+}
+
+// exitCarries reports whether master is rendered onto this exit at all. The base
+// master always is — that is what the exit has today. Any other master needs an
+// exit agent that can take a new peer without restarting awg0 and report every
+// peer back (api.WireMasterPeers): below it, one more master would bounce the
+// interface the base master's traffic is on, on every such exit at once.
+func (b *Broker) exitCarries(exitNode domain.Node, master config.MasterConfig) bool {
+	if master.IsBase() || exitNode.WireVersion >= api.WireMasterPeers {
+		return true
+	}
+	b.warnOnce("master-waits-for-exit:"+master.Name+"/"+exitNode.Name, fmt.Sprint(exitNode.WireVersion),
+		"master not rendered onto this exit yet: the exit's agent is too old to carry a second master",
+		"exit", exitNode.Name, "master", master.Name, "exit_wire", exitNode.WireVersion, "need_wire", api.WireMasterPeers)
+	return false
 }
