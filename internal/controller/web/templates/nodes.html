@@ -125,6 +125,32 @@
     {{range .}}{{template "topo-row" .}}{{end}}
   </div>
   {{end}}
+  {{with .Undeclared}}
+  {{/* Store rows with the master role that the manifest does not declare — a
+       master that was removed from it. No trunk and no exits: it balances nothing.
+       It is here so the row can be reached and deleted; nothing else on the
+       console lists it. Absent when there is none, which is every ordinary fleet. */}}
+  <div class="topo-grp"><span class="topo-grp-lbl" title="Registered as a master but not declared in the manifest. Delete it from its page once it is gone for good.">NOT IN MANIFEST</span><span class="topo-grp-line"></span><span class="topo-grp-n">{{len .}}</span></div>
+  <div class="topo-group">
+    {{range .}}
+    <a class="topo-row" href="/nodes/{{.ID}}">
+      <span class="topo-row-name">{{.Name}}</span>
+      <span class="topo-row-lines">
+        <span class="addr">
+          {{if .MgmtAddr}}<span class="addr-tag" title="Mgmt (ZeroTier) address">MGMT</span><span class="addr-val">{{.MgmtAddr}}</span>{{end}}
+          <span class="addr-tag" title="Node public IP">PUBLIC</span><span class="addr-val">{{or .PublicIP "—"}}</span>
+        </span>
+        <span class="topo-card-foot">
+          <span>seen {{relTime .LastSeen}}</span>
+        </span>
+      </span>
+      <span class="topo-spacer"></span>
+      <span class="role master">master</span>
+      <span class="state-pill {{lower .State}}"><span class="led"></span>{{.State}}</span>
+    </a>
+    {{end}}
+  </div>
+  {{end}}
 </div>
 {{else}}
 <div class="empty">No nodes registered yet. Provision one with <code>wgfleet-controller --provision &lt;node&gt;</code>.</div>

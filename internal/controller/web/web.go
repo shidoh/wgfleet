@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -673,17 +674,23 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		}
 		node = mn
 	}
-	if node.Role != domain.RoleExit {
+	// The one master that may go: registered, and no longer declared. It is not
+	// the client gateway of anything any more, and left in the store it is a row
+	// the fleet page cannot place and the staleness alerts never stop firing for.
+	// The drain→decommission order does not apply to it — that lifecycle is the
+	// exits', and both steps are refused for every master.
+	leftover := !unregistered && node.Role == domain.RoleMaster && h.undeclaredMaster(id)
+	if node.Role != domain.RoleExit && !leftover {
 		h.redirectErr(w, r, "/nodes/"+id, "delete refused",
 			fmt.Errorf("only exits can be deleted: the master is the client gateway and load balancer, and this controller runs beside it"))
 		return
 	}
-	if !node.Decommission && !unregistered {
+	if !leftover && !node.Decommission && !unregistered {
 		h.redirectErr(w, r, "/nodes/"+id, "delete refused",
 			fmt.Errorf("decommission and tear the node down first, then delete"))
 		return
 	}
-	if h.needsConfirmation(w, r, confirmView{
+	confirm := confirmView{
 		Title:        "Delete " + id,
 		Heading:      "Delete " + id + "?",
 		Consequence:  "This removes the exit from the fleet inventory and from the manifest permanently. The master stops peering with it and its tunnel keys are dropped. No client credentials live on an exit, so nobody's config is deleted by this.",
@@ -691,7 +698,16 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		Action:       "/nodes/" + id + "/delete",
 		ConfirmLabel: "Delete " + id,
 		CancelHref:   "/nodes/" + id,
-	}) {
+	}
+	if leftover {
+		// Worded from what the store cascades on a master's row (schema: node_status,
+		// node_tunnel_keys, client_vless_credentials, client_wg_credentials — all ON
+		// DELETE CASCADE). A device is not a row of the master and stays; what goes
+		// is each credential it held on this master, and with it the attachment.
+		confirm.Consequence = "This master is registered but not declared in the manifest. Deleting it removes it from the fleet inventory permanently, together with everything stored for it: all client credentials issued on it, WireGuard and VLESS, and their attachments to devices. The devices themselves stay, without their credential on this master."
+		confirm.Detail = "Its last status report and its per-tunnel keys go too. The configs those clients hold stop being re-issuable from the console; the only way back is a backup taken before this. If the box is still running its agent, its registration is refused from now on. The node's own files are not touched, and the manifest is not edited — it does not declare this master. Nothing here can be undone from the console."
+	}
+	if h.needsConfirmation(w, r, confirm) {
 		return
 	}
 	// Store row first, declaration second, and a missing row is not an error. That
@@ -1020,6 +1036,11 @@ type topology struct {
 	Masters []topoMasterGroup // one block per master, manifest order
 	// Unattached holds the exits when there is no master to show them under.
 	Unattached []topoExit
+	// Undeclared holds the nodes registered as masters that the manifest does not
+	// declare — a master taken out of the manifest whose store row is still there.
+	// They take no trunk and no exits; they are listed so the row can be found and
+	// deleted, instead of ageing in the store where only the alerts can see it.
+	Undeclared []topoCard
 }
 
 // topoMasterGroup is one master's block: its trunk and the exits split by what
@@ -1346,6 +1367,9 @@ type nodeData struct {
 	// found". Gating Delete on it made the ghost of a destroyed server permanently
 	// undeletable from the console.
 	CanDelete bool
+	// UndeclaredMaster: registered as a master, and the manifest does not declare
+	// it. The one master the page offers Delete for.
+	UndeclaredMaster bool
 	// DecommissionStuck: a decommission was requested but the node is not
 	// reporting, so no agent will ever carry it out. Delete is the way out.
 	DecommissionStuck bool
@@ -1406,7 +1430,8 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 		node = backfillFromManifest(node, mn)
 	}
 	user, _ := h.currentUser(r)
-	data := nodeData{Title: node.Name, NodeCount: h.fleetCount(r.Context()), User: user, Node: node, CSRF: h.csrf, CanDelete: node.Decommission || unregistered, Unregistered: unregistered, CanDecommission: node.Drain && !node.Decommission, Flash: h.takeFlash(w, r), MetricsURL: metricsURL(node)}
+	undeclared := !unregistered && node.Role == domain.RoleMaster && h.undeclaredMaster(id)
+	data := nodeData{Title: node.Name, NodeCount: h.fleetCount(r.Context()), User: user, Node: node, CSRF: h.csrf, CanDelete: node.Decommission || unregistered || undeclared, UndeclaredMaster: undeclared, Unregistered: unregistered, CanDecommission: node.Drain && !node.Decommission, Flash: h.takeFlash(w, r), MetricsURL: metricsURL(node)}
 	if node.WireVersion != 0 {
 		if compat := api.CheckWire(node.WireVersion); compat != api.WireCompatible {
 			data.WireSkew = api.IncompatibilityDetail(compat, node.WireVersion)
@@ -1431,6 +1456,9 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 		default:
 			data.WGClientCount = len(clients)
 		}
+	} else if undeclared {
+		// Nothing to count with. "0 credentials" would be a claim, not a reading.
+		data.WGClientCountUnknown = true
 	}
 	// Render the desired spec once: for the preview text and, for a master, the
 	// wg-easy admin UI link.
@@ -1575,6 +1603,11 @@ func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
 		}
 	}
 	topo := &topology{}
+	for _, r := range rows {
+		if r.Role == domain.RoleMaster && h.undeclaredMaster(r.Name) {
+			topo.Undeclared = append(topo.Undeclared, cardOf(r))
+		}
+	}
 	for _, name := range h.fleetMasters(rows) {
 		row, ok := byName[name]
 		if !ok {
@@ -1605,10 +1638,8 @@ func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
 // role is not one of ours. Without a manifest source (a handler built without
 // SetDevices) the store's master rows stand in, in row order.
 func (h *Handler) fleetMasters(rows []nodeRow) []string {
-	if h.devices != nil {
-		if names := h.devices.Masters(); len(names) > 0 {
-			return names
-		}
+	if names, ok := h.manifestMasters(); ok {
+		return names
 	}
 	var names []string
 	for _, r := range rows {
@@ -1617,6 +1648,26 @@ func (h *Handler) fleetMasters(rows []nodeRow) []string {
 		}
 	}
 	return names
+}
+
+// manifestMasters is the masters the manifest declares, in its order. ok=false
+// when there is no manifest to ask — and then nothing may be concluded from a
+// master's absence.
+func (h *Handler) manifestMasters() ([]string, bool) {
+	if h.devices == nil {
+		return nil, false
+	}
+	names := h.devices.Masters()
+	return names, len(names) > 0
+}
+
+// undeclaredMaster reports whether a node registered as a master is known NOT to
+// be in the manifest. It is the one master the console may delete: the others
+// are client gateways of this fleet, and with no manifest to check against every
+// master is treated as one of them.
+func (h *Handler) undeclaredMaster(name string) bool {
+	names, ok := h.manifestMasters()
+	return ok && !slices.Contains(names, name)
 }
 
 // partitionExits splits the exits into carrying and reserve by one master's

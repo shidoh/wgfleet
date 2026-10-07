@@ -814,10 +814,21 @@ Expect "exit out of rotation" alerts for the new master for a few minutes while 
 1. Delete its entry from the manifest. Keep `interface_anchor` and every other master's `slot`.
 2. Validate: `wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config`
 3. Restart the controller.
+4. Delete the node from its console page: fleet page → **NOT IN MANIFEST** → the node → **Delete**.
 
-Removing the master in slot 0: every exit loses the `direct_cidrs` it inherited from it and its `MasterIP` rule, and flushes conntrack once. The other masters' interface parameters, addresses and peers do not move. A dead slot-0 master may stay in the manifest (it has no peer and no say in anything once it has no store record) until a quiet window.
+| Step 4 deletes | Step 4 keeps |
+|---|---|
+| The master's row, last status and per-tunnel keys | Devices |
+| Every client credential issued on it, WireGuard and VLESS | Credentials on other masters |
+| Those credentials' attachments to devices | The node's own files |
 
-The store keeps the removed master's row; the console has no delete for masters.
+- Until step 4 the master's row stays in the store and its staleness alerts keep firing.
+- After step 4 an agent still running on the box is refused at registration.
+- The console refuses Delete for a master that is still in the manifest.
+
+Removing the master in slot 0: every exit loses the `direct_cidrs` it inherited from it and its `MasterIP` rule, and flushes conntrack once. The other masters' interface parameters, addresses and peers do not move.
+
+A dead slot-0 master may stay in the manifest until a quiet window. While it stays, every exit keeps its peer (which carries nothing) and the direct rules inherited from it, and its staleness alerts keep firing.
 
 ### Upgrade a remote master
 
