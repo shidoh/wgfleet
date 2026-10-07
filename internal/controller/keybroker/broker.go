@@ -5,7 +5,8 @@
 // MVP topology (the reference master↔exit mesh): exits run a WG server; the
 // master dials each exit. The master's client-facing AmneziaWG server (where
 // real VPN clients connect) is configured separately and is not part of this
-// fleet-internal peering. A single master fronts all exits on MVP.
+// fleet-internal peering. Every master is a peer on each exit's one interface; what
+// belongs to that interface is derived from the fleet's anchor label (see exitInterface).
 package keybroker
 
 import (
@@ -445,23 +446,18 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	// AmneziaWG obfuscation for the master↔exit tunnel: derived deterministically
 	// from the tunnel identity so both ends compute the identical shared params
 	// (only Jc/Jmin/Jmax may differ; this end uses the defaults).
+	iface, hasAnchor, err := b.exitInterface(ctx, exit, exitNode)
+	if err != nil {
+		return domain.NodeSpec{}, err
+	}
 	var awg *domain.AWGParams
-	if master, ok := b.primaryMaster(); ok {
+	if hasAnchor {
 		// Exit is the kernel-module (awg-quick) end of the master↔exit tunnel, so
-		// its I1-I5 signatures may use the full CPS tag set including <c>/<t>.
-		seed := wg.TunnelSeed(exit.Name, master.Name, awgSalt)
-		p := wg.DeriveAWGParamsForEnd(seed, "exit", true)
-		masterNode, _, merr := b.lookupPubKey(ctx, master.Name)
-		if merr != nil {
-			return domain.NodeSpec{}, merr
-		}
-		// AmneziaWG 3.0, when the operator opted in AND BOTH agents can render it.
-		// The same decision is taken for the master end in renderMasterSpec from the
-		// same two node records — both ends of one tunnel must agree on the generation
-		// or the handshake never completes, so this must never be decided twice
-		// differently, and it must never be decided from one end's record alone.
-		if awg3Enabled(b.fleet.AWG3For(exit), exitNode, masterNode) {
-			p = wg.WithAWG3(p, seed, b.awg3Key)
+		// its I1-I5 signatures may use the full CPS tag set including <c>/<t>. The
+		// generation is decided once, for both ends, in exitInterface.
+		p := wg.DeriveAWGParamsForEnd(iface.seed, "exit", true)
+		if iface.awg3 {
+			p = wg.WithAWG3(p, iface.seed, b.awg3Key)
 		}
 		awg = &p
 	}
@@ -521,7 +517,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		spec.Firewall.LifelinePort = lifeline.ListenPort
 	}
 
-	master, ok := b.primaryMaster()
+	master, ok := b.fleet.BaseMaster()
 	if !ok {
 		b.log.Warn("exit has no master to peer with", "exit", exit.Name)
 		return spec, nil
@@ -631,7 +627,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	// the master's vless proxy because both call realityFor with the same inputs; the
 	// exit generates its own x25519 keypair locally and publishes only the pubkey.
 	if spec.HasTransport(domain.TransportRealityXHTTP) {
-		rp := b.realityFor(exit, master.Name)
+		rp := b.realityFor(exit, iface.anchor)
 		spec.Reality = &domain.RealityServerSpec{
 			ListenPort: rp.Port, UUID: rp.UUID, ShortID: rp.ShortID,
 			ServerName: rp.ServerName, Dest: rp.Dest,
@@ -793,6 +789,10 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			// entirely (not just out of the LB group, which is what Drain does).
 			continue
 		}
+		iface, _, ierr := b.exitInterface(ctx, exit, exitNode)
+		if ierr != nil {
+			return domain.NodeSpec{}, ierr
+		}
 		masterAddr, err := nthHost(exit.AddressPool, masterHostIndex)
 		if err != nil {
 			return domain.NodeSpec{}, err
@@ -904,18 +904,12 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		realityActive := active == domain.TransportRealityXHTTP && realityRenderable
 
 		if hasAWG {
-			// Same tunnel seed as the exit's interface ⇒ identical shared AWG params on
-			// both ends (ADR-0005); the "master" end label gives this end its own local
-			// I1-I5. mihomo is userspace WireGuard-Go, so kernel=false keeps the
-			// signatures free of the <c>/<t> tags it cannot parse.
-			seed := wg.TunnelSeed(exit.Name, master.Name, awgSalt)
-			awg := wg.DeriveAWGParamsForEnd(seed, "master", false)
-			// Mirror of the exit end in renderExitSpec — same gate, same two node
-			// records, so the two ends of this tunnel cannot disagree about the AWG
-			// generation. THIS end is rendered into mihomo by the master's own agent,
-			// which is why the master's record has to be one of the inputs.
-			if awg3Enabled(b.fleet.AWG3For(exit), exitNode, masterNode) {
-				awg = wg.WithAWG3(awg, seed, b.awg3Key)
+			// The exit's interface decides the shared parameters and the generation;
+			// this end only chooses its own local decoy. mihomo is userspace
+			// WireGuard-Go, so kernel=false keeps the signatures free of <c>/<t>.
+			awg := wg.DeriveAWGParamsForEnd(iface.seed, masterEndLabel(master), false)
+			if iface.awg3 {
+				awg = wg.WithAWG3(awg, iface.seed, b.awg3Key)
 			}
 			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
 				Name:            exit.Name,
@@ -934,7 +928,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			})
 		}
 		if realityRenderable {
-			rp := b.realityFor(exit, master.Name)
+			rp := b.realityFor(exit, iface.anchor)
 			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
 				Name:      exit.Name + "-reality",
 				Endpoint:  netip.AddrPortFrom(exitIP, uint16(rp.Port)).String(),
@@ -1590,14 +1584,6 @@ func (b *Broker) findMaster(name string) (config.MasterConfig, bool) {
 		}
 	}
 	return config.MasterConfig{}, false
-}
-
-// primaryMaster returns the master that fronts exits on MVP (the first one).
-func (b *Broker) primaryMaster() (config.MasterConfig, bool) {
-	if len(b.fleet.Masters) == 0 {
-		return config.MasterConfig{}, false
-	}
-	return b.fleet.Masters[0], true
 }
 
 // firstNonEmpty returns the first non-empty string, or "" if all are empty.

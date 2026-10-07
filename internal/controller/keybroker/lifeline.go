@@ -58,7 +58,7 @@ func (b *Broker) lifelineSpec(ctx context.Context, exit config.ExitConfig, exitN
 	if !exit.LifelineEnabled() {
 		return nil, nil
 	}
-	master, ok := b.primaryMaster()
+	master, ok := b.fleet.BaseMaster()
 	if !ok {
 		b.warnOnce("lifeline-no-master:"+exit.Name, "none",
 			"lifeline not rendered: the fleet has no master whose clients it would carry",
