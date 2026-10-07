@@ -222,6 +222,8 @@ type Store interface {
 	GetAWGPinConfirmation(ctx context.Context, master, exit string) (addr, peerKey string, since time.Time, err error)
 	// SetAWGPinConfirmation records that confirmation, replacing the previous one.
 	SetAWGPinConfirmation(ctx context.Context, master, exit, addr, peerKey string, since time.Time) error
+	// DeleteAWGPinConfirmation forgets that confirmation. Absent ⇒ no-op.
+	DeleteAWGPinConfirmation(ctx context.Context, master, exit string) error
 
 	// AuthConfigured reports whether the single web-panel admin credential exists.
 	AuthConfigured(ctx context.Context) (bool, error)

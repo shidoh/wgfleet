@@ -305,6 +305,36 @@ func (b *Broker) confirm(ctx context.Context, master, exit string, c pinConfirma
 	}
 }
 
+// forgetConfirmation drops what the exit confirmed for a pair it no longer
+// carries. A confirmation is about a tunnel that exists: while the exit holds no
+// peer for the master nothing is pinned, and when it carries the master again the
+// old record's age would be read as that long of silence — the returning peer,
+// which has rightly never handshaken, judged a poisoned flow and its port moved
+// on the first render (seen on the stand). The pair confirms afresh on return.
+//
+// Every render of an uncarried pair comes through here, so it must cost nothing
+// when there is nothing to forget: the cache answers, and the store is written
+// only when a confirmation is actually dropped. pinMu is not held across I/O. A
+// failed delete is logged, not fatal — this process has already forgotten; the
+// row would matter only to a controller restarted inside the gap.
+func (b *Broker) forgetConfirmation(ctx context.Context, master, exit string) error {
+	c, err := b.confirmation(ctx, master, exit)
+	if err != nil {
+		return err
+	}
+	if c == (pinConfirmation{}) {
+		return nil
+	}
+	b.pinMu.Lock()
+	b.pinConfirmed[pinKey(master, exit)] = pinConfirmation{}
+	b.pinMu.Unlock()
+	if err := b.store.DeleteAWGPinConfirmation(ctx, master, exit); err != nil {
+		b.log.Warn("exit-initiated AWG: could not drop the confirmation of a tunnel the exit no longer carries",
+			"exit", exit, "master", master, "err", err)
+	}
+	return nil
+}
+
 // exitReports reports whether the exit's last status says its awg0 holds addr
 // for THIS master. A store error confirms nothing — the master keeps opening the
 // flow, as before.

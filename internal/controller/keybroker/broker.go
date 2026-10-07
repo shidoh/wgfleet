@@ -561,6 +561,9 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	var hosts []hostRoute
 	for _, master := range b.fleet.Masters {
 		if !b.exitCarries(exit, exitNode, master) {
+			if ferr := b.forgetConfirmation(ctx, master.Name, exit.Name); ferr != nil {
+				return domain.NodeSpec{}, ferr
+			}
 			continue
 		}
 		peers, masterNode, perr := b.masterPeers(ctx, exit, exitNode, master, serverMTU)
@@ -884,6 +887,9 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		// the group being probed and held out. REALITY needs no peer on the exit.
 		if hasAWG && !b.exitCarries(exit, exitNode, master) {
 			hasAWG = false
+			if ferr := b.forgetConfirmation(ctx, master.Name, exit.Name); ferr != nil {
+				return domain.NodeSpec{}, ferr
+			}
 		}
 		// Nor does it hold one under a key an earlier master presents there too (see
 		// keyOwners): this master would dial with a key whose peer answers on the

@@ -791,4 +791,14 @@ func TestAWGPinConfirmationPersistsPerMasterAndExit(t *testing.T) {
 	if err := s.SetAWGPinConfirmation(ctx, "", "exit-de-1", "203.0.113.1:40001", "key-a", at); err == nil {
 		t.Error("a confirmation without a master must be refused")
 	}
+	// Forgotten reads exactly like never confirmed, and forgetting twice is fine.
+	for i := 0; i < 2; i++ {
+		if err := s.DeleteAWGPinConfirmation(ctx, "master-xa-1", "exit-de-1"); err != nil {
+			t.Fatalf("delete %d: %v", i, err)
+		}
+	}
+	addr, key, since, err = s.GetAWGPinConfirmation(ctx, "master-xa-1", "exit-de-1")
+	if err != nil || addr != "" || key != "" || !since.IsZero() {
+		t.Errorf("after forgetting: addr=%q key=%q since=%v err=%v; want zero values", addr, key, since, err)
+	}
 }

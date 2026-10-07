@@ -809,3 +809,12 @@ func (s *SQLiteStore) SetAWGPinConfirmation(ctx context.Context, master, exit, a
 	}
 	return nil
 }
+
+// DeleteAWGPinConfirmation implements Store.
+func (s *SQLiteStore) DeleteAWGPinConfirmation(ctx context.Context, master, exit string) error {
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM awg_pin_confirmed WHERE master_id = ? AND exit_id = ?`, master, exit); err != nil {
+		return fmt.Errorf("delete awg pin confirmation %q/%q: %w", master, exit, err)
+	}
+	return nil
+}

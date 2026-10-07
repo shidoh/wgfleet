@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
 )
@@ -168,5 +169,52 @@ func TestAnUnreadablePortGenerationNamesTheTunnel(t *testing.T) {
 	_, err := restartedOver(rotationReadFails{st}, b, &now).RenderNodeSpec(context.Background(), eiExit)
 	if err == nil || !strings.Contains(err.Error(), eiMaster) || !strings.Contains(err.Error(), eiExit) {
 		t.Errorf("err = %v, want it to name master %q and exit %q", err, eiMaster, eiExit)
+	}
+}
+
+// countingConfirmations counts the store traffic of the confirmation table.
+type countingConfirmations struct {
+	store.Store
+	reads, deletes int
+}
+
+func (c *countingConfirmations) GetAWGPinConfirmation(ctx context.Context, master, exit string) (string, string, time.Time, error) {
+	c.reads++
+	return c.Store.GetAWGPinConfirmation(ctx, master, exit)
+}
+
+func (c *countingConfirmations) DeleteAWGPinConfirmation(ctx context.Context, master, exit string) error {
+	c.deletes++
+	return c.Store.DeleteAWGPinConfirmation(ctx, master, exit)
+}
+
+// An exit on an old agent is rendered every pass, by itself and by every master.
+// Forgetting the pair it does not carry is one delete when there is something to
+// forget, and after that no store traffic at all.
+func TestForgettingAnUncarriedPairCostsOneWrite(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	phase := domain.PerTunnelKeyOff
+	s := eiTwoMasters(t, phase, &now)
+	pinB := pinnedFor("master-xa-2", "203.0.113.2")
+	recordExit(t, s.st, now, "", domain.MasterPeerStatus{PublicKey: s.tunnelKeyIn(phase, "master-xa-2"), Endpoint: pinB, LastHandshake: now})
+	recordMasters(t, s.st, now)
+	if got := gateOf(t, s.b, "master-xa-2"); got != pinB {
+		t.Fatalf("gate = %q, want %q", got, pinB)
+	}
+
+	setWireVersion(t, s.st, "exit-de-1", api.WireAWGExitInitiated)
+	counted := &countingConfirmations{Store: s.st}
+	b := restartedOver(counted, s.b, &now)
+	for i := 0; i < 5; i++ {
+		for _, id := range []string{"exit-de-1", "master-xa-1", "master-xa-2"} {
+			mustRender(t, b, id)
+		}
+	}
+	if counted.deletes != 1 {
+		t.Errorf("deletes = %d over 15 renders, want 1", counted.deletes)
+	}
+	// One read per pair, ever: the cache answers the rest.
+	if counted.reads > 2 {
+		t.Errorf("confirmation reads = %d over 15 renders, want at most one per pair", counted.reads)
 	}
 }
