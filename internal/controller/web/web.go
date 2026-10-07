@@ -1011,18 +1011,24 @@ type listData struct {
 // rows joined by a CSS rail. Each row carries the full per-node inventory + live
 // operational signals the table used to show and links to its detail page.
 // Latency and the carrying flag come from the master's latest status report
-// (ExitHealth, mihomo's view of the tunnels). nil only when the fleet is empty
-// (the template then shows the empty state). Master is nil for a degenerate
-// no-master fleet — the exits still render so no node is hidden.
+// (ExitHealth, mihomo's view of the tunnels), per master. nil only when the fleet
+// is empty (the template then shows the empty state). A degenerate no-master
+// fleet keeps its exits in Unattached — no node is hidden.
 type topology struct {
-	Master *topoMaster // the load-balancer hub; nil when there is no master node
+	Masters []topoMasterGroup // one block per master, manifest order
+	// Unattached holds the exits when there is no master to show them under.
+	Unattached []topoExit
+}
 
-	// Carrying holds the exits currently carrying traffic, Reserve everything
-	// else; both sorted by lowercased name. Drained/errored/decommissioning nodes
-	// are by definition not carrying, so they land in Reserve — there is no third
-	// group. The split is what makes the rendered bus's live segment fall out of
-	// the grouping instead of needing measurement.
-	Carrying []topoExit
+// topoMasterGroup is one master's block: its trunk and the exits split by what
+// THAT master's own report says. Carrying holds the exits currently carrying
+// traffic, Reserve everything else; both sorted by lowercased name.
+// Drained/errored/decommissioning nodes are by definition not carrying, so they
+// land in Reserve — there is no third group. The split is what makes the rendered
+// bus's live segment fall out of the grouping instead of needing measurement.
+type topoMasterGroup struct {
+	Master   topoMaster
+	Carrying []topoExit // by THIS master's report
 	Reserve  []topoExit
 }
 
@@ -1557,28 +1563,62 @@ func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
 	if len(rows) == 0 {
 		return nil
 	}
-	var masterRow *nodeRow
+	byName := make(map[string]nodeRow, len(rows))
 	var exits []nodeRow
-	for i := range rows {
-		switch rows[i].Role {
-		case domain.RoleMaster:
-			if masterRow == nil {
-				masterRow = &rows[i]
-			}
-		case domain.RoleExit:
-			exits = append(exits, rows[i])
+	for _, r := range rows {
+		byName[r.Name] = r
+		if r.Role == domain.RoleExit {
+			exits = append(exits, r)
 		}
 	}
 	topo := &topology{}
-	// The master's view of each tunnel (latency + which one carries traffic) is only
-	// available from a master's status report.
-	var health []domain.ExitTunnelHealth
-	if masterRow != nil {
-		if st, err := h.store.GetStatus(ctx, masterRow.ID); err == nil {
+	for _, name := range h.fleetMasters(rows) {
+		row, ok := byName[name]
+		if !ok {
+			continue // declared, not yet registered: nothing to show
+		}
+		// A master's view of each tunnel (latency, which one carries traffic) is
+		// only in that master's own status report.
+		var health []domain.ExitTunnelHealth
+		if st, err := h.store.GetStatus(ctx, row.ID); err == nil {
 			health = st.ExitHealth
 		}
-		topo.Master = &topoMaster{topoCard: cardOf(*masterRow), Balancing: len(exits)}
+		carrying, reserve := partitionExits(exits, health)
+		topo.Masters = append(topo.Masters, topoMasterGroup{
+			Master:   topoMaster{topoCard: cardOf(row), Balancing: len(exits)},
+			Carrying: carrying,
+			Reserve:  reserve,
+		})
 	}
+	if len(topo.Masters) == 0 {
+		// No master to hang them under: the exits still render, so no node is hidden.
+		_, topo.Unattached = partitionExits(exits, nil)
+	}
+	return topo
+}
+
+// fleetMasters is the fleet's masters in the order to show them. The MANIFEST
+// decides, in its own order: a node that merely registered itself with the master
+// role is not one of ours. Without a manifest source (a handler built without
+// SetDevices) the store's master rows stand in, in row order.
+func (h *Handler) fleetMasters(rows []nodeRow) []string {
+	if h.devices != nil {
+		if names := h.devices.Masters(); len(names) > 0 {
+			return names
+		}
+	}
+	var names []string
+	for _, r := range rows {
+		if r.Role == domain.RoleMaster {
+			names = append(names, r.Name)
+		}
+	}
+	return names
+}
+
+// partitionExits splits the exits into carrying and reserve by one master's
+// health report, each sorted by lowercased name.
+func partitionExits(exits []nodeRow, health []domain.ExitTunnelHealth) (carrying, reserve []topoExit) {
 	for _, ex := range exits {
 		te := topoExit{
 			topoCard:      cardOf(ex),
@@ -1586,8 +1626,8 @@ func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
 			Transport:     ex.Transport,
 			DualTransport: ex.DualTransport,
 		}
-		if d, carrying, ok := exitDelay(health, ex.Name); ok {
-			te.Carrying = carrying
+		if d, isCarrying, ok := exitDelay(health, ex.Name); ok {
+			te.Carrying = isCarrying
 			te.Latency = formatDelay(d)
 			te.Slow = d >= slowExitLatency
 		}
@@ -1606,19 +1646,19 @@ func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
 			te.Unusable = !v.HeldOut && v.Probed > 0 && v.Reachable == 0
 		}
 		if te.Carrying {
-			topo.Carrying = append(topo.Carrying, te)
+			carrying = append(carrying, te)
 			continue
 		}
-		topo.Reserve = append(topo.Reserve, te)
+		reserve = append(reserve, te)
 	}
 	byName := func(s []topoExit) {
 		sort.SliceStable(s, func(a, b int) bool {
 			return strings.ToLower(s[a].Name) < strings.ToLower(s[b].Name)
 		})
 	}
-	byName(topo.Carrying)
-	byName(topo.Reserve)
-	return topo
+	byName(carrying)
+	byName(reserve)
+	return carrying, reserve
 }
 
 // exitDelay picks the most representative ExitHealth entry for an exit node from
@@ -1702,8 +1742,16 @@ func (h *Handler) exitHoldOf(ctx context.Context, node domain.Node) *exitHoldVie
 	if err != nil {
 		return nil
 	}
+	rows := make([]nodeRow, len(ns))
+	for i, n := range ns {
+		rows[i] = nodeRow{Node: n}
+	}
+	declared := make(map[string]bool)
+	for _, name := range h.fleetMasters(rows) {
+		declared[name] = true
+	}
 	for _, n := range ns {
-		if n.Role != domain.RoleMaster {
+		if !declared[n.Name] {
 			continue
 		}
 		st, err := h.store.GetStatus(ctx, n.ID)

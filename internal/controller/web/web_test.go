@@ -1316,19 +1316,22 @@ func TestTopologyOrdersCarryingFirstThenAlphabetical(t *testing.T) {
 		t.Fatalf("nodeRows: %v", err)
 	}
 	topo := h.buildTopology(context.Background(), rows)
+	if len(topo.Masters) != 1 {
+		t.Fatalf("want one master block, got %d", len(topo.Masters))
+	}
 	got := make([]string, 0, 4)
-	for _, e := range topo.Carrying {
+	for _, e := range topo.Masters[0].Carrying {
 		got = append(got, e.Name)
 	}
-	for _, e := range topo.Reserve {
+	for _, e := range topo.Masters[0].Reserve {
 		got = append(got, e.Name)
 	}
 	want := []string{"vn0", "vn1", "anz3", "zeta"}
 	if !slices.Equal(got, want) {
 		t.Errorf("topology order = %v, want %v", got, want)
 	}
-	if len(topo.Carrying) != 2 {
-		t.Errorf("Carrying = %d exits, want 2", len(topo.Carrying))
+	if len(topo.Masters[0].Carrying) != 2 {
+		t.Errorf("Carrying = %d exits, want 2", len(topo.Masters[0].Carrying))
 	}
 
 	// The struct assertions above pin the data; this pins the render. Reading
@@ -1500,8 +1503,11 @@ func TestTopologyCarriesTheHeldOutVerdictAndItsAge(t *testing.T) {
 		t.Fatalf("nodeRows: %v", err)
 	}
 	topo := h.buildTopology(context.Background(), rows)
+	if len(topo.Masters) != 1 {
+		t.Fatalf("want one master block, got %d", len(topo.Masters))
+	}
 	byName := map[string]topoExit{}
-	for _, e := range append(append([]topoExit{}, topo.Carrying...), topo.Reserve...) {
+	for _, e := range append(append([]topoExit{}, topo.Masters[0].Carrying...), topo.Masters[0].Reserve...) {
 		byName[e.Name] = e
 	}
 
@@ -1608,8 +1614,11 @@ func TestTopologyFlagsAReserveExitTheWarmProbeCouldNotReachThrough(t *testing.T)
 		t.Fatalf("nodeRows: %v", err)
 	}
 	topo := h.buildTopology(context.Background(), rows)
+	if len(topo.Masters) != 1 {
+		t.Fatalf("want one master block, got %d", len(topo.Masters))
+	}
 	byName := map[string]topoExit{}
-	for _, e := range topo.Reserve {
+	for _, e := range topo.Masters[0].Reserve {
 		byName[e.Name] = e
 	}
 	bad := byName["1cnode004"]
@@ -1654,5 +1663,82 @@ func TestVLESSPageOffersNoSubscriptionOrRoutingImport(t *testing.T) {
 		if strings.Contains(body, gone) {
 			t.Errorf("page still offers %q", gone)
 		}
+	}
+}
+
+func masterNode(name string) domain.Node {
+	return domain.Node{ID: name, Name: name, Role: domain.RoleMaster, State: domain.StateReady}
+}
+
+func fleetBody(t *testing.T, h *Handler) string {
+	t.Helper()
+	_, body := get(t, h, "/")
+	return body
+}
+
+// Two masters, and the same exit carrying for one while held out by the other:
+// each master's block must tell its own story.
+func TestFleetShowsEveryMasterWithItsOwnViewOfTheExits(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	h.SetDevices(&fakeDevices{masters: []string{"master-xa-1", "master-xa-2"}})
+	ctx := context.Background()
+	seed(t, st, masterNode("master-xa-1"))
+	seed(t, st, masterNode("master-xa-2"))
+	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady})
+	for id, health := range map[string]domain.ExitTunnelHealth{
+		"master-xa-1": {Name: "exit-de-1", Alive: true, Selected: true, Delay: 90 * time.Millisecond},
+		"master-xa-2": {Name: "exit-de-1", HeldOut: true, Probed: 4},
+	} {
+		if err := st.RecordStatus(ctx, domain.NodeStatus{NodeID: id, State: domain.StateReady, ExitHealth: []domain.ExitTunnelHealth{health}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	body := fleetBody(t, h)
+	trunks := strings.Split(body, `class="topo-trunk"`)
+	if len(trunks) != 3 {
+		t.Fatalf("want two master trunks, got %d", len(trunks)-1)
+	}
+	blockA, blockB := trunks[1], trunks[2]
+	if !strings.Contains(blockA, "master-xa-1") || !strings.Contains(blockB, "master-xa-2") {
+		t.Fatal("masters are missing or out of manifest order")
+	}
+	const carrying, notCarrying = `>CARRYING<`, `>NOT CARRYING<`
+	if !strings.Contains(blockA, carrying) || strings.Contains(blockA, notCarrying) {
+		t.Error("master-xa-1's block must show exit-de-1 as carrying, and only that")
+	}
+	if strings.Contains(blockB, carrying) || !strings.Contains(blockB, notCarrying) {
+		t.Error("master-xa-2's block must show exit-de-1 as not carrying — it holds it out")
+	}
+	if !strings.Contains(blockA, "exit-de-1") || !strings.Contains(blockB, "exit-de-1") {
+		t.Error("the exit must appear under both masters")
+	}
+}
+
+// The order follows the manifest, not the alphabet and not the store.
+func TestFleetMasterOrderFollowsTheManifest(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	h.SetDevices(&fakeDevices{masters: []string{"master-z", "master-a"}})
+	seed(t, st, masterNode("master-a"))
+	seed(t, st, masterNode("master-z"))
+	body := fleetBody(t, h)
+	z, a := strings.Index(body, "master-z"), strings.Index(body, "master-a")
+	if z < 0 || a < 0 {
+		t.Fatalf("a master is missing from the page (master-z at %d, master-a at %d)", z, a)
+	}
+	if z > a {
+		t.Error("masters must follow the manifest order even when it is not alphabetical")
+	}
+}
+
+// A node that registered as a master but is not in the manifest is not a master
+// of this fleet: it must not take a trunk.
+func TestFleetIgnoresAMasterTheManifestDoesNotDeclare(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	h.SetDevices(&fakeDevices{masters: []string{"master-xa-1"}})
+	seed(t, st, masterNode("master-xa-1"))
+	seed(t, st, masterNode("aaa-rogue"))
+	if n := strings.Count(fleetBody(t, h), `class="topo-trunk"`); n != 1 {
+		t.Errorf("want exactly one trunk, got %d", n)
 	}
 }

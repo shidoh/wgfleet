@@ -19,6 +19,7 @@ type fakeDevices struct {
 	devs    map[string]*domain.ClientDevice
 	calls   []string
 	attachE error
+	masters []string // empty ⇒ the single master-xa-1
 }
 
 func newFakeDevices() *fakeDevices {
@@ -28,7 +29,12 @@ func newFakeDevices() *fakeDevices {
 	}}
 }
 
-func (f *fakeDevices) Masters() []string { return []string{"master-xa-1"} }
+func (f *fakeDevices) Masters() []string {
+	if len(f.masters) > 0 {
+		return f.masters
+	}
+	return []string{"master-xa-1"}
+}
 func (f *fakeDevices) ListDevices(context.Context) ([]domain.ClientDevice, error) {
 	var out []domain.ClientDevice
 	for _, d := range f.devs {
