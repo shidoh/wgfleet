@@ -34,10 +34,14 @@ const (
 	awgReportFresh = 2 * time.Minute
 )
 
-// pinConfirmation is the address an exit last confirmed holding, and since when.
+// pinConfirmation is the address an exit last confirmed holding for one master,
+// since when, and which of the master's peers the confirmation is about (see
+// speakingKey). The silence clock is that peer's: a confirmation earned by one
+// peer says nothing about how long another has been quiet.
 type pinConfirmation struct {
 	addr  string
 	since time.Time
+	key   string
 }
 
 // pinKey names one master↔exit tunnel in the broker's in-memory state. Every
@@ -81,10 +85,26 @@ func (b *Broker) tunnelPeer(ctx context.Context, st domain.NodeStatus, exit conf
 	return st.MasterPeer(key)
 }
 
+// speakingKey identifies the peer tunnelPeer reads for this pair: the master's
+// key in the exit's current phase, or "" for an exit below api.WireMasterPeers,
+// whose single field has no per-peer identity (and for a key not published yet).
+func (b *Broker) speakingKey(ctx context.Context, exit config.ExitConfig, exitNode domain.Node,
+	master config.MasterConfig, masterNode domain.Node) string {
+	if exitNode.WireVersion < api.WireMasterPeers {
+		return ""
+	}
+	key, err := b.masterTunnelKey(ctx, exit, master, masterNode)
+	if err != nil {
+		return ""
+	}
+	return key
+}
+
 // exitInitiatedAddr is the master's pinned "ip:port" the exit knocks on when the
 // exit starts the master↔exit AWG flow, or ok=false when the feature is not live
-// for this pair: the flag is off, either agent is below wire 12, or the master
-// has no public IPv4 the exit could reach. Every refusal leaves the tunnel as it
+// for this pair: the flag is off, the exit does not carry this master yet (see
+// exitCarries), either agent is below wire 12, or the master has no public IPv4
+// the exit could reach. Every refusal leaves the tunnel as it
 // is today — the master opens the flow — which is the safe side of each case.
 // It also moves the port when the current one is judged poisoned.
 func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, master config.MasterConfig, exitNode, masterNode domain.Node) (string, bool) {
@@ -97,7 +117,7 @@ func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, 
 	if exitNode.WireVersion < api.WireAWGExitInitiated || masterNode.WireVersion < api.WireAWGExitInitiated {
 		b.warnOnce("exit-initiated-wire:"+pinKey(master.Name, exit.Name), fmt.Sprintf("%d|%d", masterNode.WireVersion, exitNode.WireVersion),
 			"exit-initiated AWG flow not rendered: an agent is too old to hold its half",
-			"exit", exit.Name, "master_wire", masterNode.WireVersion, "exit_wire", exitNode.WireVersion,
+			"exit", exit.Name, "master", master.Name, "master_wire", masterNode.WireVersion, "exit_wire", exitNode.WireVersion,
 			"need_wire", api.WireAWGExitInitiated)
 		return "", false
 	}
@@ -111,7 +131,8 @@ func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, 
 	gen, rotatedAt, err := b.store.GetAWGPortRotation(ctx, master.Name, exit.Name)
 	if err != nil {
 		b.warnOnce("exit-initiated-rotation-read:"+pinKey(master.Name, exit.Name), err.Error(),
-			"exit-initiated AWG: port generation unreadable, using the base port", "exit", exit.Name, "err", err)
+			"exit-initiated AWG: port generation unreadable, using the base port",
+			"exit", exit.Name, "master", master.Name, "err", err)
 		gen, rotatedAt = 0, time.Time{}
 	}
 	addr := pinnedAddr(exit, master, ip, gen)
@@ -119,12 +140,12 @@ func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, 
 		now := b.now()
 		if err := b.store.SetAWGPortRotation(ctx, master.Name, exit.Name, gen+1, now); err != nil {
 			b.log.Warn("exit-initiated AWG: could not record a port rotation; keeping the port",
-				"exit", exit.Name, "err", err)
+				"exit", exit.Name, "master", master.Name, "err", err)
 			return addr, true
 		}
 		next := pinnedAddr(exit, master, ip, gen+1)
 		b.log.Warn("exit-initiated AWG: tunnel silent on its pinned port, moving to a new one",
-			"exit", exit.Name, "from", addr, "to", next, "generation", gen+1)
+			"exit", exit.Name, "master", master.Name, "from", addr, "to", next, "generation", gen+1)
 		addr = next
 	}
 	return addr, true
@@ -164,6 +185,12 @@ func (b *Broker) pinPoisoned(ctx context.Context, exit config.ExitConfig, exitNo
 	if c.addr != addr || now.Sub(c.since) < AWGRotateAfter {
 		return false
 	}
+	// The peer that speaks for the tunnel changed (a per-tunnel-key phase change)
+	// and armedMasterAddr has not restarted the clock for it yet — the exit's
+	// render can get here first. The confirmation's age is the old peer's.
+	if c.key != b.speakingKey(ctx, exit, exitNode, master, masterNode) {
+		return false
+	}
 	if !rotatedAt.IsZero() && now.Sub(rotatedAt) < AWGRotateMinInterval {
 		return false
 	}
@@ -192,14 +219,24 @@ func (b *Broker) armedMasterAddr(ctx context.Context, exit config.ExitConfig, ma
 	if !ok {
 		return ""
 	}
-	if b.exitReports(ctx, exit, exitNode, master, masterNode, addr) {
-		b.pinMu.Lock()
-		if b.pinConfirmed[pinKey(master.Name, exit.Name)].addr != addr {
-			b.pinConfirmed[pinKey(master.Name, exit.Name)] = pinConfirmation{addr: addr, since: b.now()}
-		}
-		b.pinMu.Unlock()
+	key := b.speakingKey(ctx, exit, exitNode, master, masterNode)
+	reports := b.exitReports(ctx, exit, exitNode, master, masterNode, addr)
+	pk := pinKey(master.Name, exit.Name)
+	b.pinMu.Lock()
+	c := b.pinConfirmed[pk]
+	// A new address is confirmed when the exit reports holding it. The same
+	// address with another peer speaking for the tunnel is the exit's phase
+	// changing: the address the exit knocks on has not moved, so the gate stays
+	// armed — disarming would have the master open the flow, the direction a path
+	// filter cuts. But the new peer has never handshaken, and judged on the old
+	// peer's clock it would look poisoned at once; it gets a full AWGRotateAfter
+	// of its own.
+	if (reports && c.addr != addr) || (c.addr == addr && c.key != key) {
+		c = pinConfirmation{addr: addr, since: b.now(), key: key}
+		b.pinConfirmed[pk] = c
 	}
-	if b.confirmation(pinKey(master.Name, exit.Name)).addr != addr {
+	b.pinMu.Unlock()
+	if c.addr != addr {
 		return ""
 	}
 	return addr
