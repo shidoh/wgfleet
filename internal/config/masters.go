@@ -4,8 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strings"
+	"unicode"
 
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/routing"
 )
 
 // reservedNodeNames are the second halves of the tunnel seeds that are not node
@@ -88,6 +91,20 @@ func (c ControllerConfig) validateMasterFanout() []error {
 				"fleet.interface_anchor is required when no master holds slot 0: there is no name left to derive it from"))
 		}
 	}
+	if a := f.InterfaceAnchor; a != "" {
+		// The label is one half of wg.TunnelSeed(exit, anchor): named like one of
+		// the other seeds' halves it derives that interface's parameters, and with
+		// the seed's separator in it two different (exit, label) pairs can spell the
+		// same seed. Whitespace is never meant.
+		if _, bad := reservedNodeNames[a]; bad {
+			errs = append(errs, fmt.Errorf("fleet.interface_anchor: %q is reserved", a))
+		} else if strings.ContainsFunc(a, unicode.IsSpace) || strings.Contains(a, "|") {
+			errs = append(errs, fmt.Errorf("fleet.interface_anchor: %q must not contain whitespace or '|'", a))
+		}
+	}
+	if err := f.validateExitDirectRules(); err != nil {
+		errs = append(errs, err)
+	}
 	_, lastHost := domain.MasterTunnelHostIndex(maxSlot)
 	for i, e := range f.Exits {
 		if _, bad := reservedNodeNames[e.Name]; bad {
@@ -107,6 +124,46 @@ func (c ControllerConfig) validateMasterFanout() []error {
 		}
 	}
 	return errs
+}
+
+// validateExitDirectRules checks that the direct rules every exit is rendered
+// fit under routing.MaxDirectCIDRs. Each takes its own ip-rule priority, and past
+// the cap they would walk into the fwmark rule — so routing.Render refuses the
+// whole set, on every exit, on every pass, and the fleet runs without policy
+// routing while the manifest that caused it loaded clean.
+//
+// The count mirrors keybroker.renderExitSpec: the base master's direct_cidrs and
+// the management CIDRs, de-duplicated, plus one host route for every other
+// master. It is the same for every exit, which is why the error is the fleet's.
+func (f FleetSection) validateExitDirectRules() error {
+	if len(f.Exits) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	count := func(cidrs []string) int {
+		n := 0
+		for _, c := range cidrs {
+			if _, dup := seen[c]; c == "" || dup {
+				continue
+			}
+			seen[c] = struct{}{}
+			n++
+		}
+		return n
+	}
+	direct, others := 0, len(f.Masters)
+	if base, ok := f.BaseMaster(); ok {
+		direct, others = count(base.Routing.DirectCIDRs), others-1
+	}
+	mgmt := count(f.MgmtCIDRs())
+	total := direct + mgmt + others
+	if total <= routing.MaxDirectCIDRs {
+		return nil
+	}
+	return fmt.Errorf("fleet: every exit would be given %d direct rules, over the max of %d: "+
+		"%d from the base master's routing.direct_cidrs, %d management CIDRs (fleet.mgmt_subnet, or one per node's mgmt_addr without it) "+
+		"and %d for the other masters — shorten direct_cidrs, or declare fleet.mgmt_subnet",
+		total, routing.MaxDirectCIDRs, direct, mgmt, others)
 }
 
 // poolHoldsHost reports whether the nth address after the network address is

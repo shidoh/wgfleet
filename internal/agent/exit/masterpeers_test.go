@@ -1,8 +1,12 @@
 package exit
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -165,8 +169,9 @@ func TestWGPlannerTurnsKeepaliveOff(t *testing.T) {
 	spec.Peers[0].Keepalive = 0
 	prev := spec
 	actions := planFor(t, spec, priv, prev, live, true)
-	if !hasDisplay(actions, "persistent-keepalive off") {
-		t.Errorf("actions = %q, want the keepalive switched off, not left at 25", displays(actions))
+	// 0, not "off": AmneziaWG 3.x tools reject the word.
+	if !hasDisplay(actions, "persistent-keepalive 0") || hasDisplay(actions, "persistent-keepalive off") {
+		t.Errorf("actions = %q, want the keepalive switched off as `persistent-keepalive 0`", displays(actions))
 	}
 	if hasDisplay(actions, "awg-quick") {
 		t.Fatalf("switching a keepalive off restarted the interface: %q", displays(actions))
@@ -239,5 +244,44 @@ func TestDumpReadable(t *testing.T) {
 		if got := dumpReadable(c.out, c.peers); got != c.want {
 			t.Errorf("%s: dumpReadable = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// An interface that cannot be read makes the planner restate peers blind and the
+// report go out empty; without a line in the journal neither has a cause.
+func TestAnUnreadableDumpIsLogged(t *testing.T) {
+	iface := "privkey\tpubkey\t51820\toff\n"
+	cases := []struct {
+		name     string
+		out      string
+		err      error
+		wantOK   bool
+		wantWarn string
+	}{
+		{"the command failed", "", errors.New("exit status 1"), false, "exit status 1"},
+		{"peer lines nobody could parse", iface + "garbage\n", nil, false, "unparseable"},
+		{"an interface with no peers", iface, nil, true, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+			_, ok := readLiveDumpWith(func(string) ([]byte, error) { return []byte(c.out), c.err }, "awg0")
+			if ok != c.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, c.wantOK)
+			}
+			got := logs.String()
+			if c.wantWarn == "" {
+				if got != "" {
+					t.Errorf("a readable dump was logged: %s", got)
+				}
+				return
+			}
+			if !strings.Contains(got, "level=WARN") || !strings.Contains(got, "awg0") || !strings.Contains(got, c.wantWarn) {
+				t.Errorf("log = %q, want a warning naming awg0 and %q", got, c.wantWarn)
+			}
+		})
 	}
 }

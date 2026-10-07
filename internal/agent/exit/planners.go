@@ -580,10 +580,19 @@ func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 	actions := []reconcile.Action{file}
 	switch {
 	case file.Changes() && routing.OnlyDirectRulesDiffer(string(prev), script):
-		// Only a `to <cidr> lookup main` rule came or went — another master's
-		// address, say. No flow's egress moved, so there is nothing for a flush to
-		// make take effect, and plenty for it to break.
+		// Only `to <cidr> lookup main` rules came or went — another master's
+		// address, say. Flushing all of conntrack for that would stall every
+		// long-lived flow on the exit over a change that touches almost none of
+		// them. But the flows TO those destinations did change path, and a forwarded
+		// client flow keeps the source NAT of the path it used to take: forget
+		// those, once the rules are in, and nothing else.
 		actions = append(actions, routingExecActions(routing.WithoutConntrackFlush(steps))...)
+		for _, cidr := range routing.DirectCIDRsChanged(string(prev), script) {
+			// Best-effort like the global flush: `conntrack -D` exits non-zero when
+			// it matched no flow, which is the ordinary case for a new destination.
+			actions = append(actions, reconcile.BestEffortExecAction(
+				"forget flows to "+cidr+": its route changed", "conntrack", "-D", "-d", cidr))
+		}
 	case file.Changes():
 		// Intent changed: apply the full set (incl. the conntrack flush).
 		actions = append(actions, routingExecActions(steps)...)

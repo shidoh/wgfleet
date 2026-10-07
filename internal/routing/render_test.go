@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -513,5 +514,37 @@ func TestWithoutConntrackFlush(t *testing.T) {
 		if s.Argv[0] == "conntrack" {
 			t.Errorf("the flush survived: %v", s.Argv)
 		}
+	}
+}
+
+// DirectCIDRsChanged names the destinations whose route moved, whatever happened
+// to the priorities around them.
+func TestDirectCIDRsChanged(t *testing.T) {
+	base := scriptOf(t, warpSpec("10.0.0.0/8", "192.168.0.0/16"))
+	cases := []struct {
+		name string
+		next domain.RoutingSpec
+		want []string
+	}{
+		{"appended", warpSpec("10.0.0.0/8", "192.168.0.0/16", "203.0.113.2/32"), []string{"203.0.113.2/32"}},
+		{"removed", warpSpec("10.0.0.0/8"), []string{"192.168.0.0/16"}},
+		// Every rule after the insert moves to the next priority; only one
+		// destination changed its route.
+		{"inserted mid-list", warpSpec("10.0.0.0/8", "203.0.113.2/32", "192.168.0.0/16"), []string{"203.0.113.2/32"}},
+		{"one swapped for another", warpSpec("10.0.0.0/8", "198.51.100.0/24"), []string{"192.168.0.0/16", "198.51.100.0/24"}},
+		{"unchanged", warpSpec("10.0.0.0/8", "192.168.0.0/16"), nil},
+		// The master's own rule and the client pool are not direct CIDRs.
+		{"the master changed", func() domain.RoutingSpec {
+			s := warpSpec("10.0.0.0/8", "192.168.0.0/16")
+			s.MasterIP = "203.0.113.9"
+			return s
+		}(), nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := DirectCIDRsChanged(base, scriptOf(t, c.next)); !slices.Equal(got, c.want) {
+				t.Errorf("got %v, want %v", got, c.want)
+			}
+		})
 	}
 }

@@ -2,7 +2,9 @@ package keybroker
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/wg"
@@ -35,18 +37,27 @@ func (b *Broker) exitInterface(ctx context.Context, exit config.ExitConfig, exit
 	if anchor == "" {
 		return exitInterface{}, false, nil
 	}
+	optIn := b.fleet.AWG3For(exit)
 	ends := []domain.Node{exitNode}
 	for _, m := range b.fleet.Masters {
 		node, pub, err := b.lookupPubKey(ctx, m.Name)
 		if err != nil {
 			return exitInterface{}, false, err
 		}
-		if node.WireVersion != 0 || pub != "" {
-			ends = append(ends, node)
+		if node.WireVersion == 0 && pub == "" {
+			continue
+		}
+		ends = append(ends, node)
+		// The spec says only that the interface is on 2.0. With several masters the
+		// operator cannot tell which of them is the reason without this line.
+		if optIn && node.WireVersion < api.WireAWG3 {
+			b.warnOnce("awg3-held-by-master:"+exit.Name+"/"+m.Name, fmt.Sprint(node.WireVersion),
+				"AmneziaWG 3.0 is switched on for this exit, but a master holds this exit's interface at AmneziaWG 2.0: its agent is too old",
+				"exit", exit.Name, "master", m.Name, "master_wire", node.WireVersion, "need_wire", api.WireAWG3)
 		}
 	}
 	seed := wg.TunnelSeed(exit.Name, anchor, awgSalt)
-	return exitInterface{seed: seed, anchor: anchor, awg3: awg3Enabled(b.fleet.AWG3For(exit), ends...)}, true, nil
+	return exitInterface{seed: seed, anchor: anchor, awg3: awg3Enabled(optIn, ends...)}, true, nil
 }
 
 // masterEndLabel names a master's end of the tunnel for the LOCAL AmneziaWG

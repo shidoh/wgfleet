@@ -935,21 +935,62 @@ func hasExec(actions []reconcile.Action, frag string) bool {
 	return false
 }
 
+// flushesAllConntrack reports whether a bare `conntrack -D` — every flow on the
+// node — would run.
+func flushesAllConntrack(actions []reconcile.Action) bool {
+	for _, a := range actions {
+		if a.Kind == reconcile.ActionExec && a.Changes() && a.Display == "conntrack -D" {
+			return true
+		}
+	}
+	return false
+}
+
 // A second master appears as one more `to <ip> lookup main` rule on every exit.
 // Flushing conntrack for it would stall every long-lived flow on the fleet inside
-// one reconcile interval, for a rule that reroutes none of them.
-func TestAddingADirectRuleDoesNotFlushConntrack(t *testing.T) {
+// one reconcile interval. Only flows to the address whose route changed hold a
+// stale NAT mapping, and only they are forgotten.
+func TestAddingADirectRuleForgetsOnlyThatDestination(t *testing.T) {
 	spec, pl := applyRoutingOnce(t)
 	spec.Routing.DirectCIDRs = append(append([]string(nil), spec.Routing.DirectCIDRs...), "203.0.113.2/32")
 	actions, err := pl.Plan(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hasExec(actions, "conntrack") {
-		t.Errorf("an appended direct rule flushed conntrack: %q", displays(actions))
+	if flushesAllConntrack(actions) {
+		t.Errorf("an appended direct rule flushed all of conntrack: %q", displays(actions))
 	}
-	if !hasExec(actions, "203.0.113.2/32") {
+	if !hasExec(actions, "conntrack -D -d 203.0.113.2/32") {
+		t.Errorf("flows to the new direct destination were not forgotten: %q", displays(actions))
+	}
+	if !hasExec(actions, "ip rule add to 203.0.113.2/32") {
 		t.Errorf("the new rule was not applied: %q", displays(actions))
+	}
+	for _, kept := range spec.Routing.DirectCIDRs[:len(spec.Routing.DirectCIDRs)-1] {
+		if hasExec(actions, "conntrack -D -d "+kept) {
+			t.Errorf("flows to %s were forgotten though its route did not change: %q", kept, displays(actions))
+		}
+	}
+}
+
+// A direct rule going away moves its destination back onto the egress: the same
+// stale mapping in the other direction, forgotten the same way.
+func TestRemovingADirectRuleForgetsOnlyThatDestination(t *testing.T) {
+	spec, pl := applyRoutingOnce(t)
+	if len(spec.Routing.DirectCIDRs) == 0 {
+		t.Fatal("the fixture has no direct CIDR to remove")
+	}
+	gone := spec.Routing.DirectCIDRs[len(spec.Routing.DirectCIDRs)-1]
+	spec.Routing.DirectCIDRs = append([]string(nil), spec.Routing.DirectCIDRs[:len(spec.Routing.DirectCIDRs)-1]...)
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flushesAllConntrack(actions) {
+		t.Errorf("a removed direct rule flushed all of conntrack: %q", displays(actions))
+	}
+	if !hasExec(actions, "conntrack -D -d "+gone) {
+		t.Errorf("flows to the removed direct destination were not forgotten: %q", displays(actions))
 	}
 }
 

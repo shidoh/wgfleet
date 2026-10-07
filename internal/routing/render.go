@@ -8,6 +8,7 @@ package routing
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -223,12 +224,59 @@ func withoutDirectRules(script string) string {
 }
 
 // OnlyDirectRulesDiffer reports whether two routing scripts differ in nothing but
-// their direct-CIDR rules. Such a change needs no conntrack flush: an earlier finding is
-// about flows remembering an egress path that changed, and a destination pinned
-// to the main table changes no flow's egress. prev=="" is a first apply and is
+// their direct-CIDR rules. Such a change needs no flush of the whole conntrack
+// table: an earlier finding is about flows remembering an egress path that changed, and
+// here the only flows whose path changed are the ones to the destinations that
+// came or went — DirectCIDRsChanged names them. prev=="" is a first apply and is
 // never "only direct rules".
 func OnlyDirectRulesDiffer(prev, next string) bool {
 	return prev != "" && prev != next && withoutDirectRules(prev) == withoutDirectRules(next)
+}
+
+// directCIDRsOf is the set of destinations a routing script pins to the main
+// table with a direct-CIDR rule: the `to <cidr>` of each `ip rule add` at a
+// direct priority.
+func directCIDRsOf(script string) map[string]struct{} {
+	out := make(map[string]struct{})
+	for _, line := range strings.Split(script, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 || f[0] != "ip" || f[1] != "rule" || f[2] != "add" || !isDirectRule(line) {
+			continue
+		}
+		for i := 3; i+1 < len(f); i++ {
+			if f[i] == "to" {
+				out[f[i+1]] = struct{}{}
+				break
+			}
+		}
+	}
+	return out
+}
+
+// DirectCIDRsChanged returns, sorted, the direct CIDRs that are in exactly one of
+// two routing scripts: the destinations whose route moved between the main table
+// and the egress. It compares destinations, not lines, so a CIDR inserted
+// mid-list — which shifts every later rule to the next priority — is still one
+// change.
+//
+// A forwarded client flow to such a destination keeps the source NAT it was
+// given on the path it used to take; those are the flows to forget, and the only
+// ones.
+func DirectCIDRsChanged(prev, next string) []string {
+	was, is := directCIDRsOf(prev), directCIDRsOf(next)
+	var out []string
+	for c := range was {
+		if _, kept := is[c]; !kept {
+			out = append(out, c)
+		}
+	}
+	for c := range is {
+		if _, had := was[c]; !had {
+			out = append(out, c)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // WithoutConntrackFlush is steps without the conntrack flush.

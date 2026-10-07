@@ -2,6 +2,7 @@ package exit
 
 import (
 	"context"
+	"log/slog"
 	"os/exec"
 	"slices"
 	"sort"
@@ -18,14 +19,30 @@ import (
 type liveDump func(iface string) ([]wg.DumpPeer, bool)
 
 func readLiveDump(iface string) ([]wg.DumpPeer, bool) {
+	return readLiveDumpWith(awgShowDump, iface)
+}
+
+func awgShowDump(iface string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), awgShowTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "awg", "show", iface, "dump").Output()
+	return exec.CommandContext(ctx, "awg", "show", iface, "dump").Output()
+}
+
+// readLiveDumpWith reads the interface through show and says so when it cannot.
+// The callers carry on without the reading — peers are restated blind, the
+// status report goes out with no peer list — and both look, from the controller,
+// like an exit that simply has nothing to say. One line per failed pass is the
+// only place the cause is written down.
+func readLiveDumpWith(show func(iface string) ([]byte, error), iface string) ([]wg.DumpPeer, bool) {
+	out, err := show(iface)
 	if err != nil {
+		slog.Warn("could not read the interface's peers from the kernel", "iface", iface, "err", err)
 		return nil, false
 	}
 	peers := wg.ParseShowDump(string(out))
 	if !dumpReadable(string(out), peers) {
+		slog.Warn("could not read the interface's peers from the kernel",
+			"iface", iface, "err", "unparseable dump: peer lines present and none understood")
 		return nil, false
 	}
 	return peers, true
@@ -114,12 +131,10 @@ func masterPeerEdits(iface string, want []domain.PeerSpec, live []wg.DumpPeer) (
 		if present && slices.Equal(ips, l.AllowedIPs) && p.Keepalive == l.Keepalive {
 			continue // endpoints are restoreRoamedEndpoints' business
 		}
-		keepalive := "off"
-		if p.Keepalive > 0 {
-			keepalive = strconv.Itoa(p.Keepalive)
-		}
+		// A zero keepalive is written as 0: AmneziaWG 3.x tools reject the word
+		// `off` that wg(8) documents, and take 0 for the same thing.
 		cmd := []string{"awg", "set", iface, "peer", p.PublicKey,
-			"allowed-ips", strings.Join(p.AllowedIPs, ","), "persistent-keepalive", keepalive}
+			"allowed-ips", strings.Join(p.AllowedIPs, ","), "persistent-keepalive", strconv.Itoa(max(p.Keepalive, 0))}
 		if p.Endpoint != "" {
 			cmd = append(cmd, "endpoint", p.Endpoint)
 		}

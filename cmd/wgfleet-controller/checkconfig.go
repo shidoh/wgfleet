@@ -7,10 +7,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite" // read-only probe of the store's schema version
 
@@ -77,6 +79,7 @@ func checkManifestOnly(path string) (*config.ControllerConfig, error) {
 	fmt.Printf("  sha256   %s\n", hex.EncodeToString(sum[:]))
 	fmt.Printf("  masters  %d\n", len(cfg.Fleet.Masters))
 	fmt.Printf("  exits    %d\n", len(cfg.Fleet.Exits))
+	printMasterModel(os.Stdout, cfg.Fleet)
 
 	// The question operations insisted be answerable by ONE command: is the running
 	// controller actually on this file? Until now nothing could answer it — you
@@ -105,6 +108,33 @@ func checkManifestOnly(path string) (*config.ControllerConfig, error) {
 		fmt.Printf("\nwarning: %s\n", w)
 	}
 	return cfg, nil
+}
+
+// printMasterModel prints what places every master on every exit: the anchor
+// label the exits' interfaces are derived from, the base master, and each
+// master's slot. Changing any of them on a running fleet re-keys or re-addresses
+// tunnels, and nothing compares them with what the fleet was started on — so the
+// check shows them, for the operator to compare before the restart.
+func printMasterModel(w io.Writer, f config.FleetSection) {
+	orNone := func(s string) string {
+		if s == "" {
+			return "none"
+		}
+		return s
+	}
+	base, _ := f.BaseMaster()
+	fmt.Fprintf(w, "  anchor   %s\n", orNone(f.AnchorLabel()))
+	fmt.Fprintf(w, "  base     %s\n", orNone(base.Name))
+	for _, m := range f.Masters {
+		fmt.Fprintf(w, "  master   %s  slot %d\n", m.Name, m.Slot)
+	}
+	// Without a subnet the management scope is one /32 per node, so every node
+	// that comes or goes rewrites the direct routes and the firewall whitelist of
+	// every exit — and with several masters, under several masters' traffic.
+	if len(f.Masters) > 1 && strings.TrimSpace(f.MgmtSubnet) == "" {
+		fmt.Fprintf(w, "\nwarning: fleet.mgmt_subnet is not set — with several masters, adding or removing a node\n"+
+			"         changes routing and firewall rules on every exit\n")
+	}
 }
 
 // checkHostReadiness is the second verdict: the things a restart does before it

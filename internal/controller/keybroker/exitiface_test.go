@@ -1,10 +1,13 @@
 package keybroker
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/shidoh/wgfleet/internal/api"
@@ -181,5 +184,46 @@ func TestNonBaseMasterGetsItsOwnLocalDecoy(t *testing.T) {
 	tb, _ := tunnelByName(mustRender(t, s.b, "master-xa-2").Master.ExitTunnels, "exit-de-1")
 	if reflect.DeepEqual(ta.AWG.Local, tb.AWG.Local) {
 		t.Error("both masters render the same local decoy profile")
+	}
+}
+
+// The operator switched AmneziaWG 3.0 on and the exit stayed on 2.0. Which master
+// is holding it there is the one thing they need, and the spec cannot say.
+func TestTheMasterHoldingAnExitAtAWG2IsNamed(t *testing.T) {
+	s := seedTwoMasters(t, twoMasterFleet())
+	var logs bytes.Buffer
+	s.b.log = slog.New(slog.NewTextHandler(&logs, nil))
+
+	mustRender(t, s.b, "exit-de-1")
+	if logs.Len() != 0 {
+		t.Fatalf("an interface on 3.0 was warned about: %s", logs.String())
+	}
+
+	setWireVersion(t, s.st, "master-xa-2", api.WireAWG3-1)
+	mustRender(t, s.b, "exit-de-1")
+	mustRender(t, s.b, "master-xa-1")
+	out := logs.String()
+	if n := strings.Count(out, "holds this exit's interface at AmneziaWG 2.0"); n != 1 {
+		t.Fatalf("want the hold announced exactly once, got %d:\n%s", n, out)
+	}
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "master=master-xa-2") ||
+		!strings.Contains(out, "exit=exit-de-1") || !strings.Contains(out, fmt.Sprintf("master_wire=%d", api.WireAWG3-1)) {
+		t.Errorf("the warning does not name the exit, the master and its wire version:\n%s", out)
+	}
+	if strings.Contains(out, "master=master-xa-1") {
+		t.Errorf("the master that can speak 3.0 was blamed:\n%s", out)
+	}
+
+	// Not opted in: nothing is being held back.
+	off := false
+	fleet := twoMasterFleet()
+	fleet.AWG3 = &off
+	quiet := seedTwoMasters(t, fleet)
+	var none bytes.Buffer
+	quiet.b.log = slog.New(slog.NewTextHandler(&none, nil))
+	setWireVersion(t, quiet.st, "master-xa-2", api.WireAWG3-1)
+	mustRender(t, quiet.b, "exit-de-1")
+	if strings.Contains(none.String(), "AmneziaWG 2.0") {
+		t.Errorf("warned about 3.0 on a fleet that did not ask for it: %s", none.String())
 	}
 }
