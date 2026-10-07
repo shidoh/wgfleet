@@ -285,3 +285,68 @@ func TestAnUnreadableDumpIsLogged(t *testing.T) {
 		})
 	}
 }
+
+// indexOfDisplay is the position of the first changing action whose command
+// contains frag, or -1.
+func indexOfDisplay(actions []reconcile.Action, frag string) int {
+	for i, d := range displays(actions) {
+		if strings.Contains(d, frag) {
+			return i
+		}
+	}
+	return -1
+}
+
+// One master leaves and another takes its address in the same pass. Removals go
+// first, so the address is free before its new owner claims it — the order
+// masterPeerEdits promises, pinned.
+func TestWGPlannerRemovesBeforeItSets(t *testing.T) {
+	prev, priv := exitSpec(t)
+	departed := secondMaster(t)
+	prev.Peers = append(append([]domain.PeerSpec(nil), prev.Peers...), departed)
+	arrived := secondMaster(t) // another key, the same 10.81.0.4/32
+	spec := prev
+	spec.Peers = []domain.PeerSpec{prev.Peers[0], arrived}
+
+	actions := planFor(t, spec, priv, prev, liveOf(prev.Peers...), true)
+	remove := indexOfDisplay(actions, "peer "+departed.PublicKey+" remove")
+	set := indexOfDisplay(actions, "peer "+arrived.PublicKey+" allowed-ips 10.81.0.4/32")
+	if remove < 0 || set < 0 {
+		t.Fatalf("actions = %q, want a remove of the departed peer and a set of the new one", displays(actions))
+	}
+	if remove > set {
+		t.Errorf("the new peer was set before the departed one was removed: %q", displays(actions))
+	}
+	if hasDisplay(actions, "awg-quick") {
+		t.Errorf("swapping one master for another restarted the interface: %q", displays(actions))
+	}
+}
+
+// A spec with no master peer at all, against an interface that has some. The
+// controller renders that only on purpose — the fleet has no master left, a
+// master's key is not registered, or its key is another master's — never for a
+// store it could not read (that fails the render and the agent keeps its last
+// spec). The live peers are removed in place: a restart would end in the same
+// empty interface, by way of a down/up nobody needs. "Nothing in common ⇒
+// rebuild" is about a foreign peer set, and an empty spec has no set to be
+// foreign to.
+func TestWGPlannerEmptiesAnInterfaceInPlace(t *testing.T) {
+	prev, priv := exitSpec(t)
+	prev.Peers = append(append([]domain.PeerSpec(nil), prev.Peers...), secondMaster(t))
+	spec := prev
+	spec.Peers = nil
+
+	actions := planFor(t, spec, priv, prev, liveOf(prev.Peers...), true)
+	for _, p := range prev.Peers {
+		if !hasDisplay(actions, "awg set awg0 peer "+p.PublicKey+" remove") {
+			t.Errorf("actions = %q, want %s removed", displays(actions), p.Name)
+		}
+	}
+	if hasDisplay(actions, "awg-quick") {
+		t.Errorf("an empty peer list restarted the interface: %q", displays(actions))
+	}
+	// Converged: nothing left to remove, nothing to restart.
+	if d := displays(planFor(t, spec, priv, spec, nil, true)); len(d) != 0 {
+		t.Errorf("an empty interface that matches an empty spec produced actions: %q", d)
+	}
+}

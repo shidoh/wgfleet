@@ -484,6 +484,9 @@ func TestOnlyDirectRulesDiffer(t *testing.T) {
 	}{
 		{"a direct rule appended", warpSpec("10.0.0.0/8", "203.0.113.2/32"), true},
 		{"a direct rule removed", warpSpec(), true},
+		// Every rule after the insert moves one priority down: many lines differ,
+		// and all of them are direct rules.
+		{"a direct rule inserted mid-list", warpSpec("203.0.113.2/32", "10.0.0.0/8"), true},
 		{"nothing changed", warpSpec("10.0.0.0/8"), false},
 		{"the client pool changed", func() domain.RoutingSpec { s := warpSpec("10.0.0.0/8"); s.ClientCIDR = "10.82.0.0/24"; return s }(), false},
 		{"the egress interface changed", func() domain.RoutingSpec { s := warpSpec("10.0.0.0/8"); s.EgressInterface = "wgcf2"; return s }(), false},
