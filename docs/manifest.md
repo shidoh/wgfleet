@@ -201,7 +201,7 @@ fleet:
 |---|---|
 | Exit `address_pool` size | Must hold host `3 + 2 × (highest slot)` |
 | Reserved node names | `clients` and `lifeline` |
-| Two masters with one WireGuard key | The later one in the manifest is refused at registration, gets no peer on the exits and no AmneziaWG tunnel. A master built from a copy of another's disk needs a new key |
+| Two masters with one WireGuard key | The master that registers the key second is refused at registration. With both keys already stored, the exits peer the earlier master in manifest order; the other gets no peer and no AmneziaWG tunnel. A master built from a copy of another's disk needs a new key |
 | Direct rules per exit | `direct_cidrs` of the master in slot 0 + management CIDRs + one per other master. Over 80: a warning from `--check-config` and at startup; an exit with WARP egress cannot apply its routing |
 | `transports.awg.exit_initiated` | Needs a public IPv4 on every master |
 | `transports.awg.master_port` | Applies to the master in slot 0 |
