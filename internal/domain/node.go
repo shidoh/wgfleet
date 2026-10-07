@@ -137,6 +137,34 @@ type NodeStatus struct {
 	// AWGMasterEndpoint is the endpoint an exit's awg0 currently holds for the
 	// master peer given one (exit-initiated AWG flow). Empty when none has one.
 	AWGMasterEndpoint string
+	// MasterPeers is an exit's view of every master peer on its awg0: which
+	// endpoint the kernel holds for it and when it last handshook. With several
+	// masters on one interface the single AWGMasterEndpoint and the freshest
+	// LastHandshake above cannot say WHICH master they describe, and the
+	// exit-initiated flow (ADR-0036) is armed and judged per master. Empty from an
+	// agent below api.WireMasterPeers and from a pass that could not read awg0 —
+	// which is why the controller decides how to read a status by the exit's wire
+	// version, never by whether this is empty.
+	MasterPeers []MasterPeerStatus
+}
+
+// MasterPeer finds the reported peer carrying publicKey.
+func (s NodeStatus) MasterPeer(publicKey string) (MasterPeerStatus, bool) {
+	for _, p := range s.MasterPeers {
+		if p.PublicKey == publicKey {
+			return p, true
+		}
+	}
+	return MasterPeerStatus{}, false
+}
+
+// MasterPeerStatus is one master peer on an exit's awg0, keyed by public key —
+// the interface knows keys, not node names; the controller maps a key back to
+// the master that published it.
+type MasterPeerStatus struct {
+	PublicKey     string
+	Endpoint      string // "ip:port" the kernel holds; "" when it has none yet
+	LastHandshake time.Time
 }
 
 // ClientPeerStatus is one end user's live peer on the master's client interface.
