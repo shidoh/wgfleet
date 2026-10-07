@@ -65,10 +65,12 @@ func (p Plan) Outdated() int { return len(p.Targets) }
 // BuildPlan orders a rolling upgrade over the fleet's exits.
 //
 // Masters are excluded unconditionally and by construction — this walks
-// fleet.Exits and never fleet.Masters. The master is co-located with the
-// controller (the documented default deployment), so restarting its agent would
-// restart the process running the rollout and abandon it mid-flight. A master is
-// upgraded on its own, via deploy-master.sh or the per-node action.
+// fleet.Exits and never fleet.Masters. One master is co-located with the
+// controller, so restarting its agent would restart the process running the
+// rollout and abandon it mid-flight; the others are client gateways, and a
+// rollout that takes them down one after another takes every client's entry
+// point with it. A master is upgraded on its own, via deploy-master.sh (the
+// co-located one) or the per-node action.
 //
 // Reserve exits go first: a bad binary should be discovered on a node carrying no
 // client traffic, where the blast radius of a crash-looping agent is zero. Within
@@ -142,17 +144,24 @@ func BuildPlan(fleet config.FleetSection, nodes []domain.Node, want string, now 
 	return plan
 }
 
-// reserveSet is the union of every master's reserve_exits. Union, not per-master:
-// an exit that is reserve for one master and primary for another still carries
-// traffic, so treating it as reserve would defeat the ordering's purpose — but
-// with a single master (the only shipped topology) the union is exact.
+// reserveSet is the exits EVERY master holds in reserve. An exit that is reserve
+// for one master and primary for another still carries traffic, and reserve
+// exits roll first precisely because a bad binary costs nothing there.
 func reserveSet(fleet config.FleetSection) map[string]bool {
-	out := map[string]bool{}
+	count := map[string]int{}
 	for _, m := range fleet.Masters {
+		seen := map[string]bool{}
 		for _, name := range m.Routing.ReserveExits {
-			if name = strings.TrimSpace(name); name != "" {
-				out[name] = true
+			if name = strings.TrimSpace(name); name != "" && !seen[name] {
+				seen[name] = true
+				count[name]++
 			}
+		}
+	}
+	out := map[string]bool{}
+	for name, n := range count {
+		if n == len(fleet.Masters) {
+			out[name] = true
 		}
 	}
 	return out

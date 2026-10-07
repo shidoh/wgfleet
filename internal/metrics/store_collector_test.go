@@ -318,3 +318,53 @@ wgfleet_exit_tunnel_delay_seconds{exit="vn0",node="master-xa-1"} 0.092
 		t.Error(err)
 	}
 }
+
+// The out-of-rotation alerts join the controller's per-tunnel series to the
+// master agent's own on (node, exit). That holds only while both carry the
+// master's name in `node` — pin it, so a relabel on either side fails here and
+// not as an alert that silently stopped matching.
+func TestExitTunnelSeriesShareTheMasterLabelWithTheAgentSeries(t *testing.T) {
+	const master, exit = "master-xa-1", "exit-de-1"
+
+	reg, st, _ := newCollectorWithStore(t)
+	ctx := context.Background()
+	_ = st.UpsertNode(ctx, domain.Node{ID: master, Name: master, Role: domain.RoleMaster, State: domain.StateReady})
+	_ = st.RecordStatus(ctx, domain.NodeStatus{
+		NodeID: master, State: domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{{Name: exit, Alive: true}},
+	})
+	controller := labelsOf(t, reg, "wgfleet_exit_tunnel_alive")
+
+	agentReg := prometheus.NewRegistry()
+	m := NewAgentMetrics(agentReg, master, domain.RoleMaster, time.Unix(1_700_000_000, 0))
+	m.ObserveTier(false, map[string]bool{exit: true}, 1, 1)
+	agent := labelsOf(t, agentReg, "wgfleet_agent_exit_held_out")
+
+	for _, name := range []string{"node", "exit"} {
+		if controller[name] == "" || controller[name] != agent[name] {
+			t.Errorf("label %q: controller series has %q, agent series has %q — the alert join on(node, exit) would not match",
+				name, controller[name], agent[name])
+		}
+	}
+}
+
+// labelsOf returns the labels of the first series of the named family.
+func labelsOf(t *testing.T, reg *prometheus.Registry, family string) map[string]string {
+	t.Helper()
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mf := range mfs {
+		if mf.GetName() != family || len(mf.GetMetric()) == 0 {
+			continue
+		}
+		out := map[string]string{}
+		for _, lp := range mf.GetMetric()[0].GetLabel() {
+			out[lp.GetName()] = lp.GetValue()
+		}
+		return out
+	}
+	t.Fatalf("family %s not exported", family)
+	return nil
+}

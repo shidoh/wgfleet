@@ -35,7 +35,8 @@ import (
 //
 // It may run alongside a serving controller: it opens the store like --provision
 // does (sqlite WAL tolerates the concurrent open), and it only ever touches
-// exits, never the co-located master this controller runs on. The controller
+// exits, never a master: upgrade each from its node page, or the co-located one
+// with deploy-master.sh. The controller
 // MUST be up for a rollout to confirm anything — the gate reads the node state
 // that the serving controller writes from agent check-ins.
 func rollingUpgrade(cfg *config.ControllerConfig, ca *pki.CA, agentBin string, plan bool, nodeTimeout time.Duration) error {
@@ -189,7 +190,7 @@ func printRollingPlan(rp rollout.Plan, agentBin string) {
 	for _, s := range rp.Skipped {
 		fmt.Printf("     %-12s skipped: %s\n", s.Name, s.Reason)
 	}
-	fmt.Println("\nmasters are excluded: the master is co-located with this controller.")
+	fmt.Println("\nmasters are excluded: upgrade each from its node page, or the co-located one with deploy-master.sh.")
 }
 
 // streamRollout prints each node's phase transitions until the rollout ends,
