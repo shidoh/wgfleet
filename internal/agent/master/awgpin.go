@@ -96,9 +96,36 @@ func (p awgPinPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 		}
 		isHeard := heard(exit.Addr().String())
 		actions = append(actions, exitOpenedFlowActions(ctx, knocks, pin.Exit, exit, int(master.Port()), isHeard)...)
-		// Nothing else moves until the exit has knocked since the table was last
-		// built. The set starts empty on every render, and a flow deleted before the
-		// knock is a NEW flow the gate holds back until the next keepalive.
+		out, err := list(ctx, exit.Addr().String(), int(exit.Port()))
+		if err != nil {
+			// Loud, not a quiet no-change: a tunnel stuck behind a stale entry is the
+			// one case this planner exists for, and it would otherwise read as clean.
+			slog.Warn("exit-initiated AWG: conntrack unreadable, stale entries cannot be cleared",
+				"exit", pin.Exit, "err", err)
+			actions = append(actions, reconcile.NoChangeAction("exit-initiated AWG conntrack",
+				"conntrack unreadable for "+pin.Exit+": "+err.Error()))
+			continue
+		}
+		// A flow NAT mapped to another port (it predates the pin) goes at once, heard
+		// or not. The master answers from that port, so the exit's endpoint roams
+		// back to it after every restore and the knock this would wait for never
+		// comes — the released v0.3.2 sat like that for minutes on the stand
+		// (2026-10-09). Deleted, mihomo's next packet waits at the gate until the
+		// exit's agent has restored the endpoint and its keepalive has knocked.
+		offPin, onPin := splitByPinnedPort(parseConntrackUDP(out), int(master.Port()))
+		drop := func(e ctEntry) {
+			actions = append(actions, reconcile.BestEffortExecAction(
+				fmt.Sprintf("drop a conntrack entry that keeps %s off its pinned port", pin.Exit),
+				"conntrack", "-D", "-p", "udp", "-s", e.origSrc, "-d", exit.Addr().String(),
+				"--sport", strconv.Itoa(e.origSport), "--dport", strconv.Itoa(int(exit.Port()))))
+		}
+		for _, e := range offPin {
+			drop(e)
+		}
+		// Nothing ON the pinned port moves until the exit has knocked since the table
+		// was last built. The set starts empty on every render, and a flow deleted
+		// before the knock is a NEW flow the gate holds back until the next
+		// keepalive — which is coming, the exit's endpoint being right.
 		if !isHeard {
 			actions = append(actions, reconcile.NoChangeAction("exit-initiated AWG conntrack",
 				"waiting for "+pin.Exit+" to knock on its pinned port"))
@@ -110,26 +137,12 @@ func (p awgPinPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 				"remove the hand-made pin table; the agent's own pin is armed",
 				"nft", "delete", "table", "ip", legacyAWGPinTable))
 		}
-		out, err := list(ctx, exit.Addr().String(), int(exit.Port()))
-		if err != nil {
-			// Loud, not a quiet no-change: a tunnel stuck behind a stale entry is the
-			// one case this planner exists for, and it would otherwise read as clean.
-			slog.Warn("exit-initiated AWG: conntrack unreadable, stale entries cannot be cleared",
-				"exit", pin.Exit, "err", err)
-			actions = append(actions, reconcile.NoChangeAction("exit-initiated AWG conntrack",
-				"conntrack unreadable for "+pin.Exit+": "+err.Error()))
-			continue
-		}
-		entries := parseConntrackUDP(out)
-		stale := staleAWGPinEntries(entries, int(master.Port()))
+		stale := staleAWGPinEntries(onPin, int(master.Port()))
 		if owned, ok := socks(ctx, pin.Exit); ok {
-			stale = staleAWGPinEntriesOwned(entries, int(master.Port()), owned)
+			stale = staleAWGPinEntriesOwned(onPin, int(master.Port()), owned)
 		}
 		for _, e := range stale {
-			actions = append(actions, reconcile.BestEffortExecAction(
-				fmt.Sprintf("drop a conntrack entry that keeps %s off its pinned port", pin.Exit),
-				"conntrack", "-D", "-p", "udp", "-s", e.origSrc, "-d", exit.Addr().String(),
-				"--sport", strconv.Itoa(e.origSport), "--dport", strconv.Itoa(int(exit.Port()))))
+			drop(e)
 		}
 	}
 	if len(actions) == 0 {
@@ -177,6 +190,19 @@ func exitOpenedFlowActions(ctx context.Context, list func(context.Context, strin
 			"--sport", strconv.Itoa(e.origSport), "--dport", strconv.Itoa(e.origDport)))
 	}
 	return actions
+}
+
+// splitByPinnedPort separates the flows NAT mapped to another port from those
+// holding the pinned one.
+func splitByPinnedPort(entries []ctEntry, pinnedPort int) (offPin, onPin []ctEntry) {
+	for _, e := range entries {
+		if e.replyDport != pinnedPort {
+			offPin = append(offPin, e)
+			continue
+		}
+		onPin = append(onPin, e)
+	}
+	return offPin, onPin
 }
 
 // ctEntry is the part of a UDP conntrack entry this planner decides on.

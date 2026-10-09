@@ -128,15 +128,16 @@ func TestAWGPinPlannerDoesNothingWithoutAnArmedTunnel(t *testing.T) {
 	}
 }
 
-// Right after arming, the heard set is empty until the exit's next keepalive.
-// Deleting the working entry then turns mihomo's next packet into a NEW flow the
-// gate holds back — up to one keepalive of outage for nothing. Wait for the knock.
+// Right after a re-render the heard set is empty until the exit's next keepalive.
+// Deleting an entry ON the pinned port then turns mihomo's next packet into a NEW
+// flow the gate holds back — up to one keepalive of outage for nothing: the
+// exit's endpoint is right, so its knock is coming. Wait for it.
 func TestAWGPinPlannerWaitsForTheExitToBeHeard(t *testing.T) {
 	spec := domain.NodeSpec{Master: &domain.MasterSpec{ExitTunnels: []domain.ExitTunnel{
 		{Name: "exit-a", Endpoint: "198.51.100.7:35555", Transport: domain.TransportAWG, MasterAddr: "203.0.113.1:41234"},
 	}}}
 	p := awgPinPlanner{
-		list:        func(context.Context, string, int) (string, error) { return ctUnpinned, nil },
+		list:        func(context.Context, string, int) (string, error) { return ctStaleAssured + "\n" + ctFreshWaiting, nil },
 		listKnocks:  func(context.Context, string, int) (string, error) { return ctConfirmedKnock, nil },
 		tableExists: func(string) bool { return true },
 		heard:       func(string) bool { return false },
@@ -148,6 +149,42 @@ func TestAWGPinPlannerWaitsForTheExitToBeHeard(t *testing.T) {
 	for _, a := range actions {
 		if a.Changes() {
 			t.Fatalf("acted before the exit was heard: %s", a.Display)
+		}
+	}
+}
+
+// A flow NAT mapped to another port before the pin does not wait. The master
+// keeps answering from that port, so the exit's endpoint roams straight back to
+// it after every restore and the exit never knocks: on the stand the released
+// v0.3.2 sat off its pinned port for minutes with the gate reading armed
+// (2026-10-09). Deleted, mihomo's next packet waits at the gate, the exit's
+// agent restores the endpoint with nothing to pull it back, and its keepalive
+// opens the gate — one agent pass of outage instead of a pin that never applies.
+func TestAWGPinPlannerMovesAFlowOffThePinnedPortWithoutWaitingForAKnock(t *testing.T) {
+	spec := domain.NodeSpec{Master: &domain.MasterSpec{ExitTunnels: []domain.ExitTunnel{
+		{Name: "exit-a", Endpoint: "198.51.100.7:35555", Transport: domain.TransportAWG, MasterAddr: "203.0.113.1:41234"},
+	}}}
+	for _, heard := range []bool{false, true} {
+		p := awgPinPlanner{
+			list:        func(context.Context, string, int) (string, error) { return ctUnpinned, nil },
+			listKnocks:  func(context.Context, string, int) (string, error) { return "", nil },
+			tableExists: func(string) bool { return false },
+			heard:       func(string) bool { return heard },
+			sockets:     func(context.Context, string) (map[string]bool, bool) { return nil, false },
+		}
+		actions, err := p.Plan(context.Background(), spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var changes []string
+		for _, a := range actions {
+			if a.Changes() {
+				changes = append(changes, a.Display)
+			}
+		}
+		want := "conntrack -D -p udp -s 100.127.255.2 -d 198.51.100.7 --sport 50446 --dport 35555"
+		if len(changes) != 1 || changes[0] != want {
+			t.Fatalf("heard=%v: changes = %v, want only %q", heard, changes, want)
 		}
 	}
 }
