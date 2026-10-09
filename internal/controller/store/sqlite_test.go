@@ -854,3 +854,44 @@ func TestDeleteNodeForgetsItsPinConfirmations(t *testing.T) {
 		t.Errorf("port generation after the delete = %d, want 3 kept: generation 0 is a port already judged poisoned", gen)
 	}
 }
+
+func TestAutoSuspendedRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	got, err := st.ListAutoSuspended(ctx)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("empty store: %v, %v", got, err)
+	}
+	since := time.Date(2026, 10, 9, 18, 0, 0, 0, time.UTC)
+	if err := st.SetAutoSuspended(ctx, "exit-a", since); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAutoSuspended(ctx, "exit-a", since.Add(time.Minute)); err != nil { // replaces
+		t.Fatal(err)
+	}
+	if err := st.SetAutoSuspended(ctx, "exit-b", since); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.ListAutoSuspended(ctx)
+	if err != nil || len(got) != 2 || !got["exit-a"].Equal(since.Add(time.Minute)) || !got["exit-b"].Equal(since) {
+		t.Fatalf("list = %v, %v", got, err)
+	}
+	if err := st.ClearAutoSuspended(ctx, "exit-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ClearAutoSuspended(ctx, "exit-a"); err != nil { // absent ⇒ no-op
+		t.Fatal(err)
+	}
+	got, _ = st.ListAutoSuspended(ctx)
+	if _, still := got["exit-a"]; still || len(got) != 1 {
+		t.Fatalf("after clear: %v", got)
+	}
+	if err := st.SetAutoSuspended(ctx, "", since); err == nil {
+		t.Fatal("an empty exit name was accepted")
+	}
+}

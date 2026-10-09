@@ -278,6 +278,11 @@ func (s *SQLiteStore) DeleteNode(ctx context.Context, id string) error {
 		`DELETE FROM awg_pin_confirmed WHERE master_id = ? OR exit_id = ?`, id, id); err != nil {
 		return fmt.Errorf("delete node %q: pin confirmations: %w", id, err)
 	}
+	// A suspension is about the node that was there; one re-admitted under the
+	// same name starts in the load balancer.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM exit_auto_suspend WHERE exit_id = ?`, id); err != nil {
+		return fmt.Errorf("delete node %q: auto-suspend record: %w", id, err)
+	}
 	// The tombstone, in the same transaction: a delete that succeeded without it
 	// is the bug this table exists to close.
 	if _, err := tx.ExecContext(ctx,
@@ -825,6 +830,49 @@ func (s *SQLiteStore) DeleteAWGPinConfirmation(ctx context.Context, master, exit
 	if _, err := s.db.ExecContext(ctx,
 		`DELETE FROM awg_pin_confirmed WHERE master_id = ? AND exit_id = ?`, master, exit); err != nil {
 		return fmt.Errorf("delete awg pin confirmation %q/%q: %w", master, exit, err)
+	}
+	return nil
+}
+
+// ListAutoSuspended implements Store.
+func (s *SQLiteStore) ListAutoSuspended(ctx context.Context) (map[string]time.Time, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT exit_id, since FROM exit_auto_suspend`)
+	if err != nil {
+		return nil, fmt.Errorf("list auto-suspended exits: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]time.Time)
+	for rows.Next() {
+		var exit, since string
+		if err := rows.Scan(&exit, &since); err != nil {
+			return nil, fmt.Errorf("list auto-suspended exits: %w", err)
+		}
+		out[exit] = parseTime(since)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list auto-suspended exits: %w", err)
+	}
+	return out, nil
+}
+
+// SetAutoSuspended implements Store.
+func (s *SQLiteStore) SetAutoSuspended(ctx context.Context, exit string, since time.Time) error {
+	if exit == "" {
+		return errors.New("store: exit name is required")
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO exit_auto_suspend (exit_id, since) VALUES (?,?)
+		 ON CONFLICT(exit_id) DO UPDATE SET since=excluded.since`,
+		exit, fmtTime(since.UTC())); err != nil {
+		return fmt.Errorf("set auto-suspended %q: %w", exit, err)
+	}
+	return nil
+}
+
+// ClearAutoSuspended implements Store.
+func (s *SQLiteStore) ClearAutoSuspended(ctx context.Context, exit string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM exit_auto_suspend WHERE exit_id = ?`, exit); err != nil {
+		return fmt.Errorf("clear auto-suspended %q: %w", exit, err)
 	}
 	return nil
 }

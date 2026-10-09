@@ -163,6 +163,11 @@ func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, 
 	// full AWGRotateAfter. One that just started carrying — the operator switched
 	// the exit back from REALITY, an auto-suspension ended — has a handshake as
 	// stale as its idle time, and is judged on its own clock.
+	// The stored suspensions have to be in memory before one is asked about: the
+	// exit's render can run first after a restart.
+	if err := b.loadSuspensions(ctx); err != nil {
+		return "", false, err
+	}
 	carries := awgCarries(exit, exitNode) && !b.exitSuspended(exit.Name)
 	since := b.carryingSince(pinKey(master.Name, exit.Name), carries)
 	if carries && b.now().Sub(since) >= AWGRotateAfter {

@@ -687,6 +687,109 @@ func TestAutoSuspendThroughputDegraded(t *testing.T) {
 	}
 }
 
+// suspendFleet is the two-exit fleet of TestAutoSuspendThroughputDegraded with
+// exit-de-2 already auto-suspended, and the pieces a test needs to go on from there.
+func suspendFleet(t *testing.T, clock *time.Time) (*Broker, store.Store, func(b *Broker, name string) bool) {
+	t.Helper()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	fleet := testFleet()
+	fleet.Exits = append(fleet.Exits, config.ExitConfig{Name: "exit-de-2", Egress: "warp", AddressPool: "10.82.0.0/24"})
+	b := New(st, fleet, slog.New(slog.NewTextHandler(io.Discard, nil)), WithClock(func() time.Time { return *clock }))
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+	seedNode(t, st, "exit-de-2", "10.20.0.6", "198.51.100.8", "bGm5lqV2yYt8m6Dl0sFhT4xQ0r9p7zX1cV2bN3mK4U=", domain.RoleExit)
+	drained := func(b *Broker, name string) bool {
+		t.Helper()
+		spec, err := b.RenderNodeSpec(context.Background(), "master-xa-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		x, ok := tunnelByName(spec.Master.ExitTunnels, name)
+		if !ok {
+			t.Fatalf("no tunnel %s", name)
+		}
+		return x.Drained
+	}
+	recordThroughputDegraded(t, st, "exit-de-1", true)
+	recordThroughputDegraded(t, st, "exit-de-2", false)
+	_ = drained(b, "exit-de-2")
+	*clock = clock.Add(AutoSuspendAfter + time.Second)
+	if !drained(b, "exit-de-2") {
+		t.Fatal("fixture: exit-de-2 was not auto-suspended")
+	}
+	return b, st, drained
+}
+
+// A controller restart must not change who is in the load balancer. The
+// suspension lived in the process: after a restart the suspended exit went
+// straight back into the group, clients rode a throttled exit for
+// AutoSuspendAfter, and then it was pulled again — two re-renders of every
+// master's mihomo, each a container restart that drops every client connection
+// (stand 2026-10-09: a client's download closed 25 s after the controller restarted).
+func TestAutoSuspendSurvivesAControllerRestart(t *testing.T) {
+	clock := time.Date(2026, 9, 7, 8, 30, 0, 0, time.UTC)
+	old, st, drained := suspendFleet(t, &clock)
+
+	restarted := New(st, old.fleet, slog.New(slog.NewTextHandler(io.Discard, nil)), WithClock(func() time.Time { return clock }))
+	if !drained(restarted, "exit-de-2") {
+		t.Fatal("the restart put a suspended exit back into the load balancer")
+	}
+	if drained(restarted, "exit-de-1") {
+		t.Fatal("the restart suspended the healthy exit")
+	}
+	// It still returns the usual way: AutoReleaseAfter of health, counted afresh.
+	recordThroughputDegraded(t, st, "exit-de-2", true)
+	_ = drained(restarted, "exit-de-2")
+	clock = clock.Add(AutoReleaseAfter - time.Second)
+	if !drained(restarted, "exit-de-2") {
+		t.Fatal("released before AutoReleaseAfter of health")
+	}
+	clock = clock.Add(2 * time.Second)
+	if drained(restarted, "exit-de-2") {
+		t.Fatal("not released after AutoReleaseAfter of health")
+	}
+	// And the release is durable too: a second restart does not resurrect it.
+	again := New(st, old.fleet, slog.New(slog.NewTextHandler(io.Discard, nil)), WithClock(func() time.Time { return clock }))
+	if drained(again, "exit-de-2") {
+		t.Fatal("a released exit came back suspended after a restart")
+	}
+}
+
+// The stored suspension could not be read: the controller must keep trying
+// rather than settle on "nothing is suspended" for the life of the process.
+func TestAutoSuspendRetriesAnUnreadableStore(t *testing.T) {
+	clock := time.Date(2026, 9, 7, 8, 30, 0, 0, time.UTC)
+	old, st, drained := suspendFleet(t, &clock)
+
+	flaky := &suspendReadFails{Store: st, fail: true}
+	restarted := New(flaky, old.fleet, slog.New(slog.NewTextHandler(io.Discard, nil)), WithClock(func() time.Time { return clock }))
+	// Unreadable: the render fails and the master keeps its last spec — it is not
+	// handed one with the suspended exit back in the group.
+	if _, err := restarted.RenderNodeSpec(context.Background(), "master-xa-1"); err == nil {
+		t.Fatal("rendered the master without knowing what is suspended")
+	}
+	flaky.fail = false
+	if !drained(restarted, "exit-de-2") {
+		t.Fatal("the suspension was not picked up once the store became readable")
+	}
+}
+
+type suspendReadFails struct {
+	store.Store
+	fail bool
+}
+
+func (s *suspendReadFails) ListAutoSuspended(ctx context.Context) (map[string]time.Time, error) {
+	if s.fail {
+		return nil, errors.New("disk I/O error")
+	}
+	return s.Store.ListAutoSuspended(ctx)
+}
+
 func TestAutoSuspendSingleExitGuard(t *testing.T) {
 	ctx := context.Background()
 	b, st := newBroker(t) // testFleet has exactly one exit

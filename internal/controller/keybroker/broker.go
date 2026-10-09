@@ -67,6 +67,9 @@ type Broker struct {
 	pinCarrying map[string]carryTrack
 	suspendMu   sync.Mutex
 	suspend     map[string]*suspendTrack
+	// suspendLoaded is set once the stored suspensions have been read into suspend
+	// (see loadSuspensions); until then nothing may be decided from an empty map.
+	suspendLoaded bool
 }
 
 // suspendTrack is one exit's auto-suspend history: how long it has been degraded
@@ -751,7 +754,10 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	}
 	ms.ClientWG = cwSpec
 
-	autoSuspend := b.throughputAutoSuspend(ctx)
+	autoSuspend, err := b.throughputAutoSuspend(ctx)
+	if err != nil {
+		return domain.NodeSpec{}, fmt.Errorf("master %q: %w", master.Name, err)
+	}
 
 	// dnsUpstreams collects the active exit blockys (mgmt addrs) the master-tier
 	// resolver forwards public queries to (ADR-0024). Built from the same membership
@@ -1106,7 +1112,7 @@ func deriveRealityIDs(seed string) (uuid, shortID string) {
 // healthy: it must not satisfy the last-exit guard, or two limping-but-reporting
 // exits could be suspended in favour of one that may never come up. The degraded
 // signal is the exit's own hysteresis-smoothed egress-throughput check.
-func (b *Broker) throughputAutoSuspend(ctx context.Context) map[string]bool {
+func (b *Broker) throughputAutoSuspend(ctx context.Context) (map[string]bool, error) {
 	degraded := make(map[string]bool)
 	var present []string
 	healthy := 0
@@ -1118,7 +1124,7 @@ func (b *Broker) throughputAutoSuspend(ctx context.Context) map[string]bool {
 			// function must not make; suspend nothing this pass.
 			b.log.Warn("auto-suspend: inventory read failed; suspending nothing this pass",
 				"exit", exit.Name, "err", err)
-			return nil
+			return nil, nil
 		}
 		if pub == "" || node.Decommission {
 			continue
@@ -1139,11 +1145,50 @@ func (b *Broker) throughputAutoSuspend(ctx context.Context) map[string]bool {
 			healthy++
 		}
 	}
-	suspended := b.trackSuspensions(degraded, present)
-	if healthy == 0 {
-		return nil // keep every exit in the LB rather than black-hole all clients
+	// What was suspended before this process started has to be known first.
+	// Deciding from an empty history would put every suspended exit back into the
+	// balancer — the re-render the state is stored to avoid — so an unreadable
+	// store fails the render and the master keeps its last spec.
+	if err := b.loadSuspensions(ctx); err != nil {
+		return nil, err
 	}
-	return suspended
+	suspended := b.trackSuspensions(ctx, degraded, present)
+	if healthy == 0 {
+		return nil, nil // keep every exit in the LB rather than black-hole all clients
+	}
+	return suspended, nil
+}
+
+// loadSuspensions reads the stored suspensions into memory, once per process. A
+// failed read is retried on the next render: it never settles on "none".
+func (b *Broker) loadSuspensions(ctx context.Context) error {
+	b.suspendMu.Lock()
+	loaded := b.suspendLoaded
+	b.suspendMu.Unlock()
+	if loaded {
+		return nil
+	}
+	stored, err := b.store.ListAutoSuspended(ctx)
+	if err != nil {
+		return fmt.Errorf("auto-suspend: stored suspensions: %w", err)
+	}
+	b.suspendMu.Lock()
+	defer b.suspendMu.Unlock()
+	if b.suspendLoaded {
+		return nil
+	}
+	if b.suspend == nil {
+		b.suspend = make(map[string]*suspendTrack, len(stored))
+	}
+	for name := range stored {
+		// Suspended, with both clocks at zero: it returns after AutoReleaseAfter of
+		// health counted from now, the same evidence any release asks for.
+		if b.suspend[name] == nil {
+			b.suspend[name] = &suspendTrack{suspended: true}
+		}
+	}
+	b.suspendLoaded = true
+	return nil
 }
 
 // trackSuspensions turns this pass's degraded set into the suspended set, with
@@ -1151,7 +1196,25 @@ func (b *Broker) throughputAutoSuspend(ctx context.Context) map[string]bool {
 // degradation and released only after AutoReleaseAfter of continuous health.
 // Exits not in present are forgotten. Every transition is logged — the previous
 // version changed the master's data plane without a line anywhere.
-func (b *Broker) trackSuspensions(degraded map[string]bool, present []string) map[string]bool {
+func (b *Broker) trackSuspensions(ctx context.Context, degraded map[string]bool, present []string) map[string]bool {
+	// Transitions are written to the store after the lock is released: suspendMu
+	// is not held across I/O. A failed write leaves this process correct and is
+	// logged; the cost is the old behaviour after the next restart.
+	var taken, released []string
+	defer func() {
+		for _, name := range taken {
+			if err := b.store.SetAutoSuspended(ctx, name, b.now()); err != nil {
+				b.log.Warn("auto-suspend: could not store the suspension; a controller restart would return the exit to the load balancer",
+					"exit", name, "err", err)
+			}
+		}
+		for _, name := range released {
+			if err := b.store.ClearAutoSuspended(ctx, name); err != nil {
+				b.log.Warn("auto-suspend: could not clear the stored suspension; a controller restart would suspend the exit again",
+					"exit", name, "err", err)
+			}
+		}
+	}()
 	b.suspendMu.Lock()
 	defer b.suspendMu.Unlock()
 	now := b.now()
@@ -1170,6 +1233,7 @@ func (b *Broker) trackSuspensions(degraded map[string]bool, present []string) ma
 			}
 			if !t.suspended && now.Sub(t.degradedSince) >= AutoSuspendAfter {
 				t.suspended = true
+				taken = append(taken, name)
 				b.log.Warn("auto-suspend: exit removed from the load balancer",
 					"exit", name, "degraded_for", now.Sub(t.degradedSince).Round(time.Second))
 			}
@@ -1180,6 +1244,7 @@ func (b *Broker) trackSuspensions(degraded map[string]bool, present []string) ma
 			}
 			if t.suspended && now.Sub(t.healthySince) >= AutoReleaseAfter {
 				t.suspended = false
+				released = append(released, name)
 				b.log.Info("auto-suspend: exit returned to the load balancer",
 					"exit", name, "healthy_for", now.Sub(t.healthySince).Round(time.Second))
 			}
@@ -1189,6 +1254,13 @@ func (b *Broker) trackSuspensions(degraded map[string]bool, present []string) ma
 		}
 		b.log.Debug("auto-suspend: exit assessed", "exit", name, "degraded", degraded[name],
 			"suspended", t.suspended, "degraded_since", t.degradedSince, "healthy_since", t.healthySince)
+	}
+	// An exit that left the inventory is forgotten here, so its stored suspension
+	// goes too: kept, it would come back suspended after a restart on no evidence.
+	for name, t := range b.suspend {
+		if keep[name] == nil && t.suspended {
+			released = append(released, name)
+		}
 	}
 	b.suspend = keep
 	return out

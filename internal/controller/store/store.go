@@ -225,6 +225,15 @@ type Store interface {
 	// DeleteAWGPinConfirmation forgets that confirmation. Absent ⇒ no-op.
 	DeleteAWGPinConfirmation(ctx context.Context, master, exit string) error
 
+	// ListAutoSuspended returns the exits the throughput watchdog holds out of the
+	// load balancer, each with the time it was taken out.
+	ListAutoSuspended(ctx context.Context) (map[string]time.Time, error)
+	// SetAutoSuspended records that exit is held out since the given time,
+	// replacing an earlier record.
+	SetAutoSuspended(ctx context.Context, exit string, since time.Time) error
+	// ClearAutoSuspended records that exit is back in. Absent ⇒ no-op.
+	ClearAutoSuspended(ctx context.Context, exit string) error
+
 	// AuthConfigured reports whether the single web-panel admin credential exists.
 	AuthConfigured(ctx context.Context) (bool, error)
 	// GetAuth returns the admin credential, or ErrNotFound when unset.

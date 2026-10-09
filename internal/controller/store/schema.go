@@ -222,6 +222,15 @@ var migrations = []string{
 		since     TEXT NOT NULL,
 		PRIMARY KEY (master_id, exit_id)
 	)`,
+	// v29: the exits the throughput watchdog currently holds out of the load
+	// balancer. Held in memory alone, a controller restart put every suspended
+	// exit straight back into the group and pulled it again AutoSuspendAfter
+	// later — two re-renders of each master's mihomo, each one a container restart
+	// that drops every client connection.
+	`CREATE TABLE IF NOT EXISTS exit_auto_suspend (
+		exit_id TEXT PRIMARY KEY,
+		since   TEXT NOT NULL
+	)`,
 }
 
 // MigrationCount is how many schema migrations this build knows. Exported so a
