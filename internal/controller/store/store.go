@@ -15,6 +15,13 @@ import (
 // ErrNotFound is returned when a requested node or status does not exist.
 var ErrNotFound = errors.New("store: not found")
 
+// ErrUnreadable marks a failure that is the controller not being able to read its
+// own state, as opposed to the state saying no. Whoever renders a node's spec
+// wraps a store read error with it when the honest answer is "I do not know",
+// so the gRPC layer can tell the agent the controller is unavailable — the agent
+// then reconciles on its last good spec — instead of handing it a refusal.
+var ErrUnreadable = errors.New("store: unreadable")
+
 // Store is the controller's persistence boundary. All methods take a context so
 // callers can cancel slow queries; implementations must honor it.
 type Store interface {

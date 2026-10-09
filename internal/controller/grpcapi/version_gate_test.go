@@ -2,6 +2,9 @@ package grpcapi_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"github.com/shidoh/wgfleet/internal/controller/store"
 	"sync"
 	"testing"
 	"time"
@@ -144,4 +147,36 @@ func itoa(u uint32) string {
 		u /= 10
 	}
 	return string(b)
+}
+
+// A render that failed because the controller could not READ ITS OWN STATE is not
+// the controller answering "no". Sent as NotFound it was an answer the agent
+// obeyed: the node went to Error, applied nothing and dropped its self-checks
+// for the pass. Sent as Unavailable the agent does what it does when the
+// controller is down — reconciles on its last good spec.
+//
+// A node the manifest does not know stays NotFound: that IS an answer, and an
+// agent falling back to its cache on it would rebuild a node the operator removed.
+func TestPullSpecTellsAnUnreadableStoreFromARefusal(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want codes.Code
+	}{
+		{"state could not be read", fmt.Errorf("master %q: %w: disk I/O error", "m", store.ErrUnreadable), codes.Unavailable},
+		{"node not in the manifest", errors.New(`keybroker: node "x" not found in fleet manifest`), codes.NotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, integrationFleet())
+			h.svc.FailRendersForTest(tc.err)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			rc := h.rawClient(t, "exit-de-1")
+			_, err := rc.PullSpec(withWireVersion(ctx, itoa(api.WireContractVersion)), &pb.PullSpecRequest{})
+			if status.Code(err) != tc.want {
+				t.Fatalf("PullSpec: got %v, want %v", err, tc.want)
+			}
+		})
+	}
 }

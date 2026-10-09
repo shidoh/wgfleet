@@ -158,7 +158,7 @@ func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, 
 	}
 	gen, rotatedAt, err := b.store.GetAWGPortRotation(ctx, master.Name, exit.Name)
 	if err != nil {
-		return "", false, fmt.Errorf("exit %q: pinned port generation for master %q: %w", exit.Name, master.Name, err)
+		return "", false, fmt.Errorf("exit %q: pinned port generation for master %q: %w: %w", exit.Name, master.Name, store.ErrUnreadable, err)
 	}
 	addr := pinnedAddr(exit, master, ip, gen)
 	poisoned := false
@@ -361,7 +361,7 @@ func (b *Broker) confirmation(ctx context.Context, master, exit string) (pinConf
 	}
 	addr, key, since, err := b.store.GetAWGPinConfirmation(ctx, master, exit)
 	if err != nil {
-		return pinConfirmation{}, fmt.Errorf("exit %q: pinned address confirmed for master %q: %w", exit, master, err)
+		return pinConfirmation{}, fmt.Errorf("exit %q: pinned address confirmed for master %q: %w: %w", exit, master, store.ErrUnreadable, err)
 	}
 	b.pinMu.Lock()
 	defer b.pinMu.Unlock()

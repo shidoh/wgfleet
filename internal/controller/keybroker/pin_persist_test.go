@@ -50,6 +50,11 @@ func wantRenderFails(t *testing.T, b *Broker, id string) {
 	if !errors.Is(err, errStoreDown) {
 		t.Errorf("render %s: err = %v, want the store's read error — the node must keep its last-good spec", id, err)
 	}
+	// …and it has to say so in a way the gRPC layer can tell from a refusal: only
+	// then does the agent fall back to its last good spec instead of obeying a "no".
+	if !errors.Is(err, store.ErrUnreadable) {
+		t.Errorf("render %s: err = %v is not marked store.ErrUnreadable", id, err)
+	}
 }
 
 // Generation 0 is the port already judged poisoned. A store that cannot say which

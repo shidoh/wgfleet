@@ -245,6 +245,15 @@ func (s *Service) PullSpec(ctx context.Context, _ *pb.PullSpecRequest) (*pb.Node
 	}
 	spec, err := s.renderer.RenderNodeSpec(ctx, nodeID)
 	if err != nil {
+		// Logged here because nowhere else is: the agent reports it, the node page
+		// shows it, and the controller's own journal used to say nothing at all.
+		s.log.Warn("spec not rendered", "node", nodeID, "err", err)
+		if errors.Is(err, store.ErrUnreadable) {
+			// Not an answer about the node — the controller could not read its own
+			// state. Unavailable is what the agent treats as "nobody answered": it
+			// reconciles on its last good spec. NotFound it would obey.
+			return nil, status.Errorf(codes.Unavailable, "render spec for %q: %v", nodeID, err)
+		}
 		return nil, status.Errorf(codes.NotFound, "render spec for %q: %v", nodeID, err)
 	}
 	logging.Trace(s.log, "rpc PullSpec", "node", nodeID, "peers", len(spec.Peers),
