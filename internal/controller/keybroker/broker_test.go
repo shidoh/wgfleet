@@ -769,8 +769,8 @@ func TestAutoSuspendRetriesAnUnreadableStore(t *testing.T) {
 	restarted := New(flaky, old.fleet, slog.New(slog.NewTextHandler(io.Discard, nil)), WithClock(func() time.Time { return clock }))
 	// Unreadable: the render fails and the master keeps its last spec — it is not
 	// handed one with the suspended exit back in the group.
-	if _, err := restarted.RenderNodeSpec(context.Background(), "master-xa-1"); err == nil {
-		t.Fatal("rendered the master without knowing what is suspended")
+	if _, err := restarted.RenderNodeSpec(context.Background(), "master-xa-1"); !errors.Is(err, store.ErrUnreadable) {
+		t.Fatalf("rendered the master without knowing what is suspended, or failed without saying the store was unreadable: %v", err)
 	}
 	flaky.fail = false
 	if !drained(restarted, "exit-de-2") {
@@ -842,6 +842,87 @@ func TestAutoSuspendKeepsTheSetOnAnUnreadableInventory(t *testing.T) {
 	if !got["exit-de-2"] || len(got) != 1 {
 		t.Fatalf("suspended set on an unreadable inventory = %v, want exit-de-2 alone", got)
 	}
+}
+
+// A write that failed is retried on the next pass, in both directions. It used
+// to be logged once and dropped: the process stayed right and the store stayed
+// wrong until the next restart found out.
+func TestAutoSuspendRetriesAFailedWrite(t *testing.T) {
+	clock := time.Date(2026, 9, 7, 8, 30, 0, 0, time.UTC)
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	flaky := &suspendWriteFails{Store: st, fail: true}
+	fleet := testFleet()
+	fleet.Exits = append(fleet.Exits, config.ExitConfig{Name: "exit-de-2", Egress: "warp", AddressPool: "10.82.0.0/24"})
+	b := New(flaky, fleet, slog.New(slog.NewTextHandler(io.Discard, nil)), WithClock(func() time.Time { return clock }))
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+	seedNode(t, st, "exit-de-2", "10.20.0.6", "198.51.100.8", "bGm5lqV2yYt8m6Dl0sFhT4xQ0r9p7zX1cV2bN3mK4U=", domain.RoleExit)
+	ctx := context.Background()
+	pass := func() {
+		t.Helper()
+		if _, err := b.RenderNodeSpec(ctx, "master-xa-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stored := func() map[string]time.Time {
+		t.Helper()
+		m, err := st.ListAutoSuspended(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	recordThroughputDegraded(t, st, "exit-de-1", true)
+	recordThroughputDegraded(t, st, "exit-de-2", false)
+	pass()
+	clock = clock.Add(AutoSuspendAfter + time.Second)
+	pass() // suspended in memory; the write fails
+	if len(stored()) != 0 {
+		t.Fatal("fixture: the failing write reached the store")
+	}
+	flaky.fail = false
+	pass()
+	if _, ok := stored()["exit-de-2"]; !ok {
+		t.Fatal("a suspension whose write failed was not written on the next pass")
+	}
+
+	// And the other way: the release's delete fails, then is retried.
+	recordThroughputDegraded(t, st, "exit-de-2", true)
+	pass()
+	flaky.fail = true
+	clock = clock.Add(AutoReleaseAfter + time.Second)
+	pass() // released in memory; the delete fails
+	if len(stored()) != 1 {
+		t.Fatal("fixture: the failing delete reached the store")
+	}
+	flaky.fail = false
+	pass()
+	if len(stored()) != 0 {
+		t.Fatalf("a release whose delete failed was not cleared on the next pass: %v", stored())
+	}
+}
+
+type suspendWriteFails struct {
+	store.Store
+	fail bool
+}
+
+func (s *suspendWriteFails) SetAutoSuspended(ctx context.Context, exit string, since time.Time) error {
+	if s.fail {
+		return errors.New("disk I/O error")
+	}
+	return s.Store.SetAutoSuspended(ctx, exit, since)
+}
+
+func (s *suspendWriteFails) ClearAutoSuspended(ctx context.Context, exit string) error {
+	if s.fail {
+		return errors.New("disk I/O error")
+	}
+	return s.Store.ClearAutoSuspended(ctx, exit)
 }
 
 type statusReadFails struct {

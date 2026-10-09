@@ -70,6 +70,10 @@ type Broker struct {
 	// suspendLoaded is set once the stored suspensions have been read into suspend
 	// (see loadSuspensions); until then nothing may be decided from an empty map.
 	suspendLoaded bool
+	// suspendStored is the suspended set known to be in the store: what was loaded,
+	// plus every write that succeeded since. syncSuspensions brings the store in
+	// line with suspend against it. Guarded by suspendMu.
+	suspendStored map[string]bool
 	// suspendGuard is set while the last-healthy-exit guard overrides the suspended
 	// set (no healthy exit left: every exit stays in the balancer). Guarded by suspendMu.
 	suspendGuard bool
@@ -1197,7 +1201,7 @@ func (b *Broker) loadSuspensions(ctx context.Context) error {
 	}
 	stored, err := b.store.ListAutoSuspended(ctx)
 	if err != nil {
-		return fmt.Errorf("auto-suspend: stored suspensions: %w", err)
+		return fmt.Errorf("auto-suspend: stored suspensions: %w: %w", store.ErrUnreadable, err)
 	}
 	b.suspendMu.Lock()
 	defer b.suspendMu.Unlock()
@@ -1207,7 +1211,9 @@ func (b *Broker) loadSuspensions(ctx context.Context) error {
 	if b.suspend == nil {
 		b.suspend = make(map[string]*suspendTrack, len(stored))
 	}
+	b.suspendStored = make(map[string]bool, len(stored))
 	for name := range stored {
+		b.suspendStored[name] = true
 		// Suspended, with both clocks at zero: it returns after AutoReleaseAfter of
 		// health counted from now, the same evidence any release asks for.
 		if b.suspend[name] == nil {
@@ -1224,27 +1230,11 @@ func (b *Broker) loadSuspensions(ctx context.Context) error {
 // Exits not in present are forgotten. Every transition is logged — the previous
 // version changed the master's data plane without a line anywhere.
 func (b *Broker) trackSuspensions(ctx context.Context, degraded map[string]bool, present, unknown []string) map[string]bool {
-	// Transitions are written to the store after the lock is released: suspendMu
-	// is not held across I/O. A failed write leaves this process correct and is
-	// logged; the cost is the old behaviour after the next restart.
-	var taken, released []string
-	defer func() {
-		// The render's context may be cancelled the moment the caller hangs up; the
-		// transition happened either way and has to reach the store.
-		ctx := context.WithoutCancel(ctx)
-		for _, name := range taken {
-			if err := b.store.SetAutoSuspended(ctx, name, b.now()); err != nil {
-				b.log.Warn("auto-suspend: could not store the suspension; a controller restart would return the exit to the load balancer",
-					"exit", name, "err", err)
-			}
-		}
-		for _, name := range released {
-			if err := b.store.ClearAutoSuspended(ctx, name); err != nil {
-				b.log.Warn("auto-suspend: could not clear the stored suspension; after a controller restart the exit would stay out of the load balancer until it has been healthy for AutoReleaseAfter",
-					"exit", name, "err", err)
-			}
-		}
-	}()
+	// The store is brought in line after the lock is released: suspendMu is not
+	// held across I/O. It is a reconcile, not a log of transitions — what memory
+	// holds is compared with what is known to be stored on EVERY pass, so a write
+	// that failed is simply still owed on the next one.
+	defer b.syncSuspensions(ctx)
 	b.suspendMu.Lock()
 	defer b.suspendMu.Unlock()
 	now := b.now()
@@ -1263,7 +1253,6 @@ func (b *Broker) trackSuspensions(ctx context.Context, degraded map[string]bool,
 			}
 			if !t.suspended && now.Sub(t.degradedSince) >= AutoSuspendAfter {
 				t.suspended = true
-				taken = append(taken, name)
 				b.log.Warn("auto-suspend: exit removed from the load balancer",
 					"exit", name, "degraded_for", now.Sub(t.degradedSince).Round(time.Second))
 			}
@@ -1274,7 +1263,6 @@ func (b *Broker) trackSuspensions(ctx context.Context, degraded map[string]bool,
 			}
 			if t.suspended && now.Sub(t.healthySince) >= AutoReleaseAfter {
 				t.suspended = false
-				released = append(released, name)
 				b.log.Info("auto-suspend: exit returned to the load balancer",
 					"exit", name, "healthy_for", now.Sub(t.healthySince).Round(time.Second))
 			}
@@ -1294,15 +1282,63 @@ func (b *Broker) trackSuspensions(ctx context.Context, degraded map[string]bool,
 			}
 		}
 	}
-	// An exit that left the inventory is forgotten here, so its stored suspension
-	// goes too: kept, it would come back suspended after a restart on no evidence.
-	for name, t := range b.suspend {
-		if keep[name] == nil && t.suspended {
-			released = append(released, name)
-		}
-	}
+	// An exit that left the inventory is forgotten here, and syncSuspensions drops
+	// its stored suspension with it: kept, it would come back suspended after a
+	// restart on no evidence.
 	b.suspend = keep
 	return out
+}
+
+// syncSuspensions writes the difference between the suspended set in memory and
+// the one known to be in the store. A failed write is logged and stays owed.
+func (b *Broker) syncSuspensions(ctx context.Context) {
+	// The render's context may be cancelled the moment the caller hangs up; the
+	// transition happened either way and has to reach the store.
+	ctx = context.WithoutCancel(ctx)
+	b.suspendMu.Lock()
+	var set, drop []string
+	for name, t := range b.suspend {
+		if t.suspended && !b.suspendStored[name] {
+			set = append(set, name)
+		}
+	}
+	for name := range b.suspendStored {
+		if t := b.suspend[name]; t == nil || !t.suspended {
+			drop = append(drop, name)
+		}
+	}
+	b.suspendMu.Unlock()
+
+	stored := func(name string, is bool) {
+		b.suspendMu.Lock()
+		defer b.suspendMu.Unlock()
+		if b.suspendStored == nil {
+			b.suspendStored = make(map[string]bool)
+		}
+		if is {
+			b.suspendStored[name] = true
+		} else {
+			delete(b.suspendStored, name)
+		}
+	}
+	for _, name := range set {
+		if err := b.store.SetAutoSuspended(ctx, name, b.now()); err != nil {
+			b.warnOnce("auto-suspend-set:"+name, err.Error(),
+				"auto-suspend: could not store the suspension; retried every pass — until it is stored, a controller restart would return the exit to the load balancer",
+				"exit", name, "err", err)
+			continue
+		}
+		stored(name, true)
+	}
+	for _, name := range drop {
+		if err := b.store.ClearAutoSuspended(ctx, name); err != nil {
+			b.warnOnce("auto-suspend-clear:"+name, err.Error(),
+				"auto-suspend: could not clear the stored suspension; retried every pass — until it is cleared, a controller restart would keep the exit out of the load balancer until it has been healthy for AutoReleaseAfter",
+				"exit", name, "err", err)
+			continue
+		}
+		stored(name, false)
+	}
 }
 
 // egressChain builds the exit's egress priority chain (ADR-0017) from its
