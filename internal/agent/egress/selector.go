@@ -42,10 +42,26 @@ type Selector struct {
 // Active returns the egress the agent should converge to this pass, defaulting to
 // the chain's preferred method before the first Step.
 func (s *Selector) Active(chain []domain.EgressMethod) domain.EgressMethod {
-	if s.active == "" && len(chain) > 0 {
-		s.active = chain[0]
-	}
+	s.followChain(chain)
 	return s.active
+}
+
+// followChain returns the selector to the preferred method when it has none yet,
+// or holds one the chain no longer lists. The second case is the operator
+// changing the exit's egress in the manifest: the held method is then not a
+// fallback the node failed over to, and staying on it until a recovery probe
+// passes keeps the exit on an egress the manifest has dropped.
+func (s *Selector) followChain(chain []domain.EgressMethod) {
+	if len(chain) == 0 {
+		return
+	}
+	for _, m := range chain {
+		if s.active == m {
+			return
+		}
+	}
+	s.active = chain[0]
+	s.recovers = 0
 }
 
 // Step advances the selector after a pass and returns the active egress to
@@ -62,9 +78,7 @@ func (s *Selector) Step(ctx context.Context, chain []domain.EgressMethod, class 
 		return s.active
 	}
 	preferred := chain[0]
-	if s.active == "" {
-		s.active = preferred
-	}
+	s.followChain(chain)
 
 	if s.active == preferred {
 		// On the preferred egress: demote on a confirmed block OR a sustained
