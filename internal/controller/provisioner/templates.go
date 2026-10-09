@@ -2,10 +2,10 @@ package provisioner
 
 // baselineNFT is the minimal firewall installed BEFORE the node accepts traffic
 // (Phase 1): only SSH, the management overlay (ZeroTier), and the WG port are
-// reachable. The agent's reconcile later replaces this with the full per-role
-// ruleset — but the master's agent does not re-apply an input firewall, so this
-// baseline (which trusts the overlay) is also what keeps the master's mgmt surface
-// reachable across reboots.
+// reachable. The agent's reconcile then replaces this with the full per-role
+// ruleset, on both roles: applying that ruleset deletes this table, and an agent
+// that finds it loaded beside its own (a re-provision of a running node) applies
+// again.
 const baselineNFT = `#!/usr/sbin/nft -f
 # Managed by wgfleet — baseline bootstrap firewall. Replaced by agent reconcile.
 # Replace ONLY our own table (atomic add/delete/create), never ` + "`flush ruleset`" + `:

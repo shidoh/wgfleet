@@ -1011,15 +1011,24 @@ func TestRemovingADirectRuleDeletesItsLeftoverPriority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// "ip rule del pref N" is also how a rule is replaced, so the leftover's delete
+	// is the one that comes after the last add — and it has to: deleted first, a
+	// CIDR shifting down a priority would have no rule until its new one is written.
 	leftover := fmt.Sprintf("ip rule del pref %d", 110+n-1)
-	found := false
-	for _, a := range actions {
-		if a.Kind == reconcile.ActionExec && a.Changes() && a.Display == leftover {
-			found = true
+	lastAdd, lastDel := -1, -1
+	for i, a := range actions {
+		if a.Kind != reconcile.ActionExec || !a.Changes() {
+			continue
+		}
+		if strings.HasPrefix(a.Display, "ip rule add ") {
+			lastAdd = i
+		}
+		if a.Display == leftover {
+			lastDel = i
 		}
 	}
-	if !found {
-		t.Errorf("the priority the shorter list no longer fills was not cleared (%s): %q", leftover, displays(actions))
+	if lastDel < 0 || lastDel < lastAdd {
+		t.Errorf("the priority the shorter list no longer fills was not cleared after the rules were re-added (%s): %q", leftover, displays(actions))
 	}
 }
 

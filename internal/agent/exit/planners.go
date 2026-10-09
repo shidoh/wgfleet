@@ -595,11 +595,14 @@ func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 		return nil, err
 	}
 	actions := []reconcile.Action{file}
+	// A rule at a priority the new intent no longer uses is replaced by nothing and
+	// would outlive the change. Deleted AFTER the rules are re-added: a shortened
+	// list shifts its later CIDRs down, and deleting the old tail first would
+	// leave one of them with no rule until its new priority is written.
+	var dropped []reconcile.Action
 	if file.Changes() {
-		// Before anything is re-added: a rule at a priority the new intent no longer
-		// uses is replaced by nothing and would outlive the change.
 		for _, pref := range routing.RulePrefsDropped(string(prev), script) {
-			actions = append(actions, routingExecActions([]routing.Step{routing.DeleteRuleStep(pref)})...)
+			dropped = append(dropped, routingExecActions([]routing.Step{routing.DeleteRuleStep(pref)})...)
 		}
 	}
 	switch {
@@ -611,6 +614,7 @@ func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 		// client flow keeps the source NAT of the path it used to take: forget
 		// those, once the rules are in, and nothing else.
 		actions = append(actions, routingExecActions(routing.WithoutConntrackFlush(steps))...)
+		actions = append(actions, dropped...)
 		for _, cidr := range routing.DirectCIDRsChanged(string(prev), script) {
 			// Best-effort like the global flush: `conntrack -D` exits non-zero when
 			// it matched no flow, which is the ordinary case for a new destination.
@@ -620,6 +624,7 @@ func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 	case file.Changes():
 		// Intent changed: apply the full set (incl. the conntrack flush).
 		actions = append(actions, routingExecActions(steps)...)
+		actions = append(actions, dropped...)
 	case !p.isApplied(rspec):
 		// Intent unchanged but the live kernel no longer reflects it — someone
 		// flushed or edited `ip rule`/`ip route` by hand, or a partial state.
