@@ -895,3 +895,59 @@ func TestAutoSuspendedRoundTrip(t *testing.T) {
 		t.Fatal("an empty exit name was accepted")
 	}
 }
+
+// The suspension is about the node that was there: deleting the node drops it,
+// and a node with none is deleted like any other.
+func TestDeleteNodeForgetsItsAutoSuspension(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	since := time.Unix(1_800_000_000, 0).UTC()
+	for _, id := range []string{"exit-de-1", "exit-de-2", "exit-de-3"} {
+		if err := s.UpsertNode(ctx, domain.Node{ID: id, Name: id, Role: domain.RoleExit, State: domain.StateReady}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"exit-de-1", "exit-de-2"} {
+		if err := s.SetAutoSuspended(ctx, id, since); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"exit-de-1", "exit-de-3"} {
+		if err := s.DeleteNode(ctx, id); err != nil {
+			t.Fatalf("delete %s: %v", id, err)
+		}
+	}
+	got, err := s.ListAutoSuspended(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, kept := got["exit-de-2"]; !kept || len(got) != 1 {
+		t.Fatalf("after deleting exit-de-1 and exit-de-3: %v, want only exit-de-2", got)
+	}
+}
+
+// The whole point of the table: it is still there after the process is gone.
+func TestAutoSuspendedSurvivesReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "state.db")
+	since := time.Date(2026, 10, 9, 18, 33, 38, 461576765, time.UTC)
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAutoSuspended(ctx, "exit-a", since); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	got, err := st.ListAutoSuspended(ctx)
+	if err != nil || len(got) != 1 || !got["exit-a"].Equal(since) {
+		t.Fatalf("after reopen: %v, %v", got, err)
+	}
+}

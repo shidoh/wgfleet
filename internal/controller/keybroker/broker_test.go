@@ -778,6 +778,97 @@ func TestAutoSuspendRetriesAnUnreadableStore(t *testing.T) {
 	}
 }
 
+// One status read that failed is not an exit that left the fleet. It used to drop
+// the exit from this pass's inventory, and with the suspension stored that now
+// deleted the stored row as well: a disk hiccup returned a suspended exit to the
+// balancer for good.
+func TestAutoSuspendOutlivesAFailedStatusRead(t *testing.T) {
+	clock := time.Date(2026, 9, 7, 8, 30, 0, 0, time.UTC)
+	old, st, drained := suspendFleet(t, &clock)
+
+	flaky := &statusReadFails{Store: st, node: "exit-de-2", fail: true}
+	b := New(flaky, old.fleet, slog.New(slog.NewTextHandler(io.Discard, nil)), WithClock(func() time.Time { return clock }))
+	if !drained(b, "exit-de-2") {
+		t.Fatal("a failed status read returned the suspended exit to the load balancer")
+	}
+	stored, err := st.ListAutoSuspended(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, kept := stored["exit-de-2"]; !kept {
+		t.Fatal("a failed status read deleted the stored suspension")
+	}
+	flaky.fail = false
+	if !drained(b, "exit-de-2") {
+		t.Fatal("the suspension was lost once the status became readable again")
+	}
+}
+
+// An exit that really is gone — out of the manifest's inventory — takes its
+// stored suspension with it.
+func TestAutoSuspendForgetsAnExitThatLeft(t *testing.T) {
+	clock := time.Date(2026, 9, 7, 8, 30, 0, 0, time.UTC)
+	b, st, drained := suspendFleet(t, &clock)
+	ctx := context.Background()
+	node, err := st.GetNode(ctx, "exit-de-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.Decommission = true
+	if err := st.UpsertNode(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	_ = drained(b, "exit-de-1")
+	stored, err := st.ListAutoSuspended(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 0 {
+		t.Fatalf("a decommissioned exit kept its stored suspension: %v", stored)
+	}
+}
+
+// The inventory itself could not be read: the suspended set stays what it was.
+// It used to come back empty — every suspended exit returned for one pass.
+func TestAutoSuspendKeepsTheSetOnAnUnreadableInventory(t *testing.T) {
+	clock := time.Date(2026, 9, 7, 8, 30, 0, 0, time.UTC)
+	old, st, _ := suspendFleet(t, &clock)
+	b := New(&nodeReadFails{Store: st, node: "exit-de-1"}, old.fleet, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithClock(func() time.Time { return clock }))
+	got, err := b.throughputAutoSuspend(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got["exit-de-2"] || len(got) != 1 {
+		t.Fatalf("suspended set on an unreadable inventory = %v, want exit-de-2 alone", got)
+	}
+}
+
+type statusReadFails struct {
+	store.Store
+	node string
+	fail bool
+}
+
+func (s *statusReadFails) GetStatus(ctx context.Context, id string) (domain.NodeStatus, error) {
+	if s.fail && id == s.node {
+		return domain.NodeStatus{}, errors.New("disk I/O error")
+	}
+	return s.Store.GetStatus(ctx, id)
+}
+
+type nodeReadFails struct {
+	store.Store
+	node string
+}
+
+func (s *nodeReadFails) GetNode(ctx context.Context, id string) (domain.Node, error) {
+	if id == s.node {
+		return domain.Node{}, errors.New("disk I/O error")
+	}
+	return s.Store.GetNode(ctx, id)
+}
+
 type suspendReadFails struct {
 	store.Store
 	fail bool

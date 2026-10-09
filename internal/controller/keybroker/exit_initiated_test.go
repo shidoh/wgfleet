@@ -491,6 +491,56 @@ func TestExitInitiatedDoesNotRotateAnAutoSuspendedExit(t *testing.T) {
 	}
 }
 
+// The exit's own spec does not hang on the stored suspensions: unreadable, the
+// tunnel is simply not judged this pass. Only the master's render — whose output
+// IS the balancer's membership — fails on them.
+func TestExitInitiatedRendersTheExitWhenSuspensionsAreUnreadable(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	b, st, pub := eiFleet(t, &now)
+	start := now
+	report(t, st, eiExit, now, now, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	_ = masterTunnel(t, b)
+
+	restarted := New(&suspendReadFails{Store: st, fail: true}, b.fleet, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithClock(func() time.Time { return now }))
+	now = start.Add(AWGRotateAfter + time.Minute)
+	report(t, st, eiExit, now, start, eiPinned) // stale: would be rotated if judged
+	report(t, st, eiMaster, now, now, "")
+	spec, err := restarted.RenderNodeSpec(context.Background(), eiExit)
+	if err != nil {
+		t.Fatalf("the exit's render failed on unreadable suspensions: %v", err)
+	}
+	for _, p := range spec.Peers {
+		if p.PublicKey == pub && p.Endpoint != eiPinned {
+			t.Fatalf("a tunnel was judged without knowing whether its exit is suspended: endpoint %q", p.Endpoint)
+		}
+	}
+}
+
+// A refusal to render the pinned flow is the tunnel not carrying: when it is
+// asked for again it starts its clock afresh.
+func TestExitInitiatedRefusalStopsTheCarryingClock(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	b, st, pub := eiFleet(t, &now)
+	report(t, st, eiExit, now, now, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	_ = masterTunnel(t, b)
+	pair := pinKey(eiMaster, eiExit)
+	if !b.pinCarrying[pair].carrying {
+		t.Fatal("fixture: the tunnel is not recorded as carrying")
+	}
+	for i := range b.fleet.Exits {
+		if b.fleet.Exits[i].Name == eiExit {
+			b.fleet.Exits[i].Transports.AWG.ExitInitiated = false
+		}
+	}
+	_ = exitPeer(t, b, pub)
+	if b.pinCarrying[pair].carrying {
+		t.Fatal("a tunnel whose pinned flow is refused is still recorded as carrying")
+	}
+}
+
 // eiTwoMasters is twoMasterFleet with the exit starting its own AWG flow, in the
 // given per-tunnel-key phase, and a clock the test moves.
 func eiTwoMasters(t *testing.T, phase domain.PerTunnelKeyPhase, clock *time.Time) seededFleet {

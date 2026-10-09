@@ -123,6 +123,9 @@ func (b *Broker) speakingKey(ctx context.Context, exit config.ExitConfig, exitNo
 // on yet. Both renderers come through here, so they cannot disagree about it.
 func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, master config.MasterConfig, exitNode, masterNode domain.Node) (string, bool, error) {
 	refuse := func() (string, bool, error) {
+		// Not asked for is not carrying: asked for again, the tunnel starts its
+		// silence clock afresh (see carryingSince).
+		b.carryingSince(pinKey(master.Name, exit.Name), false)
 		return "", false, b.forgetConfirmation(ctx, master.Name, exit.Name)
 	}
 	if !exit.Transports.AWG.ExitInitiated || !slices.Contains(exit.EnabledTransports(), domain.TransportAWG) {
@@ -164,11 +167,17 @@ func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, 
 	// the exit back from REALITY, an auto-suspension ended — has a handshake as
 	// stale as its idle time, and is judged on its own clock.
 	// The stored suspensions have to be in memory before one is asked about: the
-	// exit's render can run first after a restart.
+	// exit's render can run first after a restart. Unreadable, the tunnel is not
+	// judged this pass — an exit's own spec does not hang on them, only the
+	// master's render, whose output is the balancer's membership, fails.
+	carries := awgCarries(exit, exitNode)
 	if err := b.loadSuspensions(ctx); err != nil {
-		return "", false, err
+		b.warnOnce("auto-suspend-unreadable", err.Error(),
+			"exit-initiated AWG: stored suspensions unreadable; no tunnel is judged silent until they can be read", "err", err)
+		carries = false
+	} else if b.exitSuspended(exit.Name) {
+		carries = false
 	}
-	carries := awgCarries(exit, exitNode) && !b.exitSuspended(exit.Name)
 	since := b.carryingSince(pinKey(master.Name, exit.Name), carries)
 	if carries && b.now().Sub(since) >= AWGRotateAfter {
 		if poisoned, err = b.pinPoisoned(ctx, exit, exitNode, master, masterNode, addr, rotatedAt); err != nil {
@@ -207,7 +216,9 @@ func (b *Broker) exitSuspended(exit string) bool {
 	b.suspendMu.Lock()
 	defer b.suspendMu.Unlock()
 	t := b.suspend[exit]
-	return t != nil && t.suspended
+	// Under the last-healthy-exit guard the set is overridden and the exit is in
+	// the balancer, carrying traffic.
+	return t != nil && t.suspended && !b.suspendGuard
 }
 
 // carryingSince returns when the master↔exit AWG tunnel was last SEEN to start
