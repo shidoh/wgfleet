@@ -47,7 +47,7 @@ func TestMasterNATPinsTheExitInitiatedFlow(t *testing.T) {
 		// an accepted knock is a confirmed conntrack entry occupying the tuple the
 		// SNAT below needs.
 		"type filter hook input priority filter - 10",
-		"ip saddr 198.51.100.7 udp sport 35555 udp dport 41234 ct state new drop",
+		"ip saddr 198.51.100.7 udp sport 35555 ct state new drop",
 		// The gate: only a NEW flow waits for the exit, so a re-render that empties
 		// the set never cuts a tunnel already carrying traffic.
 		"type filter hook forward priority filter - 10",
@@ -60,6 +60,29 @@ func TestMasterNATPinsTheExitInitiatedFlow(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("pinned ruleset missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// Found on the stand (kernel 5.15): an exit whose endpoint still points at the
+// port mihomo used before the pin sends there, the whitelist accepts it, and the
+// confirmed entry turns every packet of mihomo into a reply that skips the SNAT.
+// The tunnel then lives off its pinned port with the gate reading armed. The
+// exit may open nothing towards the master, on any port.
+func TestMasterNATRefusesAFlowTheExitOpensOnAnyPort(t *testing.T) {
+	out, err := RenderMasterNAT(pinnedNATInput(exitPin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, chain, found := strings.Cut(out, "chain awg_exit_knock_input {")
+	if !found {
+		t.Fatalf("no knock-drop chain:\n%s", out)
+	}
+	chain, _, _ = strings.Cut(chain, "}")
+	if !strings.Contains(chain, "\t\tip saddr 198.51.100.7 udp sport 35555 ct state new drop\n") {
+		t.Errorf("the knock-drop chain does not refuse the exit on every port:\n%s", chain)
+	}
+	if strings.Contains(chain, "dport") {
+		t.Errorf("the refusal is limited to a port:\n%s", chain)
 	}
 }
 

@@ -14,7 +14,9 @@ const (
 	ctStaleAssured = "udp      17 117 src=100.127.255.2 dst=198.51.100.7 sport=41234 dport=35555 src=198.51.100.7 dst=203.0.113.1 sport=35555 dport=41234 [ASSURED] mark=0 use=1"
 	ctFreshWaiting = "udp      17 28 src=100.127.255.2 dst=198.51.100.7 sport=50446 dport=35555 [UNREPLIED] src=198.51.100.7 dst=203.0.113.1 sport=35555 dport=41234 mark=0 use=1"
 	ctUnpinned     = "udp      17 117 src=100.127.255.2 dst=198.51.100.7 sport=50446 dport=35555 src=198.51.100.7 dst=203.0.113.1 sport=35555 dport=50446 [ASSURED] mark=0 use=1"
-	ctLive         = "udp      17 117 src=100.127.255.2 dst=198.51.100.7 sport=50446 dport=35555 src=198.51.100.7 dst=203.0.113.1 sport=35555 dport=41234 [ASSURED] mark=0 use=1"
+	// The exit's own knock on the pinned port, accepted before the gate was armed.
+	ctConfirmedKnock = "udp      17 24 src=198.51.100.7 dst=203.0.113.1 sport=35555 dport=41234 [UNREPLIED] src=203.0.113.1 dst=198.51.100.7 sport=41234 dport=35555 mark=0 use=1"
+	ctLive           = "udp      17 117 src=100.127.255.2 dst=198.51.100.7 sport=50446 dport=35555 src=198.51.100.7 dst=203.0.113.1 sport=35555 dport=41234 [ASSURED] mark=0 use=1"
 )
 
 func TestParseConntrackUDP(t *testing.T) {
@@ -74,7 +76,7 @@ func TestAWGPinPlannerDeletesStaleAndTheManualTable(t *testing.T) {
 	}}}
 	p := awgPinPlanner{
 		list:        func(context.Context, string, int) (string, error) { return ctStaleAssured + "\n" + ctFreshWaiting, nil },
-		listKnocks:  func(context.Context, string, int, int) (string, error) { return "", nil },
+		listKnocks:  func(context.Context, string, int) (string, error) { return "", nil },
 		tableExists: func(string) bool { return true },
 		heard:       func(string) bool { return true },
 		sockets:     func(context.Context, string) (map[string]bool, bool) { return nil, false },
@@ -135,6 +137,7 @@ func TestAWGPinPlannerWaitsForTheExitToBeHeard(t *testing.T) {
 	}}}
 	p := awgPinPlanner{
 		list:        func(context.Context, string, int) (string, error) { return ctUnpinned, nil },
+		listKnocks:  func(context.Context, string, int) (string, error) { return ctConfirmedKnock, nil },
 		tableExists: func(string) bool { return true },
 		heard:       func(string) bool { return false },
 	}
@@ -159,10 +162,9 @@ func TestAWGPinPlannerDeletesAConfirmedKnock(t *testing.T) {
 	spec := domain.NodeSpec{Master: &domain.MasterSpec{ExitTunnels: []domain.ExitTunnel{
 		{Name: "exit-a", Endpoint: "198.51.100.7:35555", Transport: domain.TransportAWG, MasterAddr: "203.0.113.1:41234"},
 	}}}
-	const knock = "udp      17 24 src=198.51.100.7 dst=203.0.113.1 sport=35555 dport=41234 [UNREPLIED] src=203.0.113.1 dst=198.51.100.7 sport=41234 dport=35555 mark=0 use=1"
 	p := awgPinPlanner{
 		list:        func(context.Context, string, int) (string, error) { return "", nil },
-		listKnocks:  func(context.Context, string, int, int) (string, error) { return knock, nil },
+		listKnocks:  func(context.Context, string, int) (string, error) { return ctConfirmedKnock, nil },
 		tableExists: func(string) bool { return false },
 		heard:       func(string) bool { return true },
 		sockets:     func(context.Context, string) (map[string]bool, bool) { return nil, false },
@@ -178,6 +180,79 @@ func TestAWGPinPlannerDeletesAConfirmedKnock(t *testing.T) {
 		}
 	}
 	t.Fatalf("confirmed knock not deleted; actions: %+v", actions)
+}
+
+// Found on the stand (kernel 5.15, 2026-10-08): the exit's endpoint still pointed
+// at the port mihomo used before the pin, its packet there was accepted, and
+// mihomo's packets then left as replies of that entry — past the SNAT, off the
+// pinned port, while the exit's agent kept restoring the endpoint and the gate
+// read armed. A flow the exit opened is never the pinned one, whatever its port.
+//
+// And it goes without waiting for a knock: while the master answers from the
+// wrong port the exit's endpoint roams straight back after every restore, so it
+// hardly ever knocks — on the stand the heard set stayed empty for minutes.
+func TestAWGPinPlannerDeletesAFlowTheExitOpenedOffThePinnedPort(t *testing.T) {
+	spec := domain.NodeSpec{Master: &domain.MasterSpec{ExitTunnels: []domain.ExitTunnel{
+		{Name: "exit-a", Endpoint: "198.51.100.7:35555", Transport: domain.TransportAWG, MasterAddr: "203.0.113.1:41234"},
+	}}}
+	const (
+		opened     = "udp      17 117 src=198.51.100.7 dst=203.0.113.1 sport=35555 dport=39689 src=203.0.113.1 dst=198.51.100.7 sport=39689 dport=35555 [ASSURED] mark=0 use=1"
+		dropOpened = "conntrack -D -p udp -s 198.51.100.7 -d 203.0.113.1 --sport 35555 --dport 39689"
+		dropKnock  = "conntrack -D -p udp -s 198.51.100.7 -d 203.0.113.1 --sport 35555 --dport 41234"
+	)
+	cases := []struct {
+		name  string
+		heard bool
+		want  []string
+	}{
+		// The knock on the pinned port stays until the exit is heard: it is what
+		// fills the heard set, and deleting it early changes nothing for the tunnel.
+		{"not heard: only the flow off the pinned port goes", false, []string{dropOpened}},
+		{"heard: the confirmed knock goes too", true, []string{dropOpened, dropKnock}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			listed := 0
+			p := awgPinPlanner{
+				list: func(context.Context, string, int) (string, error) { return "", nil },
+				listKnocks: func(_ context.Context, exitIP string, exitPort int) (string, error) {
+					listed++
+					if exitIP != "198.51.100.7" || exitPort != 35555 {
+						t.Fatalf("listed flows of %s:%d", exitIP, exitPort)
+					}
+					return opened + "\n" + ctConfirmedKnock, nil
+				},
+				tableExists: func(string) bool { return false },
+				heard:       func(string) bool { return tc.heard },
+				sockets:     func(context.Context, string) (map[string]bool, bool) { return nil, false },
+			}
+			actions, err := p.Plan(context.Background(), spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var changes []string
+			for _, a := range actions {
+				if a.Changes() {
+					changes = append(changes, a.Display)
+				}
+			}
+			if listed != 1 {
+				t.Fatalf("the exit's flows were listed %d times, want once", listed)
+			}
+			if strings.Join(changes, "\n") != strings.Join(tc.want, "\n") {
+				t.Fatalf("changes = %v, want %v", changes, tc.want)
+			}
+		})
+	}
+}
+
+// The listing must not be narrowed to the pinned port: the entry that breaks the
+// pin is by definition on another one.
+func TestListExitOpenedFlowsArgsCoverEveryPort(t *testing.T) {
+	got := strings.Join(exitOpenedFlowsArgs("198.51.100.7", 35555), " ")
+	if want := "-L -p udp -s 198.51.100.7 --sport 35555"; got != want {
+		t.Fatalf("conntrack args = %q, want %q", got, want)
+	}
 }
 
 // Found on the stand (kernel 5.15): after a mihomo restart the new socket's flow

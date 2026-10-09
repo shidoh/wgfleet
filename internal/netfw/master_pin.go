@@ -79,11 +79,18 @@ func renderPinGate(b *strings.Builder, pins []pinnedTuple) {
 	// knock confirms a conntrack entry whose reply tuple is the one the SNAT below
 	// needs, and mihomo's flow would then collide with it for as long as the exit
 	// keeps knocking. A drop here is final, whatever the filter table says later.
+	//
+	// On any port and any address of the master, not only the pinned one — the
+	// port mihomo left from before the pin sits on the uplink's own address, which
+	// need not be the pinned one: an exit whose endpoint still points at
+	// the port mihomo used before the pin sends there, and once that packet is
+	// accepted mihomo's own packets are replies of its entry — they skip the SNAT
+	// and the tunnel lives off its pinned port with the gate reading armed. Found
+	// on the stand (kernel 5.15) 2026-10-08.
 	b.WriteString("\tchain awg_exit_knock_input {\n")
 	b.WriteString("\t\ttype filter hook input priority filter - 10; policy accept;\n")
 	for _, p := range pins {
-		fmt.Fprintf(b, "\t\tip saddr %s udp sport %d udp dport %d ct state new drop\n",
-			p.exitIP, p.exitPort, p.masterPort)
+		fmt.Fprintf(b, "\t\tip saddr %s udp sport %d ct state new drop\n", p.exitIP, p.exitPort)
 	}
 	b.WriteString("\t}\n\n")
 
