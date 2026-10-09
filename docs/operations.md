@@ -826,7 +826,7 @@ Expect "exit out of rotation" alerts for the new master for a few minutes while 
 - After step 4 an agent still running on the box is refused at registration.
 - The console refuses Delete for a master that is still in the manifest.
 
-Removing the master in slot 0: every exit loses the `direct_cidrs` it inherited from it and its `MasterIP` rule, and flushes conntrack once. The other masters' interface parameters, addresses and peers do not move.
+Removing the master in slot 0: remove `lifeline` from every exit in the same edit — the manifest is refused otherwise (`lifeline needs a master in slot 0`). Every exit loses the `direct_cidrs` it inherited from it and its `MasterIP` rule, and flushes conntrack once. The other masters' interface parameters, addresses and peers do not move.
 
 A dead slot-0 master may stay in the manifest until a quiet window. While it stays, every exit keeps its peer (which carries nothing) and the direct rules inherited from it, and its staleness alerts keep firing.
 
