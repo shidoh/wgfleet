@@ -446,6 +446,52 @@ func KernelReflects(spec domain.RoutingSpec, ruleList, egressRoutes string) bool
 		strings.Contains(egressRoutes, spec.EgressInterface)
 }
 
+// StrayRule is an ip rule of ours that the routing intent no longer asks for.
+type StrayRule struct {
+	Pref int
+	To   string // the destination the rule kept on the main table
+}
+
+// StrayRules lists the rules in `ip rule list` output that look like ours — the
+// master rule or a direct-CIDR rule, `from all to <dst> lookup main` at one of
+// those priorities — and that spec does not ask for. RulePrefsDropped deletes
+// such a rule on the pass the intent changes; this finds one that pass left
+// behind (it failed half-way, or an agent that did not delete made the change),
+// which KernelReflects cannot see: it only checks that what the intent names is
+// present. Sorted by priority.
+//
+// A rule of any other shape in the range is somebody else's and is left alone,
+// and a direct-egress spec is not judged: it installs no rules, and removing the
+// ones a WARP intent left is TeardownActions' job.
+func StrayRules(spec domain.RoutingSpec, ruleList string) []StrayRule {
+	if spec.EgressInterface == "" {
+		return nil
+	}
+	managed := make(map[int]bool)
+	for _, p := range ManagedPrefs(spec) {
+		managed[p] = true
+	}
+	var out []StrayRule
+	for _, line := range strings.Split(ruleList, "\n") {
+		field, rest, found := strings.Cut(strings.TrimSpace(line), ":")
+		if !found {
+			continue
+		}
+		pref, err := strconv.Atoi(field)
+		if err != nil || managed[pref] || (pref != prefMaster && (pref < prefDirect0 || pref >= prefFwmark)) {
+			continue
+		}
+		// `from all to <dst> lookup main` — the only shape Render writes there.
+		f := strings.Fields(rest)
+		if len(f) != 6 || f[0] != "from" || f[1] != "all" || f[2] != "to" || f[4] != "lookup" || f[5] != "main" {
+			continue
+		}
+		out = append(out, StrayRule{Pref: pref, To: f[3]})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Pref < out[j].Pref })
+	return out
+}
+
 // parseRulePrefs extracts the set of rule priorities present in `ip rule list`
 // output. Each line begins with the priority followed by a colon, e.g.
 // "300:\tfrom all lookup 51820"; lines without a leading numeric pref are

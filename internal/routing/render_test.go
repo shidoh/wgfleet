@@ -591,3 +591,45 @@ func TestRulePrefsDropped(t *testing.T) {
 		})
 	}
 }
+
+// A rule of ours that the intent no longer asks for and that is still in the
+// kernel: the one-shot delete at the change missed it (the pass failed half-way,
+// or an older agent made the change), and nothing else would ever notice — every
+// rule the intent DOES ask for is present.
+func TestStrayRules(t *testing.T) {
+	spec := domain.RoutingSpec{EgressInterface: "wgcf", ClientCIDR: "10.81.0.0/24", MasterIP: "203.0.113.1",
+		DirectCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
+	const base = "0:\tfrom all lookup local\n" +
+		"100:\tfrom all to 203.0.113.1 lookup main\n" +
+		"110:\tfrom all to 10.0.0.0/8 lookup main\n" +
+		"111:\tfrom all to 192.168.0.0/16 lookup main\n" +
+		"200:\tfrom all fwmark 0x1 lookup main\n" +
+		"300:\tfrom 10.81.0.0/24 lookup 51820\n" +
+		"32766:\tfrom all lookup main\n32767:\tfrom all lookup default\n"
+	noMaster := spec
+	noMaster.MasterIP = ""
+	direct := domain.RoutingSpec{}
+	cases := []struct {
+		name  string
+		spec  domain.RoutingSpec
+		rules string
+		want  []StrayRule
+	}{
+		{"nothing stray", spec, base, nil},
+		{"a direct rule past the end of the list", spec, base + "112:\tfrom all to 203.0.113.2 lookup main\n",
+			[]StrayRule{{Pref: 112, To: "203.0.113.2"}}},
+		{"the master rule with no master address", noMaster, base, []StrayRule{{Pref: 100, To: "203.0.113.1"}}},
+		// Not ours: another tool's rule in the same range, in a shape we never write.
+		{"a foreign rule in the range is left alone", spec, base + "150:\tfrom 172.17.0.0/16 lookup 99\n", nil},
+		// Direct egress installs no rules at all; TeardownActions owns that cleanup.
+		{"direct egress is not judged here", direct, base, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := StrayRules(tc.spec, tc.rules)
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Fatalf("StrayRules = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

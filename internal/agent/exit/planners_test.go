@@ -18,6 +18,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/dnsfilter"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/egress"
+	"github.com/shidoh/wgfleet/internal/routing"
 	"github.com/shidoh/wgfleet/internal/wg"
 	"github.com/shidoh/wgfleet/internal/xray"
 )
@@ -1049,6 +1050,41 @@ func TestLosingTheMasterAddressDeletesItsRule(t *testing.T) {
 	}
 	if hasExec(actions, "ip rule add to  ") {
 		t.Errorf("an empty master rule was added: %q", displays(actions))
+	}
+}
+
+// The delete at the change is one-shot: when that pass failed half-way the rule
+// stayed, and the intent — unchanged from then on — never asked again. A rule of
+// ours the intent does not name is drift, and is repaired on any later pass.
+func TestRoutingRemovesAStrayRuleOnALaterPass(t *testing.T) {
+	spec, pl := applyRoutingOnce(t)
+	pl.applied = func(domain.RoutingSpec) bool { return true }
+	pl.stray = func(domain.RoutingSpec) []routing.StrayRule {
+		return []routing.StrayRule{{Pref: 114, To: "203.0.113.2"}}
+	}
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasExec(actions, "ip rule del pref 114") {
+		t.Errorf("the stray rule was not removed: %q", displays(actions))
+	}
+	if !hasExec(actions, "conntrack -D -d 203.0.113.2") {
+		t.Errorf("flows to the stray rule's destination were not forgotten: %q", displays(actions))
+	}
+	if flushesAllConntrack(actions) || hasExec(actions, "ip rule add") {
+		t.Errorf("a stray rule re-applied the whole routing: %q", displays(actions))
+	}
+
+	pl.stray = func(domain.RoutingSpec) []routing.StrayRule { return nil }
+	actions, err = pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range actions {
+		if a.Changes() {
+			t.Errorf("acted with nothing stray: %s", a.Display)
+		}
 	}
 }
 

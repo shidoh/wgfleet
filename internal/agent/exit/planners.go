@@ -519,6 +519,9 @@ type routingPlanner struct {
 	// applied reports whether the live kernel still reflects the routing intent.
 	// nil ⇒ a real `ip rule list` + `ip route show` probe; tests inject a stub.
 	applied func(domain.RoutingSpec) bool
+	// stray lists the rules of ours still in the kernel that the intent no longer
+	// asks for. nil ⇒ a real `ip rule list` probe; tests inject a stub.
+	stray func(domain.RoutingSpec) []routing.StrayRule
 }
 
 func (routingPlanner) Component() string { return "policy routing" }
@@ -633,9 +636,34 @@ func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 		// path was effectively broken.
 		actions = append(actions, routingExecActions(steps)...)
 	default:
-		actions = append(actions, reconcile.NoChangeAction("policy routing", "intent unchanged; kernel reflects it"))
+		// Everything the intent names is there. What is left to check is the
+		// opposite: a rule of ours it does NOT name. The delete at the change is
+		// one-shot, so one that pass left behind would otherwise stay until reboot,
+		// keeping client traffic to its destination off the egress.
+		strays := p.strayRules(rspec)
+		if len(strays) == 0 {
+			actions = append(actions, reconcile.NoChangeAction("policy routing", "intent unchanged; kernel reflects it"))
+			break
+		}
+		for _, r := range strays {
+			actions = append(actions, routingExecActions([]routing.Step{routing.DeleteRuleStep(r.Pref)})...)
+			actions = append(actions, reconcile.BestEffortExecAction(
+				"forget flows to "+r.To+": its route changed", "conntrack", "-D", "-d", r.To))
+		}
 	}
 	return actions, nil
+}
+
+func (p routingPlanner) strayRules(r domain.RoutingSpec) []routing.StrayRule {
+	if p.stray != nil {
+		return p.stray(r)
+	}
+	// Unreadable ⇒ nothing stray: a delete is never issued on a guess.
+	rules, err := exec.Command("ip", "rule", "list").Output()
+	if err != nil {
+		return nil
+	}
+	return routing.StrayRules(r, string(rules))
 }
 
 func (p routingPlanner) isApplied(r domain.RoutingSpec) bool {
