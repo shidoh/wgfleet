@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -991,6 +992,54 @@ func TestRemovingADirectRuleForgetsOnlyThatDestination(t *testing.T) {
 	}
 	if !hasExec(actions, "conntrack -D -d "+gone) {
 		t.Errorf("flows to the removed direct destination were not forgotten: %q", displays(actions))
+	}
+}
+
+// A rule is replaced by priority, so a list that got SHORTER leaves its last
+// priorities with nothing to replace them: the rule of a master removed from the
+// manifest stayed in the kernel, and client traffic to that address kept leaving
+// direct instead of through the egress. Found on the stand with WARP egress
+// 2026-10-09 (`114: from all to 203.0.113.2 lookup main` after the master was gone).
+func TestRemovingADirectRuleDeletesItsLeftoverPriority(t *testing.T) {
+	spec, pl := applyRoutingOnce(t)
+	n := len(spec.Routing.DirectCIDRs)
+	if n == 0 {
+		t.Fatal("the fixture has no direct CIDR to remove")
+	}
+	spec.Routing.DirectCIDRs = append([]string(nil), spec.Routing.DirectCIDRs[:n-1]...)
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leftover := fmt.Sprintf("ip rule del pref %d", 110+n-1)
+	found := false
+	for _, a := range actions {
+		if a.Kind == reconcile.ActionExec && a.Changes() && a.Display == leftover {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the priority the shorter list no longer fills was not cleared (%s): %q", leftover, displays(actions))
+	}
+}
+
+// The master in slot 0 leaving the manifest empties MasterIP: its rule has no
+// successor at that priority either.
+func TestLosingTheMasterAddressDeletesItsRule(t *testing.T) {
+	spec, pl := applyRoutingOnce(t)
+	if spec.Routing.MasterIP == "" {
+		t.Fatal("the fixture has no master address")
+	}
+	spec.Routing.MasterIP = ""
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasExec(actions, "ip rule del pref 100") {
+		t.Errorf("the master rule was left behind: %q", displays(actions))
+	}
+	if hasExec(actions, "ip rule add to  ") {
+		t.Errorf("an empty master rule was added: %q", displays(actions))
 	}
 }
 

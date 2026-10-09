@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -547,6 +548,45 @@ func TestDirectCIDRsChanged(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if got := DirectCIDRsChanged(base, scriptOf(t, c.next)); !slices.Equal(got, c.want) {
 				t.Errorf("got %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// A priority that carried a rule in the previous script and carries none in the
+// next one has to be deleted by hand: rules are replaced by priority, and nothing
+// replaces these.
+func TestRulePrefsDropped(t *testing.T) {
+	render := func(spec domain.RoutingSpec) string {
+		t.Helper()
+		steps, err := Render(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return Script(steps)
+	}
+	base := domain.RoutingSpec{EgressInterface: "wgcf", ClientCIDR: "10.81.0.0/24", MasterIP: "203.0.113.1",
+		DirectCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16", "203.0.113.2/32"}}
+	shorter := base
+	shorter.DirectCIDRs = base.DirectCIDRs[:1]
+	noMaster := base
+	noMaster.MasterIP = ""
+	cases := []struct {
+		name       string
+		prev, next string
+		want       []int
+	}{
+		{"nothing changed", render(base), render(base), nil},
+		{"first apply", "", render(base), nil},
+		{"two direct rules gone", render(base), render(shorter), []int{111, 112}},
+		{"a rule added", render(shorter), render(base), nil},
+		{"the master address gone", render(base), render(noMaster), []int{100}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := RulePrefsDropped(tc.prev, tc.next)
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Fatalf("RulePrefsDropped = %v, want %v", got, tc.want)
 			}
 		})
 	}

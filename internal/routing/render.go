@@ -279,6 +279,56 @@ func DirectCIDRsChanged(prev, next string) []string {
 	return out
 }
 
+// rulePrefsOf is the set of priorities a routing script installs an ip rule at.
+func rulePrefsOf(script string) map[int]bool {
+	out := make(map[int]bool)
+	for _, line := range strings.Split(script, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 || f[0] != "ip" || f[1] != "rule" || f[2] != "add" {
+			continue
+		}
+		for i := 3; i+1 < len(f); i++ {
+			if f[i] != "pref" {
+				continue
+			}
+			if p, err := strconv.Atoi(f[i+1]); err == nil {
+				out[p] = true
+			}
+		}
+	}
+	return out
+}
+
+// RulePrefsDropped returns, sorted, the priorities the previous routing script
+// installed a rule at and the next one does not. A rule is replaced by priority
+// (ipRuleReplace), so a rule whose priority the next script no longer uses has
+// nothing to replace it and stays in the kernel: the tail of a direct-CIDR list
+// that got shorter, or the master rule once no master holds slot 0. Seen on the
+// stand 2026-10-09 — a master removed from the manifest left its `to <ip> lookup
+// main` behind, and client traffic to that address kept leaving direct.
+func RulePrefsDropped(prev, next string) []int {
+	is := rulePrefsOf(next)
+	var out []int
+	for p := range rulePrefsOf(prev) {
+		if !is[p] {
+			out = append(out, p)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
+// DeleteRuleStep removes whatever ip rule sits at pref. Best-effort: the rule is
+// already gone after a reboot, and `ip rule del` then answers non-zero.
+func DeleteRuleStep(pref int) Step {
+	p := strconv.Itoa(pref)
+	return Step{
+		Summary:    "remove the rule at pref " + p + ": nothing uses that priority any more",
+		Argv:       []string{"ip", "rule", "del", "pref", p},
+		BestEffort: true,
+	}
+}
+
 // WithoutConntrackFlush is steps without the conntrack flush.
 func WithoutConntrackFlush(steps []Step) []Step {
 	out := make([]Step, 0, len(steps))

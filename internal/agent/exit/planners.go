@@ -578,6 +578,13 @@ func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 		return nil, err
 	}
 	actions := []reconcile.Action{file}
+	if file.Changes() {
+		// Before anything is re-added: a rule at a priority the new intent no longer
+		// uses is replaced by nothing and would outlive the change.
+		for _, pref := range routing.RulePrefsDropped(string(prev), script) {
+			actions = append(actions, routingExecActions([]routing.Step{routing.DeleteRuleStep(pref)})...)
+		}
+	}
 	switch {
 	case file.Changes() && routing.OnlyDirectRulesDiffer(string(prev), script):
 		// Only `to <cidr> lookup main` rules came or went — another master's
