@@ -98,3 +98,14 @@ func controllerUnreachable(err error) bool {
 		return false
 	}
 }
+
+// forgetSpec removes the cached spec. Called once a decommission teardown has
+// completed: the cache holds the last LIVE spec, and an agent that later finds
+// the controller unreachable would converge on it and rebuild the data plane it
+// was just told to take down. Absent ⇒ no-op.
+func forgetSpec(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("forget cached spec: %w", err)
+	}
+	return nil
+}

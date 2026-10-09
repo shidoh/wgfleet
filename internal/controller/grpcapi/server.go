@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -48,6 +49,11 @@ type Service struct {
 	log      *slog.Logger
 	trigger  UpgradeTrigger // optional auto-upgrade hook; see SetUpgradeTrigger
 	signer   CertSigner     // optional CA for RenewCertificate; see SetCertSigner
+
+	// renderFailed remembers, per node, the last render error that was logged, so
+	// a standing failure is one line and not one every reconcile interval.
+	renderMu     sync.Mutex
+	renderFailed map[string]string
 }
 
 var _ pb.NodeServiceServer = (*Service)(nil)
@@ -247,7 +253,7 @@ func (s *Service) PullSpec(ctx context.Context, _ *pb.PullSpecRequest) (*pb.Node
 	if err != nil {
 		// Logged here because nowhere else is: the agent reports it, the node page
 		// shows it, and the controller's own journal used to say nothing at all.
-		s.log.Warn("spec not rendered", "node", nodeID, "err", err)
+		s.noteRender(nodeID, err)
 		if errors.Is(err, store.ErrUnreadable) {
 			// Not an answer about the node — the controller could not read its own
 			// state. Unavailable is what the agent treats as "nobody answered": it
@@ -256,9 +262,36 @@ func (s *Service) PullSpec(ctx context.Context, _ *pb.PullSpecRequest) (*pb.Node
 		}
 		return nil, status.Errorf(codes.NotFound, "render spec for %q: %v", nodeID, err)
 	}
+	s.noteRender(nodeID, nil)
 	logging.Trace(s.log, "rpc PullSpec", "node", nodeID, "peers", len(spec.Peers),
 		"exit_tunnels", exitTunnelCount(spec), "decommission", spec.Decommission)
 	return api.SpecToProto(spec), nil
+}
+
+// noteRender logs a failed render when it starts or its error changes, and the
+// recovery when it ends. Every pull of a standing failure would otherwise be a
+// line per node per reconcile interval for as long as it lasts.
+func (s *Service) noteRender(nodeID string, err error) {
+	s.renderMu.Lock()
+	prev, failing := s.renderFailed[nodeID]
+	switch {
+	case err == nil && failing:
+		delete(s.renderFailed, nodeID)
+	case err != nil && prev != err.Error():
+		if s.renderFailed == nil {
+			s.renderFailed = make(map[string]string)
+		}
+		s.renderFailed[nodeID] = err.Error()
+	default:
+		s.renderMu.Unlock()
+		return
+	}
+	s.renderMu.Unlock()
+	if err == nil {
+		s.log.Info("spec rendered again", "node", nodeID)
+		return
+	}
+	s.log.Warn("spec not rendered", "node", nodeID, "err", err)
 }
 
 // ReportStatus consumes a stream of status reports and persists the latest from

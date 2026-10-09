@@ -925,6 +925,24 @@ func (s *suspendWriteFails) ClearAutoSuspended(ctx context.Context, exit string)
 	return s.Store.ClearAutoSuspended(ctx, exit)
 }
 
+// Whether a node is being decommissioned could not be read. The render must not
+// go on — and must not come back marked "unreadable" either: that reaches the
+// agent as "controller unavailable", on which it rebuilds itself from its cached
+// spec. A node that was just told to tear down would come back.
+func TestAnUnreadableDecommissionFlagIsARefusal(t *testing.T) {
+	clock := time.Date(2026, 9, 7, 8, 30, 0, 0, time.UTC)
+	old, st, _ := suspendFleet(t, &clock)
+	b := New(&nodeReadFails{Store: st, node: "exit-de-1"}, old.fleet, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithClock(func() time.Time { return clock }))
+	_, err := b.RenderNodeSpec(context.Background(), "exit-de-1")
+	if err == nil {
+		t.Fatal("rendered a node whose decommission flag could not be read")
+	}
+	if errors.Is(err, store.ErrUnreadable) {
+		t.Fatalf("the failure is marked unreadable and would reach the agent as unavailable: %v", err)
+	}
+}
+
 type statusReadFails struct {
 	store.Store
 	node string

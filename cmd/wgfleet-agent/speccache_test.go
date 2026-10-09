@@ -94,3 +94,21 @@ func TestSpecCacheIsOwnerOnly(t *testing.T) {
 		t.Errorf("spec cache mode = %o, want 600", perm)
 	}
 }
+
+// After a decommission teardown nothing may be left to fall back on: the cached
+// spec is the last LIVE one, and "controller unreachable" would rebuild from it.
+func TestForgetSpecLeavesNothingToFallBackOn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "last-spec.json")
+	if err := saveSpec(path, domain.NodeSpec{Role: domain.RoleExit}); err != nil {
+		t.Fatal(err)
+	}
+	if err := forgetSpec(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadSpec(path); err == nil {
+		t.Fatal("the cached spec is still loadable after forgetSpec")
+	}
+	if err := forgetSpec(path); err != nil {
+		t.Fatalf("forgetting an absent cache is an error: %v", err)
+	}
+}

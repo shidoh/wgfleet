@@ -74,6 +74,10 @@ type Broker struct {
 	// plus every write that succeeded since. syncSuspensions brings the store in
 	// line with suspend against it. Guarded by suspendMu.
 	suspendStored map[string]bool
+	// syncMu serialises syncSuspensions end to end, so two renders cannot write the
+	// store in one order and record the outcome in the other. Never held together
+	// with suspendMu across I/O: suspendMu is taken and released inside it.
+	syncMu sync.Mutex
 	// suspendGuard is set while the last-healthy-exit guard overrides the suspended
 	// set (no healthy exit left: every exit stays in the balancer). Guarded by suspendMu.
 	suspendGuard bool
@@ -407,8 +411,17 @@ func (b *Broker) RegisterTunnelKey(ctx context.Context, nodeID, tunnel, publicKe
 func (b *Broker) RenderNodeSpec(ctx context.Context, nodeID string) (domain.NodeSpec, error) {
 	// A node flagged for decommission gets a teardown spec — the agent reverses
 	// its data plane instead of converging.
-	if node, err := b.store.GetNode(ctx, nodeID); err == nil && node.Decommission {
+	switch node, err := b.store.GetNode(ctx, nodeID); {
+	case err == nil && node.Decommission:
 		return domain.NodeSpec{Role: node.Role, Decommission: true}, nil
+	case err != nil && !errors.Is(err, store.ErrNotFound):
+		// Whether the node is flagged for decommission is not known. Rendering on
+		// would be a guess, and a failure further down marked store.ErrUnreadable
+		// would reach the agent as "controller unavailable" — on which it converges
+		// on its cached spec, rebuilding a node that may have just been told to
+		// tear down. So this is a refusal, and deliberately NOT marked unreadable
+		// (%v, not %w): the agent applies nothing this pass.
+		return domain.NodeSpec{}, fmt.Errorf("node %q: could not read whether it is being decommissioned: %v", nodeID, err)
 	}
 	spec, hardening, err := b.renderRoleSpec(ctx, nodeID)
 	if err != nil {
@@ -1295,6 +1308,8 @@ func (b *Broker) syncSuspensions(ctx context.Context) {
 	// The render's context may be cancelled the moment the caller hangs up; the
 	// transition happened either way and has to reach the store.
 	ctx = context.WithoutCancel(ctx)
+	b.syncMu.Lock()
+	defer b.syncMu.Unlock()
 	b.suspendMu.Lock()
 	var set, drop []string
 	for name, t := range b.suspend {
@@ -1328,6 +1343,7 @@ func (b *Broker) syncSuspensions(ctx context.Context) {
 				"exit", name, "err", err)
 			continue
 		}
+		b.forgetWarned("auto-suspend-set:" + name)
 		stored(name, true)
 	}
 	for _, name := range drop {
@@ -1337,6 +1353,7 @@ func (b *Broker) syncSuspensions(ctx context.Context) {
 				"exit", name, "err", err)
 			continue
 		}
+		b.forgetWarned("auto-suspend-clear:" + name)
 		stored(name, false)
 	}
 }
@@ -1701,6 +1718,14 @@ func (b *Broker) warnOnce(key, detail, msg string, args ...any) {
 // errorOnce is warnOnce for a standing condition that has a node cut off.
 func (b *Broker) errorOnce(key, detail, msg string, args ...any) {
 	b.logOnce(slog.LevelError, key, detail, msg, args...)
+}
+
+// forgetWarned makes the next warnOnce under key speak again: the condition it
+// reported is over, so the same failure coming back is news.
+func (b *Broker) forgetWarned(key string) {
+	b.warnMu.Lock()
+	delete(b.warned, key)
+	b.warnMu.Unlock()
 }
 
 func (b *Broker) logOnce(level slog.Level, key, detail, msg string, args ...any) {

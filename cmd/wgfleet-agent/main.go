@@ -1114,6 +1114,11 @@ func (a *agent) teardown(ctx context.Context, plan bool) error {
 	}
 	a.log.Info("decommission complete", "actions", report.ChangeCount())
 	// Report a terminal status so the controller/UI sees the node is torn down.
+	// The cache still holds the last live spec; see forgetSpec.
+	if err := forgetSpec(specCacheFile); err != nil {
+		a.log.Warn("decommission: the cached spec could not be removed; a controller outage would rebuild this node from it",
+			"path", specCacheFile, "err", err)
+	}
 	return a.reportStatus(ctx, domain.StatePending, []domain.HealthCheck{{Name: "decommissioned", OK: true}}, nil, "", nil)
 }
 
