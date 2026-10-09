@@ -11,3 +11,8 @@ import "os/exec"
 func TableLoaded(family, name string) bool {
 	return exec.Command("nft", "list", "table", family, name).Run() == nil
 }
+
+// BaselineLoaded reports whether the provisioner's bootstrap firewall table is in
+// the kernel. It is there between a (re-)provision and the agent's next apply of
+// its own ruleset, which deletes it; anywhere else it is drift.
+func BaselineLoaded() bool { return TableLoaded("inet", baselineTable) }

@@ -1055,3 +1055,38 @@ func TestChangingTheClientPoolStillFlushesConntrack(t *testing.T) {
 		t.Errorf("a changed client pool did not flush conntrack: %q", displays(actions))
 	}
 }
+
+// Re-provisioning a node that is already running loads the bootstrap baseline
+// table again, next to the agent's own. The agent's ruleset is unchanged and
+// present, so nothing re-applied it, and the baseline — policy drop, SSH and the
+// overlay only — stayed for good: on the stand 2026-10-09 a re-provisioned master
+// stopped answering its clients on UDP/443 while every check of its own table
+// read clean. The baseline in the kernel is drift; applying the ruleset deletes it.
+func TestFirewallReappliesOverAReturnedBaseline(t *testing.T) {
+	paths := testPaths(t)
+	spec, _ := exitSpec(t)
+	baseline := true
+	pl := firewallPlanner{path: paths.NFT, loaded: func() bool { return true }, baseline: func() bool { return baseline }}
+	eng := reconcile.NewEngine(nil, pl)
+	_, _ = eng.Reconcile(context.Background(), spec, reconcile.ModeApply)
+	writeAppliedMarker(t, paths.NFT)
+
+	acts, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasChangingSummary(acts, "apply ruleset atomically") {
+		t.Errorf("the ruleset was not re-applied over a returned baseline, got %+v", acts)
+	}
+
+	baseline = false
+	acts, err = pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range acts {
+		if a.Changes() {
+			t.Errorf("re-applied with no baseline in the kernel: %+v", a)
+		}
+	}
+}

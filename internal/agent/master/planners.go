@@ -514,6 +514,9 @@ type firewallPlanner struct {
 	// loaded reports whether the live kernel holds THIS input-firewall ruleset.
 	// nil ⇒ a real probe against the kernel; tests inject a stub.
 	loaded func() bool
+	// baseline reports whether the provisioner's bootstrap table is in the kernel
+	// beside ours. nil ⇒ a real probe; tests inject a stub.
+	baseline func() bool
 	// lastRendered is what Plan just rendered, so isLoaded can ask the strong
 	// question — does the kernel hold this — rather than "is a table by this name
 	// present". Set on the receiver copy inside Plan, which is why isLoaded is only
@@ -599,7 +602,21 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	return actions, nil
 }
 
+func (p firewallPlanner) baselineLoaded() bool {
+	if p.baseline != nil {
+		return p.baseline()
+	}
+	return netfw.BaselineLoaded()
+}
+
 func (p firewallPlanner) isLoaded() bool {
+	// The bootstrap baseline is back in the kernel: the node was re-provisioned
+	// while running. Our own table is intact, so nothing below would notice, yet
+	// the baseline's policy drop now closes every port it does not list. Applying
+	// the ruleset deletes it.
+	if p.baselineLoaded() {
+		return false
+	}
 	if p.loaded != nil {
 		return p.loaded()
 	}
