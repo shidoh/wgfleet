@@ -61,8 +61,12 @@ type Broker struct {
 	// exit confirmed holding; the store has the durable copy. See confirmation.
 	pinMu        sync.Mutex
 	pinConfirmed map[string]pinConfirmation
-	suspendMu    sync.Mutex
-	suspend      map[string]*suspendTrack
+	// pinCarrying is, per master↔exit tunnel (pinKey), whether its AWG tunnel was
+	// carrying traffic on the last pass and since when; guarded by pinMu. See
+	// carryingSince.
+	pinCarrying map[string]carryTrack
+	suspendMu   sync.Mutex
+	suspend     map[string]*suspendTrack
 }
 
 // suspendTrack is one exit's auto-suspend history: how long it has been degraded

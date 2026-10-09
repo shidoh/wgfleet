@@ -159,7 +159,13 @@ func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, 
 	}
 	addr := pinnedAddr(exit, master, ip, gen)
 	poisoned := false
-	if awgCarries(exit, exitNode) {
+	// Silence means something only on a tunnel the master has been dialling for a
+	// full AWGRotateAfter. One that just started carrying — the operator switched
+	// the exit back from REALITY, an auto-suspension ended — has a handshake as
+	// stale as its idle time, and is judged on its own clock.
+	carries := awgCarries(exit, exitNode) && !b.exitSuspended(exit.Name)
+	since := b.carryingSince(pinKey(master.Name, exit.Name), carries)
+	if carries && b.now().Sub(since) >= AWGRotateAfter {
 		if poisoned, err = b.pinPoisoned(ctx, exit, exitNode, master, masterNode, addr, rotatedAt); err != nil {
 			return "", false, err
 		}
@@ -188,6 +194,48 @@ func awgCarries(exit config.ExitConfig, node domain.Node) bool {
 		return false
 	}
 	return resolveActiveTransport(exit, node).OrDefault() == domain.TransportAWG
+}
+
+// exitSuspended reports whether the throughput watchdog currently holds the exit
+// out of the load balancer (see trackSuspensions).
+func (b *Broker) exitSuspended(exit string) bool {
+	b.suspendMu.Lock()
+	defer b.suspendMu.Unlock()
+	t := b.suspend[exit]
+	return t != nil && t.suspended
+}
+
+// carryingSince returns when the master↔exit AWG tunnel was last SEEN to start
+// carrying traffic — the pass on which it carries after a pass on which it did
+// not. The zero time means no such start was seen by this process: the tunnel
+// has carried for as long as the controller has been up, and its silence is
+// judged on the stored clocks alone. That is what keeps a restart from handing a
+// dead tunnel a fresh clock (TestTheSilenceClockSurvivesAControllerRestart).
+func (b *Broker) carryingSince(pair string, carries bool) time.Time {
+	b.pinMu.Lock()
+	defer b.pinMu.Unlock()
+	if b.pinCarrying == nil {
+		b.pinCarrying = make(map[string]carryTrack)
+	}
+	was, seen := b.pinCarrying[pair]
+	switch {
+	case !carries:
+		b.pinCarrying[pair] = carryTrack{}
+		return time.Time{}
+	case seen && !was.carrying:
+		was = carryTrack{carrying: true, since: b.now()}
+	case !seen:
+		was = carryTrack{carrying: true}
+	}
+	b.pinCarrying[pair] = was
+	return was.since
+}
+
+// carryTrack is whether a tunnel carried traffic on the last pass and, when this
+// process saw it start, since when.
+type carryTrack struct {
+	carrying bool
+	since    time.Time
 }
 
 // pinnedAddr is the master's pinned address in generation gen. Generation 0 is

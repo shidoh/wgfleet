@@ -414,6 +414,83 @@ func TestExitInitiatedDoesNotRotateATunnelThatCarriesNothing(t *testing.T) {
 	}
 }
 
+// Found on the stand 2026-10-09: an exit was switched from REALITY back to AWG and
+// five seconds later both masters' pinned ports were moved — "tunnel silent on its
+// pinned port". The tunnel had been idle for as long as REALITY carried the exit,
+// which is what a standby does; its stale handshake was judged the moment AWG
+// became the carrying transport. A tunnel that starts carrying gets a full
+// AWGRotateAfter to handshake before its silence means anything.
+func TestExitInitiatedGivesATunnelThatStartsCarryingItsOwnClock(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	b, st, pub := eiFleet(t, &now)
+	ctx := context.Background()
+	setTransport := func(tr domain.MasterTransport) {
+		t.Helper()
+		node, err := st.GetNode(ctx, eiExit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		node.ActiveTransport = tr
+		if err := st.UpsertNode(ctx, node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start := now
+	report(t, st, eiExit, now, now, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	_ = masterTunnel(t, b)
+
+	// REALITY carries the exit for longer than the rotation threshold; the AWG
+	// tunnel idles and its handshake goes stale.
+	setTransport(domain.TransportRealityXHTTP)
+	now = start.Add(2 * AWGRotateAfter)
+	report(t, st, eiExit, now, start, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	if got := exitPeer(t, b, pub).Endpoint; got != eiPinned {
+		t.Fatalf("rotated a standby tunnel: %q", got)
+	}
+
+	// The operator switches back to AWG. The handshake is as stale as it was.
+	setTransport(domain.TransportAWG)
+	now = now.Add(5 * time.Second)
+	report(t, st, eiExit, now, start, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	if got := exitPeer(t, b, pub).Endpoint; got != eiPinned {
+		t.Fatalf("rotated the moment AWG started carrying: endpoint %q, want %q", got, eiPinned)
+	}
+
+	// Still no handshake a full threshold later: now it is a poisoned flow.
+	now = now.Add(AWGRotateAfter + time.Minute)
+	report(t, st, eiExit, now, start, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	rotated := fmt.Sprintf("%s:%d", eiMasterIP, wg.MasterPortForGen(eiMaster, eiExit, 1))
+	if got := exitPeer(t, b, pub).Endpoint; got != rotated {
+		t.Fatalf("a tunnel silent for a full threshold after it started carrying was not rotated: %q, want %q", got, rotated)
+	}
+}
+
+// An exit the throughput watchdog took out of the balancer carries nothing
+// either: the masters stop dialling it, and its handshake going stale is the
+// suspension, not the path.
+func TestExitInitiatedDoesNotRotateAnAutoSuspendedExit(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	b, st, pub := eiFleet(t, &now)
+	start := now
+	report(t, st, eiExit, now, now, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	_ = masterTunnel(t, b)
+
+	b.suspendMu.Lock()
+	b.suspend = map[string]*suspendTrack{eiExit: {suspended: true, degradedSince: start}}
+	b.suspendMu.Unlock()
+	now = start.Add(AWGRotateAfter + time.Minute)
+	report(t, st, eiExit, now, start, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	if got := exitPeer(t, b, pub).Endpoint; got != eiPinned {
+		t.Fatalf("rotated the port of an auto-suspended exit: endpoint %q, want %q", got, eiPinned)
+	}
+}
+
 // eiTwoMasters is twoMasterFleet with the exit starting its own AWG flow, in the
 // given per-tunnel-key phase, and a clock the test moves.
 func eiTwoMasters(t *testing.T, phase domain.PerTunnelKeyPhase, clock *time.Time) seededFleet {
