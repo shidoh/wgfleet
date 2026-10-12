@@ -459,8 +459,10 @@ func TestClashAPIKeepsItsAddressForConnectionsMihomoDials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	if !strings.Contains(out, "type nat hook output priority dstnat") {
-		t.Fatalf("no output NAT chain — a locally dialled connection is never redirected:\n%s", out)
+	// The priority is numeric on purpose: the named form was refused on the live
+	// master 2026-10-12 and left the node in Error until this was corrected.
+	if !strings.Contains(out, "type nat hook output priority -100;") {
+		t.Fatalf("no output NAT chain at priority -100 — a locally dialled connection is never redirected:\n%s", out)
 	}
 	want := "ip daddr 172.29.3.10 tcp dport 9090 dnat to 100.127.255.2:9090"
 	if !strings.Contains(out, want) {

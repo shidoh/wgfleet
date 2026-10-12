@@ -180,7 +180,9 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	// the port is redirected only when the operator opened it to clients.
 	if in.OperatorAPIAddr != "" && len(in.ClientForwardedPorts) > 0 {
 		b.WriteString("\tchain output {\n")
-		b.WriteString("\t\ttype nat hook output priority dstnat; policy accept;\n")
+		// Numeric, as on the host: the name `dstnat` is refused outside prerouting
+		// by the nft the agent validates with, and a refused ruleset fails the pass.
+		b.WriteString("\t\ttype nat hook output priority -100; policy accept;\n")
 		for _, ap := range in.ClientForwardedPorts {
 			fmt.Fprintf(&b, "\t\tip daddr %s tcp dport %d dnat to %s:%d\n", in.OperatorAPIAddr, ap, in.SelfAddr, ap)
 		}
