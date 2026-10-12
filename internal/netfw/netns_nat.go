@@ -70,6 +70,20 @@ type NetnsNATInput struct {
 	// the redirect port. Computed by ClientForwardedPorts, never listed by hand: the
 	// host's DNAT is rendered from the same call, so the door and the room agree.
 	ClientForwardedPorts []int
+	// OperatorAPIAddr is the address the operator knows mihomo's control API by —
+	// the management-overlay address, which lives on the HOST. Set together with
+	// ClientForwardedPorts it redirects a connection DIALLED IN HERE for that
+	// address back to SelfAddr.
+	//
+	// The host's redirect covers what arrives over the mgmt overlay and the client
+	// tunnel. It cannot cover a client whose connection mihomo itself carries — a
+	// VLESS client, handed over by xray — because that dial starts in this
+	// namespace: it reaches the host's management address, where nothing has
+	// listened on the API port since the move, and is refused. Redirecting it on
+	// the host would send it back in with this namespace's own address as source.
+	// Measured on the live master 2026-10-12: 200 over AmneziaWG, an empty reply
+	// over VLESS, same URL.
+	OperatorAPIAddr string
 }
 
 // RenderNetnsNAT renders the interception that used to live on the host.
@@ -161,6 +175,19 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	b.WriteString("\t\ttype nat hook prerouting priority dstnat; policy accept;\n")
 	fmt.Fprintf(&b, "\t\tiifname %q %s%s ip protocol tcp dnat to %s\n", in.PeerIface, scope, guards, in.RedirAddr)
 	b.WriteString("\t}\n\n")
+
+	// Same list as the host's client-tunnel redirect and the input closure below:
+	// the port is redirected only when the operator opened it to clients.
+	if in.OperatorAPIAddr != "" && len(in.ClientForwardedPorts) > 0 {
+		b.WriteString("\tchain output {\n")
+		// Numeric, as on the host: the name `dstnat` is refused outside prerouting
+		// by the nft the agent validates with, and a refused ruleset fails the pass.
+		b.WriteString("\t\ttype nat hook output priority -100; policy accept;\n")
+		for _, ap := range in.ClientForwardedPorts {
+			fmt.Fprintf(&b, "\t\tip daddr %s tcp dport %d dnat to %s:%d\n", in.OperatorAPIAddr, ap, in.SelfAddr, ap)
+		}
+		b.WriteString("\t}\n\n")
+	}
 
 	b.WriteString("\tchain client_udp_tproxy {\n")
 	b.WriteString("\t\ttype filter hook prerouting priority mangle; policy accept;\n")

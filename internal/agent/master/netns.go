@@ -200,6 +200,7 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 		// port is read off the address mihomo binds IN HERE (attached by construction
 		// — this is the interception), not off the host's management address.
 		ClientForwardedPorts: netfw.ClientForwardedPorts(ClashAPIAddr(spec, true), spec.Master.ClientAdminPorts),
+		OperatorAPIAddr:      operatorAPIAddr(spec),
 	})
 	if err != nil {
 		return nil, err
@@ -937,4 +938,23 @@ func (p netnsPlanner) mihomoSharesNamespace(ctx context.Context, nsPath string, 
 		return true
 	}
 	return strings.TrimSpace(mine) == strings.TrimSpace(theirs)
+}
+
+// operatorAPIAddr is the host half of the address the operator reaches mihomo's
+// control API by, or "" when the spec names none.
+func operatorAPIAddr(spec domain.NodeSpec) string {
+	if spec.Master == nil {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(spec.Master.ExternalController)
+	if err != nil {
+		return ""
+	}
+	// A rule needs a literal address, and the table it goes into is `ip`: anything
+	// else renders no redirect rather than a ruleset nft rejects.
+	ip, err := netip.ParseAddr(host)
+	if err != nil || !ip.Is4() {
+		return ""
+	}
+	return ip.String()
 }

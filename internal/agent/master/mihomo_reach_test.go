@@ -45,6 +45,10 @@ func TestReadingMihomosHostAddressRequiresConsultingTheMove(t *testing.T) {
 		// uses the value as an address. After the move the host stops marking, so the
 		// accept is dead rather than wrong.
 		"firewallPlanner": "presence test only; the value is never used as an address",
+		// The one reader that WANTS the host's address: it is the destination a
+		// namespace-local dial is matched on before being redirected to mihomo's real
+		// one. Nothing connects to the value.
+		"operatorAPIAddr": "the match of a redirect into the namespace, never a dial target",
 	}
 
 	fset := token.NewFileSet()
