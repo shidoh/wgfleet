@@ -1089,6 +1089,41 @@ func TestRenderMasterDNS(t *testing.T) {
 	}
 }
 
+func TestRenderMasterDNSFromFleet(t *testing.T) {
+	// fleet.master_dns is the one resolver configuration every master renders:
+	// clients race the masters' resolvers, so two that differ answer differently.
+	ctx := context.Background()
+	fleet := testFleet()
+	fleet.Masters[0].DNSFilter = true
+	fleet.MasterDNS = config.DNSConfig{
+		Allowlist: []string{"*.example.com"},
+		Overrides: map[string]any{
+			"conditional": map[string]any{
+				"mapping": map[string]any{"lab.lan": "10.200.99.1"},
+			},
+		},
+	}
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	b := New(st, fleet, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !contains(spec.DNS.Allowlist, "*.example.com") {
+		t.Errorf("fleet allowlist not carried: %v", spec.DNS.Allowlist)
+	}
+	if spec.DNS.Custom.Overrides["conditional"] == nil {
+		t.Errorf("fleet conditional override not carried: %v", spec.DNS.Custom.Overrides)
+	}
+}
+
 func TestRenderMasterDNSDisabledByDefault(t *testing.T) {
 	// Without dns_filter the master runs no resolver and clients still point at the
 	// exit blockys (pre-ADR-0024 behavior).

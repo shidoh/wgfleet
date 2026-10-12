@@ -1548,7 +1548,7 @@ func (b *Broker) renderMasterDNS(master config.MasterConfig, exitUpstreams []str
 	if !master.DNSFilter {
 		return domain.DNSFilterSpec{}
 	}
-	d := master.DNS
+	d := b.fleet.MasterDNSFor(master)
 	prometheus := true // default on (docs/DESIGN.md §9: no blind components)
 	if d.Prometheus != nil {
 		prometheus = *d.Prometheus

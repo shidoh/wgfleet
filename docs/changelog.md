@@ -10,6 +10,7 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 - Several masters: `fleet.masters` accepts more than one. Each master is a peer on every exit's single AmneziaWG interface, on the addresses of its `slot`. With two or more, `fleet.interface_anchor` is required — the validation message gives the value that keeps existing tunnels as they are.
 - `fleet.interface_anchor` and `fleet.masters[].slot`. A fleet with one master sets neither and renders as before.
+- `fleet.master_dns`: the resolver settings of every master with `dns_filter`, same keys as `fleet.masters[].dns`.
 - The console shows every master with its own view of the exits.
 - An exit reports each master peer's endpoint and handshake (wire 13). Upgrade the controller first.
 
@@ -28,6 +29,7 @@ New releases are announced, with the archives attached, in the Telegram channel 
 - A store read error while rendering an `exit_initiated` tunnel fails the render; the node keeps its last spec. Before, the tunnel was handed its first port again.
 - `--check-config` prints the anchor label, the base master and every master's slot, and warns when several masters run without `fleet.mgmt_subnet`.
 - The manifest is refused when `fleet.interface_anchor` is `clients`, `lifeline` or holds whitespace or `|`.
+- The manifest is refused when `fleet.masters[].dns` is set with two or more masters, or alongside `fleet.master_dns`. Move the block to `fleet.master_dns`. A fleet with one master and `masters[].dns` loads as before.
 - `--check-config` and the controller's startup log warn when an exit is given more than 80 direct rules (`routing.direct_cidrs` of the master in slot 0, the management CIDRs and one per other master). The manifest still loads; an exit with WARP egress cannot apply its routing past that count.
 - The controller logs which master holds an exit at AmneziaWG 2.0 when `awg3` is on.
 

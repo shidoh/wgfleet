@@ -20,6 +20,9 @@ controller:
 fleet:
   zerotier_network: "8056c2e21c000001" # 16-hex ZeroTier network every node joins at bootstrap
   mgmt_subnet: 10.20.0.0/16 # overlay CIDR; routed DIRECT and trusted on every exit (default: each mgmt_addr/32)
+  # master_dns: # resolver settings of every master with dns_filter; same keys as masters[].dns, which it replaces with several masters
+  #   allowlist: ["*.example.com"]
+  #   overrides: { conditional: { mapping: { corp.example: 10.20.0.53 } } }
   mgmt_overlay_mss: 1240 # TCP MSS clamp on the overlay interface, both directions; 0 disables (1240 fits a 1280 MTU)
   min_egress_throughput_kbytes: 250 # egress throughput floor in KiB/s; below it an exit leaves the LB (default 250, <0 disables)
   # egress_throughput_probe_url: "https://speed.cloudflare.com/__down?bytes=262144" # ONE target that REPLACES the default list (Cloudflare, then CacheFly, then OVH, tried in order until one clears the floor)

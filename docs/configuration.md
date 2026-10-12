@@ -230,7 +230,8 @@ Passthrough surface: [§9 third-party configuration](#9-third-party-configuratio
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `fleet.masters[].dns_filter` | bool | `false` | Run a master-tier blocky resolver clients use directly: filters, forwards local zones internally, and forwards the rest to the active exit resolvers |
-| `fleet.masters[].dns.*` | — | — | Same shape as the exit resolver — see [§6 DNS](#6-dns-blocky) |
+| `fleet.master_dns.*` | — | — | Resolver settings of every master with `dns_filter`. Same shape as the exit resolver — see [§6 DNS](#6-dns-blocky). Required form with several masters |
+| `fleet.masters[].dns.*` | — | — | Same settings for a fleet with one master. Rejected with several masters, and alongside `fleet.master_dns.*` |
 
 ---
 
@@ -337,19 +338,19 @@ a plain exit, three on a lifeline exit.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fleet.exits[].dns.image` / `fleet.masters[].dns.image` | string | `spx01/blocky:v0.35.0` | Container repository |
-| `fleet.exits[].dns.tag` / `fleet.masters[].dns.tag` | string | — | Explicit tag, overriding any tag in the image |
-| `fleet.exits[].dns.upstreams` / `fleet.masters[].dns.upstreams` | []string | safe defaults | Default upstream resolver group. On a master these default to the active exit resolvers |
-| `fleet.exits[].dns.allowlist` / `fleet.masters[].dns.allowlist` | []string | — | Domains never blocked. Platform infrastructure is added automatically |
-| `fleet.exits[].dns.prometheus` / `fleet.masters[].dns.prometheus` | bool | `true` | Expose blocky's own `/metrics` |
-| `fleet.exits[].dns.ports.dns` / `fleet.masters[].dns.ports.dns` | int | `53` | Plain DNS port |
-| `fleet.exits[].dns.ports.tls` / `fleet.masters[].dns.ports.tls` | int | `853` | DNS-over-TLS port |
-| `fleet.exits[].dns.ports.https` / `fleet.masters[].dns.ports.https` | int | disabled | DNS-over-HTTPS port |
-| `fleet.exits[].dns.ports.http` / `fleet.masters[].dns.ports.http` | int | `4000` | HTTP port (metrics, query log UI) |
-| `fleet.exits[].dns.overrides` / `fleet.masters[].dns.overrides` | map | none | **Deep-merged into the rendered blocky config.** Denylists, conditional local-zone mappings and caching go here |
-| `fleet.exits[].dns.extra_files[].path` / `fleet.masters[].dns.extra_files[].path` | string | — | Additional managed file, e.g. a custom blocklist |
-| `fleet.exits[].dns.extra_files[].content` / `fleet.masters[].dns.extra_files[].content` | string | — | Its literal contents |
-| `fleet.exits[].dns.extra_files[].secret` / `fleet.masters[].dns.extra_files[].secret` | bool | `false` | Write mode `0600` and redact from logs |
+| `fleet.exits[].dns.image` / `fleet.masters[].dns.image` / `fleet.master_dns.image` | string | `spx01/blocky:v0.35.0` | Container repository |
+| `fleet.exits[].dns.tag` / `fleet.masters[].dns.tag` / `fleet.master_dns.tag` | string | — | Explicit tag, overriding any tag in the image |
+| `fleet.exits[].dns.upstreams` / `fleet.masters[].dns.upstreams` / `fleet.master_dns.upstreams` | []string | safe defaults | Default upstream resolver group. On a master these default to the active exit resolvers |
+| `fleet.exits[].dns.allowlist` / `fleet.masters[].dns.allowlist` / `fleet.master_dns.allowlist` | []string | — | Domains never blocked. Platform infrastructure is added automatically |
+| `fleet.exits[].dns.prometheus` / `fleet.masters[].dns.prometheus` / `fleet.master_dns.prometheus` | bool | `true` | Expose blocky's own `/metrics` |
+| `fleet.exits[].dns.ports.dns` / `fleet.masters[].dns.ports.dns` / `fleet.master_dns.ports.dns` | int | `53` | Plain DNS port |
+| `fleet.exits[].dns.ports.tls` / `fleet.masters[].dns.ports.tls` / `fleet.master_dns.ports.tls` | int | `853` | DNS-over-TLS port |
+| `fleet.exits[].dns.ports.https` / `fleet.masters[].dns.ports.https` / `fleet.master_dns.ports.https` | int | disabled | DNS-over-HTTPS port |
+| `fleet.exits[].dns.ports.http` / `fleet.masters[].dns.ports.http` / `fleet.master_dns.ports.http` | int | `4000` | HTTP port (metrics, query log UI) |
+| `fleet.exits[].dns.overrides` / `fleet.masters[].dns.overrides` / `fleet.master_dns.overrides` | map | none | **Deep-merged into the rendered blocky config.** Denylists, conditional local-zone mappings and caching go here |
+| `fleet.exits[].dns.extra_files[].path` / `fleet.masters[].dns.extra_files[].path` / `fleet.master_dns.extra_files[].path` | string | — | Additional managed file, e.g. a custom blocklist |
+| `fleet.exits[].dns.extra_files[].content` / `fleet.masters[].dns.extra_files[].content` / `fleet.master_dns.extra_files[].content` | string | — | Its literal contents |
+| `fleet.exits[].dns.extra_files[].secret` / `fleet.masters[].dns.extra_files[].secret` / `fleet.master_dns.extra_files[].secret` | bool | `false` | Write mode `0600` and redact from logs |
 
 ---
 
@@ -401,7 +402,7 @@ If wgfleet models a setting, set the wgfleet key; otherwise use `overrides`
 | Tool | Role | Configured through | Upstream documentation |
 |---|---|---|---|
 | **mihomo** (Clash.Meta) | Master data plane: transparent proxy, geo-routing, exit load balancing | `fleet.masters[].mihomo.overrides` merged into `config.yaml` | <https://wiki.metacubex.one/en/config/> |
-| **blocky** | DNS filtering and forwarding on masters and exits | `fleet.masters[].dns.overrides` / `fleet.exits[].dns.overrides` | <https://0xerr0r.github.io/blocky/latest/configuration/> |
+| **blocky** | DNS filtering and forwarding on masters and exits | `fleet.master_dns.overrides` / `fleet.masters[].dns.overrides` / `fleet.exits[].dns.overrides` | <https://0xerr0r.github.io/blocky/latest/configuration/> |
 | **xray-core** | REALITY/VLESS/XHTTP inbounds, both master↔exit and client-facing | Modelled keys only; the rendered config is not user-merged | <https://xtls.github.io/en/config/> · REALITY: <https://github.com/XTLS/REALITY> |
 | **AmneziaWG** | Obfuscated WireGuard on all tunnels | Not user-tunable: obfuscation parameters are **generated** per tunnel. Hand-editing breaks the pairing | <https://docs.amnezia.org/documentation/amnezia-wg/> |
 | **wg-easy** | Client management UI and client-facing AmneziaWG server on the master | `fleet.masters[].compose.*`; state lives in its SQLite DB, which wgfleet writes directly | <https://github.com/wg-easy/wg-easy/wiki> |
