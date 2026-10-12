@@ -167,6 +167,11 @@ type FleetSection struct {
 	// ClientSites are the operator's own networks a device is sometimes on and
 	// sometimes away from; see ClientSiteConfig.
 	ClientSites []ClientSiteConfig `koanf:"client_sites"`
+	// MasterDNS is the resolver configuration of EVERY master that runs one
+	// (masters[].dns_filter). A device asks all its masters' resolvers at once and
+	// takes the first answer, so two masters configured apart answer the same name
+	// differently, by turns. See MasterDNSFor.
+	MasterDNS DNSConfig `koanf:"master_dns"`
 	// MgmtOverlayMSS, when > 0, is baked into every node's agent.yaml at provisioning
 	// time (agent.mgmt_overlay_mss) so the agent clamps TCP MSS on the ZeroTier
 	// interface. Control-plane insurance: keeps the agent↔controller mTLS handshake
@@ -1076,6 +1081,12 @@ type DNSConfig struct {
 	Ports      DNSPortsConfig    `koanf:"ports"`      // per-protocol ports (0 ⇒ renderer default)
 	Overrides  map[string]any    `koanf:"overrides"`  // deep-merged into rendered config.yml
 	ExtraFiles []ExtraFileConfig `koanf:"extra_files"`
+}
+
+// IsZero reports whether the operator set nothing in the block.
+func (d DNSConfig) IsZero() bool {
+	return d.Image == "" && d.Tag == "" && len(d.Upstreams) == 0 && len(d.Allowlist) == 0 &&
+		d.Prometheus == nil && d.Ports == (DNSPortsConfig{}) && len(d.Overrides) == 0 && len(d.ExtraFiles) == 0
 }
 
 // DNSPortsConfig overrides blocky's per-protocol listen ports. A zero value uses

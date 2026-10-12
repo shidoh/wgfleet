@@ -13,7 +13,8 @@ import (
 )
 
 func TestExitTeardownPlan(t *testing.T) {
-	planners := TeardownPlanners(PathsUnder("/tmp/x"))
+	dir := t.TempDir()
+	planners := TeardownPlanners(PathsUnder(dir))
 	eng := reconcile.NewEngine(nil, planners...)
 	report, err := eng.Reconcile(context.Background(), domain.NodeSpec{Decommission: true, Role: domain.RoleExit}, reconcile.ModePlan)
 	if err != nil {
@@ -22,7 +23,7 @@ func TestExitTeardownPlan(t *testing.T) {
 	out := report.String()
 	for _, want := range []string{
 		"exit teardown", "awg-quick down", "wg-quick down", "ip route flush table 51820",
-		"nft delete table inet wgfleet", "docker compose -f /tmp/x/blocky/docker-compose.yml down", "conntrack -F",
+		"nft delete table inet wgfleet", "docker compose -f " + dir + "/blocky/docker-compose.yml down", "conntrack -F",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("teardown plan missing %q:\n%s", want, out)

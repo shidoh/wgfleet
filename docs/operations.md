@@ -799,7 +799,7 @@ Keys and rules: [manifest.md](manifest.md#several-masters). Each master is a pee
 
 1. Set `fleet.mgmt_subnet` if it is unset. Without it, adding the node changes the direct routes and the firewall whitelist on every exit.
 2. Upgrade every exit to an agent that supports several masters (the console shows the agent version). A non-base master gets no AmneziaWG tunnel to an exit on an older agent; if that exit's active transport is AmneziaWG, the master does not route through it at all.
-3. In the manifest, add `interface_anchor` (the name of the master in slot 0) and the new master with its own `slot`. Check that each exit `address_pool` holds host `3 + 2 × slot`.
+3. In the manifest, add `interface_anchor` (the name of the master in slot 0) and the new master with its own `slot`. Check that each exit `address_pool` holds host `3 + 2 × slot`. Move `masters[].dns` to `fleet.master_dns`; set `dns_filter` on the new master as on the first.
 4. Validate: `wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config`. Check the printed `anchor`, `base` and every `master … slot` line against the running fleet.
 5. Restart the controller.
 6. Provision the new master's node.

@@ -415,7 +415,7 @@ func TestPlannersRaiseTheLifelineBetweenTheServerAndWARP(t *testing.T) {
 // to take it down and wipe both — otherwise a re-provisioned node comes back
 // carrying a stale reserve interface keyed to credentials it no longer serves.
 func TestExitTeardownTakesTheLifelineDown(t *testing.T) {
-	paths := PathsUnder("/tmp/x")
+	paths := PathsUnder(t.TempDir())
 	eng := reconcile.NewEngine(nil, TeardownPlanners(paths)...)
 	report, err := eng.Reconcile(context.Background(),
 		domain.NodeSpec{Decommission: true, Role: domain.RoleExit}, reconcile.ModePlan)

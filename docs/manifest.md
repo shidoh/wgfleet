@@ -183,6 +183,12 @@ One master needs neither key below. From the second master on:
 fleet:
   interface_anchor: master-xa-1        # = the name of the master in slot 0; never change it
   mgmt_subnet: 10.20.0.0/16            # set before adding a master
+  master_dns:                          # resolver settings of every master; replaces masters[].dns
+    allowlist: ["*.example.net"]
+    overrides:
+      conditional:
+        mapping:
+          corp.example: 10.20.0.53
   masters:
     - name: master-xa-1
       slot: 0
@@ -195,12 +201,14 @@ fleet:
 | Key | Level | Type | Default | Meaning |
 |---|---|---|---|---|
 | `interface_anchor` | fleet | string | name of the master in slot 0 | Label every exit's interface parameters are derived from. Required with two or more masters, and when no master holds slot 0. Not `clients` or `lifeline`; no whitespace, no `\|`. Never change it on a running fleet |
+| `master_dns` | fleet | map | none | Resolver settings (`image`, `allowlist`, `upstreams`, `ports`, `overrides`, `extra_files`) rendered on every master with `dns_filter: true`. Same keys as `masters[].dns` |
 | `slot` | master | int 0-63 | `0` | The master's addresses inside every exit pool. Unique per master. Never reuse a slot for a different master while the old one's keys are still on exits |
 
 | Rule | Detail |
 |---|---|
 | Exit `address_pool` size | Must hold host `3 + 2 × (highest slot)` |
 | Reserved node names | `clients` and `lifeline` |
+| `masters[].dns` | Rejected with two or more masters, and alongside `fleet.master_dns`. Move the block to `fleet.master_dns` |
 | Two masters with one WireGuard key | The master that registers the key second is refused at registration. With both keys already stored, the exits peer the earlier master in manifest order; the other gets no peer and no AmneziaWG tunnel. A master built from a copy of another's disk needs a new key |
 | Direct rules per exit | `direct_cidrs` of the master in slot 0 + management CIDRs + one per other master. Over 80: a warning from `--check-config` and at startup; an exit with WARP egress cannot apply its routing |
 | `transports.awg.exit_initiated` | Needs a public IPv4 on every master |

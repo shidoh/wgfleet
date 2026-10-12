@@ -54,6 +54,35 @@ func (f FleetSection) AnchorLabel() string {
 	return ""
 }
 
+// MasterDNSFor returns the resolver configuration master m renders:
+// fleet.master_dns when it is set, else the master's own dns — which Validate
+// allows only while m is the one master there is.
+func (f FleetSection) MasterDNSFor(m MasterConfig) DNSConfig {
+	if !f.MasterDNS.IsZero() {
+		return f.MasterDNS
+	}
+	return m.DNS
+}
+
+// validateMasterDNS keeps the masters' resolvers on one configuration: a device
+// races them and takes the first answer, so a master configured apart turns its
+// difference into an answer that comes and goes.
+func (f FleetSection) validateMasterDNS() []error {
+	var errs []error
+	for i, m := range f.Masters {
+		switch {
+		case m.DNS.IsZero():
+		case !f.MasterDNS.IsZero():
+			errs = append(errs, fmt.Errorf(
+				"fleet.masters[%d] (%s): dns is set alongside fleet.master_dns; keep the resolver settings in fleet.master_dns only", i, m.Name))
+		case len(f.Masters) > 1:
+			errs = append(errs, fmt.Errorf(
+				"fleet.masters[%d] (%s): dns is per master; with several masters set fleet.master_dns, which every master renders", i, m.Name))
+		}
+	}
+	return errs
+}
+
 // validateMasterFanout checks what only a fleet of several masters can get wrong.
 func (c ControllerConfig) validateMasterFanout() []error {
 	var errs []error
@@ -77,6 +106,7 @@ func (c ControllerConfig) validateMasterFanout() []error {
 			maxSlot = m.Slot
 		}
 	}
+	errs = append(errs, f.validateMasterDNS()...)
 	if len(f.Masters) > 0 && f.InterfaceAnchor == "" {
 		base, hasBase := f.BaseMaster()
 		switch {

@@ -211,3 +211,57 @@ func TestExitDirectRuleWarnings(t *testing.T) {
 		t.Errorf("warned about a fleet with no exits: %q", warns)
 	}
 }
+
+func TestMasterDNSFor(t *testing.T) {
+	own := DNSConfig{Allowlist: []string{"own.example"}}
+	shared := DNSConfig{Allowlist: []string{"shared.example"}}
+	m := MasterConfig{Name: "master-xa-1", DNS: own}
+
+	// One master and no fleet-level block: its own dns is what it gets.
+	if got := (FleetSection{}).MasterDNSFor(m); got.Allowlist[0] != "own.example" {
+		t.Errorf("without fleet.master_dns = %v, want the master's own dns", got.Allowlist)
+	}
+	// fleet.master_dns is every master's resolver configuration.
+	f := FleetSection{MasterDNS: shared}
+	for _, m := range []MasterConfig{{Name: "master-xa-1"}, {Name: "master-xa-2", Slot: 1}} {
+		if got := f.MasterDNSFor(m); len(got.Allowlist) != 1 || got.Allowlist[0] != "shared.example" {
+			t.Errorf("%s: dns = %v, want fleet.master_dns", m.Name, got.Allowlist)
+		}
+	}
+}
+
+func TestValidateMasterDNSIsOneForAllMasters(t *testing.T) {
+	dns := DNSConfig{Overrides: map[string]any{"conditional": map[string]any{}}}
+	cases := []struct {
+		name     string
+		mutate   func(*FleetSection)
+		wantFrag string // empty ⇒ must validate
+	}{
+		{"several masters share fleet.master_dns",
+			func(f *FleetSection) { f.MasterDNS = dns }, ""},
+		{"several masters, one with its own dns",
+			func(f *FleetSection) { f.Masters[0].DNS = dns },
+			"fleet.masters[0] (master-xa-1): dns is per master; with several masters set fleet.master_dns"},
+		{"fleet.master_dns and a master's own dns",
+			func(f *FleetSection) { f.MasterDNS = dns; f.Masters[1].DNS = dns },
+			"fleet.masters[1] (master-xa-2): dns is set alongside fleet.master_dns"},
+		{"one master keeps its own dns",
+			func(f *FleetSection) { f.Masters = f.Masters[:1]; f.Masters[0].DNS = dns }, ""},
+		{"one master with both",
+			func(f *FleetSection) { f.Masters = f.Masters[:1]; f.Masters[0].DNS = dns; f.MasterDNS = dns },
+			"fleet.masters[0] (master-xa-1): dns is set alongside fleet.master_dns"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := twoMasters()
+			tc.mutate(&cfg.Fleet)
+			err := cfg.Validate()
+			switch {
+			case tc.wantFrag == "" && err != nil:
+				t.Fatalf("rejected: %v", err)
+			case tc.wantFrag != "" && (err == nil || !strings.Contains(err.Error(), tc.wantFrag)):
+				t.Fatalf("err = %v, want it to contain %q", err, tc.wantFrag)
+			}
+		})
+	}
+}
