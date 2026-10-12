@@ -560,6 +560,7 @@ a:focus-visible,
 /* Vertical topology: a master trunk, then one group block per tier. Each group
    owns its rail; only the carrying group gets the animated overlay, so the live
    segment is a consequence of the grouping rather than a measured height. */
+.topo-master + .topo-master { margin-top: var(--sp-5); }
 .topo-trunk {
   display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap;
   background: linear-gradient(180deg, rgba(91,141,239,.07), var(--panel-2));

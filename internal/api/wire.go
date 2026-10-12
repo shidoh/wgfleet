@@ -86,7 +86,13 @@ const (
 	// flow itself; a v11 exit applies an endpoint only on a config rewrite and
 	// never reports it, so the controller would never arm the master's gate. Both
 	// ends must be v12 before the controller turns the feature on for a tunnel.
-	WireContractVersion uint32 = 12
+	// v13 adds StatusReport.master_peers — an exit's per-master-peer endpoint and
+	// handshake — and with it an exit agent that edits its master peers in place
+	// instead of restarting the interface. Both matter only once a second master
+	// exists: a v12 exit would restart awg0 for the new peer and could report one
+	// endpoint for two masters, so the controller renders such an exit nothing but
+	// the base master, exactly as before. Deploy the controller FIRST.
+	WireContractVersion uint32 = 13
 
 	// WireClientWG is the wire version that introduced MasterSpec.client_wg. The
 	// controller refuses to render the client interface for a master below it: such
@@ -139,6 +145,14 @@ const (
 	// and the exit are both at or above it. Named rather than compared against
 	// WireContractVersion so a later bump does not re-close it to the fleet.
 	WireAWGExitInitiated uint32 = 12
+
+	// WireMasterPeers is the wire version from which an exit can carry more than
+	// the base master: it reports every master peer (StatusReport.master_peers)
+	// and adds or removes one without restarting awg0. The controller renders a
+	// non-base master's peer, route and tunnel only for an exit at or above it.
+	// Named rather than compared against WireContractVersion so a later bump does
+	// not re-close it.
+	WireMasterPeers uint32 = 13
 
 	// MinSupportedWire is the oldest agent wire version the controller will serve
 	// a spec to. Agents below it are refused (fail-safe) and, where possible,

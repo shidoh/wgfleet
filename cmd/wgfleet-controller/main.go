@@ -131,7 +131,7 @@ func run() error {
 	defer applyConfigLogLevel(logLV, logBase, *logLevel, cfg.Controller.LogLevel)()
 	// Advisory, not a load failure (RULING): a config that would silently strand a
 	// device's mihomo subscription over AWG still starts, it just says so.
-	for _, w := range config.ClientAWGTunnelWarnings(*cfg) {
+	for _, w := range manifestWarnings(*cfg) {
 		slog.Warn(w)
 	}
 	// --plan on its own used to fall through to serve(). Every subcommand consults it
@@ -394,6 +394,20 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 		slog.Error("adopting client credentials as devices failed; portal links keep working, will retry on next start", "err", err)
 	} else if n > 0 {
 		slog.Info("client credentials adopted as devices", "count", n)
+	}
+
+	// The pinned-port generations of the single-master days belong to the base
+	// master. Fatal on failure, unlike the device adoption above: carrying on would
+	// start every exit-initiated tunnel at generation 0 again — the port a path
+	// filter has already poisoned.
+	if base, ok := cfg.Fleet.BaseMaster(); ok {
+		n, err := st.AdoptAWGPortRotation(context.Background(), base.Name)
+		if err != nil {
+			return fmt.Errorf("adopt pinned-port generations for master %q: %w", base.Name, err)
+		}
+		if n > 0 {
+			slog.Info("pinned-port generations adopted for the base master", "master", base.Name, "tunnels", n)
+		}
 	}
 
 	// The 3.x header-protection secret, resolved once here rather than per render.
@@ -831,6 +845,10 @@ func (s portalSource) ListWGClients(ctx context.Context, id string) ([]domain.WG
 
 func (s portalSource) LifelineExits(ctx context.Context) ([]string, error) {
 	return s.broker.LifelineExits(ctx)
+}
+
+func (s portalSource) LifelineMaster(ctx context.Context) (string, error) {
+	return s.broker.LifelineMaster(ctx)
 }
 
 func (s portalSource) ExitEndpointHost(ctx context.Context, exitID string) (string, error) {

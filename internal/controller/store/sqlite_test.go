@@ -670,16 +670,284 @@ func TestAWGPortRotationPersists(t *testing.T) {
 	}
 	defer st.Close()
 	ctx := context.Background()
-	gen, at, err := st.GetAWGPortRotation(ctx, "exit-a")
+	gen, at, err := st.GetAWGPortRotation(ctx, "master-xa-1", "exit-a")
 	if err != nil || gen != 0 || !at.IsZero() {
 		t.Fatalf("unrotated exit: gen=%d at=%v err=%v", gen, at, err)
 	}
 	when := time.Unix(1_800_000_000, 0).UTC()
-	if err := st.SetAWGPortRotation(ctx, "exit-a", 2, when); err != nil {
+	if err := st.SetAWGPortRotation(ctx, "master-xa-1", "exit-a", 2, when); err != nil {
 		t.Fatal(err)
 	}
-	gen, at, err = st.GetAWGPortRotation(ctx, "exit-a")
+	gen, at, err = st.GetAWGPortRotation(ctx, "master-xa-1", "exit-a")
 	if err != nil || gen != 2 || !at.Equal(when) {
 		t.Fatalf("after rotation: gen=%d at=%v err=%v", gen, at, err)
+	}
+}
+
+func TestAWGPortRotationIsPerMasterAndExit(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	at := time.Unix(1_800_000_000, 0).UTC()
+	if err := s.SetAWGPortRotation(ctx, "master-xa-1", "exit-de-1", 3, at); err != nil {
+		t.Fatal(err)
+	}
+	if gen, _, err := s.GetAWGPortRotation(ctx, "master-xa-2", "exit-de-1"); err != nil || gen != 0 {
+		t.Errorf("another master's generation = %d, %v; want 0 (its own tunnel never rotated)", gen, err)
+	}
+	gen, rotated, err := s.GetAWGPortRotation(ctx, "master-xa-1", "exit-de-1")
+	if err != nil || gen != 3 || !rotated.Equal(at) {
+		t.Errorf("got gen=%d at=%v err=%v", gen, rotated, err)
+	}
+	if err := s.SetAWGPortRotation(ctx, "", "exit-de-1", 1, at); err == nil {
+		t.Error("a rotation without a master must be refused")
+	}
+}
+
+// The generations recorded before tunnels were keyed by master belong to the one
+// master there was. Starting them again at 0 would hand an exit back the port a
+// path filter already poisoned.
+func TestAdoptAWGPortRotationKeepsThePoisonedPortRetired(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	at := time.Unix(1_800_000_000, 0).UTC()
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO awg_port_rotation (node_id, generation, rotated_at) VALUES ('exit-de-1', 4, ?)`,
+		fmtTime(at)); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.AdoptAWGPortRotation(ctx, "master-xa-1")
+	if err != nil || n != 1 {
+		t.Fatalf("adopted %d, %v; want 1", n, err)
+	}
+	if gen, _, _ := s.GetAWGPortRotation(ctx, "master-xa-1", "exit-de-1"); gen != 4 {
+		t.Errorf("generation after adoption = %d, want 4", gen)
+	}
+	// One-shot: a later run with another master must not hand it the same history.
+	if n, err := s.AdoptAWGPortRotation(ctx, "master-xa-2"); err != nil || n != 0 {
+		t.Errorf("second adoption = %d, %v; want 0", n, err)
+	}
+	if gen, _, _ := s.GetAWGPortRotation(ctx, "master-xa-2", "exit-de-1"); gen != 0 {
+		t.Errorf("a second master inherited generation %d", gen)
+	}
+}
+
+// Every report overwrites the last: a peer list that outlived the report it came
+// from would be read as live handshakes, and a frozen handshake reads as a dead
+// tunnel.
+func TestStatusMasterPeersFollowTheLatestReport(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	node := sampleNode()
+	if err := s.UpsertNode(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	peers := []domain.MasterPeerStatus{{PublicKey: "keyA", Endpoint: "203.0.113.1:23456", LastHandshake: time.Unix(1_800_000_000, 0).UTC()}}
+	if err := s.RecordStatus(ctx, domain.NodeStatus{NodeID: node.ID, State: domain.StateReady, MasterPeers: peers}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetStatus(ctx, node.ID)
+	if err != nil || len(got.MasterPeers) != 1 || got.MasterPeers[0].Endpoint != "203.0.113.1:23456" {
+		t.Fatalf("stored peers = %+v, %v", got.MasterPeers, err)
+	}
+	if err := s.RecordStatus(ctx, domain.NodeStatus{NodeID: node.ID, State: domain.StateReady}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetStatus(ctx, node.ID)
+	if err != nil || len(got.MasterPeers) != 0 {
+		t.Errorf("peers after a report without any = %+v, %v; want none", got.MasterPeers, err)
+	}
+}
+
+// The address an exit confirmed for one master, the peer the confirmation is
+// about and the moment it was earned must survive a controller restart: a gate
+// that forgets it has the master speak first on a filtered path.
+func TestAWGPinConfirmationPersistsPerMasterAndExit(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	addr, key, since, err := s.GetAWGPinConfirmation(ctx, "master-xa-1", "exit-de-1")
+	if err != nil || addr != "" || key != "" || !since.IsZero() {
+		t.Fatalf("unconfirmed tunnel: addr=%q key=%q since=%v err=%v; want zero values", addr, key, since, err)
+	}
+	at := time.Unix(1_800_000_000, 0).UTC()
+	if err := s.SetAWGPinConfirmation(ctx, "master-xa-1", "exit-de-1", "203.0.113.1:40001", "key-a", at); err != nil {
+		t.Fatal(err)
+	}
+	addr, key, since, err = s.GetAWGPinConfirmation(ctx, "master-xa-1", "exit-de-1")
+	if err != nil || addr != "203.0.113.1:40001" || key != "key-a" || !since.Equal(at) {
+		t.Errorf("got addr=%q key=%q since=%v err=%v", addr, key, since, err)
+	}
+	if addr, _, _, err := s.GetAWGPinConfirmation(ctx, "master-xa-2", "exit-de-1"); err != nil || addr != "" {
+		t.Errorf("another master's confirmation = %q, %v; want none", addr, err)
+	}
+	// A later confirmation replaces the earlier one whole.
+	later := at.Add(time.Hour)
+	if err := s.SetAWGPinConfirmation(ctx, "master-xa-1", "exit-de-1", "203.0.113.1:40002", "", later); err != nil {
+		t.Fatal(err)
+	}
+	addr, key, since, err = s.GetAWGPinConfirmation(ctx, "master-xa-1", "exit-de-1")
+	if err != nil || addr != "203.0.113.1:40002" || key != "" || !since.Equal(later) {
+		t.Errorf("after replacing: addr=%q key=%q since=%v err=%v", addr, key, since, err)
+	}
+	if err := s.SetAWGPinConfirmation(ctx, "", "exit-de-1", "203.0.113.1:40001", "key-a", at); err == nil {
+		t.Error("a confirmation without a master must be refused")
+	}
+	// Forgotten reads exactly like never confirmed, and forgetting twice is fine.
+	for i := 0; i < 2; i++ {
+		if err := s.DeleteAWGPinConfirmation(ctx, "master-xa-1", "exit-de-1"); err != nil {
+			t.Fatalf("delete %d: %v", i, err)
+		}
+	}
+	addr, key, since, err = s.GetAWGPinConfirmation(ctx, "master-xa-1", "exit-de-1")
+	if err != nil || addr != "" || key != "" || !since.IsZero() {
+		t.Errorf("after forgetting: addr=%q key=%q since=%v err=%v; want zero values", addr, key, since, err)
+	}
+}
+
+// Deleting a node takes what was confirmed for it, as master or as exit — and
+// leaves the port generations, which retire ports a path already poisoned.
+func TestDeleteNodeForgetsItsPinConfirmations(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	at := time.Unix(1_800_000_000, 0).UTC()
+	for _, id := range []string{"master-xa-1", "master-xa-2", "exit-de-1", "exit-de-2"} {
+		if err := s.UpsertNode(ctx, domain.Node{ID: id, Name: id, Role: domain.RoleExit, State: domain.StateReady}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, m := range []string{"master-xa-1", "master-xa-2"} {
+		for _, e := range []string{"exit-de-1", "exit-de-2"} {
+			if err := s.SetAWGPinConfirmation(ctx, m, e, "203.0.113.1:40001", "key", at); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.SetAWGPortRotation(ctx, m, e, 3, at); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	confirmed := func(m, e string) bool {
+		addr, _, _, err := s.GetAWGPinConfirmation(ctx, m, e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return addr != ""
+	}
+
+	if err := s.DeleteNode(ctx, "master-xa-2"); err != nil {
+		t.Fatal(err)
+	}
+	if confirmed("master-xa-2", "exit-de-1") || confirmed("master-xa-2", "exit-de-2") {
+		t.Error("the deleted master's confirmations survived it")
+	}
+	if !confirmed("master-xa-1", "exit-de-1") || !confirmed("master-xa-1", "exit-de-2") {
+		t.Error("another master's confirmations were deleted with it")
+	}
+	if err := s.DeleteNode(ctx, "exit-de-2"); err != nil {
+		t.Fatal(err)
+	}
+	if confirmed("master-xa-1", "exit-de-2") {
+		t.Error("the confirmation for a deleted exit survived it")
+	}
+	if !confirmed("master-xa-1", "exit-de-1") {
+		t.Error("the confirmation for another exit was deleted with it")
+	}
+	if gen, _, _ := s.GetAWGPortRotation(ctx, "master-xa-2", "exit-de-1"); gen != 3 {
+		t.Errorf("port generation after the delete = %d, want 3 kept: generation 0 is a port already judged poisoned", gen)
+	}
+}
+
+func TestAutoSuspendedRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	got, err := st.ListAutoSuspended(ctx)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("empty store: %v, %v", got, err)
+	}
+	since := time.Date(2026, 10, 9, 18, 0, 0, 0, time.UTC)
+	if err := st.SetAutoSuspended(ctx, "exit-a", since); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAutoSuspended(ctx, "exit-a", since.Add(time.Minute)); err != nil { // replaces
+		t.Fatal(err)
+	}
+	if err := st.SetAutoSuspended(ctx, "exit-b", since); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.ListAutoSuspended(ctx)
+	if err != nil || len(got) != 2 || !got["exit-a"].Equal(since.Add(time.Minute)) || !got["exit-b"].Equal(since) {
+		t.Fatalf("list = %v, %v", got, err)
+	}
+	if err := st.ClearAutoSuspended(ctx, "exit-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ClearAutoSuspended(ctx, "exit-a"); err != nil { // absent ⇒ no-op
+		t.Fatal(err)
+	}
+	got, _ = st.ListAutoSuspended(ctx)
+	if _, still := got["exit-a"]; still || len(got) != 1 {
+		t.Fatalf("after clear: %v", got)
+	}
+	if err := st.SetAutoSuspended(ctx, "", since); err == nil {
+		t.Fatal("an empty exit name was accepted")
+	}
+}
+
+// The suspension is about the node that was there: deleting the node drops it,
+// and a node with none is deleted like any other.
+func TestDeleteNodeForgetsItsAutoSuspension(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	since := time.Unix(1_800_000_000, 0).UTC()
+	for _, id := range []string{"exit-de-1", "exit-de-2", "exit-de-3"} {
+		if err := s.UpsertNode(ctx, domain.Node{ID: id, Name: id, Role: domain.RoleExit, State: domain.StateReady}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"exit-de-1", "exit-de-2"} {
+		if err := s.SetAutoSuspended(ctx, id, since); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"exit-de-1", "exit-de-3"} {
+		if err := s.DeleteNode(ctx, id); err != nil {
+			t.Fatalf("delete %s: %v", id, err)
+		}
+	}
+	got, err := s.ListAutoSuspended(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, kept := got["exit-de-2"]; !kept || len(got) != 1 {
+		t.Fatalf("after deleting exit-de-1 and exit-de-3: %v, want only exit-de-2", got)
+	}
+}
+
+// The whole point of the table: it is still there after the process is gone.
+func TestAutoSuspendedSurvivesReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "state.db")
+	since := time.Date(2026, 10, 9, 18, 33, 38, 461576765, time.UTC)
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAutoSuspended(ctx, "exit-a", since); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	got, err := st.ListAutoSuspended(ctx)
+	if err != nil || len(got) != 1 || !got["exit-a"].Equal(since) {
+		t.Fatalf("after reopen: %v, %v", got, err)
 	}
 }

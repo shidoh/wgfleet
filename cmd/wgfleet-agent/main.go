@@ -414,6 +414,10 @@ type agent struct {
 	// applied pass (exit-initiated AWG flow); reported so the controller can arm
 	// the master's gate. Kept across passes so an error report still carries it.
 	awgMasterEndpoint string
+	// masterPeers is what this exit's awg0 held for each master peer on the last
+	// applied pass. Unlike awgMasterEndpoint it is replaced on every pass, even by
+	// nothing: it carries handshake times, and a stale list reads as a live tunnel.
+	masterPeers []domain.MasterPeerStatus
 	// exitNames maps an exit's endpoint IP to its node name, from the last spec a
 	// master applied; the exit-initiated AWG metrics label exits by name with it.
 	exitNames atomic.Pointer[map[string]string]
@@ -980,6 +984,9 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		if ep, ok := exit.MasterEndpoint(a.paths.WGConf, spec.Peers); ok {
 			a.awgMasterEndpoint = ep
 		}
+		// Not cached across a failed read, unlike the endpoint above: this list
+		// carries handshake times, and a stale one reads as a tunnel gone silent.
+		a.masterPeers, _ = exit.MasterPeers(a.paths.WGConf, spec.Peers)
 	}
 	if a.role == domain.RoleMaster && spec.Master != nil {
 		names := exitNamesByIP(spec.Master.ExitTunnels)
@@ -1107,6 +1114,11 @@ func (a *agent) teardown(ctx context.Context, plan bool) error {
 	}
 	a.log.Info("decommission complete", "actions", report.ChangeCount())
 	// Report a terminal status so the controller/UI sees the node is torn down.
+	// The cache still holds the last live spec; see forgetSpec.
+	if err := forgetSpec(specCacheFile); err != nil {
+		a.log.Warn("decommission: the cached spec could not be removed; a controller outage would rebuild this node from it",
+			"path", specCacheFile, "err", err)
+	}
 	return a.reportStatus(ctx, domain.StatePending, []domain.HealthCheck{{Name: "decommissioned", OK: true}}, nil, "", nil)
 }
 
@@ -1518,6 +1530,7 @@ func (a *agent) reportStatus(ctx context.Context, state domain.NodeState, checks
 	st := domain.NodeStatus{State: state, Checks: checks, EgressIP: egressIP, ExitHealth: exitHealth, LastHandshake: a.latestHandshake(ctx)}
 	if a.role == domain.RoleExit {
 		st.AWGMasterEndpoint = a.awgMasterEndpoint
+		st.MasterPeers = a.masterPeers
 	}
 	// A master reports its live client peers so the controller's client page shows
 	// the kernel's view rather than the desired state's. Best-effort by design: an

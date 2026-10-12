@@ -5,7 +5,8 @@
 // MVP topology (the reference master↔exit mesh): exits run a WG server; the
 // master dials each exit. The master's client-facing AmneziaWG server (where
 // real VPN clients connect) is configured separately and is not part of this
-// fleet-internal peering. A single master fronts all exits on MVP.
+// fleet-internal peering. Every master is a peer on each exit's one interface; what
+// belongs to that interface is derived from the fleet's anchor label (see exitInterface).
 package keybroker
 
 import (
@@ -17,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"sort"
 	"sync"
 	"time"
 
@@ -55,12 +57,30 @@ type Broker struct {
 
 	// Auto-suspend hysteresis (see throughputAutoSuspend). now is injected by tests.
 	now func() time.Time
-	// pinConfirmed remembers which pinned address each exit-initiated exit has
-	// confirmed holding (see armedMasterAddr).
+	// pinConfirmed caches, per master↔exit tunnel (pinKey), the pinned address the
+	// exit confirmed holding; the store has the durable copy. See confirmation.
 	pinMu        sync.Mutex
 	pinConfirmed map[string]pinConfirmation
-	suspendMu    sync.Mutex
-	suspend      map[string]*suspendTrack
+	// pinCarrying is, per master↔exit tunnel (pinKey), whether its AWG tunnel was
+	// carrying traffic on the last pass and since when; guarded by pinMu. See
+	// carryingSince.
+	pinCarrying map[string]carryTrack
+	suspendMu   sync.Mutex
+	suspend     map[string]*suspendTrack
+	// suspendLoaded is set once the stored suspensions have been read into suspend
+	// (see loadSuspensions); until then nothing may be decided from an empty map.
+	suspendLoaded bool
+	// suspendStored is the suspended set known to be in the store: what was loaded,
+	// plus every write that succeeded since. syncSuspensions brings the store in
+	// line with suspend against it. Guarded by suspendMu.
+	suspendStored map[string]bool
+	// syncMu serialises syncSuspensions end to end, so two renders cannot write the
+	// store in one order and record the outcome in the other. Never held together
+	// with suspendMu across I/O: suspendMu is taken and released inside it.
+	syncMu sync.Mutex
+	// suspendGuard is set while the last-healthy-exit guard overrides the suspended
+	// set (no healthy exit left: every exit stays in the balancer). Guarded by suspendMu.
+	suspendGuard bool
 }
 
 // suspendTrack is one exit's auto-suspend history: how long it has been degraded
@@ -129,6 +149,12 @@ func (b *Broker) RegisterPublicKey(ctx context.Context, nodeID, publicKey string
 	}
 	if b.keyUnchanged(ctx, nodeID, publicKey, func(n domain.Node) string { return n.PublicKey }) {
 		return nil
+	}
+	if err := b.refuseAnotherMastersKey(ctx, nodeID, publicKey, "shared", func(ctx context.Context, master string) (string, error) {
+		_, pub, err := b.lookupPubKey(ctx, master)
+		return pub, err
+	}); err != nil {
+		return err
 	}
 	if err := b.store.SetNodePublicKey(ctx, nodeID, publicKey); err != nil {
 		return err
@@ -366,6 +392,11 @@ func (b *Broker) RegisterTunnelKey(ctx context.Context, nodeID, tunnel, publicKe
 	if cur, err := b.store.ListNodeTunnelKeys(ctx, nodeID); err == nil && cur[tunnel] == publicKey {
 		return nil
 	}
+	if err := b.refuseAnotherMastersKey(ctx, nodeID, publicKey, "per-tunnel", func(ctx context.Context, master string) (string, error) {
+		return b.tunnelPubKey(ctx, master, tunnel)
+	}); err != nil {
+		return err
+	}
 	if err := b.store.SetNodeTunnelKey(ctx, nodeID, tunnel, publicKey); err != nil {
 		return err
 	}
@@ -380,8 +411,17 @@ func (b *Broker) RegisterTunnelKey(ctx context.Context, nodeID, tunnel, publicKe
 func (b *Broker) RenderNodeSpec(ctx context.Context, nodeID string) (domain.NodeSpec, error) {
 	// A node flagged for decommission gets a teardown spec — the agent reverses
 	// its data plane instead of converging.
-	if node, err := b.store.GetNode(ctx, nodeID); err == nil && node.Decommission {
+	switch node, err := b.store.GetNode(ctx, nodeID); {
+	case err == nil && node.Decommission:
 		return domain.NodeSpec{Role: node.Role, Decommission: true}, nil
+	case err != nil && !errors.Is(err, store.ErrNotFound):
+		// Whether the node is flagged for decommission is not known. Rendering on
+		// would be a guess, and a failure further down marked store.ErrUnreadable
+		// would reach the agent as "controller unavailable" — on which it converges
+		// on its cached spec, rebuilding a node that may have just been told to
+		// tear down. So this is a refusal, and deliberately NOT marked unreadable
+		// (%v, not %w): the agent applies nothing this pass.
+		return domain.NodeSpec{}, fmt.Errorf("node %q: could not read whether it is being decommissioned: %v", nodeID, err)
 	}
 	spec, hardening, err := b.renderRoleSpec(ctx, nodeID)
 	if err != nil {
@@ -417,10 +457,6 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	if err != nil {
 		return domain.NodeSpec{}, err
 	}
-	masterAddr, err := nthHost(exit.AddressPool, masterHostIndex)
-	if err != nil {
-		return domain.NodeSpec{}, err
-	}
 	port := exit.WGListenPort()
 	egress := domain.EgressMethod(exit.Egress)
 	// The exit's own store node carries the operator's live active-transport override.
@@ -445,23 +481,18 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	// AmneziaWG obfuscation for the master↔exit tunnel: derived deterministically
 	// from the tunnel identity so both ends compute the identical shared params
 	// (only Jc/Jmin/Jmax may differ; this end uses the defaults).
+	iface, hasAnchor, err := b.exitInterface(ctx, exit, exitNode)
+	if err != nil {
+		return domain.NodeSpec{}, err
+	}
 	var awg *domain.AWGParams
-	if master, ok := b.primaryMaster(); ok {
+	if hasAnchor {
 		// Exit is the kernel-module (awg-quick) end of the master↔exit tunnel, so
-		// its I1-I5 signatures may use the full CPS tag set including <c>/<t>.
-		seed := wg.TunnelSeed(exit.Name, master.Name, awgSalt)
-		p := wg.DeriveAWGParamsForEnd(seed, "exit", true)
-		masterNode, _, merr := b.lookupPubKey(ctx, master.Name)
-		if merr != nil {
-			return domain.NodeSpec{}, merr
-		}
-		// AmneziaWG 3.0, when the operator opted in AND BOTH agents can render it.
-		// The same decision is taken for the master end in renderMasterSpec from the
-		// same two node records — both ends of one tunnel must agree on the generation
-		// or the handshake never completes, so this must never be decided twice
-		// differently, and it must never be decided from one end's record alone.
-		if awg3Enabled(b.fleet.AWG3For(exit), exitNode, masterNode) {
-			p = wg.WithAWG3(p, seed, b.awg3Key)
+		// its I1-I5 signatures may use the full CPS tag set including <c>/<t>. The
+		// generation is decided once, for both ends, in exitInterface.
+		p := wg.DeriveAWGParamsForEnd(iface.seed, "exit", true)
+		if iface.awg3 {
+			p = wg.WithAWG3(p, iface.seed, b.awg3Key)
 		}
 		awg = &p
 	}
@@ -521,107 +552,79 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		spec.Firewall.LifelinePort = lifeline.ListenPort
 	}
 
-	master, ok := b.primaryMaster()
-	if !ok {
+	if len(b.fleet.Masters) == 0 {
 		b.log.Warn("exit has no master to peer with", "exit", exit.Name)
 		return spec, nil
 	}
-	masterNode, masterPub, err := b.lookupPubKey(ctx, master.Name)
+	// Routing intent: client traffic egresses via WARP, but management and the
+	// path back to every master must stay direct (an earlier finding–#5).
+	//
+	// The direct list an exit inherits is the base master's, exactly as before:
+	// taking every master's would change where the OTHER masters' clients leave
+	// from. With no base master there is none.
+	var baseDirect []string
+	if base, ok := b.fleet.BaseMaster(); ok {
+		baseDirect = b.masterDirectCIDRs(base)
+	}
+	directCIDRs := mergeUnique(baseDirect, mgmtCIDRs)
+
+	owners, err := b.keyOwners(ctx, exit, exitNode)
 	if err != nil {
 		return domain.NodeSpec{}, err
 	}
-	phase := exit.PerTunnelKeyPhase()
-	// Exit-initiated AWG flow: the exit dials the master's pinned address, on the
-	// ONE peer whose identity the master actually uses in this phase.
-	pinned, pinnedOK := b.exitInitiatedAddr(ctx, exit, master, exitNode, masterNode)
-	legacyEndpoint, perTunnelEndpoint := "", ""
-	legacyKeepalive := wg.KeepaliveFor("master-exit|exit|" + exit.Name)
-	perTunnelKeepalive := wg.KeepaliveFor("master-exit|exit|per-tunnel|" + exit.Name)
-	if pinnedOK {
-		// The exit speaks every few seconds on the flow it opened, so a path filter
-		// never sees it idle long enough to forget who started it.
-		fast := wg.ExitInitiatedKeepaliveFor("master-exit|exit|" + exit.Name)
-		if phase.MasterUsesPerTunnelKey() {
-			perTunnelEndpoint, perTunnelKeepalive = pinned, fast
-		} else {
-			legacyEndpoint, legacyKeepalive = pinned, fast
-		}
-	}
 
-	// Legacy shared-identity peer. Kept in every phase but `on`, so the master always
-	// has a working way in until the operator has verified the per-tunnel one.
-	if phase.ExitAcceptsLegacyKey() {
-		if masterPub == "" {
-			b.log.Warn("master public key not yet registered; rendering exit without master peer",
-				"exit", exit.Name, "master", master.Name)
-		} else {
-			spec.Peers = append(spec.Peers, domain.PeerSpec{
-				Name:      master.Name,
-				PublicKey: masterPub,
-				// Empty: the master dials the exit. Set: the exit starts the flow.
-				Endpoint:   legacyEndpoint,
-				AllowedIPs: []string{host32(masterAddr)},
-				// Per-tunnel, not the fleet-wide 25: a keepalive is a beacon whose
-				// PERIOD joined every tunnel we run into one set for a passive
-				// observer. It is a local decision, so the two ends need not agree.
-				Keepalive: legacyKeepalive,
-				MTU:       serverMTU,
-			})
-		}
-	}
-
-	// Per-tunnel identity peer (ADR-0030), on its OWN address so it does not contend
-	// with the legacy peer for the same /32 in the AllowedIPs trie.
-	if phase.ExitAcceptsPerTunnelKey() {
-		perTunnelAddr, aerr := nthHost(exit.AddressPool, masterPerTunnelHostIndex)
-		if aerr != nil {
-			return domain.NodeSpec{}, fmt.Errorf("exit %q: per-tunnel master address: %w", exit.Name, aerr)
-		}
-		perTunnelPub, kerr := b.tunnelPubKey(ctx, master.Name, exit.Name)
-		if kerr != nil {
-			return domain.NodeSpec{}, fmt.Errorf("exit %q: %w", exit.Name, kerr)
-		}
-		switch {
-		case perTunnelPub == "":
-			// The master has not published this tunnel's key yet (it publishes after it
-			// first sees the exit in its own spec, so this is normal for a pass or two).
-			// Refusing to render the phase would be wrong; the legacy peer is still
-			// there in dual/switch. In `on` there would be NO peer at all, which is why
-			// the rollout requires confirming the key is registered before `on`.
-			b.log.Warn("master per-tunnel public key not yet registered; rendering exit without the per-tunnel peer",
-				"exit", exit.Name, "master", master.Name, "phase", phase)
-		default:
-			spec.Peers = append(spec.Peers, domain.PeerSpec{
-				Name:       master.Name + " (per-tunnel)",
-				PublicKey:  perTunnelPub,
-				Endpoint:   perTunnelEndpoint,
-				AllowedIPs: []string{host32(perTunnelAddr)},
-				Keepalive:  perTunnelKeepalive,
-				MTU:        serverMTU,
-			})
-		}
-	}
-
-	// Routing intent: client traffic egresses via WARP, but management and the
-	// path back to the master must stay direct (an earlier finding–#5).
+	// One peer set per master, in manifest order.
 	//
-	// MasterIP resolves from the node record lookupPubKey ALREADY read: a second
+	// MasterIP resolves from the node record masterPeers ALREADY read: a second
 	// store read here would have to swallow its own error, and "the store is
 	// briefly busy" would then render, apply and report a spec with no route back
 	// to the master — the return path silently falling into WARP, which is the
 	// failure an earlier finding exists to prevent. It is also an IP literal or nothing:
 	// routing.Render feeds it to `ip rule add to <X>`, which cannot resolve a name.
-	spec.Routing = domain.RoutingSpec{
-		DirectCIDRs: mergeUnique(b.masterDirectCIDRs(master), mgmtCIDRs),
+	type hostRoute struct {
+		slot int
+		cidr string
 	}
-	if ip, ok := masterRoutableIP(master, masterNode); ok {
-		spec.Routing.MasterIP = ip.String()
-	} else {
-		b.warnOnce("master-no-routable-ip:"+master.Name+"/"+exit.Name, master.PublicIP+"|"+masterNode.PublicIP,
-			"master has no usable IP literal (public_ip is unset or a DNS name and the store has none); "+
-				"the exit's direct route back to the master is omitted and its replies will follow the egress",
-			"exit", exit.Name, "master", master.Name, "public_ip", master.PublicIP)
+	var hosts []hostRoute
+	for _, master := range b.fleet.Masters {
+		if !b.exitCarries(exit, exitNode, master) {
+			if ferr := b.forgetConfirmation(ctx, master.Name, exit.Name); ferr != nil {
+				return domain.NodeSpec{}, ferr
+			}
+			continue
+		}
+		peers, masterNode, perr := b.masterPeers(ctx, exit, exitNode, master, serverMTU)
+		if perr != nil {
+			return domain.NodeSpec{}, perr
+		}
+		for _, p := range peers {
+			if b.ownsKey(owners, exit.Name, master.Name, p.PublicKey) {
+				spec.Peers = append(spec.Peers, p)
+			}
+		}
+		ip, ok := masterRoutableIP(master, masterNode)
+		switch {
+		case !ok:
+			b.warnOnce("master-no-routable-ip:"+master.Name+"/"+exit.Name, master.PublicIP+"|"+masterNode.PublicIP,
+				"master has no usable IP literal (public_ip is unset or a DNS name and the store has none); "+
+					"the exit's direct route back to the master is omitted and its replies will follow the egress",
+				"exit", exit.Name, "master", master.Name, "public_ip", master.PublicIP)
+		case master.IsBase():
+			spec.Routing.MasterIP = ip.String()
+		default:
+			// RoutingSpec carries one MasterIP. Every other master's return path is
+			// kept off the egress by a host route, which renders to the same `ip
+			// rule … lookup main`.
+			hosts = append(hosts, hostRoute{master.Slot, host32(ip)})
+		}
 	}
+	// Appended, in slot order: the rules already on the exit keep their priorities,
+	// and a master coming or going is one rule coming or going.
+	sort.Slice(hosts, func(i, j int) bool { return hosts[i].slot < hosts[j].slot })
+	for _, h := range hosts {
+		directCIDRs = mergeUnique(directCIDRs, []string{h.cidr})
+	}
+	spec.Routing.DirectCIDRs = directCIDRs
 	if egress == domain.EgressWARP {
 		spec.Routing.EgressInterface = "wgcf"
 	}
@@ -631,7 +634,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	// the master's vless proxy because both call realityFor with the same inputs; the
 	// exit generates its own x25519 keypair locally and publishes only the pubkey.
 	if spec.HasTransport(domain.TransportRealityXHTTP) {
-		rp := b.realityFor(exit, master.Name)
+		rp := b.realityFor(exit, iface.anchor)
 		spec.Reality = &domain.RealityServerSpec{
 			ListenPort: rp.Port, UUID: rp.UUID, ShortID: rp.ShortID,
 			ServerName: rp.ServerName, Dest: rp.Dest,
@@ -715,6 +718,8 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	if err != nil {
 		return domain.NodeSpec{}, err
 	}
+	// Where this master lives in every exit's pool; see the loop over exits below.
+	legacyHost, perTunnelHost := domain.MasterTunnelHostIndex(master.Slot)
 
 	// Route client traffic to the master's OWN public IP DIRECT, exactly as each
 	// exit's public IP is handled below. Without it the prerouting DNAT catches
@@ -769,7 +774,10 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	}
 	ms.ClientWG = cwSpec
 
-	autoSuspend := b.throughputAutoSuspend(ctx)
+	autoSuspend, err := b.throughputAutoSuspend(ctx)
+	if err != nil {
+		return domain.NodeSpec{}, fmt.Errorf("master %q: %w", master.Name, err)
+	}
 
 	// dnsUpstreams collects the active exit blockys (mgmt addrs) the master-tier
 	// resolver forwards public queries to (ADR-0024). Built from the same membership
@@ -783,17 +791,29 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		if eerr != nil {
 			return domain.NodeSpec{}, eerr
 		}
+		// An exit this master renders no tunnel to at all has no pinned flow either
+		// (see forgetConfirmation); each skip below drops the pair's confirmation.
 		if exitPub == "" {
 			b.log.Warn("exit public key not yet registered; omitting from master mihomo proxies",
 				"master", master.Name, "exit", exit.Name)
+			if ferr := b.forgetConfirmation(ctx, master.Name, exit.Name); ferr != nil {
+				return domain.NodeSpec{}, ferr
+			}
 			continue
 		}
 		if exitNode.Decommission {
 			// A decommissioning exit is going away — drop it from the master
 			// entirely (not just out of the LB group, which is what Drain does).
+			if ferr := b.forgetConfirmation(ctx, master.Name, exit.Name); ferr != nil {
+				return domain.NodeSpec{}, ferr
+			}
 			continue
 		}
-		masterAddr, err := nthHost(exit.AddressPool, masterHostIndex)
+		iface, _, ierr := b.exitInterface(ctx, exit, exitNode)
+		if ierr != nil {
+			return domain.NodeSpec{}, ierr
+		}
+		masterAddr, err := nthHost(exit.AddressPool, legacyHost)
 		if err != nil {
 			return domain.NodeSpec{}, err
 		}
@@ -803,7 +823,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		// Address and key flip together, in the single manifest step `dual`→`switch`.
 		keyTunnel := ""
 		if exit.PerTunnelKeyPhase().MasterUsesPerTunnelKey() {
-			perTunnelAddr, aerr := nthHost(exit.AddressPool, masterPerTunnelHostIndex)
+			perTunnelAddr, aerr := nthHost(exit.AddressPool, perTunnelHost)
 			if aerr != nil {
 				return domain.NodeSpec{}, fmt.Errorf("exit %q: per-tunnel master address: %w", exit.Name, aerr)
 			}
@@ -856,6 +876,9 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 					"address parses as one); omitting from master proxies",
 				"exit", exit.Name, "public_ip", exit.PublicIP, "ssh_host", exit.SSH.Host,
 				"stored", exitNode.PublicIP)
+			if ferr := b.forgetConfirmation(ctx, master.Name, exit.Name); ferr != nil {
+				return domain.NodeSpec{}, ferr
+			}
 			continue
 		default:
 			// Every source empty. Left to fail the render rather than silently dropping
@@ -900,22 +923,44 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 				hasReality = true
 			}
 		}
+		// The exit holds no peer for this master yet (its agent is too old to take
+		// one in place): an AWG proxy to it would never handshake, and would sit in
+		// the group being probed and held out. REALITY needs no peer on the exit.
+		if hasAWG && !b.exitCarries(exit, exitNode, master) {
+			hasAWG = false
+		}
+		// Nor does it hold one under a key an earlier master presents there too (see
+		// keyOwners): this master would dial with a key whose peer answers on the
+		// other's address.
+		if hasAWG {
+			peered, perr := b.peeredOn(ctx, exit, exitNode, master, masterNode)
+			if perr != nil {
+				return domain.NodeSpec{}, perr
+			}
+			hasAWG = peered
+		}
+		// No AmneziaWG tunnel from this master to this exit, for whichever reason
+		// above: armedMasterAddr is not reached, so the pair's confirmation is
+		// dropped here (see forgetConfirmation).
+		if !hasAWG {
+			if ferr := b.forgetConfirmation(ctx, master.Name, exit.Name); ferr != nil {
+				return domain.NodeSpec{}, ferr
+			}
+		}
 		realityRenderable := hasReality && haveIP && exitNode.RealityPublicKey != ""
 		realityActive := active == domain.TransportRealityXHTTP && realityRenderable
 
 		if hasAWG {
-			// Same tunnel seed as the exit's interface ⇒ identical shared AWG params on
-			// both ends (ADR-0005); the "master" end label gives this end its own local
-			// I1-I5. mihomo is userspace WireGuard-Go, so kernel=false keeps the
-			// signatures free of the <c>/<t> tags it cannot parse.
-			seed := wg.TunnelSeed(exit.Name, master.Name, awgSalt)
-			awg := wg.DeriveAWGParamsForEnd(seed, "master", false)
-			// Mirror of the exit end in renderExitSpec — same gate, same two node
-			// records, so the two ends of this tunnel cannot disagree about the AWG
-			// generation. THIS end is rendered into mihomo by the master's own agent,
-			// which is why the master's record has to be one of the inputs.
-			if awg3Enabled(b.fleet.AWG3For(exit), exitNode, masterNode) {
-				awg = wg.WithAWG3(awg, seed, b.awg3Key)
+			armed, aerr := b.armedMasterAddr(ctx, exit, master, exitNode, masterNode)
+			if aerr != nil {
+				return domain.NodeSpec{}, aerr
+			}
+			// The exit's interface decides the shared parameters and the generation;
+			// this end only chooses its own local decoy. mihomo is userspace
+			// WireGuard-Go, so kernel=false keeps the signatures free of <c>/<t>.
+			awg := wg.DeriveAWGParamsForEnd(iface.seed, masterEndLabel(master), false)
+			if iface.awg3 {
+				awg = wg.WithAWG3(awg, iface.seed, b.awg3Key)
 			}
 			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
 				Name:            exit.Name,
@@ -930,11 +975,11 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 				MasterKeyTunnel: keyTunnel,
 				Drained:         baseDrained || realityActive,
 				Reserve:         isReserve,
-				MasterAddr:      b.armedMasterAddr(ctx, exit, master, exitNode, masterNode),
+				MasterAddr:      armed,
 			})
 		}
 		if realityRenderable {
-			rp := b.realityFor(exit, master.Name)
+			rp := b.realityFor(exit, iface.anchor)
 			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
 				Name:      exit.Name + "-reality",
 				Endpoint:  netip.AddrPortFrom(exitIP, uint16(rp.Port)).String(),
@@ -1087,30 +1132,42 @@ func deriveRealityIDs(seed string) (uuid, shortID string) {
 // healthy: it must not satisfy the last-exit guard, or two limping-but-reporting
 // exits could be suspended in favour of one that may never come up. The degraded
 // signal is the exit's own hysteresis-smoothed egress-throughput check.
-func (b *Broker) throughputAutoSuspend(ctx context.Context) map[string]bool {
+func (b *Broker) throughputAutoSuspend(ctx context.Context) (map[string]bool, error) {
+	// What was suspended before this process started has to be known first.
+	// Deciding from an empty history would put every suspended exit back into the
+	// balancer — the re-render the state is stored to avoid — so an unreadable
+	// store fails the render: the master's agent applies nothing that pass and its
+	// data plane stays as it is.
+	if err := b.loadSuspensions(ctx); err != nil {
+		return nil, err
+	}
 	degraded := make(map[string]bool)
-	var present []string
+	var present, unknown []string
 	healthy := 0
 	for _, exit := range b.fleet.Exits {
 		node, pub, err := b.lookupPubKey(ctx, exit.Name)
 		if err != nil {
-			// Auto-suspend removes an exit from the load balancer. Deciding that from
-			// an inventory we could not read is exactly the kind of guess this
-			// function must not make; suspend nothing this pass.
-			b.log.Warn("auto-suspend: inventory read failed; suspending nothing this pass",
+			// Deciding from an inventory we could not read is exactly the kind of
+			// guess this function must not make — in either direction. Nothing is
+			// suspended and nothing returned this pass: the set stays what it was.
+			b.log.Warn("auto-suspend: inventory read failed; the suspended set is left as it is this pass",
 				"exit", exit.Name, "err", err)
-			return nil
+			return b.suspendedNow(), nil
 		}
 		if pub == "" || node.Decommission {
 			continue
 		}
 		st, err := b.store.GetStatus(ctx, exit.Name)
-		if err != nil {
-			if !errors.Is(err, store.ErrNotFound) {
-				b.log.Warn("auto-suspend: status read failed; treating exit as unknown",
-					"exit", exit.Name, "err", err)
-			}
+		if errors.Is(err, store.ErrNotFound) {
 			continue // no status ⇒ neither degraded nor counted toward the guard
+		}
+		if err != nil {
+			// One failed read is not an exit that left the fleet: it keeps whatever
+			// it was — suspended or not, with its clocks — until it can be read.
+			b.log.Warn("auto-suspend: status read failed; the exit keeps its state this pass",
+				"exit", exit.Name, "err", err)
+			unknown = append(unknown, exit.Name)
+			continue
 		}
 		present = append(present, exit.Name)
 		switch {
@@ -1120,11 +1177,64 @@ func (b *Broker) throughputAutoSuspend(ctx context.Context) map[string]bool {
 			healthy++
 		}
 	}
-	suspended := b.trackSuspensions(degraded, present)
+	suspended := b.trackSuspensions(ctx, degraded, present, unknown)
+	b.suspendMu.Lock()
+	b.suspendGuard = healthy == 0
+	b.suspendMu.Unlock()
 	if healthy == 0 {
-		return nil // keep every exit in the LB rather than black-hole all clients
+		return nil, nil // keep every exit in the LB rather than black-hole all clients
 	}
-	return suspended
+	return suspended, nil
+}
+
+// suspendedNow is the suspended set as it stands, without assessing anything.
+func (b *Broker) suspendedNow() map[string]bool {
+	b.suspendMu.Lock()
+	defer b.suspendMu.Unlock()
+	if b.suspendGuard {
+		return nil
+	}
+	out := make(map[string]bool)
+	for name, t := range b.suspend {
+		if t.suspended {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// loadSuspensions reads the stored suspensions into memory, once per process. A
+// failed read is retried on the next render: it never settles on "none".
+func (b *Broker) loadSuspensions(ctx context.Context) error {
+	b.suspendMu.Lock()
+	loaded := b.suspendLoaded
+	b.suspendMu.Unlock()
+	if loaded {
+		return nil
+	}
+	stored, err := b.store.ListAutoSuspended(ctx)
+	if err != nil {
+		return fmt.Errorf("auto-suspend: stored suspensions: %w: %w", store.ErrUnreadable, err)
+	}
+	b.suspendMu.Lock()
+	defer b.suspendMu.Unlock()
+	if b.suspendLoaded {
+		return nil
+	}
+	if b.suspend == nil {
+		b.suspend = make(map[string]*suspendTrack, len(stored))
+	}
+	b.suspendStored = make(map[string]bool, len(stored))
+	for name := range stored {
+		b.suspendStored[name] = true
+		// Suspended, with both clocks at zero: it returns after AutoReleaseAfter of
+		// health counted from now, the same evidence any release asks for.
+		if b.suspend[name] == nil {
+			b.suspend[name] = &suspendTrack{suspended: true}
+		}
+	}
+	b.suspendLoaded = true
+	return nil
 }
 
 // trackSuspensions turns this pass's degraded set into the suspended set, with
@@ -1132,7 +1242,12 @@ func (b *Broker) throughputAutoSuspend(ctx context.Context) map[string]bool {
 // degradation and released only after AutoReleaseAfter of continuous health.
 // Exits not in present are forgotten. Every transition is logged — the previous
 // version changed the master's data plane without a line anywhere.
-func (b *Broker) trackSuspensions(degraded map[string]bool, present []string) map[string]bool {
+func (b *Broker) trackSuspensions(ctx context.Context, degraded map[string]bool, present, unknown []string) map[string]bool {
+	// The store is brought in line after the lock is released: suspendMu is not
+	// held across I/O. It is a reconcile, not a log of transitions — what memory
+	// holds is compared with what is known to be stored on EVERY pass, so a write
+	// that failed is simply still owed on the next one.
+	defer b.syncSuspensions(ctx)
 	b.suspendMu.Lock()
 	defer b.suspendMu.Unlock()
 	now := b.now()
@@ -1171,8 +1286,76 @@ func (b *Broker) trackSuspensions(degraded map[string]bool, present []string) ma
 		b.log.Debug("auto-suspend: exit assessed", "exit", name, "degraded", degraded[name],
 			"suspended", t.suspended, "degraded_since", t.degradedSince, "healthy_since", t.healthySince)
 	}
+	// An exit whose status could not be read this pass is carried over untouched.
+	for _, name := range unknown {
+		if t := b.suspend[name]; t != nil {
+			keep[name] = t
+			if t.suspended {
+				out[name] = true
+			}
+		}
+	}
+	// An exit that left the inventory is forgotten here, and syncSuspensions drops
+	// its stored suspension with it: kept, it would come back suspended after a
+	// restart on no evidence.
 	b.suspend = keep
 	return out
+}
+
+// syncSuspensions writes the difference between the suspended set in memory and
+// the one known to be in the store. A failed write is logged and stays owed.
+func (b *Broker) syncSuspensions(ctx context.Context) {
+	// The render's context may be cancelled the moment the caller hangs up; the
+	// transition happened either way and has to reach the store.
+	ctx = context.WithoutCancel(ctx)
+	b.syncMu.Lock()
+	defer b.syncMu.Unlock()
+	b.suspendMu.Lock()
+	var set, drop []string
+	for name, t := range b.suspend {
+		if t.suspended && !b.suspendStored[name] {
+			set = append(set, name)
+		}
+	}
+	for name := range b.suspendStored {
+		if t := b.suspend[name]; t == nil || !t.suspended {
+			drop = append(drop, name)
+		}
+	}
+	b.suspendMu.Unlock()
+
+	stored := func(name string, is bool) {
+		b.suspendMu.Lock()
+		defer b.suspendMu.Unlock()
+		if b.suspendStored == nil {
+			b.suspendStored = make(map[string]bool)
+		}
+		if is {
+			b.suspendStored[name] = true
+		} else {
+			delete(b.suspendStored, name)
+		}
+	}
+	for _, name := range set {
+		if err := b.store.SetAutoSuspended(ctx, name, b.now()); err != nil {
+			b.warnOnce("auto-suspend-set:"+name, err.Error(),
+				"auto-suspend: could not store the suspension; retried every pass — until it is stored, a controller restart would return the exit to the load balancer",
+				"exit", name, "err", err)
+			continue
+		}
+		b.forgetWarned("auto-suspend-set:" + name)
+		stored(name, true)
+	}
+	for _, name := range drop {
+		if err := b.store.ClearAutoSuspended(ctx, name); err != nil {
+			b.warnOnce("auto-suspend-clear:"+name, err.Error(),
+				"auto-suspend: could not clear the stored suspension; retried every pass — until it is cleared, a controller restart would keep the exit out of the load balancer until it has been healthy for AutoReleaseAfter",
+				"exit", name, "err", err)
+			continue
+		}
+		b.forgetWarned("auto-suspend-clear:" + name)
+		stored(name, false)
+	}
 }
 
 // egressChain builds the exit's egress priority chain (ADR-0017) from its
@@ -1529,6 +1712,23 @@ func (b *Broker) inMgmtOverlay(addr netip.Addr) bool {
 // real events under thousands of identical lines a day. That is the same churn
 // Register was fixed for; do not reintroduce it by warning in a render loop.
 func (b *Broker) warnOnce(key, detail, msg string, args ...any) {
+	b.logOnce(slog.LevelWarn, key, detail, msg, args...)
+}
+
+// errorOnce is warnOnce for a standing condition that has a node cut off.
+func (b *Broker) errorOnce(key, detail, msg string, args ...any) {
+	b.logOnce(slog.LevelError, key, detail, msg, args...)
+}
+
+// forgetWarned makes the next warnOnce under key speak again: the condition it
+// reported is over, so the same failure coming back is news.
+func (b *Broker) forgetWarned(key string) {
+	b.warnMu.Lock()
+	delete(b.warned, key)
+	b.warnMu.Unlock()
+}
+
+func (b *Broker) logOnce(level slog.Level, key, detail, msg string, args ...any) {
 	b.warnMu.Lock()
 	if prev, seen := b.warned[key]; seen && prev == detail {
 		b.warnMu.Unlock()
@@ -1536,7 +1736,7 @@ func (b *Broker) warnOnce(key, detail, msg string, args ...any) {
 	}
 	b.warned[key] = detail
 	b.warnMu.Unlock()
-	b.log.Warn(msg, args...)
+	b.log.Log(context.Background(), level, msg, args...)
 }
 
 // isIPLiteral reports whether s is an IP address rather than a DNS name.
@@ -1590,14 +1790,6 @@ func (b *Broker) findMaster(name string) (config.MasterConfig, bool) {
 		}
 	}
 	return config.MasterConfig{}, false
-}
-
-// primaryMaster returns the master that fronts exits on MVP (the first one).
-func (b *Broker) primaryMaster() (config.MasterConfig, bool) {
-	if len(b.fleet.Masters) == 0 {
-		return config.MasterConfig{}, false
-	}
-	return b.fleet.Masters[0], true
 }
 
 // firstNonEmpty returns the first non-empty string, or "" if all are empty.

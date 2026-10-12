@@ -122,8 +122,20 @@
   </span>
   {{end}}
   {{end}}
+  {{if .UndeclaredMaster}}
+  {{/* A master the manifest no longer declares. It is nobody's client gateway any
+       more, so the one routing-lifecycle action that makes sense for it is the
+       last: remove the row. The count is of what the store deletes with it. */}}
+  <form method="post" action="/nodes/{{.Node.ID}}/delete" onsubmit="return lockAction(this)"
+        data-confirm="Delete {{.Node.Name}} from inventory? It is registered as a master but not declared in the manifest. Deleted with it: {{if .WGClientCountUnknown}}its WireGuard client credentials (the count could not be read){{else}}{{.WGClientCount}} WireGuard client credential{{if ne .WGClientCount 1}}s{{end}}{{end}}, its VLESS client credentials, and their attachments to devices. The devices themselves stay. If the box still runs its agent, it is refused at registration from now on.">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <input type="hidden" name="confirm" value="">
+    <button type="submit" class="btn ghost-red" data-pending="Deleting…">Delete</button>
+  </form>
+  {{end}}
 </div>
 
+{{if .UndeclaredMaster}}<p class="error-note" role="status">This node is registered as a master but is not declared in the manifest. It is not part of the fleet's routing; delete it once it is gone for good.</p>{{end}}
 {{if .Flash}}<p class="error-note" role="alert">⚠ {{.Flash}}</p>{{end}}
 {{if .Node.LastError}}<p class="error-note">⚠ {{.Node.LastError}}</p>{{end}}
 

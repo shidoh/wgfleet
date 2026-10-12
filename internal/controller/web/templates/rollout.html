@@ -82,7 +82,7 @@
           onsubmit="return confirm('Update {{.Plan.Outdated}} exit agent(s), one at a time? A node that fails is rolled back and the rollout stops.');">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <button class="btn go" type="submit">↻ Update {{.Plan.Outdated}} outdated exit{{if ne .Plan.Outdated 1}}s{{end}}</button>
-      <span class="rollout-hint">Masters are excluded — the master is co-located with this controller.</span>
+      <span class="rollout-hint">Masters are excluded — upgrade each from its node page, or the co-located one with deploy-master.sh.</span>
     </form>
 
     {{else if .Plan.Unavailable}}

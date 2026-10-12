@@ -8,6 +8,7 @@ package routing
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -195,6 +196,151 @@ func Script(steps []Step) string {
 	return b.String()
 }
 
+// isDirectRule reports whether one line of a routing script is an `ip rule` at a
+// direct-CIDR priority — `to <cidr> lookup main`, which pins a destination to the
+// main table and moves no existing flow anywhere. Both the add and the
+// delete-by-pref line of such a rule carry the priority after `pref`.
+func isDirectRule(line string) bool {
+	f := strings.Fields(line)
+	for i := 0; i+1 < len(f); i++ {
+		if f[i] != "pref" && f[i] != "priority" {
+			continue
+		}
+		n, err := strconv.Atoi(f[i+1])
+		return err == nil && n >= prefDirect0 && n < prefFwmark
+	}
+	return false
+}
+
+func withoutDirectRules(script string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(script, "\n") {
+		if !isDirectRule(line) {
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}
+
+// OnlyDirectRulesDiffer reports whether two routing scripts differ in nothing but
+// their direct-CIDR rules. Such a change needs no flush of the whole conntrack
+// table: an earlier finding is about flows remembering an egress path that changed, and
+// here the only flows whose path changed are the ones to the destinations that
+// came or went — DirectCIDRsChanged names them. prev=="" is a first apply and is
+// never "only direct rules".
+func OnlyDirectRulesDiffer(prev, next string) bool {
+	return prev != "" && prev != next && withoutDirectRules(prev) == withoutDirectRules(next)
+}
+
+// directCIDRsOf is the set of destinations a routing script pins to the main
+// table with a direct-CIDR rule: the `to <cidr>` of each `ip rule add` at a
+// direct priority.
+func directCIDRsOf(script string) map[string]struct{} {
+	out := make(map[string]struct{})
+	for _, line := range strings.Split(script, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 || f[0] != "ip" || f[1] != "rule" || f[2] != "add" || !isDirectRule(line) {
+			continue
+		}
+		for i := 3; i+1 < len(f); i++ {
+			if f[i] == "to" {
+				out[f[i+1]] = struct{}{}
+				break
+			}
+		}
+	}
+	return out
+}
+
+// DirectCIDRsChanged returns, sorted, the direct CIDRs that are in exactly one of
+// two routing scripts: the destinations whose route moved between the main table
+// and the egress. It compares destinations, not lines, so a CIDR inserted
+// mid-list — which shifts every later rule to the next priority — is still one
+// change.
+//
+// A forwarded client flow to such a destination keeps the source NAT it was
+// given on the path it used to take; those are the flows to forget, and the only
+// ones.
+func DirectCIDRsChanged(prev, next string) []string {
+	was, is := directCIDRsOf(prev), directCIDRsOf(next)
+	var out []string
+	for c := range was {
+		if _, kept := is[c]; !kept {
+			out = append(out, c)
+		}
+	}
+	for c := range is {
+		if _, had := was[c]; !had {
+			out = append(out, c)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// rulePrefsOf is the set of priorities a routing script installs an ip rule at.
+func rulePrefsOf(script string) map[int]bool {
+	out := make(map[int]bool)
+	for _, line := range strings.Split(script, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 || f[0] != "ip" || f[1] != "rule" || f[2] != "add" {
+			continue
+		}
+		for i := 3; i+1 < len(f); i++ {
+			if f[i] != "pref" {
+				continue
+			}
+			if p, err := strconv.Atoi(f[i+1]); err == nil {
+				out[p] = true
+			}
+		}
+	}
+	return out
+}
+
+// RulePrefsDropped returns, sorted, the priorities the previous routing script
+// installed a rule at and the next one does not. A rule is replaced by priority
+// (ipRuleReplace), so a rule whose priority the next script no longer uses has
+// nothing to replace it and stays in the kernel: the tail of a direct-CIDR list
+// that got shorter, or the master rule once no master holds slot 0. Seen on the
+// stand 2026-10-09 — a master removed from the manifest left its `to <ip> lookup
+// main` behind, and client traffic to that address kept leaving direct.
+func RulePrefsDropped(prev, next string) []int {
+	is := rulePrefsOf(next)
+	var out []int
+	for p := range rulePrefsOf(prev) {
+		if !is[p] {
+			out = append(out, p)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
+// DeleteRuleStep removes whatever ip rule sits at pref. Best-effort: the rule is
+// already gone after a reboot, and `ip rule del` then answers non-zero.
+func DeleteRuleStep(pref int) Step {
+	p := strconv.Itoa(pref)
+	return Step{
+		Summary:    "remove the rule at pref " + p + ": nothing uses that priority any more",
+		Argv:       []string{"ip", "rule", "del", "pref", p},
+		BestEffort: true,
+	}
+}
+
+// WithoutConntrackFlush is steps without the conntrack flush.
+func WithoutConntrackFlush(steps []Step) []Step {
+	out := make([]Step, 0, len(steps))
+	for _, s := range steps {
+		if len(s.Argv) > 0 && s.Argv[0] == "conntrack" {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
 // TeardownActions reverses Render: it flushes the egress routing table and
 // deletes the ip rules pointing at it, plus flushes conntrack so the old WARP
 // path is forgotten immediately (an earlier finding, in reverse).
@@ -298,6 +444,52 @@ func KernelReflects(spec domain.RoutingSpec, ruleList, egressRoutes string) bool
 	}
 	return strings.Contains(egressRoutes, "default") &&
 		strings.Contains(egressRoutes, spec.EgressInterface)
+}
+
+// StrayRule is an ip rule of ours that the routing intent no longer asks for.
+type StrayRule struct {
+	Pref int
+	To   string // the destination the rule kept on the main table
+}
+
+// StrayRules lists the rules in `ip rule list` output that look like ours — the
+// master rule or a direct-CIDR rule, `from all to <dst> lookup main` at one of
+// those priorities — and that spec does not ask for. RulePrefsDropped deletes
+// such a rule on the pass the intent changes; this finds one that pass left
+// behind (it failed half-way, or an agent that did not delete made the change),
+// which KernelReflects cannot see: it only checks that what the intent names is
+// present. Sorted by priority.
+//
+// A rule of any other shape in the range is somebody else's and is left alone,
+// and a direct-egress spec is not judged: it installs no rules, and removing the
+// ones a WARP intent left is TeardownActions' job.
+func StrayRules(spec domain.RoutingSpec, ruleList string) []StrayRule {
+	if spec.EgressInterface == "" {
+		return nil
+	}
+	managed := make(map[int]bool)
+	for _, p := range ManagedPrefs(spec) {
+		managed[p] = true
+	}
+	var out []StrayRule
+	for _, line := range strings.Split(ruleList, "\n") {
+		field, rest, found := strings.Cut(strings.TrimSpace(line), ":")
+		if !found {
+			continue
+		}
+		pref, err := strconv.Atoi(field)
+		if err != nil || managed[pref] || (pref != prefMaster && (pref < prefDirect0 || pref >= prefFwmark)) {
+			continue
+		}
+		// `from all to <dst> lookup main` — the only shape Render writes there.
+		f := strings.Fields(rest)
+		if len(f) != 6 || f[0] != "from" || f[1] != "all" || f[2] != "to" || f[4] != "lookup" || f[5] != "main" {
+			continue
+		}
+		out = append(out, StrayRule{Pref: pref, To: f[3]})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Pref < out[j].Pref })
+	return out
 }
 
 // parseRulePrefs extracts the set of rule priorities present in `ip rule list`

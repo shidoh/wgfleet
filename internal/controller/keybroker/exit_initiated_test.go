@@ -339,7 +339,7 @@ func TestExitInitiatedRotatesAStaleTunnel(t *testing.T) {
 	if got := exitPeer(t, b, pub).Endpoint; got != rotated {
 		t.Fatalf("rotated twice in one interval: %q", got)
 	}
-	gen, _, err := st.GetAWGPortRotation(context.Background(), eiExit)
+	gen, _, err := st.GetAWGPortRotation(context.Background(), eiMaster, eiExit)
 	if err != nil || gen != 1 {
 		t.Fatalf("generation = %d (%v), want 1", gen, err)
 	}
@@ -411,5 +411,597 @@ func TestExitInitiatedDoesNotRotateATunnelThatCarriesNothing(t *testing.T) {
 				t.Fatalf("rotated a tunnel that carries nothing: endpoint %q, want %q", got, eiPinned)
 			}
 		})
+	}
+}
+
+// Found on the stand 2026-10-09: an exit was switched from REALITY back to AWG and
+// five seconds later both masters' pinned ports were moved — "tunnel silent on its
+// pinned port". The tunnel had been idle for as long as REALITY carried the exit,
+// which is what a standby does; its stale handshake was judged the moment AWG
+// became the carrying transport. A tunnel that starts carrying gets a full
+// AWGRotateAfter to handshake before its silence means anything.
+func TestExitInitiatedGivesATunnelThatStartsCarryingItsOwnClock(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	b, st, pub := eiFleet(t, &now)
+	ctx := context.Background()
+	setTransport := func(tr domain.MasterTransport) {
+		t.Helper()
+		node, err := st.GetNode(ctx, eiExit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		node.ActiveTransport = tr
+		if err := st.UpsertNode(ctx, node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start := now
+	report(t, st, eiExit, now, now, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	_ = masterTunnel(t, b)
+
+	// REALITY carries the exit for longer than the rotation threshold; the AWG
+	// tunnel idles and its handshake goes stale.
+	setTransport(domain.TransportRealityXHTTP)
+	now = start.Add(2 * AWGRotateAfter)
+	report(t, st, eiExit, now, start, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	if got := exitPeer(t, b, pub).Endpoint; got != eiPinned {
+		t.Fatalf("rotated a standby tunnel: %q", got)
+	}
+
+	// The operator switches back to AWG. The handshake is as stale as it was.
+	setTransport(domain.TransportAWG)
+	now = now.Add(5 * time.Second)
+	report(t, st, eiExit, now, start, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	if got := exitPeer(t, b, pub).Endpoint; got != eiPinned {
+		t.Fatalf("rotated the moment AWG started carrying: endpoint %q, want %q", got, eiPinned)
+	}
+
+	// Still no handshake a full threshold later: now it is a poisoned flow.
+	now = now.Add(AWGRotateAfter + time.Minute)
+	report(t, st, eiExit, now, start, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	rotated := fmt.Sprintf("%s:%d", eiMasterIP, wg.MasterPortForGen(eiMaster, eiExit, 1))
+	if got := exitPeer(t, b, pub).Endpoint; got != rotated {
+		t.Fatalf("a tunnel silent for a full threshold after it started carrying was not rotated: %q, want %q", got, rotated)
+	}
+}
+
+// An exit the throughput watchdog took out of the balancer carries nothing
+// either: the masters stop dialling it, and its handshake going stale is the
+// suspension, not the path.
+func TestExitInitiatedDoesNotRotateAnAutoSuspendedExit(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	b, st, pub := eiFleet(t, &now)
+	start := now
+	report(t, st, eiExit, now, now, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	_ = masterTunnel(t, b)
+
+	b.suspendMu.Lock()
+	b.suspend = map[string]*suspendTrack{eiExit: {suspended: true, degradedSince: start}}
+	b.suspendMu.Unlock()
+	now = start.Add(AWGRotateAfter + time.Minute)
+	report(t, st, eiExit, now, start, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	if got := exitPeer(t, b, pub).Endpoint; got != eiPinned {
+		t.Fatalf("rotated the port of an auto-suspended exit: endpoint %q, want %q", got, eiPinned)
+	}
+}
+
+// The exit's own spec does not hang on the stored suspensions: unreadable, the
+// tunnel is simply not judged this pass. Only the master's render — whose output
+// IS the balancer's membership — fails on them.
+func TestExitInitiatedRendersTheExitWhenSuspensionsAreUnreadable(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	b, st, pub := eiFleet(t, &now)
+	start := now
+	report(t, st, eiExit, now, now, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	_ = masterTunnel(t, b)
+
+	restarted := New(&suspendReadFails{Store: st, fail: true}, b.fleet, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithClock(func() time.Time { return now }))
+	now = start.Add(AWGRotateAfter + time.Minute)
+	report(t, st, eiExit, now, start, eiPinned) // stale: would be rotated if judged
+	report(t, st, eiMaster, now, now, "")
+	spec, err := restarted.RenderNodeSpec(context.Background(), eiExit)
+	if err != nil {
+		t.Fatalf("the exit's render failed on unreadable suspensions: %v", err)
+	}
+	for _, p := range spec.Peers {
+		if p.PublicKey == pub && p.Endpoint != eiPinned {
+			t.Fatalf("a tunnel was judged without knowing whether its exit is suspended: endpoint %q", p.Endpoint)
+		}
+	}
+}
+
+// A refusal to render the pinned flow is the tunnel not carrying: when it is
+// asked for again it starts its clock afresh.
+func TestExitInitiatedRefusalStopsTheCarryingClock(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	b, st, pub := eiFleet(t, &now)
+	report(t, st, eiExit, now, now, eiPinned)
+	report(t, st, eiMaster, now, now, "")
+	_ = masterTunnel(t, b)
+	pair := pinKey(eiMaster, eiExit)
+	if !b.pinCarrying[pair].carrying {
+		t.Fatal("fixture: the tunnel is not recorded as carrying")
+	}
+	for i := range b.fleet.Exits {
+		if b.fleet.Exits[i].Name == eiExit {
+			b.fleet.Exits[i].Transports.AWG.ExitInitiated = false
+		}
+	}
+	_ = exitPeer(t, b, pub)
+	if b.pinCarrying[pair].carrying {
+		t.Fatal("a tunnel whose pinned flow is refused is still recorded as carrying")
+	}
+}
+
+// eiTwoMasters is twoMasterFleet with the exit starting its own AWG flow, in the
+// given per-tunnel-key phase, and a clock the test moves.
+func eiTwoMasters(t *testing.T, phase domain.PerTunnelKeyPhase, clock *time.Time) seededFleet {
+	t.Helper()
+	fleet := twoMasterFleet()
+	fleet.Exits[0].Transports.AWG.ExitInitiated = true
+	fleet.Exits[0].PerTunnelKey = string(phase)
+	s := seedTwoMasters(t, fleet)
+	s.b.now = func() time.Time { return *clock }
+	return s
+}
+
+func pinnedFor(master, ip string) string {
+	return fmt.Sprintf("%s:%d", ip, wg.MasterPortFor(master, "exit-de-1"))
+}
+
+// tunnelKeyIn is the key a master dials with in phase — the peer that speaks for
+// its tunnel.
+func (s seededFleet) tunnelKeyIn(phase domain.PerTunnelKeyPhase, master string) string {
+	if phase.MasterUsesPerTunnelKey() {
+		return s.tunnelPubs[master]
+	}
+	return s.sharedPubs[master]
+}
+
+func recordExit(t *testing.T, st store.Store, at time.Time, legacy string, peers ...domain.MasterPeerStatus) {
+	t.Helper()
+	if err := st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "exit-de-1", State: domain.StateReady, ReportedAt: at, LastHandshake: at,
+		AWGMasterEndpoint: legacy, MasterPeers: peers,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func recordMasters(t *testing.T, st store.Store, at time.Time) {
+	t.Helper()
+	for _, m := range []string{"master-xa-1", "master-xa-2"} {
+		if err := st.RecordStatus(context.Background(), domain.NodeStatus{NodeID: m, State: domain.StateReady, ReportedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func gateOf(t *testing.T, b *Broker, master string) string {
+	t.Helper()
+	tun, ok := tunnelByName(mustRender(t, b, master).Master.ExitTunnels, "exit-de-1")
+	if !ok {
+		t.Fatalf("%s renders no AWG tunnel to exit-de-1: there is no gate to read", master)
+	}
+	return tun.MasterAddr
+}
+
+// wantNoTunnel asserts master renders no AWG tunnel to the exit at all — an
+// unarmed gate on a tunnel that is not there would prove nothing.
+func wantNoTunnel(t *testing.T, b *Broker, master string) {
+	t.Helper()
+	if tun, ok := tunnelByName(mustRender(t, b, master).Master.ExitTunnels, "exit-de-1"); ok {
+		t.Errorf("%s renders an AWG tunnel to exit-de-1 (gate %q), want none", master, tun.MasterAddr)
+	}
+}
+
+// forgetConfirmations leaves the broker with no confirmation for any pair,
+// remembered or stored: every gate has to be earned again from what the exit
+// reports next.
+func forgetConfirmations(t *testing.T, b *Broker) {
+	t.Helper()
+	b.pinMu.Lock()
+	b.pinConfirmed = make(map[string]pinConfirmation)
+	b.pinMu.Unlock()
+	for _, m := range b.fleet.Masters {
+		for _, e := range b.fleet.Exits {
+			if err := b.store.DeleteAWGPinConfirmation(context.Background(), m.Name, e.Name); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+// Each master's gate arms from ITS OWN peer's reported endpoint — the peer that
+// carries its traffic in the exit's current phase — and one master's confirmation
+// neither arms nor disarms the other's.
+func TestEachMasterArmsFromItsOwnPeer(t *testing.T) {
+	for _, phase := range []domain.PerTunnelKeyPhase{domain.PerTunnelKeyOff, domain.PerTunnelKeyOn} {
+		t.Run(string(phase), func(t *testing.T) {
+			now := time.Unix(1_800_000_000, 0)
+			s := eiTwoMasters(t, phase, &now)
+			pinA, pinB := pinnedFor("master-xa-1", "203.0.113.1"), pinnedFor("master-xa-2", "203.0.113.2")
+			keyA, keyB := s.tunnelKeyIn(phase, "master-xa-1"), s.tunnelKeyIn(phase, "master-xa-2")
+
+			exitSpec := mustRender(t, s.b, "exit-de-1")
+			pa, _ := peerByKey(exitSpec.Peers, keyA)
+			pb, _ := peerByKey(exitSpec.Peers, keyB)
+			if pa.Endpoint != pinA || pb.Endpoint != pinB {
+				t.Fatalf("exit endpoints = %q, %q; want %q, %q", pa.Endpoint, pb.Endpoint, pinA, pinB)
+			}
+
+			// Only master-xa-2's peer holds its pinned address so far.
+			recordExit(t, s.st, now, "",
+				domain.MasterPeerStatus{PublicKey: keyA, Endpoint: "203.0.113.1:40000"},
+				domain.MasterPeerStatus{PublicKey: keyB, Endpoint: pinB})
+			if got := gateOf(t, s.b, "master-xa-1"); got != "" {
+				t.Errorf("master-xa-1 armed on %q while its own peer holds another endpoint", got)
+			}
+			if got := gateOf(t, s.b, "master-xa-2"); got != pinB {
+				t.Errorf("master-xa-2 gate = %q, want %q", got, pinB)
+			}
+			// Now master-xa-1 confirms too; neither confirmation may displace the other.
+			recordExit(t, s.st, now, "",
+				domain.MasterPeerStatus{PublicKey: keyA, Endpoint: pinA},
+				domain.MasterPeerStatus{PublicKey: keyB, Endpoint: pinB})
+			for i := 0; i < 2; i++ {
+				if got := gateOf(t, s.b, "master-xa-1"); got != pinA {
+					t.Errorf("round %d: master-xa-1 gate = %q, want %q", i, got, pinA)
+				}
+				if got := gateOf(t, s.b, "master-xa-2"); got != pinB {
+					t.Errorf("round %d: master-xa-2 gate = %q, want %q", i, got, pinB)
+				}
+			}
+		})
+	}
+}
+
+// One master's healthy handshake must not hide another's poisoned flow, one
+// master's rotation must not move the other's port — and both rotate when both
+// are silent, however their renders interleave.
+func TestRotationJudgesAndMovesOneTunnel(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	phase := domain.PerTunnelKeyOff
+	s := eiTwoMasters(t, phase, &now)
+	ctx := context.Background()
+	pinA, pinB := pinnedFor("master-xa-1", "203.0.113.1"), pinnedFor("master-xa-2", "203.0.113.2")
+	keyA, keyB := s.tunnelKeyIn(phase, "master-xa-1"), s.tunnelKeyIn(phase, "master-xa-2")
+	gen := func(master string) int {
+		g, _, err := s.st.GetAWGPortRotation(ctx, master, "exit-de-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return g
+	}
+	report := func(hsA time.Time, epA, epB string) {
+		recordExit(t, s.st, now, "",
+			domain.MasterPeerStatus{PublicKey: keyA, Endpoint: epA, LastHandshake: hsA},
+			domain.MasterPeerStatus{PublicKey: keyB, Endpoint: epB})
+		recordMasters(t, s.st, now)
+	}
+	renderAll := func() {
+		for _, id := range []string{"master-xa-1", "master-xa-2", "exit-de-1", "master-xa-2", "master-xa-1"} {
+			mustRender(t, s.b, id)
+		}
+	}
+
+	report(now, pinA, pinB)
+	renderAll() // both confirm
+	now = now.Add(AWGRotateAfter + time.Minute)
+	report(now, pinA, pinB) // master-xa-1 handshakes; master-xa-2 holds its pin and never does
+	renderAll()
+	if gen("master-xa-2") != 1 {
+		t.Errorf("silent tunnel generation = %d, want 1: the other master's handshake masked it", gen("master-xa-2"))
+	}
+	if gen("master-xa-1") != 0 {
+		t.Errorf("healthy tunnel generation = %d, want 0", gen("master-xa-1"))
+	}
+
+	// Second round: master-xa-1 goes silent as well, on the address it confirmed.
+	silentSince := now
+	now = now.Add(AWGRotateAfter + AWGRotateMinInterval + time.Minute)
+	report(silentSince, pinA, pinB)
+	renderAll()
+	if gen("master-xa-1") != 1 {
+		t.Errorf("master-xa-1 generation = %d, want 1 once its own tunnel went silent", gen("master-xa-1"))
+	}
+}
+
+// Review Focus 4. The exit's agent is rolled back below wire 13: it stops sending
+// peers. The controller must read it the way it reads any old exit — one
+// endpoint, the base master's — not judge the base master on the absence of a
+// list it will never get again.
+func TestExitRolledBackBelowWire13FallsBackToTheSingleField(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	phase := domain.PerTunnelKeyOff
+	s := eiTwoMasters(t, phase, &now)
+	ctx := context.Background()
+	pinA := pinnedFor("master-xa-1", "203.0.113.1")
+	keyA := s.tunnelKeyIn(phase, "master-xa-1")
+
+	recordExit(t, s.st, now, pinA, domain.MasterPeerStatus{PublicKey: keyA, Endpoint: pinA, LastHandshake: now})
+	recordMasters(t, s.st, now)
+	if got := gateOf(t, s.b, "master-xa-1"); got != pinA {
+		t.Fatalf("gate before the rollback = %q, want %q", got, pinA)
+	}
+
+	setWireVersion(t, s.st, "exit-de-1", api.WireAWGExitInitiated)
+	// Nothing confirmed from the peer list is left, in memory or in the store: the
+	// gate has to arm again from the single field alone.
+	forgetConfirmations(t, s.b)
+	for i := 0; i < 3; i++ {
+		now = now.Add(AWGRotateAfter)
+		recordExit(t, s.st, now, pinA) // wire 12: the single field and a fresh handshake, no peers
+		recordMasters(t, s.st, now)
+		mustRender(t, s.b, "exit-de-1")
+		if got := gateOf(t, s.b, "master-xa-1"); got != pinA {
+			t.Fatalf("pass %d after the rollback: gate = %q, want it armed on %q from the single field", i, got, pinA)
+		}
+		// The single field is not about master-xa-2, and such an exit does not
+		// carry it at all.
+		wantNoTunnel(t, s.b, "master-xa-2")
+	}
+	if g, _, _ := s.st.GetAWGPortRotation(ctx, "master-xa-1", "exit-de-1"); g != 0 {
+		t.Errorf("a healthy tunnel's port was rotated %d time(s) after the exit was rolled back", g)
+	}
+}
+
+// A wire-13 exit whose awg0 could not be read this pass sends no peers. That is
+// not a silent tunnel: nothing rotates, and a gate already armed stays armed.
+func TestAnUnreadablePassRotatesNothing(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	phase := domain.PerTunnelKeyOff
+	s := eiTwoMasters(t, phase, &now)
+	ctx := context.Background()
+	pinB := pinnedFor("master-xa-2", "203.0.113.2")
+	keyB := s.tunnelKeyIn(phase, "master-xa-2")
+
+	recordExit(t, s.st, now, "", domain.MasterPeerStatus{PublicKey: keyB, Endpoint: pinB, LastHandshake: now})
+	recordMasters(t, s.st, now)
+	if got := gateOf(t, s.b, "master-xa-2"); got != pinB {
+		t.Fatalf("gate = %q, want %q", got, pinB)
+	}
+	now = now.Add(AWGRotateAfter + time.Minute)
+	// A readable status from an unreadable interface: no peers. The single field
+	// and the freshest handshake are filled with what would mislead a controller
+	// that fell back to them — another address, and a handshake long gone.
+	if err := s.st.RecordStatus(ctx, domain.NodeStatus{
+		NodeID: "exit-de-1", State: domain.StateReady, ReportedAt: now,
+		LastHandshake: now.Add(-2 * AWGRotateAfter), AWGMasterEndpoint: "203.0.113.1:40000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recordMasters(t, s.st, now)
+	mustRender(t, s.b, "exit-de-1")
+	if got := gateOf(t, s.b, "master-xa-2"); got != pinB {
+		t.Errorf("gate after an unreadable pass = %q, want it still armed", got)
+	}
+	if g, _, _ := s.st.GetAWGPortRotation(ctx, "master-xa-2", "exit-de-1"); g != 0 {
+		t.Errorf("port rotated %d time(s) on a pass that could not read the interface", g)
+	}
+}
+
+// The gate stays armed while the exit roams (see armedMasterAddr), and that
+// memory is one tunnel's: with it keyed by the exit alone, the other master's
+// next confirmation would overwrite it and disarm a gate nobody disproved.
+func TestAnotherMastersConfirmationDoesNotDisarmARoamingTunnel(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	phase := domain.PerTunnelKeyOff
+	s := eiTwoMasters(t, phase, &now)
+	pinA, pinB := pinnedFor("master-xa-1", "203.0.113.1"), pinnedFor("master-xa-2", "203.0.113.2")
+	keyA, keyB := s.tunnelKeyIn(phase, "master-xa-1"), s.tunnelKeyIn(phase, "master-xa-2")
+
+	recordExit(t, s.st, now, "",
+		domain.MasterPeerStatus{PublicKey: keyA, Endpoint: pinA},
+		domain.MasterPeerStatus{PublicKey: keyB, Endpoint: pinB})
+	if got := gateOf(t, s.b, "master-xa-1"); got != pinA {
+		t.Fatalf("master-xa-1 gate = %q, want %q", got, pinA)
+	}
+	// master-xa-1's peer roams; master-xa-2's keeps confirming its own address.
+	recordExit(t, s.st, now, "",
+		domain.MasterPeerStatus{PublicKey: keyA, Endpoint: "203.0.113.1:40000"},
+		domain.MasterPeerStatus{PublicKey: keyB, Endpoint: pinB})
+	if got := gateOf(t, s.b, "master-xa-2"); got != pinB {
+		t.Fatalf("master-xa-2 gate = %q, want %q", got, pinB)
+	}
+	if got := gateOf(t, s.b, "master-xa-1"); got != pinA {
+		t.Errorf("master-xa-1 gate = %q after master-xa-2 confirmed, want it still armed on %q", got, pinA)
+	}
+}
+
+// phaseFlip runs one fleet through a per-tunnel-key phase change on a tunnel
+// that has been healthy for longer than AWGRotateAfter. The peer that speaks for
+// each tunnel changes with the phase, and the new one has never handshaken — a
+// wire-13 exit reports it so from the first pass. That is not a poisoned port:
+// the address the exit knocks on has not moved. Nothing rotates and every gate
+// stays armed; the new peer then gets a full AWGRotateAfter of its own, after
+// which its silence does move the port.
+func phaseFlip(t *testing.T, masters int, from, to domain.PerTunnelKeyPhase) {
+	t.Helper()
+	now := time.Unix(1_800_000_000, 0)
+	fleet := twoMasterFleet()
+	fleet.Masters = fleet.Masters[:masters]
+	fleet.Exits[0].Transports.AWG.ExitInitiated = true
+	fleet.Exits[0].PerTunnelKey = string(from)
+	s := seedTwoMasters(t, fleet)
+	s.b.now = func() time.Time { return now }
+	ctx := context.Background()
+
+	pins := map[string]string{}
+	for _, m := range fleet.Masters {
+		pins[m.Name] = pinnedFor(m.Name, m.PublicIP)
+	}
+	// report is the exit's status with the peer of `speaking` holding the pinned
+	// address and handshaking at hs. The master's other peer is idle — no endpoint,
+	// no handshake — unless idleHS says it spoke for the tunnel until then.
+	report := func(speaking domain.PerTunnelKeyPhase, hs, idleHS time.Time) {
+		t.Helper()
+		var peers []domain.MasterPeerStatus
+		for _, m := range fleet.Masters {
+			spoken := s.tunnelKeyIn(speaking, m.Name)
+			idle := s.sharedPubs[m.Name]
+			if idle == spoken {
+				idle = s.tunnelPubs[m.Name]
+			}
+			o := domain.MasterPeerStatus{PublicKey: idle}
+			if !idleHS.IsZero() {
+				o.Endpoint, o.LastHandshake = pins[m.Name], idleHS
+			}
+			peers = append(peers, domain.MasterPeerStatus{PublicKey: spoken, Endpoint: pins[m.Name], LastHandshake: hs}, o)
+			if err := s.st.RecordStatus(ctx, domain.NodeStatus{NodeID: m.Name, State: domain.StateReady, ReportedAt: now}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		recordExit(t, s.st, now, "", peers...)
+	}
+	check := func(when string, wantGen int) {
+		t.Helper()
+		order := []string{"exit-de-1"}
+		for _, m := range fleet.Masters {
+			order = append(order, m.Name)
+		}
+		order = append(order, "exit-de-1")
+		for i := len(fleet.Masters) - 1; i >= 0; i-- {
+			order = append(order, fleet.Masters[i].Name)
+		}
+		for _, id := range order {
+			mustRender(t, s.b, id)
+		}
+		for _, m := range fleet.Masters {
+			g, _, err := s.st.GetAWGPortRotation(ctx, m.Name, "exit-de-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if g != wantGen {
+				t.Errorf("%s: %s generation = %d, want %d", when, m.Name, g, wantGen)
+			}
+			if wantGen == 0 {
+				if got := gateOf(t, s.b, m.Name); got != pins[m.Name] {
+					t.Errorf("%s: %s gate = %q, want it armed on %q", when, m.Name, got, pins[m.Name])
+				}
+			}
+		}
+	}
+
+	// A long healthy stretch in the old phase; the other peer is idle.
+	report(from, now, time.Time{})
+	check("confirmed", 0)
+	now = now.Add(AWGRotateAfter + time.Minute)
+	report(from, now, time.Time{})
+	check("healthy", 0)
+
+	// The flip. The new peer holds the pinned address and has no handshake yet;
+	// the old one keeps the endpoint and the handshake it had.
+	s.b.fleet.Exits[0].PerTunnelKey = string(to)
+	flippedAt := now
+	report(to, time.Time{}, flippedAt)
+	check("right after the flip", 0)
+
+	now = now.Add(AWGRotateAfter - time.Minute)
+	report(to, time.Time{}, flippedAt)
+	check("new peer silent for less than the limit", 0)
+
+	now = now.Add(2 * time.Minute)
+	report(to, time.Time{}, flippedAt)
+	check("new peer silent past the limit", 1)
+}
+
+func TestAPhaseChangeDoesNotRotateAHealthyTunnel(t *testing.T) {
+	phaseFlip(t, 2, domain.PerTunnelKeyDual, domain.PerTunnelKeySwitch)
+}
+
+func TestAPhaseChangeBackDoesNotRotateAHealthyTunnel(t *testing.T) {
+	phaseFlip(t, 2, domain.PerTunnelKeySwitch, domain.PerTunnelKeyDual)
+}
+
+// A one-master fleet is hit the same way once its exits report per peer.
+func TestAPhaseChangeDoesNotRotateAHealthyTunnelOfOneMaster(t *testing.T) {
+	phaseFlip(t, 1, domain.PerTunnelKeyDual, domain.PerTunnelKeySwitch)
+}
+
+// Stand finding. An exit rolled back below wire 13 stops carrying the non-base
+// master; rolled forward, it carries it again. What was confirmed before the gap
+// is about a tunnel that then did not exist: judged on that confirmation's age,
+// the returning peer — rightly silent, it has only just been put back — looked
+// like a poisoned flow and had its port moved on the first render. A pair that is
+// not carried has no confirmation; it earns a new one, and its clock, on return.
+func TestAPairThatWasNotCarriedConfirmsAfreshOnItsReturn(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	phase := domain.PerTunnelKeyOff
+	s := eiTwoMasters(t, phase, &now)
+	ctx := context.Background()
+	pinA, pinB := pinnedFor("master-xa-1", "203.0.113.1"), pinnedFor("master-xa-2", "203.0.113.2")
+	keyA, keyB := s.tunnelKeyIn(phase, "master-xa-1"), s.tunnelKeyIn(phase, "master-xa-2")
+	gen := func() int {
+		g, _, err := s.st.GetAWGPortRotation(ctx, "master-xa-2", "exit-de-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return g
+	}
+	// wire13 is a report from the exit on the current agent: master-xa-1 healthy,
+	// master-xa-2 on its pinned endpoint with the given handshake.
+	wire13 := func(hsB time.Time) {
+		recordExit(t, s.st, now, "",
+			domain.MasterPeerStatus{PublicKey: keyA, Endpoint: pinA, LastHandshake: now},
+			domain.MasterPeerStatus{PublicKey: keyB, Endpoint: pinB, LastHandshake: hsB})
+		recordMasters(t, s.st, now)
+	}
+	renderAll := func() {
+		for _, id := range []string{"exit-de-1", "master-xa-1", "master-xa-2"} {
+			mustRender(t, s.b, id)
+		}
+	}
+
+	wire13(now)
+	renderAll()
+	if got := gateOf(t, s.b, "master-xa-2"); got != pinB {
+		t.Fatalf("gate before the gap = %q, want %q", got, pinB)
+	}
+
+	// The gap: the exit's agent goes back below wire 13 and reports one field.
+	setWireVersion(t, s.st, "exit-de-1", api.WireAWGExitInitiated)
+	renderAll()
+	wantNoTunnel(t, s.b, "master-xa-2")
+	now = now.Add(AWGRotateAfter + AWGRotateMinInterval + 10*time.Minute)
+	recordExit(t, s.st, now, pinA)
+	recordMasters(t, s.st, now)
+	renderAll()
+	if addr, _, _, err := s.st.GetAWGPinConfirmation(ctx, "master-xa-2", "exit-de-1"); err != nil || addr != "" {
+		t.Errorf("stored confirmation of the uncarried pair = %q, %v; want none", addr, err)
+	}
+
+	// The return: the peer is back on its pinned endpoint and has never handshaken.
+	setWireVersion(t, s.st, "exit-de-1", api.WireContractVersion)
+	returned := now
+	wire13(time.Time{})
+	renderAll()
+	if gen() != 0 {
+		t.Fatalf("generation = %d on the first render after the return, want 0: the port was moved on a confirmation from before the gap", gen())
+	}
+	if got := gateOf(t, s.b, "master-xa-2"); got != pinB {
+		t.Errorf("gate after the return = %q, want it armed on %q from the fresh report", got, pinB)
+	}
+
+	// The silence clock runs from the new confirmation.
+	now = returned.Add(AWGRotateAfter - time.Minute)
+	wire13(time.Time{})
+	renderAll()
+	if gen() != 0 {
+		t.Fatalf("generation = %d before the returned tunnel had been silent for AWGRotateAfter, want 0", gen())
+	}
+	now = returned.Add(AWGRotateAfter + time.Minute)
+	wire13(time.Time{})
+	renderAll()
+	if gen() != 1 {
+		t.Errorf("generation = %d, want 1: a tunnel silent for AWGRotateAfter since it returned is rotated", gen())
 	}
 }

@@ -1535,7 +1535,7 @@
       "type": "prometheus",
       "uid": "${datasource}"
      },
-     "expr": "sum(wgfleet_exit_tunnel_alive == 0 and on(exit) wgfleet_agent_exit_held_out) or vector(0)",
+     "expr": "sum(wgfleet_exit_tunnel_alive == 0 and on(node, exit) wgfleet_agent_exit_held_out) or vector(0)",
      "refId": "A",
      "instant": true
     }
@@ -1671,9 +1671,9 @@
       "type": "prometheus",
       "uid": "${datasource}"
      },
-     "expr": "wgfleet_exit_tunnel_alive{exit=~\"$node\"} and on(exit) wgfleet_agent_exit_held_out",
+     "expr": "wgfleet_exit_tunnel_alive{exit=~\"$node\"} and on(node, exit) wgfleet_agent_exit_held_out",
      "refId": "A",
-     "legendFormat": "{{exit}}"
+     "legendFormat": "{{node}} → {{exit}}"
     }
    ]
   },
@@ -1749,7 +1749,7 @@
      },
      "expr": "wgfleet_exit_tunnel_delay_seconds{exit=~\"$node\"}",
      "refId": "A",
-     "legendFormat": "{{exit}}"
+     "legendFormat": "{{node}} → {{exit}}"
     }
    ]
   },
@@ -1824,7 +1824,7 @@
      },
      "expr": "wgfleet_agent_exit_held_out{exit=~\"$node\"}",
      "refId": "A",
-     "legendFormat": "{{exit}}"
+     "legendFormat": "{{node}} → {{exit}}"
     }
    ]
   },

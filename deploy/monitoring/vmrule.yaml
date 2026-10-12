@@ -366,7 +366,7 @@ spec:
       # the master AGENT scrape while the gated series comes from the CONTROLLER, so
       # if the agent stops being scraped these go quiet — WgfleetAgentScrapeDown is
       # what covers that.
-      expr: wgfleet_exit_tunnel_alive == 0 and on(exit) wgfleet_agent_exit_held_out
+      expr: wgfleet_exit_tunnel_alive == 0 and on(node, exit) wgfleet_agent_exit_held_out
       for: 5m
       labels:
         severity: warning
@@ -394,28 +394,26 @@ spec:
           exit is silent. On the exit check `awg show awg0 endpoints` points at the master's pinned
           port; on the master check `tcpdump -ni any udp and src host <exit>` for its knocks.
     - alert: WgfleetNoExitInRotation
-      # `or vector(0)` makes the empty case reachable, exactly as in
-      # WgfleetNoReadyExit — count() over an empty selector returns no series, so
-      # without it the comparison can never be true in the condition it names.
-      #
-      # The `and on() (count(...) > 0)` guard is the other half, and it is NOT
-      # symmetric with that alert: these series are brand new, so before the
-      # controller carrying them is deployed the selector is empty for a reason that
-      # has nothing to do with the data plane — and `or vector(0)` alone would page
-      # critical on every fleet that has not upgraded yet. Requiring the family to
-      # exist makes the rule silent until it has real data, which for a new alert is
-      # the right way round; WgfleetNoReadyExit still covers the same outage.
-      expr: ((count(wgfleet_exit_tunnel_alive == 1 and on(exit) wgfleet_agent_exit_held_out) or vector(0)) < 1)
-        and on() (count(wgfleet_agent_exit_held_out) > 0)
+      # Per master: each master's wg-best group is its own, so one master with
+      # every tunnel down is an outage for its clients even while another master
+      # still has a live exit. The left side lists the masters that have an active
+      # tier at all (the held-out family has one series per active-tier exit), so a
+      # controller or agent that does not yet export these series stays silent
+      # instead of paging on an empty selector; the first `unless` drops the
+      # masters that still have a live exit, the second silences the rule while the
+      # controller's own store is down. WgfleetNoReadyExit covers the same outage
+      # from the node-state side.
+      expr: (count by (node) (wgfleet_agent_exit_held_out) > 0)
+        unless on(node) (count by (node) (wgfleet_exit_tunnel_alive == 1 and on(node, exit) wgfleet_agent_exit_held_out) > 0)
         unless on() (wgfleet_controller_store_up == 0)
       for: 2m
       labels:
         severity: critical
         service: wgfleet
       annotations:
-        summary: No exit left in the master's load balancer
-        description: Every master↔exit tunnel is marked down. Client traffic has nothing to egress
-          through even though the exits themselves may be Ready.
+        summary: No exit left in the load balancer of master {{ $labels.node }}
+        description: Every master↔exit tunnel of {{ $labels.node }} is marked down. Its clients have
+          nothing to egress through even though the exits themselves may be Ready.
     - alert: WgfleetExitTunnelHealthStale
       # mihomo's alive flag is STICKY: it holds whatever the last probe wrote. A
       # master that stopped probing therefore reports every tunnel confidently alive
@@ -425,7 +423,7 @@ spec:
       # Same active-tier gate as WgfleetExitOutOfRotation, for the same reason: an
       # unrouted standby-transport proxy is never probed, so its age grows without
       # bound and means nothing.
-      expr: wgfleet_exit_tunnel_last_test_age_seconds > 300 and on(exit) wgfleet_agent_exit_held_out
+      expr: wgfleet_exit_tunnel_last_test_age_seconds > 300 and on(node, exit) wgfleet_agent_exit_held_out
       for: 5m
       labels:
         severity: warning

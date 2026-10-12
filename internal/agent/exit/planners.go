@@ -149,6 +149,9 @@ type firewallPlanner struct {
 	// loaded reports whether the live kernel holds THIS exit firewall ruleset.
 	// nil ⇒ a real probe against the kernel; tests inject a stub.
 	loaded func() bool
+	// baseline reports whether the provisioner's bootstrap table is in the kernel
+	// beside ours. nil ⇒ a real probe; tests inject a stub.
+	baseline func() bool
 	// lastRendered is what Plan just rendered, so isLoaded can ask the strong
 	// question — does the kernel hold this — rather than "is a table by this name
 	// present". Set on the receiver copy inside Plan, which is why isLoaded is only
@@ -232,7 +235,21 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	return actions, nil
 }
 
+func (p firewallPlanner) baselineLoaded() bool {
+	if p.baseline != nil {
+		return p.baseline()
+	}
+	return netfw.BaselineLoaded()
+}
+
 func (p firewallPlanner) isLoaded() bool {
+	// The bootstrap baseline is back in the kernel: the node was re-provisioned
+	// while running. Our own table is intact, so nothing below would notice, yet
+	// the baseline's policy drop now closes every port it does not list. Applying
+	// the ruleset deletes it.
+	if p.baselineLoaded() {
+		return false
+	}
 	if p.loaded != nil {
 		return p.loaded()
 	}
@@ -254,6 +271,16 @@ type wgPlanner struct {
 	awgGen func() (int, error)
 	// endpoints reads the live endpoint of each peer; nil ⇒ `awg show endpoints`.
 	endpoints func(iface string) (map[string]string, bool)
+	// dump reads the interface's peers as the kernel holds them; nil ⇒ `awg show
+	// <iface> dump`.
+	dump liveDump
+}
+
+func (p wgPlanner) liveDump(iface string) ([]wg.DumpPeer, bool) {
+	if p.dump != nil {
+		return p.dump(iface)
+	}
+	return readLiveDump(iface)
 }
 
 func (wgPlanner) Component() string { return "amneziawg interface" }
@@ -321,30 +348,57 @@ func (p wgPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Ac
 	actions := []reconcile.Action{file}
 	iface := ifaceName(p.path)
 	current, _ := os.ReadFile(p.path)
+	restart := []reconcile.Action{
+		// down is best-effort (the interface does not exist on the first run, and
+		// `awg-quick down` errors on a missing one).
+		reconcile.BestEffortExecAction("bring interface down (if up)", "awg-quick", "down", p.path),
+		reconcile.ExecAction("bring interface up with new config", "awg-quick", "up", p.path),
+	}
 	switch {
-	case file.Changes() && p.isUp() && onlyEndpointsDiffer(string(current), cfg):
+	case !p.isUp() && !file.Changes():
+		// Config unchanged but the interface is down (reboot, or a prior up failed):
+		// bring it up so reconcile converges to the running state, not just config.
+		return append(actions,
+			reconcile.ExecAction("bring interface up (interface was down)", "awg-quick", "up", p.path)), nil
+	case !p.isUp():
+		return append(actions, restart...), nil
+	case file.Changes() && onlyEndpointsDiffer(string(current), cfg):
 		// Only a peer endpoint moved (exit-initiated AWG flow switched on or its
 		// port changed): set it on the running interface. A down/up here would drop
 		// the tunnel the master is carrying traffic on. An endpoint REMOVED from the
 		// config stays in the kernel until the next restart — WireGuard cannot
 		// clear one — which is harmless: the master's packets move it anyway.
-		actions = append(actions, setMasterEndpoints(iface, spec.Peers, nil,
-			"set the master endpoint on the running interface")...)
-	case file.Changes():
-		// Config changed: re-apply. down is best-effort (the interface does not
-		// exist on the first run, and `awg-quick down` errors on a missing one).
-		actions = append(actions,
-			reconcile.BestEffortExecAction("bring interface down (if up)", "awg-quick", "down", p.path),
-			reconcile.ExecAction("bring interface up with new config", "awg-quick", "up", p.path))
-	case !p.isUp():
-		// Config unchanged but the interface is down (reboot, or a prior up failed):
-		// bring it up so reconcile converges to the running state, not just config.
-		actions = append(actions,
-			reconcile.ExecAction("bring interface up (interface was down)", "awg-quick", "up", p.path))
-	default:
-		actions = append(actions, p.restoreRoamedEndpoints(iface, spec.Peers)...)
+		return append(actions, setMasterEndpoints(iface, spec.Peers, nil,
+			"set the master endpoint on the running interface")...), nil
+	case file.Changes() && wg.InterfaceSection(string(current)) != wg.InterfaceSection(cfg):
+		// S/H, the port, the MTU, the AmneziaWG generation: none of it can be set
+		// on a live device.
+		return append(actions, restart...), nil
 	}
-	return actions, nil
+	// The interface is up and its [Interface] section is what the spec asks for.
+	// What is left is peers, and peers are judged against the kernel on EVERY pass,
+	// changed file or not — every master's tunnel runs on this one interface, so
+	// the alternative to an in-place edit is dropping all of them.
+	live, readable := p.liveDump(iface)
+	if !readable {
+		if file.Changes() {
+			// Only peers differ here ([Interface] is unchanged), and a restart would
+			// drop every master's tunnel because one read timed out. Restate every
+			// spec peer blind — `awg set` is idempotent — and leave removals to the
+			// first pass that can read the kernel.
+			blind, _ := masterPeerEdits(iface, spec.Peers, nil)
+			return append(actions, blind...), nil
+		}
+		return append(actions, p.restoreRoamedEndpoints(iface, spec.Peers)...), nil
+	}
+	edits, rebuild := masterPeerEdits(iface, spec.Peers, live)
+	switch {
+	case rebuild:
+		return append(actions, restart...), nil
+	case len(edits) > 0:
+		return append(actions, edits...), nil
+	}
+	return append(actions, p.restoreRoamedEndpoints(iface, spec.Peers)...), nil
 }
 
 // restoreRoamedEndpoints puts back a master endpoint WireGuard roamed away from.
@@ -465,6 +519,9 @@ type routingPlanner struct {
 	// applied reports whether the live kernel still reflects the routing intent.
 	// nil ⇒ a real `ip rule list` + `ip route show` probe; tests inject a stub.
 	applied func(domain.RoutingSpec) bool
+	// stray lists the rules of ours still in the kernel that the intent no longer
+	// asks for. nil ⇒ a real `ip rule list` probe; tests inject a stub.
+	stray func(domain.RoutingSpec) []routing.StrayRule
 }
 
 func (routingPlanner) Component() string { return "policy routing" }
@@ -534,15 +591,43 @@ func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 	// conntrack on route CHANGE, not on a timer. The state file lives on tmpfs
 	// (/run), so a reboot clears it alongside the kernel rules and the next pass
 	// re-applies from scratch.
-	file, err := reconcile.FileAction(p.statePath, []byte(routing.Script(steps)), 0o644, nil)
+	script := routing.Script(steps)
+	prev, _ := os.ReadFile(p.statePath) // absent on a first apply: "" takes the full set
+	file, err := reconcile.FileAction(p.statePath, []byte(script), 0o644, nil)
 	if err != nil {
 		return nil, err
 	}
 	actions := []reconcile.Action{file}
+	// A rule at a priority the new intent no longer uses is replaced by nothing and
+	// would outlive the change. Deleted AFTER the rules are re-added: a shortened
+	// list shifts its later CIDRs down, and deleting the old tail first would
+	// leave one of them with no rule until its new priority is written.
+	var dropped []reconcile.Action
+	if file.Changes() {
+		for _, pref := range routing.RulePrefsDropped(string(prev), script) {
+			dropped = append(dropped, routingExecActions([]routing.Step{routing.DeleteRuleStep(pref)})...)
+		}
+	}
 	switch {
+	case file.Changes() && routing.OnlyDirectRulesDiffer(string(prev), script):
+		// Only `to <cidr> lookup main` rules came or went — another master's
+		// address, say. Flushing all of conntrack for that would stall every
+		// long-lived flow on the exit over a change that touches almost none of
+		// them. But the flows TO those destinations did change path, and a forwarded
+		// client flow keeps the source NAT of the path it used to take: forget
+		// those, once the rules are in, and nothing else.
+		actions = append(actions, routingExecActions(routing.WithoutConntrackFlush(steps))...)
+		actions = append(actions, dropped...)
+		for _, cidr := range routing.DirectCIDRsChanged(string(prev), script) {
+			// Best-effort like the global flush: `conntrack -D` exits non-zero when
+			// it matched no flow, which is the ordinary case for a new destination.
+			actions = append(actions, reconcile.BestEffortExecAction(
+				"forget flows to "+cidr+": its route changed", "conntrack", "-D", "-d", cidr))
+		}
 	case file.Changes():
 		// Intent changed: apply the full set (incl. the conntrack flush).
 		actions = append(actions, routingExecActions(steps)...)
+		actions = append(actions, dropped...)
 	case !p.isApplied(rspec):
 		// Intent unchanged but the live kernel no longer reflects it — someone
 		// flushed or edited `ip rule`/`ip route` by hand, or a partial state.
@@ -551,9 +636,34 @@ func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 		// path was effectively broken.
 		actions = append(actions, routingExecActions(steps)...)
 	default:
-		actions = append(actions, reconcile.NoChangeAction("policy routing", "intent unchanged; kernel reflects it"))
+		// Everything the intent names is there. What is left to check is the
+		// opposite: a rule of ours it does NOT name. The delete at the change is
+		// one-shot, so one that pass left behind would otherwise stay until reboot,
+		// keeping client traffic to its destination off the egress.
+		strays := p.strayRules(rspec)
+		if len(strays) == 0 {
+			actions = append(actions, reconcile.NoChangeAction("policy routing", "intent unchanged; kernel reflects it"))
+			break
+		}
+		for _, r := range strays {
+			actions = append(actions, routingExecActions([]routing.Step{routing.DeleteRuleStep(r.Pref)})...)
+			actions = append(actions, reconcile.BestEffortExecAction(
+				"forget flows to "+r.To+": its route changed", "conntrack", "-D", "-d", r.To))
+		}
 	}
 	return actions, nil
+}
+
+func (p routingPlanner) strayRules(r domain.RoutingSpec) []routing.StrayRule {
+	if p.stray != nil {
+		return p.stray(r)
+	}
+	// Unreadable ⇒ nothing stray: a delete is never issued on a guess.
+	rules, err := exec.Command("ip", "rule", "list").Output()
+	if err != nil {
+		return nil
+	}
+	return routing.StrayRules(r, string(rules))
 }
 
 func (p routingPlanner) isApplied(r domain.RoutingSpec) bool {

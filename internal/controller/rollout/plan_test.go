@@ -151,3 +151,21 @@ func TestBuildPlanCarriesCurrentVersion(t *testing.T) {
 		t.Fatalf("targets = %+v, want one carrying Current=june-build", p.Targets)
 	}
 }
+
+// An exit that is reserve for one master and primary for another carries traffic:
+// a rollout must not start with it.
+func TestAnExitIsReserveOnlyWhenEveryMasterHoldsItInReserve(t *testing.T) {
+	f := config.FleetSection{
+		Masters: []config.MasterConfig{
+			{Name: "master-xa-1", Routing: config.MasterRouting{ReserveExits: []string{"exit-a", "exit-b"}}},
+			{Name: "master-xa-2", Slot: 1, Routing: config.MasterRouting{ReserveExits: []string{"exit-b"}}},
+		},
+	}
+	got := reserveSet(f)
+	if got["exit-a"] {
+		t.Error("exit-a is primary for master-xa-2 and must not roll first")
+	}
+	if !got["exit-b"] {
+		t.Error("exit-b is reserve for every master and should roll first")
+	}
+}

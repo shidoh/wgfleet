@@ -32,6 +32,10 @@ type Source interface {
 	// interface, in manifest order. The order is the operator's own and is what the
 	// console lists, so a reserve door does not move around the page between loads.
 	LifelineExits(ctx context.Context) ([]string, error)
+	// LifelineMaster names the one master whose credentials the fleet's reserve
+	// interfaces carry; "" when there is none. A reserve config is only ever built
+	// for that master's credentials.
+	LifelineMaster(ctx context.Context) (string, error)
 	// ExitEndpointHost is the address a client dials for one exit's lifeline: the
 	// same resolution the master↔exit tunnel uses, and "" when the fleet knows no
 	// dialable address for it.
@@ -279,15 +283,31 @@ type LifelineExit struct {
 	Reason   string
 }
 
+// LifelineCarries reports whether masterID's clients are on the fleet's reserve
+// interfaces at all. It is a fact about the manifest, not about any exit's
+// health: a caller uses it to tell "the fleet has no reserve for you" from "you
+// asked for an exit that does not exist".
+func LifelineCarries(ctx context.Context, src Source, masterID string) (bool, error) {
+	carried, err := src.LifelineMaster(ctx)
+	if err != nil {
+		return false, fmt.Errorf("clientcfg: resolve the lifeline's master: %w", err)
+	}
+	return carried != "" && carried == masterID, nil
+}
+
 // ListLifelineExits reports every exit that carries a reserve interface, in
 // manifest order, with its readiness.
 //
-// masterID names the master whose credentials these lifelines carry; it is
-// deliberately NOT consulted. Readiness is a property of the exit alone, and it
-// has to be: this listing is what an operator reaches for when the master is
-// exactly the thing that is broken, and a check against the master would make the
-// reserve path unavailable in precisely that case.
+// masterID is consulted for one thing only: whether the reserve interfaces carry
+// its clients at all (LifelineCarries) — for any other master the list is empty.
+// Readiness is a property of the exit alone, and it has to be: this listing is
+// what an operator reaches for when the master is exactly the thing that is
+// broken, and a check against the master's health would make the reserve path
+// unavailable in precisely that case.
 func ListLifelineExits(ctx context.Context, src Source, masterID string) ([]LifelineExit, error) {
+	if ok, err := LifelineCarries(ctx, src, masterID); err != nil || !ok {
+		return nil, err
+	}
 	names, err := src.LifelineExits(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("clientcfg: list the fleet's lifeline exits: %w", err)
@@ -366,6 +386,12 @@ func lifelineState(ctx context.Context, src Source, exitID string) (LifelineExit
 // master that has lost its public address, or never published a key, is a master
 // whose clients need this config most.
 func BuildLifeline(ctx context.Context, src Source, masterID, clientID, exitID string) (Result, error) {
+	if ok, err := LifelineCarries(ctx, src, masterID); err != nil {
+		return Result{}, err
+	} else if !ok {
+		// Same answer an unknown credential gets: the caller is a URL.
+		return Result{}, store.ErrNotFound
+	}
 	master, err := src.GetNode(ctx, masterID)
 	if err != nil {
 		return Result{}, err

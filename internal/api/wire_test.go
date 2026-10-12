@@ -68,9 +68,9 @@ func indexOf(s, sub string) int {
 
 // Guard: the wire version must never drift by accident. Changing it is a
 // deliberate act with a rollout consequence, so it takes a deliberate test edit.
-func TestWireContractVersionIs12(t *testing.T) {
-	if WireContractVersion != 12 {
-		t.Fatalf("WireContractVersion = %d, want 12 (bumped for ExitTunnel.master_addr / StatusReport.awg_master_endpoint — the exit-initiated AWG flow)", WireContractVersion)
+func TestWireContractVersionIs13(t *testing.T) {
+	if WireContractVersion != 13 {
+		t.Fatalf("WireContractVersion = %d, want 13 (bumped for StatusReport.master_peers — an exit's per-master-peer report)", WireContractVersion)
 	}
 }
 
@@ -78,8 +78,12 @@ func TestWireContractVersionIs12(t *testing.T) {
 // feature must have a named constant, because MinSupportedWire is 1 and therefore
 // the bump ALONE refuses nobody: the gate is the named comparison, never the number.
 func TestClientIPv6GateIsNamedAndCurrent(t *testing.T) {
-	if WireAWGExitInitiated != WireContractVersion {
-		t.Errorf("WireAWGExitInitiated = %d but the contract is at %d", WireAWGExitInitiated, WireContractVersion)
+	if WireMasterPeers != WireContractVersion {
+		t.Errorf("WireMasterPeers = %d but the contract is at %d", WireMasterPeers, WireContractVersion)
+	}
+	if WireAWGExitInitiated >= WireContractVersion {
+		t.Errorf("WireAWGExitInitiated = %d but the contract is at %d; the gate must name the version that introduced the field",
+			WireAWGExitInitiated, WireContractVersion)
 	}
 	if WireLifeline >= WireContractVersion {
 		t.Errorf("WireLifeline = %d but the contract is at %d; the gate must name the version that introduced the field",

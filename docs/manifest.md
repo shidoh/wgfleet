@@ -175,6 +175,42 @@ Every dockerized component (wg-easy, mihomo, blocky) exposes an `image` +
 `tag` pair so both can be pinned. An explicit `tag` overrides any tag embedded in
 `image`; either may be omitted to inherit the component's default.
 
+### Several masters
+
+One master needs neither key below. From the second master on:
+
+```yaml
+fleet:
+  interface_anchor: master-xa-1        # = the name of the master in slot 0; never change it
+  mgmt_subnet: 10.20.0.0/16            # set before adding a master
+  masters:
+    - name: master-xa-1
+      slot: 0
+      public_ip: 203.0.113.10
+    - name: master-eu-1
+      slot: 1
+      public_ip: 198.51.100.20
+```
+
+| Key | Level | Type | Default | Meaning |
+|---|---|---|---|---|
+| `interface_anchor` | fleet | string | name of the master in slot 0 | Label every exit's interface parameters are derived from. Required with two or more masters, and when no master holds slot 0. Not `clients` or `lifeline`; no whitespace, no `\|`. Never change it on a running fleet |
+| `slot` | master | int 0-63 | `0` | The master's addresses inside every exit pool. Unique per master. Never reuse a slot for a different master while the old one's keys are still on exits |
+
+| Rule | Detail |
+|---|---|
+| Exit `address_pool` size | Must hold host `3 + 2 × (highest slot)` |
+| Reserved node names | `clients` and `lifeline` |
+| Two masters with one WireGuard key | The master that registers the key second is refused at registration. With both keys already stored, the exits peer the earlier master in manifest order; the other gets no peer and no AmneziaWG tunnel. A master built from a copy of another's disk needs a new key |
+| Direct rules per exit | `direct_cidrs` of the master in slot 0 + management CIDRs + one per other master. Over 80: a warning from `--check-config` and at startup; an exit with WARP egress cannot apply its routing |
+| `transports.awg.exit_initiated` | Needs a public IPv4 on every master |
+| `transports.awg.master_port` | Applies to the master in slot 0 |
+| Master in slot 0 | The one whose clients a lifeline carries and whose `routing.direct_cidrs` exits inherit |
+| `mgmt_subnet` unset | Adding or removing any node, a master included, changes the direct routes and the firewall whitelist on every exit |
+| Exit on an older agent | Serves the master in slot 0 only |
+
+Procedures: [operations.md](operations.md#several-masters).
+
 ## `agent.yaml`
 
 The agent only needs its identity and where the controller is. Everything else

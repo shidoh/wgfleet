@@ -1723,7 +1723,7 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "sum(wgfleet_exit_tunnel_alive == 0 and on(exit) wgfleet_agent_exit_held_out) or vector(0)",
+                        "expr": "sum(wgfleet_exit_tunnel_alive == 0 and on(node, exit) wgfleet_agent_exit_held_out) or vector(0)",
                         "instant": true
                       }
                     }
@@ -1879,8 +1879,8 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "wgfleet_exit_tunnel_alive{exit=~\"$node\"} and on(exit) wgfleet_agent_exit_held_out",
-                        "legendFormat": "{{exit}}"
+                        "expr": "wgfleet_exit_tunnel_alive{exit=~\"$node\"} and on(node, exit) wgfleet_agent_exit_held_out",
+                        "legendFormat": "{{node}} → {{exit}}"
                       }
                     }
                   }
@@ -1972,7 +1972,7 @@
                       },
                       "spec": {
                         "expr": "wgfleet_exit_tunnel_delay_seconds{exit=~\"$node\"}",
-                        "legendFormat": "{{exit}}"
+                        "legendFormat": "{{node}} → {{exit}}"
                       }
                     }
                   }
@@ -2065,7 +2065,7 @@
                       },
                       "spec": {
                         "expr": "wgfleet_agent_exit_held_out{exit=~\"$node\"}",
-                        "legendFormat": "{{exit}}"
+                        "legendFormat": "{{node}} → {{exit}}"
                       }
                     }
                   }

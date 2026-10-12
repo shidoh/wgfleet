@@ -791,6 +791,53 @@ Causes, in order of likelihood:
 When it is none of those, take a support bundle
 (`wgfleet-agent --support-bundle --note "..."` on the node) and send it.
 
+## Several masters
+
+Keys and rules: [manifest.md](manifest.md#several-masters). Each master is a peer on every exit's one AmneziaWG interface.
+
+### Add a master
+
+1. Set `fleet.mgmt_subnet` if it is unset. Without it, adding the node changes the direct routes and the firewall whitelist on every exit.
+2. Upgrade every exit to an agent that supports several masters (the console shows the agent version). A non-base master gets no AmneziaWG tunnel to an exit on an older agent; if that exit's active transport is AmneziaWG, the master does not route through it at all.
+3. In the manifest, add `interface_anchor` (the name of the master in slot 0) and the new master with its own `slot`. Check that each exit `address_pool` holds host `3 + 2 × slot`.
+4. Validate: `wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config`. Check the printed `anchor`, `base` and every `master … slot` line against the running fleet.
+5. Restart the controller.
+6. Provision the new master's node.
+7. Check:
+   - `awg show awg0` on an exit lists the peers of both masters.
+   - The new master's block in the console shows its exits as CARRYING.
+
+Expect "exit out of rotation" alerts for the new master for a few minutes while its keys are published. On exits in the per-tunnel-key phase `on`, the new master has no peer for one to three passes.
+
+### Remove a master
+
+1. Delete its entry from the manifest. Keep `interface_anchor` and every other master's `slot`.
+2. Validate: `wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config`
+3. Restart the controller.
+4. Delete the node from its console page: fleet page → **NOT IN MANIFEST** → the node → **Delete**.
+
+| Step 4 deletes | Step 4 keeps |
+|---|---|
+| The master's row, last status and per-tunnel keys | Devices |
+| Every client credential issued on it, WireGuard and VLESS | Credentials on other masters |
+| Those credentials' attachments to devices | The node's own files |
+
+- Until step 4 the master's row stays in the store and its staleness alerts keep firing.
+- After step 4 an agent still running on the box is refused at registration.
+- The console refuses Delete for a master that is still in the manifest.
+
+Removing the master in slot 0: remove `lifeline` from every exit in the same edit — the manifest is refused otherwise (`lifeline needs a master in slot 0`). Every exit loses the `direct_cidrs` it inherited from it and its `MasterIP` rule, and flushes conntrack once. The other masters' interface parameters, addresses and peers do not move.
+
+A dead slot-0 master may stay in the manifest until a quiet window. While it stays, every exit keeps its peer (which carries nothing) and the direct rules inherited from it, and its staleness alerts keep firing.
+
+### Upgrade a remote master
+
+- The upgrade action on the master's node page. A fleet-wide rolling upgrade does not touch masters.
+
+### Move an exit to per-tunnel keys
+
+- Before switching `per_tunnel_key` to `on`, check that every master has published its key for the exit.
+
 ## Exit-initiated AmneziaWG flow
 
 For an exit whose AmneziaWG tunnel dies when the master opens the flow and lives when the exit opens it. The exit knocks on a pinned port of the master; the master answers only from that port and only after it has heard the exit.
@@ -808,14 +855,15 @@ All of these on one exit:
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `fleet.exits[].transports.awg.exit_initiated` | bool | `false` | Per exit. AmneziaWG only; REALITY is unaffected |
-| `fleet.exits[].transports.awg.master_port` | int | derived, `20000`–`32767` | The master's pinned UDP port for this exit. Only with `exit_initiated` |
+| `fleet.exits[].transports.awg.master_port` | int | derived, `20000`–`32767` | The pinned UDP port of the master in slot 0 for this exit. Only with `exit_initiated` |
 
 Requirements:
 
 | Requirement | Why |
 |---|---|
-| Controller, master agent and exit agent on the same release (wire 12) | Below it the controller leaves the tunnel as it was |
-| A single master in the fleet | Refused by `--check-config` otherwise |
+| Controller, master agent and exit agent on wire 12 or later | Below it the controller leaves the tunnel as it was |
+| With several masters: the exit agent on the release that reports per-master peers (wire 13) | An exit below it carries the master in slot 0 only |
+| A public IPv4 on every master | Refused by `--check-config` otherwise |
 | `masters[].public_ip` (or the stored address) is a public IPv4 | The exit dials it from the internet. A master behind NAT is not supported |
 | The provider's firewall in front of the master passes UDP from the exit to the pinned port | The exit's first packet must reach the master |
 | `conntrack` installed on the master (`prepare-node.sh` does it; nodes prepared earlier: `apt-get install conntrack`) | The agent clears stale flows with it; without it the tunnel can stay down after a mihomo restart |
@@ -857,7 +905,8 @@ The tunnel is not restarted: the exit sets the new endpoint on the running inter
 | Alert `WgfleetAWGExitNotHeard` | on the exit: `awg show awg0 endpoints` | not the pinned port: wait one agent pass, the agent restores it |
 | Endpoint is right, still not heard | on the master: `tcpdump -ni any udp and src host <exit IP>` | nothing arrives: the path from the exit or the provider firewall drops it; switch the flag off for this exit |
 | `awg_exit_heard 1`, handshake stale | on the master: `conntrack -L -p udp -d <exit IP> --dport <exit AWG port>` | more than one entry or a reply port other than the pinned one: the agent clears them within one pass |
-| `awg_pin_armed` absent | controller journal: `exit-initiated AWG` | an agent below wire 12, or no public IPv4 for the master |
+| On the exit, the endpoint leaves the pinned port after every restore (exit agent journal: `restore the master endpoint WireGuard roamed away from` on every pass) | on the master: `conntrack -L -p udp -s <exit IP> --sport <exit AWG port>` | an entry on a port other than the pinned one: the master agent deletes it within one pass (journal: `opened off its pinned port`); a master agent older than this fix does not, delete it by hand with `conntrack -D` and the same filter |
+| `awg_pin_armed` absent | controller journal: `exit-initiated AWG` | an agent below wire 12 (with several masters: the exit agent below wire 13), or no public IPv4 for the master |
 | Tunnel down right after switching a transport in the console | in mihomo's namespace: `nsenter -t $(docker inspect -f '{{.State.Pid}}' mihomo) -n ss -unaH dst <exit IP>:<exit AWG port>` | two sockets: a mihomo reload leaked a device; the agent restarts mihomo within one pass (journal: `leaked AmneziaWG device(s)`), clients reconnect |
 | Agent journal: `conntrack unreadable, stale entries cannot be cleared` | `which conntrack` on the master | install `conntrack` |
 

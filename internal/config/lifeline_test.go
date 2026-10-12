@@ -56,6 +56,11 @@ func TestValidateLifeline(t *testing.T) {
 			wantFrag: "already listed in firewall.public_udp_ports",
 		},
 		{
+			name:     "no master in slot 0",
+			mutate:   func(f *FleetSection) { f.Masters[0].Slot = 1 },
+			wantFrag: "lifeline needs a master in slot 0",
+		},
+		{
 			name:     "pool empty",
 			mutate:   func(f *FleetSection) { f.Exits[0].Lifeline.AddressPool = "" },
 			wantFrag: "lifeline.address_pool is required",

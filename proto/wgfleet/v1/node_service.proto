@@ -86,6 +86,18 @@ message StatusReport {
   // address, so an exit that never received or applied it is never cut off.
   // Additive and observational; empty when no master peer has an endpoint.
   string awg_master_endpoint = 8;
+  // master_peers is an exit's view of every master peer on its awg0 (endpoint and
+  // last handshake, keyed by public key). awg_master_endpoint above describes one
+  // peer and cannot tell several masters apart. Additive; an older controller
+  // ignores it and an older exit sends none.
+  repeated MasterPeerStatus master_peers = 9;
+}
+
+// MasterPeerStatus is one master peer on an exit's master-facing interface.
+message MasterPeerStatus {
+  string public_key = 1;
+  string endpoint = 2; // "ip:port"; empty when the kernel holds none
+  int64 last_handshake_unix = 3; // 0 = never
 }
 
 // ClientPeerStatus is one end user's live peer on the master's client interface,

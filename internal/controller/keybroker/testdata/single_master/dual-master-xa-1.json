@@ -1,0 +1,298 @@
+{
+  "Role": "master",
+  "Egress": "",
+  "EgressChain": null,
+  "WGServer": {
+    "ListenPort": 443,
+    "AddressPool": "10.80.0.0/24",
+    "Address": "",
+    "MTU": 1360,
+    "AWG": {
+      "Shared": {
+        "H1": {
+          "Min": 119440710,
+          "Max": 249440710
+        },
+        "H2": {
+          "Min": 853052489,
+          "Max": 983052489
+        },
+        "H3": {
+          "Min": 1240338360,
+          "Max": 1370338360
+        },
+        "H4": {
+          "Min": 1676329226,
+          "Max": 1806329226
+        },
+        "S1": 39,
+        "S2": 61,
+        "S3": 48,
+        "S4": 26,
+        "HeaderProtectionKey": "",
+        "ContentPaddingAddition": "",
+        "RekeyAfterTime": "",
+        "RekeyTimeout": "",
+        "RejectAfterTime": "",
+        "KeepaliveTimeout": "",
+        "MaxHandshakeAttempts": ""
+      },
+      "Local": {
+        "Jc": 4,
+        "Jmin": 43,
+        "Jmax": 123,
+        "I1": "\u003cb 0x000100002112a442\u003e\u003cr 12\u003e",
+        "I2": "\u003cb 0xc3000000010b\u003e\u003cr 11\u003e\u003cb 0x0a\u003e\u003cr 10\u003e\u003cb 0x00\u003e\u003cr 118\u003e",
+        "I3": "",
+        "I4": "",
+        "I5": ""
+      }
+    },
+    "ClientAWGLocal": {
+      "Jc": 6,
+      "Jmin": 56,
+      "Jmax": 105,
+      "I1": "\u003cb 0x000100002112a442\u003e\u003cr 12\u003e",
+      "I2": "\u003cb 0xc3000000010d\u003e\u003cr 13\u003e\u003cb 0x12\u003e\u003cr 18\u003e\u003cb 0x00\u003e\u003cr 158\u003e",
+      "I3": "",
+      "I4": "",
+      "I5": ""
+    }
+  },
+  "Peers": null,
+  "DNS": {
+    "Enabled": false,
+    "MgmtAddr": "",
+    "ClientBindAddr": "",
+    "Ports": {
+      "DNS": 0,
+      "TLS": 0,
+      "HTTPS": 0,
+      "HTTP": 0
+    },
+    "Upstreams": null,
+    "BootstrapDNS": null,
+    "Allowlist": null,
+    "Prometheus": false,
+    "Image": "",
+    "Custom": {
+      "Overrides": null,
+      "Files": null
+    }
+  },
+  "Firewall": {
+    "ASBlacklist": false,
+    "Whitelist": [
+      "10.20.25.254/32"
+    ],
+    "WGPort": 443,
+    "RealityPort": 0,
+    "LifelinePort": 0,
+    "PublicTCPPorts": null,
+    "PublicUDPPorts": null
+  },
+  "Routing": {
+    "EgressInterface": "",
+    "DirectCIDRs": null,
+    "MasterIP": "",
+    "FwMark": 0,
+    "ClientCIDR": "",
+    "RealityEgressMark": 0,
+    "LifelineCIDR": ""
+  },
+  "Exporters": {
+    "Node": true,
+    "WG": true,
+    "WARP": false
+  },
+  "Master": {
+    "BindAddress": "10.80.0.1",
+    "RedirPort": 0,
+    "NetnsCIDR": "",
+    "ClientViaNetns": "",
+    "ExternalController": "10.20.25.254:9090",
+    "ExitTunnels": [
+      {
+        "Name": "exit-de-1",
+        "Endpoint": "198.51.100.1:22891",
+        "ServerPublicKey": "kXr4jF0G0mYB0kQ0s2Yz8mJ1o8m0Qd0l5nJ8Zc1vS2I=",
+        "PresharedKey": "",
+        "TunnelIP": "10.81.0.2",
+        "MTU": 1360,
+        "AWG": {
+          "Shared": {
+            "H1": {
+              "Min": 29838687,
+              "Max": 159838687
+            },
+            "H2": {
+              "Min": 717803267,
+              "Max": 847803267
+            },
+            "H3": {
+              "Min": 1073039351,
+              "Max": 1203039351
+            },
+            "H4": {
+              "Min": 1504901982,
+              "Max": 1634901982
+            },
+            "S1": 27,
+            "S2": 38,
+            "S3": 63,
+            "S4": 23,
+            "HeaderProtectionKey": "7MyssL8LA3I67y4/S/wLO6YB/DDWLLvDMM9lGrdSqVQ=",
+            "ContentPaddingAddition": "",
+            "RekeyAfterTime": "120-149",
+            "RekeyTimeout": "5-8",
+            "RejectAfterTime": "180-191",
+            "KeepaliveTimeout": "10-15",
+            "MaxHandshakeAttempts": "18"
+          },
+          "Local": {
+            "Jc": 8,
+            "Jmin": 43,
+            "Jmax": 72,
+            "I1": "\u003cb 0x000100002112a442\u003e\u003cr 12\u003e",
+            "I2": "\u003cb 0xc30000000109\u003e\u003cr 9\u003e\u003cb 0x0d\u003e\u003cr 13\u003e\u003cb 0x00\u003e\u003cr 137\u003e",
+            "I3": "",
+            "I4": "",
+            "I5": ""
+          }
+        },
+        "Transport": "awg",
+        "Reality": null,
+        "Drained": false,
+        "MasterKeyTunnel": "",
+        "Reserve": false,
+        "MasterAddr": "203.0.113.1:29963"
+      },
+      {
+        "Name": "exit-de-1-reality",
+        "Endpoint": "198.51.100.1:443",
+        "ServerPublicKey": "",
+        "PresharedKey": "",
+        "TunnelIP": "",
+        "MTU": 0,
+        "AWG": null,
+        "Transport": "reality-xhttp",
+        "Reality": {
+          "UUID": "6f723a11-7e03-456e-a620-ee3bdce35e19",
+          "PublicKey": "Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYmFyYmE=",
+          "ShortID": "bf4cbd2b",
+          "ServerName": "www.python.org",
+          "Fingerprint": "",
+          "XHTTPPath": "/bf4cbd2b",
+          "XHTTPMode": "packet-up",
+          "Mode": "",
+          "EmptySNI": false,
+          "Mux": false
+        },
+        "Drained": true,
+        "MasterKeyTunnel": "",
+        "Reserve": false,
+        "MasterAddr": ""
+      },
+      {
+        "Name": "exit-nl-1",
+        "Endpoint": "198.51.100.2:29451",
+        "ServerPublicKey": "kXr4jF0G0mYB0kQ0s2Yz8mJ1o8m0Qd0l5nJ8Zc1vS2I=",
+        "PresharedKey": "",
+        "TunnelIP": "10.82.0.2",
+        "MTU": 1360,
+        "AWG": {
+          "Shared": {
+            "H1": {
+              "Min": 359508485,
+              "Max": 489508485
+            },
+            "H2": {
+              "Min": 833563846,
+              "Max": 963563846
+            },
+            "H3": {
+              "Min": 1081589419,
+              "Max": 1211589419
+            },
+            "H4": {
+              "Min": 1671427735,
+              "Max": 1801427735
+            },
+            "S1": 52,
+            "S2": 55,
+            "S3": 59,
+            "S4": 21,
+            "HeaderProtectionKey": "FL8RNTPqDqwAPRXlyUi6EyeQ9xEGk2qvk3H2wZnKjt8=",
+            "ContentPaddingAddition": "",
+            "RekeyAfterTime": "120-148",
+            "RekeyTimeout": "5-7",
+            "RejectAfterTime": "180-195",
+            "KeepaliveTimeout": "10-13",
+            "MaxHandshakeAttempts": "18"
+          },
+          "Local": {
+            "Jc": 7,
+            "Jmin": 49,
+            "Jmax": 80,
+            "I1": "\u003cb 0x000100002112a442\u003e\u003cr 12\u003e",
+            "I2": "\u003cb 0xc30000000106\u003e\u003cr 6\u003e\u003cb 0x09\u003e\u003cr 9\u003e\u003cb 0x00\u003e\u003cr 106\u003e",
+            "I3": "",
+            "I4": "",
+            "I5": ""
+          }
+        },
+        "Transport": "awg",
+        "Reality": null,
+        "Drained": false,
+        "MasterKeyTunnel": "",
+        "Reserve": true,
+        "MasterAddr": ""
+      }
+    ],
+    "Balance": "consistent-hashing",
+    "HealthCheckInterval": 0,
+    "MaxFailedTimes": 0,
+    "DirectCIDRs": [
+      "10.0.0.0/8",
+      "192.168.0.0/16",
+      "203.0.113.1/32",
+      "198.51.100.1/32",
+      "198.51.100.2/32"
+    ],
+    "DirectGeo": null,
+    "SnifferSkip": null,
+    "DashboardDisabled": false,
+    "DashboardURL": "",
+    "ClientAdminPorts": null,
+    "Custom": {
+      "Overrides": null,
+      "Files": null
+    },
+    "Compose": {
+      "WGEasyImage": "ghcr.io/wg-easy/wg-easy:15@sha256:93bbd593e07bab98d02807a28770ac87ab6c48818e319e68c1f66561feb99876",
+      "MihomoImage": "metacubex/mihomo:v1.19.30",
+      "PublicIP": "203.0.113.1",
+      "WGEasyWebPort": 0,
+      "ClientDNS": [
+        "10.20.25.1",
+        "10.20.25.2"
+      ],
+      "ClientAllowedIPs": "",
+      "NetnsHolderImage": ""
+    },
+    "ClientVLESS": null,
+    "ClientWG": null
+  },
+  "WARPMTU": 0,
+  "EgressThroughputMinBps": 0,
+  "EgressThroughputProbeURL": "",
+  "EnabledTransports": null,
+  "ActiveTransport": "",
+  "Reality": null,
+  "Lifeline": null,
+  "Hardening": {
+    "SSHD": true,
+    "Fail2ban": true
+  },
+  "Decommission": false
+}

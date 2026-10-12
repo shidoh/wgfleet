@@ -15,6 +15,13 @@ import (
 // ErrNotFound is returned when a requested node or status does not exist.
 var ErrNotFound = errors.New("store: not found")
 
+// ErrUnreadable marks a failure that is the controller not being able to read its
+// own state, as opposed to the state saying no. Whoever renders a node's spec
+// wraps a store read error with it when the honest answer is "I do not know",
+// so the gRPC layer can tell the agent the controller is unavailable — the agent
+// then reconciles on its last good spec — instead of handing it a refusal.
+var ErrUnreadable = errors.New("store: unreadable")
+
 // Store is the controller's persistence boundary. All methods take a context so
 // callers can cancel slow queries; implementations must honor it.
 type Store interface {
@@ -209,9 +216,30 @@ type Store interface {
 	GetStatus(ctx context.Context, id string) (domain.NodeStatus, error)
 	// GetAWGPortRotation returns the generation of an exit-initiated tunnel's
 	// pinned master port and when it last moved; 0 and zero time when it never has.
-	GetAWGPortRotation(ctx context.Context, exit string) (int, time.Time, error)
+	GetAWGPortRotation(ctx context.Context, master, exit string) (int, time.Time, error)
 	// SetAWGPortRotation records a move to generation gen at time at.
-	SetAWGPortRotation(ctx context.Context, exit string, gen int, at time.Time) error
+	SetAWGPortRotation(ctx context.Context, master, exit string, gen int, at time.Time) error
+	// AdoptAWGPortRotation gives the generations recorded before tunnels were keyed
+	// by master to master — the one master there was — and reports how many it
+	// moved. One-shot: it runs once per database, whoever is passed later.
+	AdoptAWGPortRotation(ctx context.Context, master string) (int, error)
+	// GetAWGPinConfirmation returns the pinned address the exit last confirmed
+	// holding for master, the public key of the master's peer the confirmation is
+	// about, and when it was earned; zero values when there is none.
+	GetAWGPinConfirmation(ctx context.Context, master, exit string) (addr, peerKey string, since time.Time, err error)
+	// SetAWGPinConfirmation records that confirmation, replacing the previous one.
+	SetAWGPinConfirmation(ctx context.Context, master, exit, addr, peerKey string, since time.Time) error
+	// DeleteAWGPinConfirmation forgets that confirmation. Absent ⇒ no-op.
+	DeleteAWGPinConfirmation(ctx context.Context, master, exit string) error
+
+	// ListAutoSuspended returns the exits the throughput watchdog holds out of the
+	// load balancer, each with the time it was taken out.
+	ListAutoSuspended(ctx context.Context) (map[string]time.Time, error)
+	// SetAutoSuspended records that exit is held out since the given time,
+	// replacing an earlier record.
+	SetAutoSuspended(ctx context.Context, exit string, since time.Time) error
+	// ClearAutoSuspended records that exit is back in. Absent ⇒ no-op.
+	ClearAutoSuspended(ctx context.Context, exit string) error
 
 	// AuthConfigured reports whether the single web-panel admin credential exists.
 	AuthConfigured(ctx context.Context) (bool, error)

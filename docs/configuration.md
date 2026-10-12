@@ -88,7 +88,8 @@ provisioning, so changing them requires re-provisioning the node.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `fleet.zerotier_network` | string | — | ZeroTier network ID (exactly 16 hex chars) every node joins during bootstrap. Validated strictly: it is interpolated into a root shell command |
-| `fleet.mgmt_subnet` | CIDR | derived | The management overlay's CIDR. When set, exits route it DIRECT (never through WARP) and accept it in the firewall without per-node listing. Empty ⇒ derived from each node's `mgmt_addr` as /32s |
+| `fleet.interface_anchor` | string | base master name | Label that seeds everything belonging to an exit's interface rather than to one peer on it (AmneziaWG S/H parameters, REALITY identifiers), so every master derives the same values. Required with several masters, and when no master holds slot 0; set it to the base master's name to keep existing tunnels unchanged. Not a node: it outlives the master it names. Must not be `clients` or `lifeline` (also reserved as node names) and must not contain whitespace or `\|` |
+| `fleet.mgmt_subnet` | CIDR | derived | The management overlay's CIDR. When set, exits route it DIRECT (never through WARP) and accept it in the firewall without per-node listing. Empty ⇒ derived from each node's `mgmt_addr` as /32s; adding or removing any node then changes the direct routes and the firewall whitelist on every exit |
 | `fleet.client_sites[].name` | string | — | Name of the site's switch in the mihomo app. Not `auto`, `wgfleet`, `DIRECT`, `REJECT`, a master's name or `<master>-awg`/`-vless`; no `,` or `#` |
 | `fleet.client_sites[].cidrs` | list of CIDR | — | The site's networks. Must not overlap `fleet.mgmt_subnet` or any `client_awg.address_pool`. Their rules precede every other rule of the device profile |
 | `fleet.client_sites[].probe_url` | URL | none | `http://<IP inside cidrs>/…` answering over HTTP. Answers directly ⇒ the site goes `DIRECT`; does not ⇒ through the tunnel. Empty ⇒ manual switch only, `DIRECT` by default |
@@ -129,13 +130,14 @@ first, see [upgrade.md](upgrade.md).
 
 ## 4. `fleet.masters[]` — master nodes
 
-> Exactly one master is supported; a manifest with more than one is rejected.
+> Several masters are accepted. Each needs a unique `slot`; with two or more, `fleet.interface_anchor` is required.
 
 ### Identity and exposure
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `fleet.masters[].name` | string | **required** | Stable node name. This is the node's identity — renaming means re-issuing its certificate. `auto`, `wgfleet`, `DIRECT`, `REJECT` are reserved by the device profile: a master named so cannot serve devices |
+| `fleet.masters[].slot` | int | `0` | The master's place in every exit's address pool (hosts `2+2·slot` and `3+2·slot`). Unique, 0-63. The master in slot 0 is the base master: the exit's single master address, the lifeline's client population and the inherited `direct_cidrs` follow it. With a non-zero slot, each exit `address_pool` must hold the highest slot's hosts |
 | `fleet.masters[].mgmt_addr` | string | — | ZeroTier/overlay address. Binds admin surfaces and is trusted by construction |
 | `fleet.masters[].public_ip` | string | = `ssh.host` | Public IP clients and peers reach this node at |
 | `fleet.masters[].client_admin_ports` | []int | none | Admin ports (Web UI, mihomo dashboard, client portal) opened **to AWG and VLESS clients** on the mgmt address — a VLESS client's connection to these ports is dialled DIRECT from mihomo's namespace and arrives on its veth, not on the AWG interface, so both are opened together. Default keeps admin reachable only over the overlay |
@@ -268,7 +270,7 @@ run warm and the live path can be switched instantly.
 | `fleet.exits[].active_transport` | string | first enabled | Which transport the master routes through: `awg` or `reality-xhttp`. Also switchable live from the Web UI |
 | `fleet.exits[].transports.awg.enabled` | bool | `true` when neither is set | Run the kernel AmneziaWG server |
 | `fleet.exits[].transports.awg.listen_port` | int | derived from name | UDP port. Derived per exit so the fleet does not share one port |
-| `fleet.exits[].transports.awg.exit_initiated` | bool | `false` | The exit starts the master↔exit AWG flow; the master answers from a pinned port. Master needs a public IPv4 reachable by the exit. Single master only. No effect on REALITY. Client configs unchanged |
+| `fleet.exits[].transports.awg.exit_initiated` | bool | `false` | The exit starts the master↔exit AWG flow; the master answers from a pinned port. Every master needs a public IPv4 reachable by the exit. No effect on REALITY. Client configs unchanged |
 | `fleet.exits[].transports.awg.master_port` | int | derived from master and exit names, `20000`–`32767` | Master's pinned UDP port for this tunnel. Only with `exit_initiated`. Range `1024`–`65535` |
 | `fleet.exits[].transports.reality.enabled` | bool | `false` | Run the VLESS+REALITY+XHTTP inbound |
 | `fleet.exits[].transports.reality.listen_port` | int | `443` | TCP port. Must differ from the AWG port |
@@ -432,9 +434,17 @@ Both files are validated at startup and the process refuses to run on a bad valu
   entries must parse as CIDRs.
 - `controller.webui` and `controller.metrics` must bind a management address unless
   `WGFLEET_ALLOW_PUBLIC_BIND=1`.
-- More than one entry in `fleet.masters[]` is rejected.
+- `fleet.masters[].slot` must be unique and within 0-63; `fleet.interface_anchor` is
+  required with several masters and when no master holds slot 0; no master, exit or
+  anchor label may be named `clients` or `lifeline`, and the label holds no whitespace
+  and no `|`.
 - Durations, MTUs and MSS values are range-checked; the error names the key and the
   accepted band.
+
+Not refused, only warned about (by `--check-config` and in the startup log): more
+than 80 direct rules per exit — `routing.direct_cidrs` of the master in slot 0, the
+management CIDRs and one per other master. An exit with WARP egress cannot apply its
+routing past that count.
 
 `--check-config` validates a manifest without touching the fleet: it parses the file,
 prints its digest and the master/exit counts, then makes the checks a restart makes —

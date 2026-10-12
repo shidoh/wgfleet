@@ -751,6 +751,13 @@ func StatusFromProto(nodeID string, r *pb.StatusReport) domain.NodeStatus {
 		st.ClientPeers = append(st.ClientPeers, cp)
 	}
 	st.AWGMasterEndpoint = r.GetAwgMasterEndpoint()
+	for _, p := range r.GetMasterPeers() {
+		mp := domain.MasterPeerStatus{PublicKey: p.GetPublicKey(), Endpoint: p.GetEndpoint()}
+		if t := p.GetLastHandshakeUnix(); t > 0 {
+			mp.LastHandshake = time.Unix(t, 0).UTC()
+		}
+		st.MasterPeers = append(st.MasterPeers, mp)
+	}
 	return st
 }
 
@@ -801,6 +808,13 @@ func StatusToProto(s domain.NodeStatus) *pb.StatusReport {
 			cp.LastHandshakeUnix = p.LastHandshake.Unix()
 		}
 		r.ClientPeers = append(r.ClientPeers, cp)
+	}
+	for _, p := range s.MasterPeers {
+		mp := &pb.MasterPeerStatus{PublicKey: p.PublicKey, Endpoint: p.Endpoint}
+		if !p.LastHandshake.IsZero() {
+			mp.LastHandshakeUnix = p.LastHandshake.Unix()
+		}
+		r.MasterPeers = append(r.MasterPeers, mp)
 	}
 	return r
 }

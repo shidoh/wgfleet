@@ -1,0 +1,145 @@
+{
+  "Role": "exit",
+  "Egress": "warp",
+  "EgressChain": [
+    "warp"
+  ],
+  "WGServer": {
+    "ListenPort": 22891,
+    "AddressPool": "10.81.0.0/24",
+    "Address": "10.81.0.1",
+    "MTU": 1360,
+    "AWG": {
+      "Shared": {
+        "H1": {
+          "Min": 29838687,
+          "Max": 159838687
+        },
+        "H2": {
+          "Min": 717803267,
+          "Max": 847803267
+        },
+        "H3": {
+          "Min": 1073039351,
+          "Max": 1203039351
+        },
+        "H4": {
+          "Min": 1504901982,
+          "Max": 1634901982
+        },
+        "S1": 27,
+        "S2": 38,
+        "S3": 63,
+        "S4": 23,
+        "HeaderProtectionKey": "7MyssL8LA3I67y4/S/wLO6YB/DDWLLvDMM9lGrdSqVQ=",
+        "ContentPaddingAddition": "",
+        "RekeyAfterTime": "120-149",
+        "RekeyTimeout": "5-8",
+        "RejectAfterTime": "180-191",
+        "KeepaliveTimeout": "10-15",
+        "MaxHandshakeAttempts": "18"
+      },
+      "Local": {
+        "Jc": 5,
+        "Jmin": 45,
+        "Jmax": 105,
+        "I1": "\u003cb 0x000100002112a442\u003e\u003cr 12\u003e",
+        "I2": "\u003cb 0xc3000000010e\u003e\u003cr 14\u003e\u003cb 0x0c\u003e\u003cr 12\u003e\u003cb 0x00\u003e\u003cr 97\u003e",
+        "I3": "",
+        "I4": "",
+        "I5": ""
+      }
+    },
+    "ClientAWGLocal": null
+  },
+  "Peers": [
+    {
+      "Name": "master-xa-1",
+      "PublicKey": "L+V9o0fNYkMVKNqsX7spBzD/9oSvxM/C7ZCZX1jLO3Q=",
+      "Endpoint": "203.0.113.1:29963",
+      "AllowedIPs": [
+        "10.81.0.2/32"
+      ],
+      "Keepalive": 8,
+      "MTU": 1360
+    }
+  ],
+  "DNS": {
+    "Enabled": true,
+    "MgmtAddr": "10.20.25.1",
+    "ClientBindAddr": "",
+    "Ports": {
+      "DNS": 0,
+      "TLS": 0,
+      "HTTPS": 0,
+      "HTTP": 0
+    },
+    "Upstreams": null,
+    "BootstrapDNS": null,
+    "Allowlist": null,
+    "Prometheus": true,
+    "Image": "spx01/blocky:v0.35.0",
+    "Custom": {
+      "Overrides": null,
+      "Files": null
+    }
+  },
+  "Firewall": {
+    "ASBlacklist": true,
+    "Whitelist": [
+      "10.20.0.0/16",
+      "10.20.25.254/32"
+    ],
+    "WGPort": 22891,
+    "RealityPort": 443,
+    "LifelinePort": 0,
+    "PublicTCPPorts": null,
+    "PublicUDPPorts": null
+  },
+  "Routing": {
+    "EgressInterface": "wgcf",
+    "DirectCIDRs": [
+      "10.0.0.0/8",
+      "192.168.0.0/16",
+      "10.20.25.254/32"
+    ],
+    "MasterIP": "203.0.113.1",
+    "FwMark": 0,
+    "ClientCIDR": "",
+    "RealityEgressMark": 0,
+    "LifelineCIDR": ""
+  },
+  "Exporters": {
+    "Node": true,
+    "WG": true,
+    "WARP": true
+  },
+  "Master": null,
+  "WARPMTU": 0,
+  "EgressThroughputMinBps": 256000,
+  "EgressThroughputProbeURL": "",
+  "EnabledTransports": [
+    "awg",
+    "reality-xhttp"
+  ],
+  "ActiveTransport": "awg",
+  "Reality": {
+    "ListenPort": 443,
+    "UUID": "6f723a11-7e03-456e-a620-ee3bdce35e19",
+    "ShortID": "bf4cbd2b",
+    "ServerName": "www.python.org",
+    "Dest": "www.python.org:443",
+    "XHTTPPath": "/bf4cbd2b",
+    "XHTTPMode": "packet-up",
+    "Mode": "",
+    "AllowEmptySNI": false,
+    "AllowIPv6": false,
+    "Image": "ghcr.io/xtls/xray-core:26.6.22"
+  },
+  "Lifeline": null,
+  "Hardening": {
+    "SSHD": true,
+    "Fail2ban": true
+  },
+  "Decommission": false
+}

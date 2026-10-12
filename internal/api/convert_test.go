@@ -458,3 +458,30 @@ func TestExitInitiatedFieldsRoundTrip(t *testing.T) {
 		t.Fatalf("NodeStatus.AWGMasterEndpoint = %q after round trip", st.AWGMasterEndpoint)
 	}
 }
+
+func TestMasterPeersRoundTrip(t *testing.T) {
+	hs := time.Unix(1_800_000_000, 0).UTC()
+	in := domain.NodeStatus{
+		State: domain.StateReady,
+		MasterPeers: []domain.MasterPeerStatus{
+			{PublicKey: "keyA", Endpoint: "203.0.113.1:23456", LastHandshake: hs},
+			{PublicKey: "keyB"}, // never handshaken, no endpoint
+		},
+	}
+	out := StatusFromProto("exit-de-1", StatusToProto(in))
+	if len(out.MasterPeers) != 2 {
+		t.Fatalf("master peers = %d, want 2", len(out.MasterPeers))
+	}
+	if got := out.MasterPeers[0]; got.PublicKey != "keyA" || got.Endpoint != "203.0.113.1:23456" || !got.LastHandshake.Equal(hs) {
+		t.Errorf("first peer = %+v", got)
+	}
+	if got := out.MasterPeers[1]; got.PublicKey != "keyB" || got.Endpoint != "" || !got.LastHandshake.IsZero() {
+		t.Errorf("second peer = %+v, want a key and nothing else", got)
+	}
+	if p, ok := out.MasterPeer("keyB"); !ok || p.PublicKey != "keyB" {
+		t.Errorf("MasterPeer(keyB) = %+v, %v", p, ok)
+	}
+	if _, ok := out.MasterPeer("nope"); ok {
+		t.Error("an unknown key must not resolve to a peer")
+	}
+}

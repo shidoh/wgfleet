@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -221,5 +222,82 @@ func TestCheckConfigHonoursTheStoreOverride(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "no-such-dir", "state.db")
 	if err := checkManifest(p, missing); err == nil {
 		t.Error("--store was accepted and then ignored")
+	}
+}
+
+// The anchor label and the slots decide every address and every key derivation
+// on the exits, and nothing detects one that changed between restarts. The check
+// prints them, so the operator can compare by eye before applying.
+func TestCheckConfigPrintsTheMasterModel(t *testing.T) {
+	two := config.FleetSection{
+		InterfaceAnchor: "master-xa-1",
+		MgmtSubnet:      "10.20.0.0/16",
+		Masters: []config.MasterConfig{
+			{Name: "master-xa-1", Slot: 0},
+			{Name: "master-xa-2", Slot: 3},
+		},
+	}
+	cases := []struct {
+		name    string
+		mutate  func(*config.FleetSection)
+		want    []string
+		wantNot []string
+	}{
+		{"two masters", func(*config.FleetSection) {},
+			[]string{"anchor   master-xa-1", "base     master-xa-1", "master   master-xa-1  slot 0", "master   master-xa-2  slot 3"},
+			[]string{"warning"}},
+		{"the base master is gone", func(f *config.FleetSection) { f.Masters = f.Masters[1:] },
+			[]string{"anchor   master-xa-1", "base     none", "master   master-xa-2  slot 3"},
+			[]string{"master   master-xa-1", "warning"}},
+		{"one master, nothing declared", func(f *config.FleetSection) {
+			f.Masters, f.InterfaceAnchor, f.MgmtSubnet = f.Masters[:1], "", ""
+		},
+			[]string{"anchor   master-xa-1", "base     master-xa-1", "master   master-xa-1  slot 0"},
+			[]string{"warning"}},
+		{"several masters without a mgmt subnet", func(f *config.FleetSection) { f.MgmtSubnet = "" },
+			[]string{"warning: fleet.mgmt_subnet is not set", "every exit"}, nil},
+		{"no masters", func(f *config.FleetSection) { f.Masters, f.InterfaceAnchor = nil, "" },
+			[]string{"anchor   none", "base     none"}, []string{"master   "}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := two
+			f.Masters = append([]config.MasterConfig(nil), two.Masters...)
+			c.mutate(&f)
+			var out bytes.Buffer
+			printMasterModel(&out, f)
+			for _, w := range c.want {
+				if !strings.Contains(out.String(), w) {
+					t.Errorf("output lacks %q:\n%s", w, out.String())
+				}
+			}
+			for _, w := range c.wantNot {
+				if strings.Contains(out.String(), w) {
+					t.Errorf("output has %q:\n%s", w, out.String())
+				}
+			}
+		})
+	}
+}
+
+// More direct rules than an exit can hold is said by the check and by the
+// startup log, from one list — and is not a reason to refuse the manifest.
+func TestManifestWarningsCarryTheDirectRuleCount(t *testing.T) {
+	cidrs := make([]string, 80)
+	for i := range cidrs {
+		cidrs[i] = fmt.Sprintf("10.%d.0.0/16", i)
+	}
+	cfg := config.ControllerConfig{Fleet: config.FleetSection{
+		MgmtSubnet: "10.200.0.0/24",
+		Masters:    []config.MasterConfig{{Name: "master-xa-1", Routing: config.MasterRouting{DirectCIDRs: cidrs}}},
+		Exits:      []config.ExitConfig{{Name: "exit-de-1", AddressPool: "10.81.0.0/24", Egress: "warp"}},
+	}}
+	warns := manifestWarnings(cfg)
+	if len(warns) != 1 || !strings.Contains(warns[0], "81 direct rules") {
+		t.Fatalf("warnings = %q, want the one about 81 direct rules", warns)
+	}
+	cfg.Fleet.Masters[0].Routing.DirectCIDRs = cidrs[:10]
+	if warns := manifestWarnings(cfg); len(warns) != 0 {
+		t.Errorf("a manifest under the cap was warned about: %q", warns)
 	}
 }

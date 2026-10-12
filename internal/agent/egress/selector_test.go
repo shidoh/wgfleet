@@ -137,3 +137,41 @@ func TestEffectiveSpec(t *testing.T) {
 		t.Errorf("warp active must route via wgcf, got %q", eff.Routing.EgressInterface)
 	}
 }
+
+// The operator moved the exit from direct to WARP in the manifest. The selector
+// still held "direct" from the old chain and read it as a fallback it was failed
+// over to — and stayed there for as long as the recovery probe did not pass, on
+// an egress the manifest no longer lists. Found on the stand 2026-10-09: the exit
+// ran direct until its agent was restarted.
+func TestSelectorDropsAnActiveEgressTheChainNoLongerLists(t *testing.T) {
+	ctx := context.Background()
+	never := func(context.Context) bool { return false }
+	var s Selector
+	if got := s.Step(ctx, []domain.EgressMethod{domain.EgressDirect}, "", false, never); got != domain.EgressDirect {
+		t.Fatalf("active = %q, want direct", got)
+	}
+	warpOnly := []domain.EgressMethod{domain.EgressWARP}
+	if got := s.Active(warpOnly); got != domain.EgressWARP {
+		t.Errorf("Active = %q after the chain became [warp], want warp", got)
+	}
+	if got := s.Step(ctx, warpOnly, "", false, never); got != domain.EgressWARP {
+		t.Errorf("Step = %q after the chain became [warp], want warp", got)
+	}
+}
+
+// A fallback the chain still lists is a real failover and is kept.
+func TestSelectorKeepsAFallbackTheChainStillLists(t *testing.T) {
+	ctx := context.Background()
+	never := func(context.Context) bool { return false }
+	chain := []domain.EgressMethod{domain.EgressWARP, domain.EgressDirect}
+	var s Selector
+	if got := s.Step(ctx, chain, domain.EgressReachBlocked, false, never); got != domain.EgressDirect {
+		t.Fatalf("active = %q after a block, want direct", got)
+	}
+	if got := s.Active(chain); got != domain.EgressDirect {
+		t.Errorf("Active = %q, want the fallback kept", got)
+	}
+	if got := s.Step(ctx, chain, "", false, never); got != domain.EgressDirect {
+		t.Errorf("Step = %q, want the fallback kept", got)
+	}
+}

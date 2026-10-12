@@ -8,17 +8,9 @@ import (
 // Tunnel addressing convention for a master↔exit link inside the exit's pool:
 // the exit (server) takes host .1, the master (client) takes host .2. Keeping
 // this deterministic means the controller can render both ends without an IPAM.
-const (
-	exitHostIndex   = 1
-	masterHostIndex = 2
-	// masterPerTunnelHostIndex is the master's address when it dials with its
-	// PER-TUNNEL identity (ADR-0030). It must differ from masterHostIndex: WireGuard
-	// AllowedIPs is a routing trie, so the legacy peer and the per-tunnel peer cannot
-	// both claim host .2 — the second one configured would silently steal the /32 and
-	// the first would lose its return path. A distinct host makes the two peers
-	// coexist during the migration's `dual`/`switch` phases.
-	masterPerTunnelHostIndex = 3
-)
+const exitHostIndex = 1
+
+// A master's hosts follow its slot: domain.MasterTunnelHostIndex.
 
 // nthHost returns the nth usable host address in cidr (1-based; n=1 is the
 // first host after the network address). It returns a host-only string such as

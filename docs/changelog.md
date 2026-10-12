@@ -6,8 +6,41 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 ## Unreleased
 
+### Added
+
+- Several masters: `fleet.masters` accepts more than one. Each master is a peer on every exit's single AmneziaWG interface, on the addresses of its `slot`. With two or more, `fleet.interface_anchor` is required — the validation message gives the value that keeps existing tunnels as they are.
+- `fleet.interface_anchor` and `fleet.masters[].slot`. A fleet with one master sets neither and renders as before.
+- The console shows every master with its own view of the exits.
+- An exit reports each master peer's endpoint and handshake (wire 13). Upgrade the controller first.
+
+### Changed
+
+- Wire contract 13. Upgrade the controller first, then the agents; an exit on an older agent keeps serving the master in slot 0 only.
+- An exit on the new agent edits its master peers in place and checks them against the kernel on every pass; adding or removing a master no longer restarts the interface. An exit on an older agent still restarts it.
+- A reserve (lifeline) config is offered only to clients of the master in slot 0.
+- `transports.awg.exit_initiated` works with several masters: the state is kept per master and exit. Every master needs a public IPv4; `master_port` applies to the master in slot 0.
+- The rolling upgrade rolls an exit first as "reserve" only when every master lists it in `routing.reserve_exits`.
+- The "no exit in rotation" alert is per master (label `node`); tunnel alerts join on master and exit.
+- A direct route coming or going on an exit on the new agent no longer flushes all of conntrack: only the flows to that destination are dropped. An exit on an older agent still flushes everything.
+- Two masters with one WireGuard key (a master built from a copy of another's disk): the master that registers the key second is refused at registration. If both keys are already stored, the exits peer the earlier master in manifest order; the other one is not peered and gets no AmneziaWG tunnel, and the controller logs `two masters present the same WireGuard key`. Before, the two took each other's tunnel down on every exit. Generate a new key on the copy.
+- A master removed from the manifest is listed on the fleet page under NOT IN MANIFEST and can be deleted from its node page. The delete removes its client credentials (WireGuard and VLESS) and their device attachments. A master that is still in the manifest cannot be deleted.
+- The address an exit confirmed for `exit_initiated` is stored. A controller restart no longer disarms the master's gate or restarts the wait before a silent tunnel's port is moved.
+- A store read error while rendering an `exit_initiated` tunnel fails the render; the node keeps its last spec. Before, the tunnel was handed its first port again.
+- `--check-config` prints the anchor label, the base master and every master's slot, and warns when several masters run without `fleet.mgmt_subnet`.
+- The manifest is refused when `fleet.interface_anchor` is `clients`, `lifeline` or holds whitespace or `|`.
+- `--check-config` and the controller's startup log warn when an exit is given more than 80 direct rules (`routing.direct_cidrs` of the master in slot 0, the management CIDRs and one per other master). The manifest still loads; an exit with WARP egress cannot apply its routing past that count.
+- The controller logs which master holds an exit at AmneziaWG 2.0 when `awg3` is on.
+
 ### Fixed
 
+- `exit_initiated`: a tunnel could stay off the master's pinned port with the gate reading armed — after the pin was armed over a running tunnel, after the pinned port moved, or when the exit's endpoint still named the port the master used before the pin. The master agent waited for a knock the exit could not send while the master kept answering from the old port. The master now refuses any flow the exit opens from its AmneziaWG port and deletes a flow off the pinned port at once; the tunnel is back on the pinned port within one exit agent pass (about 30 s without traffic through that exit).
+- A controller restart no longer returns an auto-suspended exit to the load balancer. The suspension is stored; before, the exit went back into rotation at once and was suspended again five minutes later, and each of the two changes restarted mihomo on every master, dropping client connections. The first upgrade to this release still returns suspended exits once.
+- `exit_initiated`: switching an exit back from REALITY to AmneziaWG, or an exit returning from auto-suspend, no longer moves the master's pinned port at once. The tunnel had been idle, and its stale handshake was read as a silent port; it now gets five minutes to handshake first.
+- A controller that cannot read its own state while rendering a node's spec (a database read error) now answers the agent as unavailable, and the agent keeps reconciling on its last spec. Before, the agent took it as a refusal: the node showed Error and applied nothing that pass. The controller journal now has a line for every spec it could not render (`spec not rendered`).
+- A decommissioned node no longer rebuilds itself when the controller is unreachable. Its agent kept the last live spec on disk and converged on it whenever the controller did not answer; the cached spec is now removed once the teardown completes.
+- An exit with WARP egress kept the `ip rule` of a direct destination that left its list (a master removed from the manifest, a shortened `direct_cidrs`): client traffic to that address went on leaving direct. The rule is now removed. A rule left behind earlier is removed on the next agent pass.
+- Re-provisioning a node that is already running (`--provision`, the Provision button) no longer leaves it behind the bootstrap firewall. Before, when the node's own ruleset had not changed, the bootstrap table stayed loaded and dropped every new connection except SSH and the overlay — on the stand a master stopped answering new clients — until the ruleset next changed or the node rebooted. The agent now removes it within one pass.
+- Changing an exit's `egress` in the manifest takes effect without restarting its agent. Before, the exit could stay on the egress the manifest no longer listed.
 - The device profile for mihomo apps gives the AmneziaWG proxy `allowed-ips: 0.0.0.0/0` instead of the split list of the `.conf`. Before, with `client_awg.exclude_from_tunnel` set, a `fleet.client_sites` network was unreachable while the device was on AmneziaWG, and `<site>-auto` fell to `DIRECT` away from the site. Update the profile in the app to pick it up.
 - An agent upgrade, rollback or re-provision that cannot open SSH to a node's `ssh.host` tries the node's `mgmt_addr` with the same port, user and key. Before, an exit whose public SSH path was cut failed the rollout with `ssh: handshake failed: i/o timeout` while it stayed reachable over the mgmt network.
 - The ROLLING AGENT UPDATE panel in the console stays open once opened. Before, the page's refresh closed it every 15 seconds and at the end of a run.

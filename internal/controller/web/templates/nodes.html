@@ -64,54 +64,91 @@
 </div>
 
 {{with .Topology}}
-{{/* The fleet topology is the single fleet view: a master trunk row, and beneath
-     it the exits it balances, grouped into carrying/reserve rows joined by a CSS
-     rail. Every per-node field the old flat table showed is folded into the
+{{/* The fleet topology is the single fleet view: one block per master of the
+     manifest, each a trunk row and beneath it the exits that master balances,
+     grouped into carrying/not-carrying rows joined by a CSS rail, by THAT master's
+     own report. Every per-node field the old flat table showed is folded into the
      trunk/rows. Both the trunk and every row are links to the node detail page. */}}
 <div class="topo-panel">
-  {{with .Master}}
-  <a class="topo-trunk" href="/nodes/{{.ID}}">
-    <span class="role master">master</span>
-    <span class="topo-trunk-name">{{.Name}}</span>
-    <span class="state-pill {{lower .State}}"><span class="led"></span>{{.State}}</span>
-    {{if .Region}}<span class="topo-tag">{{.Region}}</span>{{end}}
-    {{template "node-subbadges" .}}
-    <span class="topo-spacer"></span>
-    <span class="addr topo-trunk-addr">
-      {{if .MgmtAddr}}<span class="addr-tag" title="Mgmt (ZeroTier) address">MGMT</span><span class="addr-val">{{.MgmtAddr}}</span>{{end}}
-      <span class="addr-tag" title="Node public IP">PUBLIC</span><span class="addr-val">{{or .PublicIP "—"}}</span>
-    </span>
-    <span class="topo-trunk-bal"><span class="statusdot"></span>balancing {{.Balancing}} exit{{if ne .Balancing 1}}s{{end}}</span>
-    <span class="topo-card-foot">
-      <span>handshake {{if and .HasStatus (not .LastHandshake.IsZero)}}{{relTime .LastHandshake}}{{else}}—{{end}}</span>
-      <span class="foot-sep">·</span>
-      <span>seen {{relTime .LastSeen}}</span>
-    </span>
-  </a>
-  {{end}}
+  {{range .Masters}}
+  <div class="topo-master">
+    {{with .Master}}
+    <a class="topo-trunk" href="/nodes/{{.ID}}">
+      <span class="role master">master</span>
+      <span class="topo-trunk-name">{{.Name}}</span>
+      <span class="state-pill {{lower .State}}"><span class="led"></span>{{.State}}</span>
+      {{if .Region}}<span class="topo-tag">{{.Region}}</span>{{end}}
+      {{template "node-subbadges" .}}
+      <span class="topo-spacer"></span>
+      <span class="addr topo-trunk-addr">
+        {{if .MgmtAddr}}<span class="addr-tag" title="Mgmt (ZeroTier) address">MGMT</span><span class="addr-val">{{.MgmtAddr}}</span>{{end}}
+        <span class="addr-tag" title="Node public IP">PUBLIC</span><span class="addr-val">{{or .PublicIP "—"}}</span>
+      </span>
+      <span class="topo-trunk-bal"><span class="statusdot"></span>balancing {{.Balancing}} exit{{if ne .Balancing 1}}s{{end}}</span>
+      <span class="topo-card-foot">
+        <span>handshake {{if and .HasStatus (not .LastHandshake.IsZero)}}{{relTime .LastHandshake}}{{else}}—{{end}}</span>
+        <span class="foot-sep">·</span>
+        <span>seen {{relTime .LastSeen}}</span>
+      </span>
+    </a>
+    {{end}}
 
-  {{/* One block per non-empty group. The carrying block's rail carries the
-       animated overlay, so "how far traffic reaches" is read from the grouping
-       itself — no measurement, no JS. */}}
-  {{with .Carrying}}
-  <div class="topo-grp"><span class="topo-grp-lbl">CARRYING</span><span class="topo-grp-line"></span><span class="topo-grp-n">{{len .}}</span></div>
+    {{/* One block per non-empty group. The carrying block's rail carries the
+         animated overlay, so "how far traffic reaches" is read from the grouping
+         itself — no measurement, no JS. */}}
+    {{with .Carrying}}
+    <div class="topo-grp"><span class="topo-grp-lbl">CARRYING</span><span class="topo-grp-line"></span><span class="topo-grp-n">{{len .}}</span></div>
+    <div class="topo-group">
+      <div class="topo-rail" aria-hidden="true"></div>
+      <div class="topo-rail is-live" aria-hidden="true"></div>
+      {{range .}}{{template "topo-row" .}}{{end}}
+    </div>
+    {{end}}
+
+    {{with .Reserve}}
+    {{/* Everything this master is NOT routing through right now: held out by its
+         probes, drained, errored, decommissioning. It used to say RESERVE, which is a
+         manifest tier (routing.reserve_exits) and not what this group is — a fleet
+         with no reserve tier saw its only, failing exit filed under RESERVE and read
+         that as a failover it had not asked for. */}}
+    <div class="topo-grp"><span class="topo-grp-lbl" title="Exits this master is not routing through right now — held out after failed probes, drained, or down. Not a tier.">NOT CARRYING</span><span class="topo-grp-line"></span><span class="topo-grp-n">{{len .}}</span></div>
+    <div class="topo-group">
+      <div class="topo-rail" aria-hidden="true"></div>
+      {{range .}}{{template "topo-row" .}}{{end}}
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+  {{with .Unattached}}
   <div class="topo-group">
     <div class="topo-rail" aria-hidden="true"></div>
-    <div class="topo-rail is-live" aria-hidden="true"></div>
     {{range .}}{{template "topo-row" .}}{{end}}
   </div>
   {{end}}
-
-  {{with .Reserve}}
-  {{/* Everything the master is NOT routing through right now: held out by its
-       probes, drained, errored, decommissioning. It used to say RESERVE, which is a
-       manifest tier (routing.reserve_exits) and not what this group is — a fleet
-       with no reserve tier saw its only, failing exit filed under RESERVE and read
-       that as a failover it had not asked for. */}}
-  <div class="topo-grp"><span class="topo-grp-lbl" title="Exits the master is not routing through right now — held out after failed probes, drained, or down. Not a tier.">NOT CARRYING</span><span class="topo-grp-line"></span><span class="topo-grp-n">{{len .}}</span></div>
+  {{with .Undeclared}}
+  {{/* Store rows with the master role that the manifest does not declare — a
+       master that was removed from it. No trunk and no exits: it balances nothing.
+       It is here so the row can be reached and deleted; nothing else on the
+       console lists it. Absent when there is none, which is every ordinary fleet. */}}
+  <div class="topo-grp"><span class="topo-grp-lbl" title="Registered as a master but not declared in the manifest. Delete it from its page once it is gone for good.">NOT IN MANIFEST</span><span class="topo-grp-line"></span><span class="topo-grp-n">{{len .}}</span></div>
   <div class="topo-group">
-    <div class="topo-rail" aria-hidden="true"></div>
-    {{range .}}{{template "topo-row" .}}{{end}}
+    {{range .}}
+    <a class="topo-row" href="/nodes/{{.ID}}">
+      <span class="topo-row-name">{{.Name}}</span>
+      <span class="topo-row-lines">
+        <span class="addr">
+          {{if .MgmtAddr}}<span class="addr-tag" title="Mgmt (ZeroTier) address">MGMT</span><span class="addr-val">{{.MgmtAddr}}</span>{{end}}
+          <span class="addr-tag" title="Node public IP">PUBLIC</span><span class="addr-val">{{or .PublicIP "—"}}</span>
+        </span>
+        <span class="topo-card-foot">
+          <span>seen {{relTime .LastSeen}}</span>
+        </span>
+      </span>
+      <span class="topo-spacer"></span>
+      <span class="role master">master</span>
+      <span class="state-pill {{lower .State}}"><span class="led"></span>{{.State}}</span>
+    </a>
+    {{end}}
   </div>
   {{end}}
 </div>

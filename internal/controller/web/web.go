@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -83,6 +84,8 @@ type SpecRenderer interface {
 	// exits declare one, and the address a client dials for it. Both feed
 	// clientcfg's reserve-config builder — see clientcfg.Source.
 	LifelineExits(ctx context.Context) ([]string, error)
+	// LifelineMaster names the master whose clients the reserve interfaces carry.
+	LifelineMaster(ctx context.Context) (string, error)
 	ExitEndpointHost(ctx context.Context, exitID string) (string, error)
 }
 
@@ -671,17 +674,23 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		}
 		node = mn
 	}
-	if node.Role != domain.RoleExit {
+	// The one master that may go: registered, and no longer declared. It is not
+	// the client gateway of anything any more, and left in the store it is a row
+	// the fleet page cannot place and the staleness alerts never stop firing for.
+	// The drain→decommission order does not apply to it — that lifecycle is the
+	// exits', and both steps are refused for every master.
+	leftover := !unregistered && node.Role == domain.RoleMaster && h.undeclaredMaster(id)
+	if node.Role != domain.RoleExit && !leftover {
 		h.redirectErr(w, r, "/nodes/"+id, "delete refused",
 			fmt.Errorf("only exits can be deleted: the master is the client gateway and load balancer, and this controller runs beside it"))
 		return
 	}
-	if !node.Decommission && !unregistered {
+	if !leftover && !node.Decommission && !unregistered {
 		h.redirectErr(w, r, "/nodes/"+id, "delete refused",
 			fmt.Errorf("decommission and tear the node down first, then delete"))
 		return
 	}
-	if h.needsConfirmation(w, r, confirmView{
+	confirm := confirmView{
 		Title:        "Delete " + id,
 		Heading:      "Delete " + id + "?",
 		Consequence:  "This removes the exit from the fleet inventory and from the manifest permanently. The master stops peering with it and its tunnel keys are dropped. No client credentials live on an exit, so nobody's config is deleted by this.",
@@ -689,7 +698,17 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		Action:       "/nodes/" + id + "/delete",
 		ConfirmLabel: "Delete " + id,
 		CancelHref:   "/nodes/" + id,
-	}) {
+	}
+	if leftover {
+		// Worded from what the store deletes with a master's row (schema: node_status,
+		// node_tunnel_keys, client_vless_credentials, client_wg_credentials — all ON
+		// DELETE CASCADE — and awg_pin_confirmed, by DeleteNode itself; the
+		// awg_pin_rotation generations are kept on purpose). A device is not a row of the master and stays; what goes
+		// is each credential it held on this master, and with it the attachment.
+		confirm.Consequence = "This master is registered but not declared in the manifest. Deleting it removes it from the fleet inventory permanently, together with all client credentials issued on it, WireGuard and VLESS, and their attachments to devices. The devices themselves stay, without their credential on this master."
+		confirm.Detail = "Its last status report, its per-tunnel keys and the addresses exits confirmed for it go too; the port generations of its tunnels are kept. The configs those clients hold stop being re-issuable from the console; the only way back is a backup taken before this. If the box is still running its agent, its registration is refused from now on. The node's own files are not touched, and the manifest is not edited — it does not declare this master. Nothing here can be undone from the console."
+	}
+	if h.needsConfirmation(w, r, confirm) {
 		return
 	}
 	// Store row first, declaration second, and a missing row is not an error. That
@@ -1011,18 +1030,29 @@ type listData struct {
 // rows joined by a CSS rail. Each row carries the full per-node inventory + live
 // operational signals the table used to show and links to its detail page.
 // Latency and the carrying flag come from the master's latest status report
-// (ExitHealth, mihomo's view of the tunnels). nil only when the fleet is empty
-// (the template then shows the empty state). Master is nil for a degenerate
-// no-master fleet — the exits still render so no node is hidden.
+// (ExitHealth, mihomo's view of the tunnels), per master. nil only when the fleet
+// is empty (the template then shows the empty state). A degenerate no-master
+// fleet keeps its exits in Unattached — no node is hidden.
 type topology struct {
-	Master *topoMaster // the load-balancer hub; nil when there is no master node
+	Masters []topoMasterGroup // one block per master, manifest order
+	// Unattached holds the exits when there is no master to show them under.
+	Unattached []topoExit
+	// Undeclared holds the nodes registered as masters that the manifest does not
+	// declare — a master taken out of the manifest whose store row is still there.
+	// They take no trunk and no exits; they are listed so the row can be found and
+	// deleted, instead of ageing in the store where only the alerts can see it.
+	Undeclared []topoCard
+}
 
-	// Carrying holds the exits currently carrying traffic, Reserve everything
-	// else; both sorted by lowercased name. Drained/errored/decommissioning nodes
-	// are by definition not carrying, so they land in Reserve — there is no third
-	// group. The split is what makes the rendered bus's live segment fall out of
-	// the grouping instead of needing measurement.
-	Carrying []topoExit
+// topoMasterGroup is one master's block: its trunk and the exits split by what
+// THAT master's own report says. Carrying holds the exits currently carrying
+// traffic, Reserve everything else; both sorted by lowercased name.
+// Drained/errored/decommissioning nodes are by definition not carrying, so they
+// land in Reserve — there is no third group. The split is what makes the rendered
+// bus's live segment fall out of the grouping instead of needing measurement.
+type topoMasterGroup struct {
+	Master   topoMaster
+	Carrying []topoExit // by THIS master's report
 	Reserve  []topoExit
 }
 
@@ -1338,6 +1368,9 @@ type nodeData struct {
 	// found". Gating Delete on it made the ghost of a destroyed server permanently
 	// undeletable from the console.
 	CanDelete bool
+	// UndeclaredMaster: registered as a master, and the manifest does not declare
+	// it. The one master the page offers Delete for.
+	UndeclaredMaster bool
 	// DecommissionStuck: a decommission was requested but the node is not
 	// reporting, so no agent will ever carry it out. Delete is the way out.
 	DecommissionStuck bool
@@ -1398,7 +1431,8 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 		node = backfillFromManifest(node, mn)
 	}
 	user, _ := h.currentUser(r)
-	data := nodeData{Title: node.Name, NodeCount: h.fleetCount(r.Context()), User: user, Node: node, CSRF: h.csrf, CanDelete: node.Decommission || unregistered, Unregistered: unregistered, CanDecommission: node.Drain && !node.Decommission, Flash: h.takeFlash(w, r), MetricsURL: metricsURL(node)}
+	undeclared := !unregistered && node.Role == domain.RoleMaster && h.undeclaredMaster(id)
+	data := nodeData{Title: node.Name, NodeCount: h.fleetCount(r.Context()), User: user, Node: node, CSRF: h.csrf, CanDelete: node.Decommission || unregistered || undeclared, UndeclaredMaster: undeclared, Unregistered: unregistered, CanDecommission: node.Drain && !node.Decommission, Flash: h.takeFlash(w, r), MetricsURL: metricsURL(node)}
 	if node.WireVersion != 0 {
 		if compat := api.CheckWire(node.WireVersion); compat != api.WireCompatible {
 			data.WireSkew = api.IncompatibilityDetail(compat, node.WireVersion)
@@ -1423,6 +1457,9 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 		default:
 			data.WGClientCount = len(clients)
 		}
+	} else if undeclared {
+		// Nothing to count with. "0 credentials" would be a claim, not a reading.
+		data.WGClientCountUnknown = true
 	}
 	// Render the desired spec once: for the preview text and, for a master, the
 	// wg-easy admin UI link.
@@ -1547,38 +1584,105 @@ func (h *Handler) manifestNode(id string) (domain.Node, bool) {
 	return domain.Node{}, false
 }
 
-// buildTopology assembles the fleet-list routing diagram from the joined rows: the
-// (first) master, the exits it balances, and each exit's live latency/carrying flag
-// taken from the master's latest ExitHealth report. It returns nil only for an
-// empty fleet (the template then shows the empty state). With no master it still
-// returns the exits (Master nil) so removing the flat table hides no node; with a
-// master but no exits it returns just the master. Read-only.
+// buildTopology assembles the fleet-list routing diagram from the joined rows: one
+// block per master the manifest declares (manifest order), each with the exits it
+// balances and each exit's live latency/carrying flag taken from THAT master's
+// latest ExitHealth report. It returns nil only for an empty fleet (the template
+// then shows the empty state). With no declared master it still returns the exits,
+// under Unattached, so removing the flat table hides no node; a master with no
+// exits is just its block. Read-only.
 func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
 	if len(rows) == 0 {
 		return nil
 	}
-	var masterRow *nodeRow
+	byName := make(map[string]nodeRow, len(rows))
 	var exits []nodeRow
-	for i := range rows {
-		switch rows[i].Role {
-		case domain.RoleMaster:
-			if masterRow == nil {
-				masterRow = &rows[i]
-			}
-		case domain.RoleExit:
-			exits = append(exits, rows[i])
+	for _, r := range rows {
+		byName[r.Name] = r
+		if r.Role == domain.RoleExit {
+			exits = append(exits, r)
 		}
 	}
 	topo := &topology{}
-	// The master's view of each tunnel (latency + which one carries traffic) is only
-	// available from a master's status report.
-	var health []domain.ExitTunnelHealth
-	if masterRow != nil {
-		if st, err := h.store.GetStatus(ctx, masterRow.ID); err == nil {
+	for _, r := range rows {
+		if r.Role == domain.RoleMaster && h.undeclaredMaster(r.Name) {
+			topo.Undeclared = append(topo.Undeclared, cardOf(r))
+		}
+	}
+	for _, name := range h.fleetMasters(rows) {
+		row, ok := byName[name]
+		if !ok {
+			continue // declared, not yet registered: nothing to show
+		}
+		// A master's view of each tunnel (latency, which one carries traffic) is
+		// only in that master's own status report.
+		var health []domain.ExitTunnelHealth
+		if st, err := h.store.GetStatus(ctx, row.ID); err == nil {
 			health = st.ExitHealth
 		}
-		topo.Master = &topoMaster{topoCard: cardOf(*masterRow), Balancing: len(exits)}
+		carrying, reserve := partitionExits(exits, health)
+		topo.Masters = append(topo.Masters, topoMasterGroup{
+			Master:   topoMaster{topoCard: cardOf(row), Balancing: len(exits)},
+			Carrying: carrying,
+			Reserve:  reserve,
+		})
 	}
+	if len(topo.Masters) == 0 {
+		// No master to hang them under: the exits still render, so no node is hidden.
+		_, topo.Unattached = partitionExits(exits, nil)
+	}
+	return topo
+}
+
+// fleetMasters is the fleet's masters in the order to show them. The MANIFEST
+// decides, in its own order: a node that merely registered itself with the master
+// role is not one of ours. Without a manifest source (a handler built without
+// SetDevices) the store's master rows stand in, in row order.
+func (h *Handler) fleetMasters(rows []nodeRow) []string {
+	if names, ok := h.manifestMasters(); ok {
+		return names
+	}
+	var names []string
+	for _, r := range rows {
+		if r.Role == domain.RoleMaster {
+			names = append(names, r.Name)
+		}
+	}
+	return names
+}
+
+// manifestMasters is the masters the manifest declares, in its order. ok=false
+// when there is no manifest to ask — and then nothing may be concluded from a
+// master's absence.
+func (h *Handler) manifestMasters() ([]string, bool) {
+	if h.devices == nil {
+		return nil, false
+	}
+	names := h.devices.Masters()
+	return names, len(names) > 0
+}
+
+// undeclaredMaster reports whether a node registered as a master is known NOT to
+// be in the manifest. It is the one master the console may delete: the others
+// are client gateways of this fleet, and with no manifest to check against every
+// master is treated as one of them.
+//
+// The caller has checked the store row's role, and that is only what the node
+// said about itself. So the manifest must not declare the node AT ALL, in any
+// role: a declared exit whose row says master is still an exit of this fleet,
+// and deleting it down this path would skip the drain→decommission order.
+func (h *Handler) undeclaredMaster(name string) bool {
+	names, ok := h.manifestMasters()
+	if !ok || slices.Contains(names, name) {
+		return false
+	}
+	_, declared := h.manifestNode(name)
+	return !declared
+}
+
+// partitionExits splits the exits into carrying and reserve by one master's
+// health report, each sorted by lowercased name.
+func partitionExits(exits []nodeRow, health []domain.ExitTunnelHealth) (carrying, reserve []topoExit) {
 	for _, ex := range exits {
 		te := topoExit{
 			topoCard:      cardOf(ex),
@@ -1586,8 +1690,8 @@ func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
 			Transport:     ex.Transport,
 			DualTransport: ex.DualTransport,
 		}
-		if d, carrying, ok := exitDelay(health, ex.Name); ok {
-			te.Carrying = carrying
+		if d, isCarrying, ok := exitDelay(health, ex.Name); ok {
+			te.Carrying = isCarrying
 			te.Latency = formatDelay(d)
 			te.Slow = d >= slowExitLatency
 		}
@@ -1606,19 +1710,19 @@ func (h *Handler) buildTopology(ctx context.Context, rows []nodeRow) *topology {
 			te.Unusable = !v.HeldOut && v.Probed > 0 && v.Reachable == 0
 		}
 		if te.Carrying {
-			topo.Carrying = append(topo.Carrying, te)
+			carrying = append(carrying, te)
 			continue
 		}
-		topo.Reserve = append(topo.Reserve, te)
+		reserve = append(reserve, te)
 	}
 	byName := func(s []topoExit) {
 		sort.SliceStable(s, func(a, b int) bool {
 			return strings.ToLower(s[a].Name) < strings.ToLower(s[b].Name)
 		})
 	}
-	byName(topo.Carrying)
-	byName(topo.Reserve)
-	return topo
+	byName(carrying)
+	byName(reserve)
+	return carrying, reserve
 }
 
 // exitDelay picks the most representative ExitHealth entry for an exit node from
@@ -1702,8 +1806,16 @@ func (h *Handler) exitHoldOf(ctx context.Context, node domain.Node) *exitHoldVie
 	if err != nil {
 		return nil
 	}
+	rows := make([]nodeRow, len(ns))
+	for i, n := range ns {
+		rows[i] = nodeRow{Node: n}
+	}
+	declared := make(map[string]bool)
+	for _, name := range h.fleetMasters(rows) {
+		declared[name] = true
+	}
 	for _, n := range ns {
-		if n.Role != domain.RoleMaster {
+		if !declared[n.Name] {
 			continue
 		}
 		st, err := h.store.GetStatus(ctx, n.ID)

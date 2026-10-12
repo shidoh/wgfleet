@@ -687,6 +687,299 @@ func TestAutoSuspendThroughputDegraded(t *testing.T) {
 	}
 }
 
+// suspendFleet is the two-exit fleet of TestAutoSuspendThroughputDegraded with
+// exit-de-2 already auto-suspended, and the pieces a test needs to go on from there.
+func suspendFleet(t *testing.T, clock *time.Time) (*Broker, store.Store, func(b *Broker, name string) bool) {
+	t.Helper()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	fleet := testFleet()
+	fleet.Exits = append(fleet.Exits, config.ExitConfig{Name: "exit-de-2", Egress: "warp", AddressPool: "10.82.0.0/24"})
+	b := New(st, fleet, slog.New(slog.NewTextHandler(io.Discard, nil)), WithClock(func() time.Time { return *clock }))
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+	seedNode(t, st, "exit-de-2", "10.20.0.6", "198.51.100.8", "bGm5lqV2yYt8m6Dl0sFhT4xQ0r9p7zX1cV2bN3mK4U=", domain.RoleExit)
+	drained := func(b *Broker, name string) bool {
+		t.Helper()
+		spec, err := b.RenderNodeSpec(context.Background(), "master-xa-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		x, ok := tunnelByName(spec.Master.ExitTunnels, name)
+		if !ok {
+			t.Fatalf("no tunnel %s", name)
+		}
+		return x.Drained
+	}
+	recordThroughputDegraded(t, st, "exit-de-1", true)
+	recordThroughputDegraded(t, st, "exit-de-2", false)
+	_ = drained(b, "exit-de-2")
+	*clock = clock.Add(AutoSuspendAfter + time.Second)
+	if !drained(b, "exit-de-2") {
+		t.Fatal("fixture: exit-de-2 was not auto-suspended")
+	}
+	return b, st, drained
+}
+
+// A controller restart must not change who is in the load balancer. The
+// suspension lived in the process: after a restart the suspended exit went
+// straight back into the group, clients rode a throttled exit for
+// AutoSuspendAfter, and then it was pulled again — two re-renders of every
+// master's mihomo, each a container restart that drops every client connection
+// (stand 2026-10-09: a client's download closed 25 s after the controller restarted).
+func TestAutoSuspendSurvivesAControllerRestart(t *testing.T) {
+	clock := time.Date(2026, 9, 7, 8, 30, 0, 0, time.UTC)
+	old, st, drained := suspendFleet(t, &clock)
+
+	restarted := New(st, old.fleet, slog.New(slog.NewTextHandler(io.Discard, nil)), WithClock(func() time.Time { return clock }))
+	if !drained(restarted, "exit-de-2") {
+		t.Fatal("the restart put a suspended exit back into the load balancer")
+	}
+	if drained(restarted, "exit-de-1") {
+		t.Fatal("the restart suspended the healthy exit")
+	}
+	// It still returns the usual way: AutoReleaseAfter of health, counted afresh.
+	recordThroughputDegraded(t, st, "exit-de-2", true)
+	_ = drained(restarted, "exit-de-2")
+	clock = clock.Add(AutoReleaseAfter - time.Second)
+	if !drained(restarted, "exit-de-2") {
+		t.Fatal("released before AutoReleaseAfter of health")
+	}
+	clock = clock.Add(2 * time.Second)
+	if drained(restarted, "exit-de-2") {
+		t.Fatal("not released after AutoReleaseAfter of health")
+	}
+	// And the release is durable too: a second restart does not resurrect it.
+	again := New(st, old.fleet, slog.New(slog.NewTextHandler(io.Discard, nil)), WithClock(func() time.Time { return clock }))
+	if drained(again, "exit-de-2") {
+		t.Fatal("a released exit came back suspended after a restart")
+	}
+}
+
+// The stored suspension could not be read: the controller must keep trying
+// rather than settle on "nothing is suspended" for the life of the process.
+func TestAutoSuspendRetriesAnUnreadableStore(t *testing.T) {
+	clock := time.Date(2026, 9, 7, 8, 30, 0, 0, time.UTC)
+	old, st, drained := suspendFleet(t, &clock)
+
+	flaky := &suspendReadFails{Store: st, fail: true}
+	restarted := New(flaky, old.fleet, slog.New(slog.NewTextHandler(io.Discard, nil)), WithClock(func() time.Time { return clock }))
+	// Unreadable: the render fails and the master keeps its last spec — it is not
+	// handed one with the suspended exit back in the group.
+	if _, err := restarted.RenderNodeSpec(context.Background(), "master-xa-1"); !errors.Is(err, store.ErrUnreadable) {
+		t.Fatalf("rendered the master without knowing what is suspended, or failed without saying the store was unreadable: %v", err)
+	}
+	flaky.fail = false
+	if !drained(restarted, "exit-de-2") {
+		t.Fatal("the suspension was not picked up once the store became readable")
+	}
+}
+
+// One status read that failed is not an exit that left the fleet. It used to drop
+// the exit from this pass's inventory, and with the suspension stored that now
+// deleted the stored row as well: a disk hiccup returned a suspended exit to the
+// balancer for good.
+func TestAutoSuspendOutlivesAFailedStatusRead(t *testing.T) {
+	clock := time.Date(2026, 9, 7, 8, 30, 0, 0, time.UTC)
+	old, st, drained := suspendFleet(t, &clock)
+
+	flaky := &statusReadFails{Store: st, node: "exit-de-2", fail: true}
+	b := New(flaky, old.fleet, slog.New(slog.NewTextHandler(io.Discard, nil)), WithClock(func() time.Time { return clock }))
+	if !drained(b, "exit-de-2") {
+		t.Fatal("a failed status read returned the suspended exit to the load balancer")
+	}
+	stored, err := st.ListAutoSuspended(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, kept := stored["exit-de-2"]; !kept {
+		t.Fatal("a failed status read deleted the stored suspension")
+	}
+	flaky.fail = false
+	if !drained(b, "exit-de-2") {
+		t.Fatal("the suspension was lost once the status became readable again")
+	}
+}
+
+// An exit that really is gone — out of the manifest's inventory — takes its
+// stored suspension with it.
+func TestAutoSuspendForgetsAnExitThatLeft(t *testing.T) {
+	clock := time.Date(2026, 9, 7, 8, 30, 0, 0, time.UTC)
+	b, st, drained := suspendFleet(t, &clock)
+	ctx := context.Background()
+	node, err := st.GetNode(ctx, "exit-de-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.Decommission = true
+	if err := st.UpsertNode(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	_ = drained(b, "exit-de-1")
+	stored, err := st.ListAutoSuspended(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 0 {
+		t.Fatalf("a decommissioned exit kept its stored suspension: %v", stored)
+	}
+}
+
+// The inventory itself could not be read: the suspended set stays what it was.
+// It used to come back empty — every suspended exit returned for one pass.
+func TestAutoSuspendKeepsTheSetOnAnUnreadableInventory(t *testing.T) {
+	clock := time.Date(2026, 9, 7, 8, 30, 0, 0, time.UTC)
+	old, st, _ := suspendFleet(t, &clock)
+	b := New(&nodeReadFails{Store: st, node: "exit-de-1"}, old.fleet, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithClock(func() time.Time { return clock }))
+	got, err := b.throughputAutoSuspend(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got["exit-de-2"] || len(got) != 1 {
+		t.Fatalf("suspended set on an unreadable inventory = %v, want exit-de-2 alone", got)
+	}
+}
+
+// A write that failed is retried on the next pass, in both directions. It used
+// to be logged once and dropped: the process stayed right and the store stayed
+// wrong until the next restart found out.
+func TestAutoSuspendRetriesAFailedWrite(t *testing.T) {
+	clock := time.Date(2026, 9, 7, 8, 30, 0, 0, time.UTC)
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	flaky := &suspendWriteFails{Store: st, fail: true}
+	fleet := testFleet()
+	fleet.Exits = append(fleet.Exits, config.ExitConfig{Name: "exit-de-2", Egress: "warp", AddressPool: "10.82.0.0/24"})
+	b := New(flaky, fleet, slog.New(slog.NewTextHandler(io.Discard, nil)), WithClock(func() time.Time { return clock }))
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+	seedNode(t, st, "exit-de-2", "10.20.0.6", "198.51.100.8", "bGm5lqV2yYt8m6Dl0sFhT4xQ0r9p7zX1cV2bN3mK4U=", domain.RoleExit)
+	ctx := context.Background()
+	pass := func() {
+		t.Helper()
+		if _, err := b.RenderNodeSpec(ctx, "master-xa-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stored := func() map[string]time.Time {
+		t.Helper()
+		m, err := st.ListAutoSuspended(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	recordThroughputDegraded(t, st, "exit-de-1", true)
+	recordThroughputDegraded(t, st, "exit-de-2", false)
+	pass()
+	clock = clock.Add(AutoSuspendAfter + time.Second)
+	pass() // suspended in memory; the write fails
+	if len(stored()) != 0 {
+		t.Fatal("fixture: the failing write reached the store")
+	}
+	flaky.fail = false
+	pass()
+	if _, ok := stored()["exit-de-2"]; !ok {
+		t.Fatal("a suspension whose write failed was not written on the next pass")
+	}
+
+	// And the other way: the release's delete fails, then is retried.
+	recordThroughputDegraded(t, st, "exit-de-2", true)
+	pass()
+	flaky.fail = true
+	clock = clock.Add(AutoReleaseAfter + time.Second)
+	pass() // released in memory; the delete fails
+	if len(stored()) != 1 {
+		t.Fatal("fixture: the failing delete reached the store")
+	}
+	flaky.fail = false
+	pass()
+	if len(stored()) != 0 {
+		t.Fatalf("a release whose delete failed was not cleared on the next pass: %v", stored())
+	}
+}
+
+type suspendWriteFails struct {
+	store.Store
+	fail bool
+}
+
+func (s *suspendWriteFails) SetAutoSuspended(ctx context.Context, exit string, since time.Time) error {
+	if s.fail {
+		return errors.New("disk I/O error")
+	}
+	return s.Store.SetAutoSuspended(ctx, exit, since)
+}
+
+func (s *suspendWriteFails) ClearAutoSuspended(ctx context.Context, exit string) error {
+	if s.fail {
+		return errors.New("disk I/O error")
+	}
+	return s.Store.ClearAutoSuspended(ctx, exit)
+}
+
+// Whether a node is being decommissioned could not be read. The render must not
+// go on — and must not come back marked "unreadable" either: that reaches the
+// agent as "controller unavailable", on which it rebuilds itself from its cached
+// spec. A node that was just told to tear down would come back.
+func TestAnUnreadableDecommissionFlagIsARefusal(t *testing.T) {
+	clock := time.Date(2026, 9, 7, 8, 30, 0, 0, time.UTC)
+	old, st, _ := suspendFleet(t, &clock)
+	b := New(&nodeReadFails{Store: st, node: "exit-de-1"}, old.fleet, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WithClock(func() time.Time { return clock }))
+	_, err := b.RenderNodeSpec(context.Background(), "exit-de-1")
+	if err == nil {
+		t.Fatal("rendered a node whose decommission flag could not be read")
+	}
+	if errors.Is(err, store.ErrUnreadable) {
+		t.Fatalf("the failure is marked unreadable and would reach the agent as unavailable: %v", err)
+	}
+}
+
+type statusReadFails struct {
+	store.Store
+	node string
+	fail bool
+}
+
+func (s *statusReadFails) GetStatus(ctx context.Context, id string) (domain.NodeStatus, error) {
+	if s.fail && id == s.node {
+		return domain.NodeStatus{}, errors.New("disk I/O error")
+	}
+	return s.Store.GetStatus(ctx, id)
+}
+
+type nodeReadFails struct {
+	store.Store
+	node string
+}
+
+func (s *nodeReadFails) GetNode(ctx context.Context, id string) (domain.Node, error) {
+	if id == s.node {
+		return domain.Node{}, errors.New("disk I/O error")
+	}
+	return s.Store.GetNode(ctx, id)
+}
+
+type suspendReadFails struct {
+	store.Store
+	fail bool
+}
+
+func (s *suspendReadFails) ListAutoSuspended(ctx context.Context) (map[string]time.Time, error) {
+	if s.fail {
+		return nil, errors.New("disk I/O error")
+	}
+	return s.Store.ListAutoSuspended(ctx)
+}
+
 func TestAutoSuspendSingleExitGuard(t *testing.T) {
 	ctx := context.Background()
 	b, st := newBroker(t) // testFleet has exactly one exit

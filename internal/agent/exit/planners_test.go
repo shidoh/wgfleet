@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/dnsfilter"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/egress"
+	"github.com/shidoh/wgfleet/internal/routing"
 	"github.com/shidoh/wgfleet/internal/wg"
 	"github.com/shidoh/wgfleet/internal/xray"
 )
@@ -907,4 +909,229 @@ func planDump(actions []reconcile.Action) string {
 		b.WriteString("  " + a.Summary + " | " + a.Display + "\n")
 	}
 	return b.String()
+}
+
+// applyRoutingOnce records the routing intent in a fresh state file, as the first
+// pass of TestRoutingIdempotentAfterApply does, and returns the spec and planner.
+func applyRoutingOnce(t *testing.T) (domain.NodeSpec, routingPlanner) {
+	t.Helper()
+	paths := testPaths(t)
+	spec, _ := exitSpec(t)
+	eng := reconcile.NewEngine(nil, routingPlanner{statePath: paths.RoutingState})
+	_, _ = eng.Reconcile(context.Background(), spec, reconcile.ModeApply)
+	if _, err := os.Stat(paths.RoutingState); err != nil {
+		t.Fatalf("routing state file should be written on first apply: %v", err)
+	}
+	return spec, routingPlanner{statePath: paths.RoutingState}
+}
+
+// hasExec reports whether a changing exec action's command contains frag. The
+// state-file action's Display carries the whole script, conntrack line included,
+// so only the exec actions say what would actually run.
+func hasExec(actions []reconcile.Action, frag string) bool {
+	for _, a := range actions {
+		if a.Kind == reconcile.ActionExec && a.Changes() && strings.Contains(a.Display, frag) {
+			return true
+		}
+	}
+	return false
+}
+
+// flushesAllConntrack reports whether a bare `conntrack -D` — every flow on the
+// node — would run.
+func flushesAllConntrack(actions []reconcile.Action) bool {
+	for _, a := range actions {
+		if a.Kind == reconcile.ActionExec && a.Changes() && a.Display == "conntrack -D" {
+			return true
+		}
+	}
+	return false
+}
+
+// A second master appears as one more `to <ip> lookup main` rule on every exit.
+// Flushing conntrack for it would stall every long-lived flow on the fleet inside
+// one reconcile interval. Only flows to the address whose route changed hold a
+// stale NAT mapping, and only they are forgotten.
+func TestAddingADirectRuleForgetsOnlyThatDestination(t *testing.T) {
+	spec, pl := applyRoutingOnce(t)
+	spec.Routing.DirectCIDRs = append(append([]string(nil), spec.Routing.DirectCIDRs...), "203.0.113.2/32")
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flushesAllConntrack(actions) {
+		t.Errorf("an appended direct rule flushed all of conntrack: %q", displays(actions))
+	}
+	if !hasExec(actions, "conntrack -D -d 203.0.113.2/32") {
+		t.Errorf("flows to the new direct destination were not forgotten: %q", displays(actions))
+	}
+	if !hasExec(actions, "ip rule add to 203.0.113.2/32") {
+		t.Errorf("the new rule was not applied: %q", displays(actions))
+	}
+	for _, kept := range spec.Routing.DirectCIDRs[:len(spec.Routing.DirectCIDRs)-1] {
+		if hasExec(actions, "conntrack -D -d "+kept) {
+			t.Errorf("flows to %s were forgotten though its route did not change: %q", kept, displays(actions))
+		}
+	}
+}
+
+// A direct rule going away moves its destination back onto the egress: the same
+// stale mapping in the other direction, forgotten the same way.
+func TestRemovingADirectRuleForgetsOnlyThatDestination(t *testing.T) {
+	spec, pl := applyRoutingOnce(t)
+	if len(spec.Routing.DirectCIDRs) == 0 {
+		t.Fatal("the fixture has no direct CIDR to remove")
+	}
+	gone := spec.Routing.DirectCIDRs[len(spec.Routing.DirectCIDRs)-1]
+	spec.Routing.DirectCIDRs = append([]string(nil), spec.Routing.DirectCIDRs[:len(spec.Routing.DirectCIDRs)-1]...)
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flushesAllConntrack(actions) {
+		t.Errorf("a removed direct rule flushed all of conntrack: %q", displays(actions))
+	}
+	if !hasExec(actions, "conntrack -D -d "+gone) {
+		t.Errorf("flows to the removed direct destination were not forgotten: %q", displays(actions))
+	}
+}
+
+// A rule is replaced by priority, so a list that got SHORTER leaves its last
+// priorities with nothing to replace them: the rule of a master removed from the
+// manifest stayed in the kernel, and client traffic to that address kept leaving
+// direct instead of through the egress. Found on the stand with WARP egress
+// 2026-10-09 (`114: from all to 203.0.113.2 lookup main` after the master was gone).
+func TestRemovingADirectRuleDeletesItsLeftoverPriority(t *testing.T) {
+	spec, pl := applyRoutingOnce(t)
+	n := len(spec.Routing.DirectCIDRs)
+	if n == 0 {
+		t.Fatal("the fixture has no direct CIDR to remove")
+	}
+	spec.Routing.DirectCIDRs = append([]string(nil), spec.Routing.DirectCIDRs[:n-1]...)
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// "ip rule del pref N" is also how a rule is replaced, so the leftover's delete
+	// is the one that comes after the last add — and it has to: deleted first, a
+	// CIDR shifting down a priority would have no rule until its new one is written.
+	leftover := fmt.Sprintf("ip rule del pref %d", 110+n-1)
+	lastAdd, lastDel := -1, -1
+	for i, a := range actions {
+		if a.Kind != reconcile.ActionExec || !a.Changes() {
+			continue
+		}
+		if strings.HasPrefix(a.Display, "ip rule add ") {
+			lastAdd = i
+		}
+		if a.Display == leftover {
+			lastDel = i
+		}
+	}
+	if lastDel < 0 || lastDel < lastAdd {
+		t.Errorf("the priority the shorter list no longer fills was not cleared after the rules were re-added (%s): %q", leftover, displays(actions))
+	}
+}
+
+// The master in slot 0 leaving the manifest empties MasterIP: its rule has no
+// successor at that priority either.
+func TestLosingTheMasterAddressDeletesItsRule(t *testing.T) {
+	spec, pl := applyRoutingOnce(t)
+	if spec.Routing.MasterIP == "" {
+		t.Fatal("the fixture has no master address")
+	}
+	spec.Routing.MasterIP = ""
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasExec(actions, "ip rule del pref 100") {
+		t.Errorf("the master rule was left behind: %q", displays(actions))
+	}
+	if hasExec(actions, "ip rule add to  ") {
+		t.Errorf("an empty master rule was added: %q", displays(actions))
+	}
+}
+
+// The delete at the change is one-shot: when that pass failed half-way the rule
+// stayed, and the intent — unchanged from then on — never asked again. A rule of
+// ours the intent does not name is drift, and is repaired on any later pass.
+func TestRoutingRemovesAStrayRuleOnALaterPass(t *testing.T) {
+	spec, pl := applyRoutingOnce(t)
+	pl.applied = func(domain.RoutingSpec) bool { return true }
+	pl.stray = func(domain.RoutingSpec) []routing.StrayRule {
+		return []routing.StrayRule{{Pref: 114, To: "203.0.113.2"}}
+	}
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasExec(actions, "ip rule del pref 114") {
+		t.Errorf("the stray rule was not removed: %q", displays(actions))
+	}
+	if !hasExec(actions, "conntrack -D -d 203.0.113.2") {
+		t.Errorf("flows to the stray rule's destination were not forgotten: %q", displays(actions))
+	}
+	if flushesAllConntrack(actions) || hasExec(actions, "ip rule add") {
+		t.Errorf("a stray rule re-applied the whole routing: %q", displays(actions))
+	}
+
+	pl.stray = func(domain.RoutingSpec) []routing.StrayRule { return nil }
+	actions, err = pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range actions {
+		if a.Changes() {
+			t.Errorf("acted with nothing stray: %s", a.Display)
+		}
+	}
+}
+
+// …and a change that does reroute flows still flushes.
+func TestChangingTheClientPoolStillFlushesConntrack(t *testing.T) {
+	spec, pl := applyRoutingOnce(t)
+	spec.WGServer.AddressPool = "10.82.0.0/24"
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasExec(actions, "conntrack") {
+		t.Errorf("a changed client pool did not flush conntrack: %q", displays(actions))
+	}
+}
+
+// Re-provisioning a node that is already running loads the bootstrap baseline
+// table again, next to the agent's own. The agent's ruleset is unchanged and
+// present, so nothing re-applied it, and the baseline — policy drop, SSH and the
+// overlay only — stayed for good: on the stand 2026-10-09 a re-provisioned master
+// stopped answering its clients on UDP/443 while every check of its own table
+// read clean. The baseline in the kernel is drift; applying the ruleset deletes it.
+func TestFirewallReappliesOverAReturnedBaseline(t *testing.T) {
+	paths := testPaths(t)
+	spec, _ := exitSpec(t)
+	baseline := true
+	pl := firewallPlanner{path: paths.NFT, loaded: func() bool { return true }, baseline: func() bool { return baseline }}
+	eng := reconcile.NewEngine(nil, pl)
+	_, _ = eng.Reconcile(context.Background(), spec, reconcile.ModeApply)
+	writeAppliedMarker(t, paths.NFT)
+
+	acts, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasChangingSummary(acts, "apply ruleset atomically") {
+		t.Errorf("the ruleset was not re-applied over a returned baseline, got %+v", acts)
+	}
+
+	baseline = false
+	acts, err = pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range acts {
+		if a.Changes() {
+			t.Errorf("re-applied with no baseline in the kernel: %+v", a)
+		}
+	}
 }

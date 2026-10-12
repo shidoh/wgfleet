@@ -34,21 +34,6 @@ func TestValidateZeroTierNetworkID(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsMultiMaster(t *testing.T) {
-	cfg := baseValidController()
-	cfg.Fleet.Masters = []MasterConfig{{Name: "m1"}, {Name: "m2"}}
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "multi-master") {
-		t.Fatalf("expected multi-master rejection, got %v", err)
-	}
-
-	// One master is fine.
-	cfg.Fleet.Masters = []MasterConfig{{Name: "m1"}}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("single master rejected unexpectedly: %v", err)
-	}
-}
-
 func TestValidateMgmtSubnet(t *testing.T) {
 	for _, ok := range []string{"", "10.20.0.0/16", "10.147.0.0/16", "fd00::/8"} {
 		cfg := baseValidController()

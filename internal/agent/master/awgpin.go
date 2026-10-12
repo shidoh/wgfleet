@@ -36,9 +36,10 @@ const legacyAWGPinTable = "wgf_awg_pin"
 type awgPinPlanner struct {
 	// list returns `conntrack -L` output for UDP to exitIP:port; nil ⇒ real exec.
 	list func(ctx context.Context, exitIP string, port int) (string, error)
-	// listKnocks returns `conntrack -L` output for UDP FROM exitIP:port to the
-	// pinned port — the exit's knocks; nil ⇒ real exec.
-	listKnocks func(ctx context.Context, exitIP string, exitPort, pinnedPort int) (string, error)
+	// listKnocks returns `conntrack -L` output for UDP FROM exitIP:port — every
+	// flow the exit opened towards the master, its knocks among them; nil ⇒ real
+	// exec.
+	listKnocks func(ctx context.Context, exitIP string, exitPort int) (string, error)
 	// tableExists probes an nft table in family ip; nil ⇒ netfw.TableLoaded.
 	tableExists func(name string) bool
 	// heard reports whether the exit is in the gate's heard set; nil ⇒ nft.
@@ -93,20 +94,8 @@ func (p awgPinPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 		if err != nil {
 			continue
 		}
-		// Nothing moves until the exit has knocked since the table was last built.
-		// The set starts empty on every render, and a flow deleted before the knock
-		// is a NEW flow the gate holds back until the next keepalive.
-		if !heard(exit.Addr().String()) {
-			actions = append(actions, reconcile.NoChangeAction("exit-initiated AWG conntrack",
-				"waiting for "+pin.Exit+" to knock on its pinned port"))
-			continue
-		}
-		if !legacyRetired && exists(legacyAWGPinTable) {
-			legacyRetired = true
-			actions = append(actions, reconcile.BestEffortExecAction(
-				"remove the hand-made pin table; the agent's own pin is armed",
-				"nft", "delete", "table", "ip", legacyAWGPinTable))
-		}
+		isHeard := heard(exit.Addr().String())
+		actions = append(actions, exitOpenedFlowActions(ctx, knocks, pin.Exit, exit, int(master.Port()), isHeard)...)
 		out, err := list(ctx, exit.Addr().String(), int(exit.Port()))
 		if err != nil {
 			// Loud, not a quiet no-change: a tunnel stuck behind a stale entry is the
@@ -117,37 +106,103 @@ func (p awgPinPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 				"conntrack unreadable for "+pin.Exit+": "+err.Error()))
 			continue
 		}
-		// A knock the master ever ACCEPTED (a whitelisted exit, before the gate was
-		// armed) is a confirmed entry holding the tuple the SNAT needs, and every
-		// later knock keeps it alive even once dropped: mihomo's writes then fail
-		// NAT with EPERM for good. Found on the stand; every such entry goes.
-		kout, kerr := knocks(ctx, exit.Addr().String(), int(exit.Port()), int(master.Port()))
-		if kerr != nil {
-			slog.Warn("exit-initiated AWG: conntrack unreadable, stale entries cannot be cleared",
-				"exit", pin.Exit, "err", kerr)
-		}
-		for _, e := range parseConntrackUDP(kout) {
-			actions = append(actions, reconcile.BestEffortExecAction(
-				fmt.Sprintf("drop a confirmed knock from %s that holds its pinned tuple", pin.Exit),
-				"conntrack", "-D", "-p", "udp", "-s", e.origSrc, "-d", e.origDst,
-				"--sport", strconv.Itoa(e.origSport), "--dport", strconv.Itoa(e.origDport)))
-		}
-		entries := parseConntrackUDP(out)
-		stale := staleAWGPinEntries(entries, int(master.Port()))
-		if owned, ok := socks(ctx, pin.Exit); ok {
-			stale = staleAWGPinEntriesOwned(entries, int(master.Port()), owned)
-		}
-		for _, e := range stale {
+		// A flow NAT mapped to another port (it predates the pin) goes at once, heard
+		// or not. The master answers from that port, so the exit's endpoint roams
+		// back to it after every restore and the knock this would wait for never
+		// comes — the released v0.3.2 sat like that for minutes on the stand
+		// (2026-10-09). Deleted, mihomo's next packet waits at the gate until the
+		// exit's agent has restored the endpoint and its keepalive has knocked.
+		offPin, onPin := splitByPinnedPort(parseConntrackUDP(out), int(master.Port()))
+		drop := func(e ctEntry) {
 			actions = append(actions, reconcile.BestEffortExecAction(
 				fmt.Sprintf("drop a conntrack entry that keeps %s off its pinned port", pin.Exit),
 				"conntrack", "-D", "-p", "udp", "-s", e.origSrc, "-d", exit.Addr().String(),
 				"--sport", strconv.Itoa(e.origSport), "--dport", strconv.Itoa(int(exit.Port()))))
+		}
+		for _, e := range offPin {
+			drop(e)
+		}
+		// Nothing ON the pinned port moves until the exit has knocked since the table
+		// was last built. The set starts empty on every render, and a flow deleted
+		// before the knock is a NEW flow the gate holds back until the next
+		// keepalive — which is coming, the exit's endpoint being right.
+		if !isHeard {
+			actions = append(actions, reconcile.NoChangeAction("exit-initiated AWG conntrack",
+				"waiting for "+pin.Exit+" to knock on its pinned port"))
+			continue
+		}
+		if !legacyRetired && exists(legacyAWGPinTable) {
+			legacyRetired = true
+			actions = append(actions, reconcile.BestEffortExecAction(
+				"remove the hand-made pin table; the agent's own pin is armed",
+				"nft", "delete", "table", "ip", legacyAWGPinTable))
+		}
+		stale := staleAWGPinEntries(onPin, int(master.Port()))
+		if owned, ok := socks(ctx, pin.Exit); ok {
+			stale = staleAWGPinEntriesOwned(onPin, int(master.Port()), owned)
+		}
+		for _, e := range stale {
+			drop(e)
 		}
 	}
 	if len(actions) == 0 {
 		return []reconcile.Action{reconcile.NoChangeAction("exit-initiated AWG conntrack", "every pinned flow is clean")}, nil
 	}
 	return actions, nil
+}
+
+// exitOpenedFlowActions deletes the conntrack entries of flows the exit opened
+// towards the master from its AWG port. None of them is the pinned flow — that
+// one the master opens, through the SNAT.
+//
+// On the pinned port it is a knock the master ACCEPTED (a whitelisted exit,
+// before the gate was armed): a confirmed entry holding the tuple the SNAT
+// needs, kept alive by every later knock even once dropped, so mihomo's writes
+// fail NAT with EPERM for good. It goes once the exit is heard.
+//
+// On any other port it is the one mihomo used before the pin, which the exit's
+// endpoint still named: mihomo's packets are replies of that entry and never
+// meet the SNAT, so the tunnel lives off its pinned port with the gate reading
+// armed. That one goes at once. Waiting for a knock would wait for good — the
+// exit's endpoint roams back to the wrong port after every restore, so it
+// hardly knocks at all (stand, kernel 5.15, 2026-10-09). Once the entry is gone
+// the knock-drop rule refuses the exit's next packet there, its agent restores
+// the endpoint, and the knock that follows opens the gate.
+func exitOpenedFlowActions(ctx context.Context, list func(context.Context, string, int) (string, error),
+	pinExit string, exit netip.AddrPort, pinnedPort int, heard bool) []reconcile.Action {
+	out, err := list(ctx, exit.Addr().String(), int(exit.Port()))
+	if err != nil {
+		slog.Warn("exit-initiated AWG: conntrack unreadable, stale entries cannot be cleared",
+			"exit", pinExit, "err", err)
+		return nil
+	}
+	var actions []reconcile.Action
+	for _, e := range parseConntrackUDP(out) {
+		summary := fmt.Sprintf("drop a flow %s opened off its pinned port, which keeps the pin from applying", pinExit)
+		if e.origDport == pinnedPort {
+			if !heard {
+				continue
+			}
+			summary = fmt.Sprintf("drop a confirmed knock from %s that holds its pinned tuple", pinExit)
+		}
+		actions = append(actions, reconcile.BestEffortExecAction(summary,
+			"conntrack", "-D", "-p", "udp", "-s", e.origSrc, "-d", e.origDst,
+			"--sport", strconv.Itoa(e.origSport), "--dport", strconv.Itoa(e.origDport)))
+	}
+	return actions
+}
+
+// splitByPinnedPort separates the flows NAT mapped to another port from those
+// holding the pinned one.
+func splitByPinnedPort(entries []ctEntry, pinnedPort int) (offPin, onPin []ctEntry) {
+	for _, e := range entries {
+		if e.replyDport != pinnedPort {
+			offPin = append(offPin, e)
+			continue
+		}
+		onPin = append(onPin, e)
+	}
+	return offPin, onPin
 }
 
 // ctEntry is the part of a UDP conntrack entry this planner decides on.
@@ -245,9 +300,15 @@ func exitHeard(exitIP string) bool {
 		"{", exitIP, "}").Run() == nil
 }
 
-func listConntrackKnocks(ctx context.Context, exitIP string, exitPort, pinnedPort int) (string, error) {
-	out, err := exec.CommandContext(ctx, "conntrack", "-L", "-p", "udp", "-s", exitIP,
-		"--sport", strconv.Itoa(exitPort), "--dport", strconv.Itoa(pinnedPort)).Output()
+// exitOpenedFlowsArgs lists every UDP flow the exit opened from its AWG port,
+// whatever port of the master it reached: the entry that breaks the pin is by
+// definition not on the pinned one.
+func exitOpenedFlowsArgs(exitIP string, exitPort int) []string {
+	return []string{"-L", "-p", "udp", "-s", exitIP, "--sport", strconv.Itoa(exitPort)}
+}
+
+func listConntrackKnocks(ctx context.Context, exitIP string, exitPort int) (string, error) {
+	out, err := exec.CommandContext(ctx, "conntrack", exitOpenedFlowsArgs(exitIP, exitPort)...).Output()
 	if err != nil {
 		return "", fmt.Errorf("conntrack -L: %w", err)
 	}

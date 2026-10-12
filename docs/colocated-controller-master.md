@@ -228,6 +228,7 @@ before the controller restart so the file exists before mihomo reloads.
 
 ## Gotchas
 
+- **The controller backup holds the keys of this co-located master only.** The keys of a remote master (`wg.key`, `client-wg.key`, `client-vless.key`) are not in the archive.
 - **Cert SAN must cover the dialed host.** The agent dials `<mgmt>:8443`;
   `controller.listen` must use that same `<mgmt>` host. If you must listen on
   `0.0.0.0`, set `controller.advertise: "<mgmt>:8443"`.

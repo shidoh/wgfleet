@@ -44,6 +44,7 @@ func (s devSrc) ListVLESSClients(_ context.Context, m string) ([]domain.VLESSCli
 	return s.vless[m], nil
 }
 func (s devSrc) LifelineExits(context.Context) ([]string, error)                  { return nil, nil }
+func (s devSrc) LifelineMaster(context.Context) (string, error)                   { return "m1", nil }
 func (s devSrc) ExitEndpointHost(context.Context, string) (string, error)         { return "", nil }
 func (s devSrc) NodeChecks(context.Context, string) ([]domain.HealthCheck, error) { return nil, nil }
 func (s devSrc) ClientMasterMeta(_ context.Context, m string) (domain.ClientMasterMeta, error) {

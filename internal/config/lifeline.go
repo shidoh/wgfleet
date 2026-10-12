@@ -42,17 +42,6 @@ func (l LifelineConfig) ResolvedEgress() domain.EgressMethod {
 	return domain.EgressMethod(strings.ToLower(strings.TrimSpace(l.Egress)))
 }
 
-// primaryMaster returns the master that fronts exits (the first one), mirroring
-// keybroker.Broker.primaryMaster — this package cannot import keybroker (it would
-// be a cycle: keybroker already imports config), so the same tiny lookup is
-// re-declared here rather than shared.
-func (f FleetSection) primaryMaster() (MasterConfig, bool) {
-	if len(f.Masters) == 0 {
-		return MasterConfig{}, false
-	}
-	return f.Masters[0], true
-}
-
 // exitEgressChainHas reports whether m is somewhere in the exit's egress chain —
 // its preferred egress or one of its ADR-0017 fallbacks.
 func exitEgressChainHas(e ExitConfig, m domain.EgressMethod) bool {
@@ -73,10 +62,10 @@ func exitEgressChainHas(e ExitConfig, m domain.EgressMethod) bool {
 // never coming up (or coming up unreachable) the day it is actually needed.
 func (c ControllerConfig) validateLifeline() []error {
 	var errs []error
-	master, hasMaster := c.Fleet.primaryMaster()
+	master, hasMaster := c.Fleet.BaseMaster()
 	masterPool, _ := netip.ParsePrefix(master.ClientAWG.AddressPool) // invalid ⇒ zero Prefix, IsValid() false below
 
-	for _, e := range c.Fleet.Exits {
+	for i, e := range c.Fleet.Exits {
 		l := e.Lifeline
 		if l == nil {
 			continue
@@ -150,6 +139,9 @@ func (c ControllerConfig) validateLifeline() []error {
 		// The lifeline pool is projected by the controller, the same way the master's
 		// managed client pool is — there is no wg-easy equivalent for a reserve
 		// interface, so the controller must own the credentials on this exit too.
+		if !hasMaster {
+			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): lifeline needs a master in slot 0 (its clients are the ones a lifeline carries)", i, e.Name))
+		}
 		if hasMaster && !master.ClientAWGManaged() {
 			errs = append(errs, fmt.Errorf("%s: requires masters[%s].client_awg.managed: true (the controller must own the credentials it projects)", at, master.Name))
 		}

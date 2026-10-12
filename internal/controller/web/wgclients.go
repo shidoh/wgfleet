@@ -660,6 +660,10 @@ func (s clientSource) LifelineExits(ctx context.Context) ([]string, error) {
 	return s.h.renderer.LifelineExits(ctx)
 }
 
+func (s clientSource) LifelineMaster(ctx context.Context) (string, error) {
+	return s.h.renderer.LifelineMaster(ctx)
+}
+
 func (s clientSource) ExitEndpointHost(ctx context.Context, exitID string) (string, error) {
 	return s.h.renderer.ExitEndpointHost(ctx, exitID)
 }

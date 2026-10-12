@@ -58,7 +58,7 @@ func (b *Broker) lifelineSpec(ctx context.Context, exit config.ExitConfig, exitN
 	if !exit.LifelineEnabled() {
 		return nil, nil
 	}
-	master, ok := b.primaryMaster()
+	master, ok := b.fleet.BaseMaster()
 	if !ok {
 		b.warnOnce("lifeline-no-master:"+exit.Name, "none",
 			"lifeline not rendered: the fleet has no master whose clients it would carry",
@@ -290,6 +290,18 @@ func (b *Broker) LifelineExits(context.Context) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// LifelineMaster names the master whose clients every reserve interface carries:
+// the base master. An exit's lifeline projects one master's credentials into one
+// pool, and two masters' clients at the same pool offset would land on one
+// address there. "" when no master holds slot 0.
+func (b *Broker) LifelineMaster(context.Context) (string, error) {
+	base, ok := b.fleet.BaseMaster()
+	if !ok {
+		return "", nil
+	}
+	return base.Name, nil
 }
 
 // ExitEndpointHost resolves the address a client dials for one exit's lifeline.

@@ -1,6 +1,8 @@
 package routing
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -457,5 +459,177 @@ func TestTeardownActionsRemovesEveryEgressRule(t *testing.T) {
 				t.Errorf("rule deletion is not pinned to a priority: %s", joined)
 			}
 		}
+	}
+}
+
+func warpSpec(direct ...string) domain.RoutingSpec {
+	return domain.RoutingSpec{EgressInterface: "wgcf", MasterIP: "203.0.113.1",
+		ClientCIDR: "10.81.0.0/24", DirectCIDRs: direct}
+}
+
+func scriptOf(t *testing.T, spec domain.RoutingSpec) string {
+	t.Helper()
+	steps, err := Render(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Script(steps)
+}
+
+func TestOnlyDirectRulesDiffer(t *testing.T) {
+	base := scriptOf(t, warpSpec("10.0.0.0/8"))
+	cases := []struct {
+		name string
+		next domain.RoutingSpec
+		want bool
+	}{
+		{"a direct rule appended", warpSpec("10.0.0.0/8", "203.0.113.2/32"), true},
+		{"a direct rule removed", warpSpec(), true},
+		// Every rule after the insert moves one priority down: many lines differ,
+		// and all of them are direct rules.
+		{"a direct rule inserted mid-list", warpSpec("203.0.113.2/32", "10.0.0.0/8"), true},
+		{"nothing changed", warpSpec("10.0.0.0/8"), false},
+		{"the client pool changed", func() domain.RoutingSpec { s := warpSpec("10.0.0.0/8"); s.ClientCIDR = "10.82.0.0/24"; return s }(), false},
+		{"the egress interface changed", func() domain.RoutingSpec { s := warpSpec("10.0.0.0/8"); s.EgressInterface = "wgcf2"; return s }(), false},
+		{"the master changed", func() domain.RoutingSpec { s := warpSpec("10.0.0.0/8"); s.MasterIP = "203.0.113.9"; return s }(), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := OnlyDirectRulesDiffer(base, scriptOf(t, c.next)); got != c.want {
+				t.Errorf("got %v, want %v", got, c.want)
+			}
+		})
+	}
+	if OnlyDirectRulesDiffer("", base) {
+		t.Error("a first apply has nothing to compare with and must take the full set")
+	}
+}
+
+func TestWithoutConntrackFlush(t *testing.T) {
+	steps, err := Render(warpSpec("10.0.0.0/8"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := WithoutConntrackFlush(steps)
+	if len(kept) != len(steps)-1 {
+		t.Fatalf("kept %d of %d steps, want exactly the flush dropped", len(kept), len(steps))
+	}
+	for _, s := range kept {
+		if s.Argv[0] == "conntrack" {
+			t.Errorf("the flush survived: %v", s.Argv)
+		}
+	}
+}
+
+// DirectCIDRsChanged names the destinations whose route moved, whatever happened
+// to the priorities around them.
+func TestDirectCIDRsChanged(t *testing.T) {
+	base := scriptOf(t, warpSpec("10.0.0.0/8", "192.168.0.0/16"))
+	cases := []struct {
+		name string
+		next domain.RoutingSpec
+		want []string
+	}{
+		{"appended", warpSpec("10.0.0.0/8", "192.168.0.0/16", "203.0.113.2/32"), []string{"203.0.113.2/32"}},
+		{"removed", warpSpec("10.0.0.0/8"), []string{"192.168.0.0/16"}},
+		// Every rule after the insert moves to the next priority; only one
+		// destination changed its route.
+		{"inserted mid-list", warpSpec("10.0.0.0/8", "203.0.113.2/32", "192.168.0.0/16"), []string{"203.0.113.2/32"}},
+		{"one swapped for another", warpSpec("10.0.0.0/8", "198.51.100.0/24"), []string{"192.168.0.0/16", "198.51.100.0/24"}},
+		{"unchanged", warpSpec("10.0.0.0/8", "192.168.0.0/16"), nil},
+		// The master's own rule and the client pool are not direct CIDRs.
+		{"the master changed", func() domain.RoutingSpec {
+			s := warpSpec("10.0.0.0/8", "192.168.0.0/16")
+			s.MasterIP = "203.0.113.9"
+			return s
+		}(), nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := DirectCIDRsChanged(base, scriptOf(t, c.next)); !slices.Equal(got, c.want) {
+				t.Errorf("got %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// A priority that carried a rule in the previous script and carries none in the
+// next one has to be deleted by hand: rules are replaced by priority, and nothing
+// replaces these.
+func TestRulePrefsDropped(t *testing.T) {
+	render := func(spec domain.RoutingSpec) string {
+		t.Helper()
+		steps, err := Render(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return Script(steps)
+	}
+	base := domain.RoutingSpec{EgressInterface: "wgcf", ClientCIDR: "10.81.0.0/24", MasterIP: "203.0.113.1",
+		DirectCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16", "203.0.113.2/32"}}
+	shorter := base
+	shorter.DirectCIDRs = base.DirectCIDRs[:1]
+	noMaster := base
+	noMaster.MasterIP = ""
+	cases := []struct {
+		name       string
+		prev, next string
+		want       []int
+	}{
+		{"nothing changed", render(base), render(base), nil},
+		{"first apply", "", render(base), nil},
+		{"two direct rules gone", render(base), render(shorter), []int{111, 112}},
+		{"a rule added", render(shorter), render(base), nil},
+		{"the master address gone", render(base), render(noMaster), []int{100}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := RulePrefsDropped(tc.prev, tc.next)
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Fatalf("RulePrefsDropped = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A rule of ours that the intent no longer asks for and that is still in the
+// kernel: the one-shot delete at the change missed it (the pass failed half-way,
+// or an older agent made the change), and nothing else would ever notice — every
+// rule the intent DOES ask for is present.
+func TestStrayRules(t *testing.T) {
+	spec := domain.RoutingSpec{EgressInterface: "wgcf", ClientCIDR: "10.81.0.0/24", MasterIP: "203.0.113.1",
+		DirectCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
+	const base = "0:\tfrom all lookup local\n" +
+		"100:\tfrom all to 203.0.113.1 lookup main\n" +
+		"110:\tfrom all to 10.0.0.0/8 lookup main\n" +
+		"111:\tfrom all to 192.168.0.0/16 lookup main\n" +
+		"200:\tfrom all fwmark 0x1 lookup main\n" +
+		"300:\tfrom 10.81.0.0/24 lookup 51820\n" +
+		"32766:\tfrom all lookup main\n32767:\tfrom all lookup default\n"
+	noMaster := spec
+	noMaster.MasterIP = ""
+	direct := domain.RoutingSpec{}
+	cases := []struct {
+		name  string
+		spec  domain.RoutingSpec
+		rules string
+		want  []StrayRule
+	}{
+		{"nothing stray", spec, base, nil},
+		{"a direct rule past the end of the list", spec, base + "112:\tfrom all to 203.0.113.2 lookup main\n",
+			[]StrayRule{{Pref: 112, To: "203.0.113.2"}}},
+		{"the master rule with no master address", noMaster, base, []StrayRule{{Pref: 100, To: "203.0.113.1"}}},
+		// Not ours: another tool's rule in the same range, in a shape we never write.
+		{"a foreign rule in the range is left alone", spec, base + "150:\tfrom 172.17.0.0/16 lookup 99\n", nil},
+		// Direct egress installs no rules at all; TeardownActions owns that cleanup.
+		{"direct egress is not judged here", direct, base, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := StrayRules(tc.spec, tc.rules)
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Fatalf("StrayRules = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
