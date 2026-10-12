@@ -11,6 +11,7 @@ New releases are announced, with the archives attached, in the Telegram channel 
 - The device profile for mihomo apps gives the AmneziaWG proxy `allowed-ips: 0.0.0.0/0` instead of the split list of the `.conf`. Before, with `client_awg.exclude_from_tunnel` set, a `fleet.client_sites` network was unreachable while the device was on AmneziaWG, and `<site>-auto` fell to `DIRECT` away from the site. Update the profile in the app to pick it up.
 - An agent upgrade, rollback or re-provision that cannot open SSH to a node's `ssh.host` tries the node's `mgmt_addr` with the same port, user and key. Before, an exit whose public SSH path was cut failed the rollout with `ssh: handshake failed: i/o timeout` while it stayed reachable over the mgmt network.
 - The ROLLING AGENT UPDATE panel in the console stays open once opened. Before, the page's refresh closed it every 15 seconds and at the end of a run.
+- The mihomo dashboard on the master (`external_controller`) opens for a device connected over the VLESS profile when its port is in `client_admin_ports`. Before, the same URL answered over AmneziaWG and returned an empty reply over VLESS.
 
 ## v0.3.2 — 2026-09-30
 

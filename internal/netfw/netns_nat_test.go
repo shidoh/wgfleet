@@ -437,3 +437,56 @@ func TestTheHostAndTheNamespaceAgreeOnTheClientAdminPort(t *testing.T) {
 		t.Errorf("a port forwarded with no API address at all: %v", got)
 	}
 }
+
+// The dashboard keeps its address for a client whose connection mihomo itself
+// carries — a VLESS client, whose traffic xray hands to mihomo and mihomo dials
+// from inside this namespace.
+//
+// That dial never touches the host's redirect: it leaves the namespace for the
+// management address, where nothing has listened on the API port since the move,
+// and is refused. Redirecting it on the host instead would send it straight back
+// in wearing the namespace's own address as source. Measured on the live master
+// 2026-10-12: the same URL answered 200 over AmneziaWG and an empty reply over
+// VLESS, for as long as the client's fallback group sat on VLESS.
+func TestClashAPIKeepsItsAddressForConnectionsMihomoDials(t *testing.T) {
+	out, err := RenderNetnsNAT(NetnsNATInput{
+		PeerIface: "mih0", ClientCIDR: "10.73.0.0/24",
+		RedirAddr: "100.127.255.2:7895", TProxyAddr: "100.127.255.2:7896",
+		SelfAddr:             "100.127.255.2",
+		OperatorAPIAddr:      "172.29.3.10",
+		ClientForwardedPorts: []int{9090},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(out, "type nat hook output priority dstnat") {
+		t.Fatalf("no output NAT chain — a locally dialled connection is never redirected:\n%s", out)
+	}
+	want := "ip daddr 172.29.3.10 tcp dport 9090 dnat to 100.127.255.2:9090"
+	if !strings.Contains(out, want) {
+		t.Errorf("missing %q — the dashboard is refused for every client mihomo proxies:\n%s", want, out)
+	}
+}
+
+// The redirect widens nothing: a port the operator has not opened to clients is
+// not redirected, and with no operator address there is nothing to redirect from.
+func TestClashAPIOutputRedirectFollowsTheClientAdminPorts(t *testing.T) {
+	base := NetnsNATInput{
+		PeerIface: "mih0", ClientCIDR: "10.73.0.0/24",
+		RedirAddr: "100.127.255.2:7895", TProxyAddr: "100.127.255.2:7896",
+		SelfAddr: "100.127.255.2",
+	}
+	closed := base
+	closed.OperatorAPIAddr = "172.29.3.10"
+	noAddr := base
+	noAddr.ClientForwardedPorts = []int{9090}
+	for name, in := range map[string]NetnsNATInput{"port not opened to clients": closed, "no operator address": noAddr} {
+		out, err := RenderNetnsNAT(in)
+		if err != nil {
+			t.Fatalf("%s: render: %v", name, err)
+		}
+		if strings.Contains(out, "hook output") {
+			t.Errorf("%s: an output redirect was rendered anyway:\n%s", name, out)
+		}
+	}
+}

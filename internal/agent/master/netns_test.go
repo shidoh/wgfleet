@@ -1062,3 +1062,18 @@ func TestTheMoveRuleRefusesToApplyWhenTheTableWentAwayAfterPlanning(t *testing.T
 		t.Error("the rule would have been installed over a table that emptied since planning")
 	}
 }
+
+func TestOperatorAPIAddrIsTheLiteralHostOfTheExternalController(t *testing.T) {
+	for ec, want := range map[string]string{
+		"172.29.3.10:9090":  "172.29.3.10",
+		"":                  "",
+		"master.local:9090": "",
+		"172.29.3.10":       "",
+		"[fd00::10]:9090":   "",
+	} {
+		spec := domain.NodeSpec{Master: &domain.MasterSpec{ExternalController: ec}}
+		if got := operatorAPIAddr(spec); got != want {
+			t.Errorf("ExternalController %q: got %q, want %q", ec, got, want)
+		}
+	}
+}
