@@ -51,7 +51,7 @@ fleet:
       # ★ CLIENT-FACING DNS FILTER: the master runs a blocky that is your devices' single
       #   DNS; it blocks the denylists below and forwards the rest to the exits' resolvers.
       dns_filter: true                  # run the master-tier blocky (default false)
-      dns:
+      dns:                              # with two or more masters this block is fleet.master_dns instead
         prometheus: true                # export blocky metrics on the mgmt/ZT bind (default true)
         allowlist: ["*.example.ru"]     # never-blocked domains; wins over every denylist
         overrides:                      # deep-merged into the rendered blocky config

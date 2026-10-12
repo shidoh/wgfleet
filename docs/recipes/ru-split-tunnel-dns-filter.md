@@ -88,6 +88,26 @@ fleet:
             clientGroupsBlock: { default: [ads] }
 ```
 
+### Several masters
+
+| Masters | Where the master resolver settings go |
+|---|---|
+| One | `fleet.masters[].dns` (as above) or `fleet.master_dns` |
+| Two or more | `fleet.master_dns` only; `fleet.masters[].dns` is refused |
+
+```yaml
+fleet:
+  master_dns:                              # same keys as masters[].dns
+    allowlist: ["*.example.ru"]
+    overrides: { ... }
+  masters:
+    - name: master-1
+      dns_filter: true
+    - name: master-2
+      slot: 1
+      dns_filter: true
+```
+
 ### Denylist groups
 
 Named groups can be enabled/tuned independently. A practical set (all
