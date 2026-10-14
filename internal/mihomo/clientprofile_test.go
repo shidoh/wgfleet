@@ -401,3 +401,57 @@ func TestClientProfileRefusesNothingToDial(t *testing.T) {
 		t.Error("an AWG proxy without a private key rendered")
 	}
 }
+
+// ClashMetaForAndroid puts its own app inside its VPN and protects the core's
+// sockets only once the tun is up; the profile's first health checks open the
+// AWG socket a few milliseconds earlier, so that socket's packets come back
+// through the tun. Without a rule ahead of everything they meet MATCH and are
+// sent into the very proxy that produced them. Measured 2026-10-14: AWG dead
+// after 3 of 4 cold starts, alive after 4 of 4 with these rules. Only the
+// proxy's own server, port and network: SSH, ZeroTier or a web page on the same
+// address keep riding the tunnel.
+func TestClientProfileProxyEndpointsGoDirectFirst(t *testing.T) {
+	awg := profileAWG(t, "2.0")
+	awg.Endpoint = "198.51.100.7:8443"
+	doc := renderProfile(t, ClientProfileInput{
+		Sites: []domain.ClientSite{{Name: "home", CIDRs: []string{"192.168.88.0/24"}}},
+		Masters: []ClientProfileMaster{
+			{Name: "m1", AWG: profileAWG(t, "2.0"), VLESS: profileVLESS("tcp"), DNS: []string{"10.80.0.1"}},
+			{Name: "m2", AWG: awg},
+		},
+	})
+	rules := toStrings(doc["rules"].([]any))
+	want := []string{
+		"AND,((NETWORK,UDP),(DST-PORT,443),(IP-CIDR,203.0.113.1/32,no-resolve)),DIRECT",
+		"AND,((NETWORK,TCP),(DST-PORT,49443),(IP-CIDR,203.0.113.1/32,no-resolve)),DIRECT",
+		"AND,((NETWORK,UDP),(DST-PORT,8443),(IP-CIDR,198.51.100.7/32,no-resolve)),DIRECT",
+	}
+	if len(rules) < len(want) || !slices.Equal(rules[:len(want)], want) {
+		t.Fatalf("rules do not open with the proxy endpoints:\n got %v\nwant prefix %v", rules, want)
+	}
+}
+
+func TestClientProfileProxyEndpointRuleIPv6(t *testing.T) {
+	awg := profileAWG(t, "2.0")
+	awg.Endpoint = "[2001:db8::7]:443"
+	rules := toStrings(renderProfile(t, ClientProfileInput{
+		Masters: []ClientProfileMaster{{Name: "m1", AWG: awg}},
+	})["rules"].([]any))
+	if want := "AND,((NETWORK,UDP),(DST-PORT,443),(IP-CIDR6,2001:db8::7/128,no-resolve)),DIRECT"; rules[0] != want {
+		t.Errorf("rules[0] = %q, want %q", rules[0], want)
+	}
+}
+
+// A name cannot become an IP-CIDR; the endpoint is left to the rules below it
+// rather than guessed at render time.
+func TestClientProfileProxyEndpointByNameHasNoRule(t *testing.T) {
+	awg := profileAWG(t, "2.0")
+	awg.Endpoint = "master.example.net:443"
+	for _, r := range toStrings(renderProfile(t, ClientProfileInput{
+		Masters: []ClientProfileMaster{{Name: "m1", AWG: awg}},
+	})["rules"].([]any)) {
+		if strings.HasPrefix(r, "AND,") {
+			t.Errorf("rule %q for an endpoint given by name", r)
+		}
+	}
+}
