@@ -99,6 +99,7 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 		all             []string
 		pools           []string
 		nameservers     []string
+		endpoints       []string
 	)
 	if err := validateSiteNames(in.Sites, in.Masters); err != nil {
 		return "", err
@@ -122,9 +123,13 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 				return "", fmt.Errorf("client profile: master %q: %w", m.Name, err)
 			}
 			proxies, own = append(proxies, p), append(own, m.Name+"-awg")
+			if host, port, err := splitEndpoint(m.AWG.Endpoint); err == nil {
+				endpoints = appendEndpointRule(endpoints, "UDP", host, port)
+			}
 		}
 		if m.VLESS != nil {
 			proxies, own = append(proxies, clientVLESSProxy(m.Name+"-vless", *m.VLESS)), append(own, m.Name+"-vless")
+			endpoints = appendEndpointRule(endpoints, "TCP", m.VLESS.Host, m.VLESS.Port)
 		}
 		if len(own) == 0 {
 			continue
@@ -162,7 +167,8 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 		"ipv6":         false,
 		"proxies":      proxies,
 		"proxy-groups": groups,
-		"rules":        append(toAnySlice(siteRules(in.Sites)), clientRules(dedupe(through), pools)...),
+		"rules": append(toAnySlice(append(dedupe(endpoints), siteRules(in.Sites)...)),
+			clientRules(dedupe(through), pools)...),
 	}
 	if len(nameservers) > 0 {
 		doc["dns"] = map[string]any{
@@ -179,6 +185,31 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 		}
 	}
 	return marshalYAML(doc)
+}
+
+// appendEndpointRule sends a proxy's own server — that address, port and
+// network only — DIRECT, ahead of every other rule. ClashMetaForAndroid puts
+// itself inside its own VPN and protects the core's sockets only once the tun is
+// up, while the profile's first health checks open the AWG socket a few
+// milliseconds earlier; that socket's packets then come back through the tun,
+// and MATCH would send them into the very proxy that produced them (AWG dead
+// after 3 of 4 cold starts, measured 2026-10-14). DIRECT re-sends them on a
+// protected socket. Where the core's sockets never enter the tun (Clash Verge
+// Rev, FlClash on a desktop) the rule never matches. Narrow on purpose: SSH,
+// ZeroTier or a page on the same address keep riding the tunnel. no-resolve:
+// the looped packet carries an address, and a name cannot be an IP-CIDR — an
+// endpoint given by name gets no rule rather than a render-time guess.
+func appendEndpointRule(rules []string, network, host string, port int) []string {
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return rules
+	}
+	kind := "IP-CIDR"
+	if addr.Is6() {
+		kind = "IP-CIDR6"
+	}
+	return append(rules, fmt.Sprintf("AND,((NETWORK,%s),(DST-PORT,%d),(%s,%s,no-resolve)),DIRECT",
+		network, port, kind, netip.PrefixFrom(addr, addr.BitLen())))
 }
 
 func fallbackGroup(name string, members []string) map[string]any {

@@ -76,9 +76,14 @@ func TestClientProfileSiteProbeIntervalDefault(t *testing.T) {
 }
 
 // Site nets sit inside RFC1918 and may sit inside route_through_cidrs too; their
-// rules come first or the broader rules swallow them.
+// rules come first or the broader rules swallow them. Only the proxy endpoints'
+// own rules precede them: a master on a site's LAN still must not carry its own
+// tunnel's packets.
 func TestClientProfileSiteRulesComeFirst(t *testing.T) {
 	rules := toStrings(siteProfile(t, home)["rules"].([]any))
+	for len(rules) > 0 && strings.HasPrefix(rules[0], "AND,") && strings.HasSuffix(rules[0], ",DIRECT") {
+		rules = rules[1:]
+	}
 	want := []string{"IP-CIDR,172.18.0.0/21,home", "IP-CIDR,172.26.1.0/24,home"}
 	if !slices.Equal(rules[:2], want) {
 		t.Errorf("first rules = %v, want %v", rules[:2], want)
