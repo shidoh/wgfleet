@@ -580,6 +580,7 @@ wgfleet_node_egress_info{node,egress_ip}                   # observed egress IP 
 wgfleet_node_drain{node}                                   # 1 if administratively drained (out of LB)
 wgfleet_node_decommission{node}                            # 1 if flagged for decommission (data plane torn down)
 wgfleet_node_client_vless_clients{node}                    # VLESS/REALITY clients issued on a master
+wgfleet_client_info{node,peer,client,device}               # name and device behind a client peer key
 ```
 
 **Agent** (its own reconcile/health counters):

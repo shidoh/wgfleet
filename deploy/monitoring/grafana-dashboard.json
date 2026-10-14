@@ -1184,13 +1184,347 @@
       }
     },
     {
+      "type": "table",
+      "id": 215,
+      "title": "Clients by traffic in this range",
+      "description": "Every client-facing WireGuard peer with traffic in the selected range. via: master — the master's client interface; lifeline — an exit's reserve interface (the same credential, used when the master is unreachable). Names and devices come from the controller; a peer it does not know shows as (unnamed). VLESS clients are not in here: their inbound keeps no per-client counters.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "down|up"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "decbytes"
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "down"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "basic",
+                  "valueDisplayMode": "text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-BlPu"
+                }
+              },
+              {
+                "id": "custom.width",
+                "value": 260
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "last handshake"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "text",
+                      "value": 180
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "via"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "wg0": {
+                        "text": "master",
+                        "index": 0
+                      },
+                      "awgl0": {
+                        "text": "lifeline",
+                        "color": "orange",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "custom.width",
+                "value": 80
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "peer"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "sortBy": [
+          {
+            "displayName": "down",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "((sum by (node, iface, peer) (increase(wgfleet_wg_peer_tx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__range])) > 0) * on(peer) group_left(client, device) max by (peer, client, device) (wgfleet_client_info)) or label_replace(label_replace((sum by (node, iface, peer) (increase(wgfleet_wg_peer_tx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__range])) > 0) unless on(peer) max by (peer, client, device) (wgfleet_client_info), \"client\", \"(unnamed)\", \"\", \"\"), \"device\", \"\", \"\", \"\")",
+          "refId": "down",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "((sum by (node, iface, peer) (increase(wgfleet_wg_peer_rx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__range]))) * on(peer) group_left(client, device) max by (peer, client, device) (wgfleet_client_info)) or label_replace(label_replace((sum by (node, iface, peer) (increase(wgfleet_wg_peer_rx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__range]))) unless on(peer) max by (peer, client, device) (wgfleet_client_info), \"client\", \"(unnamed)\", \"\", \"\"), \"device\", \"\", \"\", \"\")",
+          "refId": "up",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "((min by (node, iface, peer) (wgfleet_wg_handshake_age_seconds{iface=~\"wg0|awgl0\",node=~\"$node\"})) * on(peer) group_left(client, device) max by (peer, client, device) (wgfleet_client_info)) or label_replace(label_replace((min by (node, iface, peer) (wgfleet_wg_handshake_age_seconds{iface=~\"wg0|awgl0\",node=~\"$node\"})) unless on(peer) max by (peer, client, device) (wgfleet_client_info), \"client\", \"(unnamed)\", \"\", \"\"), \"device\", \"\", \"\", \"\")",
+          "refId": "hs",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "filterByValue",
+          "options": {
+            "type": "exclude",
+            "match": "any",
+            "filters": [
+              {
+                "fieldName": "Value #down",
+                "config": {
+                  "id": "isNull",
+                  "options": {}
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #down": "down",
+              "Value #up": "up",
+              "Value #hs": "last handshake",
+              "node": "where",
+              "iface": "via"
+            },
+            "indexByName": {
+              "client": 0,
+              "device": 1,
+              "node": 2,
+              "iface": 3,
+              "Value #down": 4,
+              "Value #up": 5,
+              "Value #hs": 6,
+              "peer": 7
+            }
+          }
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "w": 15,
+        "h": 11,
+        "y": 26
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 216,
+      "title": "Busiest clients, download",
+      "description": "The eight clients pulling the most at each moment, by name. Same sources as the table on the left.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "topk(8, ((8 * sum by (node, iface, peer) (rate(wgfleet_wg_peer_tx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__rate_interval]))) * on(peer) group_left(client, device) max by (peer, client, device) (wgfleet_client_info)) or label_replace(label_replace((8 * sum by (node, iface, peer) (rate(wgfleet_wg_peer_tx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__rate_interval]))) unless on(peer) max by (peer, client, device) (wgfleet_client_info), \"client\", \"(unnamed)\", \"\", \"\"), \"device\", \"\", \"\", \"\"))",
+          "refId": "A",
+          "legendFormat": "{{client}} · {{node}}"
+        }
+      ],
+      "gridPos": {
+        "x": 15,
+        "w": 9,
+        "h": 11,
+        "y": 26
+      }
+    },
+    {
       "type": "row",
       "id": 90,
       "title": "Master → exit",
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 26,
+        "y": 37,
         "w": 24,
         "h": 1
       }
@@ -1312,7 +1646,7 @@
         "x": 0,
         "w": 7,
         "h": 13,
-        "y": 27
+        "y": 38
       }
     },
     {
@@ -1406,7 +1740,7 @@
         "x": 7,
         "w": 17,
         "h": 13,
-        "y": 27
+        "y": 38
       }
     },
     {
@@ -1478,7 +1812,7 @@
         "x": 0,
         "w": 12,
         "h": 8,
-        "y": 40
+        "y": 51
       }
     },
     {
@@ -1554,7 +1888,7 @@
         "x": 12,
         "w": 12,
         "h": 8,
-        "y": 40
+        "y": 51
       }
     },
     {
@@ -1632,7 +1966,7 @@
         "x": 0,
         "w": 8,
         "h": 8,
-        "y": 48
+        "y": 59
       }
     },
     {
@@ -1709,7 +2043,7 @@
         "x": 8,
         "w": 8,
         "h": 8,
-        "y": 48
+        "y": 59
       }
     },
     {
@@ -1786,7 +2120,7 @@
         "x": 16,
         "w": 8,
         "h": 8,
-        "y": 48
+        "y": 59
       }
     },
     {
@@ -1796,7 +2130,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 56,
+        "y": 67,
         "w": 24,
         "h": 1
       }
@@ -1862,7 +2196,7 @@
         "x": 0,
         "w": 6,
         "h": 4,
-        "y": 57
+        "y": 68
       }
     },
     {
@@ -1932,7 +2266,7 @@
         "x": 6,
         "w": 6,
         "h": 4,
-        "y": 57
+        "y": 68
       }
     },
     {
@@ -2010,7 +2344,7 @@
         "x": 12,
         "w": 6,
         "h": 4,
-        "y": 57
+        "y": 68
       }
     },
     {
@@ -2088,7 +2422,7 @@
         "x": 18,
         "w": 6,
         "h": 4,
-        "y": 57
+        "y": 68
       }
     },
     {
@@ -2102,7 +2436,7 @@
         "x": 0,
         "w": 24,
         "h": 9,
-        "y": 61
+        "y": 72
       },
       "id": 21,
       "fieldConfig": {
@@ -2429,7 +2763,7 @@
       "title": "Health",
       "gridPos": {
         "x": 0,
-        "y": 70,
+        "y": 81,
         "w": 24,
         "h": 1
       },
@@ -2448,7 +2782,7 @@
         "x": 0,
         "w": 4,
         "h": 8,
-        "y": 71
+        "y": 82
       },
       "id": 31,
       "fieldConfig": {
@@ -2524,7 +2858,7 @@
         "x": 4,
         "w": 20,
         "h": 8,
-        "y": 71
+        "y": 82
       },
       "id": 32,
       "fieldConfig": {
@@ -2616,7 +2950,7 @@
         "x": 0,
         "w": 24,
         "h": 6,
-        "y": 79
+        "y": 90
       },
       "id": 33,
       "fieldConfig": {
@@ -2738,7 +3072,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 85,
+        "y": 96,
         "w": 24,
         "h": 1
       },
@@ -2756,7 +3090,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 86
+            "y": 97
           },
           "id": 101,
           "fieldConfig": {
@@ -2817,7 +3151,7 @@
             "x": 4,
             "w": 12,
             "h": 8,
-            "y": 86
+            "y": 97
           },
           "id": 102,
           "fieldConfig": {
@@ -2892,7 +3226,7 @@
             "x": 16,
             "w": 4,
             "h": 8,
-            "y": 86
+            "y": 97
           },
           "id": 103,
           "fieldConfig": {
@@ -2997,7 +3331,7 @@
             "x": 20,
             "w": 4,
             "h": 8,
-            "y": 86
+            "y": 97
           },
           "id": 104,
           "fieldConfig": {
@@ -3058,7 +3392,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 94
+            "y": 105
           },
           "id": 96,
           "fieldConfig": {
@@ -3119,7 +3453,7 @@
             "x": 4,
             "w": 8,
             "h": 8,
-            "y": 94
+            "y": 105
           },
           "id": 97,
           "fieldConfig": {
@@ -3194,7 +3528,7 @@
             "x": 12,
             "w": 6,
             "h": 8,
-            "y": 94
+            "y": 105
           },
           "id": 106,
           "fieldConfig": {
@@ -3267,7 +3601,7 @@
             "x": 18,
             "w": 6,
             "h": 8,
-            "y": 94
+            "y": 105
           },
           "id": 107,
           "fieldConfig": {
@@ -3336,7 +3670,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 86,
+        "y": 97,
         "w": 24,
         "h": 1
       },
@@ -3354,7 +3688,7 @@
             "x": 0,
             "w": 12,
             "h": 8,
-            "y": 87
+            "y": 98
           },
           "id": 61,
           "fieldConfig": {
@@ -3459,7 +3793,7 @@
             "x": 12,
             "w": 12,
             "h": 8,
-            "y": 87
+            "y": 98
           },
           "id": 62,
           "fieldConfig": {
@@ -3531,7 +3865,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 87,
+        "y": 98,
         "w": 24,
         "h": 1
       },
@@ -3549,7 +3883,7 @@
             "x": 0,
             "w": 16,
             "h": 8,
-            "y": 88
+            "y": 99
           },
           "id": 41,
           "fieldConfig": {
@@ -3637,7 +3971,7 @@
             "x": 16,
             "w": 8,
             "h": 8,
-            "y": 88
+            "y": 99
           },
           "id": 42,
           "fieldConfig": {
@@ -3738,7 +4072,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 88,
+        "y": 99,
         "w": 24,
         "h": 1
       },
@@ -3756,7 +4090,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 89
+            "y": 100
           },
           "id": 71,
           "fieldConfig": {
@@ -3817,7 +4151,7 @@
             "x": 4,
             "w": 4,
             "h": 8,
-            "y": 89
+            "y": 100
           },
           "id": 72,
           "fieldConfig": {
@@ -3875,7 +4209,7 @@
             "x": 8,
             "w": 16,
             "h": 8,
-            "y": 89
+            "y": 100
           },
           "id": 73,
           "fieldConfig": {
@@ -3954,7 +4288,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 89,
+        "y": 100,
         "w": 24,
         "h": 1
       },
@@ -3971,7 +4305,7 @@
             "x": 0,
             "w": 6,
             "h": 8,
-            "y": 90
+            "y": 101
           },
           "id": 51,
           "fieldConfig": {
@@ -4048,7 +4382,7 @@
             "x": 6,
             "w": 6,
             "h": 8,
-            "y": 90
+            "y": 101
           },
           "id": 52,
           "fieldConfig": {
@@ -4107,7 +4441,7 @@
             "x": 12,
             "w": 6,
             "h": 8,
-            "y": 90
+            "y": 101
           },
           "id": 53,
           "fieldConfig": {
@@ -4164,7 +4498,7 @@
             "x": 18,
             "w": 6,
             "h": 8,
-            "y": 90
+            "y": 101
           },
           "id": 54,
           "fieldConfig": {
@@ -4242,7 +4576,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 90,
+        "y": 101,
         "w": 24,
         "h": 1
       },
@@ -4260,7 +4594,7 @@
             "x": 0,
             "w": 5,
             "h": 8,
-            "y": 91
+            "y": 102
           },
           "id": 81,
           "fieldConfig": {
@@ -4321,7 +4655,7 @@
             "x": 5,
             "w": 5,
             "h": 8,
-            "y": 91
+            "y": 102
           },
           "id": 82,
           "fieldConfig": {
@@ -4382,7 +4716,7 @@
             "x": 10,
             "w": 14,
             "h": 8,
-            "y": 91
+            "y": 102
           },
           "id": 83,
           "fieldConfig": {
@@ -4497,7 +4831,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 91,
+        "y": 102,
         "w": 24,
         "h": 1
       },
@@ -4515,7 +4849,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 92
+            "y": 103
           },
           "id": 111,
           "fieldConfig": {
@@ -4576,7 +4910,7 @@
             "x": 4,
             "w": 10,
             "h": 8,
-            "y": 92
+            "y": 103
           },
           "id": 112,
           "fieldConfig": {
@@ -4653,7 +4987,7 @@
             "x": 14,
             "w": 10,
             "h": 8,
-            "y": 92
+            "y": 103
           },
           "id": 113,
           "fieldConfig": {
@@ -4730,7 +5064,7 @@
             "x": 0,
             "w": 8,
             "h": 8,
-            "y": 100
+            "y": 111
           },
           "id": 114,
           "fieldConfig": {
@@ -4807,7 +5141,7 @@
             "x": 8,
             "w": 8,
             "h": 8,
-            "y": 100
+            "y": 111
           },
           "id": 115,
           "fieldConfig": {
@@ -4892,7 +5226,7 @@
             "x": 16,
             "w": 8,
             "h": 8,
-            "y": 100
+            "y": 111
           },
           "id": 116,
           "fieldConfig": {

@@ -179,6 +179,7 @@ ones — is documented at the top of that script.
 | `wgfleet_node_agent_info` | `node,agent_version,wire_version` | reported agent build (=1) |
 | `wgfleet_node_drain` / `wgfleet_node_decommission` | `node` | admin intent (0/1) |
 | `wgfleet_node_client_vless_clients` | `node` | VLESS/REALITY clients issued for a master's client-facing inbound; masters only |
+| `wgfleet_client_info` | `node,peer,client,device` | one per client-facing WireGuard credential (=1); `node` is the master, `peer` the public key. Join `on(peer)` to name `wgfleet_wg_peer_*` series — on the master's `wg0` and on an exit's lifeline `awgl0` |
 | `wgfleet_build_info` | `component,version,commit` | controller build (=1) |
 | `wgfleet_exit_tunnel_alive` | `node,exit` | 1 when the master's mihomo has this master↔exit tunnel up, 0 when it is out of the load-balance rotation. `node` is the MASTER holding the tunnel, `exit` the far end |
 | `wgfleet_exit_tunnel_selected` | `node,exit` | 1 when this exit currently carries traffic for wg-best |

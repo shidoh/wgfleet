@@ -1324,6 +1324,402 @@
           }
         }
       },
+      "panel-215": {
+        "kind": "Panel",
+        "spec": {
+          "id": 215,
+          "title": "Clients by traffic in this range",
+          "description": "Every client-facing WireGuard peer with traffic in the selected range. via: master — the master's client interface; lifeline — an exit's reserve interface (the same credential, used when the master is unreachable). Names and devices come from the controller; a peer it does not know shows as (unnamed). VLESS clients are not in here: their inbound keeps no per-client counters.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "down",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "((sum by (node, iface, peer) (increase(wgfleet_wg_peer_tx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__range])) > 0) * on(peer) group_left(client, device) max by (peer, client, device) (wgfleet_client_info)) or label_replace(label_replace((sum by (node, iface, peer) (increase(wgfleet_wg_peer_tx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__range])) > 0) unless on(peer) max by (peer, client, device) (wgfleet_client_info), \"client\", \"(unnamed)\", \"\", \"\"), \"device\", \"\", \"\", \"\")",
+                        "instant": true,
+                        "range": false,
+                        "format": "table"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "up",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "((sum by (node, iface, peer) (increase(wgfleet_wg_peer_rx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__range]))) * on(peer) group_left(client, device) max by (peer, client, device) (wgfleet_client_info)) or label_replace(label_replace((sum by (node, iface, peer) (increase(wgfleet_wg_peer_rx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__range]))) unless on(peer) max by (peer, client, device) (wgfleet_client_info), \"client\", \"(unnamed)\", \"\", \"\"), \"device\", \"\", \"\", \"\")",
+                        "instant": true,
+                        "range": false,
+                        "format": "table"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "hs",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "((min by (node, iface, peer) (wgfleet_wg_handshake_age_seconds{iface=~\"wg0|awgl0\",node=~\"$node\"})) * on(peer) group_left(client, device) max by (peer, client, device) (wgfleet_client_info)) or label_replace(label_replace((min by (node, iface, peer) (wgfleet_wg_handshake_age_seconds{iface=~\"wg0|awgl0\",node=~\"$node\"})) unless on(peer) max by (peer, client, device) (wgfleet_client_info), \"client\", \"(unnamed)\", \"\", \"\"), \"device\", \"\", \"\", \"\")",
+                        "instant": true,
+                        "range": false,
+                        "format": "table"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": [
+                {
+                  "kind": "Transformation",
+                  "group": "merge",
+                  "spec": {
+                    "options": {}
+                  }
+                },
+                {
+                  "kind": "Transformation",
+                  "group": "filterByValue",
+                  "spec": {
+                    "options": {
+                      "type": "exclude",
+                      "match": "any",
+                      "filters": [
+                        {
+                          "fieldName": "Value #down",
+                          "config": {
+                            "id": "isNull",
+                            "options": {}
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "Transformation",
+                  "group": "organize",
+                  "spec": {
+                    "options": {
+                      "excludeByName": {
+                        "Time": true
+                      },
+                      "renameByName": {
+                        "Value #down": "down",
+                        "Value #up": "up",
+                        "Value #hs": "last handshake",
+                        "node": "where",
+                        "iface": "via"
+                      },
+                      "indexByName": {
+                        "client": 0,
+                        "device": 1,
+                        "node": 2,
+                        "iface": 3,
+                        "Value #down": 4,
+                        "Value #up": 5,
+                        "Value #hs": 6,
+                        "peer": 7
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "table",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "align": "auto",
+                    "cellOptions": {
+                      "type": "auto"
+                    },
+                    "inspect": false
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      }
+                    ]
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byRegexp",
+                      "options": "down|up"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "decbytes"
+                      },
+                      {
+                        "id": "custom.width",
+                        "value": 110
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "down"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.cellOptions",
+                        "value": {
+                          "type": "gauge",
+                          "mode": "basic",
+                          "valueDisplayMode": "text"
+                        }
+                      },
+                      {
+                        "id": "color",
+                        "value": {
+                          "mode": "continuous-BlPu"
+                        }
+                      },
+                      {
+                        "id": "custom.width",
+                        "value": 260
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "last handshake"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "s"
+                      },
+                      {
+                        "id": "decimals",
+                        "value": 0
+                      },
+                      {
+                        "id": "custom.cellOptions",
+                        "value": {
+                          "type": "color-text"
+                        }
+                      },
+                      {
+                        "id": "thresholds",
+                        "value": {
+                          "mode": "absolute",
+                          "steps": [
+                            {
+                              "color": "green",
+                              "value": 0
+                            },
+                            {
+                              "color": "text",
+                              "value": 180
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "via"
+                    },
+                    "properties": [
+                      {
+                        "id": "mappings",
+                        "value": [
+                          {
+                            "type": "value",
+                            "options": {
+                              "wg0": {
+                                "text": "master",
+                                "index": 0
+                              },
+                              "awgl0": {
+                                "text": "lifeline",
+                                "color": "orange",
+                                "index": 1
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "id": "custom.cellOptions",
+                        "value": {
+                          "type": "color-text"
+                        }
+                      },
+                      {
+                        "id": "custom.width",
+                        "value": 80
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "peer"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.width",
+                        "value": 110
+                      }
+                    ]
+                  }
+                ]
+              },
+              "options": {
+                "showHeader": true,
+                "cellHeight": "sm",
+                "footer": {
+                  "show": false
+                },
+                "sortBy": [
+                  {
+                    "displayName": "down",
+                    "desc": true
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "panel-216": {
+        "kind": "Panel",
+        "spec": {
+          "id": 216,
+          "title": "Busiest clients, download",
+          "description": "The eight clients pulling the most at each moment, by name. Same sources as the table on the left.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "topk(8, ((8 * sum by (node, iface, peer) (rate(wgfleet_wg_peer_tx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__rate_interval]))) * on(peer) group_left(client, device) max by (peer, client, device) (wgfleet_client_info)) or label_replace(label_replace((8 * sum by (node, iface, peer) (rate(wgfleet_wg_peer_tx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__rate_interval]))) unless on(peer) max by (peer, client, device) (wgfleet_client_info), \"client\", \"(unnamed)\", \"\", \"\"), \"device\", \"\", \"\", \"\"))",
+                        "legendFormat": "{{client}} · {{node}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "bps",
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineWidth": 1,
+                    "fillOpacity": 0,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "mode": "none",
+                      "group": "A"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisSoftMin": 0
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      }
+                    ]
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "showLegend": true,
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          }
+        }
+      },
       "panel-220": {
         "kind": "Panel",
         "spec": {
@@ -5988,6 +6384,32 @@
                         "width": 8,
                         "x": 16,
                         "y": 8
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-215"
+                        },
+                        "height": 11,
+                        "width": 15,
+                        "x": 0,
+                        "y": 16
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-216"
+                        },
+                        "height": 11,
+                        "width": 9,
+                        "x": 15,
+                        "y": 16
                       }
                     }
                   ]
