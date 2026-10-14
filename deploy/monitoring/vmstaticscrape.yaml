@@ -70,3 +70,26 @@ spec:
       path: /metrics
       scheme: http
       interval: 30s
+---
+# blocky — the DNS resolver on every node — exposes metrics on <mgmt_addr>:4000. blocky puts no node
+# label on its own series, so it is set per target — without it the DNS panels
+# cannot tell one node from another, and WgfleetDNSMetricsMissing cannot name a
+# node that is missing.
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMStaticScrape
+metadata:
+  name: blocky-scrape
+  namespace: monitoring # <-- your vmagent scrape namespace
+  labels:
+    app.kubernetes.io/name: wgfleet
+spec:
+  jobName: blocky
+  targetEndpoints:
+    - targets: ["10.20.0.1:4000"] # <-- EDIT: one entry per node, master included
+      labels: { node: master, role: master }
+      path: /metrics
+      interval: 30s
+    - targets: ["10.20.0.2:4000"]
+      labels: { node: exit-1, role: exit }
+      path: /metrics
+      interval: 30s

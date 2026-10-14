@@ -73,6 +73,20 @@ spec:
         summary: Fleet has more Ready nodes than scraped agents
         description: '{{ $value }} node(s) are Ready in the controller store but have no agent target
           in the wgfleet job. Add their mgmt addresses to the VMStaticScrape.'
+    - alert: WgfleetDNSMetricsMissing
+      # A node the controller knows that no blocky target is UP for. The blocky job is
+      # a hand-kept list like the node-exporter one, and a second master went
+      # unscraped for days because nothing asked this question for DNS.
+      expr: |
+        wgfleet_node_info{state!="Decommissioning"} == 1
+          unless on(node) (up{job="blocky"} == 1)
+      for: 30m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: No DNS metrics from {{ $labels.node }}
+        description: The controller knows {{ $labels.node }} ({{ $labels.role }}) but no blocky target labelled node={{ $labels.node }} has been up for 30m. Add its mgmt address on 4000 to the blocky VMStaticScrape with node/role labels; until then that node's DNS is invisible.
   - name: wgfleet.fleet
     interval: 30s
     rules:
