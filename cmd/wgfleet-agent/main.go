@@ -318,6 +318,9 @@ func run() error {
 		metrics.NewFWCollector(reg, cfg.Agent.NodeID, string(role), nil)
 		if role == domain.RoleMaster {
 			metrics.NewAWGPinCollector(reg, cfg.Agent.NodeID, string(role), nil, a.exitNameByIP)
+			// Per-client traffic of the client-facing VLESS inbound, from xray's
+			// stats API on the loopback.
+			metrics.NewVLESSCollector(reg, cfg.Agent.NodeID, string(role), a.vlessInbound.Load, nil)
 		}
 		// Scheduled probes degrade silently by design (a failure keeps the last-good
 		// value and only WARNs), so without this a probe that fails 100% of the time
@@ -421,11 +424,15 @@ type agent struct {
 	// exitNames maps an exit's endpoint IP to its node name, from the last spec a
 	// master applied; the exit-initiated AWG metrics label exits by name with it.
 	exitNames atomic.Pointer[map[string]string]
-	publicIP  string
-	mgmtAddr  string
-	stateDir  string // non-empty roots managed files outside /etc (non-root/dev)
-	paths     exit.Paths
-	metrics   *metrics.AgentMetrics // nil when /metrics is disabled
+	// vlessInbound is true while the master's last applied spec runs the
+	// client-facing VLESS inbound; the per-client VLESS collector stays silent
+	// otherwise instead of reporting a stats API that is not supposed to exist.
+	vlessInbound atomic.Bool
+	publicIP     string
+	mgmtAddr     string
+	stateDir     string // non-empty roots managed files outside /etc (non-root/dev)
+	paths        exit.Paths
+	metrics      *metrics.AgentMetrics // nil when /metrics is disabled
 	// mihomoLogCursor is how far into mihomo's log the error counter has read.
 	// Kept here rather than in a planner: planners are rebuilt every pass and would
 	// re-count the same window forever.
@@ -991,6 +998,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	if a.role == domain.RoleMaster && spec.Master != nil {
 		names := exitNamesByIP(spec.Master.ExitTunnels)
 		a.exitNames.Store(&names)
+		a.vlessInbound.Store(spec.Master.ClientVLESS != nil)
 	}
 	if !fromCache {
 		repCtx, repCancel := context.WithTimeout(base, statusReportTimeout)

@@ -580,7 +580,7 @@ wgfleet_node_egress_info{node,egress_ip}                   # observed egress IP 
 wgfleet_node_drain{node}                                   # 1 if administratively drained (out of LB)
 wgfleet_node_decommission{node}                            # 1 if flagged for decommission (data plane torn down)
 wgfleet_node_client_vless_clients{node}                    # VLESS/REALITY clients issued on a master
-wgfleet_client_info{node,peer,client,device}               # name and device behind a client peer key
+wgfleet_client_info{node,peer,client,device,kind}          # name and device behind a client key (awg|vless)
 ```
 
 **Agent** (its own reconcile/health counters):
@@ -595,6 +595,18 @@ wgfleet_agent_egress_active{method}                # current active egress metho
 wgfleet_agent_egress_reachability{state}           # ok | degraded | blocked (censorship signal)
 wgfleet_agent_start_time_seconds                   # for uptime
 ```
+
+**Per-client traffic** (master agent):
+
+```
+wgfleet_wg_peer_rx_bytes{iface,peer} / _tx_bytes   # WireGuard, per peer (8-character key)
+wgfleet_vless_user_rx_bytes{user} / _tx_bytes      # VLESS, per client (stats id, not the UUID)
+wgfleet_vless_user_online_ips{user}                # VLESS source IPs connected now
+wgfleet_vless_collector_up                         # 1 = xray stats API answered
+```
+
+Name them with `wgfleet_client_info` `on(peer)`. xray serves the stats API on
+`127.0.0.1:10085` only.
 
 ### Host metrics (yours to upgrade)
 

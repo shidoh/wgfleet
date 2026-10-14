@@ -14,11 +14,13 @@ New releases are announced, with the archives attached, in the Telegram channel 
 - The console shows every master with its own view of the exits.
 - An exit reports each master peer's endpoint and handshake (wire 13). Upgrade the controller first.
 - Alert `WgfleetDNSMetricsMissing`: a node the controller knows that no `blocky` scrape target covers. The `blocky` job needs per-target `node`/`role` labels — `deploy/monitoring/vmstaticscrape.yaml` has the template.
-- Metric `wgfleet_client_info`: the name and device of each client-facing WireGuard credential, by peer key. The dashboard has a per-client traffic table and a busiest-clients graph, master and lifeline alike. VLESS clients are not covered.
+- Metric `wgfleet_client_info`: the name and device of each client credential (`kind` awg or vless). The dashboard has a per-client traffic table and a busiest-clients graph: WireGuard on the master and on an exit's lifeline, and VLESS.
+- Per-client VLESS traffic: `wgfleet_vless_user_rx_bytes`, `_tx_bytes`, `_online_ips` and `wgfleet_vless_collector_up` from the master agent; alert `WgfleetVLESSStatsUnreadable`. Clients are labelled by a hash of the UUID, never by the UUID.
 - Prometheus service discovery on the controller's metrics address: `/sd/wgfleet`, `/sd/node-exporter`, `/sd/blocky`. `deploy/monitoring/vmscrapeconfig-sd.yaml` scrapes the fleet through it, so a new node needs no scrape-list edit.
 
 ### Changed
 
+- The master's client VLESS inbound counts traffic per client: xray serves its stats API on `127.0.0.1:10085`. The first agent upgrade restarts xray once; VLESS clients of that master reconnect after a few seconds.
 - The Grafana dashboard is rebuilt: firing alerts, clients online and client traffic, DNS, and an exit × master matrix come first; the earlier rows are below, most of them collapsed. New `$master` and `$exit` variables; an "Agent restarts" annotation marks rollouts. Re-import `grafana-dashboard.json` (Grafana ≤12) or paste `grafana-dashboard-v2.json` (Grafana 13).
 - Wire contract 13. Upgrade the controller first, then the agents; an exit on an older agent keeps serving the master in slot 0 only.
 - mihomo on the masters is v1.19.32 (was v1.19.30): fixes for AmneziaWG 3.x tunnels and WireGuard start-up. The image change restarts mihomo once on every master that does not pin `mihomo_tag`; client connections drop for a few seconds.

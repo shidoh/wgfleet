@@ -1187,7 +1187,7 @@
       "type": "table",
       "id": 215,
       "title": "Clients by traffic in this range",
-      "description": "Every client-facing WireGuard peer with traffic in the selected range. via: master — the master's client interface; lifeline — an exit's reserve interface (the same credential, used when the master is unreachable). Names and devices come from the controller; a peer it does not know shows as (unnamed) — normally just the master's own synthetic client (10.73.0.254), which probes the client path. VLESS clients are not in here: their inbound keeps no per-client counters.",
+      "description": "Every client with traffic in the selected range. via: master — the master's WireGuard client interface; lifeline — an exit's reserve interface (the same credential, used when the master is unreachable); VLESS — the master's VLESS inbound. WireGuard bytes are on the wire, VLESS bytes are payload without REALITY/XHTTP overhead, so a VLESS client reads a little lower for the same use. VLESS has no handshake column. Names and devices come from the controller; a peer it does not know shows as (unnamed) — normally just the master's own synthetic client (10.73.0.254), which probes the client path.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1312,6 +1312,11 @@
                         "text": "lifeline",
                         "color": "orange",
                         "index": 1
+                      },
+                      "vless": {
+                        "text": "VLESS",
+                        "color": "purple",
+                        "index": 2
                       }
                     }
                   }
@@ -1362,7 +1367,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "((sum by (node, iface, peer) (increase(wgfleet_wg_peer_tx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__range])) > 0) * on(peer) group_left(client, device) max by (peer, client, device) (last_over_time(wgfleet_client_info[1d] @ end()))) or label_replace(label_replace((sum by (node, iface, peer) (increase(wgfleet_wg_peer_tx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__range])) > 0) unless on(peer) max by (peer, client, device) (last_over_time(wgfleet_client_info[1d] @ end())), \"client\", \"(unnamed)\", \"\", \"\"), \"device\", \"\", \"\", \"\")",
+          "expr": "((sum by (node, iface, peer) ((sum by (node, iface, peer) (increase(wgfleet_wg_peer_tx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__range]))) or (label_replace(label_replace(sum by (node, user) (increase(wgfleet_vless_user_tx_bytes{node=~\"$node\"}[$__range])), \"peer\", \"$1\", \"user\", \"(.+)\"), \"iface\", \"vless\", \"\", \"\"))) > 0) * on(peer) group_left(client, device) max by (peer, client, device) (last_over_time(wgfleet_client_info[1d] @ end()))) or label_replace(label_replace((sum by (node, iface, peer) ((sum by (node, iface, peer) (increase(wgfleet_wg_peer_tx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__range]))) or (label_replace(label_replace(sum by (node, user) (increase(wgfleet_vless_user_tx_bytes{node=~\"$node\"}[$__range])), \"peer\", \"$1\", \"user\", \"(.+)\"), \"iface\", \"vless\", \"\", \"\"))) > 0) unless on(peer) max by (peer, client, device) (last_over_time(wgfleet_client_info[1d] @ end())), \"client\", \"(unnamed)\", \"\", \"\"), \"device\", \"\", \"\", \"\")",
           "refId": "down",
           "instant": true,
           "range": false,
@@ -1373,7 +1378,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "((sum by (node, iface, peer) (increase(wgfleet_wg_peer_rx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__range]))) * on(peer) group_left(client, device) max by (peer, client, device) (last_over_time(wgfleet_client_info[1d] @ end()))) or label_replace(label_replace((sum by (node, iface, peer) (increase(wgfleet_wg_peer_rx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__range]))) unless on(peer) max by (peer, client, device) (last_over_time(wgfleet_client_info[1d] @ end())), \"client\", \"(unnamed)\", \"\", \"\"), \"device\", \"\", \"\", \"\")",
+          "expr": "((sum by (node, iface, peer) ((sum by (node, iface, peer) (increase(wgfleet_wg_peer_rx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__range]))) or (label_replace(label_replace(sum by (node, user) (increase(wgfleet_vless_user_rx_bytes{node=~\"$node\"}[$__range])), \"peer\", \"$1\", \"user\", \"(.+)\"), \"iface\", \"vless\", \"\", \"\")))) * on(peer) group_left(client, device) max by (peer, client, device) (last_over_time(wgfleet_client_info[1d] @ end()))) or label_replace(label_replace((sum by (node, iface, peer) ((sum by (node, iface, peer) (increase(wgfleet_wg_peer_rx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__range]))) or (label_replace(label_replace(sum by (node, user) (increase(wgfleet_vless_user_rx_bytes{node=~\"$node\"}[$__range])), \"peer\", \"$1\", \"user\", \"(.+)\"), \"iface\", \"vless\", \"\", \"\")))) unless on(peer) max by (peer, client, device) (last_over_time(wgfleet_client_info[1d] @ end())), \"client\", \"(unnamed)\", \"\", \"\"), \"device\", \"\", \"\", \"\")",
           "refId": "up",
           "instant": true,
           "range": false,
@@ -1505,7 +1510,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "topk(8, ((8 * sum by (node, iface, peer) (rate(wgfleet_wg_peer_tx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__rate_interval])) > 0) * on(peer) group_left(client, device) max by (peer, client, device) (last_over_time(wgfleet_client_info[1d] @ end()))) or label_replace(label_replace((8 * sum by (node, iface, peer) (rate(wgfleet_wg_peer_tx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__rate_interval])) > 0) unless on(peer) max by (peer, client, device) (last_over_time(wgfleet_client_info[1d] @ end())), \"client\", \"(unnamed)\", \"\", \"\"), \"device\", \"\", \"\", \"\"))",
+          "expr": "topk(8, ((8 * sum by (node, iface, peer) ((sum by (node, iface, peer) (rate(wgfleet_wg_peer_tx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__rate_interval]))) or (label_replace(label_replace(sum by (node, user) (rate(wgfleet_vless_user_tx_bytes{node=~\"$node\"}[$__rate_interval])), \"peer\", \"$1\", \"user\", \"(.+)\"), \"iface\", \"vless\", \"\", \"\"))) > 0) * on(peer) group_left(client, device) max by (peer, client, device) (last_over_time(wgfleet_client_info[1d] @ end()))) or label_replace(label_replace((8 * sum by (node, iface, peer) ((sum by (node, iface, peer) (rate(wgfleet_wg_peer_tx_bytes{iface=~\"wg0|awgl0\",node=~\"$node\"}[$__rate_interval]))) or (label_replace(label_replace(sum by (node, user) (rate(wgfleet_vless_user_tx_bytes{node=~\"$node\"}[$__rate_interval])), \"peer\", \"$1\", \"user\", \"(.+)\"), \"iface\", \"vless\", \"\", \"\"))) > 0) unless on(peer) max by (peer, client, device) (last_over_time(wgfleet_client_info[1d] @ end())), \"client\", \"(unnamed)\", \"\", \"\"), \"device\", \"\", \"\", \"\"))",
           "refId": "A",
           "legendFormat": "{{client}} · {{node}}"
         }
