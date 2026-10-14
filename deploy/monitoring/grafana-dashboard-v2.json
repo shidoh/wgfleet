@@ -24,17 +24,45 @@
             "spec": {}
           }
         }
+      },
+      {
+        "kind": "AnnotationQuery",
+        "spec": {
+          "builtIn": false,
+          "enable": true,
+          "hide": false,
+          "iconColor": "purple",
+          "name": "Agent restarts",
+          "query": {
+            "kind": "DataQuery",
+            "group": "prometheus",
+            "version": "v0",
+            "datasource": {
+              "name": "${datasource}"
+            },
+            "spec": {
+              "expr": "count(changes(wgfleet_agent_start_time_seconds[2m]) > 0)",
+              "refId": "Anno"
+            }
+          },
+          "legacyOptions": {
+            "titleFormat": "agent restarts",
+            "textFormat": "{{value}} node(s)",
+            "useValueForTime": false,
+            "step": "60s"
+          }
+        }
       }
     ],
     "cursorSync": "Crosshair",
     "editable": true,
     "elements": {
-      "panel-2": {
+      "panel-200": {
         "kind": "Panel",
         "spec": {
-          "id": 2,
-          "title": "Nodes",
-          "description": "",
+          "id": 200,
+          "title": "Firing now",
+          "description": "wgfleet alerts vmalert is firing, newest first. Silences live in Alertmanager, so a silenced alert still shows here — check the silence list before chasing it.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -53,102 +81,59 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "sum(wgfleet_nodes)",
-                        "instant": true
+                        "expr": "1000 * max by (severity, alertname, node, exit, check, probe, port, transport) (ALERTS_FOR_STATE{service=\"wgfleet\"} and ignoring(alertstate) ALERTS{alertstate=\"firing\",service=\"wgfleet\"})",
+                        "instant": true,
+                        "range": false,
+                        "format": "table"
                       }
                     }
                   }
                 }
               ],
               "queryOptions": {},
-              "transformations": []
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "stat",
-            "version": "13.2.0",
-            "spec": {
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "thresholds"
-                  },
-                  "thresholds": {
-                    "mode": "absolute",
-                    "steps": [
-                      {
-                        "color": "text",
-                        "value": 0
-                      }
-                    ]
-                  },
-                  "unit": "short"
-                },
-                "overrides": []
-              },
-              "options": {
-                "colorMode": "value",
-                "graphMode": "none",
-                "justifyMode": "auto",
-                "orientation": "auto",
-                "reduceOptions": {
-                  "calcs": [
-                    "lastNotNull"
-                  ],
-                  "fields": "",
-                  "values": false
-                },
-                "textMode": "auto"
-              }
-            }
-          }
-        }
-      },
-      "panel-3": {
-        "kind": "Panel",
-        "spec": {
-          "id": 3,
-          "title": "Ready",
-          "description": "",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
+              "transformations": [
                 {
-                  "kind": "PanelQuery",
+                  "kind": "Transformation",
+                  "group": "organize",
                   "spec": {
-                    "refId": "A",
-                    "hidden": false,
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "${datasource}"
+                    "options": {
+                      "excludeByName": {
+                        "Time": true
                       },
-                      "spec": {
-                        "expr": "sum(wgfleet_nodes{state=\"Ready\"})",
-                        "instant": true
+                      "renameByName": {
+                        "Value": "since",
+                        "alertname": "alert"
+                      },
+                      "indexByName": {
+                        "severity": 0,
+                        "alertname": 1,
+                        "node": 2,
+                        "exit": 3,
+                        "check": 4,
+                        "probe": 5,
+                        "port": 6,
+                        "transport": 7,
+                        "Value": 8
                       }
                     }
                   }
                 }
-              ],
-              "queryOptions": {},
-              "transformations": []
+              ]
             }
           },
           "vizConfig": {
             "kind": "VizConfig",
-            "group": "stat",
+            "group": "table",
             "version": "13.2.0",
             "spec": {
               "fieldConfig": {
                 "defaults": {
-                  "color": {
-                    "mode": "thresholds"
+                  "custom": {
+                    "align": "auto",
+                    "cellOptions": {
+                      "type": "auto"
+                    },
+                    "inspect": false
                   },
                   "thresholds": {
                     "mode": "absolute",
@@ -158,33 +143,88 @@
                         "value": 0
                       }
                     ]
-                  },
-                  "unit": "short"
+                  }
                 },
-                "overrides": []
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "since"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "dateTimeFromNow"
+                      },
+                      {
+                        "id": "custom.width",
+                        "value": 130
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "severity"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.cellOptions",
+                        "value": {
+                          "type": "color-background"
+                        }
+                      },
+                      {
+                        "id": "custom.width",
+                        "value": 80
+                      },
+                      {
+                        "id": "mappings",
+                        "value": [
+                          {
+                            "type": "value",
+                            "options": {
+                              "critical": {
+                                "text": "critical",
+                                "color": "red",
+                                "index": 0
+                              },
+                              "warning": {
+                                "text": "warning",
+                                "color": "orange",
+                                "index": 1
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
               },
               "options": {
-                "colorMode": "value",
-                "graphMode": "none",
-                "reduceOptions": {
-                  "calcs": [
-                    "lastNotNull"
-                  ],
-                  "fields": "",
-                  "values": false
+                "showHeader": true,
+                "cellHeight": "sm",
+                "footer": {
+                  "show": false
                 },
-                "textMode": "auto"
+                "sortBy": [
+                  {
+                    "displayName": "since",
+                    "desc": true
+                  }
+                ]
               }
             }
           }
         }
       },
-      "panel-4": {
+      "panel-201": {
         "kind": "Panel",
         "spec": {
-          "id": 4,
-          "title": "Degraded",
-          "description": "",
+          "id": 201,
+          "title": "Clients online",
+          "description": "Client peers with a fresh handshake on the masters' client interface. VLESS clients are not counted: their inbound keeps no handshake.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -203,8 +243,7 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "sum(wgfleet_nodes{state=\"Degraded\"})",
-                        "instant": true
+                        "expr": "sum(wgfleet_wg_peers_active{iface=\"wg0\",role=\"master\"})"
                       }
                     }
                   }
@@ -221,29 +260,29 @@
             "spec": {
               "fieldConfig": {
                 "defaults": {
-                  "color": {
-                    "mode": "thresholds"
-                  },
+                  "unit": "none",
                   "thresholds": {
                     "mode": "absolute",
                     "steps": [
                       {
-                        "color": "green",
+                        "color": "red",
                         "value": 0
                       },
                       {
-                        "color": "yellow",
+                        "color": "green",
                         "value": 1
                       }
                     ]
                   },
-                  "unit": "short"
+                  "mappings": [],
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "noValue": "no data"
                 },
                 "overrides": []
               },
               "options": {
-                "colorMode": "value",
-                "graphMode": "none",
                 "reduceOptions": {
                   "calcs": [
                     "lastNotNull"
@@ -251,18 +290,24 @@
                   "fields": "",
                   "values": false
                 },
-                "textMode": "auto"
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto",
+                "wideLayout": true,
+                "showPercentChange": false
               }
             }
           }
         }
       },
-      "panel-5": {
+      "panel-202": {
         "kind": "Panel",
         "spec": {
-          "id": 5,
-          "title": "Error",
-          "description": "",
+          "id": 202,
+          "title": "Client traffic",
+          "description": "Both directions, all masters, last 5 minutes.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -281,8 +326,7 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "sum(wgfleet_nodes{state=\"Error\"})",
-                        "instant": true
+                        "expr": "8 * sum(rate(wgfleet_wg_peer_rx_bytes{iface=\"wg0\",role=\"master\"}[5m]) + rate(wgfleet_wg_peer_tx_bytes{iface=\"wg0\",role=\"master\"}[5m]))"
                       }
                     }
                   }
@@ -299,9 +343,85 @@
             "spec": {
               "fieldConfig": {
                 "defaults": {
+                  "unit": "bps",
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      }
+                    ]
+                  },
+                  "mappings": [],
                   "color": {
                     "mode": "thresholds"
-                  },
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "colorMode": "none",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto",
+                "wideLayout": true,
+                "showPercentChange": false
+              }
+            }
+          }
+        }
+      },
+      "panel-203": {
+        "kind": "Panel",
+        "spec": {
+          "id": 203,
+          "title": "Client path failing",
+          "description": "Probes the masters' own synthetic client fails right now (icmp, tcp/443, udp/53 through the whole path). Anything above 0 means real clients hurt.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "count(wgfleet_agent_client_path_ok == 0) or vector(0)"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "stat",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
                   "thresholds": {
                     "mode": "absolute",
                     "steps": [
@@ -315,13 +435,14 @@
                       }
                     ]
                   },
-                  "unit": "short"
+                  "mappings": [],
+                  "color": {
+                    "mode": "thresholds"
+                  }
                 },
                 "overrides": []
               },
               "options": {
-                "colorMode": "value",
-                "graphMode": "none",
                 "reduceOptions": {
                   "calcs": [
                     "lastNotNull"
@@ -329,18 +450,24 @@
                   "fields": "",
                   "values": false
                 },
-                "textMode": "auto"
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto",
+                "wideLayout": true,
+                "showPercentChange": false
               }
             }
           }
         }
       },
-      "panel-6": {
+      "panel-204": {
         "kind": "Panel",
         "spec": {
-          "id": 6,
-          "title": "Nodes by state",
-          "description": "",
+          "id": 204,
+          "title": "Nodes not Ready",
+          "description": "Nodes the controller does not report as Ready (Degraded, Error, Provisioning, Draining…).",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -359,9 +486,7 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "sum by (state) (wgfleet_nodes) > 0",
-                        "instant": true,
-                        "legendFormat": "{{state}}"
+                        "expr": "count(wgfleet_node_info{state!=\"Ready\"} == 1) or vector(0)"
                       }
                     }
                   }
@@ -373,43 +498,1048 @@
           },
           "vizConfig": {
             "kind": "VizConfig",
-            "group": "piechart",
+            "group": "stat",
             "version": "13.2.0",
             "spec": {
               "fieldConfig": {
                 "defaults": {
+                  "unit": "none",
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      },
+                      {
+                        "color": "orange",
+                        "value": 1
+                      }
+                    ]
+                  },
+                  "mappings": [],
                   "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "hideFrom": {
-                      "legend": false,
-                      "tooltip": false,
-                      "viz": false
-                    }
-                  },
-                  "mappings": []
+                    "mode": "thresholds"
+                  }
                 },
                 "overrides": []
               },
               "options": {
-                "displayLabels": [
-                  "name",
-                  "value"
-                ],
-                "legend": {
-                  "displayMode": "list",
-                  "placement": "right",
-                  "showLegend": true,
-                  "values": []
-                },
-                "pieType": "donut",
                 "reduceOptions": {
                   "calcs": [
                     "lastNotNull"
                   ],
                   "fields": "",
                   "values": false
+                },
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto",
+                "wideLayout": true,
+                "showPercentChange": false
+              }
+            }
+          }
+        }
+      },
+      "panel-205": {
+        "kind": "Panel",
+        "spec": {
+          "id": 205,
+          "title": "Exits carrying traffic",
+          "description": "Per master: exits wg-best currently balances over. 0 means that master's clients have no way out.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "count by (node) (wgfleet_exit_tunnel_selected{node=~\"$master\"} == 1) or on(node) (0 * max by (node) (wgfleet_exit_tunnel_selected{node=~\"$master\"}))",
+                        "legendFormat": "{{node}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "stat",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "red",
+                        "value": 0
+                      },
+                      {
+                        "color": "orange",
+                        "value": 1
+                      },
+                      {
+                        "color": "green",
+                        "value": 2
+                      }
+                    ]
+                  },
+                  "mappings": [],
+                  "color": {
+                    "mode": "thresholds"
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "value_and_name",
+                "orientation": "auto",
+                "wideLayout": true,
+                "showPercentChange": false
+              }
+            }
+          }
+        }
+      },
+      "panel-206": {
+        "kind": "Panel",
+        "spec": {
+          "id": 206,
+          "title": "Reserve tier in use",
+          "description": "Per master: 1 when the primary exits are all down and wg-best fell back to the reserve tier.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "max by (node) (wgfleet_agent_reserve_tier_active{node=~\"$master\"})",
+                        "legendFormat": "{{node}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "stat",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      },
+                      {
+                        "color": "orange",
+                        "value": 1
+                      }
+                    ]
+                  },
+                  "mappings": [
+                    {
+                      "type": "value",
+                      "options": {
+                        "0": {
+                          "text": "primary",
+                          "color": "green",
+                          "index": 0
+                        },
+                        "1": {
+                          "text": "RESERVE",
+                          "color": "orange",
+                          "index": 1
+                        }
+                      }
+                    }
+                  ],
+                  "color": {
+                    "mode": "thresholds"
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "value_and_name",
+                "orientation": "auto",
+                "wideLayout": true,
+                "showPercentChange": false
+              }
+            }
+          }
+        }
+      },
+      "panel-207": {
+        "kind": "Panel",
+        "spec": {
+          "id": 207,
+          "title": "DNS SERVFAIL",
+          "description": "Share of the masters' blocky answers that are SERVFAIL — the clients' only resolver.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "(sum(rate(blocky_response_total{role=\"master\",response_code=\"SERVFAIL\"}[15m])) or vector(0)) / sum(rate(blocky_response_total{role=\"master\"}[15m]))"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "stat",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "percentunit",
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      },
+                      {
+                        "color": "orange",
+                        "value": 0.01
+                      },
+                      {
+                        "color": "red",
+                        "value": 0.05
+                      }
+                    ]
+                  },
+                  "mappings": [],
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "decimals": 2
+                },
+                "overrides": []
+              },
+              "options": {
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto",
+                "wideLayout": true,
+                "showPercentChange": false
+              }
+            }
+          }
+        }
+      },
+      "panel-210": {
+        "kind": "Panel",
+        "spec": {
+          "id": 210,
+          "title": "Client peers online, per master",
+          "description": "Peers with a fresh handshake on wg0. A master dropping to 0 while the other rises is clients failing over; both dropping is an outage.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "max by (node) (wgfleet_wg_peers_active{iface=\"wg0\",node=~\"$master\"})",
+                        "legendFormat": "{{node}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineWidth": 1,
+                    "fillOpacity": 0,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "mode": "none",
+                      "group": "A"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisSoftMin": 0
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      }
+                    ]
+                  },
+                  "noValue": null
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "showLegend": true,
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-211": {
+        "kind": "Panel",
+        "spec": {
+          "id": 211,
+          "title": "Client traffic, per master",
+          "description": "Download (to clients) above the axis, upload below.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "down",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "8 * sum by (node) (rate(wgfleet_wg_peer_tx_bytes{iface=\"wg0\",node=~\"$master\"}[$__rate_interval]))",
+                        "legendFormat": "{{node}} ↓"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "up",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "-8 * sum by (node) (rate(wgfleet_wg_peer_rx_bytes{iface=\"wg0\",node=~\"$master\"}[$__rate_interval]))",
+                        "legendFormat": "{{node}} ↑"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "bps",
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineWidth": 1,
+                    "fillOpacity": 10,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "mode": "none",
+                      "group": "A"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      }
+                    ]
+                  },
+                  "noValue": null
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "showLegend": true,
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-212": {
+        "kind": "Panel",
+        "spec": {
+          "id": 212,
+          "title": "Client DNS answers (masters)",
+          "description": "What the masters' blocky answers clients with, stacked.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "sum by (response_type) (rate(blocky_response_total{node=~\"$master\"}[$__rate_interval]))",
+                        "legendFormat": "{{response_type}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "reqps",
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineWidth": 1,
+                    "fillOpacity": 10,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "mode": "normal",
+                      "group": "A"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisSoftMin": 0
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      }
+                    ]
+                  },
+                  "noValue": null
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "showLegend": true,
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-213": {
+        "kind": "Panel",
+        "spec": {
+          "id": 213,
+          "title": "DNS latency p95, per node",
+          "description": "blocky request duration. Masters resolve for clients; exits resolve for their own egress.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "histogram_quantile(0.95, sum by (node, le) (rate(blocky_request_duration_seconds_bucket{node=~\"$node\",node!=\"\"}[$__rate_interval])))",
+                        "legendFormat": "{{node}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "s",
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineWidth": 1,
+                    "fillOpacity": 0,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "mode": "none",
+                      "group": "A"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisSoftMin": 0
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      }
+                    ]
+                  },
+                  "noValue": null
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "showLegend": true,
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-214": {
+        "kind": "Panel",
+        "spec": {
+          "id": 214,
+          "title": "DNS failures, per node",
+          "description": "SERVFAIL answers plus blocky's own errors (upstream timeouts, list downloads).",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "sf",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "sum by (node) (rate(blocky_response_total{response_code=\"SERVFAIL\",node=~\"$node\"}[$__rate_interval])) > 0",
+                        "legendFormat": "{{node}} SERVFAIL"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "err",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "sum by (node) (rate(blocky_error_total{node=~\"$node\"}[$__rate_interval])) > 0",
+                        "legendFormat": "{{node}} error"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "reqps",
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineWidth": 1,
+                    "fillOpacity": 0,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "mode": "none",
+                      "group": "A"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisSoftMin": 0
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      }
+                    ]
+                  },
+                  "noValue": "no DNS failures"
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "showLegend": true,
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-220": {
+        "kind": "Panel",
+        "spec": {
+          "id": 220,
+          "title": "Exit × master, now",
+          "description": "carrying — wg-best balances over it; ready — in rotation, not chosen (reserve tier or not picked); held out — our multi-destination probe pulled it; OUT — mihomo's own check failed. `-reality` rows are the REALITY transport of the same exit.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "max by (node, exit) (wgfleet_exit_tunnel_alive{node=~\"$master\"}) + max by (node, exit) (wgfleet_exit_tunnel_selected{node=~\"$master\"}) - 3 * (max by (node, exit) (wgfleet_agent_exit_held_out{node=~\"$master\"}) or 0 * max by (node, exit) (wgfleet_exit_tunnel_alive{node=~\"$master\"}))",
+                        "instant": true,
+                        "range": false,
+                        "format": "table"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": [
+                {
+                  "kind": "Transformation",
+                  "group": "groupingToMatrix",
+                  "spec": {
+                    "options": {
+                      "columnField": "node",
+                      "rowField": "exit",
+                      "valueField": "Value",
+                      "emptyValue": "null"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "table",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "align": "center",
+                    "cellOptions": {
+                      "type": "color-background"
+                    },
+                    "inspect": false
+                  },
+                  "color": {
+                    "mode": "fixed",
+                    "fixedColor": "transparent"
+                  },
+                  "mappings": [
+                    {
+                      "type": "value",
+                      "options": {
+                        "2": {
+                          "text": "carrying",
+                          "color": "green",
+                          "index": 0
+                        },
+                        "1": {
+                          "text": "ready",
+                          "color": "blue",
+                          "index": 1
+                        },
+                        "0": {
+                          "text": "OUT",
+                          "color": "red",
+                          "index": 2
+                        }
+                      }
+                    },
+                    {
+                      "type": "range",
+                      "options": {
+                        "from": -3,
+                        "to": -1,
+                        "result": {
+                          "text": "held out",
+                          "color": "orange",
+                          "index": 3
+                        }
+                      }
+                    }
+                  ]
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "exit\\node"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.cellOptions",
+                        "value": {
+                          "type": "auto"
+                        }
+                      },
+                      {
+                        "id": "custom.align",
+                        "value": "left"
+                      },
+                      {
+                        "id": "displayName",
+                        "value": "exit"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "options": {
+                "showHeader": true,
+                "cellHeight": "sm",
+                "footer": {
+                  "show": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-221": {
+        "kind": "Panel",
+        "spec": {
+          "id": 221,
+          "title": "Pairs that left rotation in this range",
+          "description": "Only master→exit pairs that were OUT or held out at some point in the window; a steady fleet draws nothing here. Same colours as the matrix.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "(max by (node, exit) (wgfleet_exit_tunnel_alive{node=~\"$master\"}) + max by (node, exit) (wgfleet_exit_tunnel_selected{node=~\"$master\"}) - 3 * (max by (node, exit) (wgfleet_agent_exit_held_out{node=~\"$master\"}) or 0 * max by (node, exit) (wgfleet_exit_tunnel_alive{node=~\"$master\"}))) and on(node, exit) (min_over_time((max by (node, exit) (wgfleet_exit_tunnel_alive{node=~\"$master\"}) + max by (node, exit) (wgfleet_exit_tunnel_selected{node=~\"$master\"}) - 3 * (max by (node, exit) (wgfleet_agent_exit_held_out{node=~\"$master\"}) or 0 * max by (node, exit) (wgfleet_exit_tunnel_alive{node=~\"$master\"})))[$__range:1m]) < 1)",
+                        "legendFormat": "{{node}} → {{exit}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "state-timeline",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "fixed",
+                    "fixedColor": "text"
+                  },
+                  "mappings": [
+                    {
+                      "type": "value",
+                      "options": {
+                        "2": {
+                          "text": "carrying",
+                          "color": "green",
+                          "index": 0
+                        },
+                        "1": {
+                          "text": "ready",
+                          "color": "blue",
+                          "index": 1
+                        },
+                        "0": {
+                          "text": "OUT",
+                          "color": "red",
+                          "index": 2
+                        }
+                      }
+                    },
+                    {
+                      "type": "range",
+                      "options": {
+                        "from": -3,
+                        "to": -1,
+                        "result": {
+                          "text": "held out",
+                          "color": "orange",
+                          "index": 3
+                        }
+                      }
+                    }
+                  ],
+                  "noValue": null,
+                  "custom": {
+                    "fillOpacity": 80,
+                    "lineWidth": 0
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "showValue": "auto",
+                "rowHeight": 0.8,
+                "mergeValues": true,
+                "alignValue": "left",
+                "legend": {
+                  "showLegend": false,
+                  "displayMode": "list",
+                  "placement": "bottom"
                 },
                 "tooltip": {
                   "mode": "single",
@@ -420,12 +1550,12 @@
           }
         }
       },
-      "panel-7": {
+      "panel-222": {
         "kind": "Panel",
         "spec": {
-          "id": 7,
-          "title": "Controller",
-          "description": "",
+          "id": 222,
+          "title": "Traffic leaving each exit (WARP)",
+          "description": "Both directions on each exit's WARP interface — client traffic from every master and every transport, plus the agent's own probes (~10 KB/s). An exit on direct egress is absent here.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -444,9 +1574,8 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "wgfleet_build_info{component=\"controller\"}",
-                        "instant": true,
-                        "format": "table"
+                        "expr": "8 * sum by (node) (rate(wgfleet_wg_peer_rx_bytes{iface=\"wgcf\",node=~\"$node\"}[$__rate_interval]) + rate(wgfleet_wg_peer_tx_bytes{iface=\"wgcf\",node=~\"$node\"}[$__rate_interval]))",
+                        "legendFormat": "{{node}}"
                       }
                     }
                   }
@@ -458,7 +1587,285 @@
           },
           "vizConfig": {
             "kind": "VizConfig",
-            "group": "stat",
+            "group": "timeseries",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "bps",
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineWidth": 1,
+                    "fillOpacity": 10,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "mode": "normal",
+                      "group": "A"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisSoftMin": 0
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      }
+                    ]
+                  },
+                  "noValue": null
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "showLegend": true,
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-94": {
+        "kind": "Panel",
+        "spec": {
+          "id": 94,
+          "title": "master→exit tunnel delay",
+          "description": "Last url-test delay per tunnel, as mihomo measured it. A failed measurement is ABSENT, not zero — a dead tunnel must never render as the fastest one.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "max by (node, exit) (wgfleet_exit_tunnel_delay_seconds{node=~\"$master\",exit=~\"$exit\"})",
+                        "legendFormat": "{{node}} → {{exit}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisPlacement": "auto",
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "gradientMode": "opacity",
+                    "lineInterpolation": "smooth",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  },
+                  "mappings": [],
+                  "min": 0,
+                  "unit": "s"
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull",
+                    "max"
+                  ],
+                  "displayMode": "table",
+                  "placement": "right",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-223": {
+        "kind": "Panel",
+        "spec": {
+          "id": 223,
+          "title": "Stale AWG tunnels, master↔exit",
+          "description": "Exits whose oldest master handshake on awg0 is past 3 minutes. WireGuard re-handshakes every 2 minutes while the tunnel lives, so the healthy sawtooth stays under the line and draws nothing here.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "max by (node) (wgfleet_wg_handshake_age_seconds{iface=\"awg0\",role=\"exit\",node=~\"$node\"}) > 180",
+                        "legendFormat": "{{node}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "s",
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineWidth": 1,
+                    "fillOpacity": 0,
+                    "showPoints": "always",
+                    "spanNulls": false,
+                    "stacking": {
+                      "mode": "none",
+                      "group": "A"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "line"
+                    },
+                    "axisSoftMin": 0,
+                    "pointSize": 5
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "transparent",
+                        "value": 0
+                      },
+                      {
+                        "color": "red",
+                        "value": 180
+                      }
+                    ]
+                  },
+                  "noValue": "every master↔exit handshake is fresh"
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "showLegend": true,
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-224": {
+        "kind": "Panel",
+        "spec": {
+          "id": 224,
+          "title": "Exits silent at the master's AWG gate",
+          "description": "exit_initiated: the master answers an exit only after hearing its knock on the pinned port. Silent = the exit cannot reach the master (its tunnel is down from its side).",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "max by (node, exit) (wgfleet_agent_awg_exit_heard{node=~\"$master\",exit=~\"$exit\"}) and on(node, exit) (min_over_time(max by (node, exit) (wgfleet_agent_awg_exit_heard{node=~\"$master\",exit=~\"$exit\"})[$__range]) == 0)",
+                        "legendFormat": "{{node}} → {{exit}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "state-timeline",
             "version": "13.2.0",
             "spec": {
               "fieldConfig": {
@@ -467,33 +1874,56 @@
                     "mode": "fixed",
                     "fixedColor": "text"
                   },
-                  "mappings": []
+                  "mappings": [
+                    {
+                      "type": "value",
+                      "options": {
+                        "1": {
+                          "text": "heard",
+                          "color": "green",
+                          "index": 0
+                        },
+                        "0": {
+                          "text": "SILENT",
+                          "color": "red",
+                          "index": 1
+                        }
+                      }
+                    }
+                  ],
+                  "noValue": "every exit heard in this range",
+                  "custom": {
+                    "fillOpacity": 80,
+                    "lineWidth": 0
+                  }
                 },
                 "overrides": []
               },
               "options": {
-                "colorMode": "none",
-                "graphMode": "none",
-                "justifyMode": "center",
-                "reduceOptions": {
-                  "calcs": [
-                    "lastNotNull"
-                  ],
-                  "fields": "/^version$/",
-                  "values": false
+                "showValue": "auto",
+                "rowHeight": 0.8,
+                "mergeValues": true,
+                "alignValue": "left",
+                "legend": {
+                  "showLegend": false,
+                  "displayMode": "list",
+                  "placement": "bottom"
                 },
-                "textMode": "value_and_name"
+                "tooltip": {
+                  "mode": "single",
+                  "sort": "none"
+                }
               }
             }
           }
         }
       },
-      "panel-8": {
+      "panel-225": {
         "kind": "Panel",
         "spec": {
-          "id": 8,
-          "title": "Last report age (max)",
-          "description": "",
+          "id": 225,
+          "title": "Reserve-tier members that failed",
+          "description": "Last warm probe of each member of the INACTIVE tier. A dead member here is the exit you would fail over to.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -512,8 +1942,100 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "max(wgfleet_node_last_report_age_seconds)",
-                        "instant": true
+                        "expr": "max by (node, exit) (wgfleet_agent_standby_tier_member_usable{node=~\"$master\",exit=~\"$exit\"}) and on(node, exit) (min_over_time(max by (node, exit) (wgfleet_agent_standby_tier_member_usable{node=~\"$master\",exit=~\"$exit\"})[$__range]) == 0)",
+                        "legendFormat": "{{node}} → {{exit}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "state-timeline",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "fixed",
+                    "fixedColor": "text"
+                  },
+                  "mappings": [
+                    {
+                      "type": "value",
+                      "options": {
+                        "1": {
+                          "text": "usable",
+                          "color": "green",
+                          "index": 0
+                        },
+                        "0": {
+                          "text": "DEAD",
+                          "color": "red",
+                          "index": 1
+                        }
+                      }
+                    }
+                  ],
+                  "noValue": "every reserve member usable in this range",
+                  "custom": {
+                    "fillOpacity": 80,
+                    "lineWidth": 0
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "showValue": "auto",
+                "rowHeight": 0.8,
+                "mergeValues": true,
+                "alignValue": "left",
+                "legend": {
+                  "showLegend": false,
+                  "displayMode": "list",
+                  "placement": "bottom"
+                },
+                "tooltip": {
+                  "mode": "single",
+                  "sort": "none"
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-233": {
+        "kind": "Panel",
+        "spec": {
+          "id": 233,
+          "title": "Controller",
+          "description": "Build the controller reports. Agents' builds are in the table below.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "max by (version) (wgfleet_build_info{component=\"controller\"})",
+                        "instant": true,
+                        "range": false,
+                        "legendFormat": "{{version}}"
                       }
                     }
                   }
@@ -530,33 +2052,111 @@
             "spec": {
               "fieldConfig": {
                 "defaults": {
-                  "color": {
-                    "mode": "thresholds"
-                  },
+                  "unit": "none",
                   "thresholds": {
                     "mode": "absolute",
                     "steps": [
                       {
                         "color": "green",
                         "value": 0
+                      }
+                    ]
+                  },
+                  "mappings": [],
+                  "color": {
+                    "mode": "thresholds"
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "colorMode": "none",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "name",
+                "orientation": "auto",
+                "wideLayout": true,
+                "showPercentChange": false
+              }
+            }
+          }
+        }
+      },
+      "panel-230": {
+        "kind": "Panel",
+        "spec": {
+          "id": 230,
+          "title": "Fleet CA expires in",
+          "description": "Every node certificate chains to it; a lapsed CA cannot be repaired over the control plane.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
                       },
-                      {
-                        "color": "yellow",
-                        "value": 120
-                      },
+                      "spec": {
+                        "expr": "(wgfleet_controller_ca_expiry_timestamp_seconds - time()) / 86400"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "stat",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "d",
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
                       {
                         "color": "red",
+                        "value": 0
+                      },
+                      {
+                        "color": "orange",
+                        "value": 90
+                      },
+                      {
+                        "color": "green",
                         "value": 180
                       }
                     ]
                   },
-                  "unit": "s"
+                  "mappings": [],
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "decimals": 0
                 },
                 "overrides": []
               },
               "options": {
-                "colorMode": "value",
-                "graphMode": "area",
                 "reduceOptions": {
                   "calcs": [
                     "lastNotNull"
@@ -564,18 +2164,24 @@
                   "fields": "",
                   "values": false
                 },
-                "textMode": "auto"
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto",
+                "wideLayout": true,
+                "showPercentChange": false
               }
             }
           }
         }
       },
-      "panel-9": {
+      "panel-231": {
         "kind": "Panel",
         "spec": {
-          "id": 9,
-          "title": "Reconcile-failing nodes",
-          "description": "",
+          "id": 231,
+          "title": "Manifest on disk",
+          "description": "Whether controller.yaml on disk matches what the controller loaded. 'unreadable' = the controller could not read it at all.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -594,8 +2200,7 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "sum(wgfleet_node_reconcile_failed)",
-                        "instant": true
+                        "expr": "max(wgfleet_controller_config_drift)"
                       }
                     }
                   }
@@ -612,29 +2217,41 @@
             "spec": {
               "fieldConfig": {
                 "defaults": {
-                  "color": {
-                    "mode": "thresholds"
-                  },
+                  "unit": "none",
                   "thresholds": {
                     "mode": "absolute",
                     "steps": [
                       {
                         "color": "green",
                         "value": 0
-                      },
-                      {
-                        "color": "red",
-                        "value": 1
                       }
                     ]
                   },
-                  "unit": "short"
+                  "mappings": [
+                    {
+                      "type": "value",
+                      "options": {
+                        "0": {
+                          "text": "in sync",
+                          "color": "green",
+                          "index": 0
+                        },
+                        "1": {
+                          "text": "DRIFT — reload",
+                          "color": "orange",
+                          "index": 1
+                        }
+                      }
+                    }
+                  ],
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "noValue": "unreadable"
                 },
                 "overrides": []
               },
               "options": {
-                "colorMode": "value",
-                "graphMode": "none",
                 "reduceOptions": {
                   "calcs": [
                     "lastNotNull"
@@ -642,18 +2259,24 @@
                   "fields": "",
                   "values": false
                 },
-                "textMode": "auto"
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto",
+                "wideLayout": true,
+                "showPercentChange": false
               }
             }
           }
         }
       },
-      "panel-10": {
+      "panel-232": {
         "kind": "Panel",
         "spec": {
-          "id": 10,
-          "title": "Drained",
-          "description": "",
+          "id": 232,
+          "title": "Controller store",
+          "description": "1 when the controller read its state store on the last scrape. While 0, every fleet-wide panel above is blind.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -672,8 +2295,7 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "sum(wgfleet_node_drain)",
-                        "instant": true
+                        "expr": "max(wgfleet_controller_store_up)"
                       }
                     }
                   }
@@ -690,107 +2312,41 @@
             "spec": {
               "fieldConfig": {
                 "defaults": {
-                  "color": {
-                    "mode": "thresholds"
-                  },
-                  "thresholds": {
-                    "mode": "absolute",
-                    "steps": [
-                      {
-                        "color": "text",
-                        "value": 0
-                      },
-                      {
-                        "color": "yellow",
-                        "value": 1
-                      }
-                    ]
-                  },
-                  "unit": "short"
-                },
-                "overrides": []
-              },
-              "options": {
-                "colorMode": "value",
-                "graphMode": "none",
-                "reduceOptions": {
-                  "calcs": [
-                    "lastNotNull"
-                  ],
-                  "fields": "",
-                  "values": false
-                },
-                "textMode": "auto"
-              }
-            }
-          }
-        }
-      },
-      "panel-11": {
-        "kind": "Panel",
-        "spec": {
-          "id": 11,
-          "title": "Egress blocked",
-          "description": "",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "refId": "A",
-                    "hidden": false,
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "${datasource}"
-                      },
-                      "spec": {
-                        "expr": "sum(wgfleet_node_health_check{check=\"egress-reachability\"} == 0)",
-                        "instant": true
-                      }
-                    }
-                  }
-                }
-              ],
-              "queryOptions": {},
-              "transformations": []
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "stat",
-            "version": "13.2.0",
-            "spec": {
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "thresholds"
-                  },
+                  "unit": "none",
                   "thresholds": {
                     "mode": "absolute",
                     "steps": [
                       {
                         "color": "green",
                         "value": 0
-                      },
-                      {
-                        "color": "red",
-                        "value": 1
                       }
                     ]
                   },
-                  "unit": "short"
+                  "mappings": [
+                    {
+                      "type": "value",
+                      "options": {
+                        "1": {
+                          "text": "readable",
+                          "color": "green",
+                          "index": 0
+                        },
+                        "0": {
+                          "text": "UNREADABLE",
+                          "color": "red",
+                          "index": 1
+                        }
+                      }
+                    }
+                  ],
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "noValue": "no data"
                 },
                 "overrides": []
               },
               "options": {
-                "colorMode": "value",
-                "graphMode": "none",
                 "reduceOptions": {
                   "calcs": [
                     "lastNotNull"
@@ -798,7 +2354,13 @@
                   "fields": "",
                   "values": false
                 },
-                "textMode": "auto"
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto",
+                "wideLayout": true,
+                "showPercentChange": false
               }
             }
           }
@@ -828,7 +2390,7 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "wgfleet_node_info{node=~\"$node\"}",
+                        "expr": "max by (node, role, region, state) (wgfleet_node_info{node=~\"$node\"})",
                         "instant": true,
                         "format": "table"
                       }
@@ -848,7 +2410,7 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "wgfleet_node_agent_info{node=~\"$node\"}",
+                        "expr": "max by (node, agent_version, wire_version) (wgfleet_node_agent_info{node=~\"$node\"})",
                         "instant": true,
                         "format": "table"
                       }
@@ -868,7 +2430,7 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "wgfleet_node_egress_info{node=~\"$node\"}",
+                        "expr": "max by (node, egress_ip) (wgfleet_node_egress_info{node=~\"$node\"})",
                         "instant": true,
                         "format": "table"
                       }
@@ -888,7 +2450,7 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "wgfleet_node_last_report_age_seconds{node=~\"$node\"}",
+                        "expr": "max by (node) (wgfleet_node_last_report_age_seconds{node=~\"$node\"})",
                         "instant": true,
                         "format": "table"
                       }
@@ -908,8 +2470,50 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "wgfleet_node_drain{node=~\"$node\"}",
+                        "expr": "max by (node) (wgfleet_node_drain{node=~\"$node\"})",
                         "instant": true,
+                        "format": "table"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "cert",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "max by (node) ((wgfleet_agent_cert_expiry_timestamp_seconds{node=~\"$node\"} - time()) / 86400)",
+                        "instant": true,
+                        "range": false,
+                        "format": "table"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "up",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "max by (node) (time() - wgfleet_agent_start_time_seconds{node=~\"$node\"})",
+                        "instant": true,
+                        "range": false,
                         "format": "table"
                       }
                     }
@@ -946,13 +2550,18 @@
                         "Value #info": true,
                         "Value #ver": true,
                         "Value #egress": true,
-                        "wire_version": true
+                        "wire_version": true,
+                        "Time 6": true,
+                        "Time 7": true,
+                        "Time 8": true
                       },
                       "renameByName": {
                         "agent_version": "agent",
                         "egress_ip": "egress IP",
                         "Value #age": "last_report_age",
-                        "Value #drain": "drain"
+                        "Value #drain": "drain",
+                        "Value #cert": "cert days left",
+                        "Value #up": "agent uptime"
                       },
                       "indexByName": {
                         "node": 0,
@@ -962,7 +2571,9 @@
                         "agent_version": 4,
                         "egress_ip": 5,
                         "Value #age": 6,
-                        "Value #drain": 7
+                        "Value #drain": 7,
+                        "Value #cert": 8,
+                        "Value #up": 9
                       }
                     }
                   }
@@ -1101,6 +2712,56 @@
                         "value": {
                           "type": "color-text"
                         }
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "cert days left"
+                    },
+                    "properties": [
+                      {
+                        "id": "decimals",
+                        "value": 0
+                      },
+                      {
+                        "id": "custom.cellOptions",
+                        "value": {
+                          "type": "color-text"
+                        }
+                      },
+                      {
+                        "id": "thresholds",
+                        "value": {
+                          "mode": "absolute",
+                          "steps": [
+                            {
+                              "color": "red",
+                              "value": 0
+                            },
+                            {
+                              "color": "orange",
+                              "value": 30
+                            },
+                            {
+                              "color": "green",
+                              "value": 60
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "agent uptime"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "dtdurations"
                       }
                     ]
                   }
@@ -1465,668 +3126,6 @@
                     "desc": true
                   }
                 ]
-              }
-            }
-          }
-        }
-      },
-      "panel-41": {
-        "kind": "Panel",
-        "spec": {
-          "id": 41,
-          "title": "Egress throughput per exit",
-          "description": "Measured egress bandwidth (passive live traffic, or an active probe on an idle link). The dashed line is the configured floor (250 KiB/s default); a sustained collapse below it auto-suspends the exit from the LB.",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "refId": "A",
-                    "hidden": false,
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "${datasource}"
-                      },
-                      "spec": {
-                        "expr": "wgfleet_agent_egress_throughput_bytes{node=~\"$node\"}",
-                        "legendFormat": "{{node}}"
-                      }
-                    }
-                  }
-                }
-              ],
-              "queryOptions": {},
-              "transformations": []
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "timeseries",
-            "version": "13.2.0",
-            "spec": {
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "axisCenteredZero": false,
-                    "axisColorMode": "text",
-                    "axisPlacement": "auto",
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "gradientMode": "opacity",
-                    "lineInterpolation": "smooth",
-                    "lineWidth": 2,
-                    "pointSize": 5,
-                    "scaleDistribution": {
-                      "type": "linear"
-                    },
-                    "showPoints": "never",
-                    "spanNulls": true,
-                    "stacking": {
-                      "group": "A",
-                      "mode": "none"
-                    },
-                    "thresholdsStyle": {
-                      "mode": "dashed"
-                    }
-                  },
-                  "mappings": [],
-                  "thresholds": {
-                    "mode": "absolute",
-                    "steps": [
-                      {
-                        "color": "transparent",
-                        "value": 0
-                      },
-                      {
-                        "color": "red",
-                        "value": 256000
-                      }
-                    ]
-                  },
-                  "unit": "Bps"
-                },
-                "overrides": []
-              },
-              "options": {
-                "legend": {
-                  "calcs": [
-                    "lastNotNull",
-                    "min"
-                  ],
-                  "displayMode": "table",
-                  "placement": "right",
-                  "showLegend": true
-                },
-                "tooltip": {
-                  "mode": "multi",
-                  "sort": "desc"
-                }
-              }
-            }
-          }
-        }
-      },
-      "panel-42": {
-        "kind": "Panel",
-        "spec": {
-          "id": 42,
-          "title": "Active egress method",
-          "description": "Which egress each exit is currently using (warp / direct). Differs from the preferred egress while failed over.",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "refId": "A",
-                    "hidden": false,
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "${datasource}"
-                      },
-                      "spec": {
-                        "expr": "wgfleet_agent_egress_active{node=~\"$node\"}",
-                        "instant": true,
-                        "format": "table"
-                      }
-                    }
-                  }
-                }
-              ],
-              "queryOptions": {},
-              "transformations": [
-                {
-                  "kind": "Transformation",
-                  "group": "organize",
-                  "spec": {
-                    "options": {
-                      "excludeByName": {
-                        "Time": true,
-                        "Value": true,
-                        "__name__": true,
-                        "job": true,
-                        "instance": true,
-                        "role": true
-                      },
-                      "renameByName": {},
-                      "indexByName": {
-                        "node": 0,
-                        "method": 1
-                      }
-                    }
-                  }
-                }
-              ]
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "table",
-            "version": "13.2.0",
-            "spec": {
-              "fieldConfig": {
-                "defaults": {
-                  "custom": {
-                    "align": "auto",
-                    "cellOptions": {
-                      "type": "auto"
-                    },
-                    "inspect": false
-                  },
-                  "mappings": []
-                },
-                "overrides": [
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "method"
-                    },
-                    "properties": [
-                      {
-                        "id": "custom.cellOptions",
-                        "value": {
-                          "type": "color-text"
-                        }
-                      },
-                      {
-                        "id": "mappings",
-                        "value": [
-                          {
-                            "type": "value",
-                            "options": {
-                              "warp": {
-                                "color": "green",
-                                "index": 0
-                              },
-                              "direct": {
-                                "color": "yellow",
-                                "index": 1
-                              }
-                            }
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              },
-              "options": {
-                "showHeader": true,
-                "cellHeight": "sm",
-                "footer": {
-                  "show": false,
-                  "reducer": [
-                    "sum"
-                  ],
-                  "fields": ""
-                }
-              }
-            }
-          }
-        }
-      },
-      "panel-91": {
-        "kind": "Panel",
-        "spec": {
-          "id": 91,
-          "title": "Exits out of rotation",
-          "description": "Master↔exit tunnels mihomo currently has marked down. These tunnels are userspace mihomo proxies, not kernel WireGuard, so no wg_* panel covers them — this is their only view. Non-zero means wg-best is not routing client traffic to that exit. Counts only the tier that carries traffic: a dual-transport exit also renders a standby proxy that is in no group and never probed, so its reading is meaningless here and would sit permanently non-zero.",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "refId": "A",
-                    "hidden": false,
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "${datasource}"
-                      },
-                      "spec": {
-                        "expr": "sum(wgfleet_exit_tunnel_alive == 0 and on(node, exit) wgfleet_agent_exit_held_out) or vector(0)",
-                        "instant": true
-                      }
-                    }
-                  }
-                }
-              ],
-              "queryOptions": {},
-              "transformations": []
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "stat",
-            "version": "13.2.0",
-            "spec": {
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "thresholds"
-                  },
-                  "thresholds": {
-                    "mode": "absolute",
-                    "steps": [
-                      {
-                        "color": "green",
-                        "value": 0
-                      },
-                      {
-                        "color": "red",
-                        "value": 1
-                      }
-                    ]
-                  },
-                  "unit": "short"
-                },
-                "overrides": []
-              },
-              "options": {
-                "colorMode": "value",
-                "graphMode": "none",
-                "reduceOptions": {
-                  "calcs": [
-                    "lastNotNull"
-                  ],
-                  "fields": "",
-                  "values": false
-                },
-                "textMode": "auto"
-              }
-            }
-          }
-        }
-      },
-      "panel-92": {
-        "kind": "Panel",
-        "spec": {
-          "id": 92,
-          "title": "Held out by our probe",
-          "description": "Of the exits above, how many the master agent's own multi-destination probe took out — it requires reachability across four independent destinations, so it catches a censored-but-\"healthy\" exit that answers mihomo's single lightweight check. The rest were dropped by mihomo's own group check.",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "refId": "A",
-                    "hidden": false,
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "${datasource}"
-                      },
-                      "spec": {
-                        "expr": "sum(wgfleet_agent_exit_held_out) or vector(0)",
-                        "instant": true
-                      }
-                    }
-                  }
-                }
-              ],
-              "queryOptions": {},
-              "transformations": []
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "stat",
-            "version": "13.2.0",
-            "spec": {
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "thresholds"
-                  },
-                  "thresholds": {
-                    "mode": "absolute",
-                    "steps": [
-                      {
-                        "color": "green",
-                        "value": 0
-                      },
-                      {
-                        "color": "red",
-                        "value": 1
-                      }
-                    ]
-                  },
-                  "unit": "short"
-                },
-                "overrides": []
-              },
-              "options": {
-                "colorMode": "value",
-                "graphMode": "none",
-                "reduceOptions": {
-                  "calcs": [
-                    "lastNotNull"
-                  ],
-                  "fields": "",
-                  "values": false
-                },
-                "textMode": "auto"
-              }
-            }
-          }
-        }
-      },
-      "panel-93": {
-        "kind": "Panel",
-        "spec": {
-          "id": 93,
-          "title": "Exit in rotation, over time",
-          "description": "When each exit was actually carrying client traffic. This is the panel that answers \"why did it drop out and when\" — before it existed that had to be reconstructed from the master agent's journal. Standby-transport proxies are excluded — they are configured but in no group, so \"in rotation\" does not apply to them.",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "refId": "A",
-                    "hidden": false,
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "${datasource}"
-                      },
-                      "spec": {
-                        "expr": "wgfleet_exit_tunnel_alive{exit=~\"$node\"} and on(node, exit) wgfleet_agent_exit_held_out",
-                        "legendFormat": "{{node}} → {{exit}}"
-                      }
-                    }
-                  }
-                }
-              ],
-              "queryOptions": {},
-              "transformations": []
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "state-timeline",
-            "version": "13.2.0",
-            "spec": {
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "fixed",
-                    "fixedColor": "text"
-                  },
-                  "custom": {
-                    "fillOpacity": 85,
-                    "lineWidth": 0,
-                    "spanNulls": true
-                  },
-                  "mappings": [
-                    {
-                      "type": "value",
-                      "options": {
-                        "0": {
-                          "text": "out",
-                          "color": "red",
-                          "index": 0
-                        },
-                        "1": {
-                          "text": "in",
-                          "color": "green",
-                          "index": 1
-                        }
-                      }
-                    }
-                  ],
-                  "min": 0,
-                  "max": 1
-                },
-                "overrides": []
-              },
-              "options": {
-                "alignValue": "left",
-                "legend": {
-                  "displayMode": "list",
-                  "placement": "bottom",
-                  "showLegend": false
-                },
-                "mergeValues": true,
-                "rowHeight": 0.85,
-                "showValue": "auto",
-                "tooltip": {
-                  "mode": "single",
-                  "sort": "none"
-                }
-              }
-            }
-          }
-        }
-      },
-      "panel-94": {
-        "kind": "Panel",
-        "spec": {
-          "id": 94,
-          "title": "master↔exit tunnel delay",
-          "description": "Last url-test delay per tunnel, as mihomo measured it. A failed measurement is ABSENT, not zero — a dead tunnel must never render as the fastest one.",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "refId": "A",
-                    "hidden": false,
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "${datasource}"
-                      },
-                      "spec": {
-                        "expr": "wgfleet_exit_tunnel_delay_seconds{exit=~\"$node\"}",
-                        "legendFormat": "{{node}} → {{exit}}"
-                      }
-                    }
-                  }
-                }
-              ],
-              "queryOptions": {},
-              "transformations": []
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "timeseries",
-            "version": "13.2.0",
-            "spec": {
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "axisCenteredZero": false,
-                    "axisColorMode": "text",
-                    "axisPlacement": "auto",
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "gradientMode": "opacity",
-                    "lineInterpolation": "smooth",
-                    "lineWidth": 2,
-                    "pointSize": 5,
-                    "scaleDistribution": {
-                      "type": "linear"
-                    },
-                    "showPoints": "never",
-                    "spanNulls": false,
-                    "stacking": {
-                      "group": "A",
-                      "mode": "none"
-                    },
-                    "thresholdsStyle": {
-                      "mode": "off"
-                    }
-                  },
-                  "mappings": [],
-                  "min": 0,
-                  "unit": "s"
-                },
-                "overrides": []
-              },
-              "options": {
-                "legend": {
-                  "calcs": [
-                    "lastNotNull",
-                    "max"
-                  ],
-                  "displayMode": "table",
-                  "placement": "right",
-                  "showLegend": true
-                },
-                "tooltip": {
-                  "mode": "multi",
-                  "sort": "desc"
-                }
-              }
-            }
-          }
-        }
-      },
-      "panel-95": {
-        "kind": "Panel",
-        "spec": {
-          "id": 95,
-          "title": "Held out by the multi-destination probe",
-          "description": "The CAUSE behind the rotation panel: red means the master agent's probe judged this exit unable to reach enough independent destinations and is holding it out. mihomo's own weaker check would put such an exit straight back, so the agent re-probes every held-out member each pass to keep the stricter verdict in force.",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "refId": "A",
-                    "hidden": false,
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "${datasource}"
-                      },
-                      "spec": {
-                        "expr": "wgfleet_agent_exit_held_out{exit=~\"$node\"}",
-                        "legendFormat": "{{node}} → {{exit}}"
-                      }
-                    }
-                  }
-                }
-              ],
-              "queryOptions": {},
-              "transformations": []
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "state-timeline",
-            "version": "13.2.0",
-            "spec": {
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "fixed",
-                    "fixedColor": "text"
-                  },
-                  "custom": {
-                    "fillOpacity": 85,
-                    "lineWidth": 0,
-                    "spanNulls": true
-                  },
-                  "mappings": [
-                    {
-                      "type": "value",
-                      "options": {
-                        "0": {
-                          "text": "in rotation",
-                          "color": "green",
-                          "index": 0
-                        },
-                        "1": {
-                          "text": "held out",
-                          "color": "red",
-                          "index": 1
-                        }
-                      }
-                    }
-                  ],
-                  "min": 0,
-                  "max": 1
-                },
-                "overrides": []
-              },
-              "options": {
-                "alignValue": "left",
-                "legend": {
-                  "displayMode": "list",
-                  "placement": "bottom",
-                  "showLegend": false
-                },
-                "mergeValues": true,
-                "rowHeight": 0.85,
-                "showValue": "auto",
-                "tooltip": {
-                  "mode": "single",
-                  "sort": "none"
-                }
               }
             }
           }
@@ -2852,6 +3851,705 @@
           }
         }
       },
+      "panel-61": {
+        "kind": "Panel",
+        "spec": {
+          "id": 61,
+          "title": "Active transport",
+          "description": "Which master↔exit transport each exit is currently routed over (awg / reality-xhttp). Switch it per node on its detail page.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "wgfleet_agent_transport_active{node=~\"$node\"}",
+                        "instant": true,
+                        "format": "table"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": [
+                {
+                  "kind": "Transformation",
+                  "group": "organize",
+                  "spec": {
+                    "options": {
+                      "excludeByName": {
+                        "Time": true,
+                        "Value": true,
+                        "__name__": true,
+                        "job": true,
+                        "instance": true,
+                        "role": true
+                      },
+                      "renameByName": {},
+                      "indexByName": {
+                        "node": 0,
+                        "transport": 1
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "table",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "align": "auto",
+                    "cellOptions": {
+                      "type": "auto"
+                    },
+                    "inspect": false
+                  },
+                  "mappings": []
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "transport"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.cellOptions",
+                        "value": {
+                          "type": "color-text"
+                        }
+                      },
+                      {
+                        "id": "mappings",
+                        "value": [
+                          {
+                            "type": "value",
+                            "options": {
+                              "awg": {
+                                "color": "purple",
+                                "index": 0
+                              },
+                              "reality-xhttp": {
+                                "color": "blue",
+                                "index": 1
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              "options": {
+                "showHeader": true,
+                "cellHeight": "sm",
+                "footer": {
+                  "show": false,
+                  "reducer": [
+                    "sum"
+                  ],
+                  "fields": ""
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-62": {
+        "kind": "Panel",
+        "spec": {
+          "id": 62,
+          "title": "Standby transport usable",
+          "description": "Whether each dual-transport exit's INACTIVE transport — the one an operator would switch it onto — can actually reach the internet. Absent means never measured, which is not the same as healthy: an untested mihomo proxy reports alive=1 by default, so before this was probed the fleet showed a confident green on no evidence. The switch is an emergency move, made exactly when the active path is blocked.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "wgfleet_agent_standby_transport_usable{exit=~\"$node\"}",
+                        "legendFormat": "{{exit}} → {{transport}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "state-timeline",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "fixed",
+                    "fixedColor": "text"
+                  },
+                  "custom": {
+                    "fillOpacity": 85,
+                    "lineWidth": 0,
+                    "spanNulls": true
+                  },
+                  "mappings": [
+                    {
+                      "type": "value",
+                      "options": {
+                        "0": {
+                          "text": "no fallback",
+                          "color": "red",
+                          "index": 0
+                        },
+                        "1": {
+                          "text": "usable",
+                          "color": "green",
+                          "index": 1
+                        }
+                      }
+                    }
+                  ],
+                  "min": 0,
+                  "max": 1,
+                  "noValue": "no dual-transport exit has been measured yet"
+                },
+                "overrides": []
+              },
+              "options": {
+                "alignValue": "left",
+                "legend": {
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "showLegend": false
+                },
+                "mergeValues": true,
+                "rowHeight": 0.85,
+                "showValue": "auto",
+                "tooltip": {
+                  "mode": "single",
+                  "sort": "none"
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-41": {
+        "kind": "Panel",
+        "spec": {
+          "id": 41,
+          "title": "Egress throughput per exit",
+          "description": "Measured egress bandwidth (passive live traffic, or an active probe on an idle link). The dashed line is the configured floor (250 KiB/s default); a sustained collapse below it auto-suspends the exit from the LB.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "wgfleet_agent_egress_throughput_bytes{node=~\"$node\"}",
+                        "legendFormat": "{{node}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisPlacement": "auto",
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "gradientMode": "opacity",
+                    "lineInterpolation": "smooth",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "never",
+                    "spanNulls": true,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "dashed"
+                    }
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "transparent",
+                        "value": 0
+                      },
+                      {
+                        "color": "red",
+                        "value": 256000
+                      }
+                    ]
+                  },
+                  "unit": "Bps"
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull",
+                    "min"
+                  ],
+                  "displayMode": "table",
+                  "placement": "right",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-42": {
+        "kind": "Panel",
+        "spec": {
+          "id": 42,
+          "title": "Active egress method",
+          "description": "Which egress each exit is currently using (warp / direct). Differs from the preferred egress while failed over.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "wgfleet_agent_egress_active{node=~\"$node\"}",
+                        "instant": true,
+                        "format": "table"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": [
+                {
+                  "kind": "Transformation",
+                  "group": "organize",
+                  "spec": {
+                    "options": {
+                      "excludeByName": {
+                        "Time": true,
+                        "Value": true,
+                        "__name__": true,
+                        "job": true,
+                        "instance": true,
+                        "role": true
+                      },
+                      "renameByName": {},
+                      "indexByName": {
+                        "node": 0,
+                        "method": 1
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "table",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "align": "auto",
+                    "cellOptions": {
+                      "type": "auto"
+                    },
+                    "inspect": false
+                  },
+                  "mappings": []
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "method"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.cellOptions",
+                        "value": {
+                          "type": "color-text"
+                        }
+                      },
+                      {
+                        "id": "mappings",
+                        "value": [
+                          {
+                            "type": "value",
+                            "options": {
+                              "warp": {
+                                "color": "green",
+                                "index": 0
+                              },
+                              "direct": {
+                                "color": "yellow",
+                                "index": 1
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              "options": {
+                "showHeader": true,
+                "cellHeight": "sm",
+                "footer": {
+                  "show": false,
+                  "reducer": [
+                    "sum"
+                  ],
+                  "fields": ""
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-71": {
+        "kind": "Panel",
+        "spec": {
+          "id": 71,
+          "title": "Client-VLESS inbound down",
+          "description": "Masters whose client-facing VLESS/REALITY inbound self-check is failing. Non-zero means DPI-throttled clients can't fall back to the VLESS transport.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "sum(wgfleet_node_health_check{check=\"client-vless\"} == 0)",
+                        "instant": true
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "stat",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      },
+                      {
+                        "color": "red",
+                        "value": 1
+                      }
+                    ]
+                  },
+                  "unit": "short"
+                },
+                "overrides": []
+              },
+              "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "textMode": "auto"
+              }
+            }
+          }
+        }
+      },
+      "panel-72": {
+        "kind": "Panel",
+        "spec": {
+          "id": 72,
+          "title": "VLESS clients issued",
+          "description": "Total VLESS/REALITY client credentials issued across selected masters.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "sum(wgfleet_node_client_vless_clients{node=~\"$node\"})",
+                        "instant": true
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "stat",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "fixed",
+                    "fixedColor": "blue"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "blue",
+                        "value": 0
+                      }
+                    ]
+                  },
+                  "unit": "short"
+                },
+                "overrides": []
+              },
+              "options": {
+                "colorMode": "value",
+                "graphMode": "area",
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "textMode": "auto"
+              }
+            }
+          }
+        }
+      },
+      "panel-73": {
+        "kind": "Panel",
+        "spec": {
+          "id": 73,
+          "title": "VLESS clients per master",
+          "description": "Issued VLESS/REALITY client count per master over time.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "wgfleet_node_client_vless_clients{node=~\"$node\"}",
+                        "legendFormat": "{{node}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisPlacement": "auto",
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "gradientMode": "opacity",
+                    "lineInterpolation": "stepBefore",
+                    "lineWidth": 2,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "auto",
+                    "spanNulls": true,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  },
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "transparent",
+                        "value": 0
+                      }
+                    ]
+                  },
+                  "unit": "short"
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "displayMode": "table",
+                  "placement": "right",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          }
+        }
+      },
       "panel-51": {
         "kind": "Panel",
         "spec": {
@@ -3195,476 +4893,6 @@
                   "calcs": [],
                   "displayMode": "list",
                   "placement": "bottom",
-                  "showLegend": true
-                },
-                "tooltip": {
-                  "mode": "multi",
-                  "sort": "desc"
-                }
-              }
-            }
-          }
-        }
-      },
-      "panel-61": {
-        "kind": "Panel",
-        "spec": {
-          "id": 61,
-          "title": "Active transport",
-          "description": "Which master↔exit transport each exit is currently routed over (awg / reality-xhttp). Switch it per node on its detail page.",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "refId": "A",
-                    "hidden": false,
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "${datasource}"
-                      },
-                      "spec": {
-                        "expr": "wgfleet_agent_transport_active{node=~\"$node\"}",
-                        "instant": true,
-                        "format": "table"
-                      }
-                    }
-                  }
-                }
-              ],
-              "queryOptions": {},
-              "transformations": [
-                {
-                  "kind": "Transformation",
-                  "group": "organize",
-                  "spec": {
-                    "options": {
-                      "excludeByName": {
-                        "Time": true,
-                        "Value": true,
-                        "__name__": true,
-                        "job": true,
-                        "instance": true,
-                        "role": true
-                      },
-                      "renameByName": {},
-                      "indexByName": {
-                        "node": 0,
-                        "transport": 1
-                      }
-                    }
-                  }
-                }
-              ]
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "table",
-            "version": "13.2.0",
-            "spec": {
-              "fieldConfig": {
-                "defaults": {
-                  "custom": {
-                    "align": "auto",
-                    "cellOptions": {
-                      "type": "auto"
-                    },
-                    "inspect": false
-                  },
-                  "mappings": []
-                },
-                "overrides": [
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "transport"
-                    },
-                    "properties": [
-                      {
-                        "id": "custom.cellOptions",
-                        "value": {
-                          "type": "color-text"
-                        }
-                      },
-                      {
-                        "id": "mappings",
-                        "value": [
-                          {
-                            "type": "value",
-                            "options": {
-                              "awg": {
-                                "color": "purple",
-                                "index": 0
-                              },
-                              "reality-xhttp": {
-                                "color": "blue",
-                                "index": 1
-                              }
-                            }
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              },
-              "options": {
-                "showHeader": true,
-                "cellHeight": "sm",
-                "footer": {
-                  "show": false,
-                  "reducer": [
-                    "sum"
-                  ],
-                  "fields": ""
-                }
-              }
-            }
-          }
-        }
-      },
-      "panel-62": {
-        "kind": "Panel",
-        "spec": {
-          "id": 62,
-          "title": "Standby transport usable",
-          "description": "Whether each dual-transport exit's INACTIVE transport — the one an operator would switch it onto — can actually reach the internet. Absent means never measured, which is not the same as healthy: an untested mihomo proxy reports alive=1 by default, so before this was probed the fleet showed a confident green on no evidence. The switch is an emergency move, made exactly when the active path is blocked.",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "refId": "A",
-                    "hidden": false,
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "${datasource}"
-                      },
-                      "spec": {
-                        "expr": "wgfleet_agent_standby_transport_usable{exit=~\"$node\"}",
-                        "legendFormat": "{{exit}} → {{transport}}"
-                      }
-                    }
-                  }
-                }
-              ],
-              "queryOptions": {},
-              "transformations": []
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "state-timeline",
-            "version": "13.2.0",
-            "spec": {
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "fixed",
-                    "fixedColor": "text"
-                  },
-                  "custom": {
-                    "fillOpacity": 85,
-                    "lineWidth": 0,
-                    "spanNulls": true
-                  },
-                  "mappings": [
-                    {
-                      "type": "value",
-                      "options": {
-                        "0": {
-                          "text": "no fallback",
-                          "color": "red",
-                          "index": 0
-                        },
-                        "1": {
-                          "text": "usable",
-                          "color": "green",
-                          "index": 1
-                        }
-                      }
-                    }
-                  ],
-                  "min": 0,
-                  "max": 1,
-                  "noValue": "no dual-transport exit has been measured yet"
-                },
-                "overrides": []
-              },
-              "options": {
-                "alignValue": "left",
-                "legend": {
-                  "displayMode": "list",
-                  "placement": "bottom",
-                  "showLegend": false
-                },
-                "mergeValues": true,
-                "rowHeight": 0.85,
-                "showValue": "auto",
-                "tooltip": {
-                  "mode": "single",
-                  "sort": "none"
-                }
-              }
-            }
-          }
-        }
-      },
-      "panel-71": {
-        "kind": "Panel",
-        "spec": {
-          "id": 71,
-          "title": "Client-VLESS inbound down",
-          "description": "Masters whose client-facing VLESS/REALITY inbound self-check is failing. Non-zero means DPI-throttled clients can't fall back to the VLESS transport.",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "refId": "A",
-                    "hidden": false,
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "${datasource}"
-                      },
-                      "spec": {
-                        "expr": "sum(wgfleet_node_health_check{check=\"client-vless\"} == 0)",
-                        "instant": true
-                      }
-                    }
-                  }
-                }
-              ],
-              "queryOptions": {},
-              "transformations": []
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "stat",
-            "version": "13.2.0",
-            "spec": {
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "thresholds"
-                  },
-                  "thresholds": {
-                    "mode": "absolute",
-                    "steps": [
-                      {
-                        "color": "green",
-                        "value": 0
-                      },
-                      {
-                        "color": "red",
-                        "value": 1
-                      }
-                    ]
-                  },
-                  "unit": "short"
-                },
-                "overrides": []
-              },
-              "options": {
-                "colorMode": "value",
-                "graphMode": "none",
-                "reduceOptions": {
-                  "calcs": [
-                    "lastNotNull"
-                  ],
-                  "fields": "",
-                  "values": false
-                },
-                "textMode": "auto"
-              }
-            }
-          }
-        }
-      },
-      "panel-72": {
-        "kind": "Panel",
-        "spec": {
-          "id": 72,
-          "title": "VLESS clients issued",
-          "description": "Total VLESS/REALITY client credentials issued across selected masters.",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "refId": "A",
-                    "hidden": false,
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "${datasource}"
-                      },
-                      "spec": {
-                        "expr": "sum(wgfleet_node_client_vless_clients{node=~\"$node\"})",
-                        "instant": true
-                      }
-                    }
-                  }
-                }
-              ],
-              "queryOptions": {},
-              "transformations": []
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "stat",
-            "version": "13.2.0",
-            "spec": {
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "fixed",
-                    "fixedColor": "blue"
-                  },
-                  "thresholds": {
-                    "mode": "absolute",
-                    "steps": [
-                      {
-                        "color": "blue",
-                        "value": 0
-                      }
-                    ]
-                  },
-                  "unit": "short"
-                },
-                "overrides": []
-              },
-              "options": {
-                "colorMode": "value",
-                "graphMode": "area",
-                "reduceOptions": {
-                  "calcs": [
-                    "lastNotNull"
-                  ],
-                  "fields": "",
-                  "values": false
-                },
-                "textMode": "auto"
-              }
-            }
-          }
-        }
-      },
-      "panel-73": {
-        "kind": "Panel",
-        "spec": {
-          "id": 73,
-          "title": "VLESS clients per master",
-          "description": "Issued VLESS/REALITY client count per master over time.",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "refId": "A",
-                    "hidden": false,
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "${datasource}"
-                      },
-                      "spec": {
-                        "expr": "wgfleet_node_client_vless_clients{node=~\"$node\"}",
-                        "legendFormat": "{{node}}"
-                      }
-                    }
-                  }
-                }
-              ],
-              "queryOptions": {},
-              "transformations": []
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "timeseries",
-            "version": "13.2.0",
-            "spec": {
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "axisCenteredZero": false,
-                    "axisColorMode": "text",
-                    "axisPlacement": "auto",
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "gradientMode": "opacity",
-                    "lineInterpolation": "stepBefore",
-                    "lineWidth": 2,
-                    "pointSize": 5,
-                    "scaleDistribution": {
-                      "type": "linear"
-                    },
-                    "showPoints": "auto",
-                    "spanNulls": true,
-                    "stacking": {
-                      "group": "A",
-                      "mode": "none"
-                    },
-                    "thresholdsStyle": {
-                      "mode": "off"
-                    }
-                  },
-                  "mappings": [],
-                  "thresholds": {
-                    "mode": "absolute",
-                    "steps": [
-                      {
-                        "color": "transparent",
-                        "value": 0
-                      }
-                    ]
-                  },
-                  "unit": "short"
-                },
-                "overrides": []
-              },
-              "options": {
-                "legend": {
-                  "calcs": [
-                    "lastNotNull"
-                  ],
-                  "displayMode": "table",
-                  "placement": "right",
                   "showLegend": true
                 },
                 "tooltip": {
@@ -4553,10 +5781,10 @@
                       "spec": {
                         "element": {
                           "kind": "ElementReference",
-                          "name": "panel-2"
+                          "name": "panel-200"
                         },
-                        "height": 4,
-                        "width": 3,
+                        "height": 8,
+                        "width": 12,
                         "x": 0,
                         "y": 0
                       }
@@ -4566,49 +5794,10 @@
                       "spec": {
                         "element": {
                           "kind": "ElementReference",
-                          "name": "panel-3"
+                          "name": "panel-201"
                         },
                         "height": 4,
                         "width": 3,
-                        "x": 3,
-                        "y": 0
-                      }
-                    },
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "element": {
-                          "kind": "ElementReference",
-                          "name": "panel-4"
-                        },
-                        "height": 4,
-                        "width": 3,
-                        "x": 6,
-                        "y": 0
-                      }
-                    },
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "element": {
-                          "kind": "ElementReference",
-                          "name": "panel-5"
-                        },
-                        "height": 4,
-                        "width": 3,
-                        "x": 9,
-                        "y": 0
-                      }
-                    },
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "element": {
-                          "kind": "ElementReference",
-                          "name": "panel-6"
-                        },
-                        "height": 8,
-                        "width": 6,
                         "x": 12,
                         "y": 0
                       }
@@ -4618,10 +5807,23 @@
                       "spec": {
                         "element": {
                           "kind": "ElementReference",
-                          "name": "panel-7"
+                          "name": "panel-202"
                         },
-                        "height": 8,
-                        "width": 6,
+                        "height": 4,
+                        "width": 3,
+                        "x": 15,
+                        "y": 0
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-203"
+                        },
+                        "height": 4,
+                        "width": 3,
                         "x": 18,
                         "y": 0
                       }
@@ -4631,11 +5833,24 @@
                       "spec": {
                         "element": {
                           "kind": "ElementReference",
-                          "name": "panel-8"
+                          "name": "panel-204"
                         },
                         "height": 4,
                         "width": 3,
-                        "x": 0,
+                        "x": 21,
+                        "y": 0
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-205"
+                        },
+                        "height": 4,
+                        "width": 6,
+                        "x": 12,
                         "y": 4
                       }
                     },
@@ -4644,11 +5859,11 @@
                       "spec": {
                         "element": {
                           "kind": "ElementReference",
-                          "name": "panel-9"
+                          "name": "panel-206"
                         },
                         "height": 4,
                         "width": 3,
-                        "x": 3,
+                        "x": 18,
                         "y": 4
                       }
                     },
@@ -4657,31 +5872,18 @@
                       "spec": {
                         "element": {
                           "kind": "ElementReference",
-                          "name": "panel-10"
+                          "name": "panel-207"
                         },
                         "height": 4,
                         "width": 3,
-                        "x": 6,
-                        "y": 4
-                      }
-                    },
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "element": {
-                          "kind": "ElementReference",
-                          "name": "panel-11"
-                        },
-                        "height": 4,
-                        "width": 3,
-                        "x": 9,
+                        "x": 21,
                         "y": 4
                       }
                     }
                   ]
                 }
               },
-              "title": "Overview"
+              "title": "Now"
             }
           },
           {
@@ -4697,18 +5899,254 @@
                       "spec": {
                         "element": {
                           "kind": "ElementReference",
-                          "name": "panel-21"
+                          "name": "panel-210"
                         },
                         "height": 8,
-                        "width": 24,
+                        "width": 8,
                         "x": 0,
                         "y": 0
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-211"
+                        },
+                        "height": 8,
+                        "width": 16,
+                        "x": 8,
+                        "y": 0
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-212"
+                        },
+                        "height": 8,
+                        "width": 8,
+                        "x": 0,
+                        "y": 8
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-213"
+                        },
+                        "height": 8,
+                        "width": 8,
+                        "x": 8,
+                        "y": 8
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-214"
+                        },
+                        "height": 8,
+                        "width": 8,
+                        "x": 16,
+                        "y": 8
                       }
                     }
                   ]
                 }
               },
-              "title": "Inventory"
+              "title": "Clients"
+            }
+          },
+          {
+            "kind": "RowsLayoutRow",
+            "spec": {
+              "collapse": false,
+              "layout": {
+                "kind": "GridLayout",
+                "spec": {
+                  "items": [
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-220"
+                        },
+                        "height": 13,
+                        "width": 7,
+                        "x": 0,
+                        "y": 0
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-221"
+                        },
+                        "height": 13,
+                        "width": 17,
+                        "x": 7,
+                        "y": 0
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-222"
+                        },
+                        "height": 8,
+                        "width": 12,
+                        "x": 0,
+                        "y": 13
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-94"
+                        },
+                        "height": 8,
+                        "width": 12,
+                        "x": 12,
+                        "y": 13
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-223"
+                        },
+                        "height": 8,
+                        "width": 8,
+                        "x": 0,
+                        "y": 21
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-224"
+                        },
+                        "height": 8,
+                        "width": 8,
+                        "x": 8,
+                        "y": 21
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-225"
+                        },
+                        "height": 8,
+                        "width": 8,
+                        "x": 16,
+                        "y": 21
+                      }
+                    }
+                  ]
+                }
+              },
+              "title": "Master → exit"
+            }
+          },
+          {
+            "kind": "RowsLayoutRow",
+            "spec": {
+              "collapse": false,
+              "layout": {
+                "kind": "GridLayout",
+                "spec": {
+                  "items": [
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-233"
+                        },
+                        "height": 4,
+                        "width": 6,
+                        "x": 0,
+                        "y": 0
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-230"
+                        },
+                        "height": 4,
+                        "width": 6,
+                        "x": 6,
+                        "y": 0
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-231"
+                        },
+                        "height": 4,
+                        "width": 6,
+                        "x": 12,
+                        "y": 0
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-232"
+                        },
+                        "height": 4,
+                        "width": 6,
+                        "x": 18,
+                        "y": 0
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-21"
+                        },
+                        "height": 9,
+                        "width": 24,
+                        "x": 0,
+                        "y": 4
+                      }
+                    }
+                  ]
+                }
+              },
+              "title": "Control plane & inventory"
             }
           },
           {
@@ -4767,126 +6205,7 @@
           {
             "kind": "RowsLayoutRow",
             "spec": {
-              "collapse": false,
-              "layout": {
-                "kind": "GridLayout",
-                "spec": {
-                  "items": [
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "element": {
-                          "kind": "ElementReference",
-                          "name": "panel-41"
-                        },
-                        "height": 8,
-                        "width": 16,
-                        "x": 0,
-                        "y": 0
-                      }
-                    },
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "element": {
-                          "kind": "ElementReference",
-                          "name": "panel-42"
-                        },
-                        "height": 8,
-                        "width": 8,
-                        "x": 16,
-                        "y": 0
-                      }
-                    }
-                  ]
-                }
-              },
-              "title": "Egress (throughput watchdog)"
-            }
-          },
-          {
-            "kind": "RowsLayoutRow",
-            "spec": {
-              "collapse": false,
-              "layout": {
-                "kind": "GridLayout",
-                "spec": {
-                  "items": [
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "element": {
-                          "kind": "ElementReference",
-                          "name": "panel-91"
-                        },
-                        "height": 8,
-                        "width": 4,
-                        "x": 0,
-                        "y": 0
-                      }
-                    },
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "element": {
-                          "kind": "ElementReference",
-                          "name": "panel-92"
-                        },
-                        "height": 8,
-                        "width": 4,
-                        "x": 4,
-                        "y": 0
-                      }
-                    },
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "element": {
-                          "kind": "ElementReference",
-                          "name": "panel-93"
-                        },
-                        "height": 8,
-                        "width": 16,
-                        "x": 8,
-                        "y": 0
-                      }
-                    },
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "element": {
-                          "kind": "ElementReference",
-                          "name": "panel-94"
-                        },
-                        "height": 8,
-                        "width": 12,
-                        "x": 0,
-                        "y": 8
-                      }
-                    },
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "element": {
-                          "kind": "ElementReference",
-                          "name": "panel-95"
-                        },
-                        "height": 8,
-                        "width": 12,
-                        "x": 12,
-                        "y": 8
-                      }
-                    }
-                  ]
-                }
-              },
-              "title": "Exit rotation (master↔exit tunnels)"
-            }
-          },
-          {
-            "kind": "RowsLayoutRow",
-            "spec": {
-              "collapse": false,
+              "collapse": true,
               "layout": {
                 "kind": "GridLayout",
                 "spec": {
@@ -5004,7 +6323,140 @@
           {
             "kind": "RowsLayoutRow",
             "spec": {
-              "collapse": false,
+              "collapse": true,
+              "layout": {
+                "kind": "GridLayout",
+                "spec": {
+                  "items": [
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-61"
+                        },
+                        "height": 8,
+                        "width": 12,
+                        "x": 0,
+                        "y": 0
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-62"
+                        },
+                        "height": 8,
+                        "width": 12,
+                        "x": 12,
+                        "y": 0
+                      }
+                    }
+                  ]
+                }
+              },
+              "title": "Transport (dual-transport)"
+            }
+          },
+          {
+            "kind": "RowsLayoutRow",
+            "spec": {
+              "collapse": true,
+              "layout": {
+                "kind": "GridLayout",
+                "spec": {
+                  "items": [
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-41"
+                        },
+                        "height": 8,
+                        "width": 16,
+                        "x": 0,
+                        "y": 0
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-42"
+                        },
+                        "height": 8,
+                        "width": 8,
+                        "x": 16,
+                        "y": 0
+                      }
+                    }
+                  ]
+                }
+              },
+              "title": "Egress (throughput watchdog)"
+            }
+          },
+          {
+            "kind": "RowsLayoutRow",
+            "spec": {
+              "collapse": true,
+              "layout": {
+                "kind": "GridLayout",
+                "spec": {
+                  "items": [
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-71"
+                        },
+                        "height": 8,
+                        "width": 4,
+                        "x": 0,
+                        "y": 0
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-72"
+                        },
+                        "height": 8,
+                        "width": 4,
+                        "x": 4,
+                        "y": 0
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-73"
+                        },
+                        "height": 8,
+                        "width": 16,
+                        "x": 8,
+                        "y": 0
+                      }
+                    }
+                  ]
+                }
+              },
+              "title": "Client-facing VLESS"
+            }
+          },
+          {
+            "kind": "RowsLayoutRow",
+            "spec": {
+              "collapse": true,
               "layout": {
                 "kind": "GridLayout",
                 "spec": {
@@ -5070,100 +6522,7 @@
           {
             "kind": "RowsLayoutRow",
             "spec": {
-              "collapse": false,
-              "layout": {
-                "kind": "GridLayout",
-                "spec": {
-                  "items": [
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "element": {
-                          "kind": "ElementReference",
-                          "name": "panel-61"
-                        },
-                        "height": 8,
-                        "width": 12,
-                        "x": 0,
-                        "y": 0
-                      }
-                    },
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "element": {
-                          "kind": "ElementReference",
-                          "name": "panel-62"
-                        },
-                        "height": 8,
-                        "width": 12,
-                        "x": 12,
-                        "y": 0
-                      }
-                    }
-                  ]
-                }
-              },
-              "title": "Transport (dual-transport)"
-            }
-          },
-          {
-            "kind": "RowsLayoutRow",
-            "spec": {
-              "collapse": false,
-              "layout": {
-                "kind": "GridLayout",
-                "spec": {
-                  "items": [
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "element": {
-                          "kind": "ElementReference",
-                          "name": "panel-71"
-                        },
-                        "height": 8,
-                        "width": 4,
-                        "x": 0,
-                        "y": 0
-                      }
-                    },
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "element": {
-                          "kind": "ElementReference",
-                          "name": "panel-72"
-                        },
-                        "height": 8,
-                        "width": 4,
-                        "x": 4,
-                        "y": 0
-                      }
-                    },
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "element": {
-                          "kind": "ElementReference",
-                          "name": "panel-73"
-                        },
-                        "height": 8,
-                        "width": 16,
-                        "x": 8,
-                        "y": 0
-                      }
-                    }
-                  ]
-                }
-              },
-              "title": "Client-facing VLESS"
-            }
-          },
-          {
-            "kind": "RowsLayoutRow",
-            "spec": {
-              "collapse": false,
+              "collapse": true,
               "layout": {
                 "kind": "GridLayout",
                 "spec": {
@@ -5216,7 +6575,7 @@
           {
             "kind": "RowsLayoutRow",
             "spec": {
-              "collapse": false,
+              "collapse": true,
               "layout": {
                 "kind": "GridLayout",
                 "spec": {
@@ -5336,7 +6695,7 @@
       "timezone": "browser",
       "to": "now"
     },
-    "title": "wgfleet — Fleet Overview",
+    "title": "wgfleet — Fleet",
     "variables": [
       {
         "kind": "DatasourceVariable",
@@ -5356,6 +6715,80 @@
           "refresh": "onDashboardLoad",
           "regex": "",
           "skipUrlSync": false
+        }
+      },
+      {
+        "kind": "QueryVariable",
+        "spec": {
+          "allValue": ".*",
+          "allowCustomValue": true,
+          "current": {
+            "text": "All",
+            "value": [
+              "$__all"
+            ]
+          },
+          "definition": "label_values(wgfleet_node_info{role=\"master\"}, node)",
+          "hide": "dontHide",
+          "includeAll": true,
+          "label": "Master",
+          "multi": true,
+          "name": "master",
+          "options": [],
+          "query": {
+            "kind": "DataQuery",
+            "group": "prometheus",
+            "version": "v0",
+            "datasource": {
+              "name": "${datasource}"
+            },
+            "spec": {
+              "query": "label_values(wgfleet_node_info{role=\"master\"}, node)",
+              "refId": "master"
+            }
+          },
+          "refresh": "onTimeRangeChanged",
+          "regex": "",
+          "regexApplyTo": "value",
+          "skipUrlSync": false,
+          "sort": "alphabeticalAsc"
+        }
+      },
+      {
+        "kind": "QueryVariable",
+        "spec": {
+          "allValue": ".*",
+          "allowCustomValue": true,
+          "current": {
+            "text": "All",
+            "value": [
+              "$__all"
+            ]
+          },
+          "definition": "label_values(wgfleet_exit_tunnel_alive, exit)",
+          "hide": "dontHide",
+          "includeAll": true,
+          "label": "Exit tunnel",
+          "multi": true,
+          "name": "exit",
+          "options": [],
+          "query": {
+            "kind": "DataQuery",
+            "group": "prometheus",
+            "version": "v0",
+            "datasource": {
+              "name": "${datasource}"
+            },
+            "spec": {
+              "query": "label_values(wgfleet_exit_tunnel_alive, exit)",
+              "refId": "exit"
+            }
+          },
+          "refresh": "onTimeRangeChanged",
+          "regex": "",
+          "regexApplyTo": "value",
+          "skipUrlSync": false,
+          "sort": "alphabeticalAsc"
         }
       },
       {

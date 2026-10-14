@@ -39,6 +39,24 @@ type classicPanel struct {
 	Targets []struct {
 		Expr string `json:"expr"`
 	} `json:"targets"`
+	// A collapsed classic row carries its panels INSIDE itself rather than after
+	// it in the flat list, so a reader that only walks the top level silently
+	// loses every panel of every collapsed row.
+	Collapsed bool           `json:"collapsed"`
+	Panels    []classicPanel `json:"panels"`
+}
+
+// vizPanels lists every visualisation, including those nested in collapsed rows.
+func (c classicDash) vizPanels() []classicPanel {
+	var out []classicPanel
+	for _, p := range c.Panels {
+		if p.Type != "row" {
+			out = append(out, p)
+			continue
+		}
+		out = append(out, p.Panels...)
+	}
+	return out
 }
 
 type classicDash struct {
@@ -82,8 +100,9 @@ type v2Dash struct {
 			Spec struct {
 				Rows []struct {
 					Spec struct {
-						Title  string `json:"title"`
-						Layout struct {
+						Title    string `json:"title"`
+						Collapse bool   `json:"collapse"`
+						Layout   struct {
 							Spec struct {
 								Items []struct {
 									Spec struct {
@@ -132,10 +151,7 @@ func TestDashboardV2MatchesClassic(t *testing.T) {
 			v.Metadata.Name, c.UID)
 	}
 
-	for _, p := range c.Panels {
-		if p.Type == "row" {
-			continue
-		}
+	for _, p := range c.vizPanels() {
 		key := fmt.Sprintf("panel-%d", p.ID)
 		el, ok := v.Spec.Elements[key]
 		if !ok {
@@ -168,10 +184,8 @@ func TestDashboardV2MatchesClassic(t *testing.T) {
 	// No panel may exist only in v2 — that direction is how a hand-edit sneaks a
 	// panel into one file and not the other.
 	classicIDs := map[int]bool{}
-	for _, p := range c.Panels {
-		if p.Type != "row" {
-			classicIDs[p.ID] = true
-		}
+	for _, p := range c.vizPanels() {
+		classicIDs[p.ID] = true
 	}
 	for key, el := range v.Spec.Elements {
 		if !classicIDs[el.Spec.ID] {
@@ -191,18 +205,22 @@ func TestDashboardV2RowCoordinatesAreRowRelative(t *testing.T) {
 	readJSON(t, classicDashboard, &c)
 	readJSON(t, v2Dashboard, &v)
 
-	var classicRows []string
+	var classicRows []classicPanel
 	for _, p := range c.Panels {
 		if p.Type == "row" {
-			classicRows = append(classicRows, p.Title)
+			classicRows = append(classicRows, p)
 		}
 	}
 	if len(v.Spec.Layout.Spec.Rows) != len(classicRows) {
 		t.Fatalf("classic has %d rows, v2 has %d — %s", len(classicRows), len(v.Spec.Layout.Spec.Rows), regenerateHint)
 	}
 	for i, row := range v.Spec.Layout.Spec.Rows {
-		if row.Spec.Title != classicRows[i] {
-			t.Errorf("row %d differs: classic %q, v2 %q", i, classicRows[i], row.Spec.Title)
+		if row.Spec.Title != classicRows[i].Title {
+			t.Errorf("row %d differs: classic %q, v2 %q", i, classicRows[i].Title, row.Spec.Title)
+		}
+		if row.Spec.Collapse != classicRows[i].Collapsed {
+			t.Errorf("row %q: collapsed is %v in classic and %v in v2 — %s",
+				row.Spec.Title, classicRows[i].Collapsed, row.Spec.Collapse, regenerateHint)
 		}
 
 		items := row.Spec.Layout.Spec.Items

@@ -105,6 +105,27 @@ file, so shipping only one strands whoever runs the other.
   classic `uid` (`wgfleet-fleet`), so this REPLACES the existing dashboard rather
   than leaving a second copy beside it.
 
+### DNS metrics (blocky)
+
+blocky runs on every node with metrics on `<mgmt_addr>:4000`. Scrape it as job
+`blocky` with per-target `node` and `role` labels — blocky sets no node label of
+its own. `vmstaticscrape.yaml` carries the template; `WgfleetDNSMetricsMissing`
+names any node the controller knows that this job is not scraping.
+
+### What the dashboard answers, top to bottom
+
+| Row | Answers |
+|---|---|
+| Now | what is firing; clients online and their traffic; synthetic-client failures; exits carrying traffic and reserve tier, per master; DNS SERVFAIL share |
+| Clients | client peers and traffic per master; the masters' DNS answers; DNS latency and failures per node |
+| Master → exit | exit × master matrix (carrying / ready / held out / OUT); only the pairs that left rotation in the range; traffic leaving each exit; tunnel delay; stale AWG tunnels, exits silent at the gate, failed reserve members — each empty while healthy |
+| Control plane & inventory | controller build, CA expiry, manifest drift, store; node table with agent build, cert days left and uptime |
+| Health | checks failing now, by kind, and what failed in the range |
+| collapsed | client-path internals, transport, egress watchdog, VLESS, reconcile, scheduled probes, host |
+
+`$master` filters the per-master panels, `$exit` the per-tunnel ones, `$node` the
+rest. The "Agent restarts" annotation marks rollouts.
+
 Then pick your Prometheus data source. The dashboard variable `$node` is
 populated from `wgfleet_node_info` (controller metrics), so the controller alone
 already drives the overview, inventory and health rows; the egress-throughput,
@@ -265,7 +286,7 @@ an untested proxy rather than a measurement.
 
 ## 4. Alerts
 
-**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 46 alerts,
+**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 52 alerts,
 already applied by step 2 above. Earlier revisions of this file printed two of them
 as a snippet to paste; the copies drifted from the shipped rules (different group
 name, different `for`, a different expression on one), so pasting produced a second,
@@ -322,6 +343,7 @@ What ships, by severity:
 | `WgfleetSelfHealThrottled` | warning |
 | `WgfleetReconcileNeverConverges` | warning |
 | `WgfleetHostMetricsMissing` | warning |
+| `WgfleetDNSMetricsMissing` | warning |
 | `WgfleetHostDiskAlmostFull` | warning |
 | `WgfleetHostMemoryPressure` | warning |
 | `WgfleetHostCPUSaturated` | warning |

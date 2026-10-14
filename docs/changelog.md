@@ -13,9 +13,11 @@ New releases are announced, with the archives attached, in the Telegram channel 
 - `fleet.master_dns`: the resolver settings of every master with `dns_filter`, same keys as `fleet.masters[].dns`.
 - The console shows every master with its own view of the exits.
 - An exit reports each master peer's endpoint and handshake (wire 13). Upgrade the controller first.
+- Alert `WgfleetDNSMetricsMissing`: a node the controller knows that no `blocky` scrape target covers. The `blocky` job needs per-target `node`/`role` labels — `deploy/monitoring/vmstaticscrape.yaml` has the template.
 
 ### Changed
 
+- The Grafana dashboard is rebuilt: firing alerts, clients online and client traffic, DNS, and an exit × master matrix come first; the earlier rows are below, most of them collapsed. New `$master` and `$exit` variables; an "Agent restarts" annotation marks rollouts. Re-import `grafana-dashboard.json` (Grafana ≤12) or paste `grafana-dashboard-v2.json` (Grafana 13).
 - Wire contract 13. Upgrade the controller first, then the agents; an exit on an older agent keeps serving the master in slot 0 only.
 - mihomo on the masters is v1.19.32 (was v1.19.30): fixes for AmneziaWG 3.x tunnels and WireGuard start-up. The image change restarts mihomo once on every master that does not pin `mihomo_tag`; client connections drop for a few seconds.
 - wgfleet installs wgcf 2.3.1 (was 2.2.32) on exits, for WARP registration against the current Cloudflare API. Running WARP interfaces are not touched.
