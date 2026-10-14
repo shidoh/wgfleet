@@ -14,6 +14,7 @@ New releases are announced, with the archives attached, in the Telegram channel 
 - The console shows every master with its own view of the exits.
 - An exit reports each master peer's endpoint and handshake (wire 13). Upgrade the controller first.
 - Alert `WgfleetDNSMetricsMissing`: a node the controller knows that no `blocky` scrape target covers. The `blocky` job needs per-target `node`/`role` labels — `deploy/monitoring/vmstaticscrape.yaml` has the template.
+- Prometheus service discovery on the controller's metrics address: `/sd/wgfleet`, `/sd/node-exporter`, `/sd/blocky`. `deploy/monitoring/vmscrapeconfig-sd.yaml` scrapes the fleet through it, so a new node needs no scrape-list edit.
 
 ### Changed
 

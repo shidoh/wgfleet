@@ -14,6 +14,7 @@ the public interface — the code refuses a public bind).
 | `servicemonitor.yaml` | Prometheus-Operator `ServiceMonitor` + headless `Service`/`Endpoints` for the controller and the agents. Edit the ZT addresses. |
 | `scrapeconfig.yaml` | Prometheus-Operator `ScrapeConfig` CRD (operator ≥ v0.65) — static targets, no Service plumbing. |
 | `vmstaticscrape.yaml` | VictoriaMetrics-Operator `VMStaticScrape` CRD — for a `vmagent`. Edit the ZT addresses. |
+| `vmscrapeconfig-sd.yaml` | VictoriaMetrics-Operator `VMScrapeConfig` over the controller's service discovery — the same three jobs with no address list. Edit the controller address only. Use it **instead of** `vmstaticscrape.yaml`. |
 | `vmrule.yaml` | VictoriaMetrics-Operator `VMRule` — alerts over the fleet metrics. No addresses to edit. |
 | `prometheusrule.yaml` | Prometheus-Operator `PrometheusRule` — the same alerts. |
 
@@ -79,6 +80,23 @@ Edit before applying:
     **`staticScrapeSelector`** (or set the vmagent `selectAllByDefault: true`).
 
 Verify targets are `UP` under Prometheus → Status → Targets.
+
+### Service discovery from the controller
+
+The controller serves Prometheus HTTP service discovery next to its `/metrics`,
+on the same mgmt-only address:
+
+| URL | Job | Targets | Target labels |
+|---|---|---|---|
+| `/sd/wgfleet` | `wgfleet` | the controller, every agent on `:9301` | `component`; agents also `__meta_wgfleet_node`, `__meta_wgfleet_role` |
+| `/sd/node-exporter` | `wgfleet-node` | every node on `:9100` | `node`, `role` |
+| `/sd/blocky` | `blocky` | every node with `dns_filter` and blocky metrics on, on its blocky HTTP port | `node`, `role` |
+
+Only nodes with a mgmt address are listed. If the controller cannot read its
+store, the endpoint answers `503` and the scraper keeps the last list.
+`vmscrapeconfig-sd.yaml` points a `vmagent` at it. With Prometheus-Operator, use
+`httpSDConfigs` in a `ScrapeConfig` with these URLs and set `job` to the job name
+above — the alerts select on it.
 
 ### Host metrics (node_exporter)
 

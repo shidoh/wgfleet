@@ -556,6 +556,17 @@ All keys: [configuration.md#2-controller-the-controller-process](configuration.m
 | `--metrics <addr>` | Override the bind. |
 | `--metrics off` | Disable it. |
 
+**Scrape targets from the controller.** `controller.metrics` also serves Prometheus
+HTTP service discovery:
+
+| URL | Lists |
+|---|---|
+| `/sd/wgfleet` | the controller and every agent (`:9301`) |
+| `/sd/node-exporter` | every node's node_exporter (`:9100`), labels `node`, `role` |
+| `/sd/blocky` | every node's blocky with metrics on, labels `node`, `role` |
+
+Manifest for a `vmagent`: `monitoring/vmscrapeconfig-sd.yaml` in the release archive.
+
 **Controller** (a scrape-time projection of the state store):
 
 ```

@@ -177,7 +177,7 @@ release-archive: agent-linux controller-linux
 	# older Grafana cannot read the v2 one, so leaving either out strands a tester
 	# on whichever version they happen to run.
 	cp deploy/monitoring/grafana-dashboard.json deploy/monitoring/grafana-dashboard-v2.json deploy/monitoring/README.md $(DIST)/$(PKG)/monitoring/
-	cp deploy/monitoring/servicemonitor.yaml deploy/monitoring/scrapeconfig.yaml deploy/monitoring/vmstaticscrape.yaml $(DIST)/$(PKG)/monitoring/
+	cp deploy/monitoring/servicemonitor.yaml deploy/monitoring/scrapeconfig.yaml deploy/monitoring/vmstaticscrape.yaml deploy/monitoring/vmscrapeconfig-sd.yaml $(DIST)/$(PKG)/monitoring/
 	cp deploy/monitoring/vmrule.yaml deploy/monitoring/prometheusrule.yaml $(DIST)/$(PKG)/monitoring/
 	@echo "$(VERSION) $(COMMIT) $(DATE) linux/$(ARCH) wire/$(WIRE)" > $(DIST)/$(PKG)/VERSION
 	chmod 0755 $(DIST)/$(PKG)/wgfleet-controller $(DIST)/$(PKG)/wgfleet-agent $(DIST)/$(PKG)/*.sh
