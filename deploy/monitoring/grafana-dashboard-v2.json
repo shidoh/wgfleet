@@ -165,6 +165,30 @@
                   {
                     "matcher": {
                       "id": "byName",
+                      "options": "alert"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.width",
+                        "value": 250
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byRegexp",
+                      "options": "node|exit|check|probe|port"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.width",
+                        "value": 95
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
                       "options": "severity"
                     },
                     "properties": [
@@ -1443,8 +1467,8 @@
         "kind": "Panel",
         "spec": {
           "id": 221,
-          "title": "Pairs that left rotation in this range",
-          "description": "Only master→exit pairs that were OUT or held out at some point in the window; a steady fleet draws nothing here. Same colours as the matrix.",
+          "title": "Tunnels out of rotation ≥ 5 min in this range",
+          "description": "One row per master→exit tunnel that spent at least 5 minutes OUT or held out in the selected range — the rest are healthy and not drawn. Colour = what the tunnel was doing at that moment: green carrying traffic, blue in rotation but idle, orange pulled by our probe, red failed mihomo's check. The short blink every node shows at a rollout is filtered out.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -1463,8 +1487,8 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "(max by (node, exit) (wgfleet_exit_tunnel_alive{node=~\"$master\"}) + max by (node, exit) (wgfleet_exit_tunnel_selected{node=~\"$master\"}) - 3 * (max by (node, exit) (wgfleet_agent_exit_held_out{node=~\"$master\"}) or 0 * max by (node, exit) (wgfleet_exit_tunnel_alive{node=~\"$master\"}))) and on(node, exit) (min_over_time((max by (node, exit) (wgfleet_exit_tunnel_alive{node=~\"$master\"}) + max by (node, exit) (wgfleet_exit_tunnel_selected{node=~\"$master\"}) - 3 * (max by (node, exit) (wgfleet_agent_exit_held_out{node=~\"$master\"}) or 0 * max by (node, exit) (wgfleet_exit_tunnel_alive{node=~\"$master\"})))[$__range:1m]) < 1)",
-                        "legendFormat": "{{node}} → {{exit}}"
+                        "expr": "label_join((max by (node, exit) (wgfleet_exit_tunnel_alive{node=~\"$master\"}) + max by (node, exit) (wgfleet_exit_tunnel_selected{node=~\"$master\"}) - 3 * (max by (node, exit) (wgfleet_agent_exit_held_out{node=~\"$master\"}) or 0 * max by (node, exit) (wgfleet_exit_tunnel_alive{node=~\"$master\"}))) and on(node, exit) (count_over_time(((max by (node, exit) (wgfleet_exit_tunnel_alive{node=~\"$master\"}) + max by (node, exit) (wgfleet_exit_tunnel_selected{node=~\"$master\"}) - 3 * (max by (node, exit) (wgfleet_agent_exit_held_out{node=~\"$master\"}) or 0 * max by (node, exit) (wgfleet_exit_tunnel_alive{node=~\"$master\"}))) < 1)[$__range:1m] @ end()) >= 5), \"tunnel\", \" → \", \"node\", \"exit\") or on() (label_replace(vector(9), \"tunnel\", \"every tunnel stayed in rotation\", \"\", \"\") unless on() count(count_over_time(((max by (node, exit) (wgfleet_exit_tunnel_alive{node=~\"$master\"}) + max by (node, exit) (wgfleet_exit_tunnel_selected{node=~\"$master\"}) - 3 * (max by (node, exit) (wgfleet_agent_exit_held_out{node=~\"$master\"}) or 0 * max by (node, exit) (wgfleet_exit_tunnel_alive{node=~\"$master\"}))) < 1)[$__range:1m] @ end()) >= 5))",
+                        "legendFormat": "{{tunnel}}"
                       }
                     }
                   }
@@ -1503,6 +1527,11 @@
                           "text": "OUT",
                           "color": "red",
                           "index": 2
+                        },
+                        "9": {
+                          "text": "all clear",
+                          "color": "green",
+                          "index": 9
                         }
                       }
                     },
@@ -1527,12 +1556,12 @@
                 "overrides": []
               },
               "options": {
-                "showValue": "auto",
+                "showValue": "never",
                 "rowHeight": 0.8,
                 "mergeValues": true,
                 "alignValue": "left",
                 "legend": {
-                  "showLegend": false,
+                  "showLegend": true,
                   "displayMode": "list",
                   "placement": "bottom"
                 },
@@ -1638,8 +1667,8 @@
         "kind": "Panel",
         "spec": {
           "id": 94,
-          "title": "master→exit tunnel delay",
-          "description": "Last url-test delay per tunnel, as mihomo measured it. A failed measurement is ABSENT, not zero — a dead tunnel must never render as the fastest one.",
+          "title": "Tunnel delay, worst master per exit (5 min avg)",
+          "description": "mihomo's url-test delay through each exit, the slower of the masters, averaged over 5 minutes so single slow probes do not dominate. A tunnel whose probe failed has no value here — it shows in the matrix as OUT.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -1658,8 +1687,8 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "max by (node, exit) (wgfleet_exit_tunnel_delay_seconds{node=~\"$master\",exit=~\"$exit\"})",
-                        "legendFormat": "{{node}} → {{exit}}"
+                        "expr": "max by (exit) (avg_over_time(wgfleet_exit_tunnel_delay_seconds{node=~\"$master\",exit=~\"$exit\"}[5m]))",
+                        "legendFormat": "{{exit}}"
                       }
                     }
                   }
@@ -1676,47 +1705,47 @@
             "spec": {
               "fieldConfig": {
                 "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
+                  "unit": "s",
                   "custom": {
-                    "axisCenteredZero": false,
-                    "axisColorMode": "text",
-                    "axisPlacement": "auto",
                     "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "gradientMode": "opacity",
-                    "lineInterpolation": "smooth",
-                    "lineWidth": 2,
-                    "pointSize": 5,
-                    "scaleDistribution": {
-                      "type": "linear"
-                    },
+                    "lineWidth": 1,
+                    "fillOpacity": 0,
                     "showPoints": "never",
                     "spanNulls": false,
                     "stacking": {
-                      "group": "A",
-                      "mode": "none"
+                      "mode": "none",
+                      "group": "A"
                     },
                     "thresholdsStyle": {
                       "mode": "off"
-                    }
+                    },
+                    "axisSoftMin": 0
                   },
-                  "mappings": [],
-                  "min": 0,
-                  "unit": "s"
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      }
+                    ]
+                  }
                 },
                 "overrides": []
               },
               "options": {
                 "legend": {
-                  "calcs": [
-                    "lastNotNull",
-                    "max"
-                  ],
                   "displayMode": "table",
-                  "placement": "right",
-                  "showLegend": true
+                  "placement": "bottom",
+                  "showLegend": true,
+                  "calcs": [
+                    "mean",
+                    "max",
+                    "lastNotNull"
+                  ]
                 },
                 "tooltip": {
                   "mode": "multi",
@@ -1827,7 +1856,7 @@
         "spec": {
           "id": 224,
           "title": "Exits silent at the master's AWG gate",
-          "description": "exit_initiated: the master answers an exit only after hearing its knock on the pinned port. Silent = the exit cannot reach the master (its tunnel is down from its side).",
+          "description": "Tunnels where the master stopped hearing the exit's knock for 3+ minutes in this range (exit_initiated: the master answers an exit only after it knocks on its pinned port). Red = silent: the exit cannot reach the master. Empty = every exit kept knocking.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -1846,8 +1875,8 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "max by (node, exit) (wgfleet_agent_awg_exit_heard{node=~\"$master\",exit=~\"$exit\"}) and on(node, exit) (min_over_time(max by (node, exit) (wgfleet_agent_awg_exit_heard{node=~\"$master\",exit=~\"$exit\"})[$__range]) == 0)",
-                        "legendFormat": "{{node}} → {{exit}}"
+                        "expr": "label_join((max by (node, exit) (wgfleet_agent_awg_exit_heard{node=~\"$master\",exit=~\"$exit\"})) and on(node, exit) (count_over_time((max by (node, exit) (wgfleet_agent_awg_exit_heard{node=~\"$master\",exit=~\"$exit\"}) == 0)[$__range:1m] @ end()) >= 3), \"tunnel\", \" → \", \"node\", \"exit\") or on() (label_replace(vector(9), \"tunnel\", \"every exit kept knocking\", \"\", \"\") unless on() count(count_over_time((max by (node, exit) (wgfleet_agent_awg_exit_heard{node=~\"$master\",exit=~\"$exit\"}) == 0)[$__range:1m] @ end()) >= 3))",
+                        "legendFormat": "{{tunnel}}"
                       }
                     }
                   }
@@ -1881,11 +1910,15 @@
                           "text": "SILENT",
                           "color": "red",
                           "index": 1
+                        },
+                        "9": {
+                          "text": "all clear",
+                          "color": "green",
+                          "index": 9
                         }
                       }
                     }
                   ],
-                  "noValue": "every exit heard in this range",
                   "custom": {
                     "fillOpacity": 80,
                     "lineWidth": 0
@@ -1894,12 +1927,12 @@
                 "overrides": []
               },
               "options": {
-                "showValue": "auto",
+                "showValue": "never",
                 "rowHeight": 0.8,
                 "mergeValues": true,
                 "alignValue": "left",
                 "legend": {
-                  "showLegend": false,
+                  "showLegend": true,
                   "displayMode": "list",
                   "placement": "bottom"
                 },
@@ -1917,7 +1950,7 @@
         "spec": {
           "id": 225,
           "title": "Reserve-tier members that failed",
-          "description": "Last warm probe of each member of the INACTIVE tier. A dead member here is the exit you would fail over to.",
+          "description": "Reserve-tier exits whose warm probe failed for 3+ minutes in this range. These are the exits wg-best would fail over to if the primary tier died; red here means that failover would land on a dead exit. Empty = every reserve member answered.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -1936,8 +1969,8 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "max by (node, exit) (wgfleet_agent_standby_tier_member_usable{node=~\"$master\",exit=~\"$exit\"}) and on(node, exit) (min_over_time(max by (node, exit) (wgfleet_agent_standby_tier_member_usable{node=~\"$master\",exit=~\"$exit\"})[$__range]) == 0)",
-                        "legendFormat": "{{node}} → {{exit}}"
+                        "expr": "label_join((max by (node, exit) (wgfleet_agent_standby_tier_member_usable{node=~\"$master\",exit=~\"$exit\"})) and on(node, exit) (count_over_time((max by (node, exit) (wgfleet_agent_standby_tier_member_usable{node=~\"$master\",exit=~\"$exit\"}) == 0)[$__range:1m] @ end()) >= 3), \"tunnel\", \" → \", \"node\", \"exit\") or on() (label_replace(vector(9), \"tunnel\", \"every reserve member answered\", \"\", \"\") unless on() count(count_over_time((max by (node, exit) (wgfleet_agent_standby_tier_member_usable{node=~\"$master\",exit=~\"$exit\"}) == 0)[$__range:1m] @ end()) >= 3))",
+                        "legendFormat": "{{tunnel}}"
                       }
                     }
                   }
@@ -1971,11 +2004,15 @@
                           "text": "DEAD",
                           "color": "red",
                           "index": 1
+                        },
+                        "9": {
+                          "text": "all clear",
+                          "color": "green",
+                          "index": 9
                         }
                       }
                     }
                   ],
-                  "noValue": "every reserve member usable in this range",
                   "custom": {
                     "fillOpacity": 80,
                     "lineWidth": 0
@@ -1984,12 +2021,12 @@
                 "overrides": []
               },
               "options": {
-                "showValue": "auto",
+                "showValue": "never",
                 "rowHeight": 0.8,
                 "mergeValues": true,
                 "alignValue": "left",
                 "legend": {
-                  "showLegend": false,
+                  "showLegend": true,
                   "displayMode": "list",
                   "placement": "bottom"
                 },
@@ -6714,7 +6751,7 @@
       {
         "kind": "QueryVariable",
         "spec": {
-          "allValue": ".*",
+          "allValue": "",
           "allowCustomValue": true,
           "current": {
             "text": "All",
