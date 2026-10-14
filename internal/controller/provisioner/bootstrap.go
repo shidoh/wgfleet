@@ -404,7 +404,13 @@ func parseAgentVersion(out string) (string, error) {
 // Cloudflare stopped always sending), and 2.2.32 restored the TLS fingerprint
 // that registration is matched on. Registration is the one thing this binary
 // does, and it is the step that fails first when the far side drifts.
-const wgcfVersion = "2.2.32"
+//
+// Bumped 2.2.32 -> 2.3.1 (2026-10-14) for the same reason: 2.3.0 moved to the
+// current API schema and 2.3.1 made SourceDevice's key_type/tunnel_type
+// optional. The profile is unchanged except that, when Cloudflare sends no
+// endpoint host, Endpoint falls back to "<ip>:<port>" — ParseWGCFProfile reads
+// it verbatim either way.
+const wgcfVersion = "2.3.1"
 
 // wgcfInstallCmd downloads the wgcf release binary for the node's arch into
 // /usr/local/bin and marks it executable. arch is uname -m from the facts.

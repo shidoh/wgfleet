@@ -122,6 +122,38 @@ Endpoint = engage.cloudflareclient.com:2408
 	}
 }
 
+// wgcf 2.3.x writes "<ip>:<port>" when Cloudflare sends no endpoint host, and a
+// PersistentKeepalive line under --keepalive; the first must reach the rendered
+// conf as-is, the second must not trip the parser.
+func TestParseWGCFProfileV23IPEndpointAndKeepalive(t *testing.T) {
+	profile := `[Interface]
+PrivateKey = aPrivKeyBase64ExampleForTestingPurposesOnly=
+Address = 172.16.0.2/32, 2606:4700:110:8beb:679b:e540:1a83:4227/128
+DNS = 1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001
+MTU = 1280
+[Peer]
+PublicKey = bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=
+AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = 162.159.192.1:2408
+PersistentKeepalive = 25
+`
+	c, err := ParseWGCFProfile([]byte(profile))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if c.Endpoint != "162.159.192.1:2408" {
+		t.Errorf("Endpoint = %q, want 162.159.192.1:2408", c.Endpoint)
+	}
+	c.MTU = 1440
+	out, err := RenderWGCF(c)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(out, "Endpoint = 162.159.192.1:2408\n") {
+		t.Errorf("rendered conf lost the IP endpoint:\n%s", out)
+	}
+}
+
 func TestParseWGCFProfileIncomplete(t *testing.T) {
 	if _, err := ParseWGCFProfile([]byte("[Interface]\nAddress = 172.16.0.2/32\n")); err == nil {
 		t.Fatal("expected error for profile missing private/peer keys")
