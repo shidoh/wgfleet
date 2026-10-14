@@ -37,6 +37,10 @@ type StoreCollector struct {
 	nodeDrain        *prometheus.Desc
 	nodeDecommission *prometheus.Desc
 	nodeVLESSClients *prometheus.Desc
+	// clientInfo names the client behind each peer public key. The agents report
+	// traffic per peer key only — they never see names — so without it a per-client
+	// panel reads "Zg4vfVc4…: 6 Mbit/s".
+	clientInfo *prometheus.Desc
 	// The master's view of each master↔exit tunnel. These tunnels are userspace
 	// mihomo proxies, not kernel WireGuard, so NO wg_* series covers them — this is
 	// their only representation in metrics. Their absence is what made an exit
@@ -104,6 +108,10 @@ func NewStoreCollector(reg *prometheus.Registry, st store.Store) *StoreCollector
 			prometheus.BuildFQName(namespace, "node", "decommission"),
 			"1 if the node is flagged for decommission (data plane torn down), else 0.",
 			[]string{"node"}, nil),
+		clientInfo: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "", "client_info"),
+			"Client-facing WireGuard credential behind a peer public key; value is always 1. Join on peer to name wgfleet_wg_peer_* series, on the master's wg0 and on an exit's lifeline interface alike.",
+			[]string{"node", "peer", "client", "device"}, nil),
 		nodeVLESSClients: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "node", "client_vless_clients"),
 			"Number of VLESS/REALITY clients issued for a master's client-facing inbound (ADR-0031).",
@@ -141,6 +149,7 @@ func (c *StoreCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.nodeDrain
 	ch <- c.nodeDecommission
 	ch <- c.nodeVLESSClients
+	ch <- c.clientInfo
 	ch <- c.exitTunnelAlive
 	ch <- c.exitTunnelDelay
 	ch <- c.exitTunnelSelected
@@ -163,6 +172,7 @@ func (c *StoreCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 	ch <- prometheus.MustNewConstMetric(c.storeUp, prometheus.GaugeValue, 1)
 
+	devices := c.deviceNames(ctx)
 	counts := map[domain.NodeState]int{}
 	for _, n := range nodes {
 		counts[n.State]++
@@ -194,6 +204,7 @@ func (c *StoreCollector) Collect(ch chan<- prometheus.Metric) {
 				ch <- prometheus.MustNewConstMetric(c.nodeVLESSClients, prometheus.GaugeValue,
 					float64(len(clients)), n.Name)
 			}
+			c.collectClients(ctx, ch, n, devices)
 		}
 
 		c.collectStatus(ctx, ch, n.Name)
@@ -202,6 +213,43 @@ func (c *StoreCollector) Collect(ch chan<- prometheus.Metric) {
 	for _, st := range nodeStates {
 		ch <- prometheus.MustNewConstMetric(c.nodesByState, prometheus.GaugeValue,
 			float64(counts[st]), string(st))
+	}
+}
+
+// deviceNames maps (master ID, credential ID) of every AWG credential attached to
+// a device to that device's name. A read error yields an empty map: the clients
+// are still named, only without their device.
+func (c *StoreCollector) deviceNames(ctx context.Context) map[[2]string]string {
+	out := map[[2]string]string{}
+	devs, err := c.store.ListDevices(ctx)
+	if err != nil {
+		return out
+	}
+	for _, d := range devs {
+		for _, cr := range d.Credentials {
+			if cr.Kind == domain.CredentialAWG {
+				out[[2]string{cr.MasterID, cr.Ref}] = d.Name
+			}
+		}
+	}
+	return out
+}
+
+// collectClients emits one wgfleet_client_info per issued WireGuard credential of
+// a master, muted ones included: a muted client keeps its traffic history and
+// that history should keep its name. Only public fields reach labels — the
+// metrics endpoint is unauthenticated and WGClient also holds the private key.
+func (c *StoreCollector) collectClients(ctx context.Context, ch chan<- prometheus.Metric, n domain.Node, devices map[[2]string]string) {
+	clients, err := c.store.ListWGClients(ctx, n.ID)
+	if err != nil {
+		return
+	}
+	for _, cl := range clients {
+		if cl.PublicKey == "" {
+			continue
+		}
+		ch <- prometheus.MustNewConstMetric(c.clientInfo, prometheus.GaugeValue, 1,
+			n.Name, cl.PublicKey, cl.Name, devices[[2]string{n.ID, cl.ID}])
 	}
 }
 
