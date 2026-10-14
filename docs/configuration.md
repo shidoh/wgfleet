@@ -68,7 +68,7 @@ SOPS/age setup: `secrets-sops.md`.
 | `controller.store` | string | **required** | Path to the SQLite state database |
 | `controller.log_level` | string | `info` | `trace` \| `debug` \| `info` \| `warn` \| `error`. `debug` prints every spec render decision; `trace` adds one line per agent RPC. `--log-level` overrides it. On a running process `SIGUSR1` steps one level more verbose and `SIGUSR2` returns to this value |
 | `controller.webui` | string | disabled | Web UI bind. **Must be a mgmt/overlay address** unless `WGFLEET_ALLOW_PUBLIC_BIND=1` |
-| `controller.metrics` | string | disabled | Prometheus `/metrics` bind (conventionally `<mgmt>:9300`). Same mgmt-only restriction |
+| `controller.metrics` | string | disabled | Prometheus `/metrics` and `/sd/*` service-discovery bind (conventionally `<mgmt>:9300`). Same mgmt-only restriction |
 | `controller.client_portal_url` | string | — | Base URL clients reach the portal on, e.g. `https://vpn.example.org`. Required together with `client_portal` |
 | `controller.client_portal` | string | disabled | Bind for the client self-service portal: device pages, the mihomo subscription and its QR, AmneziaWG profiles and QR. Bind it on the master's **mgmt address** and list its port in `fleet.masters[].client_admin_ports`; a bind on the client-pool gateway address does not work, and a public bind is refused |
 | `controller.agent_bin` | string | — | Path to the `wgfleet-agent` binary installed during UI-triggered provisioning. Also the rolling upgrade's target: nodes are compared against **this binary's** version, not the controller's |

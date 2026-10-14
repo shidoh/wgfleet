@@ -13,6 +13,7 @@ New releases are announced, with the archives attached, in the Telegram channel 
 - `fleet.master_dns`: the resolver settings of every master with `dns_filter`, same keys as `fleet.masters[].dns`.
 - The console shows every master with its own view of the exits.
 - An exit reports each master peer's endpoint and handshake (wire 13). Upgrade the controller first.
+- Prometheus service discovery on the controller's metrics address: `/sd/wgfleet`, `/sd/node-exporter`, `/sd/blocky`. `deploy/monitoring/vmscrapeconfig-sd.yaml` scrapes the fleet through it, so a new node needs no scrape-list edit.
 
 ### Changed
 

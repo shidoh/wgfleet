@@ -1,0 +1,70 @@
+# wgfleet — VictoriaMetrics Operator VMScrapeConfig over the controller's HTTP
+# service discovery. Replaces the three hand-kept VMStaticScrape lists in
+# vmstaticscrape.yaml: the controller already knows every node and its mgmt
+# address, and serves them as Prometheus HTTP SD on its metrics port:
+#
+#   /sd/wgfleet        the controller (component=controller) + every agent (component=agent)
+#   /sd/node-exporter  every node's node_exporter, labelled node/role
+#   /sd/blocky         every node running blocky with metrics on, labelled node/role
+#
+# A node added to the manifest becomes a target on its own; one removed stops
+# being one. If the controller is unreachable the scraper keeps the last list.
+#
+# Apply ONE of vmstaticscrape.yaml or this file, not both — the same targets in
+# two jobs are scraped twice and every count in the rules doubles.
+#
+# You only edit the controller address (and namespace + selector label).
+---
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMScrapeConfig
+metadata:
+  name: wgfleet
+  namespace: monitoring # <-- your vmagent scrape namespace
+  labels:
+    app.kubernetes.io/name: wgfleet
+spec:
+  interval: 30s
+  # VMScrapeConfig has no job name: the job label defaults to
+  # "scrapeConfig/<namespace>/<name>", and every shipped alert selects on job=.
+  relabelConfigs:
+    - targetLabel: job
+      replacement: wgfleet
+  httpSDConfigs:
+    - url: http://10.20.0.1:9300/sd/wgfleet # <-- EDIT: controller.metrics address
+---
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMScrapeConfig
+metadata:
+  name: wgfleet-node
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: wgfleet
+spec:
+  interval: 30s
+  # VMScrapeConfig has no job name: the job label defaults to
+  # "scrapeConfig/<namespace>/<name>", and every shipped alert selects on job=.
+  relabelConfigs:
+    - targetLabel: job
+      replacement: wgfleet-node
+  # If some exporters sit behind basic auth, set it here for the whole job: an
+  # exporter without a web config ignores the header.
+  # basicAuth: { username: {name: <secret>, key: username}, password: {name: <secret>, key: password} }
+  httpSDConfigs:
+    - url: http://10.20.0.1:9300/sd/node-exporter # <-- EDIT
+---
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMScrapeConfig
+metadata:
+  name: wgfleet-blocky
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: wgfleet
+spec:
+  interval: 30s
+  # VMScrapeConfig has no job name: the job label defaults to
+  # "scrapeConfig/<namespace>/<name>", and every shipped alert selects on job=.
+  relabelConfigs:
+    - targetLabel: job
+      replacement: blocky
+  httpSDConfigs:
+    - url: http://10.20.0.1:9300/sd/blocky # <-- EDIT

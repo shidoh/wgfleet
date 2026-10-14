@@ -615,6 +615,12 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 	if cfg.Controller.Metrics != "" {
 		mux := http.NewServeMux()
 		mux.Handle("GET /metrics", metrics.Handler(reg))
+		// Prometheus HTTP service discovery for the fleet's scrape jobs, on the same
+		// mgmt-only bind: a new node becomes a target without editing a scrape list.
+		mux.Handle("GET /sd/", metrics.SDHandler(st, metrics.SDConfig{
+			ControllerAddr: cfg.Controller.Metrics,
+			BlockyPort:     cfg.Fleet.BlockyMetricsPort,
+		}))
 		metricsSrv = &http.Server{Addr: cfg.Controller.Metrics, Handler: mux}
 		go serveWithRetry("metrics", metricsSrv, slog.Default())
 	}
