@@ -11,6 +11,44 @@ import (
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
+const (
+	alicePub = "ALICEkey0000000000000000000000000000000000="
+	bobPub   = "BOBkey00000000000000000000000000000000000000="
+)
+
+// The label must be the agent's form of the key: the dashboard joins
+// wgfleet_wg_peer_*{peer} to this on(peer). The first version used the whole key
+// while the agent labels a short prefix, and the join matched nothing in prod.
+func TestClientInfoPeerMatchesTheAgentsPeerLabel(t *testing.T) {
+	reg, st, _ := newCollectorWithStore(t)
+	ctx := context.Background()
+	_ = st.UpsertNode(ctx, domain.Node{ID: "m1", Name: "master-1", Role: domain.RoleMaster, State: domain.StateReady})
+	if err := st.AddWGClient(ctx, "m1", domain.WGClient{ID: "c1", Name: "alice", Address: "10.73.0.2/32", PublicKey: alicePub, PrivateKey: "x", Enabled: true, CreatedAt: time.Unix(1, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	// What the agent emits for this peer, through its own parser.
+	agentPeer := ""
+	for _, p := range parseWGDump("priv\tpub\t51820\toff\n" + alicePub + "\t(none)\t1.2.3.4:5\t10.73.0.2/32\t1700000000\t10\t20\toff\n") {
+		agentPeer = shortPeerID(p.publicKey)
+	}
+	if agentPeer == "" {
+		t.Fatal("parseWGDump found no peer in the sample dump")
+	}
+	mfs, _ := reg.Gather()
+	for _, mf := range mfs {
+		if mf.GetName() != "wgfleet_client_info" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "peer" && l.GetValue() != agentPeer {
+					t.Errorf("client_info peer=%q, the agent labels the same peer %q — the join cannot match", l.GetValue(), agentPeer)
+				}
+			}
+		}
+	}
+}
+
 func TestStoreCollectorClientInfoNamesEveryPeer(t *testing.T) {
 	reg, st, _ := newCollectorWithStore(t)
 	ctx := context.Background()
@@ -26,21 +64,21 @@ func TestStoreCollectorClientInfoNamesEveryPeer(t *testing.T) {
 	if err := st.CreateDevice(ctx, domain.ClientDevice{ID: "d1", Token: "tok", Name: "pixel", CreatedAt: at}); err != nil {
 		t.Fatal(err)
 	}
-	onDevice := domain.WGClient{ID: "c1", Name: "alice", Address: "10.73.0.2/32", PublicKey: "PUBalice=", PrivateKey: "x", Enabled: true, CreatedAt: at}
+	onDevice := domain.WGClient{ID: "c1", Name: "alice", Address: "10.73.0.2/32", PublicKey: alicePub, PrivateKey: "x", Enabled: true, CreatedAt: at}
 	if err := st.AddWGClientToDevice(ctx, "m1", onDevice, "d1"); err != nil {
 		t.Fatal(err)
 	}
 	// A muted credential still owns its traffic history: it keeps its name.
-	lone := domain.WGClient{ID: "c2", Name: "bob", Address: "10.73.0.3/32", PublicKey: "PUBbob=", PrivateKey: "y", Enabled: false, CreatedAt: at}
+	lone := domain.WGClient{ID: "c2", Name: "bob", Address: "10.73.0.3/32", PublicKey: bobPub, PrivateKey: "y", Enabled: false, CreatedAt: at}
 	if err := st.AddWGClient(ctx, "m1", lone); err != nil {
 		t.Fatal(err)
 	}
 
 	want := `
-# HELP wgfleet_client_info Client-facing WireGuard credential behind a peer public key; value is always 1. Join on peer to name wgfleet_wg_peer_* series, on the master's wg0 and on an exit's lifeline interface alike.
+# HELP wgfleet_client_info Client-facing WireGuard credential behind a peer key, in the same short form the agents label peers with; value is always 1. Join on peer to name wgfleet_wg_peer_* series, on the master's wg0 and on an exit's lifeline interface alike.
 # TYPE wgfleet_client_info gauge
-wgfleet_client_info{client="alice",device="pixel",node="master-1",peer="PUBalice="} 1
-wgfleet_client_info{client="bob",device="",node="master-1",peer="PUBbob="} 1
+wgfleet_client_info{client="alice",device="pixel",node="master-1",peer="` + shortPeerID(alicePub) + `"} 1
+wgfleet_client_info{client="bob",device="",node="master-1",peer="` + shortPeerID(bobPub) + `"} 1
 `
 	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "wgfleet_client_info"); err != nil {
 		t.Error(err)
