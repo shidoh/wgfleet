@@ -59,8 +59,34 @@ type ClientRenderInput struct {
 type config struct {
 	Log       logCfg     `json:"log"`
 	DNS       *dnsConfig `json:"dns,omitempty"` // set to pin resolution to IPv4 (AAAA-only dest black-hole, #20)
+	Stats     *struct{}  `json:"stats,omitempty"`
+	API       *apiCfg    `json:"api,omitempty"`
+	Policy    *policyCfg `json:"policy,omitempty"`
 	Inbounds  []inbound  `json:"inbounds"`
 	Outbounds []outbound `json:"outbounds"`
+}
+
+// ClientStatsAPIAddr is where the master's client-facing xray serves its
+// StatsService. Loopback only: xray runs on the host network next to the agent,
+// the agent is the one reader, and nothing has to be opened in the firewall.
+const ClientStatsAPIAddr = "127.0.0.1:10085"
+
+// apiCfg is xray's API block in the "listen" form: the API gets its own listener,
+// so no dokodemo inbound or routing rule is needed and its traffic is not counted.
+type apiCfg struct {
+	Tag      string   `json:"tag"`
+	Listen   string   `json:"listen"`
+	Services []string `json:"services"`
+}
+
+type policyCfg struct {
+	Levels map[string]levelPolicy `json:"levels"`
+}
+
+type levelPolicy struct {
+	StatsUserUplink   bool `json:"statsUserUplink"`
+	StatsUserDownlink bool `json:"statsUserDownlink"`
+	StatsUserOnline   bool `json:"statsUserOnline"`
 }
 
 // dnsConfig pins xray's resolver IP-version. queryStrategy "UseIPv4" makes xray
@@ -90,6 +116,11 @@ type inboundSetting struct {
 type client struct {
 	ID   string `json:"id"`
 	Flow string `json:"flow,omitempty"` // "xtls-rprx-vision" in vision mode; empty for xhttp
+	// Email is the name xray counts this user's traffic under; without it no
+	// counter is registered. The client inbound sets it to domain.VLESSStatsID,
+	// never to the UUID: it is published on the agent's open /metrics.
+	Email string `json:"email,omitempty"`
+	Level *int   `json:"level,omitempty"`
 }
 
 type streamSettings struct {
@@ -288,8 +319,12 @@ func RenderClientConfig(in ClientRenderInput) (string, error) {
 	clients := make([]client, 0, len(s.Clients))
 	shortIDs := []string{""}
 	seenSID := map[string]struct{}{"": {}}
+	level := 0
 	for _, c := range s.Clients {
-		clients = append(clients, vlessClient(c.UUID, s.Mode))
+		cl := vlessClient(c.UUID, s.Mode)
+		cl.Email = domain.VLESSStatsID(c.UUID)
+		cl.Level = &level
+		clients = append(clients, cl)
 		if c.ShortID != "" {
 			if _, dup := seenSID[c.ShortID]; !dup {
 				shortIDs = append(shortIDs, c.ShortID)
@@ -318,6 +353,13 @@ func RenderClientConfig(in ClientRenderInput) (string, error) {
 	cfg := config{
 		Log: logCfg{Loglevel: "warning"},
 		DNS: dnsCfg,
+		// Per-client traffic and online counters, read by the master agent. Only
+		// StatsService: HandlerService would let a local caller add users.
+		Stats: &struct{}{},
+		API:   &apiCfg{Tag: "api", Listen: ClientStatsAPIAddr, Services: []string{"StatsService"}},
+		Policy: &policyCfg{Levels: map[string]levelPolicy{
+			"0": {StatsUserUplink: true, StatsUserDownlink: true, StatsUserOnline: true},
+		}},
 		Inbounds: []inbound{{
 			Listen:   "0.0.0.0",
 			Port:     s.ListenPort,

@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 )
@@ -79,13 +81,26 @@ type ClientVLESSServerSpec struct {
 }
 
 // VLESSClient is one issued end-user credential for the client-facing inbound.
-// UUID is the VLESS user id; ShortID is this user's REALITY short-id. Neither is
-// secret (the REALITY private key stays on the master), so the controller may
-// store and enumerate them to build vless:// links and to revoke access.
+// UUID is the VLESS user id; ShortID is this user's REALITY short-id.
+//
+// The UUID IS a credential: the REALITY public key is in every link and the
+// inbound accepts the empty short-id, so a UUID plus the master's address is
+// enough to connect. The controller stores it to build links and revoke access,
+// but it must never leave through an unauthenticated surface — metrics, logs —
+// which is what VLESSStatsID is for.
 type VLESSClient struct {
 	Name    string // operator-facing label, unique per master
-	UUID    string // VLESS user id
+	UUID    string // VLESS user id — secret, see above
 	ShortID string // this user's REALITY short-id (hex, even length)
+}
+
+// VLESSStatsID is the non-secret identity of a VLESS credential: the first 12 hex
+// digits of sha256(UUID). It is the xray user "email" the inbound counts traffic
+// under, so per-client counters can be published on the agent's open /metrics
+// and joined to a name on the controller without either side exposing the UUID.
+func VLESSStatsID(uuid string) string {
+	sum := sha256.Sum256([]byte(uuid))
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 // Validate checks the client-facing inbound invariants. It runs from

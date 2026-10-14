@@ -110,8 +110,8 @@ func NewStoreCollector(reg *prometheus.Registry, st store.Store) *StoreCollector
 			[]string{"node"}, nil),
 		clientInfo: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "", "client_info"),
-			"Client-facing WireGuard credential behind a peer key, in the same short form the agents label peers with; value is always 1. Join on peer to name wgfleet_wg_peer_* series, on the master's wg0 and on an exit's lifeline interface alike.",
-			[]string{"node", "peer", "client", "device"}, nil),
+			"Client credential behind a per-client series key; value is always 1. kind=awg: peer is the WireGuard key in the agents' short form — join wgfleet_wg_peer_*{peer} on the master's wg0 and an exit's lifeline interface. kind=vless: peer is the VLESS stats id — join wgfleet_vless_user_*{user}.",
+			[]string{"node", "peer", "client", "device", "kind"}, nil),
 		nodeVLESSClients: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "node", "client_vless_clients"),
 			"Number of VLESS/REALITY clients issued for a master's client-facing inbound (ADR-0031).",
@@ -216,20 +216,19 @@ func (c *StoreCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-// deviceNames maps (master ID, credential ID) of every AWG credential attached to
-// a device to that device's name. A read error yields an empty map: the clients
-// are still named, only without their device.
-func (c *StoreCollector) deviceNames(ctx context.Context) map[[2]string]string {
-	out := map[[2]string]string{}
+// deviceNames maps (kind, master ID, credential ref) of every credential attached
+// to a device to that device's name. The ref is the credential ID for AWG and the
+// client label for VLESS (see domain.DeviceCredential). A read error yields an
+// empty map: the clients are still named, only without their device.
+func (c *StoreCollector) deviceNames(ctx context.Context) map[[3]string]string {
+	out := map[[3]string]string{}
 	devs, err := c.store.ListDevices(ctx)
 	if err != nil {
 		return out
 	}
 	for _, d := range devs {
 		for _, cr := range d.Credentials {
-			if cr.Kind == domain.CredentialAWG {
-				out[[2]string{cr.MasterID, cr.Ref}] = d.Name
-			}
+			out[[3]string{string(cr.Kind), cr.MasterID, cr.Ref}] = d.Name
 		}
 	}
 	return out
@@ -239,19 +238,30 @@ func (c *StoreCollector) deviceNames(ctx context.Context) map[[2]string]string {
 // a master, muted ones included: a muted client keeps its traffic history and
 // that history should keep its name. Only public fields reach labels — the
 // metrics endpoint is unauthenticated and WGClient also holds the private key.
-func (c *StoreCollector) collectClients(ctx context.Context, ch chan<- prometheus.Metric, n domain.Node, devices map[[2]string]string) {
-	clients, err := c.store.ListWGClients(ctx, n.ID)
-	if err != nil {
-		return
-	}
-	for _, cl := range clients {
-		if cl.PublicKey == "" {
-			continue
+func (c *StoreCollector) collectClients(ctx context.Context, ch chan<- prometheus.Metric, n domain.Node, devices map[[3]string]string) {
+	if clients, err := c.store.ListWGClients(ctx, n.ID); err == nil {
+		for _, cl := range clients {
+			if cl.PublicKey == "" {
+				continue
+			}
+			// The agent labels peers with shortPeerID, not the whole key; anything
+			// else here and the join on(peer) matches nothing.
+			ch <- prometheus.MustNewConstMetric(c.clientInfo, prometheus.GaugeValue, 1,
+				n.Name, shortPeerID(cl.PublicKey), cl.Name,
+				devices[[3]string{string(domain.CredentialAWG), n.ID, cl.ID}], string(domain.CredentialAWG))
 		}
-		// The agent labels peers with shortPeerID, not the whole key; anything else
-		// here and the join on(peer) matches nothing.
-		ch <- prometheus.MustNewConstMetric(c.clientInfo, prometheus.GaugeValue, 1,
-			n.Name, shortPeerID(cl.PublicKey), cl.Name, devices[[2]string{n.ID, cl.ID}])
+	}
+	// The VLESS UUID is a credential and this endpoint is open: only its stats id
+	// — the same one the inbound counts under — ever reaches a label.
+	if clients, err := c.store.ListVLESSClients(ctx, n.ID); err == nil {
+		for _, cl := range clients {
+			if cl.UUID == "" {
+				continue
+			}
+			ch <- prometheus.MustNewConstMetric(c.clientInfo, prometheus.GaugeValue, 1,
+				n.Name, domain.VLESSStatsID(cl.UUID), cl.Name,
+				devices[[3]string{string(domain.CredentialVLESS), n.ID, cl.Name}], string(domain.CredentialVLESS))
+		}
 	}
 }
 

@@ -83,6 +83,19 @@ spec:
       annotations:
         summary: No DNS metrics from {{ $labels.node }}
         description: The controller knows {{ $labels.node }} ({{ $labels.role }}) but no blocky target labelled node={{ $labels.node }} has been up for 30m. Add its mgmt address on 4000 to the blocky VMStaticScrape with node/role labels; until then that node's DNS is invisible.
+    - alert: WgfleetVLESSStatsUnreadable
+      # The master runs the client VLESS inbound but its xray did not answer the
+      # stats API. Per-client VLESS traffic goes blank; the inbound itself may be
+      # fine (client-vless health says that). Usually xray is restarting in a loop or
+      # an operator-pinned image lacks the API.
+      expr: wgfleet_vless_collector_up == 0
+      for: 15m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: VLESS client stats unreadable on {{ $labels.node }}
+        description: '{{ $labels.node }} runs the client-facing VLESS inbound, but xray has not answered its stats API on 127.0.0.1:10085 for 15m, so per-client VLESS traffic is blank. Check `docker logs xray` on the master and that its image is not pinned below 26.4.13.'
   - name: wgfleet.fleet
     interval: 30s
     rules:

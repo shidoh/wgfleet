@@ -12,8 +12,10 @@ import (
 )
 
 const (
-	alicePub = "ALICEkey0000000000000000000000000000000000="
-	bobPub   = "BOBkey00000000000000000000000000000000000000="
+	alicePub  = "ALICEkey0000000000000000000000000000000000="
+	bobPub    = "BOBkey00000000000000000000000000000000000000="
+	aliceUUID = "11111111-1111-4111-8111-111111111111"
+	carolUUID = "33333333-3333-4333-8333-333333333333"
 )
 
 // The label must be the agent's form of the key: the dashboard joins
@@ -73,12 +75,20 @@ func TestStoreCollectorClientInfoNamesEveryPeer(t *testing.T) {
 	if err := st.AddWGClient(ctx, "m1", lone); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.AddVLESSClientToDevice(ctx, "m1", domain.VLESSClient{Name: "alice-v", UUID: aliceUUID, ShortID: "0badc0de"}, "d1", at); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddVLESSClient(ctx, "m1", domain.VLESSClient{Name: "carol-v", UUID: carolUUID, ShortID: "feedface"}); err != nil {
+		t.Fatal(err)
+	}
 
 	want := `
-# HELP wgfleet_client_info Client-facing WireGuard credential behind a peer key, in the same short form the agents label peers with; value is always 1. Join on peer to name wgfleet_wg_peer_* series, on the master's wg0 and on an exit's lifeline interface alike.
+# HELP wgfleet_client_info Client credential behind a per-client series key; value is always 1. kind=awg: peer is the WireGuard key in the agents' short form — join wgfleet_wg_peer_*{peer} on the master's wg0 and an exit's lifeline interface. kind=vless: peer is the VLESS stats id — join wgfleet_vless_user_*{user}.
 # TYPE wgfleet_client_info gauge
-wgfleet_client_info{client="alice",device="pixel",node="master-1",peer="` + shortPeerID(alicePub) + `"} 1
-wgfleet_client_info{client="bob",device="",node="master-1",peer="` + shortPeerID(bobPub) + `"} 1
+wgfleet_client_info{client="alice",device="pixel",kind="awg",node="master-1",peer="` + shortPeerID(alicePub) + `"} 1
+wgfleet_client_info{client="alice-v",device="pixel",kind="vless",node="master-1",peer="` + domain.VLESSStatsID(aliceUUID) + `"} 1
+wgfleet_client_info{client="bob",device="",kind="awg",node="master-1",peer="` + shortPeerID(bobPub) + `"} 1
+wgfleet_client_info{client="carol-v",device="",kind="vless",node="master-1",peer="` + domain.VLESSStatsID(carolUUID) + `"} 1
 `
 	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "wgfleet_client_info"); err != nil {
 		t.Error(err)
@@ -95,6 +105,10 @@ func TestStoreCollectorClientInfoNeverCarriesThePrivateKey(t *testing.T) {
 	if err := st.AddWGClient(ctx, "m1", c); err != nil {
 		t.Fatal(err)
 	}
+	// The VLESS UUID is a credential too (UUID + address = access).
+	if err := st.AddVLESSClient(ctx, "m1", domain.VLESSClient{Name: "v", UUID: "SECRET-0000-4000-8000-000000000000", ShortID: "ab"}); err != nil {
+		t.Fatal(err)
+	}
 	mfs, err := reg.Gather()
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +117,7 @@ func TestStoreCollectorClientInfoNeverCarriesThePrivateKey(t *testing.T) {
 		for _, m := range mf.GetMetric() {
 			for _, l := range m.GetLabel() {
 				if strings.Contains(l.GetValue(), "SECRET") {
-					t.Fatalf("%s label %s carries the client's private key", mf.GetName(), l.GetName())
+					t.Fatalf("%s label %s carries a client secret (WG private key or VLESS UUID)", mf.GetName(), l.GetName())
 				}
 			}
 		}

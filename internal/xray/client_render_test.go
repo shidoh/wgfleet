@@ -121,3 +121,84 @@ func TestRenderClientConfigEmptyClients(t *testing.T) {
 		t.Fatalf("invalid JSON: %v", err)
 	}
 }
+
+// Per-client traffic needs four things in the config, and missing any one of them
+// makes xray count nothing without saying so: stats, the API, the per-level policy
+// flags, and an email on every client (no email ⇒ no counter is registered).
+func TestRenderClientConfigCountsTrafficPerClient(t *testing.T) {
+	spec := sampleClientSpec()
+	out, err := RenderClientConfig(ClientRenderInput{Spec: spec, PrivateKey: "PRIVKEY"})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	var c struct {
+		Stats *map[string]any `json:"stats"`
+		API   struct {
+			Tag      string   `json:"tag"`
+			Listen   string   `json:"listen"`
+			Services []string `json:"services"`
+		} `json:"api"`
+		Policy struct {
+			Levels map[string]map[string]bool `json:"levels"`
+		} `json:"policy"`
+		Inbounds []struct {
+			Settings struct {
+				Clients []struct {
+					ID    string `json:"id"`
+					Email string `json:"email"`
+					Level *int   `json:"level"`
+				} `json:"clients"`
+			} `json:"settings"`
+		} `json:"inbounds"`
+	}
+	if err := json.Unmarshal([]byte(out), &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Stats == nil {
+		t.Error(`no "stats": {} — xray keeps no counters at all`)
+	}
+	if c.API.Listen != ClientStatsAPIAddr {
+		t.Errorf("api.listen = %q, want %q (loopback only: nothing but the agent reads it)", c.API.Listen, ClientStatsAPIAddr)
+	}
+	if !strings.HasPrefix(c.API.Listen, "127.0.0.1:") {
+		t.Errorf("api.listen %q is not on the loopback", c.API.Listen)
+	}
+	if len(c.API.Services) != 1 || c.API.Services[0] != "StatsService" {
+		t.Errorf("api.services = %v, want only StatsService (no HandlerService: it can add users)", c.API.Services)
+	}
+	lvl := c.Policy.Levels["0"]
+	for _, k := range []string{"statsUserUplink", "statsUserDownlink", "statsUserOnline"} {
+		if !lvl[k] {
+			t.Errorf("policy.levels.0.%s is not true", k)
+		}
+	}
+	for i, cl := range c.Inbounds[0].Settings.Clients {
+		want := domain.VLESSStatsID(spec.Clients[i].UUID)
+		if cl.Email != want {
+			t.Errorf("client %d email = %q, want the stats id %q", i, cl.Email, want)
+		}
+		if cl.Level == nil || *cl.Level != 0 {
+			t.Errorf("client %d level = %v, want 0 (the level the policy flags are on)", i, cl.Level)
+		}
+	}
+	// The email reaches the open /metrics endpoint. The UUID is the credential.
+	for _, cl := range spec.Clients {
+		if n := strings.Count(out, cl.UUID); n != 1 {
+			t.Errorf("uuid of %s appears %d times in the config, want exactly once (its id)", cl.Name, n)
+		}
+	}
+}
+
+// The exit's server inbound has one service user and nobody reads its stats: it
+// must not grow an API listener.
+func TestRenderConfigExitHasNoStatsAPI(t *testing.T) {
+	out, err := RenderConfig(RenderInput{Spec: sampleSpec(), PrivateKey: "K"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{`"api"`, `"stats"`, `"policy"`} {
+		if strings.Contains(out, k) {
+			t.Errorf("exit config carries %s", k)
+		}
+	}
+}

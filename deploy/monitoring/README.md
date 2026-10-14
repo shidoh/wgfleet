@@ -179,7 +179,7 @@ ones — is documented at the top of that script.
 | `wgfleet_node_agent_info` | `node,agent_version,wire_version` | reported agent build (=1) |
 | `wgfleet_node_drain` / `wgfleet_node_decommission` | `node` | admin intent (0/1) |
 | `wgfleet_node_client_vless_clients` | `node` | VLESS/REALITY clients issued for a master's client-facing inbound; masters only |
-| `wgfleet_client_info` | `node,peer,client,device` | one per client-facing WireGuard credential (=1); `node` is the master, `peer` the public key. Join `on(peer)` to name `wgfleet_wg_peer_*` series — on the master's `wg0` and on an exit's lifeline `awgl0` |
+| `wgfleet_client_info` | `node,peer,client,device,kind` | one per client credential (=1); `node` is the master. `kind=awg`: `peer` is the WireGuard key in the agents' 8-character form — join `on(peer)` to `wgfleet_wg_peer_*` on the master's `wg0` and an exit's lifeline `awgl0`. `kind=vless`: `peer` is the VLESS stats id — join to `wgfleet_vless_user_*{user}` |
 | `wgfleet_build_info` | `component,version,commit` | controller build (=1) |
 | `wgfleet_exit_tunnel_alive` | `node,exit` | 1 when the master's mihomo has this master↔exit tunnel up, 0 when it is out of the load-balance rotation. `node` is the MASTER holding the tunnel, `exit` the far end |
 | `wgfleet_exit_tunnel_selected` | `node,exit` | 1 when this exit currently carries traffic for wg-best |
@@ -224,6 +224,19 @@ per interface):
 | `wgfleet_wg_peer_rx_bytes` / `_tx_bytes` | `iface,peer` | bytes from and to that peer, cumulative; they reset when the interface is re-created, so read them with `rate()`/`increase()` rather than as a running total |
 | `wgfleet_wg_peers_active` | `iface` | peers with a handshake inside the freshness window |
 | `wgfleet_wg_collector_up` | `iface` | 1 when the peer dump could be read, 0 when it could not |
+
+**VLESS clients** (`wgfleet_vless_*`, master agent, `node` + `role`; only while the
+master runs the client VLESS inbound):
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `wgfleet_vless_user_rx_bytes` / `_tx_bytes` | `user` | bytes from and to that client, cumulative; reset when xray restarts — which it does on every client issue or revoke — so read with `rate()`/`increase()`. Payload after decryption, without REALITY/XHTTP overhead |
+| `wgfleet_vless_user_online_ips` | `user` | source IPs with open connections now; `> 0` = online. Absent when the xray build cannot say |
+| `wgfleet_vless_collector_up` | — | 1 when xray's stats API answered, 0 when it did not (`WgfleetVLESSStatsUnreadable`) |
+
+`user` is the client's stats id — the first 12 hex digits of sha256(UUID) — never
+the UUID: the UUID is the credential, and this endpoint is unauthenticated. xray
+serves the stats API on `127.0.0.1:10085` only.
 
 `wgfleet_wg_collector_up` exists because absence of the peer series is otherwise
 indistinguishable from having no peers — "the interface has zero clients" and "we
@@ -305,7 +318,7 @@ an untested proxy rather than a measurement.
 
 ## 4. Alerts
 
-**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 52 alerts,
+**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 53 alerts,
 already applied by step 2 above. Earlier revisions of this file printed two of them
 as a snippet to paste; the copies drifted from the shipped rules (different group
 name, different `for`, a different expression on one), so pasting produced a second,
@@ -363,6 +376,7 @@ What ships, by severity:
 | `WgfleetReconcileNeverConverges` | warning |
 | `WgfleetHostMetricsMissing` | warning |
 | `WgfleetDNSMetricsMissing` | warning |
+| `WgfleetVLESSStatsUnreadable` | warning |
 | `WgfleetHostDiskAlmostFull` | warning |
 | `WgfleetHostMemoryPressure` | warning |
 | `WgfleetHostCPUSaturated` | warning |
