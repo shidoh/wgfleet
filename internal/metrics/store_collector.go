@@ -110,7 +110,7 @@ func NewStoreCollector(reg *prometheus.Registry, st store.Store) *StoreCollector
 			[]string{"node"}, nil),
 		clientInfo: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "", "client_info"),
-			"Client-facing WireGuard credential behind a peer public key; value is always 1. Join on peer to name wgfleet_wg_peer_* series, on the master's wg0 and on an exit's lifeline interface alike.",
+			"Client-facing WireGuard credential behind a peer key, in the same short form the agents label peers with; value is always 1. Join on peer to name wgfleet_wg_peer_* series, on the master's wg0 and on an exit's lifeline interface alike.",
 			[]string{"node", "peer", "client", "device"}, nil),
 		nodeVLESSClients: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "node", "client_vless_clients"),
@@ -248,8 +248,10 @@ func (c *StoreCollector) collectClients(ctx context.Context, ch chan<- prometheu
 		if cl.PublicKey == "" {
 			continue
 		}
+		// The agent labels peers with shortPeerID, not the whole key; anything else
+		// here and the join on(peer) matches nothing.
 		ch <- prometheus.MustNewConstMetric(c.clientInfo, prometheus.GaugeValue, 1,
-			n.Name, cl.PublicKey, cl.Name, devices[[2]string{n.ID, cl.ID}])
+			n.Name, shortPeerID(cl.PublicKey), cl.Name, devices[[2]string{n.ID, cl.ID}])
 	}
 }
 
