@@ -196,9 +196,20 @@ def variable(v):
     raise SystemExit(f"unsupported variable type {v['type']!r} — teach the converter about it")
 
 
+# Classic Prometheus annotation fields that v2 does not type: they ride in
+# legacyOptions, which Grafana hands back to the datasource untouched.
+ANNOTATION_LEGACY = ("titleFormat", "textFormat", "tagKeys", "useValueForTime", "step")
+
+
 def annotation(a):
     ds = a.get("datasource", {})
-    return {
+    spec = {}
+    if "expr" in a:
+        # Without this the annotation imports with an empty query and draws nothing —
+        # the classic file states it at the top level, v2 inside the DataQuery.
+        spec = {"expr": a["expr"], "refId": "Anno"}
+    legacy = {k: a[k] for k in ANNOTATION_LEGACY if k in a}
+    out = {
         "kind": "AnnotationQuery",
         "spec": {
             "builtIn": bool(a.get("builtIn")),
@@ -211,16 +222,30 @@ def annotation(a):
                 "group": "grafana" if ds.get("type") == "grafana" else "prometheus",
                 "version": "v0",
                 "datasource": {"name": ds.get("uid", "${datasource}")},
-                "spec": {},
+                "spec": spec,
             },
         },
     }
+    if legacy:
+        out["spec"]["legacyOptions"] = legacy
+    return out
+
+
+def flatten(panels):
+    """Classic keeps a COLLAPSED row's panels inside the row (`row.panels`), not after
+    it in the flat list. Lay them back out in order so every consumer sees one list."""
+    out = []
+    for p in panels:
+        out.append(p)
+        if p["type"] == "row":
+            out.extend(p.get("panels", []))
+    return out
 
 
 def rows(panels):
     """Split the flat classic panel list into v2 rows with row-relative coordinates."""
     out, current = [], None
-    for p in panels:
+    for p in flatten(panels):
         if p["type"] == "row":
             current = {
                 "kind": "RowsLayoutRow",
@@ -267,7 +292,7 @@ def rows(panels):
 
 def convert(src):
     panels = src["panels"]
-    viz = [p for p in panels if p["type"] != "row"]
+    viz = [p for p in flatten(panels) if p["type"] != "row"]
     return {
         "apiVersion": "dashboard.grafana.app/v2",
         "kind": "Dashboard",
@@ -299,7 +324,7 @@ def convert(src):
 
 def check(src, out):
     """Nothing may be lost in translation — the point of shipping both files."""
-    viz = [p for p in src["panels"] if p["type"] != "row"]
+    viz = [p for p in flatten(src["panels"]) if p["type"] != "row"]
     assert len(out["spec"]["elements"]) == len(viz), "panel count changed"
 
     referenced = [
