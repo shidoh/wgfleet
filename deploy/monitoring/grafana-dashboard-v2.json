@@ -886,8 +886,7 @@
                         "value": 0
                       }
                     ]
-                  },
-                  "noValue": null
+                  }
                 },
                 "overrides": []
               },
@@ -994,8 +993,7 @@
                         "value": 0
                       }
                     ]
-                  },
-                  "noValue": null
+                  }
                 },
                 "overrides": []
               },
@@ -1084,8 +1082,7 @@
                         "value": 0
                       }
                     ]
-                  },
-                  "noValue": null
+                  }
                 },
                 "overrides": []
               },
@@ -1174,8 +1171,7 @@
                         "value": 0
                       }
                     ]
-                  },
-                  "noValue": null
+                  }
                 },
                 "overrides": []
               },
@@ -1523,7 +1519,6 @@
                       }
                     }
                   ],
-                  "noValue": null,
                   "custom": {
                     "fillOpacity": 80,
                     "lineWidth": 0
@@ -1619,8 +1614,7 @@
                         "value": 0
                       }
                     ]
-                  },
-                  "noValue": null
+                  }
                 },
                 "overrides": []
               },

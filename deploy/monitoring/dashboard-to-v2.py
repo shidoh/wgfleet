@@ -322,8 +322,23 @@ def convert(src):
     }
 
 
+def nulls(node, path="spec"):
+    """Paths holding JSON null. The v2 schema types every field, and Grafana 13's
+    JSON editor rejects a null where it expects a string or number (`noValue: null`
+    imported through the API but not through the editor)."""
+    if node is None:
+        return [path]
+    if isinstance(node, dict):
+        return [p for k, v in node.items() for p in nulls(v, f"{path}.{k}")]
+    if isinstance(node, list):
+        return [p for i, v in enumerate(node) for p in nulls(v, f"{path}[{i}]")]
+    return []
+
+
 def check(src, out):
     """Nothing may be lost in translation — the point of shipping both files."""
+    bad = nulls(out["spec"])
+    assert not bad, f"null values the v2 editor rejects: {bad[:5]}"
     viz = [p for p in flatten(src["panels"]) if p["type"] != "row"]
     assert len(out["spec"]["elements"]) == len(viz), "panel count changed"
 
