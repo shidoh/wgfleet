@@ -109,8 +109,8 @@ fleet:
         wg_easy_image: "ghcr.io/wg-easy/wg-easy" # repository (default ghcr.io/wg-easy/wg-easy:15)
         wg_easy_tag: "15" # explicit tag, overrides any tag in the image
         # wg_easy_web_port: 44423 # wg-easy admin UI port on the mgmt address (default 44423)
-        mihomo_image: "metacubex/mihomo" # repository (default metacubex/mihomo:v1.19.30)
-        # mihomo_tag: "v1.19.30" # pin a specific version; never :latest or Alpha
+        mihomo_image: "metacubex/mihomo" # repository (default metacubex/mihomo:v1.19.32)
+        # mihomo_tag: "v1.19.32" # pin a specific version; never :latest or Alpha
         # client_dns: [] # DNS servers handed to clients (default: the exits' mgmt addresses)
         client_allowed_ips: "1.0.0.0/8,8.0.0.0/7,11.0.0.0/8,12.0.0.0/6,16.0.0.0/4,32.0.0.0/3,64.0.0.0/2,128.0.0.0/3" # AllowedIPs in client configs (default 0.0.0.0/0); abbreviated here
       # hardening:

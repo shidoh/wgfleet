@@ -36,6 +36,10 @@ func goldenFleet(phase domain.PerTunnelKeyPhase) config.FleetSection {
 	f.AWG3 = &on
 	f.Masters[0].PublicIP = "203.0.113.1"
 	f.Masters[0].Routing.ReserveExits = []string{"exit-nl-1"}
+	// The goldens froze the default image of their day. The image pin is bumped on
+	// its own schedule, and that bump is not the regression these files guard.
+	f.Masters[0].Compose.MihomoImage = "metacubex/mihomo"
+	f.Masters[0].Compose.MihomoTag = "v1.19.30"
 	f.Exits[0].PublicIP = "198.51.100.1"
 	f.Exits[0].PerTunnelKey = string(phase)
 	f.Exits[0].Transports.AWG.Enabled = true

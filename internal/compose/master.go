@@ -76,7 +76,16 @@ const (
 	// unset (our case) keeps the legacy device_v1 code path, so this bump does NOT change
 	// how the fleet's AWG 2.0 tunnels are built. Enabling `version: 3` is a separate
 	// decision gated by tools/check-awg3-status.sh.
-	DefaultMihomoImage = "metacubex/mihomo:v1.19.30"
+	//
+	// Bumped 1.19.30 → 1.19.32 (2026-10-14): 1.19.31 fixes RandomPaddingAddition and
+	// DisableCookies for AmneziaWG v3 (what a `version: 3` master↔exit tunnel runs on),
+	// a nil dereference in WireGuard initialization, and 1.19.32 sizes the effective
+	// MSS with TCP options counted. The image change recreates the namespace holder
+	// too (it runs this image, see netnsHolderImage); on the stand that cost one
+	// pass: the agent re-plumbs the namespace and restarts mihomo to rebind the
+	// listeners it started before the namespace had its address — one ~6 s gap for
+	// clients, the same as any mihomo restart.
+	DefaultMihomoImage = "metacubex/mihomo:v1.19.32"
 	// NetnsHolderSleep is what the namespace holder runs. A shell loop rather than
 	// `sleep infinity`, because the holder now runs the mihomo image (see
 	// netnsHolderImage) and BusyBox's sleep in some builds takes only an integer.

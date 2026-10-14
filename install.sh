@@ -297,7 +297,7 @@ fleet:
         address_pool: 10.80.0.0/24
         managed: true            # the agent owns the client interface (wg-easy is the legacy path)
       routing:    { direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16], balance: health }
-      compose:    { wg_easy_web_port: 51821 }   # mihomo pinned to a safe default (v1.19.30); do NOT set :latest or "Alpha"
+      compose:    { wg_easy_web_port: 51821 }   # mihomo pinned to a safe default (v1.19.32); do NOT set :latest or "Alpha"
   # Add exits here, then: wgfleet-controller --provision <name>. Until the first one
   # registers the master reads Degraded — mihomo has nothing to balance yet.
   exits: []

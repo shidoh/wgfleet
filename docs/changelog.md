@@ -17,6 +17,8 @@ New releases are announced, with the archives attached, in the Telegram channel 
 ### Changed
 
 - Wire contract 13. Upgrade the controller first, then the agents; an exit on an older agent keeps serving the master in slot 0 only.
+- mihomo on the masters is v1.19.32 (was v1.19.30): fixes for AmneziaWG 3.x tunnels and WireGuard start-up. The image change restarts mihomo once on every master that does not pin `mihomo_tag`; client connections drop for a few seconds.
+- wgfleet installs wgcf 2.3.1 (was 2.2.32) on exits, for WARP registration against the current Cloudflare API. Running WARP interfaces are not touched.
 - An exit on the new agent edits its master peers in place and checks them against the kernel on every pass; adding or removing a master no longer restarts the interface. An exit on an older agent still restarts it.
 - A reserve (lifeline) config is offered only to clients of the master in slot 0.
 - `transports.awg.exit_initiated` works with several masters: the state is kept per master and exit. Every master needs a public IPv4; `master_port` applies to the master in slot 0.
