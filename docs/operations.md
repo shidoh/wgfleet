@@ -193,10 +193,10 @@ Local changes to the profile:
 | `wgfleet` | `select`: `auto` or any proxy |
 | `<site>-auto` (per `fleet.client_sites` entry with `probe_url`) | `fallback`: `DIRECT`, `wgfleet`, checked against `probe_url` |
 | `<site>` | `select`: `<site>-auto` (when present), `DIRECT`, `wgfleet` — the person's override |
-| Rules | each site's `cidrs` → `<site>` first; then `route_through_cidrs` (both transports, every master — keep the lists identical across masters) and `mgmt_subnet` → `wgfleet`; the master's client pool → `<master>`; RFC1918, link-local, loopback → `DIRECT`; rest → `wgfleet` |
+| Rules | each proxy's own server — its address, port and network (UDP for `<master>-awg`, TCP for `<master>-vless`) → `DIRECT` first; each site's `cidrs` → `<site>`; then `route_through_cidrs` (both transports, every master — keep the lists identical across masters) and `mgmt_subnet` → `wgfleet`; the master's client pool → `<master>`; RFC1918, link-local, loopback → `DIRECT`; rest → `wgfleet` |
 | DNS | each master's client resolvers, `tcp://<addr>:53` through `<master>`; absent when the master has none |
 | DNS mode | `enhanced-mode: fake-ip` with `fake-ip-filter-mode: rule` and `MATCH,real-ip`: every name gets its real address, no `198.18.x` placeholders |
-| IP rules | without `no-resolve`: a name is resolved through the tunnel and routed by its real address |
+| IP rules | without `no-resolve`: a name is resolved through the tunnel and routed by its real address. The proxy-server rules carry `no-resolve`; a proxy whose endpoint is a name gets none |
 
 Symptoms:
 
@@ -215,6 +215,7 @@ Symptoms:
 - Connection drops every few seconds, handshakes every 10–20 s, the peer's endpoint port flips on the master (`awg show wg0 endpoints`) — the AmneziaWG app and a mihomo app with this device's profile run at once. Quit one of them.
 - Rules the person added in the app vanish after an update — they were edited inside the subscription profile; move them to the app's override layer (table above).
 - Clash Verge Rev shows the profile as `\"name.yaml\` — imported from a controller before `filename*` was sent; delete the profile and import the link again.
+- ClashMetaForAndroid: AWG proxies fail their health checks right after the app starts, videos stall, the app shows 0 B/s; the log has `[UDP] <device>:<port> --> <master>:<awg port> match Match using wgfleet[<master>-awg]` — the profile predates the proxy-server rules; update it in the app.
 - AWG throttled but alive — pick `<master>-vless` in the `wgfleet` group.
 - At home, a site's hosts go through the master (slow, `chains` shows `wgfleet`) — the probe did not answer directly: check `probe_url` from the device, or pick `DIRECT` in the `<site>` group.
 - Away, a site's hosts time out — `<site>` is pinned to `DIRECT`; pick `<site>-auto`.
