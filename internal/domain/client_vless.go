@@ -46,12 +46,8 @@ type ClientVLESSServerSpec struct {
 	// POSTs. Empty ⇒ xray.DefaultXHTTPMode.
 	XHTTPMode string
 	// Fingerprint is the uTLS ClientHello fingerprint the client presents (vless://
-	// `fp`, mihomo `client-fingerprint`). Empty ⇒ a stable, off-chrome default
-	// (ClientVLESSFingerprintDefault): chrome is the fingerprint RU TSPU is reported
-	// to flag under active blocking, so the client leg blends into a different real
-	// browser instead — a STABLE choice (not per-connection randomized, which can
-	// itself trip the freeze-under-changing-fingerprint heuristic). "none" ⇒ omit it
-	// (the client's Go-default fingerprint), mirroring the exit realityProxy.
+	// `fp`, mihomo `client-fingerprint`). Empty ⇒ the stable chrome default
+	// (ClientVLESSFingerprintDefault; see there for why chrome).
 	Fingerprint string
 	// Mux enables XHTTP connection reuse (XMUX, mihomo xhttp-opts.reuse-settings) in
 	// the generated client profile: many streams ride one underlying XHTTP
@@ -138,20 +134,22 @@ func (c ClientVLESSServerSpec) Validate() error {
 	return errors.Join(errs...)
 }
 
-// Client-leg uTLS/XMUX defaults. The fingerprint is deliberately off "chrome" (the
-// exit leg's default and the signature RU TSPU is reported to flag first) and STABLE
-// (a per-connection randomized fingerprint can trip the freeze-under-change
-// heuristic). Mux defaults ON because amortizing the REALITY handshake is the top
+// Client-leg uTLS/XMUX defaults. The fingerprint is chrome — with
+// reality-opts.support-x25519mlkem768 the one built-in profile whose ClientHello
+// carries X25519MLKEM768, which REALITY ≥ 26.9.8 requires (firefox-120 is refused
+// there). It was firefox while chrome was reported flagged by RU TSPU; an A/B from
+// a home ISP on 2026-10-16 (90 fresh handshakes, both masters) found no difference
+// between firefox, chrome and chrome+PQ. STABLE on purpose: a per-connection
+// randomized fingerprint can trip the freeze-under-change heuristic. Mux defaults ON because amortizing the REALITY handshake is the top
 // handshake-parallelism-freeze mitigation. See config.ClientVLESSConfig for the
-// operator override. "none" as a fingerprint omits client-fingerprint entirely.
+// operator override.
 const (
-	ClientVLESSFingerprintDefault = "firefox"
-	ClientVLESSFingerprintNone    = "none"
+	ClientVLESSFingerprintDefault = "chrome"
 	ClientVLESSMuxDefault         = true
 )
 
 // ResolvedFingerprint returns the client uTLS fingerprint, defaulting an unset value
-// to the off-chrome default. "none" is returned verbatim (the caller omits the key).
+// to the chrome default.
 func (c ClientVLESSServerSpec) ResolvedFingerprint() string {
 	if c.Fingerprint == "" {
 		return ClientVLESSFingerprintDefault

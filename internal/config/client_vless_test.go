@@ -88,3 +88,23 @@ func TestClientVLESSValidation(t *testing.T) {
 		t.Error("valid enabled client_vless should not raise a client_vless error")
 	}
 }
+
+func TestClientVLESSRejectsUnusableFingerprint(t *testing.T) {
+	base := func(fp string) ControllerConfig {
+		return ControllerConfig{Fleet: FleetSection{Masters: []MasterConfig{{
+			Name: "m1", MgmtAddr: "10.20.0.1",
+			ClientAWG:   ClientAWGConfig{ListenPort: 443, AddressPool: "10.80.0.0/24"},
+			ClientVLESS: ClientVLESSConfig{Enabled: true, Fingerprint: fp},
+		}}}}
+	}
+	for _, fp := range []string{"none", "random", "randomized"} {
+		if !hasClientVlessErr(base(fp)) {
+			t.Errorf("client_vless.fingerprint %q should fail", fp)
+		}
+	}
+	for _, fp := range []string{"", "chrome", "firefox"} {
+		if hasClientVlessErr(base(fp)) {
+			t.Errorf("client_vless.fingerprint %q should pass", fp)
+		}
+	}
+}

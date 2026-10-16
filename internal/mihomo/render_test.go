@@ -950,10 +950,6 @@ func TestRenderRealityFingerprintAndEmptySNI(t *testing.T) {
 	if p := mk(func(rt *domain.RealityTunnel) { rt.Fingerprint = "firefox" }); p["client-fingerprint"] != "firefox" {
 		t.Errorf("fingerprint = %v, want firefox", p["client-fingerprint"])
 	}
-	// "none" omits client-fingerprint entirely (Go-default uTLS).
-	if p := mk(func(rt *domain.RealityTunnel) { rt.Fingerprint = "none" }); func() bool { _, ok := p["client-fingerprint"]; return ok }() {
-		t.Errorf("fingerprint=none must omit client-fingerprint, got %v", p["client-fingerprint"])
-	}
 	// empty ⇒ chrome default (back-compat).
 	if p := mk(func(rt *domain.RealityTunnel) {}); p["client-fingerprint"] != "chrome" {
 		t.Errorf("default fingerprint = %v, want chrome", p["client-fingerprint"])
@@ -1207,5 +1203,26 @@ func TestMissingProviderFilesNamesAbsentFileProviders(t *testing.T) {
 	got := MissingProviderFiles(cfg, dir)
 	if len(got) != 1 || got[0] != "/etc/mihomo/direct-domains.yaml" {
 		t.Fatalf("want exactly the absent file provider, got %v", got)
+	}
+}
+
+// mihomo strips X25519MLKEM768 from the ClientHello unless reality-opts opts in.
+// Without it the chrome profile sends a key-share list no real Chrome sends, and
+// REALITY ≥ 26.9.8 forwards such a ClientHello to the camouflage dest — the tunnel
+// would die on the next xray bump.
+func TestRenderRealityOffersMLKEM(t *testing.T) {
+	in := sampleInput()
+	in.Spec.ExitTunnels = append(in.Spec.ExitTunnels, domain.ExitTunnel{
+		Name: "exit-a-reality", Endpoint: "203.0.113.7:443",
+		Transport: domain.TransportRealityXHTTP, Drained: true,
+		Reality: &domain.RealityTunnel{UUID: "u", PublicKey: "PK", ShortID: "0badc0de", ServerName: "www.python.org"},
+	})
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	ro, _ := proxyByName(t, out, "exit-a-reality")["reality-opts"].(map[string]any)
+	if ro["support-x25519mlkem768"] != true {
+		t.Errorf("reality-opts.support-x25519mlkem768 = %v, want true", ro["support-x25519mlkem768"])
 	}
 }

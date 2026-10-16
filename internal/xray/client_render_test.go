@@ -54,9 +54,10 @@ func TestRenderClientConfigStructure(t *testing.T) {
 		t.Errorf("network = %v, want xhttp", ss["network"])
 	}
 	rs := ss["realitySettings"].(map[string]any)
-	// shortIds must union "" (match-any) with every client's short-id.
+	// shortIds are exactly the issued clients' short-ids: no "" (match-any), so a
+	// public key leaked with one subscription does not open the inbound.
 	sids := rs["shortIds"].([]any)
-	want := map[string]bool{"": true, "0badc0de": true, "feedface": true}
+	want := map[string]bool{"0badc0de": true, "feedface": true}
 	if len(sids) != len(want) {
 		t.Fatalf("shortIds = %v, want %v", sids, want)
 	}
@@ -120,6 +121,38 @@ func TestRenderClientConfigEmptyClients(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &c); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
+	// xray refuses an empty shortIds list, and "" would admit anyone holding the
+	// public key: an inbound with no clients carries one id nobody was issued,
+	// stable across renders and not guessable without the private key.
+	sids := clientShortIDs(t, out)
+	if len(sids) != 1 || len(sids[0]) != 16 || sids[0] == "" {
+		t.Fatalf("no-client shortIds = %q, want one 16-hex placeholder", sids)
+	}
+	again, _ := RenderClientConfig(ClientRenderInput{Spec: spec, PrivateKey: "PRIVKEY"})
+	if got := clientShortIDs(t, again); got[0] != sids[0] {
+		t.Errorf("placeholder not stable across renders: %q vs %q", got[0], sids[0])
+	}
+	other, _ := RenderClientConfig(ClientRenderInput{Spec: spec, PrivateKey: "OTHERKEY"})
+	if got := clientShortIDs(t, other); got[0] == sids[0] {
+		t.Errorf("placeholder does not depend on the private key: %q", got[0])
+	}
+}
+
+func clientShortIDs(t *testing.T, out string) []string {
+	t.Helper()
+	var c struct {
+		Inbounds []struct {
+			StreamSettings struct {
+				RealitySettings struct {
+					ShortIDs []string `json:"shortIds"`
+				} `json:"realitySettings"`
+			} `json:"streamSettings"`
+		} `json:"inbounds"`
+	}
+	if err := json.Unmarshal([]byte(out), &c); err != nil || len(c.Inbounds) == 0 {
+		t.Fatalf("parse inbound: %v", err)
+	}
+	return c.Inbounds[0].StreamSettings.RealitySettings.ShortIDs
 }
 
 // Per-client traffic needs four things in the config, and missing any one of them

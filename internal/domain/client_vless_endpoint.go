@@ -43,9 +43,6 @@ type ClientVLESSEndpoint struct {
 // EndpointFor resolves one credential's endpoint on this inbound.
 func (c ClientVLESSServerSpec) EndpointFor(host, publicKey string, cl VLESSClient) ClientVLESSEndpoint {
 	fp := c.ResolvedFingerprint()
-	if fp == ClientVLESSFingerprintNone {
-		fp = ""
-	}
 	path := c.XHTTPPath
 	if path == "" {
 		path = "/"

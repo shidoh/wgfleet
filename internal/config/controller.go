@@ -755,8 +755,9 @@ type ClientVLESSConfig struct {
 	// reported RU-TSPU bypass; set `empty_sni: false` to force it off.
 	EmptySNI *bool `koanf:"empty_sni"`
 	// Fingerprint is the client's uTLS ClientHello fingerprint (vless:// `fp`, mihomo
-	// `client-fingerprint`): "firefox" (default; off the chrome signature RU TSPU
-	// flags first), "chrome", "safari", … or "none" to omit it. Empty ⇒
+	// `client-fingerprint`): "chrome" (default; the profile that carries the
+	// X25519MLKEM768 share newer REALITY requires), "firefox", "safari", … — a fixed uTLS profile: mihomo cannot
+	// dial REALITY without one, so "none"/"random" are rejected. Empty ⇒
 	// ClientVLESSFingerprintDefault.
 	Fingerprint string `koanf:"fingerprint"`
 	// Mux enables XMUX (XHTTP connection reuse) in the generated client profile.
@@ -804,8 +805,8 @@ func (c ClientVLESSConfig) ResolvedEmptySNI() bool {
 	return *c.EmptySNI
 }
 
-// ResolvedFingerprint resolves the client uTLS fingerprint: unset ⇒ the off-chrome
-// default; any explicit value (including "none") is honoured verbatim.
+// ResolvedFingerprint resolves the client uTLS fingerprint: unset ⇒ the chrome
+// default; any explicit value is honoured verbatim (Validate rejects the unusable ones).
 func (c ClientVLESSConfig) ResolvedFingerprint() string {
 	if c.Fingerprint == "" {
 		return ClientVLESSFingerprintDefault
@@ -999,9 +1000,10 @@ type RealityTransportConfig struct {
 	// back/forward quickly when isolating XHTTP interop.
 	Mode string `koanf:"mode"`
 	// Fingerprint is the master-side uTLS ClientHello fingerprint (mihomo
-	// client-fingerprint): "chrome" (default), "firefox", "safari", … or "none" to
-	// omit it and fall back to the Go-default fingerprint. Against heuristic DPI
-	// (RU TSPU 2026) operators report firefox/none surviving where chrome is flagged.
+	// client-fingerprint): "chrome" (default), "firefox", "safari", … — a fixed
+	// uTLS profile; "none"/"random" are rejected (mihomo cannot dial REALITY
+	// without one). Against heuristic DPI (RU TSPU 2026) operators report firefox
+	// surviving where chrome is flagged.
 	Fingerprint string `koanf:"fingerprint"`
 	// EmptySNI accepts/sends a ClientHello with NO SNI extension (server serverNames
 	// gains "", the master sends the exit IP as a placeholder so uTLS omits SNI).
@@ -1289,6 +1291,9 @@ func (c ControllerConfig) Validate() error {
 			if err := validateRealityCamouflage(cv.SNI, cv.DestHostPort()); err != nil {
 				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_vless: %w", i, err))
 			}
+			if err := validateRealityFingerprint(cv.Fingerprint); err != nil {
+				errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_vless: %w", i, err))
+			}
 			// route_through_cidrs is interpolated into the client routing object; reject
 			// a non-CIDR value so a typo can't produce a broken import.
 			for _, c := range cv.RouteThroughCIDRs {
@@ -1379,6 +1384,9 @@ func (c ControllerConfig) Validate() error {
 		if err := validateRealityCamouflage(r.SNI, r.DestHostPort()); err != nil {
 			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): %w", i, e.Name, err))
 		}
+		if err := validateRealityFingerprint(r.Fingerprint); err != nil {
+			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): transports.reality: %w", i, e.Name, err))
+		}
 		if !e.PerTunnelKeyPhase().Valid() {
 			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): per_tunnel_key %q invalid (want %q, %q, %q or %q)",
 				i, e.Name, e.PerTunnelKey, domain.PerTunnelKeyOff, domain.PerTunnelKeyDual,
@@ -1438,6 +1446,19 @@ func validateRealityCamouflage(sni, dest string) error {
 		if err != nil || host == "" || port == "" {
 			return fmt.Errorf("reality dest %q must be host:port", dest)
 		}
+	}
+	return nil
+}
+
+// validateRealityFingerprint rejects the uTLS fingerprints a REALITY dial cannot
+// use. mihomo refuses REALITY without a fingerprint ("none" is a dead tunnel), and
+// a random pick may land on a profile without X25519MLKEM768, which REALITY
+// ≥ 26.9.8 silently hands to the camouflage dest — a tunnel that fails only on
+// some restarts. Empty is fine: it resolves to the per-leg default.
+func validateRealityFingerprint(fp string) error {
+	switch fp {
+	case "none", "random", "randomized":
+		return fmt.Errorf("reality fingerprint %q unusable (mihomo REALITY needs a fixed uTLS profile, e.g. \"chrome\")", fp)
 	}
 	return nil
 }

@@ -315,18 +315,15 @@ func clientWireguardProxy(name string, in wg.ClientConfigInput) (map[string]any,
 // transport shape mirrors the master's realityProxy.
 func clientVLESSProxy(name string, e domain.ClientVLESSEndpoint) map[string]any {
 	proxy := map[string]any{
-		"name":       name,
-		"type":       "vless",
-		"server":     e.Host,
-		"port":       e.Port,
-		"uuid":       e.UUID,
-		"tls":        true,
-		"udp":        true,
-		"servername": e.MihomoServerName(),
-		"reality-opts": map[string]any{
-			"public-key": e.PublicKey,
-			"short-id":   e.ShortID,
-		},
+		"name":         name,
+		"type":         "vless",
+		"server":       e.Host,
+		"port":         e.Port,
+		"uuid":         e.UUID,
+		"tls":          true,
+		"udp":          true,
+		"servername":   e.MihomoServerName(),
+		"reality-opts": realityOpts(e.PublicKey, e.ShortID),
 	}
 	if e.Fingerprint != "" {
 		proxy["client-fingerprint"] = e.Fingerprint

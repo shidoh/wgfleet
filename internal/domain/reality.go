@@ -66,7 +66,7 @@ type RealityTunnel struct {
 	// ServerName is the camouflage SNI the client sends (mihomo servername).
 	ServerName string
 	// Fingerprint is the client uTLS fingerprint (mihomo client-fingerprint,
-	// e.g. "chrome", "firefox"). "none" ⇒ omit it (Go-default fingerprint).
+	// e.g. "chrome", "firefox"); never empty — mihomo cannot dial REALITY without one.
 	Fingerprint string
 	// XHTTPPath is the XHTTP request path (must match the inbound).
 	XHTTPPath string

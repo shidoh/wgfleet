@@ -221,6 +221,7 @@ proxies:
 %s    reality-opts:
       public-key: %q
       short-id: "%s"
+      support-x25519mlkem768: true
 %s
 rules:
   - MATCH,wgfleet
@@ -275,8 +276,8 @@ func buildClashConfig(host string, cv domain.ClientVLESSServerSpec, pubkey, bloc
 				fmt.Sprintf("        h-max-reusable-secs: %q\n", domain.ClientVLESSXMUXHMaxReusableSecs)
 		}
 	}
-	// client-fingerprint is the uTLS ClientHello fingerprint. "" omits it (operator
-	// chose "none", the client's Go-default fingerprint).
+	// client-fingerprint is the uTLS ClientHello fingerprint; always set in practice
+	// (Validate rejects "none"), the guard only keeps a zero endpoint renderable.
 	var fingerprint string
 	if e.Fingerprint != "" {
 		fingerprint = fmt.Sprintf("    client-fingerprint: %s\n", e.Fingerprint)
