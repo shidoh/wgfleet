@@ -596,6 +596,7 @@ func redactSpec(s domain.NodeSpec) domain.NodeSpec {
 			ps := append([]domain.RealityPortalPeer(nil), b.Portals...)
 			for i := range ps {
 				ps[i].UUID = redactIfSet(ps[i].UUID)
+				ps[i].ShortID = redactIfSet(ps[i].ShortID)
 			}
 			b.Portals = ps
 			r.Bridge = &b
@@ -624,6 +625,7 @@ func redactSpec(s domain.NodeSpec) domain.NodeSpec {
 			cs := append([]domain.RealityPortalClient(nil), rp.Clients...)
 			for i := range cs {
 				cs[i].UUID = redactIfSet(cs[i].UUID)
+				cs[i].ShortID = redactIfSet(cs[i].ShortID)
 			}
 			rp.Clients = cs
 			m.RealityPortal = &rp

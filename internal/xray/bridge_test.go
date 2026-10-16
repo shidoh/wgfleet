@@ -55,7 +55,8 @@ func TestRenderBridge(t *testing.T) {
 		blocked = append(blocked, c.(string))
 	}
 	for _, want := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16",
-		"100.64.0.0/10", "0.0.0.0/8", "fc00::/7", "fe80::/10", "::1/128"} {
+		"100.64.0.0/10", "0.0.0.0/8", "fc00::/7", "fe80::/10", "::1/128",
+		"::/128", "::ffff:0:0/96", "64:ff9b::/96", "fec0::/10", "192.0.0.0/24", "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4"} {
 		if !slices.Contains(blocked, want) {
 			t.Errorf("finalRules block list misses %s: %v", want, blocked)
 		}
@@ -112,6 +113,11 @@ func TestRenderBridgeDirectEgressHasNoMark(t *testing.T) {
 	direct := at(decode(t, out), "outbounds", 0).(map[string]any)
 	if _, ok := direct["streamSettings"]; ok {
 		t.Errorf("direct egress carries sockopt: %v", direct)
+	}
+	// Domains are still resolved before the block list applies: AsIs would hand
+	// freedom a name the IP rules never see.
+	if at(direct, "settings", "domainStrategy") != "UseIP" {
+		t.Errorf("freedom domainStrategy = %v, want UseIP", at(direct, "settings", "domainStrategy"))
 	}
 	if strings.Contains(out, "UseIPv4") {
 		t.Error("IPv4 pinned although IPv6 is allowed")

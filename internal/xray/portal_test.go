@@ -174,8 +174,8 @@ func TestRedactConfigMasksAllSecrets(t *testing.T) {
 			t.Errorf("redacted config still holds %q:\n%s", secret, red)
 		}
 	}
-	if strings.Count(red, "REDACTED") != 3 {
-		t.Errorf("want 3 masked values:\n%s", red)
+	if strings.Count(red, "REDACTED") != 5 || strings.Contains(red, "11111111-0000-4000-8000-000000000001") {
+		t.Errorf("want key, 2 passwords and 2 ids masked:\n%s", red)
 	}
 	// The forward render's single key is still masked as before.
 	fwd, err := RenderConfig(RenderInput{

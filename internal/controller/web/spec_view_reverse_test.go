@@ -17,7 +17,7 @@ func reverseExitSpec() domain.NodeSpec {
 		Role:              domain.RoleExit,
 		EnabledTransports: []domain.MasterTransport{domain.TransportAWG, domain.TransportRealityXHTTP},
 		Reality: &domain.RealityServerSpec{Image: "img", Bridge: &domain.RealityBridgeSpec{Portals: []domain.RealityPortalPeer{
-			{Master: "master-xa-1", Address: "203.0.113.1:48123", PublicKey: "pk", UUID: bridgeUUIDMarker, ShortID: "0a0b", ServerName: "www.python.org"},
+			{Master: "master-xa-1", Address: "203.0.113.1:48123", PublicKey: "pk", UUID: bridgeUUIDMarker, ShortID: "5e0b5e0b5e0b5e0b", ServerName: "www.python.org"},
 		}}},
 	}
 }
@@ -31,7 +31,7 @@ func reverseMasterSpec() domain.NodeSpec {
 			}},
 			RealityPortal: &domain.RealityPortalSpec{
 				ListenPort: 48123, SocksPort: 10808, ServerName: "www.python.org", Dest: "www.python.org:443",
-				Clients: []domain.RealityPortalClient{{Exit: "vn0", UUID: portalUUIDMarker, ShortID: "0a0b"}},
+				Clients: []domain.RealityPortalClient{{Exit: "vn0", UUID: portalUUIDMarker, ShortID: "5e0b5e0b5e0b5e0b"}},
 			},
 		},
 	}
@@ -42,7 +42,7 @@ func reverseMasterSpec() domain.NodeSpec {
 func TestSpecViewLeaksNoBridgeOrPortalUUIDs(t *testing.T) {
 	for name, s := range map[string]domain.NodeSpec{"exit": reverseExitSpec(), "master": reverseMasterSpec()} {
 		text := renderedText(buildSpecView(s))
-		for _, marker := range []string{bridgeUUIDMarker, portalUUIDMarker} {
+		for _, marker := range []string{bridgeUUIDMarker, portalUUIDMarker, "5e0b5e0b5e0b5e0b"} {
 			if strings.Contains(text, marker) {
 				t.Errorf("%s: UUID %s reached the page", name, marker)
 			}

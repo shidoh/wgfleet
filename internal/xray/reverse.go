@@ -195,11 +195,14 @@ func RenderPortalConfig(in PortalRenderInput) (string, error) {
 }
 
 // bridgeBlocked are the destinations a master's stream may not reach through
-// the exit: the exit's own and every private range. Freedom blocks all traffic
-// arriving over a reverse link unless finalRules say otherwise.
+// the exit: loopback, private, link-local, CGNAT and other special ranges.
+// Freedom blocks all traffic arriving over a reverse link unless finalRules say
+// otherwise. The exit's own public address is not listed: it is not in the
+// spec, and the forward mode leaves it reachable the same way.
 var bridgeBlocked = []string{
 	"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
-	"172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7", "fe80::/10",
+	"172.16.0.0/12", "192.0.0.0/24", "192.168.0.0/16", "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4",
+	"::/128", "::1/128", "::ffff:0:0/96", "64:ff9b::/96", "fc00::/7", "fe80::/10", "fec0::/10",
 }
 
 // BridgeRenderInput is everything the exit's bridge config needs: the spec
@@ -269,6 +272,9 @@ func RenderBridgeConfig(in BridgeRenderInput) (string, error) {
 		Tag: "direct", Protocol: "freedom",
 		Settings: freedomFinal{FinalRules: []finalRule{{Action: "block", IP: bridgeBlocked}, {Action: "allow"}}},
 	}
+	// Always resolve before the rules: with AsIs freedom would dial a name the IP
+	// block list never sees, and a name can point at 127.0.0.1.
+	direct.Settings.DomainStrategy = "UseIP"
 	if !in.Spec.AllowIPv6 {
 		direct.Settings.DomainStrategy = "UseIPv4"
 	}

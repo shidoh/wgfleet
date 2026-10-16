@@ -403,8 +403,9 @@ func marshalAny(cfg any) (string, error) {
 }
 
 // redactedKeys are the JSON keys whose string values are secrets in any config
-// rendered here: REALITY private keys and the portal's SOCKS passwords.
-var redactedKeys = []string{`"privateKey": "`, `"pass": "`}
+// rendered here: REALITY private keys, the portal's SOCKS passwords and VLESS ids
+// (a bridge's id at a portal is its credential).
+var redactedKeys = []string{`"privateKey": "`, `"pass": "`, `"id": "`}
 
 // RedactConfig masks every secret value for plan/dry-run output.
 func RedactConfig(cfg string) string {
