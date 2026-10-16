@@ -142,18 +142,17 @@ func TestBuildClashConfigEmptySNI(t *testing.T) {
 }
 
 // TestBuildClashConfigFingerprint guards the uTLS fingerprint knob (#12): an unset
-// fingerprint resolves to the off-chrome stable default. ("none" no longer reaches
+// fingerprint resolves to the stable chrome default. ("none" no longer reaches
 // here: config validation rejects it.)
 func TestBuildClashConfigFingerprint(t *testing.T) {
 	c := domain.VLESSClient{Name: "a", UUID: "u", ShortID: "0badc0de"}
 
 	def := domain.ClientVLESSServerSpec{ListenPort: 47252, ServerName: "s", XHTTPMode: "packet-up"}
 	out := buildClashConfig("h", def, "PBK", "", c)
-	if !strings.Contains(out, "client-fingerprint: firefox") {
-		t.Errorf("unset fingerprint must default to firefox\n---\n%s", out)
-	}
-	if strings.Contains(out, "chrome") {
-		t.Errorf("client leg must not default to chrome\n---\n%s", out)
+	// chrome: the only built-in profile that carries X25519MLKEM768, which REALITY
+	// ≥ 26.9.8 requires; firefox-120 is refused there.
+	if !strings.Contains(out, "client-fingerprint: chrome") {
+		t.Errorf("unset fingerprint must default to chrome\n---\n%s", out)
 	}
 
 	explicit := def
@@ -200,15 +199,15 @@ func TestBuildClashConfigMux(t *testing.T) {
 }
 
 // TestBuildVlessLinkFingerprint guards the link-side fingerprint knob: unset ⇒
-// firefox. ("none" no longer reaches here: config validation rejects it.)
+// chrome. ("none" no longer reaches here: config validation rejects it.)
 func TestBuildVlessLinkFingerprint(t *testing.T) {
 	base := domain.ClientVLESSServerSpec{ListenPort: 49443, ServerName: "s", XHTTPMode: "packet-up"}
 	c := domain.VLESSClient{Name: "a", UUID: "u", ShortID: "sid"}
 
 	link := buildVlessLink("h", 49443, base, "PBK", "m", c)
 	u, _ := url.Parse(link)
-	if u.Query().Get("fp") != "firefox" {
-		t.Errorf("unset fingerprint must default to firefox, got %q", u.Query().Get("fp"))
+	if u.Query().Get("fp") != "chrome" {
+		t.Errorf("unset fingerprint must default to chrome, got %q", u.Query().Get("fp"))
 	}
 
 }

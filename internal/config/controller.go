@@ -755,8 +755,8 @@ type ClientVLESSConfig struct {
 	// reported RU-TSPU bypass; set `empty_sni: false` to force it off.
 	EmptySNI *bool `koanf:"empty_sni"`
 	// Fingerprint is the client's uTLS ClientHello fingerprint (vless:// `fp`, mihomo
-	// `client-fingerprint`): "firefox" (default; off the chrome signature RU TSPU
-	// flags first), "chrome", "safari", … — a fixed uTLS profile: mihomo cannot
+	// `client-fingerprint`): "chrome" (default; the profile that carries the
+	// X25519MLKEM768 share newer REALITY requires), "firefox", "safari", … — a fixed uTLS profile: mihomo cannot
 	// dial REALITY without one, so "none"/"random" are rejected. Empty ⇒
 	// ClientVLESSFingerprintDefault.
 	Fingerprint string `koanf:"fingerprint"`
@@ -805,7 +805,7 @@ func (c ClientVLESSConfig) ResolvedEmptySNI() bool {
 	return *c.EmptySNI
 }
 
-// ResolvedFingerprint resolves the client uTLS fingerprint: unset ⇒ the off-chrome
+// ResolvedFingerprint resolves the client uTLS fingerprint: unset ⇒ the chrome
 // default; any explicit value is honoured verbatim (Validate rejects the unusable ones).
 func (c ClientVLESSConfig) ResolvedFingerprint() string {
 	if c.Fingerprint == "" {

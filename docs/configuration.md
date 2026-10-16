@@ -176,7 +176,7 @@ converges into mihomo. Per-client credentials are issued and revoked in the Web 
 | `fleet.masters[].client_vless.sni` | string | = `dest_domain` | SNI the ClientHello impersonates |
 | `fleet.masters[].client_vless.mode` | string | `xhttp` | `xhttp` (packet-up) or `vision` (classic TCP + xtls-rprx-vision) |
 | `fleet.masters[].client_vless.empty_sni` | bool | **`true`** | Accept/send a ClientHello with no SNI extension. Set `false` to force off |
-| `fleet.masters[].client_vless.fingerprint` | string | `firefox` | uTLS ClientHello fingerprint: `firefox` \| `chrome` \| `safari`; `none`/`random` rejected (mihomo cannot dial REALITY without a fixed profile) |
+| `fleet.masters[].client_vless.fingerprint` | string | `chrome` | uTLS ClientHello fingerprint: `chrome` \| `firefox` \| `safari` (only `chrome` works with xray ≥ 26.9.8); `none`/`random` rejected (mihomo cannot dial REALITY without a fixed profile) |
 | `fleet.masters[].client_vless.mux` | bool | **`true`** | XMUX (XHTTP connection reuse) in the generated client profile. `xhttp` mode only |
 | `fleet.masters[].client_vless.allow_ipv6` | bool | `false` | Let xray resolve the camouflage dest over IPv6. Leave off unless this node has IPv6 egress |
 | `fleet.masters[].client_vless.xhttp_path` | string | `/` | XHTTP path |
