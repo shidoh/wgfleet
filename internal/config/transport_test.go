@@ -158,3 +158,26 @@ func TestValidateRealityCamouflage(t *testing.T) {
 		t.Fatalf("expected fleet default SNI rejected, got %v", err)
 	}
 }
+
+// mihomo refuses a REALITY dial without a uTLS fingerprint ("REALITY is based on
+// uTLS, please set a client-fingerprint"), so "none" is a dead tunnel, and "random"
+// may pick a profile without X25519MLKEM768, which REALITY ≥ 26.9.8 forwards to
+// the camouflage dest. Both are config errors, caught at load.
+func TestValidateRejectsUnusableRealityFingerprint(t *testing.T) {
+	for _, fp := range []string{"none", "random", "randomized"} {
+		e := validExit()
+		e.Transports = dualTransport()
+		e.Transports.Reality.Fingerprint = fp
+		if err := controllerWithExit(e).Validate(); err == nil || !strings.Contains(err.Error(), "fingerprint") {
+			t.Errorf("exit reality fingerprint %q: expected fingerprint error, got %v", fp, err)
+		}
+	}
+	for _, fp := range []string{"", "chrome", "firefox"} {
+		e := validExit()
+		e.Transports = dualTransport()
+		e.Transports.Reality.Fingerprint = fp
+		if err := controllerWithExit(e).Validate(); err != nil && strings.Contains(err.Error(), "fingerprint") {
+			t.Errorf("exit reality fingerprint %q rejected: %v", fp, err)
+		}
+	}
+}

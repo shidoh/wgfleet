@@ -13,6 +13,8 @@
 package xray
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -301,6 +303,15 @@ func socksHost(addr string) string {
 	return addr
 }
 
+// unissuedShortID is the shortIds entry of an inbound with no clients: xray
+// refuses an empty list, and "" would admit anyone with the public key. It is
+// derived from the private key, so it is stable across renders (no config churn)
+// and cannot be guessed from anything a client was given.
+func unissuedShortID(privateKey string) string {
+	sum := sha256.Sum256([]byte("wgfleet/reality/unissued-short-id\x00" + privateKey))
+	return hex.EncodeToString(sum[:8])
+}
+
 func RenderClientConfig(in ClientRenderInput) (string, error) {
 	s := in.Spec
 	switch {
@@ -313,11 +324,12 @@ func RenderClientConfig(in ClientRenderInput) (string, error) {
 	case s.Dest == "":
 		return "", fmt.Errorf("xray client render: REALITY camouflage dest is required")
 	}
-	// One inbound client per issued credential; shortIds unions "" (match-any) with
-	// every client's short-id so each user's own short-id is accepted. An enabled
+	// One inbound client per issued credential; shortIds are exactly the issued
+	// short-ids. No "" (match-any): with it, anyone holding the public key from one
+	// subscription completes REALITY without a credential of their own. An enabled
 	// inbound with no issued clients is valid (it just authenticates no one yet).
 	clients := make([]client, 0, len(s.Clients))
-	shortIDs := []string{""}
+	var shortIDs []string
 	seenSID := map[string]struct{}{"": {}}
 	level := 0
 	for _, c := range s.Clients {
@@ -331,6 +343,9 @@ func RenderClientConfig(in ClientRenderInput) (string, error) {
 				seenSID[c.ShortID] = struct{}{}
 			}
 		}
+	}
+	if len(shortIDs) == 0 {
+		shortIDs = []string{unissuedShortID(in.PrivateKey)}
 	}
 	serverNames := serverNamesFor(s.ServerName, s.AllowEmptySNI)
 

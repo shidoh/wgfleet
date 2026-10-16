@@ -578,18 +578,15 @@ func realityProxy(t domain.ExitTunnel, host string, port int) (map[string]any, e
 		servername = host
 	}
 	proxy := map[string]any{
-		"name":       t.Name,
-		"type":       "vless",
-		"server":     host,
-		"port":       port,
-		"uuid":       r.UUID,
-		"tls":        true,
-		"udp":        true,
-		"servername": servername,
-		"reality-opts": map[string]any{
-			"public-key": r.PublicKey,
-			"short-id":   r.ShortID,
-		},
+		"name":         t.Name,
+		"type":         "vless",
+		"server":       host,
+		"port":         port,
+		"uuid":         r.UUID,
+		"tls":          true,
+		"udp":          true,
+		"servername":   servername,
+		"reality-opts": realityOpts(r.PublicKey, r.ShortID),
 	}
 	// Transport mode (ADR-0025): vision = classic TCP + xtls-rprx-vision (no XHTTP);
 	// xhttp (default) = network xhttp + xhttp-opts, no flow (Vision is incompatible
@@ -623,16 +620,27 @@ func realityProxy(t domain.ExitTunnel, host string, port int) (map[string]any, e
 		proxy["network"] = "xhttp"
 		proxy["xhttp-opts"] = xhttp
 	}
-	// client-fingerprint is the uTLS ClientHello fingerprint. "none" omits it (the
-	// Go-default fingerprint, reported to survive RU TSPU where chrome is flagged);
-	// empty ⇒ the chrome default for back-compat.
-	if fp := r.Fingerprint; fp != "none" {
-		if fp == "" {
-			fp = DefaultRealityFingerprint
-		}
-		proxy["client-fingerprint"] = fp
+	// client-fingerprint is the uTLS ClientHello fingerprint; mihomo cannot dial
+	// REALITY without one. Empty ⇒ the chrome default for back-compat.
+	fp := r.Fingerprint
+	if fp == "" {
+		fp = DefaultRealityFingerprint
 	}
+	proxy["client-fingerprint"] = fp
 	return proxy, nil
+}
+
+// realityOpts renders mihomo's reality-opts. support-x25519mlkem768 keeps the
+// post-quantum key share in the ClientHello: mihomo strips it by default, which
+// leaves the chrome profile sending a key-share list no real Chrome sends, and
+// REALITY ≥ 26.9.8 forwards a ClientHello without it to the camouflage dest.
+// mihomo has the key since 2025-05 (5cf0f18); our xray (26.6.22) accepts the share.
+func realityOpts(publicKey, shortID string) map[string]any {
+	return map[string]any{
+		"public-key":             publicKey,
+		"short-id":               shortID,
+		"support-x25519mlkem768": true,
+	}
 }
 
 // awgOption renders the mihomo amnezia-wg-option block. H ranges render as

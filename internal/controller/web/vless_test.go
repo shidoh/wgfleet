@@ -142,7 +142,8 @@ func TestBuildClashConfigEmptySNI(t *testing.T) {
 }
 
 // TestBuildClashConfigFingerprint guards the uTLS fingerprint knob (#12): an unset
-// fingerprint resolves to the off-chrome stable default; "none" omits the key.
+// fingerprint resolves to the off-chrome stable default. ("none" no longer reaches
+// here: config validation rejects it.)
 func TestBuildClashConfigFingerprint(t *testing.T) {
 	c := domain.VLESSClient{Name: "a", UUID: "u", ShortID: "0badc0de"}
 
@@ -161,10 +162,15 @@ func TestBuildClashConfigFingerprint(t *testing.T) {
 		t.Errorf("explicit fingerprint must be honoured\n---\n%s", out)
 	}
 
-	none := def
-	none.Fingerprint = "none"
-	if out := buildClashConfig("h", none, "PBK", "", c); strings.Contains(out, "client-fingerprint") {
-		t.Errorf(`"none" must omit client-fingerprint entirely\n---\n%s`, out)
+}
+
+// The portal download is a second mihomo profile; it must offer the post-quantum
+// key share exactly as the subscription does (mihomo.realityOpts).
+func TestBuildClashConfigOffersMLKEM(t *testing.T) {
+	c := domain.VLESSClient{Name: "a", UUID: "u", ShortID: "0badc0de"}
+	spec := domain.ClientVLESSServerSpec{ListenPort: 47252, ServerName: "s", XHTTPMode: "packet-up"}
+	if out := buildClashConfig("h", spec, "PBK", "", c); !strings.Contains(out, "support-x25519mlkem768: true") {
+		t.Errorf("reality-opts must carry support-x25519mlkem768: true\n---\n%s", out)
 	}
 }
 
@@ -194,7 +200,7 @@ func TestBuildClashConfigMux(t *testing.T) {
 }
 
 // TestBuildVlessLinkFingerprint guards the link-side fingerprint knob: unset ⇒
-// firefox; "none" ⇒ no fp param.
+// firefox. ("none" no longer reaches here: config validation rejects it.)
 func TestBuildVlessLinkFingerprint(t *testing.T) {
 	base := domain.ClientVLESSServerSpec{ListenPort: 49443, ServerName: "s", XHTTPMode: "packet-up"}
 	c := domain.VLESSClient{Name: "a", UUID: "u", ShortID: "sid"}
@@ -205,11 +211,4 @@ func TestBuildVlessLinkFingerprint(t *testing.T) {
 		t.Errorf("unset fingerprint must default to firefox, got %q", u.Query().Get("fp"))
 	}
 
-	none := base
-	none.Fingerprint = "none"
-	link = buildVlessLink("h", 49443, none, "PBK", "m", c)
-	u, _ = url.Parse(link)
-	if _, ok := u.Query()["fp"]; ok {
-		t.Errorf(`"none" must omit the fp param, got %q`, u.Query().Get("fp"))
-	}
 }

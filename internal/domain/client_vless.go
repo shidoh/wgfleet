@@ -143,15 +143,14 @@ func (c ClientVLESSServerSpec) Validate() error {
 // (a per-connection randomized fingerprint can trip the freeze-under-change
 // heuristic). Mux defaults ON because amortizing the REALITY handshake is the top
 // handshake-parallelism-freeze mitigation. See config.ClientVLESSConfig for the
-// operator override. "none" as a fingerprint omits client-fingerprint entirely.
+// operator override.
 const (
 	ClientVLESSFingerprintDefault = "firefox"
-	ClientVLESSFingerprintNone    = "none"
 	ClientVLESSMuxDefault         = true
 )
 
 // ResolvedFingerprint returns the client uTLS fingerprint, defaulting an unset value
-// to the off-chrome default. "none" is returned verbatim (the caller omits the key).
+// to the off-chrome default.
 func (c ClientVLESSServerSpec) ResolvedFingerprint() string {
 	if c.Fingerprint == "" {
 		return ClientVLESSFingerprintDefault

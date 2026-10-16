@@ -133,7 +133,7 @@ fleet:
           sni: www.python.org               # empty ⇒ = dest_domain
           mode: xhttp                       # xhttp (default) | vision (TCP + xtls-rprx-vision)
           mux: true                         # XMUX connection reuse (xhttp only)
-          fingerprint: chrome               # uTLS fingerprint: chrome | firefox | none
+          fingerprint: chrome               # uTLS fingerprint: chrome | firefox | safari (none/random rejected)
           empty_sni: false                  # true ⇒ no-SNI ClientHello
           allow_ipv6: false                 # false ⇒ pin xray resolution to IPv4 (IPv4-only data plane)
           # image: ghcr.io/xtls/xray-core:26.6.22   # unset ⇒ pinned default

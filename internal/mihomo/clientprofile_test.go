@@ -455,3 +455,11 @@ func TestClientProfileProxyEndpointByNameHasNoRule(t *testing.T) {
 		}
 	}
 }
+
+func TestClientProfileVLESSOffersMLKEM(t *testing.T) {
+	doc := renderProfile(t, ClientProfileInput{Masters: []ClientProfileMaster{{Name: "m1", VLESS: profileVLESS(domain.RealityModeXHTTP)}}})
+	ro := proxyNamed(t, doc, "m1-vless")["reality-opts"].(map[string]any)
+	if ro["support-x25519mlkem768"] != true {
+		t.Errorf("reality-opts.support-x25519mlkem768 = %v, want true", ro["support-x25519mlkem768"])
+	}
+}

@@ -17,10 +17,6 @@ func TestEndpointForResolvesDefaults(t *testing.T) {
 	if e.MihomoServerName() != "203.0.113.1" {
 		t.Errorf("empty SNI must be spelled as the server IP for mihomo, got %q", e.MihomoServerName())
 	}
-	cv.Fingerprint = ClientVLESSFingerprintNone
-	if e := cv.EndpointFor("h", "p", VLESSClient{}); e.Fingerprint != "" {
-		t.Errorf("none must resolve to omitted, got %q", e.Fingerprint)
-	}
 }
 
 func TestEndpointLinkVision(t *testing.T) {

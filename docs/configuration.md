@@ -176,7 +176,7 @@ converges into mihomo. Per-client credentials are issued and revoked in the Web 
 | `fleet.masters[].client_vless.sni` | string | = `dest_domain` | SNI the ClientHello impersonates |
 | `fleet.masters[].client_vless.mode` | string | `xhttp` | `xhttp` (packet-up) or `vision` (classic TCP + xtls-rprx-vision) |
 | `fleet.masters[].client_vless.empty_sni` | bool | **`true`** | Accept/send a ClientHello with no SNI extension. Set `false` to force off |
-| `fleet.masters[].client_vless.fingerprint` | string | `firefox` | uTLS ClientHello fingerprint: `firefox` \| `chrome` \| `safari` \| `none` |
+| `fleet.masters[].client_vless.fingerprint` | string | `firefox` | uTLS ClientHello fingerprint: `firefox` \| `chrome` \| `safari`; `none`/`random` rejected (mihomo cannot dial REALITY without a fixed profile) |
 | `fleet.masters[].client_vless.mux` | bool | **`true`** | XMUX (XHTTP connection reuse) in the generated client profile. `xhttp` mode only |
 | `fleet.masters[].client_vless.allow_ipv6` | bool | `false` | Let xray resolve the camouflage dest over IPv6. Leave off unless this node has IPv6 egress |
 | `fleet.masters[].client_vless.xhttp_path` | string | `/` | XHTTP path |
@@ -279,7 +279,7 @@ run warm and the live path can be switched instantly.
 | `fleet.exits[].transports.reality.dest_port` | int | `443` | Camouflage target port |
 | `fleet.exits[].transports.reality.sni` | string | = `dest_domain` | Camouflage SNI |
 | `fleet.exits[].transports.reality.mode` | string | `xhttp` | `xhttp` or `vision` |
-| `fleet.exits[].transports.reality.fingerprint` | string | `chrome` | Master-side uTLS fingerprint: `chrome` \| `firefox` \| `none` |
+| `fleet.exits[].transports.reality.fingerprint` | string | `chrome` | Master-side uTLS fingerprint: `chrome` \| `firefox` \| `safari`; `none`/`random` rejected |
 | `fleet.exits[].transports.reality.empty_sni` | bool | `false` | Accept a ClientHello with no SNI extension |
 | `fleet.exits[].transports.reality.mux` | bool | `false` | XMUX connection reuse on the master's proxy. `xhttp` mode only. This is XMUX, **not** sing-mux/smux |
 | `fleet.exits[].transports.reality.allow_ipv6` | bool | `false` | Let xray resolve over IPv6. Leave off: a dest that resolves AAAA-only black-holes on an IPv4-only exit |
