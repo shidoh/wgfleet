@@ -391,6 +391,10 @@ func RenderClientConfig(in ClientRenderInput) (string, error) {
 }
 
 func marshal(cfg config) (string, error) {
+	return marshalAny(cfg)
+}
+
+func marshalAny(cfg any) (string, error) {
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("xray render: %w", err)
