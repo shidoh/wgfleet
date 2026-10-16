@@ -439,10 +439,12 @@ type MasterConfig struct {
 	PublicIP    string            `koanf:"public_ip"` // public IP peers/clients reach this node at; defaults to ssh.host when empty
 	ClientAWG   ClientAWGConfig   `koanf:"client_awg"`
 	ClientVLESS ClientVLESSConfig `koanf:"client_vless"` // client-facing VLESS+REALITY+XHTTP (DPI-resistant alternative to client AWG)
-	Routing     MasterRouting     `koanf:"routing"`
-	Mihomo      MihomoConfig      `koanf:"mihomo"`  // master data-plane (mihomo) tuning
-	Compose     ComposeConfig     `koanf:"compose"` // master container stack tuning
-	SSH         SSHConfig         `koanf:"ssh"`     // bootstrap target
+	// RealityPortal tunes the inbound exits in the exit-initiated REALITY mode dial.
+	RealityPortal RealityPortalConfig `koanf:"reality_portal"`
+	Routing       MasterRouting       `koanf:"routing"`
+	Mihomo        MihomoConfig        `koanf:"mihomo"`  // master data-plane (mihomo) tuning
+	Compose       ComposeConfig       `koanf:"compose"` // master container stack tuning
+	SSH           SSHConfig           `koanf:"ssh"`     // bootstrap target
 	// Hardening overrides fleet.hardening for this master. Unset keys inherit the
 	// fleet default. This is the node the override exists for: the master is where
 	// the controller lives and where the operator actually logs in, so it is the
@@ -1025,6 +1027,9 @@ type RealityTransportConfig struct {
 	AllowIPv6 bool   `koanf:"allow_ipv6"`
 	XHTTPPath string `koanf:"xhttp_path"` // XHTTP path; empty ⇒ /<short-id>
 	Image     string `koanf:"image"`      // xray image; empty ⇒ default pinned
+	// ExitInitiated makes the exit dial every master's portal instead of
+	// listening (ADR-0038): for exits where a filter drops TCP the master opens.
+	ExitInitiated bool `koanf:"exit_initiated"`
 }
 
 // DestHostPort returns the REALITY camouflage target as "host:port" from the split
@@ -1404,6 +1409,10 @@ func (c ControllerConfig) Validate() error {
 	}
 	errs = append(errs, c.validateLifeline()...)
 	errs = append(errs, c.validateExitInitiated()...)
+	errs = append(errs, c.validateRealityExitInitiated()...)
+	for i, m := range c.Fleet.Masters {
+		errs = append(errs, validateRealityPortal(i, m)...)
+	}
 	errs = append(errs, c.validateMasterFanout()...)
 	return errors.Join(errs...)
 }

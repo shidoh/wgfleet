@@ -59,7 +59,7 @@ func (c ControllerConfig) validateExitInitiated() []error {
 		errs = append(errs, errors.New("transports.awg.exit_initiated needs a master (fleet has none)"))
 	}
 	for _, m := range c.Fleet.Masters {
-		if err := checkKnockableAddress(m.PublicIP); err != nil {
+		if err := checkKnockableAddress(m.PublicIP, "transports.awg.exit_initiated"); err != nil {
 			errs = append(errs, fmt.Errorf("master %q: %w", m.Name, err))
 		}
 	}
@@ -68,14 +68,15 @@ func (c ControllerConfig) validateExitInitiated() []error {
 
 // checkKnockableAddress accepts an empty value or a DNS name (the controller
 // resolves the master's address from its store and reports if it cannot) and
-// rejects a literal the exit could not reach from the internet.
-func checkKnockableAddress(v string) error {
+// rejects a literal the exit could not reach from the internet. flag names the
+// manifest key that needs the address.
+func checkKnockableAddress(v, flag string) error {
 	addr, err := netip.ParseAddr(v)
 	if err != nil {
 		return nil
 	}
 	if !IsKnockableIPv4(addr) {
-		return fmt.Errorf("public_ip %s is not a public IPv4 address an exit can reach (transports.awg.exit_initiated)", v)
+		return fmt.Errorf("public_ip %s is not a public IPv4 address an exit can reach (%s)", v, flag)
 	}
 	return nil
 }

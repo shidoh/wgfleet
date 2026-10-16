@@ -184,6 +184,17 @@ converges into mihomo. Per-client credentials are issued and revoked in the Web 
 | `fleet.masters[].client_vless.image` | string | pinned xray | Container image |
 | `fleet.masters[].client_vless.tag` | string | — | Explicit tag, overriding any tag in `image` |
 
+### `reality_portal` — inbound for exits that dial the master
+
+Runs only when some exit has `transports.reality.exit_initiated`. The port is opened world-facing.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `fleet.masters[].reality_portal.listen_port` | int | derived `40000`–`60000` | TCP port, derived stably from the master name, skipping the client VLESS port and `public_tcp_ports`. Range `1024`–`65535` |
+| `fleet.masters[].reality_portal.dest_domain` | string | fleet default | Camouflage target host. **Must support X25519MLKEM768** — check with `xray tls ping <host>`. Prefer a host plausible for the master's country |
+| `fleet.masters[].reality_portal.dest_port` | int | `443` | Camouflage target port |
+| `fleet.masters[].reality_portal.sni` | string | = `dest_domain` | Camouflage SNI |
+
 ### `routing` — geo-routing and exit selection
 
 | Key | Type | Default | Meaning |
@@ -285,6 +296,7 @@ run warm and the live path can be switched instantly.
 | `fleet.exits[].transports.reality.allow_ipv6` | bool | `false` | Let xray resolve over IPv6. Leave off: a dest that resolves AAAA-only black-holes on an IPv4-only exit |
 | `fleet.exits[].transports.reality.xhttp_path` | string | `/<short-id>` | XHTTP path |
 | `fleet.exits[].transports.reality.image` | string | pinned xray | Container image |
+| `fleet.exits[].transports.reality.exit_initiated` | bool | `false` | The exit dials every master's `reality_portal` instead of listening; the exit's REALITY port closes. Every master needs a public IPv4 reachable by the exit. `mode`, `xhttp_path`, `mux`, `empty_sni` on the exit are rejected with it. `fingerprint` applies to the exit's dial. Switch it while `awg` is the active transport |
 
 ### `firewall`
 
