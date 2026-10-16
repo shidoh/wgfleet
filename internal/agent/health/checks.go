@@ -17,6 +17,10 @@ type ExitProbes struct {
 	// RealityInbound checks the xray REALITY inbound is listening (ADR-0025). Run
 	// in place of the WG-handshake check when REALITY is the active transport.
 	RealityInbound Probe
+	// RealityBridge checks the exit-initiated bridge holds a connection to at
+	// least one master's portal (ADR-0038). Run in place of RealityInbound when
+	// the spec carries a bridge: the exit then has no inbound to listen on.
+	RealityBridge Probe
 	// LifelineUp checks the exit's reserve client interface (domain.LifelineInterface)
 	// exists and is up. Only checked on exits whose spec carries a lifeline.
 	LifelineUp Probe
@@ -48,7 +52,12 @@ func ExitChecks(spec domain.NodeSpec, p ExitProbes) []Check {
 	// the reality inbound instead (ADR-0025). AWG-active exits keep the WG check.
 	if spec.HasTransport(domain.TransportRealityXHTTP) &&
 		spec.ActiveTransport.OrDefault() == domain.TransportRealityXHTTP {
-		if p.RealityInbound != nil {
+		switch {
+		case spec.Reality != nil && spec.Reality.Bridge != nil:
+			if p.RealityBridge != nil {
+				checks = append(checks, Check{Name: "reality-bridge", Probe: p.RealityBridge})
+			}
+		case p.RealityInbound != nil:
 			checks = append(checks, Check{Name: "reality-inbound", Probe: p.RealityInbound})
 		}
 	} else if p.HandshakeFresh != nil {

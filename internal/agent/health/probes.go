@@ -38,8 +38,10 @@ func DefaultExitProbes(spec domain.NodeSpec, lifelineConf string) ExitProbes {
 		egressIface = "wgcf"
 	}
 	var realityPort int
+	var bridge *domain.RealityBridgeSpec
 	if spec.Reality != nil {
 		realityPort = spec.Reality.ListenPort
+		bridge = spec.Reality.Bridge
 	}
 	return ExitProbes{
 		HandshakeFresh: handshakeFreshProbe(wgIface),
@@ -47,6 +49,7 @@ func DefaultExitProbes(spec domain.NodeSpec, lifelineConf string) ExitProbes {
 		DNSResolves:    dnsResolvesProbe(dnsListenAddr(spec.DNS)),
 		EgressConfirm:  warpHandshakeProbe(egressIface),
 		RealityInbound: realityInboundProbe(realityPort),
+		RealityBridge:  bridgeProbe(bridge, runCmd),
 		// The reserve client leg (awgl0). `ip link show` is the right question about the
 		// world here and not, say, a handshake: the lifeline is warm standby by design,
 		// so it can be perfectly healthy with no client on it for weeks. The planner's
