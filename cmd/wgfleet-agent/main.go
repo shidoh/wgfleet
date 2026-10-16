@@ -706,15 +706,18 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		// A failed publish is not fatal — nothing on this master depends on the
 		// controller knowing the key, and a controller that predates the key type
 		// must not take the whole pass down.
+		// Not fatal either: a bad key file must not stop mihomo, the NAT and blocky
+		// converging on a master that may never run a portal. The portal planner
+		// defers without a key.
 		rpPriv, rpPub, rpEph, rpErr := a.ensureRealityPortalKey(!plan)
 		if rpErr != nil {
-			return fmt.Errorf("ensure reality portal key: %w", rpErr)
+			a.log.Warn("reality portal key unavailable; the portal stays down until it is", "err", rpErr)
 		}
 		a.portalKey = rpPriv
 		if rpEph && plan {
 			a.log.Info("reality portal key absent; using an ephemeral key for the plan (apply would generate one)")
 		}
-		if !plan && !fromCache {
+		if !plan && !fromCache && rpPub != "" {
 			if err := a.client.PublishRealityPortalKey(ctx, rpPub); err != nil {
 				a.log.Warn("publish reality portal key failed; exits cannot dial this master's portal until it succeeds", "err", err)
 			}

@@ -3,6 +3,7 @@ package master
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -70,6 +71,12 @@ func TestRealityPortalPlannerDownWhenNotInSpec(t *testing.T) {
 	// A portal the spec no longer has is stopped — also the one a rolled-back
 	// agent left behind.
 	r.up = true
+	if err := os.MkdirAll(filepath.Dir(r.paths.RealityPortalYML), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.paths.RealityPortalYML, []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if acts := r.plan(t, spec); !hasExecContaining(acts, "down") {
 		t.Fatalf("no portal but xray-portal up: %+v", acts)
 	}
@@ -249,5 +256,16 @@ func TestPortalSocksFirewallFollowsThePortal(t *testing.T) {
 	spec, _ := masterSpec(t)
 	if got := portalSocksFirewall(spec); got.IsValid() {
 		t.Errorf("no portal, yet %v", got)
+	}
+}
+
+// A master that never ran a portal asks docker nothing: no compose file, no stack.
+func TestRealityPortalPlannerSkipsDockerWithoutAComposeFile(t *testing.T) {
+	r := newPortalRig(t)
+	asked := false
+	r.p.up = func(string) bool { asked = true; return false }
+	spec, _ := masterSpec(t)
+	if acts := r.plan(t, spec); !onlyNoChange(acts) || asked {
+		t.Fatalf("asked docker = %v, acts %+v", asked, acts)
 	}
 }

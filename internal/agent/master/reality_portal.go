@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"os"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/compose"
@@ -62,7 +63,11 @@ func (p realityPortalPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([
 	if portal == nil {
 		// No exit dials this master. A portal still up — the last exit left the
 		// mode, or an older agent left it running — is stopped. The key and the
-		// files stay until decommission.
+		// files stay until decommission. No compose file: it never ran here, and
+		// docker need not be asked on every pass of every master.
+		if _, err := os.Stat(p.composePath); err != nil {
+			return []reconcile.Action{reconcile.NoChangeAction("reality portal", "not used")}, nil
+		}
 		if p.isUp(ctx) {
 			return []reconcile.Action{reconcile.ExecAction("stop reality portal (no exit dials this master)",
 				"docker", "compose", "-f", p.composePath, "down")}, nil
