@@ -86,7 +86,7 @@ func buildSpecView(s domain.NodeSpec) specView {
 
 	v := specView{Summary: summaryRows(s)}
 	for _, g := range []specGroup{
-		wgServerGroup(s), awgGroup(s), realityGroup(s.Reality), clientVLESSGroup(s.Master),
+		wgServerGroup(s), awgGroup(s), realityGroup(s.Reality), realityPortalGroup(s.Master), clientVLESSGroup(s.Master),
 		lifelineGroup(s.Lifeline), routingGroup(s.Routing), dnsGroup(s.DNS), firewallGroup(s.Firewall),
 		hardeningGroup(s), observabilityGroup(s),
 	} {
@@ -309,6 +309,9 @@ func realityGroup(r *domain.RealityServerSpec) specGroup {
 	if r == nil {
 		return specGroup{}
 	}
+	if r.Bridge != nil {
+		return realityBridgeGroup(r)
+	}
 	g := specGroup{
 		Title: "REALITY inbound",
 		Note:  "dest must support X25519MLKEM768, or the handshake fails with no error at all.",
@@ -323,6 +326,53 @@ func realityGroup(r *domain.RealityServerSpec) specGroup {
 	}
 	if rel := joinNonEmptyValues(boolWord(r.AllowEmptySNI, "empty SNI", ""), boolWord(r.AllowIPv6, "IPv6", "")); rel != "" {
 		g.Rows = append(g.Rows, kv("Allowed", rel))
+	}
+	return g
+}
+
+// realityBridgeGroup renders an exit in the exit-initiated REALITY mode
+// (ADR-0038): it listens on nothing and dials each master's portal.
+func realityBridgeGroup(r *domain.RealityServerSpec) specGroup {
+	g := specGroup{
+		Title: "REALITY bridge (exit dials)",
+		Note:  "no inbound and no open port: the exit dials each master's portal and the master sends streams back down it.",
+	}
+	if len(r.Bridge.Portals) == 0 {
+		g.Rows = append(g.Rows, specRow{Label: "Dials", Value: "nothing",
+			Hint: "no master is ready yet (wire 14, portal key, public IPv4); the controller log says which"})
+	}
+	for _, p := range r.Bridge.Portals {
+		g.Rows = append(g.Rows, kv("Dials "+p.Master, fmt.Sprintf("%s, sni %s, fp %s", p.Address, orDash(p.ServerName), p.ResolvedFingerprint())))
+	}
+	if r.AllowIPv6 {
+		g.Rows = append(g.Rows, kv("Allowed", "IPv6"))
+	}
+	return g
+}
+
+// realityPortalGroup renders a master's portal (ADR-0038): the inbound the
+// bridges of exits in the exit-initiated mode dial.
+func realityPortalGroup(m *domain.MasterSpec) specGroup {
+	if m == nil || m.RealityPortal == nil {
+		return specGroup{}
+	}
+	p := m.RealityPortal
+	g := specGroup{
+		Title: "REALITY portal",
+		Note:  "exits in the exit-initiated mode dial this; mihomo reaches each of them through its SOCKS inbound.",
+		Rows: []specRow{
+			kv("Listen port", fmt.Sprintf("%d/tcp", p.ListenPort)),
+			kv("Camouflage", fmt.Sprintf("sni %s → dest %s", orDash(p.ServerName), orDash(p.Dest))),
+			kv("SOCKS port", fmt.Sprintf("%d", p.ResolvedSocksPort())),
+		},
+	}
+	var exits []string
+	for _, c := range p.Clients {
+		exits = append(exits, c.Exit)
+	}
+	if len(exits) > 0 {
+		g.Rows = append(g.Rows, specRow{Label: "Bridges from", Value: strings.Join(exits, ", "),
+			Hint: "UUIDs are access credentials and are never rendered"})
 	}
 	return g
 }
@@ -496,8 +546,12 @@ func exitProxiesTable(m *domain.MasterSpec) specTable {
 		if e.Reserve {
 			tier = "reserve"
 		}
+		endpoint := orDash(e.Endpoint)
+		if e.Reality != nil && e.Reality.Reverse {
+			endpoint = "via portal (exit dials)"
+		}
 		t.Rows = append(t.Rows, []string{
-			e.Name, string(e.Transport.OrDefault()), orDash(e.Endpoint),
+			e.Name, string(e.Transport.OrDefault()), endpoint,
 			orDash(e.TunnelIP), fmt.Sprintf("%d", e.MTU), tier,
 		})
 	}
@@ -537,6 +591,15 @@ func redactSpec(s domain.NodeSpec) domain.NodeSpec {
 	if s.Reality != nil {
 		r := *s.Reality
 		r.UUID = redactIfSet(r.UUID)
+		if r.Bridge != nil {
+			b := *r.Bridge
+			ps := append([]domain.RealityPortalPeer(nil), b.Portals...)
+			for i := range ps {
+				ps[i].UUID = redactIfSet(ps[i].UUID)
+			}
+			b.Portals = ps
+			r.Bridge = &b
+		}
 		s.Reality = &r
 	}
 	if s.Master != nil {
@@ -556,6 +619,15 @@ func redactSpec(s domain.NodeSpec) domain.NodeSpec {
 			}
 		}
 		m.ExitTunnels = tunnels
+		if m.RealityPortal != nil {
+			rp := *m.RealityPortal
+			cs := append([]domain.RealityPortalClient(nil), rp.Clients...)
+			for i := range cs {
+				cs[i].UUID = redactIfSet(cs[i].UUID)
+			}
+			rp.Clients = cs
+			m.RealityPortal = &rp
+		}
 		if m.ClientVLESS != nil {
 			cv := *m.ClientVLESS
 			cs := append([]domain.VLESSClient(nil), cv.Clients...)
