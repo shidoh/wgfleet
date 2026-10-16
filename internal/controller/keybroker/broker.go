@@ -226,6 +226,26 @@ func (b *Broker) RegisterClientVlessKey(ctx context.Context, nodeID, publicKey s
 	return nil
 }
 
+// RegisterRealityPortalKey records the master's REALITY PORTAL x25519 public key
+// (ADR-0038). Validated before the store write: it is rendered verbatim into
+// every bridge's config.
+func (b *Broker) RegisterRealityPortalKey(ctx context.Context, nodeID, publicKey string) error {
+	if publicKey == "" {
+		return fmt.Errorf("keybroker: empty reality portal public key for %q", nodeID)
+	}
+	if !xray.ValidPublicKey(publicKey) {
+		return fmt.Errorf("keybroker: malformed reality portal public key for %q", nodeID)
+	}
+	if b.keyUnchanged(ctx, nodeID, publicKey, func(n domain.Node) string { return n.RealityPortalPublicKey }) {
+		return nil
+	}
+	if err := b.store.SetNodeRealityPortalKey(ctx, nodeID, publicKey); err != nil {
+		return err
+	}
+	b.log.Info("REALITY portal public key registered", "node", nodeID)
+	return nil
+}
+
 // RegisterClientWGKey records the master's CLIENT-FACING WireGuard public key —
 // the identity of the interface end users dial once the agent owns it. Validated
 // as a well-formed WireGuard key before storing: it is rendered verbatim into

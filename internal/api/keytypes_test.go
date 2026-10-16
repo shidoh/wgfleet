@@ -14,6 +14,7 @@ func TestParseTunnelKeyType(t *testing.T) {
 		// The shared identity must never be mistaken for a per-tunnel one.
 		{"shared wireguard key", KeyTypeWireGuard, "", false},
 		{"reality key", KeyTypeReality, "", false},
+		{"reality portal key", KeyTypeRealityPortal, "", false},
 		// A bare prefix carries no tunnel and would otherwise store a key under "".
 		{"bare prefix", "wireguard:", "", false},
 		{"unrelated type", "ssh", "", false},

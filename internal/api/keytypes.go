@@ -28,6 +28,11 @@ const (
 	// reserve client configs, so it needs the same validation as the other keys.
 	KeyTypeLifeline = "lifeline"
 
+	// KeyTypeRealityPortal is the master's REALITY PORTAL x25519 public key
+	// (ADR-0038): the inbound exits in the exit-initiated REALITY mode dial.
+	// Distinct from KeyTypeClientVless, which end users hold.
+	KeyTypeRealityPortal = "reality-portal"
+
 	// KeyTypeWireGuardTunnelPrefix marks a PER-TUNNEL WireGuard public key
 	// (ADR-0030): "wireguard:<exit-name>" is the master's dedicated identity for the
 	// tunnel to that one exit, as opposed to the unsuffixed KeyTypeWireGuard, which
