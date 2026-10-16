@@ -991,7 +991,7 @@ Client configs do not change. Nothing to reissue.
 
 ### Switch on
 
-Switch while AmneziaWG is the exit's active transport: REALITY drops until both agents converge.
+Switch while AmneziaWG is the exit's active transport: with REALITY active, its traffic stops for ~10 s while both ends restart xray.
 
 ```yaml
 fleet:
@@ -1030,8 +1030,9 @@ Then make REALITY active from the exit's node page and watch the checks below.
 | Symptom | Look at | Do |
 |---|---|---|
 | Alert `WgfleetRealityBridgeDown` for one master | that master: `docker logs xray-portal --tail 50`, health check `reality-portal` | portal down: the agent restarts it within one pass. Portal up, no connection: TCP from the exit to the portal port is blocked |
-| `reality_bridge_kills_total` grows | exit agent journal: `bridge watchdog: killed a socket` | one-way freezes on that path; the bridge redials each time. Steady growth: switch the exit's active transport to AWG |
+| `reality_bridge_kills_total` grows | exit agent journal: `bridge watchdog: killed a silent socket` | one-way freezes on that path; the bridge redials each time. Steady growth: switch the exit's active transport to AWG |
 | Exit health check `reality-bridge` failing | exit: `docker logs xray --tail 50` | no master reachable; switch the exit's active transport to AWG |
+| Master journal: `portal watchdog: killed a silent socket` | — | a bridge stopped acknowledging (path cut, exit restarted); it reconnects on a new flow. Frequent: look at the path between that exit and the master |
 | Master health check `reality-portal` failing at boot | master agent journal: `SOCKS address … is not on this host yet` | wait for the namespace link; the agent starts the portal on the next pass |
 | REALITY tunnel absent on one master in the console | controller journal: `master not ready` | the reason is in the message: wire, portal key or public IPv4 |
 
