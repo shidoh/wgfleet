@@ -535,7 +535,7 @@ spec:
           enough independent destinations. The exit is still serving over its active transport, but
           switching it over would not restore anything — so it currently has no fallback.
     - alert: WgfleetRealityBridgeDown
-      # An exit in the exit-initiated REALITY mode (ADR-0038) dials every ready
+      # An exit in the exit-initiated REALITY mode dials every ready
       # master's portal. Its own health check asks only for one of them, so that one
       # master's path going dark leaves the exit Ready — and that master without a
       # REALITY tunnel to it. Absent outside the mode.
