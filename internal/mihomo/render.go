@@ -332,6 +332,12 @@ func RenderConfig(in RenderInput) (string, error) {
 		existing, _ := merged["rules"].([]any)
 		merged["rules"] = append([]any{reject}, existing...)
 	}
+	// Same placement, same reason: clients never reach the reality portal's SOCKS
+	// inbound (ADR-0038), whatever the operator's rules say.
+	if guard := portalSocksGuard(in); guard != "" {
+		existing, _ := merged["rules"].([]any)
+		merged["rules"] = append([]any{guard}, existing...)
+	}
 
 	// A loopback resolver means something ELSE inside the namespace, so it is
 	// translated rather than carried across.

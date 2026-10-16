@@ -2,6 +2,7 @@ package mihomo
 
 import (
 	"fmt"
+	"net/netip"
 
 	"github.com/shidoh/wgfleet/internal/domain"
 )
@@ -30,4 +31,23 @@ func reverseRealityProxy(in RenderInput, t domain.ExitTunnel) (map[string]any, e
 		"password": in.PortalPasswords[exit],
 		"udp":      true,
 	}, nil
+}
+
+// portalSocksGuard is the REJECT rule that keeps client traffic off the portal's
+// SOCKS address: a client's DIRECT connection leaves from mihomo and could
+// otherwise reach it. On the loopback the whole 127/8 is rejected — nothing a
+// client asks for lives there. Empty without a portal.
+func portalSocksGuard(in RenderInput) string {
+	if in.Spec.RealityPortal == nil || in.PortalSocksAddr == "" {
+		return ""
+	}
+	addr, err := netip.ParseAddr(in.PortalSocksAddr)
+	if err != nil {
+		return ""
+	}
+	prefix := netip.PrefixFrom(addr, addr.BitLen())
+	if addr.IsLoopback() && addr.Is4() {
+		prefix = netip.MustParsePrefix("127.0.0.0/8")
+	}
+	return "IP-CIDR," + prefix.String() + ",REJECT,no-resolve"
 }

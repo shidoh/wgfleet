@@ -110,3 +110,39 @@ func contains(xs []string, x string) bool {
 	}
 	return false
 }
+
+// A client's DIRECT traffic leaves from mihomo and could reach the portal's SOCKS
+// address; the password guards it, and a REJECT rule in front of everything —
+// operator rules included — keeps clients off it entirely.
+func TestPortalSocksAddrIsRejectedForClients(t *testing.T) {
+	for _, tc := range []struct{ addr, want string }{
+		{"127.0.0.1", "IP-CIDR,127.0.0.0/8,REJECT,no-resolve"},
+		{"100.127.255.1", "IP-CIDR,100.127.255.1/32,REJECT,no-resolve"},
+	} {
+		in := reverseInput()
+		in.PortalSocksAddr = tc.addr
+		in.Spec.Custom.Overrides = map[string]any{"rules": []any{"MATCH,DIRECT"}}
+		_, doc := renderDoc(t, in)
+		rules, _ := doc["rules"].([]any)
+		found := false
+		for _, r := range rules {
+			if r == tc.want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("addr %s: rules %v lack %q", tc.addr, rules, tc.want)
+		}
+	}
+}
+
+// No portal, no rule: a fleet without the mode renders exactly as before.
+func TestNoPortalRejectWithoutPortal(t *testing.T) {
+	out, err := RenderConfig(sampleInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "127.0.0.0/8,REJECT") {
+		t.Error("portal guard rendered with no portal")
+	}
+}
