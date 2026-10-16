@@ -672,7 +672,8 @@ All keys: [configuration.md#2-controller-the-controller-process](configuration.m
 | Role | Check | Runs when | Notes |
 |---|---|---|---|
 | Exit | `wg-handshake` | the active master↔exit transport is AmneziaWG | The freshest handshake must be under 3 m. An older handshake means the tunnel has stopped carrying traffic even though the interface is up. |
-| Exit | `reality-inbound` | the active transport is REALITY+XHTTP | Replaces `wg-handshake`: the AWG server is then a warm standby with no handshake, and checking it would mark a healthy exit Degraded. |
+| Exit | `reality-inbound` | the active transport is REALITY+XHTTP, without `transports.reality.exit_initiated` | Replaces `wg-handshake`: the AWG server is then a warm standby with no handshake, and checking it would mark a healthy exit Degraded. |
+| Exit | `reality-bridge` | `transports.reality.exit_initiated` and the active transport is REALITY+XHTTP | Replaces `reality-inbound`: the bridge holds a connection to at least one master's portal. A freshly restarted bridge gets 5 s before it fails. One master unreachable shows only in `wgfleet_agent_reality_bridge_connected{master}` and `WgfleetRealityBridgeDown`. |
 | Exit | `egress-reachability` | always | Reports ok, degraded or blocked — the censorship signal. |
 | Exit | `egress-active` | always | The egress method actually in use (`warp`, `direct`), which is not always the configured one: a blocked WARP fails over on its own. |
 | Exit | `egress-throughput` | a throughput floor is set (`min_egress_throughput_kbytes`, or the fleet floor) | Three consecutive below-floor passes report **Degraded**, two at or above the floor clear it. A sustained collapse also fails the egress over to the next method, the same way a block does. |
@@ -685,6 +686,7 @@ All keys: [configuration.md#2-controller-the-controller-process](configuration.m
 | Master | `mihomo-api` | always | The Clash API on `<mgmt_addr>:9090` answers `/version`. |
 | Master | `dns-filter` | `dns.enabled`, once the resolver has its listen address | The master is the clients' resolver: up-but-not-resolving must read Degraded. |
 | Master | `client-vless` | `client_vless.enabled` | The VLESS+REALITY inbound is up; a down inbound shows **Degraded**. |
+| Master | `reality-portal` | an exit with `transports.reality.exit_initiated` dials this master | A socket listens on the portal port (`ss -ltn`). Says nothing about whether exits reach it — that is `WgfleetRealityBridgeDown`. |
 | Any | `spec-valid` | only when the agent rejects a spec | Red with the reason; the node keeps its last good configuration. |
 
 | Condition | Reported state |

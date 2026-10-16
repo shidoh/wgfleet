@@ -76,7 +76,9 @@ controller gates `Register` and `PullSpec`.
    Upgrade = upload new binary + restart the agent service, then wait for the
    node to report back on the new version. The data plane (kernel WG interfaces,
    mihomo/wg-easy/blocky containers) survives the restart: **no drain is
-   required** and clients are not dropped.
+   required** and clients are not dropped — unless the release changes a
+   container image or what it renders into one. Such a change restarts that
+   container once on every node it runs on; the release notes list each one.
 
    If `wgfleet_node_agent_info` or the fleet page shows versions not moving,
    roll explicitly (per node or UI) — automatic only fires below
@@ -123,11 +125,19 @@ fleet:
 
 All keys: [configuration.md#3-fleet-fleet-wide-settings](configuration.md#3-fleet-fleet-wide-settings)
 
+### Controller store
+
+| Rule | Detail |
+|---|---|
+| The store is migrated on the first start | A controller of an earlier release refuses the migrated store. Going back means restoring a backup taken before the upgrade, not swapping the binary |
+| Before the upgrade | `wgfleet-controller --backup <file>` |
+| `deploy-master.sh` | Stops the controller and copies the store to `<store>.prev` before installing the new binary. When the new controller does not start, it restores that copy together with the previous binary. Set `STATE_DB` when `store:` is not `/var/lib/wgfleet/state.db` |
+
 ### Several masters
 
 | Rule | Detail |
 |---|---|
-| Wire 13 | Controller first, then agents. An exit on the older agent keeps serving the master in slot 0 only |
+| Wire 13 | Controller, then masters, then exits. An exit on the older agent keeps serving the master in slot 0 only |
 | Non-base master on an exit with an older agent | No AmneziaWG tunnel. If that exit's active transport is AmneziaWG, the master does not route through it until the exit's agent is upgraded |
 | A remote master | Upgraded by the upgrade action on its node page; a fleet-wide rolling upgrade skips masters |
 
@@ -135,7 +145,7 @@ Adding a master: [operations.md](operations.md#several-masters).
 
 ### Exit-initiated REALITY
 
-`transports.reality.exit_initiated` needs the controller, the masters and the exit on wire 14. Order: controller, masters, exits, then the flag, set while AmneziaWG is the exit's active transport. A master on an older agent carries no REALITY tunnel to that exit. The controller cannot be rolled back past wire 14. Procedure: [operations.md](operations.md#exit-initiated-reality).
+`transports.reality.exit_initiated` needs the controller, the masters and the exit on wire 14. Order: controller, masters, exits, then the flag, set while AmneziaWG is the exit's active transport. A master on an older agent carries no REALITY tunnel to that exit; an exit with the flag and no master on wire 14 has no REALITY tunnel at all. Procedure: [operations.md](operations.md#exit-initiated-reality).
 
 ### Exit-initiated AmneziaWG flow
 
@@ -172,7 +182,8 @@ Adding a master: [operations.md](operations.md#several-masters).
   expect to restore it rather than to roll forward.
 - **Masters** upgrade exactly like exits: restarting the master agent does not
   restart its mihomo container (containers restart only on a config change), so
-  client sessions are unaffected.
+  client sessions are unaffected — unless the release changes the mihomo image
+  or the master's xray, which the release notes say.
   **One exception:** on a master where `client_awg.managed` has just been turned
   on, the first pass after the upgrade takes the client interface over from
   wg-easy and, a pass later, removes the wg-easy container. That is a migration

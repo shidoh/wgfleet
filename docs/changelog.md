@@ -4,13 +4,40 @@ What changed for operators in each wgfleet release — behaviour, manifest keys,
 Every release archive carries this page as `CHANGELOG.md`.
 New releases are announced, with the archives attached, in the Telegram channel [t.me/wgfleet](https://t.me/wgfleet).
 
-## Unreleased
+## v0.3.3 — 2026-10-16
+
+!!! warning "Read before upgrading: the controller cannot go back without a backup, and clients reconnect"
+
+    **Before the upgrade**
+
+    - Take a controller backup: `wgfleet-controller --backup <file>`. The first start migrates the store; a v0.3.2 controller refuses the migrated store, so going back means restoring that backup. `deploy-master.sh` now also keeps a copy of the store (`state.db.prev`) and restores it when the new controller does not start.
+    - Run `wgfleet-controller --check-config`. Now refused: `fingerprint: none` or `random` in `client_vless` or `transports.reality`; `fleet.masters[].dns` alongside `fleet.master_dns` or with two or more masters. A refused manifest stops the controller at startup.
+
+    **Order**
+
+    1. Controller.
+    2. Every master: `deploy-master.sh` for the one beside the controller, the node page's upgrade for the others. The rolling upgrade skips masters.
+    3. Exits: rolling upgrade.
+
+    Agents are not upgraded on their own: an older agent stays supported and lacks the new behaviour until it is rolled.
+
+    **What drops**
+
+    - mihomo restarts once on every master that does not pin `mihomo_tag` (image v1.19.32): every client of that master reconnects.
+    - The master's client xray restarts once where `client_vless` is on: VLESS clients reconnect.
+    - Auto-suspended exits return to the load balancer once after the controller restart and are suspended again 5 minutes later; each change restarts mihomo on every master.
+
+    **Tell your users**
+
+    - Update the profile in the mihomo app: the two device-profile fixes below reach a device only then.
+    - A VLESS config without its short-id stops connecting: reissue it from the portal.
+    - The VLESS fingerprint becomes `chrome` unless the manifest sets one.
 
 ### Added
 
 - `fleet.exits[].transports.reality.exit_initiated`: the exit's xray dials every master instead of listening, for exits where TCP the master opens is cut after its first data segment. Each master runs a second xray, `xray-portal`, on `fleet.masters[].reality_portal.listen_port` (derived from the master name when unset), opened world-facing. Wire 14. Procedure and checks: [operations.md](operations.md#exit-initiated-reality).
 - Exit health check `reality-bridge` (in the mode, replaces `reality-inbound`), master health check `reality-portal`, metrics `wgfleet_agent_reality_bridge_connected` and `wgfleet_agent_reality_bridge_kills_total`, alert `WgfleetRealityBridgeDown`.
-
+- A watchdog on both ends of the exit-initiated REALITY link kills a connection that stopped receiving (the exit's bridge after 30 s of silence, the master's portal when the bridge stopped acknowledging), so the link redials instead of waiting out TCP retransmission. The agent journal says `killed a silent socket`; the bridge's count is `wgfleet_agent_reality_bridge_kills_total`.
 - Several masters: `fleet.masters` accepts more than one. Each master is a peer on every exit's single AmneziaWG interface, on the addresses of its `slot`. With two or more, `fleet.interface_anchor` is required — the validation message gives the value that keeps existing tunnels as they are.
 - `fleet.interface_anchor` and `fleet.masters[].slot`. A fleet with one master sets neither and renders as before.
 - `fleet.master_dns`: the resolver settings of every master with `dns_filter`, same keys as `fleet.masters[].dns`.
@@ -23,15 +50,15 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 ### Changed
 
-- REALITY ClientHellos from mihomo carry the X25519MLKEM768 key share (`reality-opts.support-x25519mlkem768: true` on the master's exit proxies, in the subscription and in the portal download). With the `chrome` profile this is what Chrome sends; xray 26.9.8 and later refuses REALITY ClientHellos without it. Clients refresh the subscription to get it.
+- REALITY ClientHellos from mihomo carry the X25519MLKEM768 key share (`reality-opts.support-x25519mlkem768: true` on the master's exit proxies, in the subscription and in the portal download). With the `chrome` profile this is what Chrome sends; xray 26.9.8 and later refuses REALITY ClientHellos without it. Clients refresh the subscription to get it. The fleet's xray is still 26.6.22, which accepts both: this prepares clients for a later move to 26.9.8, and a client that has not refreshed keeps working until then.
 - The master's client VLESS inbound accepts only the short-ids of issued credentials. A public key alone no longer completes the REALITY handshake; a client config without its short-id stops connecting.
 - The client VLESS profile's default uTLS fingerprint is `chrome` (was `firefox`): with the key share above it is the only built-in profile xray 26.9.8 and later accepts. An A/B from a home ISP found no difference in blocking between the two. Clients switch on the next subscription refresh; a manifest that sets `client_vless.fingerprint` keeps its value.
 - `fingerprint: none` and `random` are rejected for `fleet.masters[].client_vless` and `fleet.exits[].transports.reality`: mihomo cannot dial REALITY without a fixed uTLS profile.
 - The master's client VLESS inbound counts traffic per client: xray serves its stats API on `127.0.0.1:10085`. The first agent upgrade restarts xray once; VLESS clients of that master reconnect after a few seconds.
 - The Grafana dashboard is rebuilt: firing alerts, clients online and client traffic, DNS, and an exit × master matrix come first; the earlier rows are below, most of them collapsed. New `$master` and `$exit` variables; an "Agent restarts" annotation marks rollouts. Re-import `grafana-dashboard.json` (Grafana ≤12) or paste `grafana-dashboard-v2.json` (Grafana 13).
-- Wire contract 13. Upgrade the controller first, then the agents; an exit on an older agent keeps serving the master in slot 0 only.
-- Wire contract 14. Controller first, then masters, then exits. The controller store gains a column: the controller binary cannot be rolled back past this release.
-- Plan output masks every REALITY private key in an xray config, not only the first.
+- Wire contract 14 (13 brought several masters, 14 brings exit-initiated REALITY). Upgrade the controller, then every master, then the exits. An exit on an older agent keeps serving the master in slot 0 only. The controller store is migrated: see the warning at the top of this release.
+- `deploy-master.sh` stops the controller and copies its store to `<store>.prev` before installing a new controller, and restores that copy with the previous binary when the new one does not start. `STATE_DB` overrides the store path (default `/var/lib/wgfleet/state.db`).
+- Plan output masks every secret in an xray config: all REALITY private keys, SOCKS passwords, VLESS ids and short-ids.
 - mihomo on the masters is v1.19.32 (was v1.19.30): fixes for AmneziaWG 3.x tunnels and WireGuard start-up. The image change restarts mihomo once on every master that does not pin `mihomo_tag`; client connections drop for a few seconds.
 - wgfleet installs wgcf 2.3.1 (was 2.2.32) on exits, for WARP registration against the current Cloudflare API. Running WARP interfaces are not touched.
 - An exit on the new agent edits its master peers in place and checks them against the kernel on every pass; adding or removing a master no longer restarts the interface. An exit on an older agent still restarts it.
@@ -117,7 +144,7 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
     **Before the upgrade**
 
-    - Take a controller backup: `wgfleet-controller --backup`. The first start migrates the store (existing AmneziaWG credentials become devices); an older controller refuses to open the migrated database, so going back means restoring that backup.
+    - Take a controller backup: `wgfleet-controller --backup <file>`. The first start migrates the store (existing AmneziaWG credentials become devices); an older controller refuses to open the migrated database, so going back means restoring that backup.
     - Run `wgfleet-controller --check-config` on your manifest. A new warning names every master whose `exclude_from_tunnel` hides the client portal or the mgmt overlay from AmneziaWG — devices there cannot refresh their subscription over AmneziaWG.
     - Check what is listed in `client_admin_ports`: those ports are now reachable by VLESS clients too, not only AmneziaWG clients. The portal port must be there for subscriptions to refresh.
 
