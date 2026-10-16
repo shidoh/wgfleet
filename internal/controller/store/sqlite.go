@@ -285,6 +285,12 @@ func (s *SQLiteStore) DeleteNode(ctx context.Context, id string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM exit_auto_suspend WHERE exit_id = ?`, id); err != nil {
 		return fmt.Errorf("delete node %q: auto-suspend record: %w", id, err)
 	}
+	// A bridge's UUID and short-id at a portal are its credential: a node
+	// re-admitted under the same name, at either end, is issued new ones.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM reality_portal_ids WHERE master_id = ? OR exit_id = ?`, id, id); err != nil {
+		return fmt.Errorf("delete node %q: reality portal ids: %w", id, err)
+	}
 	// The tombstone, in the same transaction: a delete that succeeded without it
 	// is the bug this table exists to close.
 	if _, err := tx.ExecContext(ctx,

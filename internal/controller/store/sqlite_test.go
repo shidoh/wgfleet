@@ -1012,3 +1012,40 @@ func TestEnsureRealityPortalIDsKeepsTheFirst(t *testing.T) {
 		t.Error("empty master accepted")
 	}
 }
+
+// A bridge's UUID and short-id at a portal are its credential; a node re-admitted
+// under the same name, at either end of the pair, must be issued new ones.
+func TestDeleteNodeDropsRealityPortalIDs(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	for _, id := range []string{"m1", "e1"} {
+		n := sampleNode()
+		n.ID = id
+		if err := s.UpsertNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, pair := range [][2]string{{"m1", "e1"}, {"m1", "e2"}, {"m2", "e1"}} {
+		if _, _, err := s.EnsureRealityPortalIDs(ctx, pair[0], pair[1], "old-"+pair[0]+pair[1], "0a0b"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.DeleteNode(ctx, "e1"); err != nil {
+		t.Fatal(err)
+	}
+	for pair, wantNew := range map[[2]string]bool{{"m1", "e1"}: true, {"m2", "e1"}: true, {"m1", "e2"}: false} {
+		u, _, err := s.EnsureRealityPortalIDs(ctx, pair[0], pair[1], "new", "0c0d")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := u == "new"; got != wantNew {
+			t.Errorf("%v after deleting e1: uuid %q, want reissued=%v", pair, u, wantNew)
+		}
+	}
+	if err := s.DeleteNode(ctx, "m1"); err != nil {
+		t.Fatal(err)
+	}
+	if u, _, _ := s.EnsureRealityPortalIDs(ctx, "m1", "e2", "newer", "0e0f"); u != "newer" {
+		t.Errorf("m1/e2 after deleting m1: uuid %q, want reissued", u)
+	}
+}
