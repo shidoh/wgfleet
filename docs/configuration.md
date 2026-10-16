@@ -296,7 +296,7 @@ run warm and the live path can be switched instantly.
 | `fleet.exits[].transports.reality.allow_ipv6` | bool | `false` | Let xray resolve over IPv6. Leave off: a dest that resolves AAAA-only black-holes on an IPv4-only exit |
 | `fleet.exits[].transports.reality.xhttp_path` | string | `/<short-id>` | XHTTP path |
 | `fleet.exits[].transports.reality.image` | string | pinned xray | Container image |
-| `fleet.exits[].transports.reality.exit_initiated` | bool | `false` | The exit dials every master's `reality_portal` instead of listening; the exit's REALITY port closes. Every master needs a public IPv4 reachable by the exit. `mode`, `xhttp_path`, `mux`, `empty_sni` on the exit are rejected with it. `fingerprint` applies to the exit's dial. Switch it while `awg` is the active transport |
+| `fleet.exits[].transports.reality.exit_initiated` | bool | `false` | The exit dials every master's `reality_portal` instead of listening; the exit's REALITY port closes. Every master needs a public IPv4 reachable by the exit. `mode`, `xhttp_path`, `mux`, `empty_sni` on the exit are rejected with it. `fingerprint` applies to the exit's dial; `listen_port`, `sni`, `dest_domain`, `dest_port` apply only with the flag off. Switch it while `awg` is the active transport |
 
 ### `firewall`
 
