@@ -676,6 +676,24 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			}
 		}
 
+		// The portal key (ADR-0038), published unconditionally for the same reason:
+		// an exit can enter the exit-initiated REALITY mode with no master-side step.
+		// A failed publish is not fatal — nothing on this master depends on the
+		// controller knowing the key, and a controller that predates the key type
+		// must not take the whole pass down.
+		_, rpPub, rpEph, rpErr := a.ensureRealityPortalKey(!plan)
+		if rpErr != nil {
+			return fmt.Errorf("ensure reality portal key: %w", rpErr)
+		}
+		if rpEph && plan {
+			a.log.Info("reality portal key absent; using an ephemeral key for the plan (apply would generate one)")
+		}
+		if !plan && !fromCache {
+			if err := a.client.PublishRealityPortalKey(ctx, rpPub); err != nil {
+				a.log.Warn("publish reality portal key failed; exits cannot dial this master's portal until it succeeds", "err", err)
+			}
+		}
+
 		// The client-facing WireGuard identity, resolved the same way and for the
 		// same reason: publish it unconditionally so the controller can render client
 		// configs the moment the operator hands the leg over. On a master that still
@@ -1293,15 +1311,28 @@ func (a *agent) ensureLifelineKey(persist bool) (kp wg.KeyPair, ephemeral bool, 
 // persist=false (plan) it loads an existing key or generates an ephemeral one just
 // for rendering, so dry-run never writes anything.
 func (a *agent) ensureClientVlessKey(persist bool) (priv, pub string, ephemeral bool, err error) {
+	return ensureXrayKey(a.paths.ClientVLESSKey, "client vless", persist)
+}
+
+// ensureRealityPortalKey resolves the master's REALITY portal keypair
+// (ADR-0038) the same way: persisted on apply, ephemeral in plan.
+func (a *agent) ensureRealityPortalKey(persist bool) (priv, pub string, ephemeral bool, err error) {
+	return ensureXrayKey(a.masterPaths().RealityPortalKey, "reality portal", persist)
+}
+
+// ensureXrayKey loads or creates a REALITY x25519 key at path when persist is
+// set; otherwise it reads an existing key or returns an ephemeral one without
+// writing anything.
+func ensureXrayKey(path, what string, persist bool) (priv, pub string, ephemeral bool, err error) {
 	if persist {
-		priv, pub, _, err = xray.LoadOrCreateKey(a.paths.ClientVLESSKey)
+		priv, pub, _, err = xray.LoadOrCreateKey(path)
 		return priv, pub, false, err
 	}
-	if data, rerr := os.ReadFile(a.paths.ClientVLESSKey); rerr == nil {
+	if data, rerr := os.ReadFile(path); rerr == nil {
 		p := strings.TrimSpace(string(data))
 		pk, perr := xray.PublicKeyFor(p)
 		if perr != nil {
-			return "", "", false, fmt.Errorf("stored client vless key invalid: %w", perr)
+			return "", "", false, fmt.Errorf("stored %s key invalid: %w", what, perr)
 		}
 		return p, pk, false, nil
 	}

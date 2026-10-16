@@ -61,10 +61,12 @@ func TestMasterTeardownWipesEveryNodeSecret(t *testing.T) {
 	}
 	joined := strings.Join(targets, "\n")
 	for _, secret := range []string{
-		paths.ClientVLESS,    // REALITY private key + every issued client UUID
-		paths.ClientVLESSKey, // the master's client-facing REALITY key
-		paths.WGEasyDB,       // wg-easy's client database, keys included
-		paths.ClientWGConf,   // interface key + every client preshared key
+		paths.ClientVLESS,      // REALITY private key + every issued client UUID
+		paths.ClientVLESSKey,   // the master's client-facing REALITY key
+		paths.RealityPortal,    // portal config: REALITY private key + bridge UUIDs
+		paths.RealityPortalKey, // the master's portal REALITY key
+		paths.WGEasyDB,         // wg-easy's client database, keys included
+		paths.ClientWGConf,     // interface key + every client preshared key
 		paths.ClientWGKey,
 		ClaimPathFor(paths.ClientWGConf),
 	} {

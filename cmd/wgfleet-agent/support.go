@@ -258,6 +258,7 @@ func gatherSecrets(role domain.Role, paths exit.Paths, mp master.Paths) []string
 	}
 	if role == domain.RoleMaster {
 		add(readTrimmedFile(paths.ClientVLESSKey))
+		add(readTrimmedFile(mp.RealityPortalKey))
 		if pass, err := wgeasy.ReadAdminPassword(mp.WGEasyAdmin); err == nil {
 			add(pass)
 		}

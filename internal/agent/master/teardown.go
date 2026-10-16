@@ -109,6 +109,12 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 		{p.paths.ClientVLESS, "client vless config (REALITY key + client UUIDs)"},
 		{p.paths.ClientVLESSYML, "client vless compose file"},
 		{p.paths.ClientVLESSKey, "client vless REALITY private key"},
+		// The portal (ADR-0038): its config holds the portal REALITY private key and
+		// every bridge UUID; the key file is that key. They outlive a portal that is
+		// merely down, so only teardown removes them.
+		{p.paths.RealityPortal, "reality portal config (REALITY key + bridge UUIDs)"},
+		{p.paths.RealityPortalYML, "reality portal compose file"},
+		{p.paths.RealityPortalKey, "reality portal REALITY private key"},
 		// The client interface config holds the master's client-facing private key
 		// AND every issued client's preshared key; the key file holds that same
 		// identity. Both must die with the node for the same reason the vless key
