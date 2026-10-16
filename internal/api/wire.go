@@ -92,7 +92,12 @@ const (
 	// exists: a v12 exit would restart awg0 for the new peer and could report one
 	// endpoint for two masters, so the controller renders such an exit nothing but
 	// the base master, exactly as before. Deploy the controller FIRST.
-	WireContractVersion uint32 = 13
+	// v14 adds RealityServerSpec.bridge, RealityTunnel.reverse and
+	// MasterSpec.reality_portal — the exit-initiated REALITY mode. A v13 exit drops
+	// the bridge and opens no flow to any master; a v13 master drops the portal and
+	// keeps dialling an exit whose inbound is gone. Deploy the controller FIRST
+	//.
+	WireContractVersion uint32 = 14
 
 	// WireClientWG is the wire version that introduced MasterSpec.client_wg. The
 	// controller refuses to render the client interface for a master below it: such
@@ -153,6 +158,14 @@ const (
 	// Named rather than compared against WireContractVersion so a later bump does
 	// not re-close it.
 	WireMasterPeers uint32 = 13
+
+	// WireRealityReverse is the wire version that introduced the exit-initiated
+	// REALITY mode (RealityServerSpec.bridge, RealityTunnel.reverse,
+	// MasterSpec.reality_portal). The controller puts an exit in the mode only
+	// when it is at or above it, and gives a master a reverse tunnel only when that
+	// master is too. Named rather than compared against WireContractVersion so a
+	// later bump does not re-close it.
+	WireRealityReverse uint32 = 14
 
 	// MinSupportedWire is the oldest agent wire version the controller will serve
 	// a spec to. Agents below it are refused (fail-safe) and, where possible,

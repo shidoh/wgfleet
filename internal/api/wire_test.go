@@ -68,9 +68,15 @@ func indexOf(s, sub string) int {
 
 // Guard: the wire version must never drift by accident. Changing it is a
 // deliberate act with a rollout consequence, so it takes a deliberate test edit.
-func TestWireContractVersionIs13(t *testing.T) {
-	if WireContractVersion != 13 {
-		t.Fatalf("WireContractVersion = %d, want 13 (bumped for StatusReport.master_peers — an exit's per-master-peer report)", WireContractVersion)
+func TestWireContractVersionIs14(t *testing.T) {
+	if WireContractVersion != 14 {
+		t.Fatalf("WireContractVersion = %d, want 14 (bumped for the exit-initiated REALITY bridge and the master's portal)", WireContractVersion)
+	}
+}
+
+func TestRealityReverseGateIsNamedAndCurrent(t *testing.T) {
+	if WireRealityReverse != WireContractVersion {
+		t.Errorf("WireRealityReverse = %d but the contract is at %d", WireRealityReverse, WireContractVersion)
 	}
 }
 
@@ -78,8 +84,9 @@ func TestWireContractVersionIs13(t *testing.T) {
 // feature must have a named constant, because MinSupportedWire is 1 and therefore
 // the bump ALONE refuses nobody: the gate is the named comparison, never the number.
 func TestClientIPv6GateIsNamedAndCurrent(t *testing.T) {
-	if WireMasterPeers != WireContractVersion {
-		t.Errorf("WireMasterPeers = %d but the contract is at %d", WireMasterPeers, WireContractVersion)
+	if WireMasterPeers >= WireContractVersion {
+		t.Errorf("WireMasterPeers = %d but the contract is at %d; the gate must name the version that introduced the field",
+			WireMasterPeers, WireContractVersion)
 	}
 	if WireAWGExitInitiated >= WireContractVersion {
 		t.Errorf("WireAWGExitInitiated = %d but the contract is at %d; the gate must name the version that introduced the field",
