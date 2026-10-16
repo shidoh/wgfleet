@@ -128,3 +128,19 @@ func applyFilesForTest(t *testing.T, p reconcile.Planner, spec domain.NodeSpec) 
 		t.Fatal(err)
 	}
 }
+
+// A stopped bridge with a new config is brought up, not restarted: compose
+// restart leaves a stopped container stopped.
+func TestXrayPlannerStartsAStoppedBridgeOnConfigChange(t *testing.T) {
+	p := bridgePlanner(t, false)
+	applyFilesForTest(t, p, bridgeExitSpec())
+	spec := bridgeExitSpec()
+	spec.Reality.Bridge.Portals[0].ServerName = "a.example"
+	acts, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasExec(acts, "up -d") || hasExec(acts, "restart") {
+		t.Errorf("stopped bridge with a new config: %+v", acts)
+	}
+}

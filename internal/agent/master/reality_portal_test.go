@@ -269,3 +269,19 @@ func TestRealityPortalPlannerSkipsDockerWithoutAComposeFile(t *testing.T) {
 		t.Fatalf("asked docker = %v, acts %+v", asked, acts)
 	}
 }
+
+// `docker compose restart` does not start a stopped container. A portal that is
+// down (after a boot, with restart "no") and gets a new config must be brought
+// up, not "restarted" into staying down for another pass (seen on the stand).
+func TestRealityPortalPlannerStartsAStoppedPortalOnConfigChange(t *testing.T) {
+	r := newPortalRig(t)
+	applyFiles(t, r.p, portalSpec(t))
+	spec := portalSpec(t)
+	spec.Master.RealityPortal.Clients = append(spec.Master.RealityPortal.Clients,
+		domain.RealityPortalClient{Exit: "exit-2", UUID: "22222222-0000-4000-8000-000000000002", ShortID: "0c0d"})
+	r.up = false
+	acts := r.plan(t, spec)
+	if !hasExecContaining(acts, "up", "-d") || hasExecContaining(acts, "restart") {
+		t.Errorf("stopped portal with a new config: %+v", acts)
+	}
+}

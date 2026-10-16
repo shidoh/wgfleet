@@ -102,7 +102,9 @@ func (p xrayPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcil
 	case composeFile.Changes():
 		actions = append(actions, reconcile.ExecAction("bring xray stack up",
 			"docker", "compose", "-f", p.composePath, "up", "-d"))
-	case cfgFile.Changes():
+	case cfgFile.Changes() && p.isUp(ctx):
+		// Only a running container: compose restart leaves a stopped one stopped,
+		// and the case below brings it up instead.
 		actions = append(actions, reconcile.ExecAction("restart reality inbound",
 			"docker", "compose", "-f", p.composePath, "restart", "xray"))
 	case !p.isUp(ctx):

@@ -127,8 +127,9 @@ func (p realityPortalPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([
 	case composeFile.Changes():
 		actions = append(actions, reconcile.ExecAction("bring reality portal up",
 			"docker", "compose", "-f", p.composePath, "up", "-d"))
-	case cfgFile.Changes():
-		// xray has no hot reload: every bridge redials, ~7 s.
+	case cfgFile.Changes() && p.isUp(ctx):
+		// xray has no hot reload: every bridge redials, ~7 s. Only a running
+		// container: compose restart leaves a stopped one stopped.
 		actions = append(actions, reconcile.ExecAction("restart reality portal",
 			"docker", "compose", "-f", p.composePath, "restart", "xray"))
 	case !p.isUp(ctx):
