@@ -51,6 +51,11 @@ SCP_LIMIT="${SCP_LIMIT:-}"
 # On-the-wire compression. Go binaries compress well (~50%), so this roughly
 # halves both transfer time and queue pressure. Set 0 to disable.
 SCP_COMPRESS="${SCP_COMPRESS:-1}"
+# The controller's store (controller.yaml `store:`). Snapshotted before the new
+# controller first opens it: that open applies schema migrations, and an older
+# controller refuses a store a newer one has migrated — rolling back the binary
+# alone would leave neither of them able to start.
+STATE_DB="${STATE_DB:-/var/lib/wgfleet/state.db}"
 
 log()  { printf '\n\033[1;32m[deploy-master]\033[0m %s\n' "$*"; }
 warn() { printf '\n\033[1;33m[deploy-master]\033[0m %s\n' "$*"; }
@@ -140,7 +145,10 @@ deploy_one() {
   if [ "$PLAN" -eq 1 ]; then
     warn "[plan] would scp $dist -> $MASTER:$staged (sha256 ${want:0:12})"
     warn "[plan] would: verify sha256, snapshot /usr/local/bin/$bin -> .prev, install, restart $svc"
-    warn "[plan] would: roll back to .prev if $svc does not come up"
+    if [ "$svc" = wgfleet-controller ]; then
+      warn "[plan] would: stop $svc and snapshot $STATE_DB -> $STATE_DB.prev before the new binary opens it"
+    fi
+    warn "[plan] would: roll back to .prev (and the store snapshot) if $svc does not come up"
     return 0
   fi
   local scp_opts="-q"
@@ -171,6 +179,22 @@ deploy_one() {
       sudo cp -f '/usr/local/bin/${bin}' '/usr/local/bin/${bin}.prev'
     fi
 
+    # The controller's store, snapshotted with the controller stopped: a copy of a
+    # live SQLite file (with its -wal beside it) is not a consistent database. The
+    # new binary migrates the store on its first open and the old one refuses a
+    # migrated store, so the binary rollback below needs this snapshot to work.
+    db_snap=''
+    if [ '$svc' = wgfleet-controller ] && sudo test -f '$STATE_DB'; then
+      sudo systemctl stop '$svc'
+      sudo rm -f '$STATE_DB.prev-wal'
+      sudo cp -f '$STATE_DB' '$STATE_DB.prev'
+      # A WAL left by an unclean stop holds committed rows; SQLite reads
+      # <file>-wal, so beside the copy it is that copy's own WAL.
+      if sudo test -s '$STATE_DB-wal'; then sudo cp -f '$STATE_DB-wal' '$STATE_DB.prev-wal'; fi
+      db_snap=1
+      echo \"  store snapshotted to $STATE_DB.prev\"
+    fi
+
     sudo install -o root -g root -m 0755 '$staged' '/usr/local/bin/${bin}.new'
     sudo mv -f '/usr/local/bin/${bin}.new' '/usr/local/bin/${bin}'
     rm -f '$staged'
@@ -191,6 +215,16 @@ deploy_one() {
         # A rename is atomic and never touches the running image.
         sudo install -o root -g root -m 0755 '/usr/local/bin/${bin}.prev' '/usr/local/bin/${bin}.rollback'
         sudo mv -f '/usr/local/bin/${bin}.rollback' '/usr/local/bin/${bin}'
+        # The new binary may already have migrated the store; the old one refuses
+        # it. Put the pre-upgrade store back with the binary. -wal/-shm belong to
+        # the migrated file and would be replayed onto the snapshot, so they go.
+        if [ -n \"\$db_snap\" ]; then
+          sudo systemctl stop '$svc' || true
+          sudo rm -f '$STATE_DB-wal' '$STATE_DB-shm'
+          sudo cp -f '$STATE_DB.prev' '$STATE_DB'
+          if sudo test -f '$STATE_DB.prev-wal'; then sudo cp -f '$STATE_DB.prev-wal' '$STATE_DB-wal'; fi
+          echo \"  store restored from $STATE_DB.prev\" >&2
+        fi
         sudo systemctl restart '$svc'
         sleep 2
         echo \"  after rollback: \$(systemctl is-active $svc)\" >&2
