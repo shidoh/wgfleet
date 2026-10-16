@@ -955,6 +955,98 @@ The exit's keepalive on an exit-initiated tunnel is 5–9 s (15–28 s otherwise
 
 Remove `exit_initiated` (and `master_port`) and restart the controller. The master stops pinning on its next pass; the endpoint stays in the exit's kernel until the next interface restart, which does no harm.
 
+## Exit-initiated REALITY
+
+For an exit whose REALITY tunnel dies when the master opens the TCP connection and lives when the exit opens it. The exit's xray dials every master's portal and keeps the connections up; the master sends client streams back down them. The exit listens on no REALITY port.
+
+### When to switch it on
+
+All of these on one exit:
+
+- REALITY to the exit fails from the RU masters; `xray tls ping` to its port from a master times out after the ClientHello.
+- On the exit, `tcpdump -ni any tcp and src host <master public IP> and dst port <reality port>` shows the SYN and the first data segment, nothing after.
+- From the exit, `nc -zv -w 5 <master public IP> 22` connects.
+
+### Keys
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `fleet.exits[].transports.reality.exit_initiated` | bool | `false` | Per exit. Needs `transports.reality.enabled` |
+| `fleet.masters[].reality_portal.listen_port` | int | derived, `40000`–`60000` | The portal's TCP port on every master. Opened world-facing by the agent |
+| `fleet.masters[].reality_portal.sni` / `dest_domain` / `dest_port` | | fleet default | Camouflage of the portal. **Must support X25519MLKEM768** (`xray tls ping <host>`) |
+
+With the flag set, these keys of the exit are rejected: `transports.reality.mode`, `xhttp_path`, `mux`, `empty_sni`. `transports.reality.fingerprint` applies to the exit's dial.
+
+Requirements:
+
+| Requirement | Without it |
+|---|---|
+| Controller on this release (wire 14) | The flag is unknown |
+| Exit agent on wire 14 | The exit keeps listening; controller journal: `exit-initiated REALITY not rendered` |
+| Master agent on wire 14, its portal key published, a public IPv4 | That master gets no REALITY tunnel to the exit; its AmneziaWG tunnel stays. Controller journal: `master not ready` with the reason |
+| The provider's firewall in front of the master passes TCP to `reality_portal.listen_port` | The exit's bridge never connects |
+| `ss` with socket kill support on the exit (`ss -K`; iproute2 and a kernel with `CONFIG_INET_DIAG_DESTROY`) | A flow frozen one way recovers in ~100 s instead of ~30 s |
+
+Client configs do not change. Nothing to reissue.
+
+### Switch on
+
+Switch while AmneziaWG is the exit's active transport: REALITY drops until both agents converge.
+
+```yaml
+fleet:
+  exits:
+    - name: <exit>
+      transports:
+        awg:
+          enabled: true
+        reality:
+          enabled: true
+          exit_initiated: true
+      active_transport: awg
+```
+
+```bash
+wgfleet-controller --check-config -config /etc/wgfleet/controller.yaml
+systemctl restart wgfleet-controller
+```
+
+Then make REALITY active from the exit's node page and watch the checks below.
+
+### Check
+
+| Where | Command | Expect |
+|---|---|---|
+| Master | `docker ps --filter name=xray-portal` | running |
+| Master | `ss -ltnH 'sport = :<portal port>'` | a listener |
+| Master | `ss -tnH state established 'sport = :<portal port>'` | one or more connections from the exit's IP |
+| Exit | `ss -tnH state established dst <master public IP>` | connections to the portal port |
+| Exit | `curl -s <mgmt>:9301/metrics \| grep reality_bridge` | `reality_bridge_connected{master=…} 1` for every master |
+| Exit | `ss -ltnH 'sport = :443'` | nothing |
+| Node page of the exit | REALITY block | `exit dials, no open port` and one `Dials <master>` line per master |
+
+### Symptoms
+
+| Symptom | Look at | Do |
+|---|---|---|
+| Alert `WgfleetRealityBridgeDown` for one master | that master: `docker logs xray-portal --tail 50`, health check `reality-portal` | portal down: the agent restarts it within one pass. Portal up, no connection: TCP from the exit to the portal port is blocked |
+| `reality_bridge_kills_total` grows | exit agent journal: `bridge watchdog: killed a socket` | one-way freezes on that path; the bridge redials each time. Steady growth: switch the exit's active transport to AWG |
+| Exit health check `reality-bridge` failing | exit: `docker logs xray --tail 50` | no master reachable; switch the exit's active transport to AWG |
+| Master health check `reality-portal` failing at boot | master agent journal: `SOCKS address … is not on this host yet` | wait for the namespace link; the agent starts the portal on the next pass |
+| REALITY tunnel absent on one master in the console | controller journal: `master not ready` | the reason is in the message: wire, portal key or public IPv4 |
+
+### Switch off
+
+Make AmneziaWG active, remove `exit_initiated`, restart the controller. The exit listens on its REALITY port again, the masters dial it, and a master with no exit in the mode stops `xray-portal`. The portal key stays on the master until decommission.
+
+### Rollback
+
+| What | How |
+|---|---|
+| The mode | Remove the flag (above) |
+| Controller binary | Not possible past this release: the store gains a column the older controller refuses |
+| A master agent to wire 13 | `docker compose -f /etc/wgfleet/reality-portal/docker-compose.yml down` on that master first; the older agent does not know the container |
+
 ## Client interception in mihomo's network namespace
 
 mihomo runs in its own network namespace so its transparent-proxy reply sockets
