@@ -981,6 +981,13 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			}
 		}
 		realityRenderable := hasReality && haveIP && exitNode.RealityPublicKey != ""
+		// Exit-initiated (ADR-0038): the exit dials this master's portal, so neither
+		// its address nor its REALITY key matters here — only whether this master is
+		// ready to be dialled. Not ready costs this tunnel alone.
+		reverse := hasReality && b.realityReverse(exit, exitNode)
+		if reverse {
+			_, realityRenderable = b.portalTarget(exit, master, masterNode)
+		}
 		realityActive := active == domain.TransportRealityXHTTP && realityRenderable
 
 		if hasAWG {
@@ -1011,7 +1018,15 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 				MasterAddr:      armed,
 			})
 		}
-		if realityRenderable {
+		if realityRenderable && reverse {
+			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
+				Name:      exit.Name + "-reality",
+				Transport: domain.TransportRealityXHTTP,
+				Reality:   &domain.RealityTunnel{Reverse: true},
+				Drained:   baseDrained || !realityActive,
+				Reserve:   isReserve,
+			})
+		} else if realityRenderable {
 			rp := b.realityFor(exit, iface.anchor)
 			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
 				Name:      exit.Name + "-reality",
