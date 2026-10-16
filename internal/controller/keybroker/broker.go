@@ -657,7 +657,16 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	// reality transport. The shared identifiers (UUID/short-id) and camouflage match
 	// the master's vless proxy because both call realityFor with the same inputs; the
 	// exit generates its own x25519 keypair locally and publishes only the pubkey.
-	if spec.HasTransport(domain.TransportRealityXHTTP) {
+	if spec.HasTransport(domain.TransportRealityXHTTP) && b.realityReverse(exit, exitNode) {
+		// Exit-initiated (ADR-0038): no inbound, no open port; the exit dials every
+		// ready master's portal instead.
+		bridge, berr := b.bridgeFor(ctx, exit)
+		if berr != nil {
+			return domain.NodeSpec{}, berr
+		}
+		rp := b.realityFor(exit, iface.anchor)
+		spec.Reality = &domain.RealityServerSpec{AllowIPv6: rp.AllowIPv6, Image: rp.Image, Bridge: bridge}
+	} else if spec.HasTransport(domain.TransportRealityXHTTP) {
 		rp := b.realityFor(exit, iface.anchor)
 		spec.Reality = &domain.RealityServerSpec{
 			ListenPort: rp.Port, UUID: rp.UUID, ShortID: rp.ShortID,

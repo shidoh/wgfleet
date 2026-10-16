@@ -104,3 +104,37 @@ func (b *Broker) portalTargets(ctx context.Context, exit config.ExitConfig) ([]p
 func portalIDs(exitName, masterName string) (uuid, shortID string) {
 	return deriveRealityIDs(fmt.Sprintf("%s|%s|%s|reality-portal", awgSalt, masterName, exitName))
 }
+
+// portalCamouflage resolves a master's portal SNI and dest: the master's
+// reality_portal block, then the fleet default, then the safe built-in.
+func (b *Broker) portalCamouflage(m config.MasterConfig) (sni, dest string) {
+	r := m.RealityPortal
+	sni = firstNonEmpty(r.SNI, r.DestDomain, b.fleet.RealityDefaultSNI, DefaultRealitySNI)
+	dest = firstNonEmpty(r.DestHostPort(), b.fleet.RealityDefaultDest, sni+":443")
+	return sni, dest
+}
+
+// bridgeFor builds the exit's bridge: one portal per ready master. With none
+// ready the list is empty and the exit dials nothing — it never falls back to
+// listening, which is the flow the filter kills.
+func (b *Broker) bridgeFor(ctx context.Context, exit config.ExitConfig) (*domain.RealityBridgeSpec, error) {
+	targets, err := b.portalTargets(ctx, exit)
+	if err != nil {
+		return nil, err
+	}
+	bridge := &domain.RealityBridgeSpec{}
+	for _, t := range targets {
+		uuid, sid := portalIDs(exit.Name, t.Master.Name)
+		sni, _ := b.portalCamouflage(t.Master)
+		bridge.Portals = append(bridge.Portals, domain.RealityPortalPeer{
+			Master:      t.Master.Name,
+			Address:     t.Addr.String(),
+			PublicKey:   t.PublicKey,
+			UUID:        uuid,
+			ShortID:     sid,
+			ServerName:  sni,
+			Fingerprint: exit.Transports.Reality.Fingerprint,
+		})
+	}
+	return bridge, nil
+}
