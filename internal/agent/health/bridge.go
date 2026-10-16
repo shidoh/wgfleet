@@ -113,3 +113,16 @@ func bridgeProbe(bridge *domain.RealityBridgeSpec, run runner) Probe {
 		return ok(fmt.Sprintf("connected to %d/%d portal(s): %s", len(up), len(bridge.Portals), strings.Join(up, ",")), since(start))
 	}
 }
+
+// ReadBridgeConnections reads the bridge's established connections per master
+// from the live socket table; nil outside the mode.
+func ReadBridgeConnections(ctx context.Context, bridge *domain.RealityBridgeSpec) (map[string]int, error) {
+	if bridge == nil || len(bridge.Portals) == 0 {
+		return nil, nil
+	}
+	out, err := runCmd(ctx, "ss", "-tnH", "state", "established")
+	if err != nil {
+		return nil, err
+	}
+	return BridgeConnections(out, bridge), nil
+}

@@ -319,6 +319,14 @@ func run() error {
 			slog.Warn("certificate expiry gauge unavailable", "node", cfg.Agent.NodeID, "err", err)
 		}
 		metrics.NewFWCollector(reg, cfg.Agent.NodeID, string(role), nil)
+		if role == domain.RoleExit {
+			// Per-master state of the exit-initiated REALITY bridge (ADR-0038); silent
+			// outside the mode.
+			metrics.NewBridgeCollector(reg, cfg.Agent.NodeID, string(role),
+				func(ctx context.Context) (map[string]int, error) {
+					return health.ReadBridgeConnections(ctx, a.realityBridge.Load())
+				}, a.bridgeWatchdog.Kills)
+		}
 		if role == domain.RoleMaster {
 			metrics.NewAWGPinCollector(reg, cfg.Agent.NodeID, string(role), nil, a.exitNameByIP)
 			// Per-client traffic of the client-facing VLESS inbound, from xray's
