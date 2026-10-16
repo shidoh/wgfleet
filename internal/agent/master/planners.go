@@ -591,6 +591,7 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 		// converge at different times.
 		NetnsHostIface: netnsVethIface(spec),
 		PortalSocks:    portalSocksFirewall(spec),
+		PortalUDPRelay: ephemeralPortRange(),
 	})
 	if err != nil {
 		return nil, err

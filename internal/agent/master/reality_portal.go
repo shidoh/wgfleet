@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/compose"
@@ -177,6 +179,26 @@ func portalSocksFirewall(spec domain.NodeSpec) netip.AddrPort {
 		return netip.AddrPort{}
 	}
 	return netip.AddrPortFrom(addr, uint16(spec.Master.RealityPortal.ResolvedSocksPort()))
+}
+
+// ephemeralPortRange reads the host's ip_local_port_range, which xray picks its
+// SOCKS UDP relay ports from; zero when unreadable (the renderer then assumes
+// Linux's default).
+func ephemeralPortRange() [2]uint16 {
+	data, err := os.ReadFile("/proc/sys/net/ipv4/ip_local_port_range")
+	if err != nil {
+		return [2]uint16{}
+	}
+	f := strings.Fields(string(data))
+	if len(f) != 2 {
+		return [2]uint16{}
+	}
+	lo, err1 := strconv.ParseUint(f[0], 10, 16)
+	hi, err2 := strconv.ParseUint(f[1], 10, 16)
+	if err1 != nil || err2 != nil || lo == 0 || hi < lo {
+		return [2]uint16{}
+	}
+	return [2]uint16{uint16(lo), uint16(hi)}
 }
 
 // PortalSocksPassword derives an exit's SOCKS password from the portal private

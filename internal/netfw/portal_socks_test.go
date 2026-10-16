@@ -17,19 +17,21 @@ func portalFWInput() RenderInput {
 }
 
 // mihomo in its namespace dials the portal's SOCKS inbound on the host end of
-// the link, TCP for streams and UDP for ASSOCIATE datagrams. Exactly that and
-// nothing wider: a wholesale accept on the veth once let every client reach the
-// controller.
+// the link: TCP for streams; UDP to the SOCKS port and to the relay port xray
+// answers an ASSOCIATE with — a fresh one from the host's ephemeral range each
+// time (seen on the stand: 36934, 56860, 43726). Nothing wider: a wholesale
+// accept on the veth once let every client reach the controller.
 func TestPortalSocksAcceptIsExactlyTwoRules(t *testing.T) {
 	in := portalFWInput()
 	in.PortalSocks = netip.MustParseAddrPort("100.127.255.1:10808")
+	in.PortalUDPRelay = [2]uint16{32768, 60999}
 	out, err := RenderRuleset(in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
 		`iifname "mih-host" ip daddr 100.127.255.1 tcp dport 10808 accept`,
-		`iifname "mih-host" ip daddr 100.127.255.1 udp dport 10808 accept`,
+		`iifname "mih-host" ip daddr 100.127.255.1 udp dport { 10808, 32768-60999 } accept`,
 	}
 	for _, w := range want {
 		if strings.Count(out, w) != 1 {

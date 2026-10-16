@@ -153,6 +153,10 @@ type RenderInput struct {
 	// namespace link (ADR-0038). Set ⇒ mihomo in its namespace may reach exactly
 	// that address and port, TCP and UDP. Zero ⇒ no rule.
 	PortalSocks netip.AddrPort
+	// PortalUDPRelay is the port range xray picks a SOCKS UDP relay port from —
+	// the host's ephemeral range: xray answers each ASSOCIATE with a fresh port,
+	// not the SOCKS port. Zero ⇒ Linux's default 32768-60999.
+	PortalUDPRelay [2]uint16
 	// TProxyMark, when > 0 (master role), makes the input chain accept packets the
 	// TPROXY chain marked. It has to key on the MARK and not on a port: tproxy hands
 	// the datagram to a transparent socket without rewriting it, so it reaches INPUT
@@ -387,10 +391,14 @@ func RenderRuleset(in RenderInput) (string, error) {
 		// mihomo dials the reality portal's SOCKS inbound for every exit that dials
 		// this master (ADR-0038): TCP for streams, UDP for ASSOCIATE datagrams.
 		if in.PortalSocks.IsValid() {
-			for _, proto := range []string{"tcp", "udp"} {
-				fmt.Fprintf(&b, "\t\tiifname %q ip daddr %s %s dport %d accept\n",
-					in.NetnsHostIface, in.PortalSocks.Addr(), proto, in.PortalSocks.Port())
+			relay := in.PortalUDPRelay
+			if relay[0] == 0 || relay[1] < relay[0] {
+				relay = [2]uint16{32768, 60999}
 			}
+			fmt.Fprintf(&b, "\t\tiifname %q ip daddr %s tcp dport %d accept\n",
+				in.NetnsHostIface, in.PortalSocks.Addr(), in.PortalSocks.Port())
+			fmt.Fprintf(&b, "\t\tiifname %q ip daddr %s udp dport { %d, %d-%d } accept\n",
+				in.NetnsHostIface, in.PortalSocks.Addr(), in.PortalSocks.Port(), relay[0], relay[1])
 		}
 	}
 	b.WriteString("\t\tip saddr @whitelist accept\n")
