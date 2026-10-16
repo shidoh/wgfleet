@@ -56,7 +56,7 @@ func TestRenderBridge(t *testing.T) {
 	}
 	for _, want := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16",
 		"100.64.0.0/10", "0.0.0.0/8", "fc00::/7", "fe80::/10", "::1/128",
-		"::/128", "::ffff:0:0/96", "64:ff9b::/96", "fec0::/10", "192.0.0.0/24", "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4"} {
+		"::/128", "64:ff9b::/96", "fec0::/10", "192.0.0.0/24", "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4"} {
 		if !slices.Contains(blocked, want) {
 			t.Errorf("finalRules block list misses %s: %v", want, blocked)
 		}
@@ -137,5 +137,15 @@ func TestRenderBridgeRefusesAnInvalidBridge(t *testing.T) {
 				t.Fatal("rendered anyway")
 			}
 		})
+	}
+}
+
+// xray 26.6.22 refuses the whole config over an IPv4-mapped CIDR and the bridge
+// crash-loops; mapped addresses are matched against the IPv4 entries instead.
+func TestBridgeBlockListHasNoIPv4MappedRange(t *testing.T) {
+	for _, c := range bridgeBlocked {
+		if strings.HasPrefix(c, "::ffff:") {
+			t.Errorf("%s in the block list: xray rejects the config", c)
+		}
 	}
 }
