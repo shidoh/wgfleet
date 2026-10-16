@@ -35,9 +35,12 @@ type SSSocket struct {
 	Local, Peer netip.AddrPort
 	LastRcv     time.Duration
 	HasLastRcv  bool
-	// LastAck is the time since the socket last received an ACK.
+	// LastAck is the time since the socket last received an ACK; LastSnd since it
+	// last sent data.
 	LastAck    time.Duration
 	HasLastAck bool
+	LastSnd    time.Duration
+	HasLastSnd bool
 }
 
 // ParseSSEstablished reads `ss -tnH state established` output, with or without
@@ -67,6 +70,11 @@ func ParseSSEstablished(out string) []SSSocket {
 			if v, found := strings.CutPrefix(field, "lastrcv:"); found {
 				if ms, err := strconv.ParseUint(v, 10, 64); err == nil {
 					last.LastRcv, last.HasLastRcv = time.Duration(ms)*time.Millisecond, true
+				}
+			}
+			if v, found := strings.CutPrefix(field, "lastsnd:"); found {
+				if ms, err := strconv.ParseUint(v, 10, 64); err == nil {
+					last.LastSnd, last.HasLastSnd = time.Duration(ms)*time.Millisecond, true
 				}
 			}
 			if v, found := strings.CutPrefix(field, "lastack:"); found {

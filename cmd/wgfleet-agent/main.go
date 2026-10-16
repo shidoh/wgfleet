@@ -286,6 +286,7 @@ func run() error {
 		// One per process, like the tier selector and for the same reason: it has to
 		// remember how many times it has already tried and failed.
 		a.netnsMove = master.NewNetnsMove(a.masterPaths().NetnsMoveState)
+		a.portalWatchdog = master.NewPortalWatchdog(a.log, a.realityPortal.Load, a.exitNameByIP)
 	}
 	if role == domain.RoleExit {
 		a.bridgeWatchdog = exit.NewBridgeWatchdog(a.log, a.realityBridge.Load)
@@ -383,6 +384,9 @@ func run() error {
 	if a.bridgeWatchdog != nil && !*plan {
 		go a.bridgeWatchdog.Run(ctx)
 	}
+	if a.portalWatchdog != nil && !*plan {
+		go a.portalWatchdog.Run(ctx)
+	}
 
 	ticker := time.NewTicker(cfg.Interval())
 	defer ticker.Stop()
@@ -451,6 +455,10 @@ type agent struct {
 	// sockets between passes.
 	realityBridge  atomic.Pointer[domain.RealityBridgeSpec]
 	bridgeWatchdog *sockwatch.Watchdog
+	// realityPortal is the master's portal from its last applied spec, nil when
+	// it runs none; portalWatchdog kills portal sockets whose bridge is gone.
+	realityPortal  atomic.Pointer[domain.RealityPortalSpec]
+	portalWatchdog *sockwatch.Watchdog
 	// portalKey is the master's reality portal private key for this pass
 	// (ephemeral in plan mode); the portal and mihomo planners both need it.
 	portalKey string
@@ -1054,6 +1062,9 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		names := exitNamesByIP(spec.Master.ExitTunnels)
 		a.exitNames.Store(&names)
 		a.vlessInbound.Store(spec.Master.ClientVLESS != nil)
+		if !plan {
+			a.realityPortal.Store(spec.Master.RealityPortal)
+		}
 	}
 	if !fromCache {
 		repCtx, repCancel := context.WithTimeout(base, statusReportTimeout)
