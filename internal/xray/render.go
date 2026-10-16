@@ -402,17 +402,34 @@ func marshalAny(cfg any) (string, error) {
 	return string(b) + "\n", nil
 }
 
-// RedactConfig masks the REALITY private key for plan/dry-run output.
+// redactedKeys are the JSON keys whose string values are secrets in any config
+// rendered here: REALITY private keys and the portal's SOCKS passwords.
+var redactedKeys = []string{`"privateKey": "`, `"pass": "`}
+
+// RedactConfig masks every secret value for plan/dry-run output.
 func RedactConfig(cfg string) string {
-	const key = `"privateKey": "`
-	i := strings.Index(cfg, key)
-	if i < 0 {
-		return cfg
+	for _, key := range redactedKeys {
+		cfg = redactAll(cfg, key)
 	}
-	start := i + len(key)
-	end := strings.IndexByte(cfg[start:], '"')
-	if end < 0 {
-		return cfg
+	return cfg
+}
+
+func redactAll(cfg, key string) string {
+	var b strings.Builder
+	for {
+		i := strings.Index(cfg, key)
+		if i < 0 {
+			b.WriteString(cfg)
+			return b.String()
+		}
+		start := i + len(key)
+		end := strings.IndexByte(cfg[start:], '"')
+		if end < 0 {
+			b.WriteString(cfg)
+			return b.String()
+		}
+		b.WriteString(cfg[:start])
+		b.WriteString("REDACTED")
+		cfg = cfg[start+end:]
 	}
-	return cfg[:start] + "REDACTED" + cfg[start+end:]
 }

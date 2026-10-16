@@ -160,3 +160,32 @@ func TestRenderPortalWithoutClientsAdmitsNobody(t *testing.T) {
 		t.Errorf("shortIds = %v, want one unissued id", ids)
 	}
 }
+
+// Plans print the rendered config. The portal holds the private key and one
+// SOCKS password per exit; every one of them is masked, not just the first.
+func TestRedactConfigMasksAllSecrets(t *testing.T) {
+	out, err := RenderPortalConfig(portalInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	red := RedactConfig(out)
+	for _, secret := range []string{"cHJpdmF0ZQ", "pw-vn0", "pw-1cx0"} {
+		if strings.Contains(red, secret) {
+			t.Errorf("redacted config still holds %q:\n%s", secret, red)
+		}
+	}
+	if strings.Count(red, "REDACTED") != 3 {
+		t.Errorf("want 3 masked values:\n%s", red)
+	}
+	// The forward render's single key is still masked as before.
+	fwd, err := RenderConfig(RenderInput{
+		Spec:       domain.RealityServerSpec{ListenPort: 443, UUID: "u", ServerName: "a", Dest: "a:443"},
+		PrivateKey: "c2VjcmV0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := RedactConfig(fwd); strings.Contains(r, "c2VjcmV0") || !strings.Contains(r, `"privateKey": "REDACTED"`) {
+		t.Errorf("forward config not redacted:\n%s", r)
+	}
+}
