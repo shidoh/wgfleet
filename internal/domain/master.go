@@ -104,6 +104,9 @@ type MasterSpec struct {
 	// which is what an un-migrated fleet reports and what the cutover knob
 	// (fleet.masters[].client_awg.managed) leaves in place until it is flipped.
 	ClientWG *ClientWGSpec
+	// RealityPortal is the inbound exits in the exit-initiated REALITY mode dial
+	// (ADR-0038). nil ⇒ no exit uses this master that way and no portal runs.
+	RealityPortal *RealityPortalSpec `json:",omitempty"`
 }
 
 // ComposeSpec is the master's container-stack desired state, rendered by the
