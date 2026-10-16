@@ -1,0 +1,216 @@
+package keybroker
+
+import (
+	"bytes"
+	"context"
+	"log/slog"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/shidoh/wgfleet/internal/api"
+	"github.com/shidoh/wgfleet/internal/config"
+	"github.com/shidoh/wgfleet/internal/controller/store"
+	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/xray"
+)
+
+// reverseFleet is two masters with public addresses and one dual-transport exit
+// in the exit-initiated REALITY mode.
+func reverseFleet() config.FleetSection {
+	f := testFleet()
+	f.Masters[0].PublicIP = "203.0.113.1"
+	m2 := f.Masters[0]
+	m2.Name, m2.Slot, m2.PublicIP, m2.MgmtAddr = "master-xa-2", 1, "203.0.113.2", "10.20.25.253"
+	// Listed out of slot order on purpose: the bridge dials by slot.
+	f.Masters = []config.MasterConfig{m2, f.Masters[0]}
+	f.InterfaceAnchor = "master-xa-1"
+	f.Exits[0].Transports = config.TransportsConfig{
+		AWG:     config.AWGTransportConfig{Enabled: true},
+		Reality: config.RealityTransportConfig{Enabled: true, ExitInitiated: true},
+	}
+	return f
+}
+
+type reverseSetup struct {
+	b    *Broker
+	st   store.Store
+	logs *bytes.Buffer
+	pubs map[string]string
+}
+
+// newReverseSetup seeds both masters and the exit on wire 14, each master with a
+// published portal key. The gate stub is opened, as T20 will for good.
+func newReverseSetup(t *testing.T) reverseSetup {
+	t.Helper()
+	b, st := newBrokerWithFleet(t, reverseFleet())
+	var logs bytes.Buffer
+	b.log = slog.New(slog.NewTextHandler(&logs, nil))
+	b.reverseOpen = true
+	s := reverseSetup{b: b, st: st, logs: &logs, pubs: map[string]string{}}
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	seedNode(t, st, "master-xa-2", "10.20.25.253", "203.0.113.2", "/Lpxg7UgcxjrQcfYYl9CaqXDLy/bYSHQ3iD/KXnY1zU=", domain.RoleMaster)
+	seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+	for _, id := range []string{"master-xa-1", "master-xa-2", "exit-de-1"} {
+		setWireVersion(t, st, id, api.WireRealityReverse)
+	}
+	for _, m := range []string{"master-xa-1", "master-xa-2"} {
+		_, pub, err := xray.GenerateKeypair()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetNodeRealityPortalKey(context.Background(), m, pub); err != nil {
+			t.Fatal(err)
+		}
+		s.pubs[m] = pub
+	}
+	return s
+}
+
+func (s reverseSetup) exit(t *testing.T) (config.ExitConfig, domain.Node) {
+	t.Helper()
+	n, err := s.st.GetNode(context.Background(), "exit-de-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s.b.fleet.Exits[0], n
+}
+
+func portalMasters(ps []portalTarget) []string {
+	var out []string
+	for _, p := range ps {
+		out = append(out, p.Master.Name)
+	}
+	return out
+}
+
+func TestRealityReverseIsOnWhenFlagAndExitWireAgree(t *testing.T) {
+	s := newReverseSetup(t)
+	exit, node := s.exit(t)
+	if !s.b.realityReverse(exit, node) {
+		t.Fatal("exit with the flag on wire 14 is not in the mode")
+	}
+}
+
+func TestRealityReverseOffWhileTheGateIsClosed(t *testing.T) {
+	s := newReverseSetup(t)
+	s.b.reverseOpen = false
+	exit, node := s.exit(t)
+	if s.b.realityReverse(exit, node) {
+		t.Fatal("the mode is on with the gate stub still closed")
+	}
+}
+
+func TestRealityReverseOffWithoutTheFlagOrReality(t *testing.T) {
+	s := newReverseSetup(t)
+	exit, node := s.exit(t)
+	off := exit
+	off.Transports.Reality.ExitInitiated = false
+	if s.b.realityReverse(off, node) {
+		t.Error("the mode is on without the flag")
+	}
+	noReality := exit
+	noReality.Transports.Reality.Enabled = false
+	if s.b.realityReverse(noReality, node) {
+		t.Error("the mode is on with REALITY disabled")
+	}
+}
+
+// An exit agent below wire 14 would drop the bridge and open nothing: it stays
+// in forward REALITY, and the operator hears it once, not every pass.
+func TestRealityReverseOffForAnOldExitWarnsOnce(t *testing.T) {
+	s := newReverseSetup(t)
+	setWireVersion(t, s.st, "exit-de-1", api.WireRealityReverse-1)
+	exit, node := s.exit(t)
+	for range 3 {
+		if s.b.realityReverse(exit, node) {
+			t.Fatal("the mode is on for a wire-13 exit")
+		}
+	}
+	if n := strings.Count(s.logs.String(), "exit-initiated REALITY"); n != 1 {
+		t.Fatalf("warned %d times, want once:\n%s", n, s.logs.String())
+	}
+}
+
+func TestPortalTargetsListsReadyMastersBySlot(t *testing.T) {
+	s := newReverseSetup(t)
+	exit, _ := s.exit(t)
+	ps, err := s.b.portalTargets(context.Background(), exit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := portalMasters(ps); strings.Join(got, ",") != "master-xa-1,master-xa-2" {
+		t.Fatalf("portals = %v, want both by slot", got)
+	}
+	m1 := ps[0]
+	want := s.b.fleet.Masters[1].RealityPortalListenPort()
+	if m1.Addr.String() != "203.0.113.1:"+strconv.Itoa(want) || m1.PublicKey != s.pubs["master-xa-1"] {
+		t.Errorf("master-xa-1 portal = %+v, want 203.0.113.1:%d with its key", m1, want)
+	}
+}
+
+// One master not ready costs only its own tunnel to the exit (D8): the others
+// keep theirs, and the operator hears why once.
+func TestPortalTargetsSkipsAMasterThatIsNotReady(t *testing.T) {
+	cases := map[string]func(t *testing.T, s reverseSetup){
+		"wire 13": func(t *testing.T, s reverseSetup) {
+			setWireVersion(t, s.st, "master-xa-2", api.WireRealityReverse-1)
+		},
+		"no portal key": func(t *testing.T, s reverseSetup) {
+			if err := s.st.SetNodeRealityPortalKey(context.Background(), "master-xa-2", ""); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"private address": func(t *testing.T, s reverseSetup) {
+			s.b.fleet.Masters[0].PublicIP = "10.0.0.2"
+			node, _ := s.st.GetNode(context.Background(), "master-xa-2")
+			node.PublicIP = "10.0.0.2"
+			if err := s.st.UpsertNode(context.Background(), node); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"never registered": func(t *testing.T, s reverseSetup) {
+			if err := s.st.DeleteNode(context.Background(), "master-xa-2"); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := newReverseSetup(t)
+			mutate(t, s)
+			exit, _ := s.exit(t)
+			for range 2 {
+				ps, err := s.b.portalTargets(context.Background(), exit)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := portalMasters(ps); strings.Join(got, ",") != "master-xa-1" {
+					t.Fatalf("portals = %v, want master-xa-1 only", got)
+				}
+			}
+			if n := strings.Count(s.logs.String(), "master-xa-2"); n != 1 {
+				t.Errorf("master-xa-2 named %d times in the log, want once:\n%s", n, s.logs.String())
+			}
+		})
+	}
+}
+
+// The pair's identity is its own: a forward UUID (shared by every master of the
+// exit) admitted at a portal would let any master's forward credential in, and
+// two masters sharing one would let either impersonate the other's bridge.
+func TestPortalIDsDistinctPerMasterAndFromForward(t *testing.T) {
+	u1, s1 := portalIDs("exit-de-1", "master-xa-1")
+	u2, s2 := portalIDs("exit-de-1", "master-xa-2")
+	u3, s3 := portalIDs("exit-de-2", "master-xa-1")
+	fu, fs := deriveRealityIDs(realitySeed("exit-de-1", "master-xa-1"))
+	if u1 == u2 || s1 == s2 || u1 == u3 || s1 == s3 {
+		t.Error("portal ids collide across pairs")
+	}
+	if u1 == fu || s1 == fs {
+		t.Error("portal ids equal the forward REALITY ids")
+	}
+	if again, _ := portalIDs("exit-de-1", "master-xa-1"); again != u1 {
+		t.Error("portal ids are not stable")
+	}
+}
