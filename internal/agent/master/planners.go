@@ -590,6 +590,7 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 		// moving and the host trusting the veth are one change rather than two that
 		// converge at different times.
 		NetnsHostIface: netnsVethIface(spec),
+		PortalSocks:    portalSocksFirewall(spec),
 	})
 	if err != nil {
 		return nil, err

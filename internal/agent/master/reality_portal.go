@@ -158,6 +158,22 @@ func portalSocksFor(spec domain.NodeSpec, attached bool, portalKey string) (stri
 	return PortalSocksAddr(spec, attached), pw
 }
 
+// portalSocksFirewall is the SOCKS address the host firewall admits from
+// mihomo's namespace: the host end of the link, whenever the master runs a
+// portal. It does not depend on where mihomo is right now — the rule only
+// renders beside the namespace's own accepts, and it must already be there the
+// pass mihomo moves.
+func portalSocksFirewall(spec domain.NodeSpec) netip.AddrPort {
+	if spec.Master == nil || spec.Master.RealityPortal == nil {
+		return netip.AddrPort{}
+	}
+	addr, err := netip.ParseAddr(NetnsHostIP(spec))
+	if err != nil {
+		return netip.AddrPort{}
+	}
+	return netip.AddrPortFrom(addr, uint16(spec.Master.RealityPortal.ResolvedSocksPort()))
+}
+
 // PortalSocksPassword derives an exit's SOCKS password from the portal private
 // key. A client's DIRECT traffic leaves from mihomo and can reach the SOCKS
 // address, so the password is a real secret; it never leaves the master, and

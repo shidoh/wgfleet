@@ -241,3 +241,13 @@ func TestThePortalSocksHasTheSameAddressAndPasswordAtBothEnds(t *testing.T) {
 		}
 	}
 }
+
+func TestPortalSocksFirewallFollowsThePortal(t *testing.T) {
+	if got := portalSocksFirewall(portalSpec(t)); got.String() != NetnsHostIP(portalSpec(t))+":10808" {
+		t.Errorf("portal socks firewall = %v", got)
+	}
+	spec, _ := masterSpec(t)
+	if got := portalSocksFirewall(spec); got.IsValid() {
+		t.Errorf("no portal, yet %v", got)
+	}
+}
