@@ -89,6 +89,12 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 		actions = append(actions, reconcile.BestEffortExecAction("bring the client vless inbound down",
 			"docker", "compose", "-f", p.paths.ClientVLESSYML, "down"))
 	}
+	// The reality portal (ADR-0038), likewise its own project: up, it keeps
+	// admitting bridges with the key this teardown is about to delete.
+	if p.paths.RealityPortalYML != "" {
+		actions = append(actions, reconcile.BestEffortExecAction("bring the reality portal down",
+			"docker", "compose", "-f", p.paths.RealityPortalYML, "down"))
+	}
 
 	// Wipe the rendered config and the wg-easy DB once the stack is down: on
 	// decommission the master is gone, so its client-AWG database (keys included)

@@ -33,6 +33,10 @@ type Input struct {
 	// client-vless planner no-ops until the key is available (same gate as the exit
 	// reality inbound). Only used when spec.Master.ClientVLESS is set.
 	RealityPrivateKey string
+	// PortalPrivateKey is the master's REALITY PORTAL x25519 private key
+	// (ADR-0038; agent-local, never on the wire). The portal config holds it and
+	// the SOCKS passwords derive from it. Empty ⇒ the portal planner defers.
+	PortalPrivateKey string
 	// ClientWGPrivateKey is the master's CLIENT-FACING WireGuard private key — the
 	// identity of the interface end users dial once the agent owns it. Agent-local
 	// (adopted from wg-easy's database on handover, else generated), never on the
@@ -143,6 +147,11 @@ func Planners(in Input) []reconcile.Planner {
 		// live in it, but nothing routes into it yet.
 		netnsPlanner{attached: in.NetnsAttached, clientIface: in.ClientInterface,
 			composePath: in.Paths.Compose},
+		// After the namespace link exists (the SOCKS inbound may listen on its host
+		// end) and before mihomo, which dials that inbound for every exit in the
+		// exit-initiated REALITY mode (ADR-0038).
+		realityPortalPlanner{configPath: in.Paths.RealityPortal, composePath: in.Paths.RealityPortalYML,
+			privateKey: in.PortalPrivateKey, netnsAttached: in.NetnsAttached},
 		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey, tier: in.Tier,
 			netnsAttached: in.NetnsAttached, disturbed: in.OnMihomoDisturbed},
 		masterNATPlanner{path: in.Paths.NFT, v6Path: in.Paths.V6NFT, clientIface: in.ClientInterface,

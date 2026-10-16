@@ -442,11 +442,14 @@ type agent struct {
 	// sockets between passes.
 	realityBridge  atomic.Pointer[domain.RealityBridgeSpec]
 	bridgeWatchdog *exit.BridgeWatchdog
-	publicIP       string
-	mgmtAddr       string
-	stateDir       string // non-empty roots managed files outside /etc (non-root/dev)
-	paths          exit.Paths
-	metrics        *metrics.AgentMetrics // nil when /metrics is disabled
+	// portalKey is the master's reality portal private key for this pass
+	// (ephemeral in plan mode); the portal and mihomo planners both need it.
+	portalKey string
+	publicIP  string
+	mgmtAddr  string
+	stateDir  string // non-empty roots managed files outside /etc (non-root/dev)
+	paths     exit.Paths
+	metrics   *metrics.AgentMetrics // nil when /metrics is disabled
 	// mihomoLogCursor is how far into mihomo's log the error counter has read.
 	// Kept here rather than in a planner: planners are rebuilt every pass and would
 	// re-count the same window forever.
@@ -695,10 +698,11 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		// A failed publish is not fatal — nothing on this master depends on the
 		// controller knowing the key, and a controller that predates the key type
 		// must not take the whole pass down.
-		_, rpPub, rpEph, rpErr := a.ensureRealityPortalKey(!plan)
+		rpPriv, rpPub, rpEph, rpErr := a.ensureRealityPortalKey(!plan)
 		if rpErr != nil {
 			return fmt.Errorf("ensure reality portal key: %w", rpErr)
 		}
+		a.portalKey = rpPriv
 		if rpEph && plan {
 			a.log.Info("reality portal key absent; using an ephemeral key for the plan (apply would generate one)")
 		}
@@ -1197,6 +1201,7 @@ func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, life
 			Paths:              a.masterPaths(),
 			PrivateKey:         privateKey,
 			RealityPrivateKey:  realityPrivateKey,
+			PortalPrivateKey:   a.portalKey,
 			ClientWGPrivateKey: clientWGPrivateKey,
 			SyntheticKey:       a.ensureSynthKeyQuiet(),
 			ClientWGPublicKey:  publicKeyOrEmpty(clientWGPrivateKey),

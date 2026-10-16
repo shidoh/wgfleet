@@ -165,3 +165,16 @@ func TestTeardownRemovesBothNamespacesAndTheProber(t *testing.T) {
 		}
 	}
 }
+
+// Decommission stops the portal: left up, it would keep admitting bridges with
+// a private key the teardown then deletes from disk.
+func TestTeardownBringsThePortalDown(t *testing.T) {
+	paths := testPaths(t)
+	acts, err := masterTeardownPlanner{paths: paths}.Plan(context.Background(), domain.NodeSpec{Role: domain.RoleMaster, Decommission: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasExecContaining(acts, paths.RealityPortalYML, "down") {
+		t.Errorf("teardown does not bring the portal down: %+v", acts)
+	}
+}
