@@ -105,6 +105,10 @@ type Store interface {
 	// the node is absent.
 	SetNodeRealityPortalKey(ctx context.Context, id, publicKey string) error
 
+	// EnsureRealityPortalIDs returns the stored bridge identity of exit at
+	// master's portal, storing uuid and shortID first when the pair has none.
+	EnsureRealityPortalIDs(ctx context.Context, master, exit, uuid, shortID string) (string, string, error)
+
 	// ListVLESSClients returns a master's issued VLESS client credentials, ordered
 	// by name. An unknown master yields an empty slice, not ErrNotFound.
 	ListVLESSClients(ctx context.Context, masterID string) ([]domain.VLESSClient, error)

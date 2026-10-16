@@ -30,7 +30,10 @@ func TestExitSpecBridgesToEveryMaster(t *testing.T) {
 		t.Fatalf("portals = %+v, want both masters by slot", ps)
 	}
 	for _, p := range ps {
-		uuid, sid := portalIDs("exit-de-1", p.Master)
+		uuid, sid, err := s.b.portalIDs(context.Background(), "exit-de-1", p.Master)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if p.UUID != uuid || p.ShortID != sid || p.PublicKey != s.pubs[p.Master] || p.ServerName != DefaultRealitySNI {
 			t.Errorf("portal %s = %+v", p.Master, p)
 		}

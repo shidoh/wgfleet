@@ -1017,7 +1017,10 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			})
 		}
 		if realityRenderable && reverse {
-			uuid, sid := portalIDs(exit.Name, master.Name)
+			uuid, sid, perr := b.portalIDs(ctx, exit.Name, master.Name)
+			if perr != nil {
+				return domain.NodeSpec{}, perr
+			}
 			portalClients = append(portalClients, domain.RealityPortalClient{Exit: exit.Name, UUID: uuid, ShortID: sid})
 			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
 				Name:      exit.Name + "-reality",

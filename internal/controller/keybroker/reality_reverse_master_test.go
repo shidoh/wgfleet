@@ -114,7 +114,10 @@ func TestMasterSpecPortalListsArmedExitsOnly(t *testing.T) {
 		p.ServerName != DefaultRealitySNI || p.Dest != DefaultRealitySNI+":443" || p.Image == "" {
 		t.Errorf("portal = %+v", p)
 	}
-	uuid, sid := portalIDs("exit-de-1", "master-xa-1")
+	uuid, sid, err := s.b.portalIDs(context.Background(), "exit-de-1", "master-xa-1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(p.Clients) != 1 || p.Clients[0] != (domain.RealityPortalClient{Exit: "exit-de-1", UUID: uuid, ShortID: sid}) {
 		t.Errorf("clients = %+v", p.Clients)
 	}

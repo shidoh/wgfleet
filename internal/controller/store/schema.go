@@ -235,6 +235,17 @@ var migrations = []string{
 	// exits in the exit-initiated mode dial. Its own column: the client VLESS key
 	// is handed to end users and rotates on a different schedule.
 	`ALTER TABLE nodes ADD COLUMN reality_portal_public_key TEXT NOT NULL DEFAULT ''`,
+	// v31: the VLESS id and short-id of an exit's bridge at a master's portal.
+	// Random and stored, never derived from names: an id anyone can compute lets
+	// one exit register under another's reverse tag and take its traffic.
+	`CREATE TABLE IF NOT EXISTS reality_portal_ids (
+		master_id  TEXT NOT NULL,
+		exit_id    TEXT NOT NULL,
+		uuid       TEXT NOT NULL,
+		short_id   TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		PRIMARY KEY (master_id, exit_id)
+	)`,
 }
 
 // MigrationCount is how many schema migrations this build knows. Exported so a

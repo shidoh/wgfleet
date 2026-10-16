@@ -2,6 +2,8 @@ package keybroker
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -99,11 +101,25 @@ func (b *Broker) portalTargets(ctx context.Context, exit config.ExitConfig) ([]p
 	return out, nil
 }
 
-// portalIDs derives the VLESS UUID and short-id of exit's bridge at master's
-// portal. Per pair and distinct from the forward identity, which every master
-// of the exit shares.
-func portalIDs(exitName, masterName string) (uuid, shortID string) {
-	return deriveRealityIDs(fmt.Sprintf("%s|%s|%s|reality-portal", awgSalt, masterName, exitName))
+// portalIDs returns the VLESS UUID and short-id of exit's bridge at master's
+// portal: random, minted once per pair and kept in the store. Never derived from
+// names — an id any exit could compute would let it register under another
+// exit's reverse tag and receive that exit's client streams.
+func (b *Broker) portalIDs(ctx context.Context, exitName, masterName string) (uuid, shortID string, err error) {
+	var raw [24]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", "", fmt.Errorf("reality portal ids: %w", err)
+	}
+	u := raw[:16]
+	u[6] = (u[6] & 0x0f) | 0x40 // version 4
+	u[8] = (u[8] & 0x3f) | 0x80 // variant 10
+	candUUID := fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
+	candSID := hex.EncodeToString(raw[16:24])
+	uuid, shortID, err = b.store.EnsureRealityPortalIDs(ctx, masterName, exitName, candUUID, candSID)
+	if err != nil {
+		return "", "", fmt.Errorf("exit %q at master %q: %w: %w", exitName, masterName, store.ErrUnreadable, err)
+	}
+	return uuid, shortID, nil
 }
 
 // portalCamouflage resolves a master's portal SNI and dest: the master's
@@ -125,7 +141,10 @@ func (b *Broker) bridgeFor(ctx context.Context, exit config.ExitConfig) (*domain
 	}
 	bridge := &domain.RealityBridgeSpec{}
 	for _, t := range targets {
-		uuid, sid := portalIDs(exit.Name, t.Master.Name)
+		uuid, sid, err := b.portalIDs(ctx, exit.Name, t.Master.Name)
+		if err != nil {
+			return nil, err
+		}
 		sni, _ := b.portalCamouflage(t.Master)
 		bridge.Portals = append(bridge.Portals, domain.RealityPortalPeer{
 			Master:      t.Master.Name,

@@ -990,3 +990,25 @@ func TestSetNodeRealityPortalKey(t *testing.T) {
 		t.Errorf("SetNodeRealityPortalKey ghost: want ErrNotFound, got %v", err)
 	}
 }
+
+// The pair's bridge identity is minted once and kept: a new one on every render
+// would restart the portal and every bridge each pass.
+func TestEnsureRealityPortalIDsKeepsTheFirst(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	u, sid, err := s.EnsureRealityPortalIDs(ctx, "m1", "e1", "uuid-1", "0a0b0c0d0e0f1011")
+	if err != nil || u != "uuid-1" || sid != "0a0b0c0d0e0f1011" {
+		t.Fatalf("first = %q %q %v", u, sid, err)
+	}
+	u, sid, err = s.EnsureRealityPortalIDs(ctx, "m1", "e1", "uuid-2", "ffffffffffffffff")
+	if err != nil || u != "uuid-1" || sid != "0a0b0c0d0e0f1011" {
+		t.Fatalf("second call replaced the ids: %q %q %v", u, sid, err)
+	}
+	u, _, err = s.EnsureRealityPortalIDs(ctx, "m2", "e1", "uuid-3", "1111111111111111")
+	if err != nil || u != "uuid-3" {
+		t.Fatalf("other pair = %q %v", u, err)
+	}
+	if _, _, err := s.EnsureRealityPortalIDs(ctx, "", "e1", "u", "00"); err == nil {
+		t.Error("empty master accepted")
+	}
+}

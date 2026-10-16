@@ -186,21 +186,38 @@ func TestPortalTargetsSkipsAMasterThatIsNotReady(t *testing.T) {
 	}
 }
 
-// The pair's identity is its own: a forward UUID (shared by every master of the
-// exit) admitted at a portal would let any master's forward credential in, and
-// two masters sharing one would let either impersonate the other's bridge.
-func TestPortalIDsDistinctPerMasterAndFromForward(t *testing.T) {
-	u1, s1 := portalIDs("exit-de-1", "master-xa-1")
-	u2, s2 := portalIDs("exit-de-1", "master-xa-2")
-	u3, s3 := portalIDs("exit-de-2", "master-xa-1")
-	fu, fs := deriveRealityIDs(realitySeed("exit-de-1", "master-xa-1"))
-	if u1 == u2 || s1 == s2 || u1 == u3 || s1 == s3 {
+// The pair's identity is a secret the controller minted, not a function of
+// names: an exit that could compute another exit's bridge UUID could register
+// under its reverse tag and receive its client streams.
+func TestPortalIDsAreRandomStableAndPerPair(t *testing.T) {
+	s := newReverseSetup(t)
+	ctx := context.Background()
+	ids := func(b *Broker, exit, master string) (string, string) {
+		t.Helper()
+		u, sid, err := b.portalIDs(ctx, exit, master)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(sid) != 16 {
+			t.Errorf("short-id %q, want 8 random bytes", sid)
+		}
+		return u, sid
+	}
+	u1, s1 := ids(s.b, "exit-de-1", "master-xa-1")
+	u2, s2 := ids(s.b, "exit-de-1", "master-xa-2")
+	u3, _ := ids(s.b, "exit-de-2", "master-xa-1")
+	if u1 == u2 || s1 == s2 || u1 == u3 {
 		t.Error("portal ids collide across pairs")
 	}
-	if u1 == fu || s1 == fs {
-		t.Error("portal ids equal the forward REALITY ids")
-	}
-	if again, _ := portalIDs("exit-de-1", "master-xa-1"); again != u1 {
+	if again, _ := ids(s.b, "exit-de-1", "master-xa-1"); again != u1 {
 		t.Error("portal ids are not stable")
+	}
+	fu, _ := deriveRealityIDs(realitySeed("exit-de-1", "master-xa-1"))
+	if u1 == fu {
+		t.Error("portal id equals the forward REALITY id")
+	}
+	other := newReverseSetup(t)
+	if u, _ := ids(other.b, "exit-de-1", "master-xa-1"); u == u1 {
+		t.Error("a second controller computed the same id: it is derivable")
 	}
 }

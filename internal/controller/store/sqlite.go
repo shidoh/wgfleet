@@ -429,6 +429,26 @@ func (s *SQLiteStore) SetNodeRealityPortalKey(ctx context.Context, id, publicKey
 	return requireAffected(res)
 }
 
+// EnsureRealityPortalIDs implements Store.
+func (s *SQLiteStore) EnsureRealityPortalIDs(ctx context.Context, master, exit, uuid, shortID string) (string, string, error) {
+	if master == "" || exit == "" || uuid == "" || shortID == "" {
+		return "", "", errors.New("store: master, exit, uuid and short-id are required")
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO reality_portal_ids (master_id, exit_id, uuid, short_id, created_at) VALUES (?,?,?,?,?)
+		 ON CONFLICT(master_id, exit_id) DO NOTHING`,
+		master, exit, uuid, shortID, fmtTime(s.now().UTC())); err != nil {
+		return "", "", fmt.Errorf("store reality portal ids %q/%q: %w", master, exit, err)
+	}
+	var u, sid string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT uuid, short_id FROM reality_portal_ids WHERE master_id = ? AND exit_id = ?`,
+		master, exit).Scan(&u, &sid); err != nil {
+		return "", "", fmt.Errorf("read reality portal ids %q/%q: %w", master, exit, err)
+	}
+	return u, sid, nil
+}
+
 // ListVLESSClients implements Store.
 func (s *SQLiteStore) ListVLESSClients(ctx context.Context, masterID string) ([]domain.VLESSClient, error) {
 	rows, err := s.db.QueryContext(ctx,
