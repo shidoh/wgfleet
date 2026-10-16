@@ -146,6 +146,13 @@ type RenderInput struct {
 	// browsing metadata of every user, and a poisoning lever besides. Empty falls
 	// back to encrypted public resolvers, never to cleartext.
 	Resolvers []string
+	// PortalSocksAddr is where the master's reality portal serves its SOCKS
+	// inbound (ADR-0038) and PortalPasswords each exit's password there. The agent
+	// supplies both: the address depends on where mihomo runs, and the passwords
+	// derive from a key that never leaves the master. Needed only for reverse
+	// REALITY tunnels.
+	PortalSocksAddr string
+	PortalPasswords map[string]string
 }
 
 // RenderConfig renders mihomo's config.yaml. It validates each tunnel's AWG
@@ -444,6 +451,14 @@ func renderProxies(in RenderInput) (proxies []any, primary, reserve []string, er
 		}
 		seen[t.Name] = true
 
+		if t.Reality != nil && t.Reality.Reverse {
+			proxy, rerr := reverseRealityProxy(in, t)
+			if rerr != nil {
+				return nil, nil, nil, rerr
+			}
+			proxies = append(proxies, proxy)
+			continue
+		}
 		host, port, perr := splitEndpoint(t.Endpoint)
 		if perr != nil {
 			return nil, nil, nil, fmt.Errorf("exit %q: %w", t.Name, perr)
@@ -866,7 +881,7 @@ func marshalYAML(v any) (string, error) {
 // secretKeys are the config keys whose VALUE must never reach plan output.
 // header-protection-key is one of them for the same reason as the other two: it
 // is a chacha20 key whose whole purpose is that an observer does not have it.
-var secretKeys = []string{"private-key:", "pre-shared-key:", "header-protection-key:"}
+var secretKeys = []string{"private-key:", "pre-shared-key:", "header-protection-key:", "password:"}
 
 // RedactConfig masks secret key lines for plan output.
 func RedactConfig(cfg string) string {

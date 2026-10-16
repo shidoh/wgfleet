@@ -152,7 +152,7 @@ func Planners(in Input) []reconcile.Planner {
 		// exit-initiated REALITY mode (ADR-0038).
 		realityPortalPlanner{configPath: in.Paths.RealityPortal, composePath: in.Paths.RealityPortalYML,
 			privateKey: in.PortalPrivateKey, netnsAttached: in.NetnsAttached},
-		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey, tier: in.Tier,
+		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey, portalKey: in.PortalPrivateKey, tier: in.Tier,
 			netnsAttached: in.NetnsAttached, disturbed: in.OnMihomoDisturbed},
 		masterNATPlanner{path: in.Paths.NFT, v6Path: in.Paths.V6NFT, clientIface: in.ClientInterface,
 			netnsAttached: in.NetnsAttached},

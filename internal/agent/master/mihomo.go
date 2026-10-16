@@ -33,6 +33,9 @@ const mihomoConfigMode = 0o600
 type mihomoPlanner struct {
 	paths      Paths
 	privateKey string
+	// portalKey is the reality portal's private key; the SOCKS password of each
+	// exit in the exit-initiated mode derives from it (see PortalSocksPassword).
+	portalKey string
 	// reload hot-applies the config via the Clash API (nil ⇒ the real mihomo.Reload);
 	// injected in tests. Preferred over a container restart so a routine change like
 	// draining one exit does not drop every client's connection.
@@ -176,10 +179,11 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 	}
 	attached := p.netnsAttached != nil && p.netnsAttached()
 	peerIP := NetnsPeerIP(spec, attached)
+	socksAddr, passwords := portalSocksFor(spec, attached, p.portalKey)
 	cfg, err := mihomo.RenderConfig(mihomo.RenderInput{
 		Spec: *spec.Master, PrivateKey: p.privateKey, ReserveActive: reserveActive,
 		TunnelPrivateKey: p.tunnelKey, Resolvers: mihomoResolvers(spec, attached),
-		NetnsPeerAddr: peerIP,
+		NetnsPeerAddr: peerIP, PortalSocksAddr: socksAddr, PortalPasswords: passwords,
 	})
 	if err == nil {
 		// A rule provider of type file whose file is not on the node is a policy

@@ -8,6 +8,7 @@ import (
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/mihomo"
 	"github.com/shidoh/wgfleet/internal/xray"
 )
 
@@ -197,5 +198,46 @@ func applyFiles(t *testing.T, p reconcile.Planner, spec domain.NodeSpec) {
 	t.Helper()
 	if _, err := reconcile.NewEngine(nil, filesOnly{p}).Reconcile(context.Background(), spec, reconcile.ModeApply); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The portal and mihomo are rendered by two planners into two files; they must
+// name the same SOCKS socket and the same password, in both places mihomo can
+// live. The client VLESS bridge once disagreed about exactly this for three hours.
+func TestThePortalSocksHasTheSameAddressAndPasswordAtBothEnds(t *testing.T) {
+	for _, attached := range []bool{false, true} {
+		spec := portalSpec(t)
+		spec.Master.ExitTunnels = append(spec.Master.ExitTunnels, domain.ExitTunnel{
+			Name: "exit-de-1-reality", Transport: domain.TransportRealityXHTTP,
+			Reality: &domain.RealityTunnel{Reverse: true},
+		})
+		r := newPortalRig(t)
+		r.p.netnsAttached = func() bool { return attached }
+		r.addrs[NetnsHostIP(spec)] = true
+		addr, pws := portalSocksFor(spec, attached, r.p.privateKey)
+		mcfg, err := mihomo.RenderConfig(mihomo.RenderInput{
+			Spec: *spec.Master, PrivateKey: "MASTERPRIVKEYbase64ExampleValueForTestingABC=",
+			PortalSocksAddr: addr, PortalPasswords: pws,
+		})
+		if err != nil {
+			t.Fatalf("attached=%v: mihomo render: %v", attached, err)
+		}
+		xcfg, err := xray.RenderPortalConfig(xray.PortalRenderInput{
+			Spec: *spec.Master.RealityPortal, PrivateKey: r.p.privateKey, SocksAddr: addr, SocksPasswords: pws,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := PortalSocksPassword(r.p.privateKey, "exit-de-1")
+		for _, frag := range []string{"server: " + addr, "password: " + want} {
+			if !strings.Contains(mcfg, frag) {
+				t.Errorf("attached=%v: mihomo lacks %q", attached, frag)
+			}
+		}
+		for _, frag := range []string{`"listen": "` + addr + `"`, `"pass": "` + want + `"`} {
+			if !strings.Contains(xcfg, frag) {
+				t.Errorf("attached=%v: portal lacks %q", attached, frag)
+			}
+		}
 	}
 }

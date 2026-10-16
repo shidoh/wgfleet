@@ -89,10 +89,7 @@ func (p realityPortalPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([
 		return []reconcile.Action{reconcile.NoChangeAction("reality portal",
 			"pending: SOCKS address "+socks+" is not on this host yet")}, nil
 	}
-	passwords := make(map[string]string, len(portal.Clients))
-	for _, c := range portal.Clients {
-		passwords[c.Exit] = PortalSocksPassword(p.privateKey, c.Exit)
-	}
+	_, passwords := portalSocksFor(spec, attached, p.privateKey)
 	cfg, err := xray.RenderPortalConfig(xray.PortalRenderInput{
 		Spec: *portal, PrivateKey: p.privateKey, SocksAddr: socks, SocksPasswords: passwords,
 	})
@@ -145,6 +142,20 @@ func PortalSocksAddr(spec domain.NodeSpec, attached bool) string {
 		return NetnsHostIP(spec)
 	}
 	return "127.0.0.1"
+}
+
+// portalSocksFor is the SOCKS address and per-exit passwords mihomo dials the
+// portal with — the same values the portal planner renders on the other end.
+// Empty when the master runs no portal or has no key yet.
+func portalSocksFor(spec domain.NodeSpec, attached bool, portalKey string) (string, map[string]string) {
+	if spec.Master == nil || spec.Master.RealityPortal == nil || portalKey == "" {
+		return "", nil
+	}
+	pw := make(map[string]string, len(spec.Master.RealityPortal.Clients))
+	for _, c := range spec.Master.RealityPortal.Clients {
+		pw[c.Exit] = PortalSocksPassword(portalKey, c.Exit)
+	}
+	return PortalSocksAddr(spec, attached), pw
 }
 
 // PortalSocksPassword derives an exit's SOCKS password from the portal private
