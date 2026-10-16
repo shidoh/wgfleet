@@ -951,3 +951,42 @@ func TestAutoSuspendedSurvivesReopen(t *testing.T) {
 		t.Fatalf("after reopen: %v, %v", got, err)
 	}
 }
+
+func TestSetNodeRealityPortalKey(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	n := sampleNode()
+	if err := s.UpsertNode(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetNodeClientVlessKey(ctx, n.ID, "VLESSKEY"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetNodeRealityPortalKey(ctx, n.ID, "PORTALKEY"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetNode(ctx, n.ID)
+	// The portal key is its own registry: the client VLESS key is handed to end
+	// users and must never be confused with it.
+	if got.ClientVLESSPublicKey != "VLESSKEY" {
+		t.Errorf("client vless key clobbered: %q", got.ClientVLESSPublicKey)
+	}
+	if got.RealityPortalPublicKey != "PORTALKEY" {
+		t.Errorf("portal key = %q, want PORTALKEY", got.RealityPortalPublicKey)
+	}
+	got.PublicIP = "203.0.113.99"
+	if err := s.UpsertNode(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := s.GetNode(ctx, n.ID)
+	if again.RealityPortalPublicKey != "PORTALKEY" {
+		t.Errorf("portal key lost across upsert: %q", again.RealityPortalPublicKey)
+	}
+	list, err := s.ListNodes(ctx)
+	if err != nil || len(list) != 1 || list[0].RealityPortalPublicKey != "PORTALKEY" {
+		t.Errorf("ListNodes portal key = %+v, %v", list, err)
+	}
+	if err := s.SetNodeRealityPortalKey(ctx, "ghost", "x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetNodeRealityPortalKey ghost: want ErrNotFound, got %v", err)
+	}
+}

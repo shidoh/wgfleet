@@ -231,6 +231,10 @@ var migrations = []string{
 		exit_id TEXT PRIMARY KEY,
 		since   TEXT NOT NULL
 	)`,
+	// v30: the master's REALITY PORTAL x25519 public key (ADR-0038) — the inbound
+	// exits in the exit-initiated mode dial. Its own column: the client VLESS key
+	// is handed to end users and rotates on a different schedule.
+	`ALTER TABLE nodes ADD COLUMN reality_portal_public_key TEXT NOT NULL DEFAULT ''`,
 }
 
 // MigrationCount is how many schema migrations this build knows. Exported so a
