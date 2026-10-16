@@ -2,6 +2,7 @@ package xray
 
 import (
 	"fmt"
+	"net/netip"
 
 	"github.com/shidoh/wgfleet/internal/domain"
 )
@@ -189,6 +190,121 @@ func RenderPortalConfig(in PortalRenderInput) (string, error) {
 		// First outbound is the default route: whatever no rule claims is dropped.
 		Outbounds: []any{blackholeOutbound{Tag: "block", Protocol: "blackhole"}},
 		Routing:   reverseRouting{Rules: rules},
+	}
+	return marshalAny(cfg)
+}
+
+// bridgeBlocked are the destinations a master's stream may not reach through
+// the exit: the exit's own and every private range. Freedom blocks all traffic
+// arriving over a reverse link unless finalRules say otherwise.
+var bridgeBlocked = []string{
+	"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+	"172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7", "fe80::/10",
+}
+
+// BridgeRenderInput is everything the exit's bridge config needs: the spec
+// (Bridge set) and the egress mark of the freedom outbound.
+type BridgeRenderInput struct {
+	Spec       domain.RealityServerSpec
+	EgressMark int // SO_MARK for the freedom egress (→ WARP); 0 = none
+}
+
+type bridgeFreedom struct {
+	Tag            string          `json:"tag"`
+	Protocol       string          `json:"protocol"`
+	Settings       freedomFinal    `json:"settings"`
+	StreamSettings *reverseOutOpts `json:"streamSettings,omitempty"`
+}
+
+type freedomFinal struct {
+	DomainStrategy string      `json:"domainStrategy,omitempty"`
+	FinalRules     []finalRule `json:"finalRules"`
+}
+
+type finalRule struct {
+	Action string   `json:"action"`
+	IP     []string `json:"ip,omitempty"`
+}
+
+type reverseOutOpts struct {
+	Sockopt reverseSockopt `json:"sockopt"`
+}
+
+type bridgeOutbound struct {
+	Tag            string         `json:"tag"`
+	Protocol       string         `json:"protocol"`
+	Settings       bridgeSettings `json:"settings"`
+	StreamSettings reverseStream  `json:"streamSettings"`
+}
+
+// bridgeSettings is the simplified VLESS outbound form, the only one Xray takes
+// a reverse block on ("please use simplified outbound's config style").
+type bridgeSettings struct {
+	Address    string     `json:"address"`
+	Port       int        `json:"port"`
+	ID         string     `json:"id"`
+	Encryption string     `json:"encryption"`
+	Reverse    reverseTag `json:"reverse"`
+}
+
+type bridgeReality struct {
+	ServerName  string `json:"serverName"`
+	Fingerprint string `json:"fingerprint"`
+	PublicKey   string `json:"publicKey"`
+	ShortID     string `json:"shortId"`
+}
+
+// RenderBridgeConfig renders the exit's bridge: no inbound, a freedom egress
+// first (the default route), and one VLESS+REALITY outbound per master portal
+// whose reverse tag is routed to that egress.
+func RenderBridgeConfig(in BridgeRenderInput) (string, error) {
+	b := in.Spec.Bridge
+	if b == nil {
+		return "", fmt.Errorf("xray bridge render: no bridge in the spec")
+	}
+	if err := b.Validate(); err != nil {
+		return "", fmt.Errorf("xray bridge render: %w", err)
+	}
+	direct := bridgeFreedom{
+		Tag: "direct", Protocol: "freedom",
+		Settings: freedomFinal{FinalRules: []finalRule{{Action: "block", IP: bridgeBlocked}, {Action: "allow"}}},
+	}
+	if !in.Spec.AllowIPv6 {
+		direct.Settings.DomainStrategy = "UseIPv4"
+	}
+	if in.EgressMark > 0 {
+		direct.StreamSettings = &reverseOutOpts{Sockopt: reverseSockopt{Mark: in.EgressMark}}
+	}
+	outbounds := []any{direct}
+	tags := make([]string, 0, len(b.Portals))
+	for _, p := range b.Portals {
+		addr, err := netip.ParseAddrPort(p.Address)
+		if err != nil {
+			return "", fmt.Errorf("xray bridge render: %w", err)
+		}
+		tag := domain.ReverseTag(p.Master)
+		tags = append(tags, tag)
+		outbounds = append(outbounds, bridgeOutbound{
+			Tag: "to-" + p.Master, Protocol: "vless",
+			Settings: bridgeSettings{
+				Address: addr.Addr().String(), Port: int(addr.Port()), ID: p.UUID,
+				Encryption: "none", Reverse: reverseTag{Tag: tag},
+			},
+			StreamSettings: reverseStream{
+				Network: "raw", Security: "reality",
+				RealitySettings: bridgeReality{
+					ServerName: p.ServerName, Fingerprint: p.ResolvedFingerprint(),
+					PublicKey: p.PublicKey, ShortID: p.ShortID,
+				},
+				Sockopt: keepAlive(),
+			},
+		})
+	}
+	cfg := reverseConfig{
+		Log:       logCfg{Loglevel: "warning"},
+		DNS:       ipv4Only(in.Spec.AllowIPv6),
+		Outbounds: outbounds,
+		Routing:   reverseRouting{Rules: []reverseRule{{InboundTag: tags, OutboundTag: "direct"}}},
 	}
 	return marshalAny(cfg)
 }
