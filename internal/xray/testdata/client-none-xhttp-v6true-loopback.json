@@ -1,0 +1,67 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "stats": {},
+  "api": {
+    "tag": "api",
+    "listen": "127.0.0.1:10085",
+    "services": [
+      "StatsService"
+    ]
+  },
+  "policy": {
+    "levels": {
+      "0": {
+        "statsUserUplink": true,
+        "statsUserDownlink": true,
+        "statsUserOnline": true
+      }
+    }
+  },
+  "inbounds": [
+    {
+      "listen": "0.0.0.0",
+      "port": 47252,
+      "protocol": "vless",
+      "settings": {
+        "clients": [],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "target": "www.python.org:443",
+          "serverNames": [
+            "",
+            "www.python.org"
+          ],
+          "privateKey": "aGVyZSBpcyBhIGZpeHR1cmUgcHJpdmF0ZSBrZXkgeHg",
+          "shortIds": [
+            "f71afa089fcf6720"
+          ]
+        },
+        "xhttpSettings": {
+          "path": "/",
+          "mode": "packet-up"
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "socks",
+      "tag": "mihomo",
+      "settings": {
+        "servers": [
+          {
+            "address": "127.0.0.1",
+            "port": 7893
+          }
+        ]
+      }
+    }
+  ]
+}
