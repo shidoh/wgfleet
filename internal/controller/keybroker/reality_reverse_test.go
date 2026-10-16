@@ -40,13 +40,12 @@ type reverseSetup struct {
 }
 
 // newReverseSetup seeds both masters and the exit on wire 14, each master with a
-// published portal key. The gate stub is opened, as T20 will for good.
+// published portal key.
 func newReverseSetup(t *testing.T) reverseSetup {
 	t.Helper()
 	b, st := newBrokerWithFleet(t, reverseFleet())
 	var logs bytes.Buffer
 	b.log = slog.New(slog.NewTextHandler(&logs, nil))
-	b.reverseOpen = true
 	s := reverseSetup{b: b, st: st, logs: &logs, pubs: map[string]string{}}
 	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
 	seedNode(t, st, "master-xa-2", "10.20.25.253", "203.0.113.2", "/Lpxg7UgcxjrQcfYYl9CaqXDLy/bYSHQ3iD/KXnY1zU=", domain.RoleMaster)
@@ -89,15 +88,6 @@ func TestRealityReverseIsOnWhenFlagAndExitWireAgree(t *testing.T) {
 	exit, node := s.exit(t)
 	if !s.b.realityReverse(exit, node) {
 		t.Fatal("exit with the flag on wire 14 is not in the mode")
-	}
-}
-
-func TestRealityReverseOffWhileTheGateIsClosed(t *testing.T) {
-	s := newReverseSetup(t)
-	s.b.reverseOpen = false
-	exit, node := s.exit(t)
-	if s.b.realityReverse(exit, node) {
-		t.Fatal("the mode is on with the gate stub still closed")
 	}
 }
 

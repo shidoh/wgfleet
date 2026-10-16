@@ -48,10 +48,6 @@ type Broker struct {
 	// one, which config validation permits only while header protection is off
 	// everywhere.
 	awg3Key string
-	// reverseOpen is the gate stub for the exit-initiated REALITY mode
-	// (ADR-0038): false until the last commit of the feature, so a branch build
-	// never puts an exit in a mode its agents cannot carry yet. Tests open it.
-	reverseOpen bool
 
 	// warned remembers which addressing complaints have already been logged, so a
 	// standing manifest problem is announced once instead of on every render. See

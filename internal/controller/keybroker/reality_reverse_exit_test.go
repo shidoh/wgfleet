@@ -59,8 +59,8 @@ func TestExitSpecFingerprintDefaultsToChrome(t *testing.T) {
 	}
 }
 
-// Until the mode is live for the exit (gate closed, or its agent on wire 13),
-// the flag must change nothing at all in its spec.
+// Until the mode is live for the exit (its agent on wire 13), the flag must
+// change nothing at all in its spec.
 func TestExitSpecUnarmedIsByteIdenticalToFlagOff(t *testing.T) {
 	render := func(s reverseSetup) []byte {
 		t.Helper()
@@ -74,12 +74,6 @@ func TestExitSpecUnarmedIsByteIdenticalToFlagOff(t *testing.T) {
 	off := newReverseSetup(t)
 	off.b.fleet.Exits[0].Transports.Reality.ExitInitiated = false
 	want := render(off)
-
-	closed := newReverseSetup(t)
-	closed.b.reverseOpen = false
-	if got := render(closed); string(got) != string(want) {
-		t.Errorf("gate closed: spec differs from flag off\n got %s\nwant %s", got, want)
-	}
 
 	old := newReverseSetup(t)
 	setWireVersion(t, old.st, "exit-de-1", 13)

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
@@ -85,10 +86,10 @@ func TestMasterSpecUnarmedIsByteIdentical(t *testing.T) {
 	off := newReverseSetup(t)
 	off.b.fleet.Exits[0].Transports.Reality.ExitInitiated = false
 	want := render(off)
-	closed := newReverseSetup(t)
-	closed.b.reverseOpen = false
-	if got := render(closed); got != want {
-		t.Errorf("gate closed: master spec differs from flag off\n got %s\nwant %s", got, want)
+	old := newReverseSetup(t)
+	setWireVersion(t, old.st, "exit-de-1", api.WireRealityReverse-1)
+	if got := render(old); got != want {
+		t.Errorf("exit on wire 13: master spec differs from flag off\n got %s\nwant %s", got, want)
 	}
 }
 

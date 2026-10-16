@@ -32,7 +32,7 @@ type portalTarget struct {
 // Both renderers ask it, so the exit's bridge and the masters' tunnels can
 // never disagree about the mode.
 func (b *Broker) realityReverse(exit config.ExitConfig, exitNode domain.Node) bool {
-	if !b.reverseOpen || !exit.Transports.Reality.ExitInitiated ||
+	if !exit.Transports.Reality.ExitInitiated ||
 		!slices.Contains(exit.EnabledTransports(), domain.TransportRealityXHTTP) {
 		return false
 	}
