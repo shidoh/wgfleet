@@ -3,6 +3,7 @@ package keybroker
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -90,3 +91,80 @@ func TestMasterSpecUnarmedIsByteIdentical(t *testing.T) {
 		t.Errorf("gate closed: master spec differs from flag off\n got %s\nwant %s", got, want)
 	}
 }
+
+func renderMaster(t *testing.T, s reverseSetup, name string) domain.NodeSpec {
+	t.Helper()
+	spec, err := s.b.RenderNodeSpec(context.Background(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return spec
+}
+
+func TestMasterSpecPortalListsArmedExitsOnly(t *testing.T) {
+	s := newReverseSetup(t)
+	spec := renderMaster(t, s, "master-xa-1")
+	p := spec.Master.RealityPortal
+	if p == nil {
+		t.Fatal("no portal on a master an exit dials")
+	}
+	m := s.b.fleet.Masters[1] // master-xa-1 (listed second)
+	if p.ListenPort != m.RealityPortalListenPort() || p.SocksPort != domain.RealityPortalSocksPort ||
+		p.ServerName != DefaultRealitySNI || p.Dest != DefaultRealitySNI+":443" || p.Image == "" {
+		t.Errorf("portal = %+v", p)
+	}
+	uuid, sid := portalIDs("exit-de-1", "master-xa-1")
+	if len(p.Clients) != 1 || p.Clients[0] != (domain.RealityPortalClient{Exit: "exit-de-1", UUID: uuid, ShortID: sid}) {
+		t.Errorf("clients = %+v", p.Clients)
+	}
+	if err := p.Validate(); err != nil {
+		t.Errorf("rendered portal invalid: %v", err)
+	}
+	// The bridge dials exactly what the portal admits.
+	exitSpec, err := s.b.RenderNodeSpec(context.Background(), "exit-de-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := exitSpec.Reality.Bridge.Portals[0]
+	if peer.UUID != p.Clients[0].UUID || peer.ShortID != p.Clients[0].ShortID || peer.ServerName != p.ServerName ||
+		peer.Address != "203.0.113.1:"+itoaPort(p.ListenPort) {
+		t.Errorf("bridge peer %+v does not match the portal %+v", peer, p)
+	}
+	// Its world-facing port is open, and only it.
+	found := 0
+	for _, port := range spec.Firewall.PublicTCPPorts {
+		if port == p.ListenPort {
+			found++
+		}
+	}
+	if found != 1 {
+		t.Errorf("public TCP ports = %v, want the portal port once", spec.Firewall.PublicTCPPorts)
+	}
+}
+
+func TestMasterSpecNoPortalWhenNoArmedExit(t *testing.T) {
+	s := newReverseSetup(t)
+	s.b.fleet.Exits[0].Transports.Reality.ExitInitiated = false
+	spec := renderMaster(t, s, "master-xa-1")
+	if spec.Master.RealityPortal != nil {
+		t.Errorf("portal rendered with no exit in the mode: %+v", spec.Master.RealityPortal)
+	}
+	port := s.b.fleet.Masters[1].RealityPortalListenPort()
+	for _, p := range spec.Firewall.PublicTCPPorts {
+		if p == port {
+			t.Error("portal port opened with no portal")
+		}
+	}
+}
+
+func TestMasterSpecPortalCamouflageFollowsTheMaster(t *testing.T) {
+	s := newReverseSetup(t)
+	s.b.fleet.Masters[1].RealityPortal.SNI = "ya.example"
+	s.b.fleet.Masters[1].RealityPortal.DestDomain = "ya.example"
+	p := renderMaster(t, s, "master-xa-1").Master.RealityPortal
+	if p.ServerName != "ya.example" || p.Dest != "ya.example:443" {
+		t.Errorf("portal camouflage = %q %q", p.ServerName, p.Dest)
+	}
+}
+
+func itoaPort(p int) string { return strconv.Itoa(p) }

@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	"github.com/shidoh/wgfleet/internal/api"
+	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -137,4 +138,18 @@ func (b *Broker) bridgeFor(ctx context.Context, exit config.ExitConfig) (*domain
 		})
 	}
 	return bridge, nil
+}
+
+// realityPortalSpec builds a master's portal for the exits that dial it. The
+// image is the pinned default: the portal and every bridge run one xray.
+func (b *Broker) realityPortalSpec(master config.MasterConfig, clients []domain.RealityPortalClient) *domain.RealityPortalSpec {
+	sni, dest := b.portalCamouflage(master)
+	return &domain.RealityPortalSpec{
+		ListenPort: master.RealityPortalListenPort(),
+		SocksPort:  domain.RealityPortalSocksPort,
+		ServerName: sni,
+		Dest:       dest,
+		Image:      compose.DefaultXrayImage,
+		Clients:    clients,
+	}
 }

@@ -818,6 +818,8 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	// the resolver set as soon as it registers (drain doesn't remove it: a drained
 	// exit's blocky still resolves, and keeping it avoids an empty upstream group).
 	var dnsUpstreams []string
+	// The exits that dial this master's portal (ADR-0038), in manifest order.
+	var portalClients []domain.RealityPortalClient
 
 	for _, exit := range b.fleet.Exits {
 		exitNode, exitPub, eerr := b.lookupPubKey(ctx, exit.Name)
@@ -1019,6 +1021,8 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			})
 		}
 		if realityRenderable && reverse {
+			uuid, sid := portalIDs(exit.Name, master.Name)
+			portalClients = append(portalClients, domain.RealityPortalClient{Exit: exit.Name, UUID: uuid, ShortID: sid})
 			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
 				Name:      exit.Name + "-reality",
 				Transport: domain.TransportRealityXHTTP,
@@ -1053,6 +1057,10 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		}
 	}
 
+	if len(portalClients) > 0 {
+		ms.RealityPortal = b.realityPortalSpec(master, portalClients)
+		spec.Firewall.PublicTCPPorts = append(spec.Firewall.PublicTCPPorts, ms.RealityPortal.ListenPort)
+	}
 	spec.Master = ms
 	spec.DNS = b.renderMasterDNS(master, dnsUpstreams)
 	return spec, nil
