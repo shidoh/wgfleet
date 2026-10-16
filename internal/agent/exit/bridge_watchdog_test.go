@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shidoh/wgfleet/internal/agent/sockwatch"
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
@@ -43,21 +44,22 @@ func (f *fakeSS) run(_ context.Context, name string, args ...string) (string, er
 }
 
 type watchdogRig struct {
-	w   *BridgeWatchdog
-	ss  *fakeSS
-	now time.Time
+	w      *sockwatch.Watchdog
+	ss     *fakeSS
+	now    time.Time
+	bridge *domain.RealityBridgeSpec
 }
 
 func newWatchdogRig() *watchdogRig {
 	r := &watchdogRig{now: time.Unix(1_700_000_000, 0)}
 	r.ss = &fakeSS{now: func() time.Time { return r.now }, socks: map[string]time.Time{}}
-	bridge := &domain.RealityBridgeSpec{Portals: []domain.RealityPortalPeer{
+	r.bridge = &domain.RealityBridgeSpec{Portals: []domain.RealityPortalPeer{
 		{Master: "m1", Address: "203.0.113.1:48123"},
 		{Master: "m2", Address: "203.0.113.2:41000"},
 	}}
-	r.w = NewBridgeWatchdog(slog.New(slog.NewTextHandler(io.Discard, nil)), func() *domain.RealityBridgeSpec { return bridge })
-	r.w.run = r.ss.run
-	r.w.now = func() time.Time { return r.now }
+	r.w = NewBridgeWatchdog(slog.New(slog.NewTextHandler(io.Discard, nil)),
+		func() *domain.RealityBridgeSpec { return r.bridge },
+		sockwatch.WithRunner(r.ss.run), sockwatch.WithClock(func() time.Time { return r.now }))
 	return r
 }
 
@@ -145,7 +147,7 @@ func TestBridgeWatchdogDoesNotJudgeWithoutLastrcv(t *testing.T) {
 // Without a bridge there is nothing to watch.
 func TestBridgeWatchdogIdleWithoutABridge(t *testing.T) {
 	r := newWatchdogRig()
-	r.w.bridge = func() *domain.RealityBridgeSpec { return nil }
+	r.bridge = nil
 	r.ss.socks[frozen] = r.now.Add(-time.Hour)
 	r.tickAfter(time.Minute)
 	if len(r.ss.kills) != 0 {

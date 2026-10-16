@@ -44,6 +44,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/master"
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/agent/restart"
+	"github.com/shidoh/wgfleet/internal/agent/sockwatch"
 	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/atomicfile"
 	"github.com/shidoh/wgfleet/internal/config"
@@ -449,7 +450,7 @@ type agent struct {
 	// last applied spec, nil outside the mode; bridgeWatchdog kills its stalled
 	// sockets between passes.
 	realityBridge  atomic.Pointer[domain.RealityBridgeSpec]
-	bridgeWatchdog *exit.BridgeWatchdog
+	bridgeWatchdog *sockwatch.Watchdog
 	// portalKey is the master's reality portal private key for this pass
 	// (ephemeral in plan mode); the portal and mihomo planners both need it.
 	portalKey string

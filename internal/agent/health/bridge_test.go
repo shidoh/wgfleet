@@ -120,7 +120,8 @@ func TestMasterChecksIncludeThePortalOnlyWhenTheSpecCarriesOne(t *testing.T) {
 
 func TestParseSSEstablishedReadsLastrcv(t *testing.T) {
 	socks := ParseSSEstablished("0 0 198.51.100.7:1 203.0.113.1:2\n\t cubic lastsnd:10 lastrcv:31500 lastack:5\n0 0 198.51.100.7:3 203.0.113.1:2\n\t cubic rto:204\n")
-	if len(socks) != 2 || !socks[0].HasLastRcv || socks[0].LastRcv != 31500*time.Millisecond || socks[1].HasLastRcv {
+	if len(socks) != 2 || !socks[0].HasLastRcv || socks[0].LastRcv != 31500*time.Millisecond || socks[1].HasLastRcv ||
+		!socks[0].HasLastAck || socks[0].LastAck != 5*time.Millisecond {
 		t.Errorf("sockets = %+v", socks)
 	}
 }
