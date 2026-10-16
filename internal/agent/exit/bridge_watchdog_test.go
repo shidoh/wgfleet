@@ -91,7 +91,7 @@ func TestBridgeWatchdogKillsAStalledSocketOnly(t *testing.T) {
 	}
 	r.ss.socks["198.51.100.7:41190 203.0.113.2:41000"] = 600
 	r.tickAfter(10 * time.Second)
-	if len(r.ss.kills) != 1 || r.ss.kills[0] != "-K dst 203.0.113.1 dport = 48123 sport = :41182" {
+	if len(r.ss.kills) != 1 || r.ss.kills[0] != "-K dst 203.0.113.1 dport = :48123 sport = :41182" {
 		t.Fatalf("kills = %v, want exactly the stalled socket", r.ss.kills)
 	}
 	if got := r.w.Kills()["m1"]; got != 1 {
@@ -132,5 +132,41 @@ func TestBridgeWatchdogIdleWithoutABridge(t *testing.T) {
 	r.tickAfter(time.Minute)
 	if len(r.ss.kills) != 0 {
 		t.Fatalf("kills without a bridge: %v", r.ss.kills)
+	}
+}
+
+// An ss that prints no bytes_received (old iproute2) gives the watchdog nothing
+// to judge: it must not read that as a stall and kill every flow every 30 s.
+func TestBridgeWatchdogDoesNotJudgeWithoutByteCounts(t *testing.T) {
+	r := newWatchdogRig()
+	r.w.run = func(_ context.Context, name string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "-K" {
+			r.ss.kills = append(r.ss.kills, strings.Join(args, " "))
+			return "", nil
+		}
+		return "0 0 198.51.100.7:41182 203.0.113.1:48123\n\t cubic rto:204\n", nil
+	}
+	r.tickAfter(0)
+	r.tickAfter(time.Minute)
+	r.tickAfter(time.Minute)
+	if len(r.ss.kills) != 0 {
+		t.Fatalf("killed without byte counts: %v", r.ss.kills)
+	}
+}
+
+// A kill that did nothing — the socket is still listed and still silent — is
+// retried after another stall interval instead of being forgotten.
+func TestBridgeWatchdogRetriesAKillThatDidNotTakeEffect(t *testing.T) {
+	r := newWatchdogRig()
+	r.ss.socks["198.51.100.7:41182 203.0.113.1:48123"] = 500
+	r.tickAfter(0)
+	r.tickAfter(30 * time.Second)
+	r.tickAfter(5 * time.Second)
+	if len(r.ss.kills) != 1 {
+		t.Fatalf("kills after the first stall = %v", r.ss.kills)
+	}
+	r.tickAfter(30 * time.Second)
+	if len(r.ss.kills) != 2 {
+		t.Fatalf("a socket that survived its kill was not retried: %v", r.ss.kills)
 	}
 }

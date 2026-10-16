@@ -45,9 +45,8 @@ type BridgeWatchdog struct {
 type bridgeSock struct{ local, peer netip.AddrPort }
 
 type sockProgress struct {
-	bytes  uint64
-	since  time.Time
-	killed bool
+	bytes uint64
+	since time.Time
 }
 
 // NewBridgeWatchdog returns a watchdog over the bridge bridge() reports; nil
@@ -85,13 +84,14 @@ func (w *BridgeWatchdog) Kills() map[string]uint64 {
 	return maps.Clone(w.kills)
 }
 
-// Tick looks at the bridge sockets once and kills the ones that stalled.
+// Tick looks at the bridge sockets once and kills the ones that stalled. ss runs
+// outside the lock so a slow one never holds up a metrics scrape.
 func (w *BridgeWatchdog) Tick(ctx context.Context) {
 	bridge := w.bridge()
-	w.mu.Lock()
-	defer w.mu.Unlock()
 	if bridge == nil {
+		w.mu.Lock()
 		clear(w.seen)
+		w.mu.Unlock()
 		return
 	}
 	portals := health.PortalMasters(bridge)
@@ -100,11 +100,20 @@ func (w *BridgeWatchdog) Tick(ctx context.Context) {
 		w.log.Warn("bridge watchdog: ss failed; not judging sockets this tick", "err", err)
 		return
 	}
+	type stalled struct {
+		master string
+		sock   bridgeSock
+		silent time.Duration
+	}
+	var kill []stalled
 	now := w.now()
+	w.mu.Lock()
 	current := map[bridgeSock]bool{}
 	for _, s := range health.ParseSSEstablished(out) {
 		master, ok := portals[s.Peer]
-		if !ok {
+		// Without a byte count there is nothing to judge: an ss that does not
+		// print it would otherwise read as a stall on every socket.
+		if !ok || !s.HasBytes {
 			continue
 		}
 		key := bridgeSock{local: s.Local, peer: s.Peer}
@@ -114,30 +123,37 @@ func (w *BridgeWatchdog) Tick(ctx context.Context) {
 			w.seen[key] = sockProgress{bytes: s.BytesReceived, since: now}
 			continue
 		}
-		if prev.killed || now.Sub(prev.since) < BridgeStallAfter {
+		if now.Sub(prev.since) < BridgeStallAfter {
 			continue
 		}
-		w.kill(ctx, master, key, now.Sub(prev.since))
-		prev.killed = true
-		w.seen[key] = prev
+		kill = append(kill, stalled{master, key, now.Sub(prev.since)})
+		// Restart the clock: a kill that did not take effect is retried after
+		// another stall interval rather than forgotten.
+		w.seen[key] = sockProgress{bytes: s.BytesReceived, since: now}
 	}
 	for key := range w.seen {
 		if !current[key] {
 			delete(w.seen, key)
 		}
 	}
+	w.mu.Unlock()
+	for _, k := range kill {
+		w.kill(ctx, k.master, k.sock, k.silent)
+	}
 }
 
 func (w *BridgeWatchdog) kill(ctx context.Context, master string, s bridgeSock, stalled time.Duration) {
 	_, err := w.run(ctx, "ss", "-K",
-		"dst", s.peer.Addr().String(), "dport", "=", strconv.Itoa(int(s.peer.Port())),
+		"dst", s.peer.Addr().String(), "dport", "=", ":"+strconv.Itoa(int(s.peer.Port())),
 		"sport", "=", ":"+strconv.Itoa(int(s.local.Port())))
 	if err != nil {
 		w.log.Warn("bridge watchdog: could not kill a stalled socket", "master", master,
 			"local", s.local.String(), "portal", s.peer.String(), "err", err)
 		return
 	}
+	w.mu.Lock()
 	w.kills[master]++
+	w.mu.Unlock()
 	w.log.Warn("bridge watchdog: killed a socket that received nothing; xray redials", "master", master,
 		"local", s.local.String(), "portal", s.peer.String(), "stalled", stalled.Round(time.Second))
 }

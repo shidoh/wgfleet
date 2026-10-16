@@ -137,3 +137,10 @@ func TestMasterChecksIncludeThePortalOnlyWhenTheSpecCarriesOne(t *testing.T) {
 		t.Error("no portal check with a portal")
 	}
 }
+
+func TestParseSSEstablishedTellsAbsentByteCountsApart(t *testing.T) {
+	socks := ParseSSEstablished(ssEstablishedInfo)
+	if !socks[0].HasBytes || socks[1].HasBytes {
+		t.Errorf("HasBytes = %v, %v; want true, false", socks[0].HasBytes, socks[1].HasBytes)
+	}
+}

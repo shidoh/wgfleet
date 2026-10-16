@@ -32,6 +32,9 @@ func PortalMasters(bridge *domain.RealityBridgeSpec) map[netip.AddrPort]string {
 type SSSocket struct {
 	Local, Peer   netip.AddrPort
 	BytesReceived uint64
+	// HasBytes reports that ss printed bytes_received for the socket: absent on
+	// a socket that received nothing yet, and on an ss too old to print it.
+	HasBytes bool
 }
 
 // ParseSSEstablished reads `ss -tnH state established` output, with or without
@@ -60,6 +63,7 @@ func ParseSSEstablished(out string) []SSSocket {
 			if v, found := strings.CutPrefix(field, "bytes_received:"); found {
 				if n, err := strconv.ParseUint(v, 10, 64); err == nil {
 					socks[len(socks)-1].BytesReceived = n
+					socks[len(socks)-1].HasBytes = true
 				}
 			}
 		}
