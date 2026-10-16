@@ -286,6 +286,9 @@ func run() error {
 		// remember how many times it has already tried and failed.
 		a.netnsMove = master.NewNetnsMove(a.masterPaths().NetnsMoveState)
 	}
+	if role == domain.RoleExit {
+		a.bridgeWatchdog = exit.NewBridgeWatchdog(a.log, a.realityBridge.Load)
+	}
 
 	// Agent /metrics (own reconcile/health counters). Defaults to mgmt:9301 so the
 	// endpoint comes up without an explicit flag; --metrics overrides, 'off' disables.
@@ -366,6 +369,12 @@ func run() error {
 	// a one-shot run (--support-bundle over a dropping SSH session) behaves.
 	defer ignoreSIGHUP(a.log)()
 
+	// Between passes, not in them: a frozen bridge flow should cost ~30 s, and a
+	// pass can take longer than that on its own.
+	if a.bridgeWatchdog != nil && !*plan {
+		go a.bridgeWatchdog.Run(ctx)
+	}
+
 	ticker := time.NewTicker(cfg.Interval())
 	defer ticker.Stop()
 
@@ -428,11 +437,16 @@ type agent struct {
 	// client-facing VLESS inbound; the per-client VLESS collector stays silent
 	// otherwise instead of reporting a stats API that is not supposed to exist.
 	vlessInbound atomic.Bool
-	publicIP     string
-	mgmtAddr     string
-	stateDir     string // non-empty roots managed files outside /etc (non-root/dev)
-	paths        exit.Paths
-	metrics      *metrics.AgentMetrics // nil when /metrics is disabled
+	// realityBridge is the exit-initiated REALITY bridge (ADR-0038) of the exit's
+	// last applied spec, nil outside the mode; bridgeWatchdog kills its stalled
+	// sockets between passes.
+	realityBridge  atomic.Pointer[domain.RealityBridgeSpec]
+	bridgeWatchdog *exit.BridgeWatchdog
+	publicIP       string
+	mgmtAddr       string
+	stateDir       string // non-empty roots managed files outside /etc (non-root/dev)
+	paths          exit.Paths
+	metrics        *metrics.AgentMetrics // nil when /metrics is disabled
 	// mihomoLogCursor is how far into mihomo's log the error counter has read.
 	// Kept here rather than in a planner: planners are rebuilt every pass and would
 	// re-count the same window forever.
@@ -1012,6 +1026,13 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		// Not cached across a failed read, unlike the endpoint above: this list
 		// carries handshake times, and a stale one reads as a tunnel gone silent.
 		a.masterPeers, _ = exit.MasterPeers(a.paths.WGConf, spec.Peers)
+		if !plan {
+			var bridge *domain.RealityBridgeSpec
+			if spec.Reality != nil {
+				bridge = spec.Reality.Bridge
+			}
+			a.realityBridge.Store(bridge)
+		}
 	}
 	if a.role == domain.RoleMaster && spec.Master != nil {
 		names := exitNamesByIP(spec.Master.ExitTunnels)

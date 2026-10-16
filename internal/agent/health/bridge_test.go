@@ -99,3 +99,24 @@ func TestExitChecksPickTheBridgeCheckInTheMode(t *testing.T) {
 		t.Errorf("forward mode: checks = %v", names)
 	}
 }
+
+// `ss -tniH state established`: each socket line is followed by an indented
+// info line; bytes_received is absent until the first byte arrives.
+const ssEstablishedInfo = `0      0       198.51.100.7:41182   203.0.113.1:48123
+	 cubic wscale:7,7 rto:204 rtt:3.5/1.2 bytes_sent:5120 bytes_acked:5121 bytes_received:98765 segs_out:40
+0      0       198.51.100.7:41190   203.0.113.1:48123
+	 cubic wscale:7,7 rto:204 bytes_sent:517 segs_out:3
+`
+
+func TestParseSSEstablishedReadsBytesReceived(t *testing.T) {
+	socks := ParseSSEstablished(ssEstablishedInfo)
+	if len(socks) != 2 {
+		t.Fatalf("sockets = %+v, want 2", socks)
+	}
+	if socks[0].BytesReceived != 98765 || socks[0].Local.Port() != 41182 {
+		t.Errorf("first socket = %+v, want 98765 bytes from :41182", socks[0])
+	}
+	if socks[1].BytesReceived != 0 {
+		t.Errorf("a socket that received nothing = %+v, want 0", socks[1])
+	}
+}

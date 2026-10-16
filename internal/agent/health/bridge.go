@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"strconv"
 	"strings"
 
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -12,30 +13,56 @@ import (
 // runner runs a command and returns its combined output; runCmd in production.
 type runner func(ctx context.Context, name string, args ...string) (string, error)
 
-// ssSocket is one line of `ss -tnH state established`.
-type ssSocket struct {
-	Local, Peer netip.AddrPort
+// PortalMasters maps each portal address of a bridge to its master's name.
+func PortalMasters(bridge *domain.RealityBridgeSpec) map[netip.AddrPort]string {
+	out := map[netip.AddrPort]string{}
+	if bridge == nil {
+		return out
+	}
+	for _, p := range bridge.Portals {
+		if a, err := netip.ParseAddrPort(p.Address); err == nil {
+			out[a] = p.Master
+		}
+	}
+	return out
 }
 
-// parseSSEstablished reads `ss -tnH state established` output: with a state
-// filter ss drops the State column, so the local address is the third field and
-// the peer the fourth. Lines that do not parse (info lines of `ss -i`) are skipped.
-func parseSSEstablished(out string) []ssSocket {
-	var socks []ssSocket
+// SSSocket is one established TCP socket as `ss -tn[i]H state established`
+// prints it. BytesReceived is filled only with -i, and is 0 until a byte arrives.
+type SSSocket struct {
+	Local, Peer   netip.AddrPort
+	BytesReceived uint64
+}
+
+// ParseSSEstablished reads `ss -tnH state established` output, with or without
+// -i: with a state filter ss drops the State column, so the local address is the
+// third field and the peer the fourth; an -i info line follows its socket and is
+// read for bytes_received. Addresses are unmapped from IPv4-in-IPv6.
+func ParseSSEstablished(out string) []SSSocket {
+	var socks []SSSocket
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
-		if len(f) < 4 {
+		if len(f) >= 4 {
+			local, lerr := netip.ParseAddrPort(f[2])
+			peer, perr := netip.ParseAddrPort(f[3])
+			if lerr == nil && perr == nil {
+				socks = append(socks, SSSocket{
+					Local: netip.AddrPortFrom(local.Addr().Unmap(), local.Port()),
+					Peer:  netip.AddrPortFrom(peer.Addr().Unmap(), peer.Port()),
+				})
+				continue
+			}
+		}
+		if len(socks) == 0 {
 			continue
 		}
-		local, lerr := netip.ParseAddrPort(f[2])
-		peer, perr := netip.ParseAddrPort(f[3])
-		if lerr != nil || perr != nil {
-			continue
+		for _, field := range f {
+			if v, found := strings.CutPrefix(field, "bytes_received:"); found {
+				if n, err := strconv.ParseUint(v, 10, 64); err == nil {
+					socks[len(socks)-1].BytesReceived = n
+				}
+			}
 		}
-		socks = append(socks, ssSocket{
-			Local: netip.AddrPortFrom(local.Addr().Unmap(), local.Port()),
-			Peer:  netip.AddrPortFrom(peer.Addr().Unmap(), peer.Port()),
-		})
 	}
 	return socks
 }
@@ -48,14 +75,11 @@ func BridgeConnections(out string, bridge *domain.RealityBridgeSpec) map[string]
 	if bridge == nil {
 		return counts
 	}
-	byAddr := map[netip.AddrPort]string{}
 	for _, p := range bridge.Portals {
 		counts[p.Master] = 0
-		if a, err := netip.ParseAddrPort(p.Address); err == nil {
-			byAddr[a] = p.Master
-		}
 	}
-	for _, s := range parseSSEstablished(out) {
+	byAddr := PortalMasters(bridge)
+	for _, s := range ParseSSEstablished(out) {
 		if m, ok := byAddr[s.Peer]; ok {
 			counts[m]++
 		}
