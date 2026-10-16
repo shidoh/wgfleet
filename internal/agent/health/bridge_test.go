@@ -65,7 +65,7 @@ func TestBridgeProbe(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			spec := bridgeSpec(tt.portals...)
-			r := bridgeProbe(spec.Reality.Bridge, stubSS(tt.out, tt.err))(context.Background())
+			r := bridgeProbeWithRetry(spec.Reality.Bridge, stubSS(tt.out, tt.err), 1, 0)(context.Background())
 			if r.OK != tt.wantOK || !strings.Contains(r.Detail, tt.wantFrag) {
 				t.Fatalf("probe = %+v, want ok=%v with %q", r, tt.wantOK, tt.wantFrag)
 			}
@@ -123,5 +123,24 @@ func TestParseSSEstablishedReadsLastrcv(t *testing.T) {
 	if len(socks) != 2 || !socks[0].HasLastRcv || socks[0].LastRcv != 31500*time.Millisecond || socks[1].HasLastRcv ||
 		!socks[0].HasLastAck || socks[0].LastAck != 5*time.Millisecond {
 		t.Errorf("sockets = %+v", socks)
+	}
+}
+
+// The check runs in the pass that may just have restarted xray; the bridge
+// needs a moment to dial. It waits a few seconds before failing instead of
+// marking the exit Degraded for a whole pass (seen on the stand).
+func TestBridgeProbeWaitsForAFreshBridge(t *testing.T) {
+	calls := 0
+	run := func(context.Context, string, ...string) (string, error) {
+		calls++
+		if calls < 3 {
+			return "", nil
+		}
+		return ssEstablished, nil
+	}
+	spec := bridgeSpec("203.0.113.1:48123")
+	r := bridgeProbeWithRetry(spec.Reality.Bridge, run, 5, 0)(context.Background())
+	if !r.OK || calls != 3 {
+		t.Fatalf("probe = %+v after %d calls, want ok on the third", r, calls)
 	}
 }

@@ -111,27 +111,53 @@ func BridgeConnections(out string, bridge *domain.RealityBridgeSpec) map[string]
 // connection to at least one master's portal. One master down is not the exit's
 // fault and must not mark it Degraded; per-master state is a metric.
 func bridgeProbe(bridge *domain.RealityBridgeSpec, run runner) Probe {
+	return bridgeProbeWithRetry(bridge, run, bridgeProbeAttempts, time.Second)
+}
+
+// bridgeProbeAttempts is how many times the check looks before failing: it runs
+// in the pass that may just have restarted xray, and the bridge needs a moment
+// to dial.
+const bridgeProbeAttempts = 5
+
+func bridgeProbeWithRetry(bridge *domain.RealityBridgeSpec, run runner, attempts int, pause time.Duration) Probe {
 	return func(ctx context.Context) Result {
 		if bridge == nil || len(bridge.Portals) == 0 {
 			return fail("no portal to dial")
 		}
 		start := now()
-		out, err := run(ctx, "ss", "-tnH", "state", "established")
-		if err != nil {
-			return fail(fmt.Sprintf("ss failed: %v", err))
-		}
-		counts := BridgeConnections(out, bridge)
-		var up []string
-		for _, p := range bridge.Portals {
-			if counts[p.Master] > 0 {
-				up = append(up, p.Master)
+		var r Result
+		for i := 0; i < attempts; i++ {
+			if r = bridgeProbeOnce(ctx, bridge, run, start); r.OK || ctx.Err() != nil {
+				return r
+			}
+			if i < attempts-1 {
+				select {
+				case <-ctx.Done():
+					return r
+				case <-time.After(pause):
+				}
 			}
 		}
-		if len(up) == 0 {
-			return fail(fmt.Sprintf("no established connection to any of %d portal(s)", len(bridge.Portals)))
-		}
-		return ok(fmt.Sprintf("connected to %d/%d portal(s): %s", len(up), len(bridge.Portals), strings.Join(up, ",")), since(start))
+		return r
 	}
+}
+
+func bridgeProbeOnce(ctx context.Context, bridge *domain.RealityBridgeSpec, run runner, start time.Time) Result {
+	out, err := run(ctx, "ss", "-tnH", "state", "established")
+	if err != nil {
+		return fail(fmt.Sprintf("ss failed: %v", err))
+	}
+	counts := BridgeConnections(out, bridge)
+	var up []string
+	for _, p := range bridge.Portals {
+		if counts[p.Master] > 0 {
+			up = append(up, p.Master)
+		}
+	}
+	if len(up) == 0 {
+		return fail(fmt.Sprintf("no established connection to any of %d portal(s)", len(bridge.Portals)))
+	}
+	return ok(fmt.Sprintf("connected to %d/%d portal(s): %s", len(up), len(bridge.Portals), strings.Join(up, ",")), since(start))
 }
 
 // ReadBridgeConnections reads the bridge's established connections per master
