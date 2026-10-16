@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/domain"
 )
@@ -100,27 +101,6 @@ func TestExitChecksPickTheBridgeCheckInTheMode(t *testing.T) {
 	}
 }
 
-// `ss -tniH state established`: each socket line is followed by an indented
-// info line; bytes_received is absent until the first byte arrives.
-const ssEstablishedInfo = `0      0       198.51.100.7:41182   203.0.113.1:48123
-	 cubic wscale:7,7 rto:204 rtt:3.5/1.2 bytes_sent:5120 bytes_acked:5121 bytes_received:98765 segs_out:40
-0      0       198.51.100.7:41190   203.0.113.1:48123
-	 cubic wscale:7,7 rto:204 bytes_sent:517 segs_out:3
-`
-
-func TestParseSSEstablishedReadsBytesReceived(t *testing.T) {
-	socks := ParseSSEstablished(ssEstablishedInfo)
-	if len(socks) != 2 {
-		t.Fatalf("sockets = %+v, want 2", socks)
-	}
-	if socks[0].BytesReceived != 98765 || socks[0].Local.Port() != 41182 {
-		t.Errorf("first socket = %+v, want 98765 bytes from :41182", socks[0])
-	}
-	if socks[1].BytesReceived != 0 {
-		t.Errorf("a socket that received nothing = %+v, want 0", socks[1])
-	}
-}
-
 // A master with a portal reports whether it listens: exits in the mode reach
 // this master through nothing else. Not named client-*: the client-path alert
 // matches that prefix and is critical.
@@ -138,9 +118,9 @@ func TestMasterChecksIncludeThePortalOnlyWhenTheSpecCarriesOne(t *testing.T) {
 	}
 }
 
-func TestParseSSEstablishedTellsAbsentByteCountsApart(t *testing.T) {
-	socks := ParseSSEstablished(ssEstablishedInfo)
-	if !socks[0].HasBytes || socks[1].HasBytes {
-		t.Errorf("HasBytes = %v, %v; want true, false", socks[0].HasBytes, socks[1].HasBytes)
+func TestParseSSEstablishedReadsLastrcv(t *testing.T) {
+	socks := ParseSSEstablished("0 0 198.51.100.7:1 203.0.113.1:2\n\t cubic lastsnd:10 lastrcv:31500 lastack:5\n0 0 198.51.100.7:3 203.0.113.1:2\n\t cubic rto:204\n")
+	if len(socks) != 2 || !socks[0].HasLastRcv || socks[0].LastRcv != 31500*time.Millisecond || socks[1].HasLastRcv {
+		t.Errorf("sockets = %+v", socks)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/domain"
 )
@@ -28,19 +29,18 @@ func PortalMasters(bridge *domain.RealityBridgeSpec) map[netip.AddrPort]string {
 }
 
 // SSSocket is one established TCP socket as `ss -tn[i]H state established`
-// prints it. BytesReceived is filled only with -i, and is 0 until a byte arrives.
+// prints it. LastRcv is filled only with -i: the time since the socket last
+// received data, or since it was set up if it never has.
 type SSSocket struct {
-	Local, Peer   netip.AddrPort
-	BytesReceived uint64
-	// HasBytes reports that ss printed bytes_received for the socket: absent on
-	// a socket that received nothing yet, and on an ss too old to print it.
-	HasBytes bool
+	Local, Peer netip.AddrPort
+	LastRcv     time.Duration
+	HasLastRcv  bool
 }
 
 // ParseSSEstablished reads `ss -tnH state established` output, with or without
 // -i: with a state filter ss drops the State column, so the local address is the
 // third field and the peer the fourth; an -i info line follows its socket and is
-// read for bytes_received. Addresses are unmapped from IPv4-in-IPv6.
+// read for lastrcv (milliseconds). Addresses are unmapped from IPv4-in-IPv6.
 func ParseSSEstablished(out string) []SSSocket {
 	var socks []SSSocket
 	for _, line := range strings.Split(out, "\n") {
@@ -60,10 +60,10 @@ func ParseSSEstablished(out string) []SSSocket {
 			continue
 		}
 		for _, field := range f {
-			if v, found := strings.CutPrefix(field, "bytes_received:"); found {
-				if n, err := strconv.ParseUint(v, 10, 64); err == nil {
-					socks[len(socks)-1].BytesReceived = n
-					socks[len(socks)-1].HasBytes = true
+			if v, found := strings.CutPrefix(field, "lastrcv:"); found {
+				if ms, err := strconv.ParseUint(v, 10, 64); err == nil {
+					socks[len(socks)-1].LastRcv = time.Duration(ms) * time.Millisecond
+					socks[len(socks)-1].HasLastRcv = true
 				}
 			}
 		}
