@@ -40,17 +40,42 @@ func (p xrayPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcil
 		}
 		return []reconcile.Action{reconcile.NoChangeAction("reality inbound", "disabled")}, nil
 	}
-	if p.privateKey == "" {
-		return []reconcile.Action{reconcile.NoChangeAction("reality inbound",
-			"pending: REALITY private key not yet available")}, nil
-	}
-	cfg, err := xray.RenderConfig(xray.RenderInput{
-		Spec:       *spec.Reality,
-		PrivateKey: p.privateKey,
-		EgressMark: xray.EgressMark,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("render reality inbound: %w", err)
+	var cfg string
+	if b := spec.Reality.Bridge; b != nil {
+		// Exit-initiated (ADR-0038): xray dials every master's portal and listens on
+		// nothing. With no master ready there is nothing to dial — stop rather than
+		// fall back to listening, which is the flow the filter kills.
+		if len(b.Portals) == 0 {
+			if p.isUp(ctx) {
+				return []reconcile.Action{reconcile.ExecAction("stop reality bridge (no master ready to dial)",
+					"docker", "compose", "-f", p.composePath, "down")}, nil
+			}
+			return []reconcile.Action{reconcile.NoChangeAction("reality bridge", "no master ready to dial")}, nil
+		}
+		// Validated here so one bad portal keeps the last-good bridge running.
+		if err := b.Validate(); err != nil {
+			return []reconcile.Action{reconcile.NoChangeAction("reality bridge",
+				"spec rejected, keeping the last-good bridge: "+err.Error())}, nil
+		}
+		rendered, err := xray.RenderBridgeConfig(xray.BridgeRenderInput{Spec: *spec.Reality, EgressMark: xray.EgressMark})
+		if err != nil {
+			return nil, fmt.Errorf("render reality bridge: %w", err)
+		}
+		cfg = rendered
+	} else {
+		if p.privateKey == "" {
+			return []reconcile.Action{reconcile.NoChangeAction("reality inbound",
+				"pending: REALITY private key not yet available")}, nil
+		}
+		rendered, err := xray.RenderConfig(xray.RenderInput{
+			Spec:       *spec.Reality,
+			PrivateKey: p.privateKey,
+			EgressMark: xray.EgressMark,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("render reality inbound: %w", err)
+		}
+		cfg = rendered
 	}
 	composeYAML, err := compose.RenderXrayCompose(compose.XrayInput{
 		Image:      spec.Reality.Image,
