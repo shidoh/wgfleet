@@ -169,13 +169,16 @@ func TestRedactConfigMasksAllSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	red := RedactConfig(out)
-	for _, secret := range []string{"cHJpdmF0ZQ", "pw-vn0", "pw-1cx0"} {
+	for _, secret := range []string{"cHJpdmF0ZQ", "pw-vn0", "pw-1cx0", "0a0b", "0c0d"} {
 		if strings.Contains(red, secret) {
 			t.Errorf("redacted config still holds %q:\n%s", secret, red)
 		}
 	}
-	if strings.Count(red, "REDACTED") != 5 || strings.Contains(red, "11111111-0000-4000-8000-000000000001") {
-		t.Errorf("want key, 2 passwords and 2 ids masked:\n%s", red)
+	if strings.Count(red, "REDACTED") != 7 || strings.Contains(red, "11111111-0000-4000-8000-000000000001") {
+		t.Errorf("want key, 2 passwords, 2 ids and 2 short-ids masked:\n%s", red)
+	}
+	if _, err := json.Marshal(decode(t, red)); err != nil {
+		t.Errorf("redacted config is no longer JSON: %v", err)
 	}
 	// The forward render's single key is still masked as before.
 	fwd, err := RenderConfig(RenderInput{
@@ -187,5 +190,19 @@ func TestRedactConfigMasksAllSecrets(t *testing.T) {
 	}
 	if r := RedactConfig(fwd); strings.Contains(r, "c2VjcmV0") || !strings.Contains(r, `"privateKey": "REDACTED"`) {
 		t.Errorf("forward config not redacted:\n%s", r)
+	}
+}
+
+// A bridge's short-id at a portal is half of its credential there.
+func TestRedactConfigMasksBridgeShortIDs(t *testing.T) {
+	out, err := RenderBridgeConfig(bridgeInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	red := RedactConfig(out)
+	for _, secret := range []string{"0a0b", "0c0d", `"u1"`, `"u2"`} {
+		if strings.Contains(red, secret) {
+			t.Errorf("redacted bridge config still holds %s:\n%s", secret, red)
+		}
 	}
 }

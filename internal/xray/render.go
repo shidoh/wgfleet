@@ -403,16 +403,53 @@ func marshalAny(cfg any) (string, error) {
 }
 
 // redactedKeys are the JSON keys whose string values are secrets in any config
-// rendered here: REALITY private keys, the portal's SOCKS passwords and VLESS ids
-// (a bridge's id at a portal is its credential).
-var redactedKeys = []string{`"privateKey": "`, `"pass": "`, `"id": "`}
+// rendered here: REALITY private keys, the portal's SOCKS passwords, VLESS ids
+// and a bridge's short-id (an id and short-id pair is its credential at a portal).
+var redactedKeys = []string{`"privateKey": "`, `"pass": "`, `"id": "`, `"shortId": "`}
+
+// shortIDsKey opens an inbound's short-id list; its non-empty entries are the
+// issued short-ids and are masked too.
+const shortIDsKey = `"shortIds": [`
 
 // RedactConfig masks every secret value for plan/dry-run output.
 func RedactConfig(cfg string) string {
 	for _, key := range redactedKeys {
 		cfg = redactAll(cfg, key)
 	}
-	return cfg
+	return redactShortIDLists(cfg)
+}
+
+// redactShortIDLists masks every non-empty string inside each "shortIds" array.
+// The empty entry stays: it is the "any short-id" wildcard, not a secret.
+func redactShortIDLists(cfg string) string {
+	var b strings.Builder
+	for {
+		i := strings.Index(cfg, shortIDsKey)
+		if i < 0 {
+			b.WriteString(cfg)
+			return b.String()
+		}
+		start := i + len(shortIDsKey)
+		end := strings.IndexByte(cfg[start:], ']')
+		if end < 0 {
+			b.WriteString(cfg)
+			return b.String()
+		}
+		b.WriteString(cfg[:start])
+		b.WriteString(redactQuoted(cfg[start : start+end]))
+		cfg = cfg[start+end:]
+	}
+}
+
+// redactQuoted replaces the content of every non-empty "..." in s.
+func redactQuoted(s string) string {
+	parts := strings.Split(s, `"`)
+	for i := 1; i < len(parts); i += 2 {
+		if parts[i] != "" {
+			parts[i] = "REDACTED"
+		}
+	}
+	return strings.Join(parts, `"`)
 }
 
 func redactAll(cfg, key string) string {
