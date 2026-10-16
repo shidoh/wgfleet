@@ -120,3 +120,20 @@ func TestParseSSEstablishedReadsBytesReceived(t *testing.T) {
 		t.Errorf("a socket that received nothing = %+v, want 0", socks[1])
 	}
 }
+
+// A master with a portal reports whether it listens: exits in the mode reach
+// this master through nothing else. Not named client-*: the client-path alert
+// matches that prefix and is critical.
+func TestMasterChecksIncludeThePortalOnlyWhenTheSpecCarriesOne(t *testing.T) {
+	probes := MasterProbes{RealityPortalUp: passing("portal")}
+	without := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}}
+	if contains(checkNames(MasterChecks(without, probes)), "reality-portal") {
+		t.Error("portal check without a portal")
+	}
+	with := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{
+		RealityPortal: &domain.RealityPortalSpec{ListenPort: 48123},
+	}}
+	if !contains(checkNames(MasterChecks(with, probes)), "reality-portal") {
+		t.Error("no portal check with a portal")
+	}
+}
