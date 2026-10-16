@@ -19,6 +19,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/wg"
+	"github.com/shidoh/wgfleet/internal/xray"
 )
 
 // harness wires a real mTLS gRPC server over a loopback listener plus a matching
@@ -300,5 +301,29 @@ func TestPublishUnknownKeyTypeRejected(t *testing.T) {
 	// dead row that nothing reads.
 	if err := master.PublishTunnelKey(ctx, "exit-does-not-exist", kp.PublicKey); err == nil {
 		t.Fatal("expected the controller to reject a key for an undeclared exit")
+	}
+}
+
+// The portal key travels its own key type end to end and lands in its own column.
+func TestPublishRealityPortalKeyLandsInItsOwnColumn(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, integrationFleet())
+	master := h.agentFor(t, "master-xa-1")
+	if _, err := master.Register(ctx, domain.RoleMaster, "203.0.113.1", "", "10.20.25.254"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	_, pub, err := xray.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := master.PublishRealityPortalKey(ctx, pub); err != nil {
+		t.Fatalf("publish portal key: %v", err)
+	}
+	n, err := h.store.GetNode(ctx, "master-xa-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.RealityPortalPublicKey != pub || n.ClientVLESSPublicKey != "" {
+		t.Fatalf("portal=%q client-vless=%q, want portal=%q only", n.RealityPortalPublicKey, n.ClientVLESSPublicKey, pub)
 	}
 }

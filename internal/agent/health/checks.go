@@ -17,6 +17,10 @@ type ExitProbes struct {
 	// RealityInbound checks the xray REALITY inbound is listening (ADR-0025). Run
 	// in place of the WG-handshake check when REALITY is the active transport.
 	RealityInbound Probe
+	// RealityBridge checks the exit-initiated bridge holds a connection to at
+	// least one master's portal (ADR-0038). Run in place of RealityInbound when
+	// the spec carries a bridge: the exit then has no inbound to listen on.
+	RealityBridge Probe
 	// LifelineUp checks the exit's reserve client interface (domain.LifelineInterface)
 	// exists and is up. Only checked on exits whose spec carries a lifeline.
 	LifelineUp Probe
@@ -28,6 +32,9 @@ type MasterProbes struct {
 	WGServerUp    Probe // client-facing WG/AWG interface is up
 	DNSResolves   Probe // master-tier blocky resolves (ADR-0024); nil when no resolver
 	ClientVLESSUp Probe // client-facing VLESS/REALITY inbound is listening (ADR-0031); nil when not run
+	// RealityPortalUp: the portal exits in the exit-initiated REALITY mode dial is
+	// listening (ADR-0038); nil when not run.
+	RealityPortalUp Probe
 	// ClientWGOwned reports that the AGENT is carrying the client interface, not
 	// merely that an interface of that name exists (wg-easy's does too). nil when
 	// the agent does not manage the leg.
@@ -48,7 +55,12 @@ func ExitChecks(spec domain.NodeSpec, p ExitProbes) []Check {
 	// the reality inbound instead (ADR-0025). AWG-active exits keep the WG check.
 	if spec.HasTransport(domain.TransportRealityXHTTP) &&
 		spec.ActiveTransport.OrDefault() == domain.TransportRealityXHTTP {
-		if p.RealityInbound != nil {
+		switch {
+		case spec.Reality != nil && spec.Reality.Bridge != nil:
+			if p.RealityBridge != nil {
+				checks = append(checks, Check{Name: "reality-bridge", Probe: p.RealityBridge})
+			}
+		case p.RealityInbound != nil:
 			checks = append(checks, Check{Name: "reality-inbound", Probe: p.RealityInbound})
 		}
 	} else if p.HandshakeFresh != nil {
@@ -96,6 +108,11 @@ func MasterChecks(spec domain.NodeSpec, p MasterProbes) []Check {
 	// rely on it. Only checked when the master spec actually carries the inbound.
 	if spec.Master != nil && spec.Master.ClientVLESS != nil && p.ClientVLESSUp != nil {
 		checks = append(checks, Check{Name: "client-vless", Probe: p.ClientVLESSUp})
+	}
+	// The reality portal (ADR-0038): every exit in the exit-initiated mode reaches
+	// this master through it and nothing else.
+	if spec.Master != nil && spec.Master.RealityPortal != nil && p.RealityPortalUp != nil {
+		checks = append(checks, Check{Name: "reality-portal", Probe: p.RealityPortalUp})
 	}
 	// When the agent owns the client leg, "an interface named wg0 exists" is not
 	// enough: it is also true while wg-easy holds it, and it stays true through

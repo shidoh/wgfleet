@@ -48,6 +48,10 @@ type RealityServerSpec struct {
 	AllowIPv6 bool
 	// Image is the xray container image (pinned repo:tag).
 	Image string
+	// Bridge, when set, puts the exit in the exit-initiated mode (ADR-0038): no
+	// inbound is rendered (ListenPort is 0) and xray dials each master's portal
+	// instead. Only Bridge, AllowIPv6 and Image apply then.
+	Bridge *RealityBridgeSpec `json:",omitempty"`
 }
 
 // RealityTunnel is the master-side proxy descriptor for a REALITY/XHTTP exit
@@ -84,4 +88,8 @@ type RealityTunnel struct {
 	// per request. Client-side (mihomo) only; xray unchanged. Only the xhttp path
 	// honours it (vision/TCP ignores it). See RealityTransportConfig.Mux.
 	Mux bool
+	// Reverse marks a tunnel the exit dials (ADR-0038): mihomo reaches it over the
+	// master's portal SOCKS inbound as user <exit>, the enclosing ExitTunnel has no
+	// Endpoint, and only Reverse is meaningful here.
+	Reverse bool `json:",omitempty"`
 }

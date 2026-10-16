@@ -523,6 +523,21 @@ spec:
         description: The standby {{ $labels.transport }} transport on {{ $labels.exit }} could not reach
           enough independent destinations. The exit is still serving over its active transport, but
           switching it over would not restore anything — so it currently has no fallback.
+    - alert: WgfleetRealityBridgeDown
+      # An exit in the exit-initiated REALITY mode dials every ready
+      # master's portal. Its own health check asks only for one of them, so that one
+      # master's path going dark leaves the exit Ready — and that master without a
+      # REALITY tunnel to it. Absent outside the mode.
+      expr: wgfleet_agent_reality_bridge_connected == 0
+      for: 5m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: 'Exit {{ $labels.node }} holds no REALITY bridge to master {{ $labels.master }}'
+        description: The exit's bridge has held no connection to {{ $labels.master }}'s portal for 5m.
+          That master cannot reach this exit over REALITY; other masters may still. Check the
+          portal on the master (reality-portal check) and wgfleet_agent_reality_bridge_kills_total.
   - name: wgfleet.dataplane
     interval: 1m
     rules:

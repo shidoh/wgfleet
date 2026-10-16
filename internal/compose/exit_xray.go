@@ -32,6 +32,12 @@ type XrayInput struct {
 	// that otherwise lets the container's root bind low ports (#9 regression). Zero
 	// or a high port adds nothing.
 	ListenPort int
+	// ContainerName overrides the container name; empty ⇒ "xray". The master's
+	// reality portal (ADR-0038) runs next to its client-facing xray and needs its
+	// own name; the service key stays "xray" in its own compose project.
+	ContainerName string
+	// Restart overrides the restart policy; empty ⇒ "unless-stopped".
+	Restart string
 }
 
 // privilegedPortMax is the highest port that requires CAP_NET_BIND_SERVICE to
@@ -58,8 +64,8 @@ func RenderXrayCompose(in XrayInput) (string, error) {
 
 	svc := map[string]any{
 		"image":          image,
-		"container_name": "xray",
-		"restart":        "unless-stopped",
+		"container_name": orDefault(in.ContainerName, "xray"),
+		"restart":        orDefault(in.Restart, "unless-stopped"),
 		"network_mode":   "host",
 		"command":        []any{"run", "-c", "/etc/xray/config.json"},
 		"volumes":        volumes,

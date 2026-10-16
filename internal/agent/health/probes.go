@@ -38,8 +38,10 @@ func DefaultExitProbes(spec domain.NodeSpec, lifelineConf string) ExitProbes {
 		egressIface = "wgcf"
 	}
 	var realityPort int
+	var bridge *domain.RealityBridgeSpec
 	if spec.Reality != nil {
 		realityPort = spec.Reality.ListenPort
+		bridge = spec.Reality.Bridge
 	}
 	return ExitProbes{
 		HandshakeFresh: handshakeFreshProbe(wgIface),
@@ -47,6 +49,7 @@ func DefaultExitProbes(spec domain.NodeSpec, lifelineConf string) ExitProbes {
 		DNSResolves:    dnsResolvesProbe(dnsListenAddr(spec.DNS)),
 		EgressConfirm:  warpHandshakeProbe(egressIface),
 		RealityInbound: realityInboundProbe(realityPort),
+		RealityBridge:  bridgeProbe(bridge, runCmd),
 		// The reserve client leg (awgl0). `ip link show` is the right question about the
 		// world here and not, say, a handshake: the lifeline is warm standby by design,
 		// so it can be perfectly healthy with no client on it for weeks. The planner's
@@ -64,7 +67,7 @@ func DefaultExitProbes(spec domain.NodeSpec, lifelineConf string) ExitProbes {
 // healthy master as dead every pass.
 func DefaultMasterProbes(spec domain.NodeSpec, controllerAddr string) MasterProbes {
 	var controller, secret string
-	var clientVLESSPort int
+	var clientVLESSPort, portalPort int
 	if spec.Master != nil {
 		controller = spec.Master.ExternalController
 		if controllerAddr != "" {
@@ -73,6 +76,9 @@ func DefaultMasterProbes(spec domain.NodeSpec, controllerAddr string) MasterProb
 		secret = clashSecret(spec.Master.Custom.Overrides)
 		if spec.Master.ClientVLESS != nil {
 			clientVLESSPort = spec.Master.ClientVLESS.ListenPort
+		}
+		if spec.Master.RealityPortal != nil {
+			portalPort = spec.Master.RealityPortal.ListenPort
 		}
 	}
 	return MasterProbes{
@@ -92,7 +98,8 @@ func DefaultMasterProbes(spec domain.NodeSpec, controllerAddr string) MasterProb
 		// (reads `ss -ltnH`, never dials — a dial would only exercise REALITY's
 		// camouflage fallback, not the proxy). MasterChecks omits the check unless the
 		// master spec carries ClientVLESS, so a zero port here is never checked.
-		ClientVLESSUp: realityInboundProbe(clientVLESSPort),
+		ClientVLESSUp:   realityInboundProbe(clientVLESSPort),
+		RealityPortalUp: realityInboundProbe(portalPort),
 	}
 }
 

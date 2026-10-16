@@ -133,6 +133,12 @@ func (c *Client) PublishLifelineKey(ctx context.Context, publicKey string) error
 	return c.publishKey(ctx, publicKey, api.KeyTypeLifeline)
 }
 
+// PublishRealityPortalKey registers this master's REALITY PORTAL x25519 public
+// key (ADR-0038), stored separately from its client VLESS key.
+func (c *Client) PublishRealityPortalKey(ctx context.Context, publicKey string) error {
+	return c.publishKey(ctx, publicKey, api.KeyTypeRealityPortal)
+}
+
 // PublishTunnelKey registers the master's per-tunnel WireGuard public key for one
 // master↔exit tunnel (ADR-0030). tunnel is the exit's node name.
 func (c *Client) PublishTunnelKey(ctx context.Context, tunnel, publicKey string) error {

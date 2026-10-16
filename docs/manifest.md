@@ -213,6 +213,7 @@ fleet:
 | Direct rules per exit | `direct_cidrs` of the master in slot 0 + management CIDRs + one per other master. Over 80: a warning from `--check-config` and at startup; an exit with WARP egress cannot apply its routing |
 | `transports.awg.exit_initiated` | Needs a public IPv4 on every master |
 | `transports.awg.master_port` | Applies to the master in slot 0 |
+| `transports.reality.exit_initiated` | Needs a public IPv4 on every master. A master on an older agent gets no REALITY tunnel to that exit |
 | Master in slot 0 | The one whose clients a lifeline carries and whose `routing.direct_cidrs` exits inherit |
 | `mgmt_subnet` unset | Adding or removing any node, a master included, changes the direct routes and the firewall whitelist on every exit |
 | Exit on an older agent | Serves the master in slot 0 only |

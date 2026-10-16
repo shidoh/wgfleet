@@ -143,6 +143,7 @@ func realityServerToProto(r *domain.RealityServerSpec) *pb.RealitySrvSpec {
 		Mode:          r.Mode,
 		AllowIpv6:     r.AllowIPv6,
 		Image:         r.Image,
+		Bridge:        realityBridgeToProto(r.Bridge),
 	}
 }
 
@@ -162,7 +163,82 @@ func realityServerFromProto(r *pb.RealitySrvSpec) *domain.RealityServerSpec {
 		Mode:          r.GetMode(),
 		AllowIPv6:     r.GetAllowIpv6(),
 		Image:         r.GetImage(),
+		Bridge:        realityBridgeFromProto(r.GetBridge()),
 	}
+}
+
+func realityBridgeToProto(b *domain.RealityBridgeSpec) *pb.RealityBridgeSpec {
+	if b == nil {
+		return nil
+	}
+	out := &pb.RealityBridgeSpec{}
+	for _, p := range b.Portals {
+		out.Portals = append(out.Portals, &pb.RealityPortalPeer{
+			Master:      p.Master,
+			Address:     p.Address,
+			PublicKey:   p.PublicKey,
+			Uuid:        p.UUID,
+			ShortId:     p.ShortID,
+			ServerName:  p.ServerName,
+			Fingerprint: p.Fingerprint,
+		})
+	}
+	return out
+}
+
+func realityBridgeFromProto(b *pb.RealityBridgeSpec) *domain.RealityBridgeSpec {
+	if b == nil {
+		return nil
+	}
+	out := &domain.RealityBridgeSpec{}
+	for _, p := range b.GetPortals() {
+		out.Portals = append(out.Portals, domain.RealityPortalPeer{
+			Master:      p.GetMaster(),
+			Address:     p.GetAddress(),
+			PublicKey:   p.GetPublicKey(),
+			UUID:        p.GetUuid(),
+			ShortID:     p.GetShortId(),
+			ServerName:  p.GetServerName(),
+			Fingerprint: p.GetFingerprint(),
+		})
+	}
+	return out
+}
+
+func realityPortalToProto(r *domain.RealityPortalSpec) *pb.RealityPortalSpec {
+	if r == nil {
+		return nil
+	}
+	out := &pb.RealityPortalSpec{
+		ListenPort: int32(r.ListenPort),
+		SocksPort:  int32(r.SocksPort),
+		ServerName: r.ServerName,
+		Dest:       r.Dest,
+		AllowIpv6:  r.AllowIPv6,
+		Image:      r.Image,
+	}
+	for _, c := range r.Clients {
+		out.Clients = append(out.Clients, &pb.RealityPortalClient{Exit: c.Exit, Uuid: c.UUID, ShortId: c.ShortID})
+	}
+	return out
+}
+
+func realityPortalFromProto(r *pb.RealityPortalSpec) *domain.RealityPortalSpec {
+	if r == nil {
+		return nil
+	}
+	out := &domain.RealityPortalSpec{
+		ListenPort: int(r.GetListenPort()),
+		SocksPort:  int(r.GetSocksPort()),
+		ServerName: r.GetServerName(),
+		Dest:       r.GetDest(),
+		AllowIPv6:  r.GetAllowIpv6(),
+		Image:      r.GetImage(),
+	}
+	for _, c := range r.GetClients() {
+		out.Clients = append(out.Clients, domain.RealityPortalClient{Exit: c.GetExit(), UUID: c.GetUuid(), ShortID: c.GetShortId()})
+	}
+	return out
 }
 
 func clientVlessToProto(c *domain.ClientVLESSServerSpec) *pb.ClientVlessSpec {
@@ -279,6 +355,7 @@ func realityTunnelToProto(r *domain.RealityTunnel) *pb.RealityTunnel {
 		EmptySni:    r.EmptySNI,
 		Mode:        r.Mode,
 		Mux:         r.Mux,
+		Reverse:     r.Reverse,
 	}
 }
 
@@ -297,6 +374,7 @@ func realityTunnelFromProto(r *pb.RealityTunnel) *domain.RealityTunnel {
 		EmptySNI:    r.GetEmptySni(),
 		Mode:        r.GetMode(),
 		Mux:         r.GetMux(),
+		Reverse:     r.GetReverse(),
 	}
 }
 
@@ -320,6 +398,7 @@ func masterToProto(m *domain.MasterSpec) *pb.MasterSpec {
 		Custom:              customToProto(m.Custom),
 		Compose:             composeToProto(m.Compose),
 		ClientVless:         clientVlessToProto(m.ClientVLESS),
+		RealityPortal:       realityPortalToProto(m.RealityPortal),
 		ClientWg:            clientWGToProto(m.ClientWG),
 		ClientViaNetns:      m.ClientViaNetns,
 		NetnsCidr:           m.NetnsCIDR,
@@ -364,6 +443,7 @@ func masterFromProto(m *pb.MasterSpec) *domain.MasterSpec {
 		Custom:              customFromProto(m.GetCustom()),
 		Compose:             composeFromProto(m.GetCompose()),
 		ClientVLESS:         clientVlessFromProto(m.GetClientVless()),
+		RealityPortal:       realityPortalFromProto(m.GetRealityPortal()),
 		ClientWG:            clientWGFromProto(m.GetClientWg()),
 		ClientViaNetns:      m.GetClientViaNetns(),
 		NetnsCIDR:           m.GetNetnsCidr(),

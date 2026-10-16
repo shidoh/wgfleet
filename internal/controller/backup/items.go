@@ -63,6 +63,8 @@ type Sources struct {
 	// degraded, it did not come back at all.
 	AWG3Key        string
 	ClientVLESSKey string
+	// The master's reality portal key (ADR-0038) is deliberately absent: a fresh
+	// one is published on the next pass and reaches every bridge with the spec.
 }
 
 // DefaultSources fills Sources from config plus the fixed master paths.

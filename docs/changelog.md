@@ -8,6 +8,9 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 ### Added
 
+- `fleet.exits[].transports.reality.exit_initiated`: the exit's xray dials every master instead of listening, for exits where TCP the master opens is cut after its first data segment. Each master runs a second xray, `xray-portal`, on `fleet.masters[].reality_portal.listen_port` (derived from the master name when unset), opened world-facing. Wire 14. Procedure and checks: [operations.md](operations.md#exit-initiated-reality).
+- Exit health check `reality-bridge` (in the mode, replaces `reality-inbound`), master health check `reality-portal`, metrics `wgfleet_agent_reality_bridge_connected` and `wgfleet_agent_reality_bridge_kills_total`, alert `WgfleetRealityBridgeDown`.
+
 - Several masters: `fleet.masters` accepts more than one. Each master is a peer on every exit's single AmneziaWG interface, on the addresses of its `slot`. With two or more, `fleet.interface_anchor` is required — the validation message gives the value that keeps existing tunnels as they are.
 - `fleet.interface_anchor` and `fleet.masters[].slot`. A fleet with one master sets neither and renders as before.
 - `fleet.master_dns`: the resolver settings of every master with `dns_filter`, same keys as `fleet.masters[].dns`.
@@ -27,6 +30,8 @@ New releases are announced, with the archives attached, in the Telegram channel 
 - The master's client VLESS inbound counts traffic per client: xray serves its stats API on `127.0.0.1:10085`. The first agent upgrade restarts xray once; VLESS clients of that master reconnect after a few seconds.
 - The Grafana dashboard is rebuilt: firing alerts, clients online and client traffic, DNS, and an exit × master matrix come first; the earlier rows are below, most of them collapsed. New `$master` and `$exit` variables; an "Agent restarts" annotation marks rollouts. Re-import `grafana-dashboard.json` (Grafana ≤12) or paste `grafana-dashboard-v2.json` (Grafana 13).
 - Wire contract 13. Upgrade the controller first, then the agents; an exit on an older agent keeps serving the master in slot 0 only.
+- Wire contract 14. Controller first, then masters, then exits. The controller store gains a column: the controller binary cannot be rolled back past this release.
+- Plan output masks every REALITY private key in an xray config, not only the first.
 - mihomo on the masters is v1.19.32 (was v1.19.30): fixes for AmneziaWG 3.x tunnels and WireGuard start-up. The image change restarts mihomo once on every master that does not pin `mihomo_tag`; client connections drop for a few seconds.
 - wgfleet installs wgcf 2.3.1 (was 2.2.32) on exits, for WARP registration against the current Cloudflare API. Running WARP interfaces are not touched.
 - An exit on the new agent edits its master peers in place and checks them against the kernel on every pass; adding or removing a master no longer restarts the interface. An exit on an older agent still restarts it.

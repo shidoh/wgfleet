@@ -266,6 +266,8 @@ refresh (`as_blacklist_feed`):
 | `wgfleet_agent_standby_tier_usable` / `_total` | — | members of the INACTIVE tier the last warm probe found usable, out of those it could sample (master-only) |
 | `wgfleet_agent_standby_tier_member_usable` | `exit` | 1 when the last warm probe reached the internet through this member of the INACTIVE tier, 0 when it did not (master-only). The tally above cannot be acted on — one dead reserve exit hides inside "2 of 3"; this names it. **Absent means never sampled** |
 | `wgfleet_agent_standby_transport_usable` | `exit,transport` | 1 when this exit's INACTIVE transport — the one an operator would switch it onto — reached the internet on the last probe, 0 when it did not (master-only). **Absent means never measured**, which is not the same as healthy |
+| `wgfleet_agent_reality_bridge_connected` | `master` | 1 when the exit's REALITY bridge holds a connection to this master's portal, 0 when it holds none (exit-only, exit-initiated REALITY). **Absent outside the mode** |
+| `wgfleet_agent_reality_bridge_kills_total` | `master` | bridge sockets to this master's portal the watchdog killed after 30 s without a received byte — one-way freezes on that path (exit-only) |
 | `wgfleet_fw_as_blacklist_size` | `family` | size of the scanner-ASN blacklist set actually loaded in nftables |
 | `wgfleet_agent_client_path_ok` | `probe` | 1 when the master's OWN client can send and receive over this protocol through the full client path (interface, firewall, proxy, exit); 0 when it cannot (master-only). Probes: `icmp/direct`, `icmp/gateway`, `icmp/mgmt`, `tcp/443`, `udp/53`. The one measurement that says whether a client works, as opposed to whether each component looks fine |
 | `wgfleet_agent_udp_return_socket` | `port` | 1 when a TPROXY reply socket can still be opened for this destination port; 0 when a socket this namespace already holds makes it impossible, so client traffic to that port gets no replies (master-only) |
@@ -318,7 +320,7 @@ an untested proxy rather than a measurement.
 
 ## 4. Alerts
 
-**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 53 alerts,
+**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 54 alerts,
 already applied by step 2 above. Earlier revisions of this file printed two of them
 as a snippet to paste; the copies drifted from the shipped rules (different group
 name, different `for`, a different expression on one), so pasting produced a second,
@@ -351,6 +353,7 @@ What ships, by severity:
 | `WgfleetStandbyTierUnusable` | warning |
 | `WgfleetStandbyTierMemberUnusable` | warning |
 | `WgfleetStandbyTransportUnusable` | warning |
+| `WgfleetRealityBridgeDown` | warning |
 | `WgfleetClientPathDead` | critical |
 | `WgfleetClientUDPBlackHole` | critical |
 | `WgfleetGuardIsCatchingPackets` | warning |

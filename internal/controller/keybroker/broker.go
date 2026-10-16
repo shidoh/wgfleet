@@ -226,6 +226,26 @@ func (b *Broker) RegisterClientVlessKey(ctx context.Context, nodeID, publicKey s
 	return nil
 }
 
+// RegisterRealityPortalKey records the master's REALITY PORTAL x25519 public key
+// (ADR-0038). Validated before the store write: it is rendered verbatim into
+// every bridge's config.
+func (b *Broker) RegisterRealityPortalKey(ctx context.Context, nodeID, publicKey string) error {
+	if publicKey == "" {
+		return fmt.Errorf("keybroker: empty reality portal public key for %q", nodeID)
+	}
+	if !xray.ValidPublicKey(publicKey) {
+		return fmt.Errorf("keybroker: malformed reality portal public key for %q", nodeID)
+	}
+	if b.keyUnchanged(ctx, nodeID, publicKey, func(n domain.Node) string { return n.RealityPortalPublicKey }) {
+		return nil
+	}
+	if err := b.store.SetNodeRealityPortalKey(ctx, nodeID, publicKey); err != nil {
+		return err
+	}
+	b.log.Info("REALITY portal public key registered", "node", nodeID)
+	return nil
+}
+
 // RegisterClientWGKey records the master's CLIENT-FACING WireGuard public key —
 // the identity of the interface end users dial once the agent owns it. Validated
 // as a well-formed WireGuard key before storing: it is rendered verbatim into
@@ -633,7 +653,16 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	// reality transport. The shared identifiers (UUID/short-id) and camouflage match
 	// the master's vless proxy because both call realityFor with the same inputs; the
 	// exit generates its own x25519 keypair locally and publishes only the pubkey.
-	if spec.HasTransport(domain.TransportRealityXHTTP) {
+	if spec.HasTransport(domain.TransportRealityXHTTP) && b.realityReverse(exit, exitNode) {
+		// Exit-initiated (ADR-0038): no inbound, no open port; the exit dials every
+		// ready master's portal instead.
+		bridge, berr := b.bridgeFor(ctx, exit)
+		if berr != nil {
+			return domain.NodeSpec{}, berr
+		}
+		rp := b.realityFor(exit, iface.anchor)
+		spec.Reality = &domain.RealityServerSpec{AllowIPv6: rp.AllowIPv6, Image: rp.Image, Bridge: bridge}
+	} else if spec.HasTransport(domain.TransportRealityXHTTP) {
 		rp := b.realityFor(exit, iface.anchor)
 		spec.Reality = &domain.RealityServerSpec{
 			ListenPort: rp.Port, UUID: rp.UUID, ShortID: rp.ShortID,
@@ -785,6 +814,8 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	// the resolver set as soon as it registers (drain doesn't remove it: a drained
 	// exit's blocky still resolves, and keeping it avoids an empty upstream group).
 	var dnsUpstreams []string
+	// The exits that dial this master's portal (ADR-0038), in manifest order.
+	var portalClients []domain.RealityPortalClient
 
 	for _, exit := range b.fleet.Exits {
 		exitNode, exitPub, eerr := b.lookupPubKey(ctx, exit.Name)
@@ -948,6 +979,13 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			}
 		}
 		realityRenderable := hasReality && haveIP && exitNode.RealityPublicKey != ""
+		// Exit-initiated (ADR-0038): the exit dials this master's portal, so neither
+		// its address nor its REALITY key matters here — only whether this master is
+		// ready to be dialled. Not ready costs this tunnel alone.
+		reverse := hasReality && b.realityReverse(exit, exitNode)
+		if reverse {
+			_, realityRenderable = b.portalTarget(exit, master, masterNode)
+		}
 		realityActive := active == domain.TransportRealityXHTTP && realityRenderable
 
 		if hasAWG {
@@ -978,7 +1016,20 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 				MasterAddr:      armed,
 			})
 		}
-		if realityRenderable {
+		if realityRenderable && reverse {
+			uuid, sid, perr := b.portalIDs(ctx, exit.Name, master.Name)
+			if perr != nil {
+				return domain.NodeSpec{}, perr
+			}
+			portalClients = append(portalClients, domain.RealityPortalClient{Exit: exit.Name, UUID: uuid, ShortID: sid})
+			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
+				Name:      exit.Name + "-reality",
+				Transport: domain.TransportRealityXHTTP,
+				Reality:   &domain.RealityTunnel{Reverse: true},
+				Drained:   baseDrained || !realityActive,
+				Reserve:   isReserve,
+			})
+		} else if realityRenderable {
 			rp := b.realityFor(exit, iface.anchor)
 			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
 				Name:      exit.Name + "-reality",
@@ -1005,6 +1056,10 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		}
 	}
 
+	if len(portalClients) > 0 {
+		ms.RealityPortal = b.realityPortalSpec(master, portalClients)
+		spec.Firewall.PublicTCPPorts = append(spec.Firewall.PublicTCPPorts, ms.RealityPortal.ListenPort)
+	}
 	spec.Master = ms
 	spec.DNS = b.renderMasterDNS(master, dnsUpstreams)
 	return spec, nil

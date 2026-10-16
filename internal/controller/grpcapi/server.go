@@ -38,6 +38,9 @@ type SpecRenderer interface {
 	// RegisterLifelineKey records an exit's LIFELINE interface WireGuard public
 	// key (the reserve client-facing interface awgl0).
 	RegisterLifelineKey(ctx context.Context, nodeID, publicKey string) error
+	// RegisterRealityPortalKey records a master's REALITY portal x25519 public
+	// key (ADR-0038).
+	RegisterRealityPortalKey(ctx context.Context, nodeID, publicKey string) error
 	RegisterTunnelKey(ctx context.Context, nodeID, tunnel, publicKey string) error
 }
 
@@ -209,6 +212,8 @@ func (s *Service) PublishPublicKey(ctx context.Context, req *pb.PublishPublicKey
 		register = s.renderer.RegisterClientWGKey
 	case keyType == api.KeyTypeLifeline:
 		register = s.renderer.RegisterLifelineKey
+	case keyType == api.KeyTypeRealityPortal:
+		register = s.renderer.RegisterRealityPortalKey
 	default:
 		tunnel, ok := api.ParseTunnelKeyType(keyType)
 		if !ok {

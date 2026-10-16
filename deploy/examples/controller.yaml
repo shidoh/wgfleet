@@ -56,7 +56,7 @@ fleet:
         # sni: www.python.org # ClientHello SNI (default: dest_domain / fleet default)
         # mode: xhttp # xhttp (default) | vision
         # mux: true # XMUX connection reuse in the client profile (default true, xhttp only)
-        # fingerprint: firefox # client uTLS fingerprint: firefox (default) | chrome | safari | none
+        # fingerprint: chrome # client uTLS fingerprint: chrome (default) | firefox | safari
         # empty_sni: true # no-SNI ClientHello (default true)
         # allow_ipv6: false # let xray resolve over IPv6 (default false; data plane is IPv4-only)
         # xhttp_path: "/" # XHTTP path (default "/")
@@ -64,6 +64,11 @@ fleet:
         # image: "ghcr.io/xtls/xray-core" # xray image (default: built-in pinned)
         # tag: "26.6.22" # explicit xray tag
         # route_through_cidrs: [10.20.0.0/16, 10.0.0.0/8] # internal nets clients route THROUGH the tunnel (served in the subscription routing header)
+      # reality_portal: # inbound for exits with transports.reality.exit_initiated; runs only when one exists
+        # listen_port: 0 # TCP port; 0 derives a per-master port in 40000-60000
+        # dest_domain: www.python.org # camouflage host; must support X25519MLKEM768
+        # dest_port: 443 # camouflage target port (default 443)
+        # sni: www.python.org # camouflage SNI (default: dest_domain / fleet default)
       routing:
         direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] # destinations that never enter the tunnel
         direct_geo: [RU] # geo codes routed DIRECT
@@ -148,11 +153,12 @@ fleet:
           sni: www.python.org # camouflage SNI (default: dest_domain)
           mode: xhttp # xhttp (default) | vision
           mux: true # XMUX connection reuse on the master's proxy (default false, xhttp only)
-          fingerprint: chrome # master-side uTLS fingerprint: chrome (default) | firefox | none
+          fingerprint: chrome # uTLS fingerprint of the dialling side: chrome (default) | firefox | safari
           empty_sni: false # accept a ClientHello with no SNI (default false)
           allow_ipv6: false # let xray resolve over IPv6 (default false)
           # xhttp_path: "/abc123" # XHTTP path (default /<short-id>)
           # image: ghcr.io/xtls/xray-core:26.6.22 # xray image (default: built-in pinned)
+          # exit_initiated: false # the exit dials every master's reality_portal instead of listening (default false)
       active_transport: awg # transport the master routes through: awg | reality-xhttp
       # per_tunnel_key: "off" # staged per-tunnel key migration: off (default) -> dual -> switch -> on, one exit at a time
       dns_filter: true # run blocky on this exit; binds loopback and mgmt_addr only (default false)

@@ -29,8 +29,15 @@ type Paths struct {
 	ClientVLESS    string // client-facing xray inbound config.json (holds the REALITY private key, 0600)
 	ClientVLESSYML string // docker-compose.yml for the master client-vless xray container
 	ClientVLESSKey string // master's client-facing REALITY x25519 private key (0600); wiped on teardown
-	ClientWGConf   string // client-facing AmneziaWG interface config (0600); the interface name comes from this filename
-	ClientWGKey    string // master's client-facing WireGuard private key (0600); adopted from wg-easy on handover
+	// RealityPortal is the portal xray config.json (ADR-0038; holds the portal
+	// REALITY private key and every bridge UUID, 0600); RealityPortalYML its
+	// compose file; RealityPortalKey the portal's REALITY x25519 private key,
+	// kept while no exit uses the portal and wiped only on teardown.
+	RealityPortal    string
+	RealityPortalYML string
+	RealityPortalKey string
+	ClientWGConf     string // client-facing AmneziaWG interface config (0600); the interface name comes from this filename
+	ClientWGKey      string // master's client-facing WireGuard private key (0600); adopted from wg-easy on handover
 	// SynthKey is the private key of the master's OWN client — the peer it uses to
 	// measure whether a packet entering the client interface comes back. Node-local
 	// and never published: nobody has to re-issue this config, so a key that never
@@ -64,7 +71,10 @@ func DefaultPaths() Paths {
 		// Mirrors exit.Paths.ClientVLESSKey — the agent generates/reads the master's
 		// client-facing REALITY key there (main.go ensureClientVlessKey); teardown
 		// wipes the same file so a decommissioned master leaves no key behind.
-		ClientVLESSKey: "/etc/wgfleet/client-vless.key",
+		ClientVLESSKey:   "/etc/wgfleet/client-vless.key",
+		RealityPortal:    "/etc/wgfleet/reality-portal/config.json",
+		RealityPortalYML: "/etc/wgfleet/reality-portal/docker-compose.yml",
+		RealityPortalKey: "/etc/wgfleet/reality-portal.key",
 		// The filename IS the interface name: wg0 keeps the name wg-easy used, so the
 		// NAT, MSS-clamp and DOCKER-USER rules that already reference it need no change
 		// when the leg changes hands.
@@ -79,25 +89,28 @@ func DefaultPaths() Paths {
 // PathsUnder roots every managed file under dir (non-root/dev runs and tests).
 func PathsUnder(dir string) Paths {
 	return Paths{
-		MihomoConfig:   filepath.Join(dir, "config.yaml"),
-		DirectNetworks: filepath.Join(dir, "direct-networks.yaml"),
-		NFT:            filepath.Join(dir, "wgfleet-master.nft"),
-		V6NFT:          filepath.Join(dir, "wgfleet-master-v6.nft"),
-		FirewallNFT:    filepath.Join(dir, "wgfleet.nft"),
-		ExtraFilesDir:  dir,
-		UIDir:          filepath.Join(dir, "ui"),
-		WGEasyDB:       filepath.Join(dir, "wg-easy.db"),
-		Compose:        filepath.Join(dir, "docker-compose.yml"),
-		WGEasyAdmin:    filepath.Join(dir, "wg-easy-admin-password"),
-		DNS:            filepath.Join(dir, "blocky", "config.yml"),
-		DNSCompose:     filepath.Join(dir, "blocky", "docker-compose.yml"),
-		ClientVLESS:    filepath.Join(dir, "client-vless", "config.json"),
-		ClientVLESSYML: filepath.Join(dir, "client-vless", "docker-compose.yml"),
-		ClientVLESSKey: filepath.Join(dir, "client-vless.key"),
-		ClientWGConf:   filepath.Join(dir, "wg0.conf"),
-		ClientWGKey:    filepath.Join(dir, "client-wg.key"),
-		SynthKey:       filepath.Join(dir, "client-wg-synth.key"),
-		NetnsMoveState: filepath.Join(dir, "netns-move.json"),
-		SynthConf:      filepath.Join(dir, "client-wg-synth.conf"),
+		MihomoConfig:     filepath.Join(dir, "config.yaml"),
+		DirectNetworks:   filepath.Join(dir, "direct-networks.yaml"),
+		NFT:              filepath.Join(dir, "wgfleet-master.nft"),
+		V6NFT:            filepath.Join(dir, "wgfleet-master-v6.nft"),
+		FirewallNFT:      filepath.Join(dir, "wgfleet.nft"),
+		ExtraFilesDir:    dir,
+		UIDir:            filepath.Join(dir, "ui"),
+		WGEasyDB:         filepath.Join(dir, "wg-easy.db"),
+		Compose:          filepath.Join(dir, "docker-compose.yml"),
+		WGEasyAdmin:      filepath.Join(dir, "wg-easy-admin-password"),
+		DNS:              filepath.Join(dir, "blocky", "config.yml"),
+		DNSCompose:       filepath.Join(dir, "blocky", "docker-compose.yml"),
+		ClientVLESS:      filepath.Join(dir, "client-vless", "config.json"),
+		ClientVLESSYML:   filepath.Join(dir, "client-vless", "docker-compose.yml"),
+		ClientVLESSKey:   filepath.Join(dir, "client-vless.key"),
+		RealityPortal:    filepath.Join(dir, "reality-portal", "config.json"),
+		RealityPortalYML: filepath.Join(dir, "reality-portal", "docker-compose.yml"),
+		RealityPortalKey: filepath.Join(dir, "reality-portal.key"),
+		ClientWGConf:     filepath.Join(dir, "wg0.conf"),
+		ClientWGKey:      filepath.Join(dir, "client-wg.key"),
+		SynthKey:         filepath.Join(dir, "client-wg-synth.key"),
+		NetnsMoveState:   filepath.Join(dir, "netns-move.json"),
+		SynthConf:        filepath.Join(dir, "client-wg-synth.conf"),
 	}
 }

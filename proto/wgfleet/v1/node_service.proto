@@ -218,6 +218,25 @@ message RealitySrvSpec {
   // Allow xray to resolve dest/egress over IPv6. false ⇒ pin to IPv4 (data plane is
   // IPv4-only, #20). Additive; older agent ignores it — no wire bump (ADR-0019).
   bool allow_ipv6 = 11;
+  // Set ⇒ the exit dials every listed master's portal instead of listening
+  // (ADR-0038); listen_port is 0. A v13 agent drops it, hence wire 14.
+  RealityBridgeSpec bridge = 12;
+}
+
+// RealityBridgeSpec is the exit's list of master portals to dial.
+message RealityBridgeSpec {
+  repeated RealityPortalPeer portals = 1;
+}
+
+// RealityPortalPeer is one master's portal as the exit's bridge dials it.
+message RealityPortalPeer {
+  string master = 1;      // master node name (reverse tag r-<master>)
+  string address = 2;     // portal "ip:port"
+  string public_key = 3;  // master's portal REALITY x25519 PUBLIC key
+  string uuid = 4;        // VLESS id of this exit at this portal
+  string short_id = 5;    // REALITY short-id (hex)
+  string server_name = 6; // camouflage SNI
+  string fingerprint = 7; // uTLS fingerprint; "" ⇒ chrome
 }
 
 // MasterSpec is the master node's mihomo data plane.
@@ -276,6 +295,29 @@ message MasterSpec {
   // The point-to-point link between the host and mihomo's namespace, a /30.
   // Empty ⇒ domain.NetnsDefaultCIDR (100.127.255.0/30, RFC 6598).
   string netns_cidr = 19;
+  // The inbound exits in the exit-initiated REALITY mode dial (ADR-0038); unset ⇒
+  // no portal. Wire 14.
+  RealityPortalSpec reality_portal = 20;
+}
+
+// RealityPortalSpec is a master's portal: a VLESS+REALITY inbound for exit
+// bridges and a SOCKS inbound mihomo uses to reach them. No private key and no
+// SOCKS password: both stay on the master.
+message RealityPortalSpec {
+  int32 listen_port = 1;
+  int32 socks_port = 2;   // 0 ⇒ 10808
+  string server_name = 3;
+  string dest = 4;
+  bool allow_ipv6 = 5;
+  string image = 6;
+  repeated RealityPortalClient clients = 7;
+}
+
+// RealityPortalClient is one exit's bridge as the portal admits it.
+message RealityPortalClient {
+  string exit = 1;
+  string uuid = 2;
+  string short_id = 3;
 }
 
 // ClientWGSpec is the master-side desired state for the CLIENT-FACING AmneziaWG
@@ -417,6 +459,9 @@ message RealityTunnel {
   // Enable XHTTP connection reuse (XMUX) so the handshake/steal is amortized.
   // Additive; older agent ignores it — backward-compatible (ADR-0019).
   bool mux = 10;
+  // The exit dials the master's portal (ADR-0038): mihomo reaches it over the
+  // portal's SOCKS inbound; the enclosing endpoint is empty. Wire 14.
+  bool reverse = 11;
 }
 
 // CustomConfig carries operator overrides (JSON-encoded for arbitrary nesting)

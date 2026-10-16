@@ -270,13 +270,20 @@
   {{else}}
   <dl class="kv"><dt>Active</dt><dd class="strong">{{transportLabel .ActiveTransport}}</dd></dl>
   {{end}}
-  {{if .RealityInfo}}
+  {{if .RealityInfo}}{{if .RealityInfo.Bridge}}
+  <dl class="kv">
+    <dt>REALITY</dt><dd>exit dials, no open port</dd>
+    {{range .RealityInfo.Bridge.Portals}}<dt>Dials {{.Master}}</dt><dd class="dim">{{.Address}}</dd>
+    {{else}}<dt>Dials</dt><dd class="dim">no master ready yet</dd>
+    {{end}}
+  </dl>
+  {{else}}
   <dl class="kv">
     <dt>REALITY SNI</dt><dd>{{.RealityInfo.ServerName}}</dd>
     <dt>Listen port</dt><dd>{{.RealityInfo.ListenPort}} / tcp</dd>
     <dt>Camouflage</dt><dd class="dim">{{.RealityInfo.Dest}}</dd>
   </dl>
-  {{end}}
+  {{end}}{{end}}
 </div>
 {{end}}
 

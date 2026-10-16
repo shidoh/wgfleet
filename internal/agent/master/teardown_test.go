@@ -61,10 +61,12 @@ func TestMasterTeardownWipesEveryNodeSecret(t *testing.T) {
 	}
 	joined := strings.Join(targets, "\n")
 	for _, secret := range []string{
-		paths.ClientVLESS,    // REALITY private key + every issued client UUID
-		paths.ClientVLESSKey, // the master's client-facing REALITY key
-		paths.WGEasyDB,       // wg-easy's client database, keys included
-		paths.ClientWGConf,   // interface key + every client preshared key
+		paths.ClientVLESS,      // REALITY private key + every issued client UUID
+		paths.ClientVLESSKey,   // the master's client-facing REALITY key
+		paths.RealityPortal,    // portal config: REALITY private key + bridge UUIDs
+		paths.RealityPortalKey, // the master's portal REALITY key
+		paths.WGEasyDB,         // wg-easy's client database, keys included
+		paths.ClientWGConf,     // interface key + every client preshared key
 		paths.ClientWGKey,
 		ClaimPathFor(paths.ClientWGConf),
 	} {
@@ -161,5 +163,18 @@ func TestTeardownRemovesBothNamespacesAndTheProber(t *testing.T) {
 		if !strings.Contains(dump, want) {
 			t.Errorf("teardown leaves %q behind:\n%s", want, dump)
 		}
+	}
+}
+
+// Decommission stops the portal: left up, it would keep admitting bridges with
+// a private key the teardown then deletes from disk.
+func TestTeardownBringsThePortalDown(t *testing.T) {
+	paths := testPaths(t)
+	acts, err := masterTeardownPlanner{paths: paths}.Plan(context.Background(), domain.NodeSpec{Role: domain.RoleMaster, Decommission: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasExecContaining(acts, paths.RealityPortalYML, "down") {
+		t.Errorf("teardown does not bring the portal down: %+v", acts)
 	}
 }

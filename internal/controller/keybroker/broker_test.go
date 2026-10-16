@@ -1714,3 +1714,28 @@ func TestMasterSpecHonorsManifestDrain(t *testing.T) {
 		t.Fatalf("a manifest-drained exit must render Drained, got %+v", spec.Master)
 	}
 }
+
+func TestRegisterRealityPortalKey(t *testing.T) {
+	ctx := context.Background()
+	b, st := newBroker(t)
+	seedNode(t, st, "master-xa-1", "10.20.0.1", "203.0.113.1", "", domain.RoleMaster)
+
+	_, pub, err := xray.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RegisterRealityPortalKey(ctx, "master-xa-1", pub); err != nil {
+		t.Fatalf("register valid portal key: %v", err)
+	}
+	n, _ := st.GetNode(ctx, "master-xa-1")
+	if n.RealityPortalPublicKey != pub || n.ClientVLESSPublicKey != "" {
+		t.Errorf("stored portal=%q client-vless=%q, want portal=%q and client-vless untouched",
+			n.RealityPortalPublicKey, n.ClientVLESSPublicKey, pub)
+	}
+	// Rendered verbatim into every bridge's config: refuse anything but a key.
+	for _, bad := range []string{"", "not-base64-!!", "c2hvcnQ", pub + "\n}"} {
+		if err := b.RegisterRealityPortalKey(ctx, "master-xa-1", bad); err == nil {
+			t.Errorf("expected rejection of malformed portal key %q", bad)
+		}
+	}
+}

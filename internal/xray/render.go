@@ -391,6 +391,10 @@ func RenderClientConfig(in ClientRenderInput) (string, error) {
 }
 
 func marshal(cfg config) (string, error) {
+	return marshalAny(cfg)
+}
+
+func marshalAny(cfg any) (string, error) {
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("xray render: %w", err)
@@ -398,17 +402,35 @@ func marshal(cfg config) (string, error) {
 	return string(b) + "\n", nil
 }
 
-// RedactConfig masks the REALITY private key for plan/dry-run output.
+// redactedKeys are the JSON keys whose string values are secrets in any config
+// rendered here: REALITY private keys, the portal's SOCKS passwords and VLESS ids
+// (a bridge's id at a portal is its credential).
+var redactedKeys = []string{`"privateKey": "`, `"pass": "`, `"id": "`}
+
+// RedactConfig masks every secret value for plan/dry-run output.
 func RedactConfig(cfg string) string {
-	const key = `"privateKey": "`
-	i := strings.Index(cfg, key)
-	if i < 0 {
-		return cfg
+	for _, key := range redactedKeys {
+		cfg = redactAll(cfg, key)
 	}
-	start := i + len(key)
-	end := strings.IndexByte(cfg[start:], '"')
-	if end < 0 {
-		return cfg
+	return cfg
+}
+
+func redactAll(cfg, key string) string {
+	var b strings.Builder
+	for {
+		i := strings.Index(cfg, key)
+		if i < 0 {
+			b.WriteString(cfg)
+			return b.String()
+		}
+		start := i + len(key)
+		end := strings.IndexByte(cfg[start:], '"')
+		if end < 0 {
+			b.WriteString(cfg)
+			return b.String()
+		}
+		b.WriteString(cfg[:start])
+		b.WriteString("REDACTED")
+		cfg = cfg[start+end:]
 	}
-	return cfg[:start] + "REDACTED" + cfg[start+end:]
 }

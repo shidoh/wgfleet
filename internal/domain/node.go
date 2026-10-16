@@ -82,6 +82,10 @@ type Node struct {
 	// the same node. Like the others, the private key never leaves the node.
 	// Empty when the exit carries no lifeline.
 	LifelinePublicKey string
+	// RealityPortalPublicKey is the master's REALITY PORTAL x25519 public key
+	// (ADR-0038): the inbound exits in the exit-initiated mode dial. Separate from
+	// ClientVLESSPublicKey, which end users hold. Empty until the master publishes.
+	RealityPortalPublicKey string
 
 	// Drain, when set, takes the node out of the load balancer: it stays a
 	// configured peer/proxy (existing connections survive) but receives no new

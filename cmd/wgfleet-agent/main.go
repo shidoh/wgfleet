@@ -44,6 +44,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/master"
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/agent/restart"
+	"github.com/shidoh/wgfleet/internal/agent/sockwatch"
 	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/atomicfile"
 	"github.com/shidoh/wgfleet/internal/config"
@@ -285,6 +286,10 @@ func run() error {
 		// One per process, like the tier selector and for the same reason: it has to
 		// remember how many times it has already tried and failed.
 		a.netnsMove = master.NewNetnsMove(a.masterPaths().NetnsMoveState)
+		a.portalWatchdog = master.NewPortalWatchdog(a.log, a.realityPortal.Load, a.exitNameByIP)
+	}
+	if role == domain.RoleExit {
+		a.bridgeWatchdog = exit.NewBridgeWatchdog(a.log, a.realityBridge.Load)
 	}
 
 	// Agent /metrics (own reconcile/health counters). Defaults to mgmt:9301 so the
@@ -316,6 +321,14 @@ func run() error {
 			slog.Warn("certificate expiry gauge unavailable", "node", cfg.Agent.NodeID, "err", err)
 		}
 		metrics.NewFWCollector(reg, cfg.Agent.NodeID, string(role), nil)
+		if role == domain.RoleExit {
+			// Per-master state of the exit-initiated REALITY bridge (ADR-0038); silent
+			// outside the mode.
+			metrics.NewBridgeCollector(reg, cfg.Agent.NodeID, string(role),
+				func(ctx context.Context) (map[string]int, error) {
+					return health.ReadBridgeConnections(ctx, a.realityBridge.Load())
+				}, a.bridgeWatchdog.Kills)
+		}
 		if role == domain.RoleMaster {
 			metrics.NewAWGPinCollector(reg, cfg.Agent.NodeID, string(role), nil, a.exitNameByIP)
 			// Per-client traffic of the client-facing VLESS inbound, from xray's
@@ -365,6 +378,15 @@ func run() error {
 	// Daemon path only. Installed above the --once return it would also change how
 	// a one-shot run (--support-bundle over a dropping SSH session) behaves.
 	defer ignoreSIGHUP(a.log)()
+
+	// Between passes, not in them: a frozen bridge flow should cost ~30 s, and a
+	// pass can take longer than that on its own.
+	if a.bridgeWatchdog != nil && !*plan {
+		go a.bridgeWatchdog.Run(ctx)
+	}
+	if a.portalWatchdog != nil && !*plan {
+		go a.portalWatchdog.Run(ctx)
+	}
 
 	ticker := time.NewTicker(cfg.Interval())
 	defer ticker.Stop()
@@ -428,11 +450,23 @@ type agent struct {
 	// client-facing VLESS inbound; the per-client VLESS collector stays silent
 	// otherwise instead of reporting a stats API that is not supposed to exist.
 	vlessInbound atomic.Bool
-	publicIP     string
-	mgmtAddr     string
-	stateDir     string // non-empty roots managed files outside /etc (non-root/dev)
-	paths        exit.Paths
-	metrics      *metrics.AgentMetrics // nil when /metrics is disabled
+	// realityBridge is the exit-initiated REALITY bridge (ADR-0038) of the exit's
+	// last applied spec, nil outside the mode; bridgeWatchdog kills its stalled
+	// sockets between passes.
+	realityBridge  atomic.Pointer[domain.RealityBridgeSpec]
+	bridgeWatchdog *sockwatch.Watchdog
+	// realityPortal is the master's portal from its last applied spec, nil when
+	// it runs none; portalWatchdog kills portal sockets whose bridge is gone.
+	realityPortal  atomic.Pointer[domain.RealityPortalSpec]
+	portalWatchdog *sockwatch.Watchdog
+	// portalKey is the master's reality portal private key for this pass
+	// (ephemeral in plan mode); the portal and mihomo planners both need it.
+	portalKey string
+	publicIP  string
+	mgmtAddr  string
+	stateDir  string // non-empty roots managed files outside /etc (non-root/dev)
+	paths     exit.Paths
+	metrics   *metrics.AgentMetrics // nil when /metrics is disabled
 	// mihomoLogCursor is how far into mihomo's log the error counter has read.
 	// Kept here rather than in a planner: planners are rebuilt every pass and would
 	// re-count the same window forever.
@@ -673,6 +707,28 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		if !plan && !fromCache {
 			if err := a.client.PublishClientVlessKey(ctx, cvPub); err != nil {
 				return fmt.Errorf("publish client vless key: %w", err)
+			}
+		}
+
+		// The portal key (ADR-0038), published unconditionally for the same reason:
+		// an exit can enter the exit-initiated REALITY mode with no master-side step.
+		// A failed publish is not fatal — nothing on this master depends on the
+		// controller knowing the key, and a controller that predates the key type
+		// must not take the whole pass down.
+		// Not fatal either: a bad key file must not stop mihomo, the NAT and blocky
+		// converging on a master that may never run a portal. The portal planner
+		// defers without a key.
+		rpPriv, rpPub, rpEph, rpErr := a.ensureRealityPortalKey(!plan)
+		if rpErr != nil {
+			a.log.Warn("reality portal key unavailable; the portal stays down until it is", "err", rpErr)
+		}
+		a.portalKey = rpPriv
+		if rpEph && plan {
+			a.log.Info("reality portal key absent; using an ephemeral key for the plan (apply would generate one)")
+		}
+		if !plan && !fromCache && rpPub != "" {
+			if err := a.client.PublishRealityPortalKey(ctx, rpPub); err != nil {
+				a.log.Warn("publish reality portal key failed; exits cannot dial this master's portal until it succeeds", "err", err)
 			}
 		}
 
@@ -994,11 +1050,21 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		// Not cached across a failed read, unlike the endpoint above: this list
 		// carries handshake times, and a stale one reads as a tunnel gone silent.
 		a.masterPeers, _ = exit.MasterPeers(a.paths.WGConf, spec.Peers)
+		if !plan {
+			var bridge *domain.RealityBridgeSpec
+			if spec.Reality != nil {
+				bridge = spec.Reality.Bridge
+			}
+			a.realityBridge.Store(bridge)
+		}
 	}
 	if a.role == domain.RoleMaster && spec.Master != nil {
 		names := exitNamesByIP(spec.Master.ExitTunnels)
 		a.exitNames.Store(&names)
 		a.vlessInbound.Store(spec.Master.ClientVLESS != nil)
+		if !plan {
+			a.realityPortal.Store(spec.Master.RealityPortal)
+		}
 	}
 	if !fromCache {
 		repCtx, repCancel := context.WithTimeout(base, statusReportTimeout)
@@ -1158,6 +1224,7 @@ func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, life
 			Paths:              a.masterPaths(),
 			PrivateKey:         privateKey,
 			RealityPrivateKey:  realityPrivateKey,
+			PortalPrivateKey:   a.portalKey,
 			ClientWGPrivateKey: clientWGPrivateKey,
 			SyntheticKey:       a.ensureSynthKeyQuiet(),
 			ClientWGPublicKey:  publicKeyOrEmpty(clientWGPrivateKey),
@@ -1293,15 +1360,28 @@ func (a *agent) ensureLifelineKey(persist bool) (kp wg.KeyPair, ephemeral bool, 
 // persist=false (plan) it loads an existing key or generates an ephemeral one just
 // for rendering, so dry-run never writes anything.
 func (a *agent) ensureClientVlessKey(persist bool) (priv, pub string, ephemeral bool, err error) {
+	return ensureXrayKey(a.paths.ClientVLESSKey, "client vless", persist)
+}
+
+// ensureRealityPortalKey resolves the master's REALITY portal keypair
+// (ADR-0038) the same way: persisted on apply, ephemeral in plan.
+func (a *agent) ensureRealityPortalKey(persist bool) (priv, pub string, ephemeral bool, err error) {
+	return ensureXrayKey(a.masterPaths().RealityPortalKey, "reality portal", persist)
+}
+
+// ensureXrayKey loads or creates a REALITY x25519 key at path when persist is
+// set; otherwise it reads an existing key or returns an ephemeral one without
+// writing anything.
+func ensureXrayKey(path, what string, persist bool) (priv, pub string, ephemeral bool, err error) {
 	if persist {
-		priv, pub, _, err = xray.LoadOrCreateKey(a.paths.ClientVLESSKey)
+		priv, pub, _, err = xray.LoadOrCreateKey(path)
 		return priv, pub, false, err
 	}
-	if data, rerr := os.ReadFile(a.paths.ClientVLESSKey); rerr == nil {
+	if data, rerr := os.ReadFile(path); rerr == nil {
 		p := strings.TrimSpace(string(data))
 		pk, perr := xray.PublicKeyFor(p)
 		if perr != nil {
-			return "", "", false, fmt.Errorf("stored client vless key invalid: %w", perr)
+			return "", "", false, fmt.Errorf("stored %s key invalid: %w", what, perr)
 		}
 		return p, pk, false, nil
 	}

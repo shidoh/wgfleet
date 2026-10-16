@@ -133,6 +133,10 @@ All keys: [configuration.md#3-fleet-fleet-wide-settings](configuration.md#3-flee
 
 Adding a master: [operations.md](operations.md#several-masters).
 
+### Exit-initiated REALITY
+
+`transports.reality.exit_initiated` needs the controller, the masters and the exit on wire 14. Order: controller, masters, exits, then the flag, set while AmneziaWG is the exit's active transport. A master on an older agent carries no REALITY tunnel to that exit. The controller cannot be rolled back past wire 14. Procedure: [operations.md](operations.md#exit-initiated-reality).
+
 ### Exit-initiated AmneziaWG flow
 
 `transports.awg.exit_initiated` needs the controller, the master agent and the exit agent on wire 12. With several masters the exit agent must run the release that reports per-master peers (wire 13). Order: controller, master agent, exit agents, then the key. Before all three are upgraded the key changes nothing. Client configs do not change. Nodes prepared before this release may lack `conntrack`: `apt-get install conntrack` on the master.
