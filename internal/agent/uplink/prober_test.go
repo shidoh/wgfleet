@@ -3,10 +3,12 @@ package uplink
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"sort"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -53,7 +55,9 @@ func TestClassify(t *testing.T) {
 		{"a retransmitted SYN", SlowAfter, nil, ResultSlow},
 		{"two retransmits", 2100 * time.Millisecond, nil, ResultSlow},
 		{"timeout", DialTimeout, context.DeadlineExceeded, ResultFail},
-		{"refused fast is still a failure", 2 * time.Millisecond, errors.New("connection refused"), ResultFail},
+		{"a black hole", 50 * time.Millisecond, errors.New("no route to host"), ResultFail},
+		{"refused is an answer, not a black hole", 2 * time.Millisecond, syscall.ECONNREFUSED, ResultRefused},
+		{"a wrapped refusal", 2 * time.Millisecond, fmt.Errorf("dial tcp: %w", syscall.ECONNREFUSED), ResultRefused},
 	}
 	for _, c := range cases {
 		if got := classify(c.d, c.err); got != c.want {
@@ -173,5 +177,24 @@ func TestRunStopsWithItsContext(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return after its context was cancelled")
+	}
+}
+
+// An agent stopping mid-round cancels the dials it has in flight. Those are not
+// failures of the uplink and must not be counted as such: every restart would
+// leave a burst of them.
+func TestCancelledRoundRecordsNothing(t *testing.T) {
+	rec := &recorder{}
+	p := New(rec)
+	ctx, cancel := context.WithCancel(context.Background())
+	p.dial = func(dctx context.Context, _ netip.AddrPort) error {
+		cancel()
+		<-dctx.Done()
+		return dctx.Err()
+	}
+	p.SetTargets([]domain.UplinkProbeTarget{target("a", "203.0.113.1:443")})
+	p.ProbeOnce(ctx)
+	if got := rec.sorted(); len(got) != 0 {
+		t.Fatalf("observations = %+v, want none from a cancelled round", got)
 	}
 }

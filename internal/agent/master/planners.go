@@ -548,7 +548,7 @@ func (p firewallPlanner) uplinkAddress() netip.Addr {
 	if p.uplinkAddr != nil {
 		return p.uplinkAddr()
 	}
-	return detectUplinkAddr()
+	return uplinkAddrs.resolve(detectUplinkAddr)
 }
 
 func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {

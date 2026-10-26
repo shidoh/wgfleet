@@ -45,14 +45,24 @@ func (b *Broker) uplinkProbeTargets(ctx context.Context, self config.MasterConfi
 // client VLESS inbound comes first: the master exists to keep it answering.
 // public_tcp_ports is the fallback — it holds what an operator opened, which may
 // be a listener started by hand and down most of the time.
+//
+// SSH is never a target, on 22 or on the master's own SSH port: a connection
+// opened and closed every 30 s is a "Connection closed [preauth]" line per probe,
+// and fail2ban would turn that into one master banning another.
 func uplinkProbePort(m config.MasterConfig) int {
 	if m.ClientVLESS.Enabled {
-		return m.ClientVLESSListenPort()
+		if p := m.ClientVLESSListenPort(); validPort(p) {
+			return p
+		}
 	}
 	for _, p := range m.PublicTCPPorts {
-		if p > 0 && p <= 65535 {
+		if validPort(p) && p != defaultSSHPort && p != m.SSH.Port {
 			return p
 		}
 	}
 	return 0
 }
+
+const defaultSSHPort = 22
+
+func validPort(p int) bool { return p > 0 && p <= 65535 }

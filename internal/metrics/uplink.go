@@ -24,7 +24,7 @@ func NewUplinkMetrics(reg *prometheus.Registry, node, role string) *UplinkMetric
 	m := &UplinkMetrics{
 		probes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "uplink_probes_total",
-			Help:        "TCP connects from this master to another master's world-open port, by result: ok, slow (a retransmitted SYN, over 0.9 s) or fail.",
+			Help:        "TCP connects from this master to another master's world-open port, by result: ok, slow (a retransmitted SYN, over 0.9 s), refused (a reset in answer) or fail (no answer).",
 			ConstLabels: cl,
 		}, []string{"peer", "result"}),
 		connect: prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -46,7 +46,7 @@ func (m *UplinkMetrics) ObserveUplinkProbe(peer, result string, d time.Duration)
 		return
 	}
 	m.probes.WithLabelValues(peer, result).Inc()
-	if result != "fail" {
+	if result == "ok" || result == "slow" {
 		m.connect.WithLabelValues(peer).Observe(d.Seconds())
 	}
 }

@@ -10,10 +10,12 @@ package uplink
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/netip"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -24,6 +26,11 @@ const (
 	ResultOK   = "ok"
 	ResultSlow = "slow"
 	ResultFail = "fail"
+	// ResultRefused is a reset in answer to the SYN: the path delivered it and
+	// something answered. A peer restarting its listener does this, and so does
+	// a filter that injects resets — kept apart from fail (no answer at all) so
+	// the two can be told apart.
+	ResultRefused = "refused"
 )
 
 const (
@@ -98,6 +105,10 @@ func (p *Prober) ProbeOnce(ctx context.Context) {
 			start := p.now()
 			err := p.dial(dctx, tg.Addr)
 			d := p.now().Sub(start)
+			if ctx.Err() != nil {
+				// The agent is stopping: a dial it cut short says nothing about the uplink.
+				return
+			}
 			p.rec.ObserveUplinkProbe(tg.Name, classify(d, err), d)
 		}(tg)
 	}
@@ -106,6 +117,8 @@ func (p *Prober) ProbeOnce(ctx context.Context) {
 
 func classify(d time.Duration, err error) string {
 	switch {
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return ResultRefused
 	case err != nil:
 		return ResultFail
 	case d >= SlowAfter:

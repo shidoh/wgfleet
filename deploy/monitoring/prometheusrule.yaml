@@ -647,16 +647,17 @@ spec:
           on the exit's side: its hoster or a filter on its address.
     # The master's own uplink, measured by TCP connects to the other masters
     # (wgfleet_agent_uplink_probes_total). Bad = slow (a retransmitted SYN, over
-    # 0.9 s) or failed. Daily share per (node, peer), and its best day of the two
-    # weeks before.
+    # 0.9 s), refused (a reset: filters inject them; a peer restart costs a minute,
+    # nothing in a daily share) or failed. Daily share per (node, peer), and its
+    # best day of the two weeks before.
     - record: wgfleet:uplink_probe_bad_share:1d
       expr: |
-        sum by (node, peer) (increase(wgfleet_agent_uplink_probes_total{result=~"slow|fail"}[1d]))
+        sum by (node, peer) (increase(wgfleet_agent_uplink_probes_total{result=~"slow|fail|refused"}[1d]))
         / sum by (node, peer) (increase(wgfleet_agent_uplink_probes_total[1d]))
     - record: wgfleet:uplink_probe_bad_share:best_day_14d
       expr: |
         min_over_time((
-          sum by (node, peer) (increase(wgfleet_agent_uplink_probes_total{result=~"slow|fail"}[1d]))
+          sum by (node, peer) (increase(wgfleet_agent_uplink_probes_total{result=~"slow|fail|refused"}[1d]))
           / sum by (node, peer) (increase(wgfleet_agent_uplink_probes_total[1d]))
         )[14d:6h] offset 1d)
     # The same share measured the other way: node and peer swapped, so a series

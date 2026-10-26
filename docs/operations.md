@@ -637,11 +637,11 @@ A path younger than a day has no share and stays silent.
 and closes it without sending data. The controller gives it the targets: the peer's
 public IP at its client VLESS port, else its first `public_tcp_ports` entry; a peer
 with neither is not measured. A connect over 0.9 s is a retransmitted SYN (`slow`),
-none within 4 s is `fail`.
+a reset in answer is `refused`, none within 4 s is `fail`. All three count as bad.
 
 | Alert | Fires when | Look at |
 |---|---|---|
-| `WgfleetMasterUplinkDegrading` | over 5% of the day's connects from the master to a peer are slow or failed, over twice its best day plus 2 points, under 80%, and the peer's connects back are under 2% | `wgfleet:uplink_syn_per_synack:1d` on both masters; the master's hoster |
+| `WgfleetMasterUplinkDegrading` | over 5% of the day's connects from the master to a peer are slow, refused or failed, over twice its best day plus 2 points, under 80%, and the peer's connects back are under 2% | `wgfleet:uplink_syn_per_synack:1d` on both masters; the master's hoster |
 
 `wgfleet:uplink_syn_per_synack:1d` is passive: the SYNs the master sent per SYN-ACK
 it got on the address its traffic leaves with. Near 1 on a clean uplink; it rises

@@ -60,3 +60,21 @@ func TestDetectUplinkAddr(t *testing.T) {
 		t.Fatalf("detectUplinkAddr() = %v, want a routable IPv4 source", a)
 	}
 }
+
+// One failed detection must not drop the counters: the next pass would render
+// the firewall without them, wiping the totals, and the pass after would put
+// them back. The last address that was found stands until another is.
+func TestUplinkAddrKeepsTheLastGoodOnAMiss(t *testing.T) {
+	var c uplinkAddrCache
+	good := netip.MustParseAddr("192.0.2.10")
+	if got := c.resolve(func() netip.Addr { return good }); got != good {
+		t.Fatalf("first detection = %v, want %v", got, good)
+	}
+	if got := c.resolve(func() netip.Addr { return netip.Addr{} }); got != good {
+		t.Fatalf("after a miss = %v, want the last good %v", got, good)
+	}
+	moved := netip.MustParseAddr("192.0.2.20")
+	if got := c.resolve(func() netip.Addr { return moved }); got != moved {
+		t.Fatalf("after a move = %v, want the new %v", got, moved)
+	}
+}

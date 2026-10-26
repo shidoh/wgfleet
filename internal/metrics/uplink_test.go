@@ -19,7 +19,7 @@ func TestUplinkMetricsCountProbesByPeerAndResult(t *testing.T) {
 	m.ObserveUplinkProbe("master-xa-2", "fail", 3*time.Second)
 
 	want := `
-# HELP wgfleet_agent_uplink_probes_total TCP connects from this master to another master's world-open port, by result: ok, slow (a retransmitted SYN, over 0.9 s) or fail.
+# HELP wgfleet_agent_uplink_probes_total TCP connects from this master to another master's world-open port, by result: ok, slow (a retransmitted SYN, over 0.9 s), refused (a reset in answer) or fail (no answer).
 # TYPE wgfleet_agent_uplink_probes_total counter
 wgfleet_agent_uplink_probes_total{node="master-xa-1",peer="master-xa-2",result="fail",role="master"} 1
 wgfleet_agent_uplink_probes_total{node="master-xa-1",peer="master-xa-2",result="ok",role="master"} 2

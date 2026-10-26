@@ -3,7 +3,30 @@ package master
 import (
 	"net"
 	"net/netip"
+	"sync"
 )
+
+// uplinkAddrCache holds the last address detectUplinkAddr found. Planners are
+// rebuilt every pass, so it lives at package level, one per agent process.
+type uplinkAddrCache struct {
+	mu   sync.Mutex
+	last netip.Addr
+}
+
+// resolve returns what detect finds, or the last address found when detect
+// finds nothing: one failed lookup must not render the firewall without the
+// counters, wiping their totals, only for the next pass to put them back.
+func (c *uplinkAddrCache) resolve(detect func() netip.Addr) netip.Addr {
+	a := detect()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if a.IsValid() {
+		c.last = a
+	}
+	return c.last
+}
+
+var uplinkAddrs uplinkAddrCache
 
 // uplinkRouteProbe is any public IPv4 destination; only the route the kernel
 // would pick for it matters. Connecting a UDP socket sends nothing.

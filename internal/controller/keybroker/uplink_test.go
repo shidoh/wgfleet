@@ -88,3 +88,28 @@ func TestRenderMasterSpecCarriesUplinkProbeTargets(t *testing.T) {
 		t.Errorf("first target = %+v, want master-vless", spec.Master.UplinkProbeTargets[0])
 	}
 }
+
+// A probe opens and closes a connection every 30 s. Aimed at sshd, that is a
+// "Connection closed [preauth]" line per probe, which fail2ban turns into one
+// master banning another — after which every probe reads as a dead uplink.
+func TestUplinkProbeNeverAimsAtSSH(t *testing.T) {
+	f := uplinkFleet()
+	f.Masters[2].PublicTCPPorts = []int{22, 2222, 5201}
+	f.Masters[2].SSH.Port = 2222
+	b, st := newBrokerWithFleet(t, f)
+	seedNode(t, st, "master-store", "10.20.25.252", "198.51.100.3", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+
+	found := false
+	for _, tg := range b.uplinkProbeTargets(context.Background(), f.Masters[0]) {
+		if tg.Name != "master-store" {
+			continue
+		}
+		found = true
+		if tg.Addr.Port() != 5201 {
+			t.Fatalf("master-store probed on port %d, want 5201 (22 and its ssh port are skipped)", tg.Addr.Port())
+		}
+	}
+	if !found {
+		t.Fatal("master-store is not a target at all; want it on 5201")
+	}
+}
