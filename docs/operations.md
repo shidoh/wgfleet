@@ -637,7 +637,7 @@ A path younger than a day has no share and stays silent.
 and closes it without sending data. The controller gives it the targets: the peer's
 public IP at its client VLESS port, else its first `public_tcp_ports` entry; a peer
 with neither is not measured. A connect over 0.9 s is a retransmitted SYN (`slow`),
-none within 3 s is `fail`.
+none within 4 s is `fail`.
 
 | Alert | Fires when | Look at |
 |---|---|---|

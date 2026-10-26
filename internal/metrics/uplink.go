@@ -31,7 +31,7 @@ func NewUplinkMetrics(reg *prometheus.Registry, node, role string) *UplinkMetric
 			Namespace: namespace, Subsystem: "agent", Name: "uplink_connect_seconds",
 			Help:        "Connect time of the successful uplink probes. Over 0.9 s is a retransmitted SYN.",
 			ConstLabels: cl,
-			Buckets:     []float64{0.01, 0.025, 0.05, 0.1, 0.2, 0.5, 0.9, 1.5, 2.5},
+			Buckets:     []float64{0.01, 0.025, 0.05, 0.1, 0.2, 0.5, 0.9, 1.5, 2.5, 3.5},
 		}, []string{"peer"}),
 	}
 	reg.MustRegister(m.probes, m.connect)

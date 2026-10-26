@@ -30,8 +30,11 @@ const (
 	// SlowAfter is the connect time that only a retransmitted SYN reaches: the
 	// kernel's initial SYN RTO is 1 s and no path between two masters is near it.
 	SlowAfter = 900 * time.Millisecond
-	// DialTimeout covers two SYN retransmits (1 s + 2 s) and stops there.
-	DialTimeout = 3 * time.Second
+	// DialTimeout lets the kernel's second SYN retransmit (sent at 3 s) be
+	// answered, so a connect that needed it reads as slow, not failed; the third
+	// would go out at 7 s. Measured on the stand with 20% SYN-ACK loss: a 3 s
+	// timeout filed those connects as failures.
+	DialTimeout = 4 * time.Second
 	// Interval is how often every target is measured: 2880 samples a day per
 	// peer, enough for a daily share to move by a fraction of a percent.
 	Interval = 30 * time.Second
