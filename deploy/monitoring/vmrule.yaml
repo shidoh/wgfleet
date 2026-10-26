@@ -549,6 +549,113 @@ spec:
         description: The exit's bridge has held no connection to {{ $labels.master }}'s portal for 5m.
           That master cannot reach this exit over REALITY; other masters may still. Check the
           portal on the master (reality-portal check) and wgfleet_agent_reality_bridge_kills_total.
+  - name: wgfleet.paths
+    interval: 5m
+    rules:
+    # Blocking creeps in: a provider's TSPU box or a hoster's uplink starts
+    # delaying or dropping a share of one path, and the share grows over days.
+    # Measured on master-xa-1 from 2026-10-16: REALITY to two exits went from
+    # 5% slow probes to 38% in ten days while every rotation alert stayed quiet,
+    # because the median stayed at 100 ms and the tunnels never went down.
+    #
+    # A probe is BAD when it took over 1 s or failed (the delay series is absent
+    # after a failed probe, the age series is not). Frozen readings (age > 300 s)
+    # are left out: they repeat one old value. The share is per day.
+    #
+    # The baseline is the path's BEST day of the two weeks before, not its
+    # average: a creep that lasts a week becomes its own average and the alert
+    # would go quiet on the plateau (sdfi0 at 45% against a 21% average, live
+    # 2026-10-26). A creep cannot raise the best day until all 14 days are bad,
+    # and a path that is always noisy has its noise as its best day.
+    - record: wgfleet:exit_tunnel_bad_share:1d
+      expr: avg_over_time((((wgfleet_exit_tunnel_delay_seconds > bool 1) or on(node, exit) (0 * wgfleet_exit_tunnel_last_test_age_seconds + 1)) and on(node, exit) (wgfleet_exit_tunnel_last_test_age_seconds < 300))[1d:2m])
+    - record: wgfleet:exit_tunnel_bad_share:best_day_14d
+      expr: min_over_time((avg_over_time((((wgfleet_exit_tunnel_delay_seconds > bool 1) or on(node, exit) (0 * wgfleet_exit_tunnel_last_test_age_seconds + 1)) and on(node, exit) (wgfleet_exit_tunnel_last_test_age_seconds < 300))[1d:10m]))[14d:6h] offset 1d)
+    # One path is DEGRADING when all of these hold:
+    #   - over 10% of the day's probes are bad, and under 80% (a dead path is
+    #     WgfleetExitOutOfRotation's and the standby alerts' business);
+    #   - it is 8 points worse than the best master's path to the same exit, so
+    #     an exit that is slow from everywhere does not count here;
+    #   - it is over twice its best day plus 3 points.
+    # Backtested on 2026-10-21..26 (10-day lookback, the history there was):
+    # master-xa-1 from 2026-10-21, two episodes (5 paths: vn0, sdfi0, anz3 and
+    # REALITY to vn1, vn2), master-xa-2 -> hn006 from 2026-10-22 (0% -> 22%).
+    # The other 22 paths stay silent. Gaps between firing hours were 1-5 h, which
+    # keep_firing_for covers. A path younger than a day stays silent.
+    - alert: WgfleetMasterPathsDegrading
+      # Two or more exits degrading from one master while the other masters reach
+      # them fine: the master's own uplink, i.e. its hoster or a TSPU in front of
+      # it. One alert per master instead of one per path.
+      expr: |
+        count by (node) (
+          (wgfleet:exit_tunnel_bad_share:1d > 0.10)
+          and (wgfleet:exit_tunnel_bad_share:1d < 0.8)
+          and (wgfleet:exit_tunnel_bad_share:1d - on(exit) group_left() min by (exit) (wgfleet:exit_tunnel_bad_share:1d) > 0.08)
+          and (wgfleet:exit_tunnel_bad_share:1d > 2 * wgfleet:exit_tunnel_bad_share:best_day_14d + 0.03)
+        ) >= 2
+      for: 1h
+      keep_firing_for: 6h
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: 'Paths from master {{ $labels.node }} to {{ $value }} exits are degrading'
+        description: >-
+          Over the last day {{ $value }} of {{ $labels.node }}'s exit tunnels lost or delayed
+          (over 1 s) a growing share of probes, while other masters reach the same exits fine. Look at
+          the master's own uplink: TCP connects to neutral addresses (ya.ru, 1.1.1.1) slower than the
+          ping RTT, SYN retransmits. Per path: wgfleet:exit_tunnel_bad_share:1d{node="{{ $labels.node }}"}.
+    - alert: WgfleetExitPathDegrading
+      # The same test for one path, when its master is not already under
+      # WgfleetMasterPathsDegrading.
+      expr: |
+        (
+          (wgfleet:exit_tunnel_bad_share:1d > 0.10)
+          and (wgfleet:exit_tunnel_bad_share:1d < 0.8)
+          and (wgfleet:exit_tunnel_bad_share:1d - on(exit) group_left() min by (exit) (wgfleet:exit_tunnel_bad_share:1d) > 0.08)
+          and (wgfleet:exit_tunnel_bad_share:1d > 2 * wgfleet:exit_tunnel_bad_share:best_day_14d + 0.03)
+        )
+        unless on(node) (
+          count by (node) (
+            (wgfleet:exit_tunnel_bad_share:1d > 0.10)
+            and (wgfleet:exit_tunnel_bad_share:1d < 0.8)
+            and (wgfleet:exit_tunnel_bad_share:1d - on(exit) group_left() min by (exit) (wgfleet:exit_tunnel_bad_share:1d) > 0.08)
+            and (wgfleet:exit_tunnel_bad_share:1d > 2 * wgfleet:exit_tunnel_bad_share:best_day_14d + 0.03)
+          ) >= 2
+        )
+      for: 1h
+      keep_firing_for: 6h
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: 'Path {{ $labels.node }} -> {{ $labels.exit }} is degrading: {{ $value | humanizePercentage }} bad probes'
+        description: >-
+          {{ $value | humanizePercentage }} of the day's probes from {{ $labels.node }} to
+          {{ $labels.exit }} failed or took over 1 s, more than twice its best day of the two weeks before, while
+          another master reaches {{ $labels.exit }} fine. The path between the two is degrading:
+          a filter on one of the two providers, or between them.
+    - alert: WgfleetExitDegradingFromAllMasters
+      # The case the per-path rules exclude by design: every master's path to one
+      # exit degrades together - the exit's hoster, or its address being filtered
+      # from Russia. Needs at least two masters to say "all". Silent over the whole
+      # backtest, so it has not yet been seen firing on live data.
+      expr: |
+        (min by (exit) (wgfleet:exit_tunnel_bad_share:1d) > 0.10)
+        and (min by (exit) (wgfleet:exit_tunnel_bad_share:1d) < 0.8)
+        and (min by (exit) (wgfleet:exit_tunnel_bad_share:1d) > 2 * max by (exit) (wgfleet:exit_tunnel_bad_share:best_day_14d) + 0.03)
+        and (count by (exit) (wgfleet:exit_tunnel_bad_share:1d) >= 2)
+      for: 1h
+      keep_firing_for: 6h
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: 'Exit {{ $labels.exit }} is degrading from every master: at least {{ $value | humanizePercentage }} bad probes'
+        description: >-
+          Every master lost or delayed (over 1 s) at least {{ $value | humanizePercentage }} of
+          the day's probes to {{ $labels.exit }}, more than twice their best day of the two weeks before. The problem is
+          on the exit's side: its hoster or a filter on its address.
   - name: wgfleet.dataplane
     interval: 1m
     rules:

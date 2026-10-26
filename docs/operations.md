@@ -608,6 +608,23 @@ wgfleet_vless_collector_up                         # 1 = xray stats API answered
 Name them with `wgfleet_client_info` `on(peer)`. xray serves the stats API on
 `127.0.0.1:10085` only.
 
+### Path degradation alerts
+
+A probe is bad when it failed or took over 1 s. Daily share per master↔exit path:
+`wgfleet:exit_tunnel_bad_share:1d{node,exit}`; its best day of the two weeks before:
+`wgfleet:exit_tunnel_bad_share:best_day_14d`. A path is degrading when its day is over
+10% and under 80%, 8 points worse than the best master's path to the same exit, and
+over twice its best day plus 3 points.
+
+| Alert | Where the problem is | Look at |
+|---|---|---|
+| `WgfleetMasterPathsDegrading` | the master's uplink: its hoster or a filter in front of it | from the master, TCP connect time to neutral addresses against ping RTT; `nstat -az TcpExtTCPSynRetrans` |
+| `WgfleetExitPathDegrading` | between one master and one exit | the same path from the other master; the exit's other transport |
+| `WgfleetExitDegradingFromAllMasters` | the exit's side: its hoster or a filter on its address | the exit's checks; REALITY with `exit_initiated` if TCP the master opens is cut |
+
+Dead paths (80% and over) are left to `WgfleetExitOutOfRotation` and the standby alerts.
+A path younger than a day has no share and stays silent.
+
 ### Host metrics (yours to upgrade)
 
 The exporter on `<mgmt_addr>:9100` is an **optional component**. wgfleet does not

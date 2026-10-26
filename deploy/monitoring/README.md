@@ -320,7 +320,7 @@ an untested proxy rather than a measurement.
 
 ## 4. Alerts
 
-**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 54 alerts,
+**Do not hand-write these.** `vmrule.yaml` / `prometheusrule.yaml` ship 57 alerts,
 already applied by step 2 above. Earlier revisions of this file printed two of them
 as a snippet to paste; the copies drifted from the shipped rules (different group
 name, different `for`, a different expression on one), so pasting produced a second,
@@ -354,6 +354,9 @@ What ships, by severity:
 | `WgfleetStandbyTierMemberUnusable` | warning |
 | `WgfleetStandbyTransportUnusable` | warning |
 | `WgfleetRealityBridgeDown` | warning |
+| `WgfleetMasterPathsDegrading` | warning |
+| `WgfleetExitPathDegrading` | warning |
+| `WgfleetExitDegradingFromAllMasters` | warning |
 | `WgfleetClientPathDead` | critical |
 | `WgfleetClientUDPBlackHole` | critical |
 | `WgfleetGuardIsCatchingPackets` | warning |

@@ -4,6 +4,12 @@ What changed for operators in each wgfleet release — behaviour, manifest keys,
 Every release archive carries this page as `CHANGELOG.md`.
 New releases are announced, with the archives attached, in the Telegram channel [t.me/wgfleet](https://t.me/wgfleet).
 
+## Unreleased
+
+### Added
+
+- Alerts on a master↔exit path that slowly degrades, the way blocking creeps in: `WgfleetMasterPathsDegrading` (two or more exits from one master), `WgfleetExitPathDegrading` (one path), `WgfleetExitDegradingFromAllMasters` (one exit from every master). A path counts when over 10% of the day's probes failed or took over 1 s, it is worse than the other masters' path to the same exit, and it is over twice its best day of the two weeks before. Recording rules `wgfleet:exit_tunnel_bad_share:1d` and `wgfleet:exit_tunnel_bad_share:best_day_14d`. Re-apply `vmrule.yaml` or `prometheusrule.yaml`.
+
 ## v0.3.3 — 2026-10-16
 
 !!! warning "Read before upgrading: the controller cannot go back without a backup, and clients reconnect"
