@@ -301,3 +301,28 @@ func TestManifestWarningsCarryTheDirectRuleCount(t *testing.T) {
 		t.Errorf("a manifest under the cap was warned about: %q", warns)
 	}
 }
+
+// The tester's manifest from 2026-10-26: `key:` where `key_path:` belongs. The
+// warning names the exact key, so the reason for "ssh.key_path is required" is on
+// the same screen.
+func TestUnknownKeyWarningsNameTheKey(t *testing.T) {
+	p := writeManifest(t, `
+fleet:
+  masters:
+    - name: master-1
+      ssh:
+        host: 203.0.113.1
+        user: root
+        key: /etc/wgfleet/bootstrap_ed25519
+`, 0o600)
+	got := unknownKeyWarnings(p)
+	if len(got) != 1 || !strings.Contains(got[0], "fleet.masters[0].ssh.key") {
+		t.Fatalf("warnings = %q, want one naming fleet.masters[0].ssh.key", got)
+	}
+}
+
+func TestUnknownKeyWarningsSilentOnTheShippedExample(t *testing.T) {
+	if got := unknownKeyWarnings(exampleManifest(t, 0o600)); len(got) != 0 {
+		t.Fatalf("warnings on the shipped example: %q", got)
+	}
+}

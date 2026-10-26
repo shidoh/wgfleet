@@ -107,7 +107,26 @@ func checkManifestOnly(path string) (*config.ControllerConfig, error) {
 	for _, w := range manifestWarnings(*cfg) {
 		fmt.Printf("\nwarning: %s\n", w)
 	}
+	for _, w := range unknownKeyWarnings(path) {
+		fmt.Printf("\nwarning: %s\n", w)
+	}
 	return cfg, nil
+}
+
+// unknownKeyWarnings names every manifest key nothing reads. The decoder drops
+// them silently, so a misspelled key (key: for key_path:) or one indented under
+// the wrong block reads as absent and the file still validates. A warning, not a
+// refusal: a key left over from an older release must not stop a controller.
+func unknownKeyWarnings(path string) []string {
+	keys, err := config.UnknownKeys(path, &config.ControllerConfig{})
+	if err != nil {
+		return nil // the load itself reports an unreadable file
+	}
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, fmt.Sprintf("unknown key %s — nothing reads it: misspelled, or indented under the wrong block", k))
+	}
+	return out
 }
 
 // manifestWarnings is everything about a valid manifest that is worth saying and

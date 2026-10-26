@@ -76,3 +76,21 @@ func TestSplitRUExampleIsValidOnceFilledIn(t *testing.T) {
 		t.Fatalf("split-RU example is invalid once filled in: %v", err)
 	}
 }
+
+// Every key a shipped example uses must be one the binaries read: --check-config
+// warns about the rest, and an example that draws that warning teaches operators
+// to ignore it.
+func TestShippedExamplesHaveNoUnknownKeys(t *testing.T) {
+	for name, out := range map[string]any{
+		"controller.yaml": &ControllerConfig{},
+		"agent.yaml":      &AgentConfig{},
+	} {
+		got, err := UnknownKeys(examplePath(name), out)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(got) != 0 {
+			t.Errorf("%s uses keys nothing reads: %v", name, got)
+		}
+	}
+}

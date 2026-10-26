@@ -371,12 +371,17 @@ a plain exit, three on a lifeline exit.
 Bootstrap only; afterwards SSH is used again only for binary upgrades. Identical
 shape on masters and exits.
 
+The block is all or nothing. Without it the controller never dials the node (the
+master beside the controller needs none). With it, `host`, `user` and `key_path` are
+required: the manifest is refused otherwise. `--check-config` lists keys nothing
+reads (`key:` for `key_path:`, a key under the wrong block) as warnings.
+
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fleet.exits[].ssh.host` / `fleet.masters[].ssh.host` | string | — | Address the controller connects to. **Prefer the overlay address** where the public path is slow or throttled — the agent upload is ~28 MB |
+| `fleet.exits[].ssh.host` / `fleet.masters[].ssh.host` | string | required in a block | Address the controller connects to. **Prefer the overlay address** where the public path is slow or throttled — the agent upload is ~28 MB |
 | `fleet.exits[].ssh.port` / `fleet.masters[].ssh.port` | int | `22` | SSH port |
-| `fleet.exits[].ssh.user` / `fleet.masters[].ssh.user` | string | — | Login user (needs root or passwordless sudo) |
-| `fleet.exits[].ssh.key_path` / `fleet.masters[].ssh.key_path` | string | — | Private key on the **controller** host. `~` is expanded |
+| `fleet.exits[].ssh.user` / `fleet.masters[].ssh.user` | string | required in a block | Login user (needs root or passwordless sudo) |
+| `fleet.exits[].ssh.key_path` / `fleet.masters[].ssh.key_path` | string | required in a block | Private key on the **controller** host. `~` is expanded |
 | `fleet.exits[].ssh.host_key` / `fleet.masters[].ssh.host_key` | string | trust-on-first-use | Pinned server host key, in `known_hosts` public-key form. **Strongly recommended:** bootstrap ships the node's mTLS private key over this channel |
 | `fleet.exits[].ssh.insecure_ignore_host_key` / `fleet.masters[].ssh.insecure_ignore_host_key` | bool | `false` | Disable host-key verification for this node |
 

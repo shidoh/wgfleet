@@ -134,6 +134,9 @@ func run() error {
 	for _, w := range manifestWarnings(*cfg) {
 		slog.Warn(w)
 	}
+	for _, w := range unknownKeyWarnings(*configPath) {
+		slog.Warn(w)
+	}
 	// --plan on its own used to fall through to serve(). Every subcommand consults it
 	// and none of them was selected, so the flag that means "change nothing" started
 	// the control plane: a port conflict on a live master, and a second unsupervised

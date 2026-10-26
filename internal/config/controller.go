@@ -1322,6 +1322,7 @@ func (c ControllerConfig) Validate() error {
 	errs = append(errs, validateClientPoolsDisjoint(c.Fleet.Masters)...)
 	errs = append(errs, validateClientSites(c.Fleet)...)
 	errs = append(errs, validateAddressPoolsDisjoint(c.Fleet)...)
+	errs = append(errs, validateNodeSSH(c)...)
 	errs = append(errs, validateAWG3Secret(c)...)
 	for i, e := range c.Fleet.Exits {
 		if e.Name == "" {

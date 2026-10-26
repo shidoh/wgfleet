@@ -10,6 +10,11 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 - Alerts on a master↔exit path that slowly degrades, the way blocking creeps in: `WgfleetMasterPathsDegrading` (two or more exits from one master), `WgfleetExitPathDegrading` (one path), `WgfleetExitDegradingFromAllMasters` (one exit from every master). A path counts when over 10% of the day's probes failed or took over 1 s, it is worse than the other masters' path to the same exit, and it is over twice its best day of the two weeks before. Recording rules `wgfleet:exit_tunnel_bad_share:1d` and `wgfleet:exit_tunnel_bad_share:best_day_14d`. Re-apply `vmrule.yaml` or `prometheusrule.yaml`.
 - Every master measures its own uplink: every 30 s it opens a TCP connection to each other master and closes it, and counts the TCP handshakes on the address its traffic leaves with. Metrics `wgfleet_agent_uplink_probes_total{peer,result}`, `wgfleet_agent_uplink_connect_seconds{peer}`, `wgfleet_fw_uplink_handshake_packets_total{direction}`; alert `WgfleetMasterUplinkDegrading` when connects from one master degrade while the other direction stays clean. No manifest key: the controller picks each peer's client VLESS port, else its first `public_tcp_ports` entry. A master agent older than this release measures nothing.
+- `--check-config` and the controller's startup log name every manifest key nothing reads, as warnings: a misspelled key (`key:` for `key_path:`) or one indented under the wrong block used to vanish silently.
+
+### Changed
+
+- A node's `ssh` block is all or nothing: with any key set, `host`, `user` and `key_path` are required and the manifest is refused without them. Before, it loaded and every provision, upgrade and rollback of the node failed later with `has no ssh target`. Run `--check-config` before upgrading.
 
 ## v0.3.3 — 2026-10-16
 
