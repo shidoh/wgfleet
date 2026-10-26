@@ -76,7 +76,9 @@ func Planners(in Input) []reconcile.Planner {
 		// server: both are interfaces this node raises, and both must exist before the
 		// egress and the policy routing that carry their pools out.
 		lifelinePlanner{confPath: in.Paths.LifelineConf, privateKey: in.LifelinePrivateKey, up: up},
-		warpPlanner{path: in.Paths.WGCF, dir: in.Paths.WARPDir, warp: in.WARP, up: up, warpMTUCache: in.Paths.WARPMTUCache},
+		// Before the WARP planner: a pick made this pass is rendered this pass.
+		newWARPEndpointPlanner(in),
+		warpPlanner{path: in.Paths.WGCF, dir: in.Paths.WARPDir, warp: in.WARP, up: up, warpMTUCache: in.Paths.WARPMTUCache, endpointState: in.Paths.WARPEndpointState},
 		routingPlanner{statePath: in.Paths.RoutingState},
 		dnsPlanner{configPath: in.Paths.DNS, composePath: in.Paths.DNSCompose, sysctlPath: in.Paths.NonlocalBindSysctl},
 		// REALITY/XHTTP inbound (ADR-0025): renders + runs the xray container when the
@@ -438,6 +440,8 @@ type warpPlanner struct {
 	warp         *egress.WARPConfig
 	up           func(name string) bool
 	warpMTUCache string // auto-probed WARP MTU cache (effectiveWARPMTU)
+	// endpointState is the WARP endpoint fallback's pick (warpEndpointPlanner).
+	endpointState string
 }
 
 func (warpPlanner) Component() string { return "warp egress (wgcf)" }
@@ -465,6 +469,7 @@ func (p warpPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.
 		)}, nil
 	}
 	cfg := *p.warp
+	cfg.Endpoint = pickedWARPEndpoint(cfg.Endpoint, p.endpointState)
 	if cfg.MTU == 0 {
 		// WARP rides the exit's own physical link to Cloudflare (sequential model,
 		// ADR-0014): the master↔exit tunnel terminates here and the bare payload is

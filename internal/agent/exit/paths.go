@@ -57,6 +57,10 @@ type Paths struct {
 	// network probe never runs in dry-run. Empty ⇒ the wgcf MTU falls back to the
 	// operator override or wg.DefaultWARPMTU.
 	WARPMTUCache string
+	// WARPEndpointState holds the WARP endpoint fallback's pick (JSON). Written
+	// Apply-side by a Scheduled planner when wgcf goes without a handshake for a
+	// full window, read in Plan by the WARP planner. Absent ⇒ the profile endpoint.
+	WARPEndpointState string
 	// NonlocalBindSysctl persists net.ipv4.ip_nonlocal_bind=1, which lets blocky
 	// claim the lifeline gateway before awgl0 exists. `sysctl -w` alone does not
 	// survive a reboot, and a reboot is exactly when the ordering goes wrong: the
@@ -70,22 +74,23 @@ type Paths struct {
 // DefaultPaths returns the production-default file locations.
 func DefaultPaths() Paths {
 	return Paths{
-		WGKey:          "/etc/wgfleet/wg.key",
-		WGConf:         "/etc/amnezia/amneziawg/awg0.conf",
-		NFT:            "/etc/wgfleet/wgfleet.nft",
-		WGCF:           "/etc/wireguard/wgcf.conf",
-		WARPDir:        "/etc/wgfleet/warp",
-		DNS:            "/etc/wgfleet/blocky/config.yml",
-		DNSCompose:     "/etc/wgfleet/blocky/docker-compose.yml",
-		XrayKey:        "/etc/wgfleet/reality.key",
-		XrayConfig:     "/etc/wgfleet/xray/config.json",
-		XrayCompose:    "/etc/wgfleet/xray/docker-compose.yml",
-		LifelineKey:    "/etc/wgfleet/lifeline.key",
-		LifelineConf:   "/etc/amnezia/amneziawg/" + domain.LifelineInterface + ".conf",
-		ClientVLESSKey: "/etc/wgfleet/client-vless.key",
-		RoutingState:   "/run/wgfleet/routing.applied",
-		ASBlacklist:    "/var/lib/wgfleet/as-blacklist.lst",
-		WARPMTUCache:   "/var/lib/wgfleet/warp-mtu",
+		WGKey:             "/etc/wgfleet/wg.key",
+		WGConf:            "/etc/amnezia/amneziawg/awg0.conf",
+		NFT:               "/etc/wgfleet/wgfleet.nft",
+		WGCF:              "/etc/wireguard/wgcf.conf",
+		WARPDir:           "/etc/wgfleet/warp",
+		DNS:               "/etc/wgfleet/blocky/config.yml",
+		DNSCompose:        "/etc/wgfleet/blocky/docker-compose.yml",
+		XrayKey:           "/etc/wgfleet/reality.key",
+		XrayConfig:        "/etc/wgfleet/xray/config.json",
+		XrayCompose:       "/etc/wgfleet/xray/docker-compose.yml",
+		LifelineKey:       "/etc/wgfleet/lifeline.key",
+		LifelineConf:      "/etc/amnezia/amneziawg/" + domain.LifelineInterface + ".conf",
+		ClientVLESSKey:    "/etc/wgfleet/client-vless.key",
+		RoutingState:      "/run/wgfleet/routing.applied",
+		ASBlacklist:       "/var/lib/wgfleet/as-blacklist.lst",
+		WARPMTUCache:      "/var/lib/wgfleet/warp-mtu",
+		WARPEndpointState: "/var/lib/wgfleet/warp-endpoint.json",
 
 		NonlocalBindSysctl: "/etc/sysctl.d/99-wgfleet-nonlocal-bind.conf",
 	}
@@ -106,22 +111,23 @@ func AttemptMarkerPath(cachePath string) string { return cachePath + ".attempt" 
 // (and tests) where the production /etc layout is not writable.
 func PathsUnder(dir string) Paths {
 	return Paths{
-		WGKey:          filepath.Join(dir, "wg.key"),
-		WGConf:         filepath.Join(dir, "awg0.conf"),
-		NFT:            filepath.Join(dir, "wgfleet.nft"),
-		WGCF:           filepath.Join(dir, "wgcf.conf"),
-		WARPDir:        filepath.Join(dir, "warp"),
-		DNS:            filepath.Join(dir, "blocky", "config.yml"),
-		DNSCompose:     filepath.Join(dir, "blocky", "docker-compose.yml"),
-		XrayKey:        filepath.Join(dir, "reality.key"),
-		XrayConfig:     filepath.Join(dir, "xray", "config.json"),
-		XrayCompose:    filepath.Join(dir, "xray", "docker-compose.yml"),
-		LifelineKey:    filepath.Join(dir, "lifeline.key"),
-		LifelineConf:   filepath.Join(dir, domain.LifelineInterface+".conf"),
-		ClientVLESSKey: filepath.Join(dir, "client-vless.key"),
-		RoutingState:   filepath.Join(dir, "routing.applied"),
-		ASBlacklist:    filepath.Join(dir, "as-blacklist.lst"),
-		WARPMTUCache:   filepath.Join(dir, "warp-mtu"),
+		WGKey:             filepath.Join(dir, "wg.key"),
+		WGConf:            filepath.Join(dir, "awg0.conf"),
+		NFT:               filepath.Join(dir, "wgfleet.nft"),
+		WGCF:              filepath.Join(dir, "wgcf.conf"),
+		WARPDir:           filepath.Join(dir, "warp"),
+		DNS:               filepath.Join(dir, "blocky", "config.yml"),
+		DNSCompose:        filepath.Join(dir, "blocky", "docker-compose.yml"),
+		XrayKey:           filepath.Join(dir, "reality.key"),
+		XrayConfig:        filepath.Join(dir, "xray", "config.json"),
+		XrayCompose:       filepath.Join(dir, "xray", "docker-compose.yml"),
+		LifelineKey:       filepath.Join(dir, "lifeline.key"),
+		LifelineConf:      filepath.Join(dir, domain.LifelineInterface+".conf"),
+		ClientVLESSKey:    filepath.Join(dir, "client-vless.key"),
+		RoutingState:      filepath.Join(dir, "routing.applied"),
+		ASBlacklist:       filepath.Join(dir, "as-blacklist.lst"),
+		WARPMTUCache:      filepath.Join(dir, "warp-mtu"),
+		WARPEndpointState: filepath.Join(dir, "warp-endpoint.json"),
 
 		NonlocalBindSysctl: filepath.Join(dir, "99-wgfleet-nonlocal-bind.conf"),
 	}

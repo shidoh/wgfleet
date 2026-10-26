@@ -718,7 +718,7 @@ All keys: [configuration.md#2-controller-the-controller-process](configuration.m
 | Exit | `egress-reachability` | always | Reports ok, degraded or blocked — the censorship signal. |
 | Exit | `egress-active` | always | The egress method actually in use (`warp`, `direct`), which is not always the configured one: a blocked WARP fails over on its own. |
 | Exit | `egress-throughput` | a throughput floor is set (`min_egress_throughput_kbytes`, or the fleet floor) | Three consecutive below-floor passes report **Degraded**, two at or above the floor clear it. A sustained collapse also fails the egress over to the next method, the same way a block does. |
-| Exit | `warp-egress` | `egress: warp` | — |
+| Exit | `warp-egress` | `egress: warp` | WARP endpoint fallback: when the agent has seen no `wgcf` handshake younger than 5 m for 3 m of passes in a row, it moves `wgcf` to the next endpoint (the profile's, then `engage.cloudflareclient.com` on ports 2408, 500, 1701, 4500) and keeps the first one that handshakes, across reboots. A live tunnel's handshake stays under ~3.5 m, so it is not moved. Silence seen before a reboot does not count after it. After a full round without an answer the window doubles, up to 30 m. Each move logs `WARP endpoint gives no handshake`; the pick is in `/var/lib/wgfleet/warp-endpoint.json`, delete it to go back to the profile's endpoint. |
 | Exit | `dns-filter` | `dns.enabled`, once the resolver has its listen address | — |
 | Exit | `lifeline` | the exit has a `lifeline` | Red with a reason ⇒ `awgl0` serves its last good config, not the current spec. |
 | Master | `client-wg` | always | The client interface is up. |

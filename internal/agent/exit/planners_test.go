@@ -35,6 +35,8 @@ func testPaths(t *testing.T) Paths {
 		DNSCompose:   filepath.Join(dir, "blocky", "docker-compose.yml"),
 		RoutingState: filepath.Join(dir, "routing.applied"),
 		ASBlacklist:  filepath.Join(dir, "as-blacklist.lst"),
+
+		WARPEndpointState: filepath.Join(dir, "warp-endpoint.json"),
 	}
 }
 
