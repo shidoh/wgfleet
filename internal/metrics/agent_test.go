@@ -391,7 +391,10 @@ func gatherFrom(t *testing.T, role domain.Role) float64 {
 // A hold-out can begin and end between two scrapes; the gauge then never shows
 // it, and on 2026-10-26 a master held one exit out for three minutes at a time
 // while every rule stayed quiet. The counter counts each hold-out as it begins,
-// and every exit in rotation starts at 0 so increase() sees the first one.
+// and every exit in rotation starts at 0 so increase() sees the first one. An
+// exit missing from one pass (the tier flipped, or a pass cut short) and back
+// still held is the same hold-out, not a new one: counting it again would fire
+// WgfleetExitFlapping on an exit that never flapped.
 func TestExitHoldoutsAreCountedOnEachEntry(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewAgentMetrics(reg, "master-xa-1", domain.RoleMaster, time.Unix(1_700_000_000, 0))
@@ -401,8 +404,10 @@ func TestExitHoldoutsAreCountedOnEachEntry(t *testing.T) {
 	m.ObserveTier(false, map[string]bool{"vn0": true, "vn1": false}, 3, 3)  // still out: no count
 	m.ObserveTier(false, map[string]bool{"vn0": false, "vn1": false}, 3, 3) // back
 	m.ObserveTier(false, map[string]bool{"vn0": true, "vn1": false}, 3, 3)  // out again: 2
-	m.ObserveTier(false, map[string]bool{"vn1": false}, 3, 3)               // vn0 left the tier
-	m.ObserveTier(false, map[string]bool{"vn0": true, "vn1": false}, 3, 3)  // rejoins already held: 3
+	m.ObserveTier(false, map[string]bool{"vn1": false}, 3, 3)               // vn0 left the tier (tier flip, short pass)
+	m.ObserveTier(false, map[string]bool{"vn0": true, "vn1": false}, 3, 3)  // back, still the same hold-out: no count
+	m.ObserveTier(false, map[string]bool{"vn0": false, "vn1": false}, 3, 3) // released
+	m.ObserveTier(false, map[string]bool{"vn0": true, "vn1": false}, 3, 3)  // out again: 3
 
 	want := `
 # HELP wgfleet_agent_exit_holdouts_total Times the master's multi-destination probe took this exit out of the wg-best rotation. Counts hold-outs too short for a scrape of exit_held_out to see. Master nodes only.

@@ -112,6 +112,7 @@ hold across releases.
 | Rule | Detail |
 |---|---|
 | Agents renew their own certificates | Between 70% and 90% of the one-year lifetime, over the control plane, no operator step. An agent from before this behaviour never renews: runs to its certificate's `NotAfter` about a year after provisioning, then falls off the control plane. Recovery is SSH plus `--certs renew`. Also invisible to the certificate-expiry alert, because that metric arrives with the same agent generation. Roll stragglers before their certificates age out. |
+| A node's `ssh` block is all or nothing (v0.3.4) | With any key set, `host`, `user` and `key_path` are required. Missing one → controller refuses to start. Run `--check-config` with the new binary BEFORE the restart. |
 | `fleet.awg3_key` is REQUIRED once AmneziaWG 3.x header protection is on | Triggers when `fleet.awg3` is true, OR any `exits[].awg3` is true, OR any `masters[].client_awg.awg3` is `full` (`client_awg.awg3: timers` needs no secret). Missing key → controller refuses to start. Run `--check-config` BEFORE the restart: a missing key is a startup failure and a crash loop. Set it once and never change it — rotating it re-derives the key on every 3.x tunnel and invalidates every client config in the field at once. |
 
 ```yaml

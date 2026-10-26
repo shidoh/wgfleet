@@ -384,7 +384,7 @@ spec:
       # renders BOTH an AWG and a "<exit>-reality" proxy, but only one of them is in
       # a group — the other is configured, routed through by nobody, and never
       # probed, so its alive/age readings drift forever. Live check the hour this
-      # rule was written: 1cnode004's AWG proxy sat alive=0 with a 55-minute-old
+      # rule was written: one exit's AWG proxy sat alive=0 with a 55-minute-old
       # measurement while its reality proxy was fresh, i.e. this alert would have
       # paged permanently on a tunnel with no traffic on it by design.
       #
@@ -552,7 +552,7 @@ spec:
     - alert: WgfleetExitFlapping
       # A hold-out of three minutes starts and ends between the 5 m that
       # WgfleetExitOutOfRotation waits, and the exit_held_out gauge misses it
-      # between scrapes. On 2026-10-26 master-xa-1 kept dropping vn0 out of the
+      # between scrapes. On 2026-10-26 a master kept dropping one exit out of the
       # load balancer and the console was the only place it showed. The counter
       # sees every hold-out; two in six hours on one exit is already a pattern.
       expr: increase(wgfleet_agent_exit_holdouts_total[6h]) >= 2
@@ -567,8 +567,8 @@ spec:
     - alert: WgfleetRealityBridgeUnstable
       # The bridge's watchdog kills a socket that received nothing for 30 s and the
       # exit redials, so WgfleetRealityBridgeDown never fires — but every kill is
-      # traffic frozen on that path. vn0's bridge to master-xa-1 ran at 4-6 kills
-      # an hour for ten days (to master-xa-2: under one), with no rule noticing.
+      # traffic frozen on that path. One exit's bridge to one master ran at 4-6 kills
+      # an hour for ten days (to the other master: under one), with no rule noticing.
       expr: increase(wgfleet_agent_reality_bridge_kills_total[1h]) > 3
       for: 1h
       labels:
@@ -585,7 +585,7 @@ spec:
     rules:
     # Blocking creeps in: a provider's TSPU box or a hoster's uplink starts
     # delaying or dropping a share of one path, and the share grows over days.
-    # Measured on master-xa-1 from 2026-10-16: REALITY to two exits went from
+    # Measured on one master from 2026-10-16: REALITY to two exits went from
     # 5% slow probes to 38% in ten days while every rotation alert stayed quiet,
     # because the median stayed at 100 ms and the tunnels never went down.
     #
@@ -595,7 +595,7 @@ spec:
     #
     # The baseline is the path's BEST day of the two weeks before, not its
     # average: a creep that lasts a week becomes its own average and the alert
-    # would go quiet on the plateau (sdfi0 at 45% against a 21% average, live
+    # would go quiet on the plateau (one exit at 45% against a 21% average, live
     # 2026-10-26). A creep cannot raise the best day until all 14 days are bad,
     # and a path that is always noisy has its noise as its best day.
     - record: wgfleet:exit_tunnel_bad_share:1d
@@ -609,8 +609,8 @@ spec:
     #     an exit that is slow from everywhere does not count here;
     #   - it is over twice its best day plus 3 points.
     # Backtested on 2026-10-21..26 (10-day lookback, the history there was):
-    # master-xa-1 from 2026-10-21, two episodes (5 paths: vn0, sdfi0, anz3 and
-    # REALITY to vn1, vn2), master-xa-2 -> hn006 from 2026-10-22 (0% -> 22%).
+    # master A from 2026-10-21, two episodes (5 paths: AWG to three exits and
+    # REALITY to two more), master B to one exit from 2026-10-22 (0% -> 22%).
     # The other 22 paths stay silent. Gaps between firing hours were 1-5 h, which
     # keep_firing_for covers. A path younger than a day stays silent.
     - alert: WgfleetMasterPathsDegrading
@@ -721,7 +721,7 @@ spec:
     - alert: WgfleetMasterUplinkDegrading
       # Connects from this master to a peer degrade while the peer's connects
       # back to it stay clean: the filter is on this master's side. Live
-      # 2026-10-26: 7 of 60 slow from master-xa-1 to master-xa-2, 0 of 60 the
+      # 2026-10-26: 7 of 60 slow from master A to master B, 0 of 60 the
       # other way. Under 80% only: a peer whose port closed is a dead target,
       # not a creeping filter. Silent until a day of probes exists.
       expr: |

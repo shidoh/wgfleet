@@ -270,6 +270,15 @@ func TestClientProfileGroups(t *testing.T) {
 	if m1 := groupNamed(t, doc, "m1"); m1["type"] != "fallback" || strings.Join(toStrings(m1["proxies"].([]any)), ",") != "m1-awg,m1-vless" {
 		t.Errorf("per-master group = %v", m1)
 	}
+	// Each group runs its own health check, and a master's group is always in use
+	// (its resolver goes through it), so lazy does not idle it. Checked every 60 s
+	// over HTTPS like auto, two masters cost a phone ~85 MB a day; only auto, the
+	// group traffic follows, needs the fast check.
+	for _, name := range []string{"m1", "m2"} {
+		if g := groupNamed(t, doc, name); fmt.Sprint(g["interval"]) != "300" {
+			t.Errorf("group %s interval = %v, want 300", name, g["interval"])
+		}
+	}
 	ns := strings.Join(toStrings(doc["dns"].(map[string]any)["nameserver"].([]any)), ",")
 	if ns != "tcp://10.80.0.1:53#m1,tcp://10.81.0.1:53#m2" {
 		t.Errorf("each master's resolver must go through that master: %s", ns)

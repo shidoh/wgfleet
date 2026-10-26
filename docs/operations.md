@@ -190,7 +190,7 @@ Local changes to the profile:
 |---|---|
 | Proxies | `<master>-awg`, `<master>-vless` for each attached, active credential |
 | `<master>-awg` with `client_awg.awg3` | `timers`: `version: 3` and the 3.x timers. `full`: also `header-protection-key` |
-| `<master>` | `fallback` over that master's proxies |
+| `<master>` | `fallback` over that master's proxies; `https://www.gstatic.com/generate_204` every 300 s |
 | `auto` | `fallback`: every master's `<master>-awg` in manifest order, then every `<master>-vless`; `https://www.gstatic.com/generate_204` every 60 s, and at once after 5 failed connections through the selected proxy |
 | `wgfleet` | `select`: `auto` or any proxy |
 | `<site>-auto` (per `fleet.client_sites` entry with `probe_url`) | `fallback`: `DIRECT`, `wgfleet`, checked against `probe_url` |
@@ -601,7 +601,7 @@ wgfleet_agent_start_time_seconds                   # for uptime
 **Master uplink** (master agent; see [Path degradation alerts](#path-degradation-alerts)):
 
 ```
-wgfleet_agent_uplink_probes_total{peer,result}         # connects to another master: ok | slow | fail
+wgfleet_agent_uplink_probes_total{peer,result}         # connects to another master: ok | slow | refused | fail
 wgfleet_agent_uplink_connect_seconds{peer}             # histogram, successful connects only
 wgfleet_fw_uplink_handshake_packets_total{direction}   # syn_out | synack_in on the uplink address
 ```
@@ -720,7 +720,7 @@ All keys: [configuration.md#2-controller-the-controller-process](configuration.m
 | Exit | `egress-reachability` | always | Reports ok, degraded or blocked — the censorship signal. |
 | Exit | `egress-active` | always | The egress method actually in use (`warp`, `direct`), which is not always the configured one: a blocked WARP fails over on its own. |
 | Exit | `egress-throughput` | a throughput floor is set (`min_egress_throughput_kbytes`, or the fleet floor) | Three consecutive below-floor passes report **Degraded**, two at or above the floor clear it. A sustained collapse also fails the egress over to the next method, the same way a block does. |
-| Exit | `warp-egress` | `egress: warp` | WARP endpoint fallback: when the agent has seen no `wgcf` handshake younger than 5 m for 3 m of passes in a row, it moves `wgcf` to the next endpoint (the profile's, then `engage.cloudflareclient.com` on ports 2408, 500, 1701, 4500) and keeps the first one that handshakes, across reboots. A live tunnel's handshake stays under ~3.5 m, so it is not moved. Silence seen before a reboot does not count after it. After a full round without an answer the window doubles, up to 30 m. Each move logs `WARP endpoint gives no handshake`; the pick is in `/var/lib/wgfleet/warp-endpoint.json`, delete it to go back to the profile's endpoint. |
+| Exit | `warp-egress` | `egress: warp` | A dead endpoint is replaced on its own: see [WARP endpoint fallback](#warp-endpoint-fallback). |
 | Exit | `dns-filter` | `dns.enabled`, once the resolver has its listen address | — |
 | Exit | `lifeline` | the exit has a `lifeline` | Red with a reason ⇒ `awgl0` serves its last good config, not the current spec. |
 | Master | `client-wg` | always | The client interface is up. |
@@ -743,6 +743,18 @@ If an agent goes silent, the controller's **staleness sweep** demotes its node
 (`Ready`/`Reconciling`) to **Degraded** after `controller.staleness_after`
 (default 3 m; `<0` disables). `Error` nodes keep their failure reason. When the
 agent recovers, its next report restores the state.
+
+### WARP endpoint fallback
+
+| Item | Value |
+|---|---|
+| Trigger | no `wgcf` handshake younger than 5 m, seen on every pass for 3 m |
+| Candidates, in order | the profile's endpoint, then `engage.cloudflareclient.com` on 2408, 500, 1701, 4500 |
+| After a full round without a handshake | the 3 m window doubles each round, up to 30 m |
+| Kept | the first endpoint that handshakes, across reboots |
+| Pick | `/var/lib/wgfleet/warp-endpoint.json` |
+| Journal | `WARP endpoint gives no handshake; switching to the next one` |
+| Back to the profile's endpoint | `rm /var/lib/wgfleet/warp-endpoint.json` |
 
 ## Kernel upgrades (your call, not ours)
 

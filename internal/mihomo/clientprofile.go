@@ -25,9 +25,14 @@ const (
 	// device whose AmneziaWG passed small packets and lost large ones (2026-10-26)
 	// kept a plain-HTTP 204 green and never failed over.
 	ClientProfileHealthURL = "https://www.gstatic.com/generate_204"
-	// ClientProfileHealthInterval bounds how long a dead proxy stays selected when
-	// no traffic trips mihomo's max-failed-times first (default 5 failed dials).
+	// ClientProfileHealthInterval bounds how long a dead proxy stays selected in
+	// auto when no traffic trips mihomo's max-failed-times first (default 5 failed
+	// dials).
 	ClientProfileHealthInterval = 60
+	// ClientProfileMasterHealthInterval is the per-master groups' check. Every group
+	// checks on its own and a master's group never idles (its resolver goes through
+	// it), so at auto's pace two masters cost a phone ~85 MB a day.
+	ClientProfileMasterHealthInterval = 300
 )
 
 // isReservedProfileName reports whether name collides with a group this profile
@@ -146,7 +151,7 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 		allAWG, allVLESS = append(allAWG, ownAWG...), append(allVLESS, ownVLESS...)
 		// The master's own group: its resolver and its client pool are reachable
 		// through ITS proxies only, whichever one is alive.
-		groups = append(groups, fallbackGroup(m.Name, own))
+		groups = append(groups, fallbackGroup(m.Name, own, ClientProfileMasterHealthInterval))
 		through = append(through, m.RouteThrough...)
 		if m.ClientPool != "" {
 			pools = append(pools, "IP-CIDR,"+m.ClientPool+","+m.Name)
@@ -165,7 +170,7 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 	all := append(allAWG, allVLESS...)
 	groups = append(groups, siteGroups(in.Sites)...)
 	groups = append(groups,
-		fallbackGroup(ClientProfileAutoGroup, all),
+		fallbackGroup(ClientProfileAutoGroup, all, ClientProfileHealthInterval),
 		map[string]any{
 			// fallback catches a DEAD proxy only; this is for the one it cannot see —
 			// AWG alive but throttled — where the person picks VLESS by hand.
@@ -226,13 +231,13 @@ func appendEndpointRule(rules []string, network, host string, port int) []string
 		network, port, kind, netip.PrefixFrom(addr, addr.BitLen())))
 }
 
-func fallbackGroup(name string, members []string) map[string]any {
+func fallbackGroup(name string, members []string, interval int) map[string]any {
 	return map[string]any{
 		"name":     name,
 		"type":     "fallback",
 		"proxies":  toAnySlice(members),
 		"url":      ClientProfileHealthURL,
-		"interval": ClientProfileHealthInterval,
+		"interval": interval,
 	}
 }
 

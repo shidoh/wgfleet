@@ -4,19 +4,43 @@ What changed for operators in each wgfleet release — behaviour, manifest keys,
 Every release archive carries this page as `CHANGELOG.md`.
 New releases are announced, with the archives attached, in the Telegram channel [t.me/wgfleet](https://t.me/wgfleet).
 
-## Unreleased
+## v0.3.4 — 2026-10-26
+
+!!! warning "Read before upgrading: an incomplete `ssh` block stops the new controller"
+
+    **Before the upgrade**
+
+    - Run `--check-config` with the NEW binary from the archive: `./wgfleet-controller --config /etc/wgfleet/controller.yaml --check-config`. The installed one does not know the new rule and passes a manifest the new controller refuses at start: a node `ssh` block with some keys but without all of `host`, `user`, `key_path`.
+
+    **Order**
+
+    1. Controller.
+    2. Every master: `deploy-master.sh` for the one beside the controller, the node page's upgrade for the others. The uplink measurement needs both the controller (it hands out the targets) and the master agent.
+    3. Exits: rolling upgrade.
+
+    No wire change (14): an older agent keeps working and lacks the new behaviour until it is rolled.
+
+    **After the upgrade**
+
+    - Re-apply `vmrule.yaml` or `prometheusrule.yaml` (six new alerts, six recording rules) and re-import the dashboard.
+    - `WgfleetRealityBridgeUnstable` can fire at once on a path that was already freezing: it is the path, not the release.
+    - New on disk: exits keep `/var/lib/wgfleet/warp-endpoint.json` once the WARP fallback has picked an endpoint; masters get nftables chains `uplink_syn_out`, `uplink_synack_in` (counters only, policy accept). Rolling an exit agent back loses the pick: wgcf returns to the profile's endpoint.
+
+    **Tell your users**
+
+    - Update the profile in the mihomo app; in Clash Verge Rev, restart the core after the update.
 
 ### Added
 
 - Alerts on a master↔exit path that slowly degrades, the way blocking creeps in: `WgfleetMasterPathsDegrading` (two or more exits from one master), `WgfleetExitPathDegrading` (one path), `WgfleetExitDegradingFromAllMasters` (one exit from every master). A path counts when over 10% of the day's probes failed or took over 1 s, it is worse than the other masters' path to the same exit, and it is over twice its best day of the two weeks before. Recording rules `wgfleet:exit_tunnel_bad_share:1d` and `wgfleet:exit_tunnel_bad_share:best_day_14d`. Re-apply `vmrule.yaml` or `prometheusrule.yaml`.
-- Every master measures its own uplink: every 30 s it opens a TCP connection to each other master and closes it, and counts the TCP handshakes on the address its traffic leaves with. Metrics `wgfleet_agent_uplink_probes_total{peer,result}`, `wgfleet_agent_uplink_connect_seconds{peer}`, `wgfleet_fw_uplink_handshake_packets_total{direction}`; alert `WgfleetMasterUplinkDegrading` when connects from one master degrade while the other direction stays clean. No manifest key: the controller picks each peer's client VLESS port, else its first `public_tcp_ports` entry. A master agent older than this release measures nothing.
-- Short hold-outs are counted and alerted: `wgfleet_agent_exit_holdouts_total{exit}` counts every time a master takes an exit out of rotation, including those over before a scrape sees `exit_held_out`. Alerts `WgfleetExitFlapping` (two hold-outs of one exit in 6 h) and `WgfleetRealityBridgeUnstable` (a REALITY bridge to one master frozen more than 3 times an hour, for an hour). Dashboard panels "Hold-outs per hour" and "REALITY bridge freezes per hour" under Master → exit. Re-apply `vmrule.yaml` or `prometheusrule.yaml`; re-import the dashboard.
+- Every master measures its own uplink: every 30 s it opens a TCP connection to each other master and closes it, and counts the TCP handshakes on the address its traffic leaves with. Metrics `wgfleet_agent_uplink_probes_total{peer,result}`, `wgfleet_agent_uplink_connect_seconds{peer}`, `wgfleet_fw_uplink_handshake_packets_total{direction}`; alert `WgfleetMasterUplinkDegrading` when connects from one master degrade while the other direction stays clean. No manifest key: the controller picks each peer's client VLESS port, else its first `public_tcp_ports` entry. A master agent older than this release measures nothing. Re-apply `vmrule.yaml` or `prometheusrule.yaml`; upgrade the controller and every master.
+- Short hold-outs are counted and alerted: `wgfleet_agent_exit_holdouts_total{exit}` counts every time a master takes an exit out of rotation, including those over before a scrape sees `exit_held_out`. Alerts `WgfleetExitFlapping` (two hold-outs of one exit in 6 h) and `WgfleetRealityBridgeUnstable` (a REALITY bridge to one master frozen more than 3 times an hour, for an hour). Dashboard panels "Hold-outs per hour, master → exit" and "REALITY bridge freezes per hour, exit → master" under Master → exit. Re-apply `vmrule.yaml` or `prometheusrule.yaml`; re-import the dashboard.
 - An exit whose WARP endpoint stops answering moves to the next one on its own: when `wgcf` has had no handshake for 5 m and that lasts 3 m more, the agent tries `engage.cloudflareclient.com` on ports 2408, 500, 1701 and 4500 in turn and keeps the first that answers, across reboots. Before, an exit whose handshakes to `:2408` were refused stayed without WARP until someone changed the endpoint by hand. A live tunnel is not moved: its handshake never ages past ~3.5 m. No manifest key.
 - `--check-config` and the controller's startup log name every manifest key nothing reads, as warnings: a misspelled key (`key:` for `key_path:`) or one indented under the wrong block used to vanish silently.
 
 ### Changed
 
-- The device profile's `auto` group tries every master's AmneziaWG before any VLESS (`m1-awg, m2-awg, m1-vless, m2-vless`, was `m1-awg, m1-vless, m2-awg, …`) and checks every 60 s (was 300) over HTTPS. A stuck AmneziaWG no longer lands the device on VLESS of the same master, and a tunnel that passes small packets but loses large ones now fails the check: the certificate chain crosses it. Tell your users to update the profile; in Clash Verge Rev, restart the core after the update.
+- The device profile's `auto` group tries every master's AmneziaWG before any VLESS (`m1-awg, m2-awg, m1-vless, m2-vless`, was `m1-awg, m1-vless, m2-awg, …`) and checks every 60 s (was 300) over HTTPS; each master's own group checks every 300 s over HTTPS. A stuck AmneziaWG no longer lands the device on VLESS of the same master, and a tunnel that passes small packets but loses large ones now fails the check: the certificate chain crosses it. Tell your users to update the profile; in Clash Verge Rev, restart the core after the update.
 - A node's `ssh` block is all or nothing: with any key set, `host`, `user` and `key_path` are required and the manifest is refused without them. Before, it loaded and every provision, upgrade and rollback of the node failed later with `has no ssh target`. Run `--check-config` before upgrading.
 
 ## v0.3.3 — 2026-10-16

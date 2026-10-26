@@ -312,21 +312,25 @@ func (m *AgentMetrics) ObserveTier(reserveActive bool, rotation map[string]bool,
 	m.standbyTotal.Set(float64(standbyTotal))
 }
 
-// countHoldouts adds one per exit that is held out now and was not last pass.
-// Every exit seen starts at 0, so increase() over a window sees the first one.
+// countHoldouts adds one per exit that is held out now and was not when last
+// seen. Every exit seen starts at 0, so increase() over a window sees the first
+// one. An exit absent from this pass keeps its last state: back and still held
+// after a tier flip is the same hold-out.
 func (m *AgentMetrics) countHoldouts(rotation map[string]bool) {
 	m.heldMu.Lock()
 	defer m.heldMu.Unlock()
+	next := make(map[string]bool, len(m.wasHeld)+len(rotation))
+	for exit, held := range m.wasHeld {
+		next[exit] = held
+	}
 	for exit, held := range rotation {
 		c := m.exitHoldouts.WithLabelValues(exit)
 		if held && !m.wasHeld[exit] {
 			c.Inc()
 		}
+		next[exit] = held
 	}
-	m.wasHeld = make(map[string]bool, len(rotation))
-	for exit, held := range rotation {
-		m.wasHeld[exit] = held
-	}
+	m.wasHeld = next
 }
 
 // ObserveStandbyMembers records, per exit of the INACTIVE tier, whether the warm
