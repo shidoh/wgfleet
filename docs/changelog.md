@@ -14,6 +14,7 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 ### Changed
 
+- The device profile's `auto` group tries every master's AmneziaWG before any VLESS (`m1-awg, m2-awg, m1-vless, m2-vless`, was `m1-awg, m1-vless, m2-awg, …`) and checks every 60 s (was 300) over HTTPS. A stuck AmneziaWG no longer lands the device on VLESS of the same master, and a tunnel that passes small packets but loses large ones now fails the check: the certificate chain crosses it. Tell your users to update the profile; in Clash Verge Rev, restart the core after the update.
 - A node's `ssh` block is all or nothing: with any key set, `host`, `user` and `key_path` are required and the manifest is refused without them. Before, it loaded and every provision, upgrade and rollback of the node failed later with `has no ssh target`. Run `--check-config` before upgrading.
 
 ## v0.3.3 — 2026-10-16

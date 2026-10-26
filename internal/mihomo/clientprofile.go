@@ -18,10 +18,16 @@ import (
 // awgOption, and a second spelling of those keys is a second place to be wrong.
 
 const (
-	ClientProfileAutoGroup      = "auto"
-	ClientProfileSelectGroup    = "wgfleet"
-	ClientProfileHealthURL      = "http://www.gstatic.com/generate_204"
-	ClientProfileHealthInterval = 300
+	ClientProfileAutoGroup   = "auto"
+	ClientProfileSelectGroup = "wgfleet"
+	// ClientProfileHealthURL is fetched over HTTPS on purpose: the server's
+	// certificate chain (~2.5 KB) makes full-size packets cross the tunnel. A
+	// device whose AmneziaWG passed small packets and lost large ones (2026-10-26)
+	// kept a plain-HTTP 204 green and never failed over.
+	ClientProfileHealthURL = "https://www.gstatic.com/generate_204"
+	// ClientProfileHealthInterval bounds how long a dead proxy stays selected when
+	// no traffic trips mihomo's max-failed-times first (default 5 failed dials).
+	ClientProfileHealthInterval = 60
 )
 
 // isReservedProfileName reports whether name collides with a group this profile
@@ -95,11 +101,11 @@ func ClientNameserver(addr, via string) string {
 // RenderClientProfile renders one device's mihomo profile.
 func RenderClientProfile(in ClientProfileInput) (string, error) {
 	var (
-		proxies, groups []any
-		all             []string
-		pools           []string
-		nameservers     []string
-		endpoints       []string
+		proxies, groups  []any
+		allAWG, allVLESS []string
+		pools            []string
+		nameservers      []string
+		endpoints        []string
 	)
 	if err := validateSiteNames(in.Sites, in.Masters); err != nil {
 		return "", err
@@ -117,24 +123,27 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 			return "", fmt.Errorf("client profile: master name %q is reserved (mihomo group/policy name)", m.Name)
 		}
 		var own []string
+		var ownAWG, ownVLESS []string
 		if m.AWG != nil {
 			p, err := clientWireguardProxy(m.Name+"-awg", *m.AWG)
 			if err != nil {
 				return "", fmt.Errorf("client profile: master %q: %w", m.Name, err)
 			}
 			proxies, own = append(proxies, p), append(own, m.Name+"-awg")
+			ownAWG = append(ownAWG, m.Name+"-awg")
 			if host, port, err := splitEndpoint(m.AWG.Endpoint); err == nil {
 				endpoints = appendEndpointRule(endpoints, "UDP", host, port)
 			}
 		}
 		if m.VLESS != nil {
 			proxies, own = append(proxies, clientVLESSProxy(m.Name+"-vless", *m.VLESS)), append(own, m.Name+"-vless")
+			ownVLESS = append(ownVLESS, m.Name+"-vless")
 			endpoints = appendEndpointRule(endpoints, "TCP", m.VLESS.Host, m.VLESS.Port)
 		}
 		if len(own) == 0 {
 			continue
 		}
-		all = append(all, own...)
+		allAWG, allVLESS = append(allAWG, ownAWG...), append(allVLESS, ownVLESS...)
 		// The master's own group: its resolver and its client pool are reachable
 		// through ITS proxies only, whichever one is alive.
 		groups = append(groups, fallbackGroup(m.Name, own))
@@ -149,6 +158,11 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 	if len(proxies) == 0 {
 		return "", errors.New("client profile: no proxy to render")
 	}
+	// Every master's AmneziaWG before any VLESS, masters in manifest order. A wedged
+	// WG device belongs to one proxy and the next master's is another, while VLESS
+	// is TCP over TCP: with each master's pair kept together, a stuck first AWG sent
+	// the device to the slowest path on the same master and left it there.
+	all := append(allAWG, allVLESS...)
 	groups = append(groups, siteGroups(in.Sites)...)
 	groups = append(groups,
 		fallbackGroup(ClientProfileAutoGroup, all),

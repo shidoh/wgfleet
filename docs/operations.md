@@ -189,7 +189,7 @@ Local changes to the profile:
 | Proxies | `<master>-awg`, `<master>-vless` for each attached, active credential |
 | `<master>-awg` with `client_awg.awg3` | `timers`: `version: 3` and the 3.x timers. `full`: also `header-protection-key` |
 | `<master>` | `fallback` over that master's proxies |
-| `auto` | `fallback` over all proxies, `generate_204`, every 300 s |
+| `auto` | `fallback`: every master's `<master>-awg` in manifest order, then every `<master>-vless`; `https://www.gstatic.com/generate_204` every 60 s, and at once after 5 failed connections through the selected proxy |
 | `wgfleet` | `select`: `auto` or any proxy |
 | `<site>-auto` (per `fleet.client_sites` entry with `probe_url`) | `fallback`: `DIRECT`, `wgfleet`, checked against `probe_url` |
 | `<site>` | `select`: `<site>-auto` (when present), `DIRECT`, `wgfleet` — the person's override |

@@ -254,14 +254,17 @@ func TestClientProfileGroups(t *testing.T) {
 		{Name: "m2", AWG: profileAWG(t, "2.0"), DNS: []string{"10.81.0.1"}},
 	}})
 	auto := groupNamed(t, doc, "auto")
-	if auto["type"] != "fallback" || auto["url"] != ClientProfileHealthURL || fmt.Sprint(auto["interval"]) != "300" {
+	if auto["type"] != "fallback" || auto["url"] != ClientProfileHealthURL || fmt.Sprint(auto["interval"]) != "60" {
 		t.Errorf("auto = %v", auto)
 	}
-	if got := strings.Join(toStrings(auto["proxies"].([]any)), ","); got != "m1-awg,m1-vless,m2-awg" {
-		t.Errorf("fallback order = %s", got)
+	// AmneziaWG on every master before any VLESS: a wedged WG device is one proxy's,
+	// the next master's is a different one, and VLESS is TCP over TCP. With m1-vless
+	// second, a stuck m1-awg sent everyone to the slowest path on the same master.
+	if got := strings.Join(toStrings(auto["proxies"].([]any)), ","); got != "m1-awg,m2-awg,m1-vless" {
+		t.Errorf("fallback order = %s, want every AWG before any VLESS", got)
 	}
 	sel := groupNamed(t, doc, "wgfleet")
-	if sel["type"] != "select" || strings.Join(toStrings(sel["proxies"].([]any)), ",") != "auto,m1-awg,m1-vless,m2-awg" {
+	if sel["type"] != "select" || strings.Join(toStrings(sel["proxies"].([]any)), ",") != "auto,m1-awg,m2-awg,m1-vless" {
 		t.Errorf("select = %v", sel)
 	}
 	if m1 := groupNamed(t, doc, "m1"); m1["type"] != "fallback" || strings.Join(toStrings(m1["proxies"].([]any)), ",") != "m1-awg,m1-vless" {
@@ -461,5 +464,15 @@ func TestClientProfileVLESSOffersMLKEM(t *testing.T) {
 	ro := proxyNamed(t, doc, "m1-vless")["reality-opts"].(map[string]any)
 	if ro["support-x25519mlkem768"] != true {
 		t.Errorf("reality-opts.support-x25519mlkem768 = %v, want true", ro["support-x25519mlkem768"])
+	}
+}
+
+// The health check must make full-size packets cross the tunnel. A device whose
+// AmneziaWG passed small packets and lost large ones (2026-10-26: SSH stuck at the
+// server's key exchange reply, HTTP redirects fine) kept a plain-HTTP 204 green
+// and never failed over. Over HTTPS the server's certificate chain (~2.5 KB) does.
+func TestClientProfileHealthCheckIsHTTPS(t *testing.T) {
+	if !strings.HasPrefix(ClientProfileHealthURL, "https://") {
+		t.Fatalf("health URL %q is not HTTPS: a 204 over plain HTTP is a few small packets", ClientProfileHealthURL)
 	}
 }
