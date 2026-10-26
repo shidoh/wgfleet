@@ -247,8 +247,8 @@ func (p warpEndpointPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]
 	summary := fmt.Sprintf("no WARP handshake on %s for %s: switch to %s", current, silent.Round(time.Second), next.Endpoint)
 	move := p.write(next, summary, func() {
 		slog.Warn("WARP endpoint gives no handshake; switching to the next one",
-			"from", current, "to", next.Endpoint, "silent_for", silent.Round(time.Second),
-			"failed_rounds", rounds, "next_window", warpEndpointDwell(rounds))
+			"from", current, "to", next.Endpoint, "silent_for", silent.Round(time.Second).String(),
+			"failed_rounds", rounds, "next_window", warpEndpointDwell(rounds).String())
 	})
 	// Ask once more right before the write: a handshake that arrived since Plan
 	// read it cancels the move. Best-effort, so a cancelled move is a warning in
