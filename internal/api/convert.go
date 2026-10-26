@@ -402,6 +402,7 @@ func masterToProto(m *domain.MasterSpec) *pb.MasterSpec {
 		ClientWg:            clientWGToProto(m.ClientWG),
 		ClientViaNetns:      m.ClientViaNetns,
 		NetnsCidr:           m.NetnsCIDR,
+		UplinkProbeTargets:  uplinkTargetsToProto(m.UplinkProbeTargets),
 	}
 	for _, t := range m.ExitTunnels {
 		out.ExitTunnels = append(out.ExitTunnels, &pb.ExitTunnel{
@@ -447,6 +448,7 @@ func masterFromProto(m *pb.MasterSpec) *domain.MasterSpec {
 		ClientWG:            clientWGFromProto(m.GetClientWg()),
 		ClientViaNetns:      m.GetClientViaNetns(),
 		NetnsCIDR:           m.GetNetnsCidr(),
+		UplinkProbeTargets:  uplinkTargetsFromProto(m.GetUplinkProbeTargets()),
 	}
 	for _, t := range m.GetExitTunnels() {
 		out.ExitTunnels = append(out.ExitTunnels, domain.ExitTunnel{

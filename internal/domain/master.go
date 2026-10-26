@@ -107,6 +107,10 @@ type MasterSpec struct {
 	// RealityPortal is the inbound exits in the exit-initiated REALITY mode dial
 	// (ADR-0038). nil ⇒ no exit uses this master that way and no portal runs.
 	RealityPortal *RealityPortalSpec `json:",omitempty"`
+	// UplinkProbeTargets are the other masters this master dials to measure its
+	// own uplink. Empty ⇒ nothing to measure (a single-master fleet, or no peer
+	// with a world-open TCP port).
+	UplinkProbeTargets []UplinkProbeTarget `json:",omitempty"`
 }
 
 // ComposeSpec is the master's container-stack desired state, rendered by the

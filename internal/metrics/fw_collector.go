@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -13,12 +14,13 @@ const nftListTimeout = 3 * time.Second
 
 // NFTFunc returns the `nft -j list table inet wgfleet` JSON output. Injected so
 // tests feed a fixture and so a missing nft / non-Linux box / absent table fails
-// soft (an error yields no firewall series, no panic). Only meaningful on exits,
-// but safe to run elsewhere — the table is simply absent.
+// soft (an error yields no firewall series, no panic). Safe on every role: a
+// node without the table simply emits nothing.
 type NFTFunc func(ctx context.Context) ([]byte, error)
 
-// FWCollector emits firewall telemetry at scrape time: AS-blacklist set sizes
-// and named drop counters from the exit's nft table inet wgfleet. Scrape-time
+// FWCollector emits firewall telemetry at scrape time from nft table inet
+// wgfleet: AS-blacklist set sizes, named drop counters, and on a master the
+// handshake counters on its public address (uplink_*). Scrape-time
 // (like StoreCollector) so there is no extra goroutine and the numbers are
 // current as of the scrape.
 type FWCollector struct {
@@ -26,6 +28,7 @@ type FWCollector struct {
 
 	blacklistSize *prometheus.Desc
 	drops         *prometheus.Desc
+	handshakes    *prometheus.Desc
 }
 
 var _ prometheus.Collector = (*FWCollector)(nil)
@@ -48,6 +51,10 @@ func NewFWCollector(reg *prometheus.Registry, node, role string, list NFTFunc) *
 			prometheus.BuildFQName(namespace, "fw", "drops_total"),
 			"Packets dropped by a named nftables drop counter in table inet wgfleet.",
 			[]string{"counter"}, cl),
+		handshakes: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "fw", "uplink_handshake_packets_total"),
+			"TCP handshake packets crossing this master's public address: syn_out (SYNs it sent, retransmits included) and synack_in (answers it got).",
+			[]string{"direction"}, cl),
 	}
 	reg.MustRegister(c)
 	return c
@@ -57,6 +64,7 @@ func NewFWCollector(reg *prometheus.Registry, node, role string, list NFTFunc) *
 func (c *FWCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.blacklistSize
 	ch <- c.drops
+	ch <- c.handshakes
 }
 
 // Collect implements prometheus.Collector. An unreadable table (nft missing,
@@ -76,8 +84,12 @@ func (c *FWCollector) Collect(ch chan<- prometheus.Metric) {
 	for family, size := range stats.blacklistSize {
 		ch <- prometheus.MustNewConstMetric(c.blacklistSize, prometheus.GaugeValue, float64(size), family)
 	}
-	for name, dropped := range stats.counters {
-		ch <- prometheus.MustNewConstMetric(c.drops, prometheus.CounterValue, dropped, name)
+	for name, packets := range stats.counters {
+		if dir, ok := strings.CutPrefix(name, uplinkCounterPrefix); ok {
+			ch <- prometheus.MustNewConstMetric(c.handshakes, prometheus.CounterValue, packets, dir)
+			continue
+		}
+		ch <- prometheus.MustNewConstMetric(c.drops, prometheus.CounterValue, packets, name)
 	}
 }
 

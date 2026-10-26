@@ -45,6 +45,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/agent/restart"
 	"github.com/shidoh/wgfleet/internal/agent/sockwatch"
+	"github.com/shidoh/wgfleet/internal/agent/uplink"
 	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/atomicfile"
 	"github.com/shidoh/wgfleet/internal/config"
@@ -334,6 +335,7 @@ func run() error {
 			// Per-client traffic of the client-facing VLESS inbound, from xray's
 			// stats API on the loopback.
 			metrics.NewVLESSCollector(reg, cfg.Agent.NodeID, string(role), a.vlessInbound.Load, nil)
+			a.uplinkMetrics = metrics.NewUplinkMetrics(reg, cfg.Agent.NodeID, string(role))
 		}
 		// Scheduled probes degrade silently by design (a failure keeps the last-good
 		// value and only WARNs), so without this a probe that fails 100% of the time
@@ -364,6 +366,10 @@ func run() error {
 		}()
 	}
 
+	if role == domain.RoleMaster {
+		a.uplinkProber = uplink.New(a.uplinkMetrics)
+	}
+
 	a.log.Info("agent starting",
 		"version", version.Version, "commit", version.Commit, "wire", api.WireContractVersion,
 		"controller", cfg.Agent.Controller, "interval", cfg.Interval(), "plan", *plan)
@@ -386,6 +392,9 @@ func run() error {
 	}
 	if a.portalWatchdog != nil && !*plan {
 		go a.portalWatchdog.Run(ctx)
+	}
+	if a.uplinkProber != nil && !*plan {
+		go a.uplinkProber.Run(ctx)
 	}
 
 	ticker := time.NewTicker(cfg.Interval())
@@ -459,6 +468,11 @@ type agent struct {
 	// it runs none; portalWatchdog kills portal sockets whose bridge is gone.
 	realityPortal  atomic.Pointer[domain.RealityPortalSpec]
 	portalWatchdog *sockwatch.Watchdog
+	// uplinkProber dials the other masters between passes to measure this
+	// master's own uplink; its targets come from the last applied spec. nil off a
+	// master.
+	uplinkProber  *uplink.Prober
+	uplinkMetrics *metrics.UplinkMetrics // nil when /metrics is disabled
 	// portalKey is the master's reality portal private key for this pass
 	// (ephemeral in plan mode); the portal and mihomo planners both need it.
 	portalKey string
@@ -1064,6 +1078,9 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		a.vlessInbound.Store(spec.Master.ClientVLESS != nil)
 		if !plan {
 			a.realityPortal.Store(spec.Master.RealityPortal)
+			if a.uplinkProber != nil {
+				a.uplinkProber.SetTargets(spec.Master.UplinkProbeTargets)
+			}
 		}
 	}
 	if !fromCache {

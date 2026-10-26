@@ -645,6 +645,59 @@ spec:
           Every master lost or delayed (over 1 s) at least {{ $value | humanizePercentage }} of
           the day's probes to {{ $labels.exit }}, more than twice their best day of the two weeks before. The problem is
           on the exit's side: its hoster or a filter on its address.
+    # The master's own uplink, measured by TCP connects to the other masters
+    # (wgfleet_agent_uplink_probes_total). Bad = slow (a retransmitted SYN, over
+    # 0.9 s) or failed. Daily share per (node, peer), and its best day of the two
+    # weeks before.
+    - record: wgfleet:uplink_probe_bad_share:1d
+      expr: |
+        sum by (node, peer) (increase(wgfleet_agent_uplink_probes_total{result=~"slow|fail"}[1d]))
+        / sum by (node, peer) (increase(wgfleet_agent_uplink_probes_total[1d]))
+    - record: wgfleet:uplink_probe_bad_share:best_day_14d
+      expr: |
+        min_over_time((
+          sum by (node, peer) (increase(wgfleet_agent_uplink_probes_total{result=~"slow|fail"}[1d]))
+          / sum by (node, peer) (increase(wgfleet_agent_uplink_probes_total[1d]))
+        )[14d:6h] offset 1d)
+    # The same share measured the other way: node and peer swapped, so a series
+    # {node="A", peer="B"} here is what B saw dialling A.
+    - record: wgfleet:uplink_probe_bad_share:1d_reverse
+      expr: |
+        sum without (swap) (
+          label_replace(label_replace(label_replace(wgfleet:uplink_probe_bad_share:1d,
+            "swap", "$1", "node", "(.*)"),
+            "node", "$1", "peer", "(.*)"),
+            "peer", "$1", "swap", "(.*)")
+        )
+    # Passive, for the dashboard: SYNs the master sent per SYN-ACK it got on its
+    # uplink address, per day. Near 1 on a clean uplink.
+    - record: wgfleet:uplink_syn_per_synack:1d
+      expr: |
+        sum by (node) (increase(wgfleet_fw_uplink_handshake_packets_total{direction="syn_out"}[1d]))
+        / sum by (node) (increase(wgfleet_fw_uplink_handshake_packets_total{direction="synack_in"}[1d]))
+    - alert: WgfleetMasterUplinkDegrading
+      # Connects from this master to a peer degrade while the peer's connects
+      # back to it stay clean: the filter is on this master's side. Live
+      # 2026-10-26: 7 of 60 slow from master-xa-1 to master-xa-2, 0 of 60 the
+      # other way. Under 80% only: a peer whose port closed is a dead target,
+      # not a creeping filter. Silent until a day of probes exists.
+      expr: |
+        (wgfleet:uplink_probe_bad_share:1d > 0.05)
+        and (wgfleet:uplink_probe_bad_share:1d < 0.8)
+        and (wgfleet:uplink_probe_bad_share:1d > 2 * wgfleet:uplink_probe_bad_share:best_day_14d + 0.02)
+        and on (node, peer) (wgfleet:uplink_probe_bad_share:1d_reverse < 0.02)
+      for: 1h
+      keep_firing_for: 6h
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: 'Uplink of master {{ $labels.node }} is degrading: {{ $value | humanizePercentage }} of connects to {{ $labels.peer }} slow or failed'
+        description: >-
+          {{ $value | humanizePercentage }} of the day's TCP connects from {{ $labels.node }} to
+          {{ $labels.peer }} took over 0.9 s (a retransmitted SYN) or failed, while {{ $labels.peer }}
+          connects back cleanly. Something in front of {{ $labels.node }} drops or delays its
+          handshakes: its hoster or a filter. Compare wgfleet:uplink_syn_per_synack:1d across masters.
   - name: wgfleet.dataplane
     interval: 1m
     rules:

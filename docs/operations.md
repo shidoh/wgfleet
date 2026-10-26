@@ -596,6 +596,14 @@ wgfleet_agent_egress_reachability{state}           # ok | degraded | blocked (ce
 wgfleet_agent_start_time_seconds                   # for uptime
 ```
 
+**Master uplink** (master agent; see [Path degradation alerts](#path-degradation-alerts)):
+
+```
+wgfleet_agent_uplink_probes_total{peer,result}         # connects to another master: ok | slow | fail
+wgfleet_agent_uplink_connect_seconds{peer}             # histogram, successful connects only
+wgfleet_fw_uplink_handshake_packets_total{direction}   # syn_out | synack_in on the uplink address
+```
+
 **Per-client traffic** (master agent):
 
 ```
@@ -624,6 +632,22 @@ over twice its best day plus 3 points.
 
 Dead paths (80% and over) are left to `WgfleetExitOutOfRotation` and the standby alerts.
 A path younger than a day has no share and stays silent.
+
+**Master uplink.** Every 30 s a master opens a TCP connection to each other master
+and closes it without sending data. The controller gives it the targets: the peer's
+public IP at its client VLESS port, else its first `public_tcp_ports` entry; a peer
+with neither is not measured. A connect over 0.9 s is a retransmitted SYN (`slow`),
+none within 3 s is `fail`.
+
+| Alert | Fires when | Look at |
+|---|---|---|
+| `WgfleetMasterUplinkDegrading` | over 5% of the day's connects from the master to a peer are slow or failed, over twice its best day plus 2 points, under 80%, and the peer's connects back are under 2% | `wgfleet:uplink_syn_per_synack:1d` on both masters; the master's hoster |
+
+`wgfleet:uplink_syn_per_synack:1d` is passive: the SYNs the master sent per SYN-ACK
+it got on the address its traffic leaves with. Near 1 on a clean uplink; it rises
+when handshakes are lost. Measured 2026-10-26: 1.22 on a filtered master, 0.98 on a
+clean one. A single-master fleet has no peers and no probe; the passive ratio still
+works.
 
 ### Host metrics (yours to upgrade)
 

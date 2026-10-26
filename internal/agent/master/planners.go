@@ -3,6 +3,7 @@ package master
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"os"
 	"os/exec"
 	"strings"
@@ -535,9 +536,20 @@ type firewallPlanner struct {
 	// namespace. When it has, the drop-policy input chain must trust the veth or the
 	// namespace can reach nothing on this host — including the resolver.
 	netnsAttached func() bool
+	// uplinkAddr returns the address the master's outbound traffic leaves with,
+	// for the handshake counters (netfw.RenderInput.UplinkAddr). nil ⇒ the real
+	// detector; zero ⇒ no counters.
+	uplinkAddr func() netip.Addr
 }
 
 func (firewallPlanner) Component() string { return "master firewall (nftables)" }
+
+func (p firewallPlanner) uplinkAddress() netip.Addr {
+	if p.uplinkAddr != nil {
+		return p.uplinkAddr()
+	}
+	return detectUplinkAddr()
+}
 
 func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
 	// The redirect the input firewall must open matches masterNATPlanner's DNAT
@@ -592,6 +604,7 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 		NetnsHostIface: netnsVethIface(spec),
 		PortalSocks:    portalSocksFirewall(spec),
 		PortalUDPRelay: ephemeralPortRange(),
+		UplinkAddr:     p.uplinkAddress(),
 	})
 	if err != nil {
 		return nil, err

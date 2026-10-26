@@ -298,6 +298,19 @@ message MasterSpec {
   // The inbound exits in the exit-initiated REALITY mode dial (ADR-0038); unset ⇒
   // no portal. Wire 14.
   RealityPortalSpec reality_portal = 20;
+  // The other masters this master dials every 30 s to measure its own uplink:
+  // a filter in front of one master shows as slow or failed connects from it,
+  // while the reverse direction stays clean. Additive without a wire bump: an
+  // agent too old to know the field drops it and measures nothing, which is
+  // what it did before; nothing it converges depends on it.
+  repeated UplinkProbeTarget uplink_probe_targets = 21;
+}
+
+// UplinkProbeTarget is one TCP endpoint a master connects to and closes, never
+// sending data. name labels the measurement, addr is "ip:port".
+message UplinkProbeTarget {
+  string name = 1;
+  string addr = 2;
 }
 
 // RealityPortalSpec is a master's portal: a VLESS+REALITY inbound for exit

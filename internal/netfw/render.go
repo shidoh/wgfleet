@@ -94,6 +94,10 @@ type RenderInput struct {
 	// exit→WARP) does not stall when PMTU discovery is blocked (an earlier finding; the reference deployment
 	// §4.10's `clamp-mss-to-pmtu`).
 	EgressInterface string
+	// UplinkAddr is the address the master's outbound traffic leaves with (master
+	// role; IPv4 only). When set, the master counts the TCP handshakes on it — see
+	// renderUplinkCounters. Zero ⇒ no counters.
+	UplinkAddr netip.Addr
 	// OverlayMSS, when > 0, renders a postrouting MSS clamp on the management overlay
 	// interface (`zt*`), in BOTH directions: every TCP SYN crossing ZeroTier — leaving
 	// over it or arriving on it and forwarded onward — has its MSS capped to this
@@ -613,6 +617,10 @@ func RenderRuleset(in RenderInput) (string, error) {
 		b.WriteString("\t\ttype filter hook postrouting priority mangle; policy accept;\n")
 		fmt.Fprintf(&b, "\t\toifname %q %s\n", clientIface, mssClampExpr(in.ClientMSS))
 		b.WriteString("\t}\n")
+	}
+
+	if in.Role == domain.RoleMaster {
+		renderUplinkCounters(&b, in)
 	}
 
 	// MASQUERADE client-sourced traffic on egress (exit role). The exit forwards

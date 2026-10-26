@@ -1060,6 +1060,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		ms.RealityPortal = b.realityPortalSpec(master, portalClients)
 		spec.Firewall.PublicTCPPorts = append(spec.Firewall.PublicTCPPorts, ms.RealityPortal.ListenPort)
 	}
+	ms.UplinkProbeTargets = b.uplinkProbeTargets(ctx, master)
 	spec.Master = ms
 	spec.DNS = b.renderMasterDNS(master, dnsUpstreams)
 	return spec, nil
