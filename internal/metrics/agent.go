@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -28,6 +29,9 @@ type AgentMetrics struct {
 	// (exported by the controller as wgfleet_exit_tunnel_*) shows the effect
 	// without the cause.
 	exitHeldOut      *prometheus.GaugeVec   // per exit: 1 while our verdict holds it out of wg-best
+	exitHoldouts     *prometheus.CounterVec // per exit: hold-outs begun since start
+	heldMu           sync.Mutex
+	wasHeld          map[string]bool        // last pass's hold-outs, to count each one as it begins
 	reserveTier      prometheus.Gauge       // 1 when wg-best routes to the reserve tier
 	standbyUsable    prometheus.Gauge       // inactive tier: members the warm probe found usable
 	standbyTotal     prometheus.Gauge       // inactive tier: members the warm probe could sample
@@ -160,6 +164,11 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Namespace: namespace, Subsystem: "agent", Name: "exit_held_out",
 			Help: "1 while the master's multi-destination probe is holding this exit out of the wg-best rotation, else 0. Master nodes only.", ConstLabels: cl,
 		}, []string{"exit"})
+		m.exitHoldouts = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "exit_holdouts_total",
+			Help: "Times the master's multi-destination probe took this exit out of the wg-best rotation. Counts hold-outs too short for a scrape of exit_held_out to see. Master nodes only.", ConstLabels: cl,
+		}, []string{"exit"})
+		m.wasHeld = map[string]bool{}
 		m.reserveTier = prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "reserve_tier_active",
 			Help: "1 when wg-best routes to the reserve exit tier (ADR-0029), else 0. Master nodes only.", ConstLabels: cl,
@@ -219,7 +228,7 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 		reg.MustRegister(m.transportActive)
 	}
 	if m.exitHeldOut != nil {
-		reg.MustRegister(m.exitHeldOut, m.reserveTier, m.standbyUsable, m.standbyTotal, m.standbyMember, m.standbyTransport,
+		reg.MustRegister(m.exitHeldOut, m.exitHoldouts, m.reserveTier, m.standbyUsable, m.standbyTotal, m.standbyMember, m.standbyTransport,
 			m.mihomoStart, m.selfHealRestarts, m.selfHealThrottle)
 	}
 	return m
@@ -297,9 +306,27 @@ func (m *AgentMetrics) ObserveTier(reserveActive bool, rotation map[string]bool,
 	for exit, held := range rotation {
 		m.exitHeldOut.WithLabelValues(exit).Set(boolToFloat(held))
 	}
+	m.countHoldouts(rotation)
 	m.reserveTier.Set(boolToFloat(reserveActive))
 	m.standbyUsable.Set(float64(standbyUsable))
 	m.standbyTotal.Set(float64(standbyTotal))
+}
+
+// countHoldouts adds one per exit that is held out now and was not last pass.
+// Every exit seen starts at 0, so increase() over a window sees the first one.
+func (m *AgentMetrics) countHoldouts(rotation map[string]bool) {
+	m.heldMu.Lock()
+	defer m.heldMu.Unlock()
+	for exit, held := range rotation {
+		c := m.exitHoldouts.WithLabelValues(exit)
+		if held && !m.wasHeld[exit] {
+			c.Inc()
+		}
+	}
+	m.wasHeld = make(map[string]bool, len(rotation))
+	for exit, held := range rotation {
+		m.wasHeld[exit] = held
+	}
 }
 
 // ObserveStandbyMembers records, per exit of the INACTIVE tier, whether the warm

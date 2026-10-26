@@ -61,7 +61,9 @@ Why an exit is not carrying — the badge on its card and on its node page:
 the node's own self-checks, the badge reports the master's ability to route through
 it. The same verdicts are exported as `wgfleet_agent_exit_held_out` and
 `wgfleet_agent_standby_tier_member_usable`, with alerts in the archive's
-`monitoring/`.
+`monitoring/`. A hold-out shorter than a scrape interval shows only in
+`wgfleet_agent_exit_holdouts_total` (one per hold-out); `WgfleetExitFlapping` fires at
+two in 6 h.
 
 Actions are confirmed POSTs with CSRF and same-origin checks.
 
@@ -1073,7 +1075,8 @@ Then make REALITY active from the exit's node page and watch the checks below.
 | Symptom | Look at | Do |
 |---|---|---|
 | Alert `WgfleetRealityBridgeDown` for one master | that master: `docker logs xray-portal --tail 50`, health check `reality-portal` | portal down: the agent restarts it within one pass. Portal up, no connection: TCP from the exit to the portal port is blocked |
-| `reality_bridge_kills_total` grows | exit agent journal: `bridge watchdog: killed a silent socket` | one-way freezes on that path; the bridge redials each time. Steady growth: switch the exit's active transport to AWG |
+| `reality_bridge_kills_total` grows, alert `WgfleetRealityBridgeUnstable` | exit agent journal: `bridge watchdog: killed a silent socket`; the same exit's kills to the other masters | one-way freezes on that path; the bridge redials each time. Steady growth: switch the exit's active transport to AWG |
+| Console flickers **out of rotation `3m` · probes `4/4`**, alert `WgfleetExitFlapping` | `wgfleet_agent_exit_holdouts_total{exit}` per master; for a REALITY exit `reality_bridge_kills_total` | one master only: that master's path to the exit. Every master: the exit |
 | Exit health check `reality-bridge` failing | exit: `docker logs xray --tail 50` | no master reachable; switch the exit's active transport to AWG |
 | Master journal: `portal watchdog: killed a silent socket` | — | a bridge stopped acknowledging (path cut, exit restarted); it reconnects on a new flow. Frequent: look at the path between that exit and the master |
 | Master health check `reality-portal` failing at boot | master agent journal: `SOCKS address … is not on this host yet` | wait for the namespace link; the agent starts the portal on the next pass |

@@ -2129,13 +2129,167 @@
       }
     },
     {
+      "type": "timeseries",
+      "id": 234,
+      "title": "Hold-outs per hour, master → exit",
+      "description": "Times a master's multi-destination probe took an exit out of the load balancer, per hour. Counts hold-outs too short for the timeline above (under 5 min) — the ones the console shows as 'out of rotation 3m'. Alert: WgfleetExitFlapping (2 in 6 h).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 80,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "sum",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (node, exit) (increase(wgfleet_agent_exit_holdouts_total{node=~\"$master\"}[1h])) > 0",
+          "refId": "A",
+          "legendFormat": "{{node}} → {{exit}}"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "w": 12,
+        "h": 8,
+        "y": 67
+      },
+      "interval": "1h"
+    },
+    {
+      "type": "timeseries",
+      "id": 235,
+      "title": "REALITY bridge freezes per hour, exit → master",
+      "description": "Bridge sockets the exit's watchdog killed after 30 s of silence from that master's portal, per hour. Each one froze the traffic on it; the exit redials, so the bridge never reads as down. One master much higher than the others for the same exit points at that master's path. Alert: WgfleetRealityBridgeUnstable (over 3 an hour for an hour).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 80,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "sum",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (node, master) (increase(wgfleet_agent_reality_bridge_kills_total[1h])) > 0",
+          "refId": "A",
+          "legendFormat": "{{node}} → {{master}}"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "w": 12,
+        "h": 8,
+        "y": 67
+      },
+      "interval": "1h"
+    },
+    {
       "type": "row",
       "id": 229,
       "title": "Control plane & inventory",
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 67,
+        "y": 75,
         "w": 24,
         "h": 1
       }
@@ -2201,7 +2355,7 @@
         "x": 0,
         "w": 6,
         "h": 4,
-        "y": 68
+        "y": 76
       }
     },
     {
@@ -2271,7 +2425,7 @@
         "x": 6,
         "w": 6,
         "h": 4,
-        "y": 68
+        "y": 76
       }
     },
     {
@@ -2349,7 +2503,7 @@
         "x": 12,
         "w": 6,
         "h": 4,
-        "y": 68
+        "y": 76
       }
     },
     {
@@ -2427,7 +2581,7 @@
         "x": 18,
         "w": 6,
         "h": 4,
-        "y": 68
+        "y": 76
       }
     },
     {
@@ -2441,7 +2595,7 @@
         "x": 0,
         "w": 24,
         "h": 9,
-        "y": 72
+        "y": 80
       },
       "id": 21,
       "fieldConfig": {
@@ -2768,7 +2922,7 @@
       "title": "Health",
       "gridPos": {
         "x": 0,
-        "y": 81,
+        "y": 89,
         "w": 24,
         "h": 1
       },
@@ -2787,7 +2941,7 @@
         "x": 0,
         "w": 4,
         "h": 8,
-        "y": 82
+        "y": 90
       },
       "id": 31,
       "fieldConfig": {
@@ -2863,7 +3017,7 @@
         "x": 4,
         "w": 20,
         "h": 8,
-        "y": 82
+        "y": 90
       },
       "id": 32,
       "fieldConfig": {
@@ -2955,7 +3109,7 @@
         "x": 0,
         "w": 24,
         "h": 6,
-        "y": 90
+        "y": 98
       },
       "id": 33,
       "fieldConfig": {
@@ -3077,7 +3231,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 96,
+        "y": 104,
         "w": 24,
         "h": 1
       },
@@ -3095,7 +3249,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 97
+            "y": 105
           },
           "id": 101,
           "fieldConfig": {
@@ -3156,7 +3310,7 @@
             "x": 4,
             "w": 12,
             "h": 8,
-            "y": 97
+            "y": 105
           },
           "id": 102,
           "fieldConfig": {
@@ -3231,7 +3385,7 @@
             "x": 16,
             "w": 4,
             "h": 8,
-            "y": 97
+            "y": 105
           },
           "id": 103,
           "fieldConfig": {
@@ -3336,7 +3490,7 @@
             "x": 20,
             "w": 4,
             "h": 8,
-            "y": 97
+            "y": 105
           },
           "id": 104,
           "fieldConfig": {
@@ -3397,7 +3551,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 105
+            "y": 113
           },
           "id": 96,
           "fieldConfig": {
@@ -3458,7 +3612,7 @@
             "x": 4,
             "w": 8,
             "h": 8,
-            "y": 105
+            "y": 113
           },
           "id": 97,
           "fieldConfig": {
@@ -3533,7 +3687,7 @@
             "x": 12,
             "w": 6,
             "h": 8,
-            "y": 105
+            "y": 113
           },
           "id": 106,
           "fieldConfig": {
@@ -3606,7 +3760,7 @@
             "x": 18,
             "w": 6,
             "h": 8,
-            "y": 105
+            "y": 113
           },
           "id": 107,
           "fieldConfig": {
@@ -3675,7 +3829,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 97,
+        "y": 105,
         "w": 24,
         "h": 1
       },
@@ -3693,7 +3847,7 @@
             "x": 0,
             "w": 12,
             "h": 8,
-            "y": 98
+            "y": 106
           },
           "id": 61,
           "fieldConfig": {
@@ -3798,7 +3952,7 @@
             "x": 12,
             "w": 12,
             "h": 8,
-            "y": 98
+            "y": 106
           },
           "id": 62,
           "fieldConfig": {
@@ -3870,7 +4024,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 98,
+        "y": 106,
         "w": 24,
         "h": 1
       },
@@ -3888,7 +4042,7 @@
             "x": 0,
             "w": 16,
             "h": 8,
-            "y": 99
+            "y": 107
           },
           "id": 41,
           "fieldConfig": {
@@ -3976,7 +4130,7 @@
             "x": 16,
             "w": 8,
             "h": 8,
-            "y": 99
+            "y": 107
           },
           "id": 42,
           "fieldConfig": {
@@ -4077,7 +4231,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 99,
+        "y": 107,
         "w": 24,
         "h": 1
       },
@@ -4095,7 +4249,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 100
+            "y": 108
           },
           "id": 71,
           "fieldConfig": {
@@ -4156,7 +4310,7 @@
             "x": 4,
             "w": 4,
             "h": 8,
-            "y": 100
+            "y": 108
           },
           "id": 72,
           "fieldConfig": {
@@ -4214,7 +4368,7 @@
             "x": 8,
             "w": 16,
             "h": 8,
-            "y": 100
+            "y": 108
           },
           "id": 73,
           "fieldConfig": {
@@ -4293,7 +4447,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 100,
+        "y": 108,
         "w": 24,
         "h": 1
       },
@@ -4310,7 +4464,7 @@
             "x": 0,
             "w": 6,
             "h": 8,
-            "y": 101
+            "y": 109
           },
           "id": 51,
           "fieldConfig": {
@@ -4387,7 +4541,7 @@
             "x": 6,
             "w": 6,
             "h": 8,
-            "y": 101
+            "y": 109
           },
           "id": 52,
           "fieldConfig": {
@@ -4446,7 +4600,7 @@
             "x": 12,
             "w": 6,
             "h": 8,
-            "y": 101
+            "y": 109
           },
           "id": 53,
           "fieldConfig": {
@@ -4503,7 +4657,7 @@
             "x": 18,
             "w": 6,
             "h": 8,
-            "y": 101
+            "y": 109
           },
           "id": 54,
           "fieldConfig": {
@@ -4581,7 +4735,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 101,
+        "y": 109,
         "w": 24,
         "h": 1
       },
@@ -4599,7 +4753,7 @@
             "x": 0,
             "w": 5,
             "h": 8,
-            "y": 102
+            "y": 110
           },
           "id": 81,
           "fieldConfig": {
@@ -4660,7 +4814,7 @@
             "x": 5,
             "w": 5,
             "h": 8,
-            "y": 102
+            "y": 110
           },
           "id": 82,
           "fieldConfig": {
@@ -4721,7 +4875,7 @@
             "x": 10,
             "w": 14,
             "h": 8,
-            "y": 102
+            "y": 110
           },
           "id": 83,
           "fieldConfig": {
@@ -4836,7 +4990,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 102,
+        "y": 110,
         "w": 24,
         "h": 1
       },
@@ -4854,7 +5008,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 103
+            "y": 111
           },
           "id": 111,
           "fieldConfig": {
@@ -4915,7 +5069,7 @@
             "x": 4,
             "w": 10,
             "h": 8,
-            "y": 103
+            "y": 111
           },
           "id": 112,
           "fieldConfig": {
@@ -4992,7 +5146,7 @@
             "x": 14,
             "w": 10,
             "h": 8,
-            "y": 103
+            "y": 111
           },
           "id": 113,
           "fieldConfig": {
@@ -5069,7 +5223,7 @@
             "x": 0,
             "w": 8,
             "h": 8,
-            "y": 111
+            "y": 119
           },
           "id": 114,
           "fieldConfig": {
@@ -5146,7 +5300,7 @@
             "x": 8,
             "w": 8,
             "h": 8,
-            "y": 111
+            "y": 119
           },
           "id": 115,
           "fieldConfig": {
@@ -5231,7 +5385,7 @@
             "x": 16,
             "w": 8,
             "h": 8,
-            "y": 111
+            "y": 119
           },
           "id": 116,
           "fieldConfig": {

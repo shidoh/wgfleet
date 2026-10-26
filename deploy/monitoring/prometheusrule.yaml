@@ -538,6 +538,37 @@ spec:
         description: The exit's bridge has held no connection to {{ $labels.master }}'s portal for 5m.
           That master cannot reach this exit over REALITY; other masters may still. Check the
           portal on the master (reality-portal check) and wgfleet_agent_reality_bridge_kills_total.
+    - alert: WgfleetExitFlapping
+      # A hold-out of three minutes starts and ends between the 5 m that
+      # WgfleetExitOutOfRotation waits, and the exit_held_out gauge misses it
+      # between scrapes. On 2026-10-26 master-xa-1 kept dropping vn0 out of the
+      # load balancer and the console was the only place it showed. The counter
+      # sees every hold-out; two in six hours on one exit is already a pattern.
+      expr: increase(wgfleet_agent_exit_holdouts_total[6h]) >= 2
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: 'Master {{ $labels.node }} took exit {{ $labels.exit }} out of rotation {{ $value | humanize }} times in 6h'
+        description: Each time the master's multi-destination probe found the tunnel to {{ $labels.exit }}
+          dead, clients through it stalled until it came back. Look at the path from this master to the
+          exit — for an exit-initiated REALITY exit, wgfleet_agent_reality_bridge_kills_total.
+    - alert: WgfleetRealityBridgeUnstable
+      # The bridge's watchdog kills a socket that received nothing for 30 s and the
+      # exit redials, so WgfleetRealityBridgeDown never fires — but every kill is
+      # traffic frozen on that path. vn0's bridge to master-xa-1 ran at 4-6 kills
+      # an hour for ten days (to master-xa-2: under one), with no rule noticing.
+      expr: increase(wgfleet_agent_reality_bridge_kills_total[1h]) > 3
+      for: 1h
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: 'Exit {{ $labels.node }}: REALITY bridge to master {{ $labels.master }} froze {{ $value | humanize }} times in the last hour'
+        description: Connections from {{ $labels.node }} to {{ $labels.master }}'s portal keep going
+          silent one way and are killed and redialled. Each freeze stalls the traffic on it for about
+          30 s, and enough of them take the exit out of that master's rotation. Compare with the same
+          exit's bridge to the other masters to tell the master's path from the exit's.
   - name: wgfleet.paths
     interval: 5m
     rules:

@@ -387,3 +387,39 @@ func gatherFrom(t *testing.T, role domain.Role) float64 {
 	return gatherValue(t, reg, "wgfleet_agent_cert_reload_errors_total",
 		map[string]string{"node": "n", "role": string(role)})
 }
+
+// A hold-out can begin and end between two scrapes; the gauge then never shows
+// it, and on 2026-10-26 a master held one exit out for three minutes at a time
+// while every rule stayed quiet. The counter counts each hold-out as it begins,
+// and every exit in rotation starts at 0 so increase() sees the first one.
+func TestExitHoldoutsAreCountedOnEachEntry(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewAgentMetrics(reg, "master-xa-1", domain.RoleMaster, time.Unix(1_700_000_000, 0))
+
+	m.ObserveTier(false, map[string]bool{"vn0": false, "vn1": false}, 3, 3)
+	m.ObserveTier(false, map[string]bool{"vn0": true, "vn1": false}, 3, 3)  // vn0 out: 1
+	m.ObserveTier(false, map[string]bool{"vn0": true, "vn1": false}, 3, 3)  // still out: no count
+	m.ObserveTier(false, map[string]bool{"vn0": false, "vn1": false}, 3, 3) // back
+	m.ObserveTier(false, map[string]bool{"vn0": true, "vn1": false}, 3, 3)  // out again: 2
+	m.ObserveTier(false, map[string]bool{"vn1": false}, 3, 3)               // vn0 left the tier
+	m.ObserveTier(false, map[string]bool{"vn0": true, "vn1": false}, 3, 3)  // rejoins already held: 3
+
+	want := `
+# HELP wgfleet_agent_exit_holdouts_total Times the master's multi-destination probe took this exit out of the wg-best rotation. Counts hold-outs too short for a scrape of exit_held_out to see. Master nodes only.
+# TYPE wgfleet_agent_exit_holdouts_total counter
+wgfleet_agent_exit_holdouts_total{exit="vn0",node="master-xa-1",role="master"} 3
+wgfleet_agent_exit_holdouts_total{exit="vn1",node="master-xa-1",role="master"} 0
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "wgfleet_agent_exit_holdouts_total"); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestExitHoldoutsAreMasterOnly(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewAgentMetrics(reg, "vn0", domain.RoleExit, time.Unix(1_700_000_000, 0))
+	m.ObserveTier(false, map[string]bool{"vn0": true}, 1, 1)
+	if n := testutil.CollectAndCount(reg, "wgfleet_agent_exit_holdouts_total"); n != 0 {
+		t.Errorf("an exit must expose no holdouts series, got %d", n)
+	}
+}
