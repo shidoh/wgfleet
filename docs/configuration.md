@@ -215,7 +215,7 @@ Passthrough surface: [§9 third-party configuration](#9-third-party-configuratio
 | `fleet.masters[].mihomo.sniffer_skip` | []string | none | Domains the sniffer must not rewrite |
 | `fleet.masters[].mihomo.dashboard_url` | URL | metacubexd release | Where to fetch the web dashboard. Point at a mirror where GitHub is blocked |
 | `fleet.masters[].mihomo.dashboard_disabled` | bool | `false` | Skip the dashboard entirely — mihomo then never attempts the download |
-| `fleet.masters[].mihomo.client_via_netns` | string | `auto` | Where client traffic is intercepted. `off` — on the host. `auto` — inside mihomo's own network namespace once the agent has proved the namespace works, reverted automatically if the client path breaks. A CIDR or any other value is refused |
+| `fleet.masters[].mihomo.client_via_netns` | string | `auto` | Where client traffic is intercepted. `off` — on the host. `auto` — inside mihomo's own network namespace once the agent has proved the namespace works, reverted automatically if the client path breaks: after 2 failing passes, or 6 (3 minutes) once the move has had 2 clean passes. A CIDR or any other value is refused |
 | `fleet.masters[].mihomo.netns_cidr` | string | `100.127.255.0/30` | The point-to-point link between the host and that namespace (a /30, host `.1`, namespace `.2`) |
 | `fleet.masters[].mihomo.overrides` | map | none | **Deep-merged into the rendered mihomo `config.yaml`.** The escape hatch for anything wgfleet does not model |
 | `fleet.masters[].mihomo.extra_files[].path` | string | — | Additional managed file written alongside the config, e.g. a rule-provider list. Every `type: file` rule provider added under `mihomo.overrides` must ship its file here, or the provider is silently empty |

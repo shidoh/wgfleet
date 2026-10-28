@@ -53,7 +53,7 @@ Why an exit is not carrying — the badge on its card and on its node page:
 
 | Badge | Means |
 |---|---|
-| **out of rotation `12m` · probes `0/3`** | The master's own multi-destination probe judged this tunnel unusable and pulled the exit out of the load balancer `12m` ago; the last pass reached 0 of the 3 destinations it sampled. |
+| **out of rotation `12m` · probes `0/3`** | The master's own multi-destination probe judged this tunnel unusable and pulled the exit out of the load balancer `12m` ago; the last pass reached 0 of the 3 destinations it sampled. The first exit a pass samples is asked twice before it is pulled out; a pass that answers on the second ask logs `exit failed one probe and answered the re-ask` and keeps the exit. |
 | **no usable path · probes `0/3`** | A member of the idle reserve tier the last warm probe could not reach the internet through. It carries nothing today, so this is not an outage — it means failing over to it would restore nothing. |
 | no badge | Nobody judged this exit: it is carrying, or it sits behind the member the reserve scan stopped at. Absent evidence, not evidence of health. |
 
