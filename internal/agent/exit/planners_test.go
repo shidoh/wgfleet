@@ -240,6 +240,7 @@ func TestDNSPlannerEnsureUpWhenDown(t *testing.T) {
 	if err := os.WriteFile(composePath, []byte(composeYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	reconcile.MarkComposeAppliedForTest(composePath, []byte(composeYAML))
 
 	hasUp := func(actions []reconcile.Action) bool {
 		for _, a := range actions {
@@ -748,6 +749,7 @@ func TestXrayPlannerRendersAndEnsuresUp(t *testing.T) {
 	if err := os.WriteFile(composePath, []byte(composeYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	reconcile.MarkComposeAppliedForTest(composePath, []byte(composeYAML))
 
 	// Stack up + unchanged config ⇒ no re-up.
 	up := xrayPlanner{configPath: cfgPath, composePath: composePath, privateKey: "PRIV", up: func(string) bool { return true }}

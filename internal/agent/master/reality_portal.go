@@ -124,17 +124,23 @@ func (p realityPortalPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([
 	}
 	actions := []reconcile.Action{composeFile, cfgFile}
 	switch {
-	case composeFile.Changes():
-		actions = append(actions, reconcile.ExecAction("bring reality portal up",
-			"docker", "compose", "-f", p.composePath, "up", "-d"))
+	case composeFile.Changes() || !reconcile.ComposeApplied(p.composePath, []byte(composeYAML)):
+		// Also a file no `up -d` ever applied (killed mid-pass, image not pulled):
+		// the running containers may still be the previous definition.
+		actions = append(actions, reconcile.ComposeUpAction("bring reality portal up", p.composePath, []byte(composeYAML)))
+		if cfgFile.Changes() && !composeFile.Changes() && p.isUp(ctx) {
+			// An unchanged definition makes `up -d` a no-op for a running container,
+			// so it would not reread the config. A stopped one starts with it.
+			actions = append(actions, reconcile.ExecAction("restart reality portal",
+				"docker", "compose", "-f", p.composePath, "restart", "xray"))
+		}
 	case cfgFile.Changes() && p.isUp(ctx):
 		// xray has no hot reload: every bridge redials, ~7 s. Only a running
 		// container: compose restart leaves a stopped one stopped.
 		actions = append(actions, reconcile.ExecAction("restart reality portal",
 			"docker", "compose", "-f", p.composePath, "restart", "xray"))
 	case !p.isUp(ctx):
-		actions = append(actions, reconcile.ExecAction("bring reality portal up (was down)",
-			"docker", "compose", "-f", p.composePath, "up", "-d"))
+		actions = append(actions, reconcile.ComposeUpAction("bring reality portal up (was down)", p.composePath, []byte(composeYAML)))
 	default:
 		actions = append(actions, reconcile.NoChangeAction("reality portal", "xray-portal already up"))
 	}

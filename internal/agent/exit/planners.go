@@ -830,10 +830,17 @@ func (p dnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile
 	}
 
 	switch {
-	case composeFile.Changes():
+	case composeFile.Changes() || !reconcile.ComposeApplied(p.composePath, []byte(composeYAML)):
 		// A compose-file change pulls the new definition on the same up -d.
-		actions = append(actions, reconcile.ExecAction("bring blocky stack up",
-			"docker", "compose", "-f", p.composePath, "up", "-d"))
+		// Also a file no `up -d` ever applied (killed mid-pass, image not pulled):
+		// the running containers may still be the previous definition.
+		actions = append(actions, reconcile.ComposeUpAction("bring blocky stack up", p.composePath, []byte(composeYAML)))
+		if configChanged && !composeFile.Changes() && p.isUp(ctx) {
+			// An unchanged definition makes `up -d` a no-op for a running container,
+			// so it would not reread the config. A stopped one starts with it.
+			actions = append(actions, reconcile.ExecAction("restart resolver",
+				"docker", "compose", "-f", p.composePath, "restart", "blocky"))
+		}
 	case configChanged:
 		// Config (or a mounted include) is a volume: restart blocky to reload.
 		actions = append(actions, reconcile.ExecAction("restart resolver",
@@ -843,8 +850,7 @@ func (p dnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile
 		// crash, reboot, or a prior up that failed. Bring it up so the reconcile
 		// loop self-heals a dead blocky instead of leaving the node Degraded until
 		// the operator intervenes (the convergence guarantee must hold for DNS too).
-		actions = append(actions, reconcile.ExecAction("bring blocky stack up (was down)",
-			"docker", "compose", "-f", p.composePath, "up", "-d"))
+		actions = append(actions, reconcile.ComposeUpAction("bring blocky stack up (was down)", p.composePath, []byte(composeYAML)))
 	default:
 		// Steady state: everything in place and running. Record a no-change so the
 		// engine doesn't see a perpetual exec "change" every pass.

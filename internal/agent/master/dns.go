@@ -109,17 +109,23 @@ func (p dnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile
 	}
 
 	switch {
-	case composeFile.Changes():
-		actions = append(actions, reconcile.ExecAction("bring master blocky stack up",
-			"docker", "compose", "-f", p.composePath, "up", "-d"))
+	case composeFile.Changes() || !reconcile.ComposeApplied(p.composePath, []byte(composeYAML)):
+		// Also a file no `up -d` ever applied (killed mid-pass, image not pulled):
+		// the running containers may still be the previous definition.
+		actions = append(actions, reconcile.ComposeUpAction("bring master blocky stack up", p.composePath, []byte(composeYAML)))
+		if configChanged && !composeFile.Changes() && p.isUp(ctx) {
+			// An unchanged definition makes `up -d` a no-op for a running container,
+			// so it would not reread the config. A stopped one starts with it.
+			actions = append(actions, reconcile.ExecAction("restart master resolver",
+				"docker", "compose", "-f", p.composePath, "restart", "blocky"))
+		}
 	case configChanged:
 		// Config (upstreams/conditional/blocking) changed: restart blocky to reload —
 		// it has no hot-reload for the resolver config (only `/lists/refresh` for lists).
 		actions = append(actions, reconcile.ExecAction("restart master resolver",
 			"docker", "compose", "-f", p.composePath, "restart", "blocky"))
 	case !p.isUp(ctx):
-		actions = append(actions, reconcile.ExecAction("bring master blocky stack up (was down)",
-			"docker", "compose", "-f", p.composePath, "up", "-d"))
+		actions = append(actions, reconcile.ComposeUpAction("bring master blocky stack up (was down)", p.composePath, []byte(composeYAML)))
 	default:
 		actions = append(actions, reconcile.NoChangeAction("master dns filter", "resolver already up"))
 	}

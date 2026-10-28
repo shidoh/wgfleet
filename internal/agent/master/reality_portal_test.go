@@ -206,6 +206,19 @@ func applyFiles(t *testing.T, p reconcile.Planner, spec domain.NodeSpec) {
 	if _, err := reconcile.NewEngine(nil, filesOnly{p}).Reconcile(context.Background(), spec, reconcile.ModeApply); err != nil {
 		t.Fatal(err)
 	}
+	// The dropped commands are modelled as having succeeded, so every compose file
+	// written counts as applied (reconcile.ComposeApplied).
+	acts, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range acts {
+		if a.Kind != reconcile.ActionExec && strings.HasSuffix(a.Target, "docker-compose.yml") {
+			if b, rerr := os.ReadFile(a.Target); rerr == nil {
+				reconcile.MarkComposeAppliedForTest(a.Target, b)
+			}
+		}
+	}
 }
 
 // The portal and mihomo are rendered by two planners into two files; they must

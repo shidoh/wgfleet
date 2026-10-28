@@ -193,9 +193,11 @@ func Planners(in Input) []reconcile.Planner {
 // inbound down with it, on every pass, until someone intervenes. A master that
 // cannot start a container should converge everything else and say so; the same
 // argument the client-interface planner makes for the same treatment.
-func composeStart(file string) reconcile.Action {
-	return reconcile.BestEffortExecAction("ensure the container stack is up",
-		"docker", "compose", "-f", file, "up", "-d")
+//
+// It records the applied-file receipt only when `up -d` succeeded, so a bring-up
+// that failed or was killed is retried on the next pass (reconcile.ComposeApplied).
+func composeStart(file string, rendered []byte) reconcile.Action {
+	return reconcile.ComposeUpAction("ensure the container stack is up", file, rendered).BestEffort()
 }
 
 func composeRestart(file, service string) reconcile.Action {
@@ -227,15 +229,21 @@ func (p composePlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]recon
 		return nil, err
 	}
 	actions := []reconcile.Action{file}
+	rendered := []byte(yamlText)
 	switch {
 	case file.Changes():
 		// Definition changed: `up -d` recreates only the services whose config moved.
-		actions = append(actions, composeStart(p.path))
+		actions = append(actions, composeStart(p.path, rendered))
+	case !reconcile.ComposeApplied(p.path, rendered):
+		// The file is current but no `up -d` of it ever succeeded — killed mid-pass by
+		// an agent restart, or an image that would not pull. The running containers
+		// may be the previous definition, so "the stack is up" proves nothing here.
+		actions = append(actions, composeStart(p.path, rendered))
 	case !p.isUp(ctx):
-		// Definition unchanged but the stack is (partly) down — reboot, crash, or a
-		// prior up that failed: bring it up so reconcile converges to the running
-		// state, not just the on-disk config.
-		actions = append(actions, composeStart(p.path))
+		// Definition applied but the stack is (partly) down — reboot or crash: bring
+		// it up so reconcile converges to the running state, not just the on-disk
+		// config.
+		actions = append(actions, composeStart(p.path, rendered))
 	default:
 		// Steady state: `up -d` is a no-op at the docker level, but the reconcile
 		// engine still counts the exec as a change, which would show perpetual

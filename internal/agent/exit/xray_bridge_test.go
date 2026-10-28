@@ -2,6 +2,7 @@ package exit
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -127,6 +128,19 @@ func applyFilesForTest(t *testing.T, p reconcile.Planner, spec domain.NodeSpec) 
 	if _, err := reconcile.NewEngine(nil, filesOnlyPlanner{p}).Reconcile(context.Background(), spec, reconcile.ModeApply); err != nil {
 		t.Fatal(err)
 	}
+	// The dropped commands are modelled as having succeeded, so every compose file
+	// written counts as applied (reconcile.ComposeApplied).
+	acts, err := p.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range acts {
+		if a.Kind != reconcile.ActionExec && strings.HasSuffix(a.Target, "docker-compose.yml") {
+			if b, rerr := os.ReadFile(a.Target); rerr == nil {
+				reconcile.MarkComposeAppliedForTest(a.Target, b)
+			}
+		}
+	}
 }
 
 // A stopped bridge with a new config is brought up, not restarted: compose
@@ -142,5 +156,26 @@ func TestXrayPlannerStartsAStoppedBridgeOnConfigChange(t *testing.T) {
 	}
 	if !hasExec(acts, "up -d") || hasExec(acts, "restart") {
 		t.Errorf("stopped bridge with a new config: %+v", acts)
+	}
+}
+
+// The xray compose file is current and the container runs — but no `up -d` of
+// that file ever succeeded (killed mid-pass, image not pulled), so the running
+// container may be the previous image. The planner must apply the file.
+func TestXrayPlannerAppliesAComposeFileThatWasNeverApplied(t *testing.T) {
+	p := bridgePlanner(t, true)
+	applyFilesForTest(t, p, bridgeExitSpec())
+	if err := os.Remove(p.composePath + ".applied"); err != nil {
+		t.Fatal(err)
+	}
+	acts, err := p.Plan(context.Background(), bridgeExitSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasExec(acts, "up -d") {
+		t.Fatalf("an unapplied compose file was reported converged: %+v", acts)
+	}
+	if hasExec(acts, "restart") {
+		t.Errorf("nothing but the compose file is stale, yet the inbound is restarted: %+v", acts)
 	}
 }

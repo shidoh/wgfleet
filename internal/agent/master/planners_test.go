@@ -356,6 +356,41 @@ func writeMasterCompose(t *testing.T, path string, spec domain.NodeSpec) {
 	if err := os.WriteFile(path, []byte(yamlText), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	reconcile.MarkComposeAppliedForTest(path, []byte(yamlText))
+}
+
+// The file on disk is already current and the stack is running — but the
+// `up -d` that should have applied it never succeeded (the agent was restarted
+// mid-pass by a rollout, or the image would not pull). The running containers
+// are the OLD definition; the planner must apply the file instead of reporting
+// the stack converged. On 2026-10-28 a master stayed on the previous mihomo
+// image this way after a rollout, with every check green.
+func TestComposePlannerAppliesAFileThatWasWrittenButNeverApplied(t *testing.T) {
+	spec, _ := masterSpec(t)
+	paths := testPaths(t)
+	writeMasterCompose(t, paths.Compose, spec)
+	if err := os.Remove(paths.Compose + ".applied"); err != nil {
+		t.Fatal(err) // no receipt: the up -d never succeeded
+	}
+	pl := composePlanner{path: paths.Compose, up: func(string) bool { return true }}
+
+	actions, err := pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lastKind(actions); got != reconcile.ActionExec {
+		t.Fatalf("a written-but-unapplied compose file was reported converged: %+v", actions)
+	}
+
+	// With the receipt the same state is the steady state.
+	writeMasterCompose(t, paths.Compose, spec)
+	actions, err = pl.Plan(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lastKind(actions); got != reconcile.ActionNoChange {
+		t.Fatalf("an applied stack still reports work: %+v", actions)
+	}
 }
 
 // lastKind returns the Kind of the final action a planner produced.
