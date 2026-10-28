@@ -2,7 +2,7 @@
 # plus what the wgfleet workflows call directly — a C toolchain for the race
 # detector, make for the archives, gh for publishing. Built by
 # .github/workflows/runner-image.yml, consumed by gitops apps/gha-runner-sln.
-ARG RUNNER_VERSION=2.337.0
+ARG RUNNER_VERSION=2.338.2
 FROM ghcr.io/actions/actions-runner:${RUNNER_VERSION}
 USER root
 RUN set -eux; \
