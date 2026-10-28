@@ -512,3 +512,74 @@ func TestMoveIsNotJudgedOnAnUnknownVerdict(t *testing.T) {
 		t.Fatal("stayed attached after enough known failures")
 	}
 }
+
+// Live 2026-10-28 13:53: hours after the move had settled, a busy link made the
+// client-path DNS probe miss twice in a row and the mover put every client back on
+// the host path — two mihomo recreations, two full drops, for a move that had
+// nothing to do with it. The revert is there to undo a move that BROKE the path; a
+// move that has carried clients cleanly is held to a longer streak before it is
+// blamed.
+func TestASettledMoveRidesOutABriefBadPatch(t *testing.T) {
+	m, clock := testMover()
+	m.Decide(true, isReady, pathUp)
+	settleOut(m)
+	*clock = clock.Add(moveRetryHold + time.Second)
+	for range moveConfirmPasses {
+		m.Decide(true, isReady, pathUp)
+	}
+
+	for i := range moveFailPassesSettled - 1 {
+		if !m.Decide(true, isReady, pathDown) {
+			t.Fatalf("a settled move was reverted after %d failing passes; it must survive %d",
+				i+1, moveFailPassesSettled-1)
+		}
+	}
+	if m.Decide(true, isReady, pathDown) {
+		t.Fatalf("a settled move whose path stayed down for %d passes was not reverted", moveFailPassesSettled)
+	}
+}
+
+// The longer streak is earned by the move, not granted by default: a move that has
+// not yet confirmed is reverted on the original two-pass rule.
+func TestAnUnconfirmedMoveStillRevertsQuickly(t *testing.T) {
+	m, clock := testMover()
+	m.Decide(true, isReady, pathUp)
+	settleOut(m)
+	*clock = clock.Add(moveRetryHold + time.Second)
+	m.Decide(true, isReady, pathUp) // one confirmation, not enough to settle
+	for range moveFailPasses {
+		m.Decide(true, isReady, pathDown)
+	}
+	if m.Attached() {
+		t.Fatalf("an unconfirmed move survived %d failing passes: %q", moveFailPasses, m.Reason())
+	}
+}
+
+// Settled-ness belongs to one move. After a revert, the next move starts from the
+// short rule again — otherwise a node that has just been shown to break the path
+// would get three minutes of benefit of the doubt it has not earned.
+func TestARevertForgetsThatTheMoveHadSettled(t *testing.T) {
+	m, clock := testMover()
+	m.Decide(true, isReady, pathUp)
+	settleOut(m)
+	for range moveConfirmPasses {
+		m.Decide(true, isReady, pathUp)
+	}
+	for range moveFailPassesSettled {
+		m.Decide(true, isReady, pathDown)
+	}
+	if m.Attached() {
+		t.Fatal("test premise: the settled move should have been reverted")
+	}
+	*clock = clock.Add(moveRetryHold + time.Second)
+	if !m.Decide(true, isReady, pathUp) {
+		t.Fatal("did not move again after the hold")
+	}
+	settleOut(m)
+	for range moveFailPasses {
+		m.Decide(true, isReady, pathDown)
+	}
+	if m.Attached() {
+		t.Fatalf("a fresh move inherited the previous move's settled streak: %q", m.Reason())
+	}
+}

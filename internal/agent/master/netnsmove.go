@@ -23,6 +23,21 @@ const (
 	// before the move is reverted. One is too eager — the flip itself disturbs
 	// established flows — and three is a minute and a half of outage.
 	moveFailPasses = 2
+	// moveFailPassesSettled is the same limit for a move that has already confirmed
+	// (moveConfirmPasses clean passes) — three minutes at the 30s cadence.
+	//
+	// The revert exists to undo a move that BROKE the client path. A move that has
+	// carried clients cleanly and then starts failing hours later is far more likely
+	// to be looking at the path beyond it — a busy link, a slow exit — than at
+	// itself, and two passes are too few to tell the two apart. Live 2026-10-28 13:53:
+	// a client download filled a master's link, the DNS leg of the probe (pinned
+	// by wg-best to the two exits carrying the download) missed two passes running,
+	// and the mover recreated mihomo twice to move every client out and back in.
+	// Over the half hour before, misses never ran longer than two passes.
+	//
+	// It is still a revert, not an alert: a path that stays down for three minutes is
+	// down, and the host path is the known-good fallback.
+	moveFailPassesSettled = 6
 	// moveSettlePasses is how many passes after the flip are not judged at all.
 	//
 	// The flip is not one action, it is a pass. The compose planner recreates mihomo
@@ -91,6 +106,10 @@ type netnsMover struct {
 	confirm  int
 	fail     int
 	settle   int
+	// settled is set once THIS move has confirmed, and earns it the longer failure
+	// streak (moveFailPassesSettled). A failing pass does not clear it — that is the
+	// point — but every way out of moveAttached does, so the next move earns it anew.
+	settled bool
 	// lastRevert is when the move was last UNDONE, and it is the only thing the
 	// retry hold looks at.
 	//
@@ -244,6 +263,7 @@ func (m *netnsMover) DecideWith(wanted bool, ready func() error, path func() Pat
 		wasStuck := m.state == moveGaveUp || m.attempts > 0
 		m.state, m.reason = moveWaiting, "disabled by master.client_via_netns"
 		m.attempts, m.lastRevert, m.fail, m.confirm, m.settle = 0, time.Time{}, 0, 0, 0
+		m.settled = false
 		if wasStuck {
 			m.save()
 		}
@@ -269,7 +289,7 @@ func (m *netnsMover) DecideWith(wanted bool, ready func() error, path func() Pat
 			m.reason = "waiting: " + err.Error()
 			return false
 		}
-		m.state, m.confirm, m.fail = moveAttached, 0, 0
+		m.state, m.confirm, m.fail, m.settled = moveAttached, 0, 0, false
 		m.settle = moveSettlePasses
 		m.reason = "namespace ready; client interception moved in"
 		// A successful move stamps nothing. What survives a restart is the record of
@@ -307,15 +327,23 @@ func (m *netnsMover) DecideWith(wanted bool, ready func() error, path func() Pat
 					m.save()
 				}
 			}
+			if m.confirm >= moveConfirmPasses {
+				m.settled = true
+			}
 			m.reason = fmt.Sprintf("client path healthy (%d/%d confirmations)", m.confirm, moveConfirmPasses)
 			return true
 		}
 		m.fail++
 		m.confirm = 0
-		if m.fail < moveFailPasses {
-			m.reason = fmt.Sprintf("client path failing (%d/%d before reverting)", m.fail, moveFailPasses)
+		limit := moveFailPasses
+		if m.settled {
+			limit = moveFailPassesSettled
+		}
+		if m.fail < limit {
+			m.reason = fmt.Sprintf("client path failing (%d/%d before reverting)", m.fail, limit)
 			return true
 		}
+		m.settled = false
 		// The revert is UNCONDITIONAL. No hold gates it: clients are on the floor, and
 		// every second spent honouring a churn limit is a second of outage bought with
 		// somebody else's traffic.
