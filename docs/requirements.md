@@ -64,7 +64,7 @@ build is refused rather than downgraded.
 
 | Component | Version | Where |
 |---|---|---|
-| mihomo | `v1.19.32` | `compose.DefaultMihomoImage` |
+| mihomo | `v1.19.33` | `compose.DefaultMihomoImage` |
 | wg-easy (legacy client interface) | `15.3.0` by digest on a 1.x module, `15.4.0` by digest on a 3.x module | `compose.DefaultWGEasyImage`, `DefaultWGEasyImageAWG3` |
 | xray-core (REALITY) | `26.6.22` | `compose.DefaultXrayImage` |
 | blocky | `v0.35.0` (override with `dns.tag`) | `compose.DefaultBlockyImage` |

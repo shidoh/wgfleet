@@ -85,7 +85,13 @@ const (
 	// pass: the agent re-plumbs the namespace and restarts mihomo to rebind the
 	// listeners it started before the namespace had its address — one ~6 s gap for
 	// clients, the same as any mihomo restart.
-	DefaultMihomoImage = "metacubex/mihomo:v1.19.32"
+	//
+	// Bumped 1.19.32 → 1.19.33 (2026-10-28): a sub-millisecond URL test is no longer
+	// reported as a failure (our delay probes and wg-best), the fake-ip pool keeps its
+	// allocations across a hot reload, DoH dials the query gave up on no longer pile
+	// up, WireGuard devices are initialised lazily, and the crypto/tls CVE-2026-97031
+	// fix.
+	DefaultMihomoImage = "metacubex/mihomo:v1.19.33"
 	// NetnsHolderSleep is what the namespace holder runs. A shell loop rather than
 	// `sleep infinity`, because the holder now runs the mihomo image (see
 	// netnsHolderImage) and BusyBox's sleep in some builds takes only an integer.

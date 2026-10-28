@@ -128,7 +128,7 @@ fleet:
         #         - '+.example.com'
 
       # compose:
-      #   mihomo_tag: "v1.19.32"        # pinned to v1.19.32 by default; never :latest or Alpha
+      #   mihomo_tag: "v1.19.33"        # pinned to v1.19.33 by default; never :latest or Alpha
 
   exits:
     - name: exit-1                      # node identity

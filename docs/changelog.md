@@ -4,6 +4,12 @@ What changed for operators in each wgfleet release — behaviour, manifest keys,
 Every release archive carries this page as `CHANGELOG.md`.
 New releases are announced, with the archives attached, in the Telegram channel [t.me/wgfleet](https://t.me/wgfleet).
 
+## v0.3.5 — unreleased
+
+- Release binaries are built with Go 1.27.3. v0.3.4 and earlier archives were built with Go 1.26.0 and lack its security fixes to crypto/tls, crypto/x509 and the HTTP/2 server behind the portal. Upgrade the controller and every agent.
+- gRPC 1.85.0 (was 1.82.1): fixes memory exhaustion from fragmented HTTP/2 DATA frames and a server panic on a request without `:authority`. Only a node with a fleet certificate could reach either.
+- mihomo on the masters is v1.19.33 (was v1.19.32): a probe answered in under a millisecond is no longer counted as a failure, fake-ip allocations survive a config reload, abandoned DoH queries no longer pile up. The image change restarts mihomo once on every master that does not pin `mihomo_tag`; client connections drop for a few seconds.
+
 ## v0.3.4 — 2026-10-26
 
 !!! warning "Read before upgrading: an incomplete `ssh` block stops the new controller"
