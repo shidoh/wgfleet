@@ -13,7 +13,7 @@ import (
 // dry-run Display string — the real bytes hit the disk — so the mode is the only
 // at-rest protection. Shipping 0644 alongside a redactor is how the master's
 // mihomo config went out world-readable carrying one WireGuard private key per
-// exit, and the master compose file carrying the wg-easy admin password.
+// exit, and the master compose file carrying a container admin password.
 func TestFileActionRefusesWorldReadableSecrets(t *testing.T) {
 	redact := func(s string) string { return "REDACTED" }
 	for _, mode := range []os.FileMode{0o644, 0o640, 0o604, 0o666} {
@@ -34,7 +34,7 @@ func TestFileActionRefusesWorldReadableSecrets(t *testing.T) {
 
 // The mode is only applied on a write, so a file whose content is already current
 // keeps whatever mode it has. That is how the master compose file sat at 0644
-// holding the wg-easy admin password AFTER both the code fix and a manual chmod:
+// holding a container admin password AFTER both the code fix and a manual chmod:
 // the fix landed, the content never changed again, so nothing re-applied the mode.
 func TestFileActionRepairsModeDriftWithoutRewriting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "secret.yaml")

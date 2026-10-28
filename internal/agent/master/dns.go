@@ -84,8 +84,8 @@ func (p dnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile
 	}
 
 	var actions []reconcile.Action
-	// blocky binds the client gateway, which only exists once wg-easy has brought wg0
-	// up. ip_nonlocal_bind lets the host-net container claim the address even if it
+	// blocky binds the client gateway, which only exists once the client interface
+	// planner has brought wg0 up. ip_nonlocal_bind lets the host-net container claim the address even if it
 	// (re)starts before wg0 — e.g. after a reboot — instead of crash-looping until
 	// wg0 appears. Gated on the current value so it is not a perpetual "change".
 	if p.nonlocalBindOn() {

@@ -91,7 +91,7 @@ type MasterSpec struct {
 	// Custom holds operator overrides merged into the rendered config plus extra
 	// managed files (e.g. additional rule providers). See CustomConfig.
 	Custom CustomConfig
-	// Compose describes the master's container stack (wg-easy + mihomo). The
+	// Compose describes the master's container stack (mihomo). The
 	// agent renders a docker-compose.yml from it and keeps the containers up.
 	Compose ComposeSpec
 	// ClientVLESS is the client-facing VLESS+REALITY+XHTTP inbound (an alternative
@@ -99,10 +99,9 @@ type MasterSpec struct {
 	// client VLESS inbound. Its decrypted traffic converges into mihomo over a
 	// loopback SOCKS hop, so VLESS clients share the AWG clients' routing.
 	ClientVLESS *ClientVLESSServerSpec
-	// ClientWG is the client-facing AmneziaWG interface when the agent — rather
-	// than wg-easy — owns it. nil ⇒ this master's client leg is still wg-easy's,
-	// which is what an un-migrated fleet reports and what the cutover knob
-	// (fleet.masters[].client_awg.managed) leaves in place until it is flipped.
+	// ClientWG is the client-facing AmneziaWG interface the agent raises and owns.
+	// nil ⇒ the controller rendered no client interface for this master (its agent
+	// is below api.WireClientWG), and no client configs are served for it.
 	ClientWG *ClientWGSpec
 	// RealityPortal is the inbound exits in the exit-initiated REALITY mode dial
 	// (ADR-0038). nil ⇒ no exit uses this master that way and no portal runs.
@@ -115,12 +114,10 @@ type MasterSpec struct {
 
 // ComposeSpec is the master's container-stack desired state, rendered by the
 // controller and turned into a docker-compose.yml by the master agent. The data
-// plane runs as containers (wg-easy for client AmneziaWG, mihomo for routing).
+// plane runs as containers (mihomo for routing).
 type ComposeSpec struct {
-	WGEasyImage      string   // wg-easy container image (tag pinned by the operator)
 	MihomoImage      string   // mihomo container image
-	PublicIP         string   // master public IP (wg-easy INIT_HOST, first run)
-	WGEasyWebPort    int      // wg-easy web UI port (mgmt overlay)
+	PublicIP         string   // master public IP (the endpoint clients dial)
 	ClientDNS        []string // DNS handed to clients (exit blocky addrs)
 	ClientAllowedIPs string   // AllowedIPs handed to clients (inverted RFC1918; operator-set)
 	// NetnsHolderImage overrides the image that owns mihomo's network namespace.
@@ -131,7 +128,7 @@ type ComposeSpec struct {
 }
 
 // Enabled reports whether the compose stack should be rendered (images set).
-func (c ComposeSpec) Enabled() bool { return c.WGEasyImage != "" || c.MihomoImage != "" }
+func (c ComposeSpec) Enabled() bool { return c.MihomoImage != "" }
 
 // ExitTunnel is one master→exit mihomo WireGuard proxy. The master's own private
 // key is injected by the agent at render time and never stored here. Historically

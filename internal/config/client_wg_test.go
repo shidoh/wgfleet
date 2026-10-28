@@ -37,22 +37,27 @@ func TestClientAWGBackendValidation(t *testing.T) {
 	}
 }
 
-// Managing the interface ourselves means rendering it from the pool, so the pool
-// stops being optional the moment the knob is on.
-func TestClientAWGManagedRequiresPool(t *testing.T) {
-	managed := true
-	cfg := ControllerConfig{Fleet: FleetSection{Masters: []MasterConfig{
-		masterWith("m1", ClientAWGConfig{ListenPort: 443, Managed: &managed}),
-	}}}
-	if !hasClientAWGErr(cfg) {
-		t.Error("managed client_awg without an address_pool should fail validation")
+// The client interface exists exactly when the pool is set; settings that need
+// the interface are refused without one instead of silently doing nothing.
+func TestClientAWGPoolDecidesTheInterface(t *testing.T) {
+	if (masterWith("m1", ClientAWGConfig{})).ClientAWGEnabled() {
+		t.Error("a master without a pool reports a client interface")
 	}
-
-	unmanaged := ControllerConfig{Fleet: FleetSection{Masters: []MasterConfig{
+	if !(masterWith("m1", ClientAWGConfig{AddressPool: "10.80.0.0/24"})).ClientAWGEnabled() {
+		t.Error("a master with a pool reports no client interface")
+	}
+	noPool := ControllerConfig{Fleet: FleetSection{Masters: []MasterConfig{
 		masterWith("m1", ClientAWGConfig{ListenPort: 443}),
 	}}}
-	if hasClientAWGErr(unmanaged) {
-		t.Error("an unmanaged master without a pool is still valid (wg-easy owns the interface)")
+	if hasClientAWGErr(noPool) {
+		t.Error("a master without a pool (no AWG clients) must stay valid")
+	}
+	for _, c := range []ClientAWGConfig{{AWG3: "timers"}, {IPv6: ClientIPv6Block}} {
+		cfg := ControllerConfig{Fleet: FleetSection{AWG3Key: "secret://k", Masters: []MasterConfig{masterWith("m1", c)}}}
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "client_awg.address_pool is not set") {
+			t.Errorf("%+v without a pool should be refused, got %v", c, err)
+		}
 	}
 }
 
@@ -88,11 +93,8 @@ func TestClientAWGPoolsMustNotOverlap(t *testing.T) {
 }
 
 func TestClientAWGResolvers(t *testing.T) {
-	// Unset: the fleet keeps running on wg-easy and the kernel backend.
+	// Unset: the kernel backend.
 	m := masterWith("m1", ClientAWGConfig{})
-	if m.ClientAWGManaged() {
-		t.Error("ClientAWGManaged() = true for an unset knob, want false")
-	}
 	if got := m.ClientAWGBackend(); got != domain.ClientWGBackendKernel {
 		t.Errorf("ClientAWGBackend() = %q, want kernel", got)
 	}
@@ -104,14 +106,10 @@ func TestClientAWGResolvers(t *testing.T) {
 	}
 
 	// Explicit values win.
-	managed := true
 	m = masterWith("m1", ClientAWGConfig{
-		Managed: &managed, Backend: "userspace", MTU: 1420,
+		Backend: "userspace", MTU: 1420,
 		DNS: []string{"10.80.0.1"}, AllowedIPs: []string{"0.0.0.0/0"},
 	})
-	if !m.ClientAWGManaged() {
-		t.Error("ClientAWGManaged() = false for managed: true")
-	}
 	if got := m.ClientAWGBackend(); got != domain.ClientWGBackendUserspace {
 		t.Errorf("ClientAWGBackend() = %q, want userspace", got)
 	}
@@ -126,9 +124,8 @@ func TestClientAWGResolvers(t *testing.T) {
 	}
 }
 
-// The wg-easy era put the client DNS and AllowedIPs under compose. An existing
-// manifest must keep working when the interface changes hands, so those values
-// are inherited when the new keys are unset.
+// Older manifests put the client DNS and AllowedIPs under compose. They must keep
+// working, so those values are inherited when the client_awg keys are unset.
 func TestClientAWGInheritsComposeEraValues(t *testing.T) {
 	m := MasterConfig{
 		Name:     "m1",
@@ -165,11 +162,8 @@ func TestClientAWGRejectsIPv6DefaultRoute(t *testing.T) {
 // awg3Config builds a master whose client leg asks for a 3.x mode. The fleet
 // secret is set because "full" now requires one — this helper is about the MODE
 // parsing, and a missing secret is a separate refusal with its own test.
-func awg3Config(mode string, managed bool) ControllerConfig {
+func awg3Config(mode string) ControllerConfig {
 	c := ClientAWGConfig{ListenPort: 443, AddressPool: "10.80.0.0/24", AWG3: mode}
-	if managed {
-		c.Managed = &managed
-	}
 	return ControllerConfig{Fleet: FleetSection{
 		AWG3Key: "secret://awg3-key",
 		Masters: []MasterConfig{masterWith("m1", c)},
@@ -178,27 +172,14 @@ func awg3Config(mode string, managed bool) ControllerConfig {
 
 func TestClientAWG3ModeValidation(t *testing.T) {
 	for _, ok := range []string{"", "off", "timers", "full", "TIMERS", " full "} {
-		if hasClientAWGErr(awg3Config(ok, true)) {
+		if hasClientAWGErr(awg3Config(ok)) {
 			t.Errorf("client_awg.awg3 %q should be accepted", ok)
 		}
 	}
 	for _, bad := range []string{"true", "3", "yes", "headers", "3.1"} {
-		if !hasClientAWGErr(awg3Config(bad, true)) {
+		if !hasClientAWGErr(awg3Config(bad)) {
 			t.Errorf("client_awg.awg3 %q should fail validation", bad)
 		}
-	}
-}
-
-// While wg-easy owns the leg there is nowhere to put a 3.x parameter — its schema
-// has no column for one — so the knob would silently do nothing. Silently doing
-// nothing is the failure this project refuses: the operator would believe their
-// clients were on 3.x while every packet stayed 2.0.
-func TestClientAWG3RequiresAManagedInterface(t *testing.T) {
-	if !hasClientAWGErr(awg3Config("timers", false)) {
-		t.Error("client_awg.awg3 without managed:true should fail validation")
-	}
-	if hasClientAWGErr(awg3Config("off", false)) {
-		t.Error("an unmanaged leg explicitly on 2.0 is the normal shape and must be accepted")
 	}
 }
 
@@ -357,7 +338,6 @@ func TestAWG3HeaderProtectionRequiresAFleetSecret(t *testing.T) {
 
 	// The client interface's "full" mode.
 	c = base()
-	c.Fleet.Masters[0].ClientAWG.Managed = &on
 	c.Fleet.Masters[0].ClientAWG.AWG3 = "full"
 	errs := validateAWG3Secret(c)
 	if len(errs) == 0 {
@@ -370,7 +350,6 @@ func TestAWG3HeaderProtectionRequiresAFleetSecret(t *testing.T) {
 	// Timers need no secret — they are the half that keeps every existing config
 	// working, and refusing them here would be refusing the whole feature.
 	c = base()
-	c.Fleet.Masters[0].ClientAWG.Managed = &on
 	c.Fleet.Masters[0].ClientAWG.AWG3 = "timers"
 	if errs := validateAWG3Secret(c); len(errs) != 0 {
 		t.Errorf("timers were refused for want of a secret they do not use: %v", errs)

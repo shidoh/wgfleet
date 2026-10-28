@@ -75,12 +75,11 @@ func NodeCollectors(role string) []Collector {
 		{File: "logs.txt", Name: "journal lines per unit (last hour)", Cmd: "journalctl --since=-1h -n 20000 --no-pager -o short-iso | awk '{print $3}' | sed -E 's/\\[[0-9]+\\]:?$//;s/:$//' | sort | uniq -c | sort -rn | head -50"},
 
 		// containers.txt — bounded tails of the containers we know this fleet
-		// runs (wg-easy included: it runs on masters only, but a missing
-		// container on an exit is a normal failure, not an error to chase).
+		// runs (a container missing on a node of the other role is a normal
+		// failure, not an error to chase).
 		{File: "containers.txt", Name: "mihomo log", Cmd: "docker logs --tail 100 mihomo 2>&1"},
 		{File: "containers.txt", Name: "xray log", Cmd: "docker logs --tail 100 xray 2>&1"},
 		{File: "containers.txt", Name: "blocky log", Cmd: "docker logs --tail 100 blocky 2>&1"},
-		{File: "containers.txt", Name: "wg-easy log", Cmd: "docker logs --tail 100 wg-easy 2>&1"},
 	}
 
 	if role == "master" {
@@ -105,7 +104,7 @@ func NotCollected() []string {
 		"lifeline.key — the reserve client interface's private key",
 		"mihomo config.yaml — proxy credentials",
 		"xray config.json — REALITY/VLESS private keys",
-		"wg-easy config and its database — client private keys",
+		"wg0.conf, client-wg.key — the master's client interface key and client preshared keys",
 		"node.key — this node's private key",
 		"ca.key — fleet certificate authority private key",
 		"any file under a sops-encrypted path — sops age/PGP key material",

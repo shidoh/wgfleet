@@ -137,15 +137,15 @@ func TestClientPathVerdictNeedsAMeasurement(t *testing.T) {
 	}
 }
 
-// A wg-easy master has no prober, so the move is not started rather than
-// started and reverted three times.
-func TestNetnsMoveWaitsWhileWGEasyOwnsTheClientInterface(t *testing.T) {
+// A master without a client interface has no prober, so the move is not started
+// rather than started and reverted three times.
+func TestNetnsMoveWaitsWithoutAClientInterface(t *testing.T) {
 	a := &agent{
 		role:      domain.RoleMaster,
 		log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 		netnsMove: master.NewNetnsMove(""),
 	}
-	spec := domain.NodeSpec{Master: &domain.MasterSpec{}} // ClientWG nil: wg-easy owns wg0; knob at its default (auto)
+	spec := domain.NodeSpec{Master: &domain.MasterSpec{}} // ClientWG nil: no client interface; knob at its default (auto)
 	for i := 0; i < 3; i++ {
 		a.decideNetnsMove(context.Background(), spec, nil)
 	}
@@ -155,7 +155,7 @@ func TestNetnsMoveWaitsWhileWGEasyOwnsTheClientInterface(t *testing.T) {
 	if a.netnsMove.Attempts() != 0 {
 		t.Fatalf("spent %d attempt(s) without ever moving", a.netnsMove.Attempts())
 	}
-	if why := a.netnsMove.Reason(); !strings.Contains(why, "wg-easy") {
+	if why := a.netnsMove.Reason(); !strings.Contains(why, "without a client interface") {
 		t.Fatalf("the reason must name the cause, got %q", why)
 	}
 }

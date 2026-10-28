@@ -113,7 +113,7 @@ func keyIs(line, key string) bool {
 }
 
 // manifestMode is the on-disk mode of the controller manifest. It carries secrets
-// (WG/REALITY private keys, the wg-easy admin password), so it is always owner-only
+// (WG/REALITY private keys), so it is always owner-only
 // — never group/other-readable.
 const manifestMode = os.FileMode(0o600)
 

@@ -581,7 +581,7 @@ func peersTable(peers []domain.PeerSpec) specTable {
 
 // redactSpec returns a copy of s with every credential replaced. It copies each
 // pointed-to struct and slice it touches, so the caller's spec is never mutated —
-// the same spec object also feeds the wg-easy and mihomo links on this page.
+// the same spec object also feeds the mihomo link on this page.
 func redactSpec(s domain.NodeSpec) domain.NodeSpec {
 	if s.WGServer.AWG != nil {
 		awg := *s.WGServer.AWG

@@ -75,7 +75,7 @@ func run() error {
 		provision    = flag.String("provision", "", "SSH-bootstrap the named fleet node, then exit")
 		upgradeAgent = flag.String("upgrade-agent", "", "roll the named node's agent binary forward (upload + restart) over SSH, then exit")
 		rollingUp    = flag.Bool("rolling-upgrade", false, "roll every outdated EXIT agent forward one node at a time (reserve tier first), then exit")
-		plan         = flag.Bool("plan", false, "with --provision/--upgrade-agent/--rolling-upgrade/--import-wg-easy/--restore: dry-run, show the plan and change nothing; refused on its own")
+		plan         = flag.Bool("plan", false, "with --provision/--upgrade-agent/--rolling-upgrade/--restore: dry-run, show the plan and change nothing; refused on its own")
 		agentBin     = flag.String("agent-bin", "", "with --provision/--upgrade-agent/--rolling-upgrade: path to the wgfleet-agent binary to install (default controller.agent_bin)")
 		nodeTimeout  = flag.Duration("node-timeout", 0, "with --rolling-upgrade: how long ONE node has to accept the upload and restart before it is given up on and the rollout moves to the next (default 5m)")
 		ctlEndpoint  = flag.String("controller-endpoint", "", "with --provision: controller mTLS endpoint the agent dials (default controller.listen)")
@@ -91,8 +91,6 @@ func run() error {
 		showVersion  = flag.Bool("version", false, "print build version and exit")
 		checkConfig  = flag.Bool("check-config", false, "validate the manifest and exit: 0 if it would start, 1 with the reasons if not. Changes nothing")
 		setAdminPw   = flag.Bool("set-admin-password", false, "set/reset the web panel admin password (run with the controller stopped) and exit")
-		importWGEasy = flag.String("import-wg-easy", "", "import the named master's wg-easy client credentials into the controller store, then exit. Safe to run with the controller live; use --plan first")
-		wgEasyDB     = flag.String("wg-easy-db", "", "with --import-wg-easy: path to wg-easy's SQLite database (default /etc/wireguard/wg-easy.db; run on the master)")
 		adminUser    = flag.String("admin-user", "admin", "username for --set-admin-password")
 		passwordFile = flag.String("password-file", "", "with --set-admin-password: read the password from this file instead of prompting")
 	)
@@ -143,9 +141,9 @@ func run() error {
 	// controller on a stopped one. Refusing is the honest answer — there is no dry-run
 	// of serving, and configuration.md's advice to "check the dry-run output after an
 	// override change" was describing something that never existed.
-	if *plan && !anySubcommand(*provision, *upgradeAgent, *importWGEasy, *restoreIn, *backupOut, *certs) && !*rollingUp {
+	if *plan && !anySubcommand(*provision, *upgradeAgent, *restoreIn, *backupOut, *certs) && !*rollingUp {
 		return fmt.Errorf("--plan is a modifier, not a command: pass it with --provision, --upgrade-agent, " +
-			"--rolling-upgrade, --import-wg-easy or --restore. To check the manifest without starting anything, use --check-config")
+			"--rolling-upgrade or --restore. To check the manifest without starting anything, use --check-config")
 	}
 	// Dispatch below is an ordered if-chain, so two subcommands on one line meant the
 	// first in the chain ran and the second was never mentioned: `--provision exit-de-1
@@ -155,7 +153,6 @@ func run() error {
 		"--provision":       *provision != "",
 		"--upgrade-agent":   *upgradeAgent != "",
 		"--rolling-upgrade": *rollingUp,
-		"--import-wg-easy":  *importWGEasy != "",
 		"--backup":          *backupOut != "",
 		"--restore":         *restoreIn != "",
 		"--certs":           *certs != "",
@@ -185,8 +182,8 @@ func run() error {
 			return fmt.Errorf("--certs %q is not a thing to do (want check-expiration or renew)", *certs)
 		}
 	}
-	// Self-heal the manifest mode: it carries WG/REALITY private keys and the wg-easy
-	// admin password, so it must be owner-only. A hand-created or hand-edited
+	// Self-heal the manifest mode: it carries WG/REALITY private keys, so it must be
+	// owner-only. A hand-created or hand-edited
 	// controller.yaml is easily left group/other-readable (a 2026-07-25 audit found it
 	// 0644); tighten it best-effort on every startup rather than trusting every author.
 	if err := os.Chmod(*configPath, 0o600); err != nil && !os.IsNotExist(err) {
@@ -243,15 +240,6 @@ func run() error {
 		}
 		fmt.Printf("admin password set for %q\n", *adminUser)
 		return nil
-	}
-
-	if *importWGEasy != "" {
-		st, err := store.Open(cfg.Controller.Store)
-		if err != nil {
-			return fmt.Errorf("open store: %w", err)
-		}
-		defer st.Close()
-		return runClientImport(context.Background(), st, cfg, *importWGEasy, *wgEasyDB, *plan)
 	}
 
 	if *initPKI {

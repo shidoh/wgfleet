@@ -9,6 +9,13 @@ New releases are announced, with the archives attached, in the Telegram channel 
 - Release binaries are built with Go 1.27.3. v0.3.4 and earlier archives were built with Go 1.26.0 and lack its security fixes to crypto/tls, crypto/x509 and the HTTP/2 server behind the portal. Upgrade the controller and every agent.
 - gRPC 1.85.0 (was 1.82.1): fixes memory exhaustion from fragmented HTTP/2 DATA frames and a server panic on a request without `:authority`. Only a node with a fleet certificate could reach either.
 - mihomo on the masters is v1.19.33 (was v1.19.32): a probe answered in under a millisecond is no longer counted as a failure, fake-ip allocations survive a config reload, abandoned DoH queries no longer pile up. The image change restarts mihomo once on every master that does not pin `mihomo_tag`; client connections drop for a few seconds.
+- wg-easy is gone. A master with `client_awg.address_pool` always serves its AmneziaWG clients on the agent's `wg0`; without a pool it has no AmneziaWG clients.
+    - Manifest keys `client_awg.managed`, `compose.wg_easy_image`, `compose.wg_easy_tag` and `compose.wg_easy_web_port` are ignored: the controller warns `was removed with wg-easy and is ignored`. Delete the lines.
+    - `wgfleet-controller --import-wg-easy` and `--wg-easy-db` are removed.
+    - Backups no longer carry wg-easy's database; restoring an older archive skips its wg-easy entries with a warning.
+    - The node page no longer links to a wg-easy console.
+    - The agent no longer creates `/etc/wgfleet/wg-easy-admin-password`. Leftovers from old installs (`/etc/wireguard/wg-easy.db`, `/etc/wireguard/wg0.conf`, `/etc/wgfleet/wg-easy-admin-password`) are not touched; delete them by hand.
+    - No restart: the master's container stack renders as before.
 
 ## v0.3.4 — 2026-10-26
 

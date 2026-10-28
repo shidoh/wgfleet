@@ -25,8 +25,8 @@ func (masterTeardownPlanner) Component() string { return "master teardown" }
 func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]reconcile.Action, error) {
 	actions := []reconcile.Action{
 		// The client-facing interface first: it is the one carrying end users, and
-		// on a master that owns it (rather than wg-easy) nothing else takes it down.
-		// Best-effort — an unmanaged master has no such config and this is a no-op.
+		// nothing else takes it down. Best-effort — a master that never raised it
+		// has no such config and this is a no-op.
 		reconcile.BestEffortExecAction("bring the client interface down",
 			"awg-quick", "down", p.paths.ClientWGConf),
 		reconcile.BestEffortExecAction("bring the container stack down",
@@ -96,9 +96,9 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 			"docker", "compose", "-f", p.paths.RealityPortalYML, "down"))
 	}
 
-	// Wipe the rendered config and the wg-easy DB once the stack is down: on
-	// decommission the master is gone, so its client-AWG database (keys included)
-	// and mihomo/NAT configs should not linger for a re-provision to reuse.
+	// Wipe the rendered configs once the stack is down: on decommission the master
+	// is gone, so its keys and mihomo/NAT configs should not linger for a
+	// re-provision to reuse.
 	wipe := []struct{ path, what string }{
 		{p.paths.MihomoConfig, "mihomo config"},
 		{p.paths.DirectNetworks, "direct-networks include"},
@@ -106,7 +106,6 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 		{p.paths.V6NFT, "master client-facing IPv6 ruleset"},
 		{p.paths.FirewallNFT, "master input-firewall ruleset"},
 		{p.paths.Compose, "container compose file"},
-		{p.paths.WGEasyDB, "wg-easy client database"},
 		{p.paths.DNS, "blocky resolver config"},
 		{p.paths.DNSCompose, "blocky compose file"},
 		// client-vless config.json holds the REALITY private key AND every issued

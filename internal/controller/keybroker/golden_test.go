@@ -132,16 +132,16 @@ func assertGolden(t *testing.T, name string, spec domain.NodeSpec) {
 var goldenSums = map[string]string{
 	"dual-exit-de-1.json":     "47da8f329eef08f86f4e0597403215679be6698041d341b8081a192d10fd629f",
 	"dual-exit-nl-1.json":     "d4389b9b243453698f60ef55b3952a6b61f950e720ca27e26386ad76de9675b5",
-	"dual-master-xa-1.json":   "797d3015bdc13c0b5071c288365922e9aeaeac18c4c1dc569d330417485fc6ae",
+	"dual-master-xa-1.json":   "06ab34c9cdea1b7d39e7dedfc0b4fd134207ec13db78eb9e7903f744f3223fd3",
 	"off-exit-de-1.json":      "7721255e45b48475b4ef432d342b928738b8b00a75d0809ce5e90b6ef9bdf2fc",
 	"off-exit-nl-1.json":      "b770852022322d6eb038ac7aa3e762dc6489c4b71ccbbc692d2264d36f8bff90",
-	"off-master-xa-1.json":    "797d3015bdc13c0b5071c288365922e9aeaeac18c4c1dc569d330417485fc6ae",
+	"off-master-xa-1.json":    "06ab34c9cdea1b7d39e7dedfc0b4fd134207ec13db78eb9e7903f744f3223fd3",
 	"on-exit-de-1.json":       "101ef6af560d2e2f9d8c45817b987f5ed622f38924a942f13271d7d9722d017a",
 	"on-exit-nl-1.json":       "2aba44f0e06c1d12f48d7c4b9fce9a28a5169192457b8a0c77e8adbd70985cfa",
-	"on-master-xa-1.json":     "dbc3c6e74d01179414cfa871e43b507e58d8b2ce79654843c5a97da432b8c586",
+	"on-master-xa-1.json":     "027085012714f3235acc368225a25d75af6c68b1b2cf1ea2accde326aa67319b",
 	"switch-exit-de-1.json":   "6a60e594c5c7b891ccfaa9811c4f9ce9042214e57f8c6a74167418a02c9e2f86",
 	"switch-exit-nl-1.json":   "d4389b9b243453698f60ef55b3952a6b61f950e720ca27e26386ad76de9675b5",
-	"switch-master-xa-1.json": "dbc3c6e74d01179414cfa871e43b507e58d8b2ce79654843c5a97da432b8c586",
+	"switch-master-xa-1.json": "027085012714f3235acc368225a25d75af6c68b1b2cf1ea2accde326aa67319b",
 }
 
 func TestGoldenFilesAreFrozen(t *testing.T) {

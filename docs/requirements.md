@@ -28,9 +28,7 @@ promised.
   `linux-headers-generic-hwe-22.04`, not `linux-headers-generic`.
 - **Module and tools of one generation.** The agent pins `amneziawg`,
   `amneziawg-dkms` and `amneziawg-tools` with `apt-mark hold` and upgrades them
-  only through `prepare-node.sh --upgrade-awg`. On a master that still runs
-  wg-easy, the container image follows the module generation automatically
-  (v15.3.0 for a 1.x module, v15.4.0 for 3.x).
+  only through `prepare-node.sh --upgrade-awg`.
 - **Docker Engine with the Compose v2 plugin** (installed by the provisioner from
   get.docker.com). Client interception inside mihomo's network namespace uses
   `network_mode: container:…`, which needs Compose v2.
@@ -65,7 +63,6 @@ build is refused rather than downgraded.
 | Component | Version | Where |
 |---|---|---|
 | mihomo | `v1.19.33` | `compose.DefaultMihomoImage` |
-| wg-easy (legacy client interface) | `15.3.0` by digest on a 1.x module, `15.4.0` by digest on a 3.x module | `compose.DefaultWGEasyImage`, `DefaultWGEasyImageAWG3` |
 | xray-core (REALITY) | `26.6.22` | `compose.DefaultXrayImage` |
 | blocky | `v0.35.0` (override with `dns.tag`) | `compose.DefaultBlockyImage` |
 | wgcf (WARP egress, exits only) | `2.3.1`, stamped on the node at provisioning | `provisioner` bootstrap |
@@ -88,7 +85,7 @@ fleet:
 
 - **AmneziaWG 2.0 clients** (AmneziaVPN, the `awg` tools) on the client
   interface. AmneziaWG 3.x on the client interface is opt-in and needs a 3.x
-  module on the master first (`docs/client-migration.md`, part 4).
+  module on the master first (`docs/client-migration.md`).
 - **VLESS + REALITY clients** (mihomo apps via a device subscription — FlClash,
   ClashMetaForAndroid, ClashX Meta, Clash Verge Rev; any VLESS client via the
   `vless://` link) on the client VLESS inbound. Split-tunnel behaviour is a

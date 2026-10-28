@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -13,15 +12,12 @@ import (
 	"strings"
 	"testing"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/mihomo"
 	"github.com/shidoh/wgfleet/internal/netfw"
 	"github.com/shidoh/wgfleet/internal/wg"
-	"github.com/shidoh/wgfleet/internal/wgeasy"
 )
 
 func testPaths(t *testing.T) Paths {
@@ -104,7 +100,7 @@ func TestMihomoRedirPlannerNoOpWhenListening(t *testing.T) {
 	}
 }
 
-// While the bind address is not yet up locally (wg0/wg-easy down or mid-recreate)
+// While the bind address is not yet up locally (wg0 down or mid-recreate)
 // the planner must defer — never probe, never restart — so it cannot thrash mihomo.
 func TestMihomoRedirPlannerDefersWhenBindAddrDown(t *testing.T) {
 	spec, _ := masterSpec(t)
@@ -151,11 +147,14 @@ func TestMasterPlanModeWritesNothing(t *testing.T) {
 		"master NAT (nftables)", "dnat to 10.80.0.1:7895", "tproxy ip to 10.80.0.1:7896",
 		"master firewall (nftables)", `iifname "zt*" accept`,
 		"direct-domains.yaml",
-		"container stack (docker compose)", "wg-easy", "mihomo", "EXPERIMENTAL_AWG=true",
+		"container stack (docker compose)", "mihomo",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("plan output missing %q\n---\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "wg-easy") {
+		t.Errorf("plan still mentions wg-easy\n---\n%s", out)
 	}
 	// Secret: master WG key must not appear.
 	if strings.Contains(out, priv) {
@@ -345,17 +344,15 @@ func TestMasterExtraFilesWritten(t *testing.T) {
 // would and writes it to disk, so a follow-up Plan sees an unchanged file.
 func writeMasterCompose(t *testing.T, path string, spec domain.NodeSpec) {
 	t.Helper()
-	yamlText, err := compose.RenderMasterCompose(masterComposeInput(spec, "", "", nil, 0))
+	yamlText, err := compose.RenderMasterCompose(masterComposeInput(spec, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// 0600, matching what composePlanner renders: this file carries the wg-easy
-	// INIT_PASSWORD, so FileAction refuses any group/world-readable mode for it.
-	// Seeding 0644 here made every "steady state" assertion see a legitimate
-	// mode-drift repair and fail.
+	// 0600, matching what composePlanner renders. Seeding 0644 here made every
+	// "steady state" assertion see a legitimate mode-drift repair and fail.
 	if err := os.WriteFile(path, []byte(yamlText), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -409,102 +406,6 @@ func TestComposePlannerIdempotentAndEnsureUp(t *testing.T) {
 			t.Fatalf("stack down must be brought up: want exec, got %q in %+v", got, actions)
 		}
 	})
-}
-
-func seedWGEasyDB(t *testing.T, path string) {
-	t.Helper()
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if _, err := db.Exec(`CREATE TABLE interfaces_table (
-		name TEXT PRIMARY KEY,
-		port INTEGER DEFAULT 51820, ipv4_cidr TEXT DEFAULT '10.8.0.0/24', mtu INTEGER DEFAULT 1420,
-		j_c INTEGER DEFAULT 7, j_min INTEGER DEFAULT 10, j_max INTEGER DEFAULT 1000,
-		s1 INTEGER DEFAULT 128, s2 INTEGER DEFAULT 56, s3 INTEGER, s4 INTEGER,
-		h1 TEXT, h2 TEXT, h3 TEXT, h4 TEXT,
-		i1 TEXT, i2 TEXT, i3 TEXT, i4 TEXT, i5 TEXT, private_key TEXT DEFAULT 'PRIV'
-	)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO interfaces_table (name) VALUES ('wg0')`); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestWGEasyPlannerPendingWhenDBMissing(t *testing.T) {
-	paths := testPaths(t) // WGEasyDB points at a non-existent temp path
-	spec, _ := masterSpec(t)
-	// Master client-facing AWG (normally from keybroker); set one here.
-	awg := wg.DeriveAWGParams(wg.TunnelSeed("master-xa-1", "clients", "salt"))
-	spec.WGServer.AWG = &awg
-
-	actions, err := wgEasyPlanner{dbPath: paths.WGEasyDB, iface: "wg0"}.Plan(context.Background(), spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(actions) != 1 || actions[0].Changes() {
-		t.Fatalf("expected a single no-change (pending) action, got %+v", actions)
-	}
-	if !strings.Contains(actions[0].Summary, "pending") {
-		t.Errorf("expected pending notice, got %q", actions[0].Summary)
-	}
-}
-
-func TestWGEasyPlannerUpdatesSeededDB(t *testing.T) {
-	paths := testPaths(t)
-	seedWGEasyDB(t, paths.WGEasyDB)
-	spec, _ := masterSpec(t)
-	awg := wg.DeriveAWGParams(wg.TunnelSeed("master-xa-1", "clients", "salt"))
-	spec.WGServer.AWG = &awg
-
-	pl := wgEasyPlanner{dbPath: paths.WGEasyDB, iface: "wg0"}
-	actions, err := pl.Plan(context.Background(), spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Defaults differ from desired ⇒ update + restart.
-	if len(actions) != 2 || actions[0].Kind != reconcile.ActionUpdate {
-		t.Fatalf("expected update+restart, got %+v", actions)
-	}
-
-	// Apply the DB update directly (the restart exec would fail on a dev box),
-	// then re-plan ⇒ no change.
-	if err := wgeasy.UpdateInterface(context.Background(), paths.WGEasyDB, "wg0",
-		wgeasy.ColumnsFromSpec(spec.WGServer)); err != nil {
-		t.Fatal(err)
-	}
-	actions2, _ := pl.Plan(context.Background(), spec)
-	if len(actions2) != 1 || actions2[0].Changes() {
-		t.Errorf("second plan should be no-change, got %+v", actions2)
-	}
-}
-
-// TestWGEasyPlannerEnforcesPort proves a manifest port change is pushed into a
-// persisted wg-easy DB (the bug: INIT_PORT is ignored once the DB exists).
-func TestWGEasyPlannerEnforcesPort(t *testing.T) {
-	paths := testPaths(t)
-	seedWGEasyDB(t, paths.WGEasyDB) // seeds port=51820 (wg-easy default)
-	spec, _ := masterSpec(t)        // desired ListenPort=443
-	awg := wg.DeriveAWGParams(wg.TunnelSeed("master-xa-1", "clients", "salt"))
-	spec.WGServer.AWG = &awg
-
-	pl := wgEasyPlanner{dbPath: paths.WGEasyDB, iface: "wg0"}
-	if _, err := pl.Plan(context.Background(), spec); err != nil {
-		t.Fatal(err)
-	}
-	if err := wgeasy.UpdateInterface(context.Background(), paths.WGEasyDB, "wg0",
-		wgeasy.ColumnsFromSpec(spec.WGServer)); err != nil {
-		t.Fatal(err)
-	}
-	got, _, err := wgeasy.ReadInterface(context.Background(), paths.WGEasyDB, "wg0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Port != 443 {
-		t.Errorf("configured client port not enforced in DB: port=%d (want 443)", got.Port)
-	}
 }
 
 // TestMasterNATReloadGate covers the live-kernel reload gate: when the rendered
@@ -625,7 +526,7 @@ func hasChangingSummary(acts []reconcile.Action, substr string) bool {
 }
 
 // A compose file left group/world-readable by an older binary must be surfaced as
-// a change, because it carries the wg-easy INIT_PASSWORD. The chmod itself is
+// a change. The chmod itself is
 // covered by reconcile's own tests; what matters here is that the PLANNER does not
 // treat a mode-only repair as steady state and skip it.
 //
@@ -1052,90 +953,6 @@ func TestTProxyTeardownActsWhenTheKernelWillNotAnswer(t *testing.T) {
 	if changing == 0 {
 		t.Error("an unanswered probe was read as 'already withdrawn', leaving the host rules in place")
 	}
-}
-
-// The wg-easy image follows the kernel module's generation, and a module that
-// moved is a compose change: `up -d` recreates the container with tools that can
-// drive the module. On 2026-09-07 a tester's master lost every client to a 15.3
-// container on a 3.x module, with nothing in the fleet able to say why.
-func TestComposePlannerFollowsTheModuleGeneration(t *testing.T) {
-	spec, _ := masterSpec(t)
-	spec.Master.Compose.WGEasyImage = "" // left at the default: the agent may choose
-	gen := func(g int) func() (int, error) { return func() (int, error) { return g, nil } }
-
-	paths := testPaths(t)
-	pl := composePlanner{path: paths.Compose, up: func(string) bool { return true }, awgGen: gen(1)}
-	if _, err := pl.Plan(context.Background(), spec); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeFromPlan(t, paths.Compose, spec, gen(1)); err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := os.ReadFile(paths.Compose); !strings.Contains(string(b), compose.DefaultWGEasyImage) {
-		t.Fatalf("generation 1 must keep the pinned image:\n%s", b)
-	}
-
-	// The module moves to 3.x under an unchanged file: the render changes, so the
-	// plan must end in `up -d`, and the file must now name the AWG3 image.
-	pl = composePlanner{path: paths.Compose, up: func(string) bool { return true }, awgGen: gen(3)}
-	actions, err := pl.Plan(context.Background(), spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := lastKind(actions); got != reconcile.ActionExec {
-		t.Fatalf("module moved to 3.x: want exec (up -d), got %q in %+v", got, actions)
-	}
-	if err := writeFromPlan(t, paths.Compose, spec, gen(3)); err != nil {
-		t.Fatal(err)
-	}
-	b, _ := os.ReadFile(paths.Compose)
-	if !strings.Contains(string(b), compose.DefaultWGEasyImageAWG3) || strings.Contains(string(b), compose.DefaultWGEasyImage) {
-		t.Fatalf("generation 3 must render the AWG3 image:\n%s", b)
-	}
-
-	// An unreadable generation — the module unloaded for the seconds of its own
-	// upgrade — changes nothing: the file on disk already says which image this
-	// node runs, and flipping it on a blank answer would recreate the container
-	// twice for no reason.
-	unreadable := func() (int, error) { return 0, errors.New("modinfo: not found") }
-	pl = composePlanner{path: paths.Compose, up: func(string) bool { return true }, awgGen: unreadable}
-	actions, err = pl.Plan(context.Background(), spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := lastKind(actions); got != reconcile.ActionNoChange {
-		t.Fatalf("unreadable generation on an AWG3 file must change nothing, got %q in %+v", got, actions)
-	}
-	b, _ = os.ReadFile(paths.Compose)
-	if !strings.Contains(string(b), compose.DefaultWGEasyImageAWG3) {
-		t.Fatalf("unreadable generation must leave the AWG3 image in place:\n%s", b)
-	}
-
-	// With no file at all, unreadable means the pin: the image every node ran
-	// before this decision existed.
-	fresh := testPaths(t)
-	pl = composePlanner{path: fresh.Compose, up: func(string) bool { return true }, awgGen: unreadable}
-	if _, err := pl.Plan(context.Background(), spec); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeFromPlan(t, fresh.Compose, spec, func() (int, error) { return 0, nil }); err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := os.ReadFile(fresh.Compose); !strings.Contains(string(b), compose.DefaultWGEasyImage) {
-		t.Fatalf("unreadable generation with no prior file must render the pin:\n%s", b)
-	}
-}
-
-// writeFromPlan renders the compose file the way composePlanner would with the
-// given module generation and writes it, so the next Plan sees it unchanged.
-func writeFromPlan(t *testing.T, path string, spec domain.NodeSpec, gen func() (int, error)) error {
-	t.Helper()
-	g, _ := gen()
-	yamlText, err := compose.RenderMasterCompose(masterComposeInput(spec, "", "", nil, g))
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(yamlText), 0o600)
 }
 
 // Re-provisioning a node that is already running loads the bootstrap baseline

@@ -1,7 +1,7 @@
 # CLI reference
 
 Every flag on both binaries. Subcommands are mutually exclusive: passing two of
-`--provision`, `--upgrade-agent`, `--rolling-upgrade`, `--import-wg-easy`, `--backup`,
+`--provision`, `--upgrade-agent`, `--rolling-upgrade`, `--backup`,
 `--restore` or `--certs` is refused by name. For what to *do* with them see
 [operations.md](operations.md); for the config files they read see
 [manifest.md](manifest.md).
@@ -22,14 +22,12 @@ Every flag on both binaries. Subcommands are mutually exclusive: passing two of
 | `--issue-node <id>` | | issue an mTLS bundle (`node.crt`/`node.key`/`ca.crt`) for a node, then exit |
 | `--issue-out <dir>` | `pki/<id>` | output dir for `--issue-node` |
 | `--provision <node>` | | SSH-bootstrap the named fleet node, then exit |
-| `--plan` | | with `--provision`, `--upgrade-agent`, `--rolling-upgrade`, `--import-wg-easy` or `--restore`: dry-run, change nothing. A modifier, never a command: on its own, or with `--backup` or `--certs`, it is refused |
+| `--plan` | | with `--provision`, `--upgrade-agent`, `--rolling-upgrade` or `--restore`: dry-run, change nothing. A modifier, never a command: on its own, or with `--backup` or `--certs`, it is refused |
 | `--agent-bin <path>` | (from config) | with `--provision`, `--upgrade-agent` or `--rolling-upgrade`: agent binary to install |
 | `--controller-endpoint <addr>` | (from config) | with `--provision`: endpoint the agent will dial |
 | `--upgrade-agent <node>` | | roll the agent binary forward over SSH on the named node, then exit |
 | `--rolling-upgrade` | | roll every outdated EXIT agent forward one node at a time, reserve tier first, then exit. A node whose SSH will not open is left alone rather than downgraded. A node that fails does not stop the run: it is reported by name and the rollout moves to the next one |
 | `--node-timeout <dur>` | `5m` | with `--rolling-upgrade`: how long ONE node has to accept the upload and restart before it is given up on. Guards against a path that accepts the connection and then goes silent, which otherwise holds the whole fleet behind one host |
-| `--import-wg-easy <master>` | | copy the named master's wg-easy client credentials into the controller store, then exit. Run it ON the master (it reads a local SQLite file). Safe with the controller live; use `--plan` first, and read [client-migration.md](client-migration.md) before either |
-| `--wg-easy-db <path>` | `/etc/wireguard/wg-easy.db` | with `--import-wg-easy`: where wg-easy's database lives |
 | `--backup <out>` | | snapshot controller (+co-located master) state to an age-encrypted archive at `<out>`, then exit |
 | `--restore <in>` | | restore controller state from an age-encrypted archive `<in>`, then exit (controller must be stopped) |
 | `--age-recipient <rcpt>` | | with `--backup`: encrypt to this age recipient instead of prompting for a passphrase |

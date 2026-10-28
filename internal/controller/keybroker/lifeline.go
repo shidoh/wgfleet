@@ -65,16 +65,6 @@ func (b *Broker) lifelineSpec(ctx context.Context, exit config.ExitConfig, exitN
 			"exit", exit.Name)
 		return nil, nil
 	}
-	if !master.ClientAWGManaged() {
-		// config.validateLifeline refuses this pairing at startup, so reaching it
-		// means the manifest was assembled in code (tests, a future caller). The
-		// controller cannot project credentials it does not own, and inventing an
-		// empty interface would be the "locks everyone out" failure above.
-		b.warnOnce("lifeline-master-unmanaged:"+exit.Name, master.Name,
-			"lifeline not rendered: the master's client interface is not controller-managed",
-			"exit", exit.Name, "master", master.Name)
-		return nil, nil
-	}
 	if exitNode.WireVersion < api.WireLifeline {
 		// Same shape as the client leg's wire gate: an agent below v11 drops the
 		// block, so rendering it would open a firewall hole (Firewall.LifelinePort)

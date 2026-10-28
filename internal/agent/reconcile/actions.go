@@ -30,7 +30,7 @@ func FileAction(target string, content []byte, perm os.FileMode, redact Redactor
 	// This existed as a convention the exit side followed (0600 alongside
 	// wg.RedactConfig / xray.RedactConfig) and the master side quietly broke: the
 	// rendered mihomo config went out 0644 while holding one WireGuard private key
-	// per exit, and the master compose file 0644 while holding the wg-easy admin
+	// per exit, and the master compose file 0644 while holding a container admin
 	// password. Found in review 2026-07-20. A convention that is only documented
 	// gets violated; make it an invariant the code enforces.
 	if redact != nil && perm&0o077 != 0 {
@@ -57,8 +57,8 @@ func FileAction(target string, content []byte, perm os.FileMode, redact Redactor
 	// Mode drift is a change even when the bytes match. The mode is only ever
 	// applied on a write, so a file whose content is already current keeps whatever
 	// mode it has — including one left behind by an older binary, a hand-edit, or a
-	// bad umask. That is how /etc/wgfleet/docker-compose.yml sat at 0644 holding the
-	// wg-easy admin password AFTER both the code fix and a manual chmod: the fix
+	// bad umask. That is how /etc/wgfleet/docker-compose.yml sat at 0644 holding a
+	// container admin password AFTER both the code fix and a manual chmod: the fix
 	// landed, the content never changed again, so nothing re-applied the mode.
 	//
 	// Repairing it here rather than in each caller matters because this is the one

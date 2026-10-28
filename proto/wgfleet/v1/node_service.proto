@@ -256,7 +256,7 @@ message MasterSpec {
   bool dashboard_disabled = 11;
   string dashboard_url = 12;
   // TCP ports on the master mgmt address the client pool may reach (admin UIs:
-  // controller Web UI, mihomo dashboard, wg-easy). Additive; an older agent ignores
+  // controller Web UI, mihomo dashboard). Additive; an older agent ignores
   // it and keeps the strict default — backward-compatible, no wire-version bump.
   repeated int32 client_admin_ports = 13;
   // wg-best health-check cadence in seconds (detect/route around dead exits).
@@ -274,12 +274,12 @@ message MasterSpec {
   // client listener CLOSED with no error (a convergence difference, like
   // public_tcp_ports at v3), so it rides the wire-version bump to v4.
   ClientVlessSpec client_vless = 16;
-  // Client-facing AmneziaWG interface, owned by the agent instead of wg-easy.
-  // Carries NO client private keys: the controller issues the credentials and
-  // renders the client configs itself, so the node only ever learns the public
-  // half. nil ⇒ this master's client leg is still wg-easy's. A too-old agent that
-  // drops the field leaves the interface unmanaged while the controller believes
-  // it converged, so it rides a wire-version bump like client_vless did at v4.
+  // Client-facing AmneziaWG interface, owned by the agent. Carries NO client
+  // private keys: the controller issues the credentials and renders the client
+  // configs itself, so the node only ever learns the public half. nil ⇒ this
+  // master has no client interface. A too-old agent that drops the field leaves
+  // the interface unmanaged while the controller believes it converged, so it
+  // rides a wire-version bump like client_vless did at v4.
   ClientWGSpec client_wg = 17;
   // Where client traffic is intercepted: "off" (host path), "auto" (move into
   // mihomo's network namespace once the preconditions hold), or a client CIDR
@@ -405,12 +405,14 @@ message VlessClient {
   string short_id = 3; // this user's REALITY short-id (hex)
 }
 
-// ComposeSpec is the master's container-stack desired state (wg-easy + mihomo).
+// ComposeSpec is the master's container-stack desired state (mihomo and the
+// container that owns its network namespace).
 message ComposeSpec {
-  string wg_easy_image = 1;
+  // 1 and 4 carried the wg-easy image and web port; wg-easy is no longer run.
+  reserved 1, 4;
+  reserved "wg_easy_image", "wg_easy_web_port";
   string mihomo_image = 2;
   string public_ip = 3;
-  int32 wg_easy_web_port = 4;
   repeated string client_dns = 5;
   string client_allowed_ips = 6;
   // Image for the container that owns mihomo's network namespace. Empty ⇒ the

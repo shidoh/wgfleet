@@ -159,11 +159,11 @@ func TestBuildFailures(t *testing.T) {
 	}{
 		"unknown master": {master: "nope", client: "abc", wantErr: "not found"},
 		"unknown client": {master: "m1", client: "zzz", wantErr: "not found"},
-		"interface still wg-easy's": {
+		"master has no client interface": {
 			mutate:  func(s *stubSource) { s.spec = domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}} },
 			master:  "m1",
 			client:  "abc",
-			wantErr: "not managed",
+			wantErr: "has no client interface",
 		},
 		"key not published yet": {
 			mutate: func(s *stubSource) {
@@ -323,11 +323,11 @@ func TestBuildLifelineFailures(t *testing.T) {
 	}{
 		"unknown exit":   {exit: "nope", client: "abc", wantErr: "not found"},
 		"unknown client": {exit: "e1", client: "zzz", wantErr: "not found"},
-		"interface still wg-easy's": {
+		"master has no client interface": {
 			mutate:  func(s *stubSource) { s.spec = domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}} },
 			exit:    "e1",
 			client:  "abc",
-			wantErr: "not managed",
+			wantErr: "has no client interface",
 		},
 		"exit carries no lifeline": {
 			mutate:  func(s *stubSource) { s.specs["e1"] = domain.NodeSpec{Role: domain.RoleExit} },

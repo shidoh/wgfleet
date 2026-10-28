@@ -150,11 +150,10 @@ first, see [upgrade.md](upgrade.md).
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `fleet.masters[].client_awg.listen_port` | int | `443` | UDP port VPN clients connect to |
-| `fleet.masters[].client_awg.address_pool` | CIDR | — | Address pool handed to clients. Required when `managed` is on. Must not overlap any other pool in the fleet; the controller refuses to start on an overlap |
-| `fleet.masters[].client_awg.managed` | bool | `false` | Hand the interface to the agent instead of wg-easy: the controller owns the client credentials and the agent renders and raises the interface. Unset keeps wg-easy |
-| `fleet.masters[].client_awg.backend` | `kernel` \| `userspace` | `kernel` | What carries a **managed** interface. `userspace` is a fallback, not an override: on a node with a kernel module, the module carries the interface regardless. `userspace` with an AmneziaWG 3.x profile is refused unless the node has no usable module and the `amneziawg-go` daemon is installed. Ignored while unmanaged |
-| `fleet.masters[].client_awg.awg3` | `off` \| `timers` \| `full` | `off` | AmneziaWG 3.x on the client leg. `timers` randomises the 3.x timers only — existing client configs keep working. `full` adds header protection — **every client must re-import**. Requires `managed: true` and a 3.x kernel module on the master; without the module the agent keeps the last-good config |
-| `fleet.masters[].client_awg.ipv6` | `off` \| `block` | `off` | What a client is told about IPv6. `off` says nothing, so a dual-stack client keeps its own IPv6 route. `block` hands the client `::/0` and answers forwarded IPv6 with ICMPv6 administratively-prohibited, so the device falls back to IPv4. The data plane stays IPv4-only. Requires `managed: true` and an agent on wire v9; the controller refuses to render the route for an older agent |
+| `fleet.masters[].client_awg.address_pool` | CIDR | — | Address pool handed to clients. Set ⇒ the agent raises the client interface `wg0`; unset ⇒ the master has no AmneziaWG clients, and `awg3`, `ipv6: block` and an exit `lifeline` are refused. Must not overlap any other pool in the fleet; the controller refuses to start on an overlap |
+| `fleet.masters[].client_awg.backend` | `kernel` \| `userspace` | `kernel` | What carries the client interface `wg0`. `userspace` is a fallback, not an override: on a node with a kernel module, the module carries the interface regardless. `userspace` with an AmneziaWG 3.x profile is refused unless the node has no usable module and the `amneziawg-go` daemon is installed |
+| `fleet.masters[].client_awg.awg3` | `off` \| `timers` \| `full` | `off` | AmneziaWG 3.x on the client leg. `timers` randomises the 3.x timers only — existing client configs keep working. `full` adds header protection — **every client must re-import**. Requires a 3.x kernel module on the master; without the module the agent keeps the last-good config |
+| `fleet.masters[].client_awg.ipv6` | `off` \| `block` | `off` | What a client is told about IPv6. `off` says nothing, so a dual-stack client keeps its own IPv6 route. `block` hands the client `::/0` and answers forwarded IPv6 with ICMPv6 administratively-prohibited, so the device falls back to IPv4. The data plane stays IPv4-only. Requires an agent on wire v9; the controller refuses to render the route for an older agent |
 | `fleet.masters[].client_awg.mtu` | int | derived | Override the client interface MTU. Unset derives it from the hop chain |
 | `fleet.masters[].client_awg.keepalive` | int or `min-max` | `25` | `PersistentKeepalive` in generated client configs. A bare number pins one interval; a band gives each credential its own stable value. Keep it under the shortest NAT UDP timeout on the path (commonly 30s). Range 5-120 |
 | `fleet.masters[].client_awg.exclude_from_tunnel` | []CIDR | none | Networks a client must NOT send into the tunnel (its own LAN, for example). The controller expands "everything except these" into the explicit `AllowedIPs` list. Empty leaves the default route alone. Ignored when `allowed_ips` is set. Hiding the client portal or `mgmt_subnet` here logs a WARN (startup and `--check-config`): devices on AWG cannot refresh their subscription — add the range to `route_through_cidrs` |
@@ -227,9 +226,6 @@ Passthrough surface: [§9 third-party configuration](#9-third-party-configuratio
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fleet.masters[].compose.wg_easy_image` | string | pinned wg-easy 15 | Repository, optionally with a tag |
-| `fleet.masters[].compose.wg_easy_tag` | string | — | Explicit tag, overriding any tag in the image |
-| `fleet.masters[].compose.wg_easy_web_port` | int | `44423` | wg-easy admin UI port |
 | `fleet.masters[].compose.mihomo_image` | string | `metacubex/mihomo` | Repository, optionally with a tag |
 | `fleet.masters[].compose.mihomo_tag` | string | pinned | Explicit tag. **Pin a specific version**, never `latest` or `Alpha` |
 | `fleet.masters[].compose.client_dns` | []string | exit mgmt addrs | DNS servers handed to clients |
@@ -323,7 +319,7 @@ run warm and the live path can be switched instantly.
 
 Reserve client interface `awgl0` on an exit: peers are the master's credentials (same
 client keys, same host offset in this pool, per-exit preshared key), one reserve config
-per credential per lifeline exit. Requires `masters[].client_awg.managed: true`; exit
+per credential per lifeline exit. Exit
 name `[A-Za-z0-9._-]`, max 64. A reserve config routes everything (`0.0.0.0/0`)
 regardless of the master's `exclude_from_tunnel`, so it has no split tunnel and no
 IPv6 route.
@@ -422,7 +418,6 @@ If wgfleet models a setting, set the wgfleet key; otherwise use `overrides`
 | **blocky** | DNS filtering and forwarding on masters and exits | `fleet.master_dns.overrides` / `fleet.masters[].dns.overrides` / `fleet.exits[].dns.overrides` | <https://0xerr0r.github.io/blocky/latest/configuration/> |
 | **xray-core** | REALITY/VLESS/XHTTP inbounds, both master↔exit and client-facing | Modelled keys only; the rendered config is not user-merged | <https://xtls.github.io/en/config/> · REALITY: <https://github.com/XTLS/REALITY> |
 | **AmneziaWG** | Obfuscated WireGuard on all tunnels | Not user-tunable: obfuscation parameters are **generated** per tunnel. Hand-editing breaks the pairing | <https://docs.amnezia.org/documentation/amnezia-wg/> |
-| **wg-easy** | Client management UI and client-facing AmneziaWG server on the master | `fleet.masters[].compose.*`; state lives in its SQLite DB, which wgfleet writes directly | <https://github.com/wg-easy/wg-easy/wiki> |
 | **wgcf / Cloudflare WARP** | Exit egress | `fleet.exits[].warp_mtu`, `fleet.exits[].egress` | <https://github.com/ViRb3/wgcf> |
 | **ZeroTier** | Management overlay | `fleet.zerotier_network` | <https://docs.zerotier.com/> |
 | **nftables** | Node firewall | `fleet.exits[].firewall.*`; the ruleset itself is rendered, not user-supplied | <https://wiki.nftables.org/> |
@@ -471,7 +466,7 @@ and whether the store is one this binary can open. It does not create the store,
 migrations or change permissions.
 
 `--plan` is a modifier for the subcommands that have a dry run (`--provision`,
-`--upgrade-agent`, `--rolling-upgrade`, `--restore`, `--import-wg-easy`); on its own,
+`--upgrade-agent`, `--rolling-upgrade`, `--restore`); on its own,
 or with `--backup` or `--certs`, it is refused.
 
 ## AmneziaWG 3.0

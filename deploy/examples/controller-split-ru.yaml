@@ -37,8 +37,6 @@ fleet:
       client_awg:
         listen_port: 443                # UDP port clients dial (default 443)
         address_pool: 10.80.0.0/24      # client AmneziaWG subnet (its .1 is the clients' DNS)
-        managed: true                   # the agent owns the client interface (the installer sets this too;
-                                        # drop it and the master falls back to wg-easy with an empty database)
 
       # ★ THE SPLIT. Rules apply top-down: direct_cidrs -> DIRECT, direct_geo -> DIRECT,
       #   everything else -> the exit(s) abroad. Add regions ([RU, BY]) to keep more local.
@@ -155,7 +153,7 @@ fleet:
       # ★ Reserve door for the day the master is lost: this exit carries a second
       #   client interface with every issued credential, and each person gets a
       #   reserve profile against it from the console or the portal — to be added
-      #   to the phone in advance. Needs client_awg.managed: true on the master.
+      #   to the phone in advance.
       lifeline:
         listen_port: 41827              # UDP port reserve clients dial; not this exit's AWG port
         address_pool: 10.98.77.0/24     # reserve client pool; at least as large as the master's client pool

@@ -16,7 +16,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/wg"
 )
 
-// --- client-facing AmneziaWG interface (the leg that used to be wg-easy's) ---
+// --- client-facing AmneziaWG interface ---
 //
 // The master mirror of the exit's wgPlanner, with two differences: the peers are
 // end users rather than tunnels, and the backend is selectable. Everything else —
@@ -36,8 +36,6 @@ type clientWGPlanner struct {
 	awgGen   func() (int, error)    // nil ⇒ real modinfo probe (tests inject)
 	// ifacePeers lists the live interface's peer public keys. nil ⇒ real `awg show`.
 	ifacePeers func(name string) ([]string, error)
-	// containerPresent reports whether a container exists. nil ⇒ real `docker ps`.
-	containerPresent func(name string) bool
 	// lookPath resolves an executable. nil ⇒ exec.LookPath (tests inject).
 	lookPath func(file string) (string, error)
 }
@@ -47,22 +45,16 @@ func (clientWGPlanner) Component() string { return "client AmneziaWG interface" 
 func (p clientWGPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
 	cw := clientWGSpec(spec)
 	if cw == nil {
-		// wg-easy owns this leg again (the operator cleared the knob), or it always
-		// did. Take the interface down ONLY if WE raised it, which is recorded in a
-		// claim file rather than inferred from the interface itself.
-		//
-		// Identity cannot answer this question: the handover ADOPTS wg-easy's own
-		// private key so that client configs keep working, which makes our public key
-		// and wg-easy's the same value by design. A key comparison would therefore
-		// call wg-easy's interface ours and tear it down on every pass — the exact
-		// failure this branch exists to avoid.
+		// The spec has no client interface for this master. Take ours down ONLY if
+		// WE raised it, which is recorded in a claim file rather than inferred from
+		// the interface itself.
 		if !p.claimed() {
 			return []reconcile.Action{reconcile.NoChangeAction("client AmneziaWG interface",
-				"not managed by the agent (wg-easy owns the client leg)")}, nil
+				"no client interface in the spec")}, nil
 		}
 		actions := []reconcile.Action{
 			wgiface.QuickAction(domain.ClientWGBackendKernel, "down", p.confPath, true,
-				"client interface handed back to wg-easy — bring ours down"),
+				"no client interface in the spec — bring ours down"),
 		}
 		release, err := reconcile.RemoveFileAction(p.claimPath(), "release our claim on the client interface")
 		if err != nil {
@@ -124,11 +116,9 @@ func (p clientWGPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 		return nil, err
 	}
 
-	// The question is NOT "whose interface is this" — after key adoption that has no
-	// answer — but "does the live interface serve what the spec says". That covers
-	// every case the ownership question was meant to: a wg-easy container that
-	// recreated wg0 carries wg-easy's peer list, which will not match ours, so we
-	// re-apply and take it over.
+	// The question is "does the live interface serve what the spec says": an
+	// interface someone else recreated carries a different peer list, which will not
+	// match ours, so we re-apply and take it over.
 	// A spec with zero clients is APPLIED, not refused.
 	//
 	// This used to defer, on the theory that "serve nobody" could only come from a
@@ -150,7 +140,7 @@ func (p clientWGPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	// arity.
 	//
 	// The controller is the authority on who its clients are. Absence of the whole
-	// block remains a different instruction — "release the leg" — handled above.
+	// block remains a different instruction — "no client interface" — handled above.
 	// Removing every live peer is still worth a line in the journal, so it is
 	// summarised rather than silent.
 	if live, known := p.livePeerCount(); known && live > 0 && len(cw.Clients) == 0 {
@@ -161,7 +151,7 @@ func (p clientWGPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	// Past every deferral: whatever the last pass declined to do, it is doing it now.
 	actions = append(actions, p.clearDeferred())
 
-	peersMatch, peersKnown := p.servesDesiredPeers(&rendered)
+	peersMatch, _ := p.servesDesiredPeers(&rendered)
 	// Before deciding to recreate the device: can this be done as a peer edit?
 	//
 	// `awg-quick down` + `up` destroys the interface, and with it every established
@@ -184,52 +174,26 @@ func (p clientWGPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 		return append(actions, p.applyActions(backend, "live peers do not match the spec")...), nil
 	}
 
-	// Converged. Whether we may retire the fallback now turns on ONE question: is
-	// there proof that WE raised this interface? After key adoption identity cannot
-	// answer it — our public key and wg-easy's are the same value by design — so the
-	// proof is the claim, written by a bring-up that actually succeeded.
+	// Converged. An interface that is up and serving our peers without a claim is
+	// the upgrade path from a build predating the claim: record it.
 	if claim.Changes() {
-		// No claim. An interface that is up and serving the right peers is exactly as
-		// consistent with wg-easy still carrying it... unless wg-easy is not installed
-		// at all, in which case nothing else could have raised it. That second case is
-		// the upgrade path from a build predating the claim, and it is safe to record.
-		if p.wgEasyPresent() {
-			return append(actions, reconcile.NoChangeAction("client AmneziaWG interface",
-				"interface already up, but ownership is unproven while wg-easy is still installed")), nil
-		}
 		return append(actions, claim,
 			reconcile.NoChangeAction("client AmneziaWG interface", "interface already up")), nil
-	}
-
-	// A claim from an earlier pass: an awg-quick up succeeded and the interface is
-	// still up and still serving our peers. Only now is the fallback spare.
-	//
-	// peersKnown is required as well. The peer probe fails OPEN — an unanswerable
-	// `awg show` reports "matches" so a broken probe cannot bounce a healthy
-	// interface — and that is the right trade for deciding whether to re-apply. It
-	// is the wrong trade for deciding whether to delete the only fallback.
-	if p.wgEasyPresent() && peersKnown {
-		actions = append(actions, reconcile.BestEffortExecAction(
-			"retire the wg-easy container (the agent is carrying the client interface)",
-			"docker", "rm", "-f", wgEasyContainer))
 	}
 	return append(actions, reconcile.NoChangeAction("client AmneziaWG interface", "interface already up")), nil
 }
 
 // applyActions brings the interface to the rendered config. Both steps are
-// best-effort ON PURPOSE: this planner runs early (it must release the interface
-// before the compose planner can restore wg-easy), and the reconcile engine stops
+// best-effort ON PURPOSE: this planner runs early, and the reconcile engine stops
 // the whole pass at the first failed action. A client interface that will not come
 // up must not also freeze mihomo, the master NAT, DOCKER-USER, blocky and the
 // VLESS inbound. The failure is visible as a warning and as the client-wg health
 // check going red, and the next pass retries.
 func (p clientWGPlanner) applyActions(backend domain.ClientWGBackend, why string) []reconcile.Action {
 	// The claim is a RECEIPT for a successful bring-up, not a record that one was
-	// attempted. It used to be appended to the plan unconditionally, so a failed
-	// `awg-quick up` still produced a claim — and two later decisions read that
-	// claim as proof the agent carries the interface: retiring wg-easy, and the
-	// client-wg-owned health check. Both were reading evidence that did not
-	// establish the fact.
+	// attempted: the client-wg-owned health check and the peer-edit path read it as
+	// proof the agent carries the interface, so a failed `awg-quick up` must not
+	// produce one.
 	//
 	// OnApplied fires only when the exec really succeeded; BestEffort then keeps a
 	// failure from aborting the pass, which is why the order matters.
@@ -261,8 +225,8 @@ func (p clientWGPlanner) livePeerCount() (n int, known bool) {
 // deferredPath is where the planner records WHY it is not applying the spec.
 //
 // It exists because the client-wg-owned health check could not see a deferral at
-// all: it probes the claim file and `ip link show`, and after a successful
-// handover both stay true forever. So "no key yet", "spec rejected" and "3.x
+// all: it probes the claim file and `ip link show`, and once the interface is up
+// both stay true forever. So "no key yet", "spec rejected" and "3.x
 // refused" all reported green — including the case where a single malformed
 // credential freezes the interface and every later revocation silently stops
 // taking effect while the UI reports success. A check that reads the world cannot
@@ -326,8 +290,8 @@ func (p clientWGPlanner) claimed() bool {
 }
 
 // servesDesiredPeers reports whether the live interface carries exactly the peers
-// the spec asks for. A mismatch means somebody else configured it (a wg-easy
-// container that survived a reboot) or our own apply half-failed; either way the
+// the spec asks for. A mismatch means somebody else configured it (something
+// that raised wg0 again after a reboot) or our own apply half-failed; either way the
 // answer is to re-apply.
 //
 // A probe that fails answers TRUE — "assume it matches". The alternative would
@@ -341,28 +305,6 @@ func (p clientWGPlanner) claimed() bool {
 // whether to re-apply (where failing open avoids a pointless interface bounce).
 func (p clientWGPlanner) servesDesiredPeers(cw *domain.ClientWGSpec) (matches, known bool) {
 	return wgiface.ServesPeers(wgiface.Name(p.confPath), cw.Clients, p.ifacePeers)
-}
-
-// wgEasyPresent reports whether a wg-easy container still exists on this host.
-// Gating the retirement on it keeps an unchanged master from reporting drift
-// every pass for a container that has been gone for weeks.
-func (p clientWGPlanner) wgEasyPresent() bool {
-	probe := p.containerPresent
-	if probe == nil {
-		probe = dockerContainerPresent
-	}
-	return probe(wgEasyContainer)
-}
-
-// wgEasyContainer is the container name the compose stack gives wg-easy.
-const wgEasyContainer = "wg-easy"
-
-func dockerContainerPresent(name string) bool {
-	out, err := exec.Command("docker", "ps", "-a", "--filter", "name=^"+name+"$", "--format", "{{.Names}}").Output()
-	if err != nil {
-		return false
-	}
-	return strings.TrimSpace(string(out)) != ""
 }
 
 // checkBackendSupportsAWG3 refuses an AmneziaWG 3.x config the selected backend
@@ -401,11 +343,8 @@ func (p clientWGPlanner) checkBackendSupportsAWG3(backend domain.ClientWGBackend
 
 // InterfacePublicKey asks the live interface for its own public key.
 //
-// This is the durable half of the client-identity audit. Comparing against
-// wg-easy's database only works while that database is still on disk, which after
-// the handover it need not be; the interface itself is there for as long as
-// clients are being served, so "the key I publish" can always be checked against
-// "the key actually answering handshakes".
+// The client-identity audit checks "the key I publish" against "the key actually
+// answering handshakes".
 //
 // `public-key`, not `dump`: the dump's first line carries the interface PRIVATE
 // key, and this is called from a path that logs.
@@ -456,8 +395,8 @@ func (p clientWGPlanner) syntheticPeer(cw domain.ClientWGSpec) domain.WGClient {
 // The conditions that are about INTERFACES live in wgiface.PeerDelta, which the
 // exit's lifeline shares. The one condition that is about OWNERSHIP stays here:
 // we may only patch an interface we have proof we raised. Without the claim this
-// could be wg-easy's wg0, whose interface parameters are wg-easy's too, and
-// patching its peers would leave the kernel serving the right people with the
+// could be a wg0 someone else raised, whose interface parameters are theirs too,
+// and patching its peers would leave the kernel serving the right people with the
 // wrong obfuscation.
 func (p clientWGPlanner) peerDeltaActions(want *domain.ClientWGSpec, prevCfg, newCfg string) []reconcile.Action {
 	if !p.claimed() {

@@ -10,9 +10,9 @@ import (
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
-// The check exists because "an interface named wg0 is up" is also true while
-// wg-easy holds it, and stays true through every deferral the interface planner
-// can report. Without the claim, those states would leave the node green.
+// The check exists because "an interface named wg0 is up" is also true when
+// something else raised it, and stays true through every deferral the interface
+// planner can report. Without the claim, those states would leave the node green.
 func TestClientWGOwnedProbeRequiresTheClaim(t *testing.T) {
 	claim := filepath.Join(t.TempDir(), "wg0.conf.claim")
 	res := ClientWGOwnedProbe(claim, "wg0")(context.Background())
@@ -37,9 +37,9 @@ func TestClientWGOwnedProbeRequiresTheClaim(t *testing.T) {
 	}
 }
 
-// The check is wired only when the agent owns the leg: on a master still running
-// wg-easy it must not appear at all, or every un-migrated node would report a
-// failure for a component it does not have.
+// The check is wired only when the master has a client interface: without one it
+// must not appear at all, or the node would report a failure for a component it
+// does not have.
 func TestMasterChecksWiresClientWGOnlyWhenManaged(t *testing.T) {
 	probes := MasterProbes{
 		WGServerUp:    func(context.Context) Result { return Result{OK: true} },

@@ -72,7 +72,7 @@ type Node struct {
 	ClientVLESSPublicKey string
 	// ClientWGPublicKey is the master's CLIENT-FACING WireGuard public key: the
 	// identity of the interface end users dial, published by the agent so the
-	// controller can render client configs. Empty while wg-easy owns that leg.
+	// controller can render client configs. Empty until the agent has raised it.
 	ClientWGPublicKey string
 	// LifelinePublicKey is the exit's LIFELINE WireGuard public key: the identity
 	// of LifelineInterface ("awgl0"), the reserve client-facing interface an exit
@@ -135,8 +135,7 @@ type NodeStatus struct {
 	ExitHealth     []ExitTunnelHealth // master only: per-exit tunnel health from mihomo
 	// ClientPeers is the master's view of the end users on its client-facing
 	// interface, read from the live interface rather than from desired state. It
-	// only appears once the agent owns that interface; while wg-easy holds it, the
-	// same numbers come from wg-easy's own metrics endpoint.
+	// only appears once the agent has raised that interface.
 	ClientPeers []ClientPeerStatus
 	// AWGMasterEndpoint is the endpoint an exit's awg0 currently holds for the
 	// master peer given one (exit-initiated AWG flow). Empty when none has one.

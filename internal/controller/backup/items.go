@@ -9,10 +9,17 @@ import (
 	"github.com/shidoh/wgfleet/internal/config"
 )
 
+// retiredItems are archive entries older backups carry for components wgfleet no
+// longer runs (wg-easy). Restore skips them with a warning instead of refusing the
+// whole archive for a destination this host no longer keeps.
+var retiredItems = map[string]bool{
+	"master/wg-easy.db":             true,
+	"master/wg-easy-admin-password": true,
+}
+
 // Fixed master-side restore destinations (the agent manages these paths).
 const (
 	destStateDB     = "/var/lib/wgfleet/state.db"
-	destWGEasyAdmin = "/etc/wgfleet/wg-easy-admin-password"
 	destNodeCert    = "/etc/wgfleet/node.crt"
 	destNodeKey     = "/etc/wgfleet/node.key"
 	destAgentYAML   = "/etc/wgfleet/agent.yaml"
@@ -27,8 +34,6 @@ type Sources struct {
 	CACert         string
 	CAKey          string // resolved file path; "" if the CA key is a non-file reference
 	SOPSFile       string // "" when secrets.sops_file is unset
-	WGEasyDB       string
-	WGEasyAdmin    string
 	NodeCert       string
 	NodeKey        string
 	AgentYAML      string
@@ -48,8 +53,7 @@ type Sources struct {
 	// ClientWGKey is the master's CLIENT-FACING WireGuard private key — the
 	// identity every client config in the field pins. Unlike WGKey it is NOT
 	// regenerable: minting a new one silently invalidates every profile at once.
-	// It self-heals today by re-adopting from wg-easy's database, but the migration
-	// ends with that database deleted, at which point this file is the only copy.
+	// This file is its only copy.
 	ClientWGKey string
 	// AWG3Key is the fleet secret the AmneziaWG 3.x header-protection key is derived
 	// from, and ClientVLESSKey is the master's client-facing REALITY private key.
@@ -86,8 +90,6 @@ func DefaultSources(cfg *config.ControllerConfig, configPath string) Sources {
 		CACert:         config.ExpandPath(cfg.Controller.PKI.CACert),
 		CAKey:          config.ExpandPath(caKey),
 		SOPSFile:       sops,
-		WGEasyDB:       mp.WGEasyDB,
-		WGEasyAdmin:    mp.WGEasyAdmin,
 		WGKey:          destWGKey,
 		ClientWGKey:    destClientWGKey,
 		AWG3Key:        awg3KeyPath(cfg),
@@ -139,8 +141,6 @@ func GatherItems(src Sources, dbSnapshot string, exists func(string) (os.FileInf
 
 	// Master items: include only when present.
 	masterItems := []struct{ path, name, dest string }{
-		{src.WGEasyDB, "master/wg-easy.db", src.WGEasyDB},
-		{src.WGEasyAdmin, "master/wg-easy-admin-password", destWGEasyAdmin},
 		{src.WGKey, "master/wg.key", destWGKey},
 		{src.ClientWGKey, "master/client-wg.key", destClientWGKey},
 		{src.ClientVLESSKey, "master/client-vless.key", src.ClientVLESSKey},
@@ -205,8 +205,6 @@ func plannedItems(src Sources) []struct{ path, name, dest string } {
 		{src.CAKey, "controller/ca.key", src.CAKey},
 		{src.AWG3Key, "controller/awg3.key", src.AWG3Key},
 		{src.SOPSFile, "controller/secrets.sops.yaml", src.SOPSFile},
-		{src.WGEasyDB, "master/wg-easy.db", src.WGEasyDB},
-		{src.WGEasyAdmin, "master/wg-easy-admin-password", destWGEasyAdmin},
 		{src.WGKey, "master/wg.key", destWGKey},
 		{src.ClientWGKey, "master/client-wg.key", destClientWGKey},
 		{src.ClientVLESSKey, "master/client-vless.key", src.ClientVLESSKey},

@@ -10,9 +10,13 @@ import (
 	"time"
 )
 
+// ClientWGInterface is the name of the master's client-facing AmneziaWG
+// interface, which the agent raises and owns.
+const ClientWGInterface = "wg0"
+
 // ClientWGSpec is the master-side desired state for the CLIENT-FACING AmneziaWG
-// interface — the leg end users dial. It replaces wg-easy: the controller owns
-// the credentials, the agent owns the interface (see the design doc, §3).
+// interface — the leg end users dial. The controller owns the credentials, the
+// agent owns the interface (see the design doc, §3).
 //
 // The split from WGServerSpec (the master↔exit leg) is deliberate. That one
 // describes a fleet-internal tunnel whose peers are exits; this one fronts MANY
@@ -38,8 +42,7 @@ type ClientWGSpec struct {
 	DNS []string
 	// AllowedIPs is what the generated client configs route into the tunnel. The
 	// data plane is IPv4-only, so "::/0" is rejected rather than passed through:
-	// it routes IPv6 into a dead tunnel and stalls dual-stack clients (an earlier finding,
-	// which we already paid for once through wg-easy's default).
+	// it routes IPv6 into a dead tunnel and stalls dual-stack clients.
 	AllowedIPs []string
 	// AWG is the obfuscation for this interface (server end); nil ⇒ vanilla WG.
 	AWG *AWGParams
@@ -88,7 +91,7 @@ const (
 // WGClient is one issued end-user credential as the CONTROLLER holds it. Unlike
 // VLESSClient, it contains a secret: the client's private key, which the
 // controller generates so it can re-render the config and the QR at any time
-// (the operator chose parity with wg-easy's UX). It is a controller secret —
+// (an operator decision). It is a controller secret —
 // redacted in plan output, 0600 at rest, and carried in the age backup.
 type WGClient struct {
 	// ID is the stable identity of the credential. Renaming must not reissue keys
@@ -103,7 +106,7 @@ type WGClient struct {
 	// PrivateKey is the client's secret. NEVER put it on the wire.
 	PrivateKey string
 	// PresharedKey is the optional symmetric key shared by both ends. Empty when
-	// unused; carried because wg-easy issued them and the import must be lossless.
+	// unused; carried for credentials imported in earlier versions, which may have one.
 	PresharedKey string
 	// Enabled false mutes the credential: the peer leaves the interface, the
 	// config the user holds stays valid.
@@ -223,10 +226,9 @@ func validateClientPeer(i int, c WGClientPeer, pool netip.Prefix, server netip.A
 		// The name is written verbatim into the interface config as a comment. A
 		// newline in it does not corrupt the file, it EXTENDS it — an imported
 		// credential called "laptop\n[Peer]\nAllowedIPs = 0.0.0.0/0" adds an
-		// attacker's peer to the master's live client interface. Names arrive from
-		// wg-easy's database on import, which is exactly the source we no longer
-		// trust to have a stable shape, so the charset is enforced here rather than
-		// only at the web layer.
+		// attacker's peer to the master's live client interface. Credentials
+		// imported in earlier versions arrived from outside the web layer, so the
+		// charset is enforced here rather than only there.
 		errs = append(errs, fmt.Errorf("client[%d] (%q): name must be 1-%d chars of letters, digits, '-', '_' or '.'",
 			i, c.Name, MaxClientNameLen))
 	default:
@@ -323,8 +325,6 @@ func ValidClientName(name string) bool {
 // ValidWireGuardKey reports whether s is a base64-encoded 32-byte key. The domain
 // package cannot use internal/wg for this (that package imports domain), and the
 // check is small enough that duplicating it beats inverting the dependency.
-// Exported because the importer must apply the same rule to values it copies out
-// of wg-easy's database before they can reach a rendered config.
 func ValidWireGuardKey(s string) bool {
 	raw, err := base64.StdEncoding.DecodeString(s)
 	return err == nil && len(raw) == 32

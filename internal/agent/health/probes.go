@@ -13,7 +13,6 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/wgiface"
 	"github.com/shidoh/wgfleet/internal/dnsfilter"
 	"github.com/shidoh/wgfleet/internal/domain"
-	"github.com/shidoh/wgfleet/internal/wgeasy"
 )
 
 // HandshakeMaxAge is the freshness threshold for a WG handshake. Older than this
@@ -82,11 +81,10 @@ func DefaultMasterProbes(spec domain.NodeSpec, controllerAddr string) MasterProb
 		}
 	}
 	return MasterProbes{
-		// The master's client-facing interface is managed by wg-easy, which names
-		// it wg0 (wgeasy.DefaultInterface) — NOT awg0 (that is the exit's awg-quick
-		// interface). It is an AmneziaWG device, so `ip link show` sees it even
-		// though vanilla `wg show` would not.
-		WGServerUp: ifaceUpProbe(wgeasy.DefaultInterface),
+		// The master's client-facing interface is wg0 — NOT awg0 (that is the
+		// exit's awg-quick interface). It is an AmneziaWG device, so `ip link show`
+		// sees it even though vanilla `wg show` would not.
+		WGServerUp: ifaceUpProbe(domain.ClientWGInterface),
 		// Set by the caller, which knows where the agent records its claim.
 		ClientWGOwned: nil,
 		MihomoAPI:     mihomoAPIProbe(controller, secret),
@@ -387,15 +385,15 @@ func parseClientPeers(out string) []domain.ClientPeerStatus {
 // ClientWGOwnedProbe reports whether the agent is actually carrying the client
 // interface: the interface exists AND the agent recorded raising it.
 //
-// The claim file is what distinguishes us from wg-easy, whose interface has the
-// same name and — after the handover adopts its key — the same public key. It is
+// The claim file is what distinguishes us from an interface someone else raised
+// under the same name, possibly with the same key. It is
 // also absent through every deferral the interface planner can report, which is
 // the point: those are exactly the states that must not read as healthy.
 func ClientWGOwnedProbe(claimPath, iface string) Probe {
 	return func(ctx context.Context) Result {
 		start := now()
 		// The planner's own verdict comes FIRST. The two probes below read the world,
-		// and the world cannot show a decision: after a successful handover the claim
+		// and the world cannot show a decision: once the agent has raised wg0 the claim
 		// and the link are both true forever, so every deferral — no key yet, spec
 		// rejected, 3.x refused — reported green. The worst of those is a malformed
 		// credential freezing the interface, after which every revocation silently

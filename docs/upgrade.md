@@ -75,7 +75,7 @@ controller gates `Register` and `PullSpec`.
 
    Upgrade = upload new binary + restart the agent service, then wait for the
    node to report back on the new version. The data plane (kernel WG interfaces,
-   mihomo/wg-easy/blocky containers) survives the restart: **no drain is
+   mihomo/blocky containers) survives the restart: **no drain is
    required** and clients are not dropped — unless the release changes a
    container image or what it renders into one. Such a change restarts that
    container once on every node it runs on; the release notes list each one.
@@ -185,8 +185,4 @@ Adding a master: [operations.md](operations.md#several-masters).
   restart its mihomo container (containers restart only on a config change), so
   client sessions are unaffected — unless the release changes the mihomo image
   or the master's xray, which the release notes say.
-  **One exception:** on a master where `client_awg.managed` has just been turned
-  on, the first pass after the upgrade takes the client interface over from
-  wg-easy and, a pass later, removes the wg-easy container. That is a migration
-  with its own procedure and rollback: read
-  [client-migration.md](client-migration.md) BEFORE upgrading such a master.
+- **wg-easy leftovers** (no wg-easy support): manifest keys `client_awg.managed`, `compose.wg_easy_image`, `compose.wg_easy_tag`, `compose.wg_easy_web_port` are ignored with the warning `was removed with wg-easy and is ignored`; files `/etc/wireguard/wg-easy.db`, `/etc/wireguard/wg0.conf`, `/etc/wgfleet/wg-easy-admin-password`, `/etc/wgfleet/wg-easy.db` are not touched by the agent — delete them by hand.

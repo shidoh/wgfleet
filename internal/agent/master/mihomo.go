@@ -388,13 +388,13 @@ func gateRestart(gov *restart.Governor, disturbed func(), target string, act rec
 // redirect port (<BindAddress>:<RedirPort>) — the target masterNATPlanner DNATs all
 // client TCP to. mihomo binds that listener to the client gateway IP (e.g.
 // 10.73.0.1, the wg0 address); if the client interface is recreated under a running
-// mihomo (a wg-easy restart flaps the address), mihomo silently loses the bind and
+// mihomo (wg0 brought down and up again flaps the address), mihomo silently loses the bind and
 // does NOT re-bind on its own. The container still reports "up" and its config is
 // unchanged, so neither composePlanner nor mihomoPlanner notices — but every DNAT'd
 // client TCP connection now black-holes (pings and the WG handshake keep working,
 // which makes it look healthy). When the listener is down we restart mihomo to
 // rebind. Guarded by a local-address check so we never thrash while wg0 itself is
-// still down (the wg-easy/compose planners bring it back first).
+// still down (the client interface planner brings it back first).
 type mihomoRedirPlanner struct {
 	compose string
 	// listening reports whether a TCP socket is LISTENing on addr; nil ⇒ a passive
@@ -473,9 +473,9 @@ func (p mihomoRedirPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]r
 		// The namespace end of the veth is local IN THERE, never out here.
 		localUp = func(host string) bool { return nsAddrPresent(ctx, p.runner(), nsPath, host) }
 	}
-	// If the bind address isn't up on a local interface yet (wg0/wg-easy down or
+	// If the bind address isn't up on a local interface yet (wg0 down or
 	// mid-recreate), restarting mihomo can't bind it and would loop — defer to the
-	// wg-easy/compose planners and re-check next pass.
+	// client interface planner and re-check next pass.
 	if !localUp(bindHost) {
 		return []reconcile.Action{reconcile.NoChangeAction("mihomo redirect listener",
 			"deferred: bind address "+bindHost+" not up locally yet")}, nil

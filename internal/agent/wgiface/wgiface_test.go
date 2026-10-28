@@ -153,8 +153,8 @@ func TestPeerDeltaRefusesPeerWithoutAddress(t *testing.T) {
 }
 
 // A live peer list with NOTHING in common with the wanted one is not our list at
-// all — it is how a wg-easy container that recreated wg0 after a reboot presents
-// itself, and its interface parameters are wg-easy's too. Emptying it one `awg
+// all — it is how a wg0 something else recreated after a reboot presents itself,
+// and its interface parameters are not ours either. Emptying it one `awg
 // set … remove` at a time would leave the kernel serving the right people with
 // the wrong obfuscation; only a rebuild puts that right.
 func TestPeerDeltaRebuildsOnAnEntirelyForeignPeerList(t *testing.T) {

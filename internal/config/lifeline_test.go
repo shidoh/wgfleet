@@ -7,16 +7,15 @@ import (
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
-// newLifelineFleet builds a minimal fleet with one managed master and one exit
+// newLifelineFleet builds a minimal fleet with one master and one exit
 // carrying a valid lifeline section, matching the shape validateLifeline expects:
 // a master pool the lifeline pool must be at least as large as, and an exit whose
 // own listen port and firewall the lifeline port must avoid.
 func newLifelineFleet() FleetSection {
-	managed := true
 	return FleetSection{
 		Masters: []MasterConfig{{
 			Name:      "m",
-			ClientAWG: ClientAWGConfig{Managed: &managed, AddressPool: "10.80.0.0/24"},
+			ClientAWG: ClientAWGConfig{AddressPool: "10.80.0.0/24"},
 		}},
 		Exits: []ExitConfig{{
 			Name:        "e",
@@ -93,11 +92,11 @@ func TestValidateLifeline(t *testing.T) {
 			wantFrag: "lifeline.dns is required",
 		},
 		{
-			name: "master client_awg not managed",
+			name: "master without a client pool",
 			mutate: func(f *FleetSection) {
-				f.Masters[0].ClientAWG.Managed = nil
+				f.Masters[0].ClientAWG.AddressPool = ""
 			},
-			wantFrag: "client_awg.managed",
+			wantFrag: "client_awg.address_pool",
 		},
 		{
 			// The exit's name is a path segment in every reserve URL the portal hands

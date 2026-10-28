@@ -405,7 +405,7 @@ tunnel, and each agent requires a 3.x kernel module on its own node, so a
 premature flip stays on 2.0 rather than producing a dead tunnel. Header
 protection additionally needs a `fleet.awg3_key` secret and is incompatible with
 2.0 peers: every client must re-import. The timers half needs no client change.
-Enable order: [docs/client-migration.md](docs/client-migration.md) part 4.
+Enable order: [docs/client-migration.md](docs/client-migration.md).
 
 ---
 
@@ -423,7 +423,7 @@ Enable order: [docs/client-migration.md](docs/client-migration.md) part 4.
 | [docs/onboarding.md](docs/onboarding.md) | Node prerequisites and the provisioning walkthrough |
 | [docs/colocated-controller-master.md](docs/colocated-controller-master.md) | Running the controller on the master, the small-fleet default |
 | [docs/upgrade.md](docs/upgrade.md) | Agent upgrades and wire-contract versioning |
-| [docs/client-migration.md](docs/client-migration.md) | Moving the client interface from wg-easy into wgfleet, and the AmneziaWG 3.x path |
+| [docs/client-migration.md](docs/client-migration.md) | AmneziaWG 3.x on the client interface: `timers`, `full`, the `full` rollout |
 | [docs/master-migration.md](docs/master-migration.md) | Moving the controller and master to another host |
 | [docs/support-bundle.md](docs/support-bundle.md) | Collecting a secret-free diagnostic archive |
 | [docs/secrets-sops.md](docs/secrets-sops.md) | SOPS/age secret provider setup |

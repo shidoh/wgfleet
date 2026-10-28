@@ -19,12 +19,11 @@ import (
 // actually decodes.
 const masterPSK = "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc="
 
-// lifelineFleet is the smallest manifest that renders a lifeline: one managed
-// master with a client pool, one exit carrying the reserve interface. Names are
+// lifelineFleet is the smallest manifest that renders a lifeline: one master
+// with a client pool, one exit carrying the reserve interface. Names are
 // deliberately short and pools are documentation ranges — nothing here points at
 // the live fleet.
 func lifelineFleet() config.FleetSection {
-	managed := true
 	return config.FleetSection{
 		Masters: []config.MasterConfig{{
 			Name:     "m",
@@ -32,7 +31,6 @@ func lifelineFleet() config.FleetSection {
 			ClientAWG: config.ClientAWGConfig{
 				ListenPort:  443,
 				AddressPool: "10.80.0.0/24",
-				Managed:     &managed,
 				Keepalive:   "15-25",
 				AllowedIPs:  []string{"0.0.0.0/0"},
 			},

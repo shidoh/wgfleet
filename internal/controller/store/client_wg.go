@@ -8,7 +8,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
-// Client-facing WireGuard credentials (the leg that used to belong to wg-easy).
+// Client-facing WireGuard credentials (the master's client interface).
 // They live in their own file rather than in sqlite.go because they are the only
 // rows in this store that hold an end-user secret, and that deserves to be read
 // in one place.

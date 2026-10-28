@@ -44,7 +44,6 @@ fleet:
       client_awg:
         listen_port: 443 # UDP port clients dial (default 443)
         address_pool: 10.80.0.0/24 # client subnet; must not overlap any other pool
-        # managed: true # agent owns the client interface instead of wg-easy (default false); import credentials first, see CLIENT-MIGRATION.md
         # awg3: timers # off (default) | timers | full; full requires every client to re-import and fleet.awg3_key
         # keepalive: 15-25 # PersistentKeepalive in client configs: one number or a min-max band (default 25, range 5-120)
         # exclude_from_tunnel: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] # networks kept OUT of the tunnel (expanded into AllowedIPs)
@@ -111,9 +110,6 @@ fleet:
               payload:
                 - mycompany.example
       compose: # master container stack
-        wg_easy_image: "ghcr.io/wg-easy/wg-easy" # repository (default ghcr.io/wg-easy/wg-easy:15)
-        wg_easy_tag: "15" # explicit tag, overrides any tag in the image
-        # wg_easy_web_port: 44423 # wg-easy admin UI port on the mgmt address (default 44423)
         mihomo_image: "metacubex/mihomo" # repository (default metacubex/mihomo:v1.19.33)
         # mihomo_tag: "v1.19.33" # pin a specific version; never :latest or Alpha
         # client_dns: [] # DNS servers handed to clients (default: the exits' mgmt addresses)
@@ -178,7 +174,6 @@ fleet:
             clientGroupsBlock:
               default: [ads]
       # lifeline: # reserve client interface on this exit: every issued credential gets a reserve profile against it, for the day the master is lost.
-      #   # FIRST uncomment masters[].client_awg.managed: true above - the controller cannot project credentials it does not own, and validation refuses the pairing at startup.
       #   listen_port: 41827 # UDP port clients dial; must differ from this exit's AWG port and public_udp_ports; opened in the firewall automatically
       #   address_pool: 10.98.77.0/24 # reserve client pool; at least as large as the master's client pool, no overlaps
       #   egress: direct # direct (default) | warp; warp needs WARP in this exit's egress chain

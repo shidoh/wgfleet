@@ -53,7 +53,7 @@ wgfleet/
 │   │   ├── client/             agent mTLS gRPC client
 │   │   ├── reconcile/          plan/apply engine (dry-run core)
 │   │   ├── exit/               exit-role planners
-│   │   ├── master/             master-role planners (mihomo + NAT + wg-easy AWG)
+│   │   ├── master/             master-role planners (mihomo + NAT + client AWG interface)
 │   │   └── health/             self-checks → node lifecycle state
 │   ├── wg/                     WG/AWG render, key gen, MTU math, AWG param generator
 │   ├── netfw/                  nftables render (exit firewall + master NAT)
@@ -61,8 +61,7 @@ wgfleet/
 │   ├── egress/                 wgcf / WARP config render
 │   ├── dnsfilter/              blocky config render
 │   ├── mihomo/                 mihomo config render (+ overrides deep-merge)
-│   ├── compose/                master docker-compose render (wg-easy + mihomo)
-│   ├── wgeasy/                 wg-easy SQLite AWG configuration
+│   ├── compose/                master docker-compose render (mihomo + namespace holder)
 │   └── metrics/                Prometheus collectors (controller store + agent)
 ├── proto/wgfleet/v1/           gRPC contract
 ├── deploy/

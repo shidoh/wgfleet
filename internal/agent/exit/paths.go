@@ -36,7 +36,7 @@ type Paths struct {
 	// LifelineConf is the rendered awg-quick config for domain.LifelineInterface.
 	// Its PRESENCE is also the ownership evidence the disable path reads: nothing
 	// but the agent ever raises awgl0, so there is no claim file to keep (unlike the
-	// master's client leg, which it may inherit from wg-easy).
+	// master's client leg, where something else may have raised wg0 first).
 	LifelineConf string
 	// ClientVLESSKey is the MASTER's client-facing REALITY x25519 private key (0600,
 	// generated on-node). Distinct from XrayKey (the exit's master↔exit reality key);

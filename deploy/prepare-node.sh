@@ -132,18 +132,7 @@ awg_reload() {
   warn "reloading amneziawg (srcversion $loaded -> $ondisk): every AWG interface on this node goes down for a few seconds until the agent rebuilds it"
   out=$(modprobe -r amneziawg 2>&1) || die "could not unload amneziawg: ${out:-no output} — reboot to pick up the new module"
   out=$(modprobe amneziawg 2>&1) || die "new amneziawg module failed to load: ${out:-no output}"
-  # Interfaces the agent renders come back on its next pass. The one it does NOT
-  # render is wg-easy's client interface on a master that has not moved the client
-  # leg to the agent yet (docs/client-migration.md). Restarting that container is
-  # NOT the fix: wg-easy drives the interface with the amneziawg-tools it bundles,
-  # and the bundled generation must match the module — a tester's master lost
-  # every client on 2026-09-07 to a 15.3 container (generation-1 tools) on the
-  # 3.x module this very step had just loaded. The agent now picks the wg-easy
-  # image by module generation and recreates the container itself on its next
-  # pass; the only thing to do here is say so.
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx wg-easy; then
-    warn "wg-easy owns the client interface on this master: the agent recreates it with the image matching the new module on its next pass (~30 s). Do not restart it by hand; an agent older than v0.2.4 cannot do this — migrate the client leg instead (docs/client-migration.md)"
-  fi
+  # Interfaces the agent renders come back on its next pass.
 }
 
 # awg_state — one line of what is loaded and what tools are installed.

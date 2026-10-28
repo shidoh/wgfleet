@@ -269,10 +269,8 @@
       "Files": null
     },
     "Compose": {
-      "WGEasyImage": "ghcr.io/wg-easy/wg-easy:15@sha256:93bbd593e07bab98d02807a28770ac87ab6c48818e319e68c1f66561feb99876",
       "MihomoImage": "metacubex/mihomo:v1.19.30",
       "PublicIP": "203.0.113.1",
-      "WGEasyWebPort": 0,
       "ClientDNS": [
         "10.20.25.1",
         "10.20.25.2"
@@ -281,7 +279,62 @@
       "NetnsHolderImage": ""
     },
     "ClientVLESS": null,
-    "ClientWG": null
+    "ClientWG": {
+      "ListenPort": 443,
+      "AddressPool": "10.80.0.0/24",
+      "ServerAddress": "10.80.0.1",
+      "MTU": 1360,
+      "DNS": [
+        "10.20.25.1",
+        "10.20.25.2"
+      ],
+      "AllowedIPs": null,
+      "AWG": {
+        "Shared": {
+          "H1": {
+            "Min": 119440710,
+            "Max": 249440710
+          },
+          "H2": {
+            "Min": 853052489,
+            "Max": 983052489
+          },
+          "H3": {
+            "Min": 1240338360,
+            "Max": 1370338360
+          },
+          "H4": {
+            "Min": 1676329226,
+            "Max": 1806329226
+          },
+          "S1": 39,
+          "S2": 61,
+          "S3": 48,
+          "S4": 26,
+          "HeaderProtectionKey": "",
+          "ContentPaddingAddition": "",
+          "RekeyAfterTime": "",
+          "RekeyTimeout": "",
+          "RejectAfterTime": "",
+          "KeepaliveTimeout": "",
+          "MaxHandshakeAttempts": ""
+        },
+        "Local": {
+          "Jc": 4,
+          "Jmin": 43,
+          "Jmax": 123,
+          "I1": "\u003cb 0x000100002112a442\u003e\u003cr 12\u003e",
+          "I2": "\u003cb 0xc3000000010b\u003e\u003cr 11\u003e\u003cb 0x0a\u003e\u003cr 10\u003e\u003cb 0x00\u003e\u003cr 118\u003e",
+          "I3": "",
+          "I4": "",
+          "I5": ""
+        }
+      },
+      "Keepalive": "",
+      "Backend": "kernel",
+      "IPv6Prefix": "",
+      "Clients": []
+    }
   },
   "WARPMTU": 0,
   "EgressThroughputMinBps": 0,

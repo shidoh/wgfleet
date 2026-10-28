@@ -76,7 +76,8 @@ func TestUplinkProbeTargetsEmptyForASingleMaster(t *testing.T) {
 // The rendered spec carries the targets: the helper being right is worth nothing
 // if renderMasterSpec never calls it.
 func TestRenderMasterSpecCarriesUplinkProbeTargets(t *testing.T) {
-	b, _ := newBrokerWithFleet(t, uplinkFleet())
+	b, st := newBrokerWithFleet(t, uplinkFleet())
+	seedTestMaster(t, st, b.fleet.Masters[0].Name)
 	spec, err := b.renderMasterSpec(context.Background(), b.fleet.Masters[0])
 	if err != nil {
 		t.Fatal(err)

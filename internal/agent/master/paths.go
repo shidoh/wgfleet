@@ -8,8 +8,6 @@ package master
 
 import (
 	"path/filepath"
-
-	"github.com/shidoh/wgfleet/internal/wgeasy"
 )
 
 // Paths are the on-node file locations the master reconcilers manage.
@@ -21,9 +19,7 @@ type Paths struct {
 	FirewallNFT    string // master input-firewall ruleset (inet wgfleet)
 	ExtraFilesDir  string // base dir for operator extra files with relative paths
 	UIDir          string // mihomo external-ui dir; the agent populates it (see dashboardPlanner)
-	WGEasyDB       string // wg-easy SQLite db (client-facing AWG server)
 	Compose        string // docker-compose.yml for the container stack
-	WGEasyAdmin    string // wg-easy admin password file (agent-local, 0600; never crosses the wire)
 	DNS            string // master-tier blocky resolver config (config.yml, ADR-0024)
 	DNSCompose     string // docker-compose.yml for the master blocky container
 	ClientVLESS    string // client-facing xray inbound config.json (holds the REALITY private key, 0600)
@@ -37,7 +33,7 @@ type Paths struct {
 	RealityPortalYML string
 	RealityPortalKey string
 	ClientWGConf     string // client-facing AmneziaWG interface config (0600); the interface name comes from this filename
-	ClientWGKey      string // master's client-facing WireGuard private key (0600); adopted from wg-easy on handover
+	ClientWGKey      string // master's client-facing WireGuard private key (0600)
 	// SynthKey is the private key of the master's OWN client — the peer it uses to
 	// measure whether a packet entering the client interface comes back. Node-local
 	// and never published: nobody has to re-issue this config, so a key that never
@@ -61,9 +57,7 @@ func DefaultPaths() Paths {
 		FirewallNFT:    "/etc/wgfleet/wgfleet.nft",
 		ExtraFilesDir:  "/etc/mihomo",
 		UIDir:          "/etc/mihomo/ui",
-		WGEasyDB:       wgeasy.DefaultDBPath,
 		Compose:        "/etc/wgfleet/docker-compose.yml",
-		WGEasyAdmin:    "/etc/wgfleet/wg-easy-admin-password",
 		DNS:            "/etc/wgfleet/blocky/config.yml",
 		DNSCompose:     "/etc/wgfleet/blocky/docker-compose.yml",
 		ClientVLESS:    "/etc/wgfleet/client-vless/config.json",
@@ -75,9 +69,7 @@ func DefaultPaths() Paths {
 		RealityPortal:    "/etc/wgfleet/reality-portal/config.json",
 		RealityPortalYML: "/etc/wgfleet/reality-portal/docker-compose.yml",
 		RealityPortalKey: "/etc/wgfleet/reality-portal.key",
-		// The filename IS the interface name: wg0 keeps the name wg-easy used, so the
-		// NAT, MSS-clamp and DOCKER-USER rules that already reference it need no change
-		// when the leg changes hands.
+		// The filename IS the interface name (domain.ClientWGInterface).
 		ClientWGConf:   "/etc/amnezia/amneziawg/wg0.conf",
 		ClientWGKey:    "/etc/wgfleet/client-wg.key",
 		SynthKey:       "/etc/wgfleet/client-wg-synth.key",
@@ -96,9 +88,7 @@ func PathsUnder(dir string) Paths {
 		FirewallNFT:      filepath.Join(dir, "wgfleet.nft"),
 		ExtraFilesDir:    dir,
 		UIDir:            filepath.Join(dir, "ui"),
-		WGEasyDB:         filepath.Join(dir, "wg-easy.db"),
 		Compose:          filepath.Join(dir, "docker-compose.yml"),
-		WGEasyAdmin:      filepath.Join(dir, "wg-easy-admin-password"),
 		DNS:              filepath.Join(dir, "blocky", "config.yml"),
 		DNSCompose:       filepath.Join(dir, "blocky", "docker-compose.yml"),
 		ClientVLESS:      filepath.Join(dir, "client-vless", "config.json"),

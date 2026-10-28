@@ -87,8 +87,7 @@ var migrations = []string{
 		created_at TEXT NOT NULL,
 		PRIMARY KEY (master_id, name)
 	)`,
-	// v11: per-client WireGuard credentials for the CLIENT-FACING interface — the
-	// leg that used to belong to wg-easy. Unlike client_vless_credentials these
+	// v11: per-client WireGuard credentials for the CLIENT-FACING interface. Unlike client_vless_credentials these
 	// rows hold a SECRET: the client's private key, which the controller generates
 	// so it can re-render the .conf and the QR at any time. The file is 0600, the
 	// value is redacted in plan/UI output and travels in the age backup.

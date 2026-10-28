@@ -37,7 +37,6 @@ func TestReadingMihomosHostAddressRequiresConsultingTheMove(t *testing.T) {
 	}
 	// Functions exempt because they do not reach mihomo at all. Each needs a reason.
 	exempt := map[string]string{
-		"masterMgmtAddr":   "derives the MANAGEMENT address for wg-easy's UI; never dials mihomo",
 		"dashboardPlanner": "renders an operator-facing URL, never dials it",
 		"dnsPlanner":       "binds the client gateway for blocky; unrelated to mihomo's listeners",
 		// Reads the field as a PRESENCE test — "has the controller resolved a gateway

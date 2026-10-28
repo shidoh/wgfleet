@@ -55,15 +55,14 @@ const (
 	// not-yet-rolled agent hit exactly that split, the controller ALSO refuses to
 	// render 3.0 params for a node reporting less than v7 (keybroker.awg3For).
 	// Deploy the controller FIRST.
-	// v8: MasterSpec.client_wg — the client-facing AmneziaWG interface once the
-	// agent, rather than wg-easy, owns it. The hazard is the sharpest yet: the
-	// controller flips fleet.masters[].client_awg.managed, stops reconciling the
-	// wg-easy database and starts treating the credentials in its own store as the
-	// truth, while a v7 agent drops the field, keeps wg-easy running, and serves
-	// whatever that container last knew. Two sources of truth for the one leg end
-	// users actually dial, with no error on either side. Deploy the controller
-	// FIRST, and note that a nil client_wg is the safe state: it means
-	// "wg-easy still owns this leg", which is what every un-migrated master reports.
+	// v8: MasterSpec.client_wg — the client-facing AmneziaWG interface, owned by the
+	// agent. When it was introduced the hazard was the sharpest yet: the controller
+	// treats the credentials in its own store as the truth, while a v7 agent (which
+	// still ran wg-easy) drops the field, keeps that container running, and serves
+	// whatever it last knew. Two sources of truth for the one leg end users
+	// actually dial, with no error on either side. Deploy the controller FIRST
+	//; a nil client_wg is the safe state — the controller renders no
+	// client configs for that master.
 	// v9 adds ClientWGSpec.ipv6_prefix. A v8 agent drops it and brings the client
 	// interface up IPv4-only — while the controller, if it were not gated, would
 	// already be writing "::/0" into every client config. The client would then
@@ -101,10 +100,10 @@ const (
 
 	// WireClientWG is the wire version that introduced MasterSpec.client_wg. The
 	// controller refuses to render the client interface for a master below it: such
-	// an agent drops the field, keeps wg-easy running and keeps serving whatever
-	// that container last knew, while the controller has already stopped reconciling
-	// wg-easy's database and treats its own store as the truth. Two owners of the
-	// one leg end users dial, with no error on either side. Named rather than
+	// an agent (one that still ran wg-easy) drops the field and keeps serving
+	// whatever its own container last knew, while the controller treats its own
+	// store as the truth. Two owners of the one leg end users dial, with no error
+	// on either side. Named rather than
 	// compared against WireContractVersion so a later bump for something unrelated
 	// does not silently re-close the client interface to the whole fleet.
 	WireClientWG uint32 = 8

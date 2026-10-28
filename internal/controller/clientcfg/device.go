@@ -278,8 +278,8 @@ func ProfileFileName(dev domain.ClientDevice) string { return dev.Name + ".yaml"
 
 // AttachmentHeader builds a Content-Disposition: attachment header for name,
 // which — unlike a WGClient's or a legacy device's name — is not bounded by
-// domain.ValidClientName here: a device synthesised from an imported (wg-easy)
-// credential carries whatever name that import gave it. An embedded quote or
+// domain.ValidClientName here: a device synthesised from a credential imported
+// in an earlier version carries whatever name that import gave it. An embedded quote or
 // backslash would let the value escape its own quoted-string, a raw CR/LF could
 // inject a header line of its own, and a "/" could smuggle a path segment into
 // wherever the browser ends up saving it — all four are stripped before the

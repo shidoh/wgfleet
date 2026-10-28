@@ -17,8 +17,8 @@ import (
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
-// The client-facing WireGuard credential page: the operator half of the leg that
-// used to live in wg-easy's own UI.
+// The client-facing WireGuard credential page: the operator half of the client
+// interface.
 //
 // The one rule that shapes this file: a client's private key exists here, and
 // nowhere else in the request path. It is used to render a .conf and its QR and
@@ -41,7 +41,7 @@ type wgClientsData struct {
 	CSRF      string
 	NodeID    string
 	NodeName  string
-	Managed   bool // the agent owns this master's client interface
+	Managed   bool // this master has a client interface (client_awg is set)
 	Ready     bool // endpoint + published key present, so configs can be built
 	// Notice explains a state the operator can act on (configs not ready yet).
 	// Err is a FAILURE: the page could not load what it is meant to show. They are
@@ -271,9 +271,8 @@ func (h *Handler) wgClientsView(w http.ResponseWriter, r *http.Request) (wgClien
 	cw := spec.Master.ClientWG
 	switch {
 	case cw == nil:
-		// Credentials can be issued and imported BEFORE the handover — that is the
-		// migration order — so the page stays usable and says what is missing. The
-		// No Notice here: the CLIENT INTERFACE panel owns this fact and can format
+		// Credentials can be issued before the master has a client interface, so the
+		// page stays usable and says what is missing. No Notice here: the CLIENT INTERFACE panel owns this fact and can format
 		// the manifest key as markup. Setting it too printed the same sentence twice,
 		// once with raw backticks.
 	default:

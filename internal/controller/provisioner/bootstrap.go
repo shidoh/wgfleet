@@ -140,7 +140,7 @@ func BuildPlan(in BootstrapInput) Plan {
 		"apt-mark hold "+join(awgHeldPackages)))
 
 	// Phase 1c-2: Docker engine. Every role runs containers — exits run blocky,
-	// the master runs mihomo + wg-easy — so the compose reconcilers need it.
+	// the master runs mihomo and blocky — so the compose reconcilers need it.
 	if !in.Facts.HasDocker {
 		steps = append(steps, runStep("install Docker engine (get.docker.com)",
 			"curl -fsSL https://get.docker.com -o /tmp/get-docker.sh && sh /tmp/get-docker.sh && rm -f /tmp/get-docker.sh"))

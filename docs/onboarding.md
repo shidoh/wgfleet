@@ -170,19 +170,16 @@ on Pending/Error nodes).
        - name: master-xa-1
          public_ip: 203.0.113.10         # the endpoint every client config carries
          client_awg:
-           managed: true
+           address_pool: 10.80.0.0/24    # required
    ```
 
    All keys: [configuration.md#client_awg-the-client-facing-amneziawg-listener](configuration.md#client_awg-the-client-facing-amneziawg-listener)
 
-   - With `client_awg.managed: true` (not the default): the agent owns the
-     client interface, no wg-easy. Issue, pause, rename and revoke
-     credentials on the master's page in the console; hand each person their
-     self-service link. Set the master's `public_ip` — it is the endpoint
-     written into every client config.
-   - On a master still running wg-easy: `sudo cat
-     /etc/wgfleet/wg-easy-admin-password` (username `admin`). The file does
-     not exist once the agent has taken the interface over.
+   - The agent owns the client interface `wg0`. Issue, pause, rename and
+     revoke credentials on the master's page in the console; hand each person
+     their self-service link.
+   - Set the master's `public_ip` — it is the endpoint written into every
+     client config.
 
 5. An exit reaches `Ready` only when its self-checks pass: fresh WG
    handshake, WARP egress exits via Cloudflare, DNS filter resolves.
@@ -211,6 +208,5 @@ All three are UI buttons.
 | `warp-egress` stays red; `wg show wgcf` shows `0 B received` | WARP blocked by the ISP | confirm with `tcpdump -ni <egress-if> 'udp port 2408'` (handshake leaves, nothing returns) and a fresh `wgcf register` that also fails; use a different egress network for the node — nothing to change in wgfleet |
 | mihomo dashboard fails to start on first run | dashboard fetch needs GitHub reachability; default is on (`dashboard_disabled: false`) | set `masters[].mihomo.dashboard_disabled: true`, or point `mihomo.dashboard_url` at a reachable mirror |
 
-Master-side gotchas (the mihomo version pin, wg-easy's cosmetic `unhealthy`,
-the master staying `Degraded` until the first exit registers) are in the
+Master-side gotchas (the mihomo version pin, the master staying `Degraded` until the first exit registers) are in the
 Gotchas section of [colocated-controller-master.md](colocated-controller-master.md).

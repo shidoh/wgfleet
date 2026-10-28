@@ -5,15 +5,26 @@ import (
 	"testing"
 
 	"github.com/shidoh/wgfleet/internal/config"
+	"github.com/shidoh/wgfleet/internal/controller/store"
+	"github.com/shidoh/wgfleet/internal/domain"
 )
 
 func boolp(b bool) *bool { return &b }
+
+// seedTestMaster registers the test fleet's master: rendering its client
+// interface reads the registration.
+func seedTestMaster(t *testing.T, st store.Store, name string) {
+	t.Helper()
+	seedNode(t, st, name, "10.20.25.254", "203.0.113.1",
+		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+}
 
 // The rendered spec must always state the policy, even when the manifest says
 // nothing: an unset field on the wire means "controller predates the knob", and a
 // current controller must never send that.
 func TestRenderNodeSpecAlwaysStatesHardening(t *testing.T) {
-	b, _ := newBroker(t)
+	b, st := newBroker(t)
+	seedTestMaster(t, st, "master-xa-1")
 	for _, id := range []string{"exit-de-1", "master-xa-1"} {
 		spec, err := b.RenderNodeSpec(context.Background(), id)
 		if err != nil {
@@ -34,7 +45,8 @@ func TestRenderNodeSpecAlwaysStatesHardening(t *testing.T) {
 func TestRenderNodeSpecMasterOptsOutAlone(t *testing.T) {
 	fleet := testFleet()
 	fleet.Masters[0].Hardening = config.HardeningSection{SSHD: boolp(false)}
-	b, _ := newBrokerWithFleet(t, fleet)
+	b, st := newBrokerWithFleet(t, fleet)
+	seedTestMaster(t, st, "master-xa-1")
 
 	master, err := b.RenderNodeSpec(context.Background(), "master-xa-1")
 	if err != nil {
@@ -62,7 +74,8 @@ func TestRenderNodeSpecNodeReEnablesAgainstFleetOff(t *testing.T) {
 	fleet := testFleet()
 	fleet.Hardening = config.HardeningSection{SSHD: boolp(false), Fail2ban: boolp(false)}
 	fleet.Exits[0].Hardening = config.HardeningSection{SSHD: boolp(true), Fail2ban: boolp(true)}
-	b, _ := newBrokerWithFleet(t, fleet)
+	b, st := newBrokerWithFleet(t, fleet)
+	seedTestMaster(t, st, "master-xa-1")
 
 	exit, err := b.RenderNodeSpec(context.Background(), "exit-de-1")
 	if err != nil {

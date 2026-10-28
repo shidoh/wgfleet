@@ -7,7 +7,7 @@ import (
 func TestBuildParseTarRoundTrip(t *testing.T) {
 	items := []Item{
 		{Name: "controller/state.db", Dest: "/var/lib/wgfleet/state.db", Mode: 0o600, Layer: LayerController, Data: []byte("dbbytes")},
-		{Name: "master/wg-easy.db", Dest: "/etc/wireguard/wg-easy.db", Mode: 0o600, Layer: LayerMaster, Data: []byte("clients")},
+		{Name: "master/client-wg.key", Dest: "/etc/wgfleet/client-wg.key", Mode: 0o600, Layer: LayerMaster, Data: []byte("key")},
 	}
 	m := Manifest{
 		Schema:      ArchiveSchema,

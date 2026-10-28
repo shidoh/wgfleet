@@ -16,7 +16,6 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/master"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/support"
-	"github.com/shidoh/wgfleet/internal/wgeasy"
 )
 
 // supportCommandTimeout bounds every collector command. Collectors shell out to
@@ -259,9 +258,7 @@ func gatherSecrets(role domain.Role, paths exit.Paths, mp master.Paths) []string
 	if role == domain.RoleMaster {
 		add(readTrimmedFile(paths.ClientVLESSKey))
 		add(readTrimmedFile(mp.RealityPortalKey))
-		if pass, err := wgeasy.ReadAdminPassword(mp.WGEasyAdmin); err == nil {
-			add(pass)
-		}
+		add(readTrimmedFile(mp.ClientWGKey))
 	}
 	return out
 }

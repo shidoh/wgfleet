@@ -63,11 +63,10 @@ func clientPlanner(t *testing.T, up bool) clientWGPlanner {
 		t.Fatal(err)
 	}
 	return clientWGPlanner{
-		confPath:         filepath.Join(t.TempDir(), "wg0.conf"),
-		privateKey:       kp.PrivateKey,
-		up:               func(string) bool { return up },
-		awgGen:           func() (int, error) { return 3, nil },
-		containerPresent: func(string) bool { return false },
+		confPath:   filepath.Join(t.TempDir(), "wg0.conf"),
+		privateKey: kp.PrivateKey,
+		up:         func(string) bool { return up },
+		awgGen:     func() (int, error) { return 3, nil },
 	}
 }
 
@@ -167,18 +166,18 @@ func TestClientWGPlannerRaisesADownInterface(t *testing.T) {
 	}
 }
 
-// wg-easy still owning the leg must leave the agent entirely out of it.
-func TestClientWGPlannerNoopsWhenUnmanaged(t *testing.T) {
+// A spec without a client interface leaves an interface we never raised alone.
+func TestClientWGPlannerNoopsWithoutClientInterface(t *testing.T) {
 	p := clientPlanner(t, false)
 	actions, err := p.Plan(context.Background(), domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
-	if got := summaries(actions); !strings.Contains(got, "wg-easy owns the client leg") {
-		t.Fatalf("unmanaged plan = %s", got)
+	if got := summaries(actions); !strings.Contains(got, "no client interface in the spec") {
+		t.Fatalf("plan without a client interface = %s", got)
 	}
 	if _, err := os.Stat(p.confPath); !os.IsNotExist(err) {
-		t.Error("an unmanaged planner wrote a config file")
+		t.Error("a planner without a client interface wrote a config file")
 	}
 }
 
@@ -351,14 +350,11 @@ func awg3Spec(t *testing.T) domain.NodeSpec {
 
 // --- interface ownership -------------------------------------------------
 //
-// The handover ADOPTS wg-easy's private key so client configs keep working, so
-// our public key and wg-easy's are the same value by design. Ownership therefore
-// cannot be answered by identity, and these tests pin the two mechanisms that
-// replace it: a claim file for "did we raise it", and a peer-set comparison for
-// "does the live interface serve what the spec says".
+// These tests pin the two ownership mechanisms: a claim file for "did we raise
+// it", and a peer-set comparison for "does the live interface serve what the spec
+// says".
 
-// A wg-easy container that survived a reboot and recreated wg0 carries wg-easy's
-// peer list. The config has not changed and the interface is up, so a naive pass
+// An interface something else recreated carries its own peer list. The config has not changed and the interface is up, so a naive pass
 // reports converged while end users authenticate against the wrong peer set.
 func TestClientWGPlannerReclaimsAnInterfaceServingOtherPeers(t *testing.T) {
 	p := clientPlanner(t, true)
@@ -396,8 +392,7 @@ func TestClientWGPlannerConvergedWhenPeersMatch(t *testing.T) {
 	}
 }
 
-// Rollback: we raised the interface, so we release it — once. This is the case
-// that used to tear down wg-easy's interface on every pass forever.
+// The client interface leaves the spec: we raised it, so we release it — once.
 func TestClientWGPlannerReleasesItsClaimOnce(t *testing.T) {
 	p := clientPlanner(t, true)
 	applyPlan(t, p, managedSpec(t))
@@ -411,8 +406,8 @@ func TestClientWGPlannerReleasesItsClaimOnce(t *testing.T) {
 	if got := summaries(first); !strings.Contains(got, "bring ours down") {
 		t.Fatalf("planner did not release its own interface:\n%s", got)
 	}
-	// Apply the release, then look again: wg-easy now owns wg0 and we must not
-	// touch it a second time.
+	// Apply the release, then look again: whatever holds wg0 now is not ours and
+	// we must not touch it a second time.
 	applyPlan(t, p, unmanaged)
 	second, err := p.Plan(context.Background(), unmanaged)
 	if err != nil {
@@ -420,7 +415,7 @@ func TestClientWGPlannerReleasesItsClaimOnce(t *testing.T) {
 	}
 	got := summaries(second)
 	if strings.Contains(got, "down") {
-		t.Fatalf("planner tore down wg-easy's interface after releasing its own:\n%s", got)
+		t.Fatalf("planner tore down an interface after releasing its own:\n%s", got)
 	}
 	for _, a := range second {
 		if a.Changes() {
@@ -429,8 +424,8 @@ func TestClientWGPlannerReleasesItsClaimOnce(t *testing.T) {
 	}
 }
 
-// A master that never had the knob on must stay entirely out of it, even though
-// its agent holds wg-easy's adopted key and an interface named wg0 is up.
+// A master whose spec has no client interface must stay out of a wg0 it never
+// raised, even when one is up.
 func TestClientWGPlannerNeverTouchesAnUnclaimedInterface(t *testing.T) {
 	p := clientPlanner(t, true)
 	actions, err := p.Plan(context.Background(), domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}})
@@ -443,7 +438,7 @@ func TestClientWGPlannerNeverTouchesAnUnclaimedInterface(t *testing.T) {
 	}
 	for _, a := range actions {
 		if a.Changes() {
-			t.Fatalf("an unmanaged master reports drift every pass: %s", a.Summary)
+			t.Fatalf("a master without a client interface reports drift every pass: %s", a.Summary)
 		}
 	}
 }
@@ -476,29 +471,13 @@ func TestClientWGPlannerBringUpIsBestEffort(t *testing.T) {
 	}
 }
 
-// The wg-easy container is retired only once we are carrying the leg, and only
-// while it is still there — otherwise every pass forever reports drift.
-// wg-easy is retired a whole pass AFTER the interface is observed up — never in
-// the pass that raised it.
-//
-// Every awg-quick step is best-effort so a client interface that will not come up
-// cannot freeze mihomo, the NAT, DOCKER-USER, blocky and the VLESS inbound with
-// it. That made "retire after the bring-up" mean "retire after the ATTEMPT": a
-// failed `up` deleted the only thing still serving clients and reported a warning.
-// wg-easy is retired only once there is PROOF the agent raised the interface —
-// and the proof is a claim written by a bring-up that actually succeeded.
-//
-// The claim used to be appended to the plan unconditionally, so a failed
-// awg-quick up still produced one. Two decisions then read it as evidence the
-// agent carries the interface: retiring the fallback, and the client-wg-owned
-// health check. Neither fact followed from it.
-func TestClientWGPlannerRetiresWGEasyOnlyWithProofItRaisedTheInterface(t *testing.T) {
+// The claim is a receipt for a bring-up that succeeded, not for one attempted:
+// every awg-quick step is best-effort, and the client-wg-owned health check and
+// the peer-edit path read the claim as proof the agent carries the interface.
+func TestClientWGPlannerClaimsOnlyAfterASuccessfulBringUp(t *testing.T) {
 	p := clientPlanner(t, false) // interface not up yet
-	p.containerPresent = func(string) bool { return true }
 	spec := managedSpec(t)
 
-	// Pass 1 raises it. The fallback must still be standing when the pass ends,
-	// and — because awg-quick cannot succeed here — no claim may be recorded.
 	actions, err := p.Plan(context.Background(), spec)
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
@@ -506,100 +485,10 @@ func TestClientWGPlannerRetiresWGEasyOnlyWithProofItRaisedTheInterface(t *testin
 	if got := summaries(actions); !strings.Contains(got, "bring the client interface up") {
 		t.Fatalf("first pass did not raise the interface:\n%s", got)
 	}
-	if got := summaries(actions); strings.Contains(got, "retire") {
-		t.Fatalf("wg-easy retired in the same pass that raised our interface:\n%s", got)
-	}
+	// awg-quick cannot succeed here, so no claim may be recorded.
 	applyPlan(t, p, spec)
 	if _, err := os.Stat(p.claimPath()); err == nil {
 		t.Fatal("a claim was recorded although the bring-up failed")
-	}
-
-	// Now the bring-up succeeds: the interface is up, serving our peers, and the
-	// claim is on disk.
-	p.up = func(string) bool { return true }
-	p.ifacePeers = func(string) ([]string, error) {
-		return []string{spec.Master.ClientWG.Clients[0].PublicKey}, nil
-	}
-	claimIt(t, p)
-	actions, err = p.Plan(context.Background(), spec)
-	if err != nil {
-		t.Fatalf("Plan() error = %v", err)
-	}
-	if got := summaries(actions); !strings.Contains(got, "retire the wg-easy container") {
-		t.Fatalf("wg-easy is never retired once we demonstrably carry the interface:\n%s", got)
-	}
-
-	// Never for a container that is already gone.
-	p.containerPresent = func(string) bool { return false }
-	actions, err = p.Plan(context.Background(), spec)
-	if err != nil {
-		t.Fatalf("Plan() error = %v", err)
-	}
-	if got := summaries(actions); strings.Contains(got, "retire") {
-		t.Fatalf("planner tries to retire a container that is already gone:\n%s", got)
-	}
-}
-
-// The peer probe fails OPEN so a broken `awg show` cannot bounce a healthy
-// interface. That trade is right for deciding whether to re-apply and wrong for
-// deciding whether to delete the only fallback, so retirement additionally
-// requires that the probe actually answered.
-func TestClientWGPlannerKeepsWGEasyWhenThePeerProbeCannotAnswer(t *testing.T) {
-	p := clientPlanner(t, true)
-	p.containerPresent = func(string) bool { return true }
-	p.ifacePeers = func(string) ([]string, error) { return nil, errors.New("awg: command not found") }
-	spec := managedSpec(t)
-	applyPlan(t, p, spec)
-	claimIt(t, p)
-
-	actions, err := p.Plan(context.Background(), spec)
-	if err != nil {
-		t.Fatalf("Plan() error = %v", err)
-	}
-	if got := summaries(actions); strings.Contains(got, "retire") {
-		t.Fatalf("the fallback was deleted on the strength of a probe that could not run:\n%s", got)
-	}
-}
-
-// The failure this ordering exists to prevent: awg-quick is missing, so the
-// bring-up cannot work. wg-easy must still be there afterwards.
-func TestClientWGPlannerKeepsWGEasyWhenTheInterfaceNeverComesUp(t *testing.T) {
-	p := clientPlanner(t, false)
-	p.containerPresent = func(string) bool { return true }
-	spec := managedSpec(t)
-
-	for pass := 1; pass <= 3; pass++ {
-		actions, err := p.Plan(context.Background(), spec)
-		if err != nil {
-			t.Fatalf("pass %d: Plan() error = %v", pass, err)
-		}
-		if got := summaries(actions); strings.Contains(got, "retire") {
-			t.Fatalf("pass %d retired the fallback while our interface is still down:\n%s", pass, got)
-		}
-		applyPlan(t, p, spec) // the exec actions no-op here, exactly as a failed up does
-	}
-}
-
-// --- handover mechanics --------------------------------------------------
-
-// Planner ORDER is part of the contract, not an implementation detail: the
-// client interface must be released before compose restores wg-easy, or the
-// rollback pass tears down the interface wg-easy just created.
-func TestClientInterfacePlannerRunsBeforeCompose(t *testing.T) {
-	var client, compose int = -1, -1
-	for i, pl := range Planners(Input{Paths: PathsUnder(t.TempDir())}) {
-		switch pl.(type) {
-		case clientWGPlanner:
-			client = i
-		case composePlanner:
-			compose = i
-		}
-	}
-	if client < 0 || compose < 0 {
-		t.Fatalf("planners not found: client=%d compose=%d", client, compose)
-	}
-	if client > compose {
-		t.Fatalf("client interface planner runs at %d, after compose at %d — rollback would tear down wg-easy's interface", client, compose)
 	}
 }
 
@@ -685,10 +574,9 @@ func TestClientInterfaceCarriesTheProberAndDoesNotCallItDrift(t *testing.T) {
 
 	p := clientWGPlanner{
 		confPath: conf, privateKey: "serverkey", synthKey: wg.KeyPair{PrivateKey: "synthpriv", PublicKey: "SYNTHPUB"},
-		up:               func(string) bool { return true },
-		ifacePeers:       func(string) ([]string, error) { return []string{clientPub, "SYNTHPUB"}, nil },
-		containerPresent: func(string) bool { return false },
-		lookPath:         func(string) (string, error) { return "", errors.New("absent") },
+		up:         func(string) bool { return true },
+		ifacePeers: func(string) ([]string, error) { return []string{clientPub, "SYNTHPUB"}, nil },
+		lookPath:   func(string) (string, error) { return "", errors.New("absent") },
 	}
 	// applyPlan, not applyNonExec: the interface config is rendered with a redactor,
 	// so its Display is the REDACTED text. Writing that back would leave a file that

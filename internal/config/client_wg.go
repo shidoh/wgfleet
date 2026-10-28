@@ -37,20 +37,11 @@ func validateClientAWG(i int, m MasterConfig, fleet FleetSection) []error {
 			"(want off, timers or full; \"timers\" keeps every existing client config working, "+
 			"\"full\" adds header protection and requires all of them to be re-imported)", i, m.ClientAWG.AWG3))
 	}
-	// wg-easy's schema has no column for any 3.0 parameter, so while it owns the
-	// leg the knob has nowhere to land. Refusing beats writing 2.0 to the wire
-	// under a manifest that says 3.x.
-	if m.ClientAWG3() != ClientAWG3Off && !m.ClientAWGManaged() {
-		errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.awg3 is %q but client_awg.managed is not true — "+
-			"while wg-easy owns the client leg it cannot carry AmneziaWG 3.x, and the setting would silently do nothing",
-			i, m.ClientAWG.AWG3))
-	}
-
-	// The pool is optional while wg-easy owns the interface (it keeps its own
-	// state), but a managed interface is rendered FROM the pool: addresses are
-	// allocated out of it and the master's own address sits inside it.
-	if m.ClientAWGManaged() && m.ClientAWG.AddressPool == "" {
-		errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.address_pool is required when client_awg.managed is true", i))
+	// The client interface exists only with a pool, so a 3.x mode without one
+	// would silently do nothing.
+	if m.ClientAWG3() != ClientAWG3Off && !m.ClientAWGEnabled() {
+		errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.awg3 is %q but client_awg.address_pool is not set — "+
+			"without a pool the master has no client interface to carry it", i, m.ClientAWG.AWG3))
 	}
 	// The pool must have a host #1 — the master's own address inside it. Without
 	// one the broker's masterClientAddress fails, and that failure now aborts the
@@ -93,10 +84,9 @@ func validateClientAWG(i int, m MasterConfig, fleet FleetSection) []error {
 		errs = append(errs, fmt.Errorf("fleet.masters[%d]: unknown client_awg.ipv6 %q (want %q or %q)",
 			i, m.ClientAWG.IPv6, ClientIPv6Off, ClientIPv6Block))
 	}
-	if m.ClientAWG.IPv6 == ClientIPv6Block && !m.ClientAWGManaged() {
-		errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.ipv6 is %q but client_awg.managed is not true — "+
-			"only the agent-owned interface can answer IPv6; wg-easy would hand out the route and drop the packets",
-			i, ClientIPv6Block))
+	if m.ClientAWG.IPv6 == ClientIPv6Block && !m.ClientAWGEnabled() {
+		errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.ipv6 is %q but client_awg.address_pool is not set — "+
+			"without a pool the master has no client interface to answer IPv6", i, ClientIPv6Block))
 	}
 
 	for _, a := range m.ClientAWGAllowedIPs() {
@@ -105,9 +95,9 @@ func validateClientAWG(i int, m MasterConfig, fleet FleetSection) []error {
 			errs = append(errs, fmt.Errorf("fleet.masters[%d]: client_awg.allowed_ips entry %q is not a valid CIDR: %w", i, a, err))
 			continue
 		}
-		// wg-easy's own default put "::/0" in front of every client over an IPv4-only
-		// data plane and stalled dual-stack traffic until the operator re-imported
-		// every device; owning the render means refusing to repeat it.
+		// "::/0" in front of every client over an IPv4-only data plane stalls
+		// dual-stack traffic until every device is re-imported; owning
+		// the render means refusing to produce it.
 		// client_awg.ipv6: block is the deliberate version of the same route, paired
 		// with a master that answers it, so it is allowed there and nowhere else.
 		if p.Addr().Is6() && p.Bits() == 0 && m.ClientAWG.IPv6 != ClientIPv6Block {

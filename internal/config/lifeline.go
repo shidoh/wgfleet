@@ -137,13 +137,12 @@ func (c ControllerConfig) validateLifeline() []error {
 		}
 
 		// The lifeline pool is projected by the controller, the same way the master's
-		// managed client pool is — there is no wg-easy equivalent for a reserve
-		// interface, so the controller must own the credentials on this exit too.
+		// client pool is, so it needs the master whose clients it carries.
 		if !hasMaster {
 			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): lifeline needs a master in slot 0 (its clients are the ones a lifeline carries)", i, e.Name))
 		}
-		if hasMaster && !master.ClientAWGManaged() {
-			errs = append(errs, fmt.Errorf("%s: requires masters[%s].client_awg.managed: true (the controller must own the credentials it projects)", at, master.Name))
+		if hasMaster && !master.ClientAWGEnabled() {
+			errs = append(errs, fmt.Errorf("%s: requires masters[%s].client_awg.address_pool (the lifeline carries that master's clients)", at, master.Name))
 		}
 	}
 	return errs

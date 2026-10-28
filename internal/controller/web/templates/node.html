@@ -300,11 +300,10 @@
     <dt>Agent</dt><dd class="dim">{{if .Node.AgentVersion}}{{.Node.AgentVersion}} (wire v{{.Node.WireVersion}}){{else}}— (not reported){{end}}</dd>
     <dt>Created</dt><dd class="dim">{{absTime .Node.CreatedAt}}</dd>
   </dl>
-  {{if or .MetricsURL .WGEasyURL .MihomoURL}}
+  {{if or .MetricsURL .MihomoURL}}
   <div class="rule"></div>
   <dl class="kv">
     {{if .MetricsURL}}<dt>Metrics</dt><dd><a class="extlink" href="{{.MetricsURL}}" target="_blank" rel="noopener noreferrer">Prometheus /metrics ↗</a></dd>{{end}}
-    {{if .WGEasyURL}}<dt>wg-easy</dt><dd><a class="extlink" href="{{.WGEasyURL}}" target="_blank" rel="noopener noreferrer">client admin UI ↗</a></dd>{{end}}
     {{if .MihomoURL}}<dt>mihomo</dt><dd><a class="extlink" href="{{.MihomoURL}}" target="_blank" rel="noopener noreferrer">router dashboard ↗</a></dd>{{end}}
   </dl>
   {{end}}

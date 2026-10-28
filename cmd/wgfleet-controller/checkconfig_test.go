@@ -326,3 +326,24 @@ func TestUnknownKeyWarningsSilentOnTheShippedExample(t *testing.T) {
 		t.Fatalf("warnings on the shipped example: %q", got)
 	}
 }
+
+// Keys removed with wg-easy are not typos: an existing manifest keeps loading and
+// the warning says what happened instead of suggesting a misspelling.
+func TestUnknownKeyWarningsExplainRemovedWGEasyKeys(t *testing.T) {
+	p := writeManifest(t, `
+fleet:
+  masters:
+    - name: master-1
+      client_awg: { listen_port: 443, address_pool: 10.80.0.0/24, managed: true }
+      compose: { wg_easy_web_port: 51821, wg_easy_image: ghcr.io/wg-easy/wg-easy, wg_easy_tag: "15" }
+`, 0o600)
+	got := unknownKeyWarnings(p)
+	if len(got) != 4 {
+		t.Fatalf("warnings = %q, want one per removed key", got)
+	}
+	for _, w := range got {
+		if !strings.Contains(w, "removed with wg-easy") || strings.Contains(w, "misspelled") {
+			t.Errorf("warning does not explain the removal: %q", w)
+		}
+	}
+}

@@ -16,7 +16,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
-// managedMasterSpec is a master whose client interface the agent owns.
+// managedMasterSpec is a master with a client interface.
 func managedMasterSpec() domain.NodeSpec {
 	return domain.NodeSpec{
 		Role: domain.RoleMaster,
@@ -72,9 +72,9 @@ func TestWGClientsPageListsCredentials(t *testing.T) {
 	}
 }
 
-// Before the handover the page still works — that is the migration order: issue
-// and import first, flip the knob second.
-func TestWGClientsPageBeforeHandover(t *testing.T) {
+// A master without a client interface still shows the page and says why no
+// configs are offered.
+func TestWGClientsPageWithoutClientInterface(t *testing.T) {
 	var clients []domain.WGClient
 	h, _ := wgClientHandler(t, domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}}, &clients)
 
@@ -82,8 +82,8 @@ func TestWGClientsPageBeforeHandover(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", res.StatusCode)
 	}
-	if !strings.Contains(body, "wg-easy still owns") {
-		t.Errorf("page does not explain the pre-handover state:\n%s", body)
+	if !strings.Contains(body, "This master has no client interface") {
+		t.Errorf("page does not explain the missing client interface:\n%s", body)
 	}
 	if strings.Contains(body, "Download .conf") {
 		t.Error("page offers configs while the interface is not ours yet")
@@ -403,10 +403,10 @@ func TestWGClientsPageOnANonMasterIsNotAnError(t *testing.T) {
 	}
 }
 
-// Nothing is being polled for while wg-easy owns the leg, so a pulsing LIVE chip
-// over the list is a lie — and Mute/handshake rows describe an interface these
-// credentials are not on yet.
-func TestWGClientsPageBeforeHandoverIsNotLive(t *testing.T) {
+// Nothing is being polled for while the master has no client interface, so a
+// pulsing LIVE chip over the list is a lie — and Mute/handshake rows describe an
+// interface these credentials are not on yet.
+func TestWGClientsPageWithoutClientInterfaceIsNotLive(t *testing.T) {
 	clients := []domain.WGClient{{ID: "a", Name: "laptop", Address: "10.80.0.2/32", PublicKey: "pub-a", Enabled: true}}
 	h, _ := wgClientHandler(t, domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}}, &clients)
 	_, body := get(t, h, "/nodes/master-xa-1/wg-clients")

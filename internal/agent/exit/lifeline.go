@@ -18,12 +18,12 @@ import (
 // through the shared wgiface helpers so the two interfaces cannot drift apart in
 // their answers. Two things differ, and both are simplifications:
 //
-//   - No claim file. The master may INHERIT its client leg from wg-easy, so it
-//     needs a written record that it was the one that raised it. Nothing but this
-//     agent ever creates awgl0, so the rendered config's presence is already the
-//     only ownership evidence the disable path needs.
-//   - No wg-easy retirement and no backend gymnastics. Exits carry the AmneziaWG
-//     kernel module by construction — it is what their own WGServer runs on.
+//   - No claim file. The master may find wg0 already raised by something else, so
+//     it needs a written record that it was the one that raised it. Nothing but
+//     this agent ever creates awgl0, so the rendered config's presence is already
+//     the only ownership evidence the disable path needs.
+//   - No backend gymnastics. Exits carry the AmneziaWG kernel module by
+//     construction — it is what their own WGServer runs on.
 
 // lifelineComponent is the planner's name in plan output and in the journal.
 const lifelineComponent = "lifeline interface"

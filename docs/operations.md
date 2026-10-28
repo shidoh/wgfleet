@@ -89,8 +89,7 @@ way back from the console.
 
 ![AWG clients page on the master: issue a client, the interface every config inherits, issued clients with online state and transfer.](assets/img/console-wg-clients.png)
 
-On a master with `client_awg.managed`, its node page has a **Client credentials**
-panel.
+A master's node page has a **Client credentials** panel.
 
 ```yaml
 controller:
@@ -100,7 +99,6 @@ fleet:
   masters:
     - name: master-1
       client_awg:
-        managed: true
         listen_port: 443
         address_pool: 10.80.0.0/24
 ```
@@ -453,7 +451,6 @@ Captured:
 | The master's own AmneziaWG key | when this node is also a master |
 | The client-interface key | when this node is also a master |
 | The client-facing VLESS/REALITY key | when this node is also a master |
-| The wg-easy client db and admin password | where wg-easy is still in use |
 | The node identity `node.crt` / `node.key` / `agent.yaml` | when this node is also a master |
 
 **Six private keys** in one envelope: store it like a secret.
@@ -724,8 +721,8 @@ All keys: [configuration.md#2-controller-the-controller-process](configuration.m
 | Exit | `dns-filter` | `dns.enabled`, once the resolver has its listen address | — |
 | Exit | `lifeline` | the exit has a `lifeline` | Red with a reason ⇒ `awgl0` serves its last good config, not the current spec. |
 | Master | `client-wg` | always | The client interface is up. |
-| Master | `client-wg-owned` | `client_awg.managed: true` | The agent, not wg-easy, carries the interface. An interface named `wg0` exists in both cases, and every deferral the planner can report (no key yet, spec rejected, 3.x refused) leaves it up but unmanaged. |
-| Master | `udp-return-path` | `client_awg.managed: true` | No UDP port this node holds silently black-holes the replies to clients on it. |
+| Master | `client-wg-owned` | `client_awg.address_pool` set | The agent carries `wg0` from the current spec. Every deferral the planner can report (no key yet, spec rejected, 3.x refused) leaves the interface up on its last-good config and this check red. |
+| Master | `udp-return-path` | `client_awg.address_pool` set | No UDP port this node holds silently black-holes the replies to clients on it. |
 | Master | `mihomo-api` | always | The Clash API on `<mgmt_addr>:9090` answers `/version`. |
 | Master | `dns-filter` | `dns.enabled`, once the resolver has its listen address | The master is the clients' resolver: up-but-not-resolving must read Degraded. |
 | Master | `client-vless` | `client_vless.enabled` | The VLESS+REALITY inbound is up; a down inbound shows **Degraded**. |
@@ -820,17 +817,6 @@ pass (about every 30 s) and `apt-get install -y` fails with "Held packages were
 changed". `--allow-change-held-packages` moves both packages as one transaction
 and the agent re-pins the new version.
 
-On a master whose clients are still served by wg-easy (see
-[client-migration.md](client-migration.md)), watch the container, not the
-interface.
-
-| Fact | Detail |
-|---|---|
-| wg-easy v15.3.0 bundles generation-1 tools | On a 3.x module its `awg-quick up wg0` fails with `Unable to modify interface: Invalid argument`. |
-| Agent v0.2.4 or newer | Recreates wg-easy from v15.4.0 (generation-3 tools) within one pass of the reload. Do not `docker restart` it by hand in between. |
-| Older agent | The way out is client-migration.md, parts 2-3. |
-| Once v15.4.0 has run | Do **not** take the module back to 1.x: it migrated wg-easy's database forward and v15.3.0 will not open it. |
-
 If the DKMS build itself fails, the reason is in
 `/var/lib/dkms/amneziawg/1.0.0/build/make.log`, usually the kernel. Ubuntu
 22.04's GA kernel is 5.15 and upstream builds have broken on pre-6.7 kernels.
@@ -845,14 +831,12 @@ the agent never installs that unit.
 ```bash
 journalctl -u wgfleet-agent -b --no-pager | grep -i -E 'error|warn|awg|wg0' | tail -30
 ip -br link | grep -E 'wg|awg'
-docker ps -a --format '{{.Names}} {{.Status}}'        # master: is wg-easy up and healthy?
+docker ps -a --format '{{.Names}} {{.Status}}'        # master: is mihomo up?
 ```
 
 `wg0 not found` in a health check is the agent NOTICING the interface is gone,
-not failing to create it. On a master still on wg-easy the creator is the
-container, and its reason is in `docker logs --tail 40 wg-easy`. On an exit the
-interface is `awg0`, the agent raises it, and the failing `awg-quick up` is in
-the journal with its output.
+not failing to create it. The agent raises `wg0` on a master and `awg0` on an
+exit; the failing `awg-quick up` is in the journal with its output.
 
 Check the versions first; two of the causes below are version splits:
 
@@ -865,7 +849,7 @@ Causes, in order of likelihood:
 
 | Symptom | Look at | Do |
 |---|---|---|
-| `awg setconf … Invalid argument` | Compare `modinfo -F version amneziawg` with `awg --version` on the host and, on a wg-easy master, inside the container (`docker exec wg-easy awg --version`). | The major versions must agree. See the section above. |
+| `awg setconf … Invalid argument` | Compare `modinfo -F version amneziawg` with `awg --version` on the host. | The major versions must agree. See the section above. |
 | `dkms status` has no `installed` line for `uname -r` | The module was not built for the running kernel. | See "Kernel upgrades" above. |
 | The move into mihomo's namespace reverts every time and probes say "connection refused" | `nft rejects the rendered ruleset` in the agent journal, and `nft list table ip wgfleet_master` for a `dnat to <gateway>:7895` line while mihomo's network mode is `container:…`. | The host is still intercepting clients after mihomo left. Requires agent v0.2.4 or newer on nftables 1.0.2 (Ubuntu 22.04). |
 | The interface is back but `udp-return-path` keeps failing | `client interception not moving … reverted 3 times` in the journal. | The namespace mover gave up while the interface was down. On an agent older than v0.2.4, toggle `mihomo.client_via_netns` to `off`, wait a pass, and back to `auto`. |
@@ -1140,8 +1124,7 @@ the knob.
 **It ships on.** Before moving anything the agent proves the namespace resolves
 and reaches an exit; after the move it measures the client path from its own
 synthetic client and reverts itself if that path breaks. `off` is a full,
-converging way back. The move does not start on a master where wg-easy still owns
-the client interface (see [client-migration.md](client-migration.md)).
+converging way back.
 
 Run a canary on one device for a day before `auto`.
 

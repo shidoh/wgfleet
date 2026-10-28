@@ -193,14 +193,9 @@ Repeat this step for every additional exit (new name, new `address_pool`).
 
 ## Step 8 — Connect your devices
 
-wgfleet issues client credentials itself. The template already sets this —
-confirm the master's `client_awg` block reads:
-
-```yaml
-        managed: true   # the agent carries the client interface
-```
-
-All keys: [configuration.md#client_awg-the-client-facing-amneziawg-listener](configuration.md#client_awg-the-client-facing-amneziawg-listener)
+wgfleet issues client credentials itself; the agent carries the client
+interface `wg0`. Client keys:
+[configuration.md#client_awg-the-client-facing-amneziawg-listener](configuration.md#client_awg-the-client-facing-amneziawg-listener)
 
 1. Restart the controller (`--check-config` first — see [CLI.md](cli.md)).
 2. Web UI → master → **AWG CLIENTS** → issue one. You get a `.conf` to
@@ -231,10 +226,6 @@ With the portal set, prefer a **device** over a bare credential: Web UI →
 (FlClash, ClashMetaForAndroid, ClashX Meta, Clash Verge Rev) that carries
 AmneziaWG and VLESS and switches between them. Procedure:
 [operations.md#client-devices](operations.md#client-devices).
-
-Upgrading from a wgfleet that used wg-easy: do not set `managed: true`
-straight away — import the existing credentials first, or every client
-tunnel stops at the cutover. Procedure: [CLIENT-MIGRATION.md](client-migration.md).
 
 Done. Your traffic now goes device → master → exit → internet.
 
@@ -270,16 +261,13 @@ wgfleet-agent --config /etc/wgfleet/agent.yaml --once --plan   # dry run: what w
   [RU split tunnel + DNS filtering](recipes/ru-split-tunnel-dns-filter.md)
   (both in this archive). It changes only a handful of keys from the setup
   above.
-- Keep `client_awg.managed: true` when you merge it — the example carries
-  it, and a manifest without it hands the client interface back to wg-easy
-  with an empty database.
 
 ## Every configuration option
 
 - `CONFIGURATION.md` in this archive is the complete reference: every key in
   `controller.yaml` and `agent.yaml`, with its type, default and meaning,
   plus links to the upstream documentation of every third-party component
-  wgfleet drives (mihomo, blocky, xray/REALITY, wg-easy, wgcf, ZeroTier) for
+  wgfleet drives (mihomo, blocky, xray/REALITY, wgcf, ZeroTier) for
   the settings passed through via `overrides` and `extra_files`.
 - Fully annotated reference configs are in `examples/` inside the archive;
   every key listed in `CONFIGURATION.md` appears there too, commented.

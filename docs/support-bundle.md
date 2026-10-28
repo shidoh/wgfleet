@@ -40,7 +40,7 @@ Per node:
 | `network.txt` | addresses, routes, routing rules, the AmneziaWG routing table, the namespace routing table, `awg show`, the nft firewall ruleset, listening sockets, conntrack count; on a master also: mihomo's network mode, the namespace move's recorded state, the ruleset and listeners inside the namespace, and the ZeroTier overlay status |
 | `services.txt` | wgfleet's own unit status, every *failed* systemd unit on the node, running containers (`docker ps`) |
 | `logs.txt` | bounded journal tails for `wgfleet-agent`/`wgfleet-controller` (last ~300 lines each), journal disk usage, root disk headroom, a per-unit line count over the last hour |
-| `containers.txt` | bounded log tails from the containers wgfleet runs (mihomo, xray, blocky, wg-easy). A missing one on a node that does not run it is normal. |
+| `containers.txt` | bounded log tails from the containers wgfleet runs (mihomo, xray, blocky). A missing one on a node that does not run it is normal. |
 
 - Every command is read-only. `awg showconf` / `wg showconf` are never run.
 - `awg show` **is** run; it masks the private key but prints the AmneziaWG 3.x
@@ -59,7 +59,7 @@ Every file wgfleet manages that carries a secret:
 
 - `controller.yaml` and `agent.yaml`
 - the AmneziaWG/WARP tunnel configs and the reserve interface key (`lifeline.key`)
-- mihomo/xray/wg-easy configs and databases
+- mihomo/xray configs
 - this node's own private key
 - the fleet CA's private key
 - anything under a sops-encrypted path

@@ -42,7 +42,7 @@
   offline for that reason rather than their own — {{.IfaceDown}}. Check the node's status.</p>
   {{end}}
   {{if not .Managed}}
-  <p class="panel-note">Not in force yet — wg-easy still owns this interface. These clients start working after the handover.</p>
+  <p class="panel-note">Not in force yet — this master has no client interface. These clients start working once it has one.</p>
   {{end}}
 
   {{if not .Clients}}

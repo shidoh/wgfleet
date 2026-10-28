@@ -12,8 +12,8 @@ import (
 	"github.com/shidoh/wgfleet/internal/wg"
 )
 
-// Client-facing WireGuard credentials: the controller-side half of the leg that
-// used to belong to wg-easy. The broker mints them (keys + address), the store
+// Client-facing WireGuard credentials: the controller-side half of the master's
+// client interface. The broker mints them (keys + address), the store
 // keeps them, and clientWGSpec projects them onto the node's desired state.
 
 // errBadClientName is the single rule for every path that names a credential.
@@ -142,21 +142,18 @@ func (b *Broker) RevokeWGClient(ctx context.Context, masterID, clientID string) 
 	return b.store.RemoveWGClient(ctx, masterID, clientID)
 }
 
-// clientWGSpec resolves a master's client-facing AmneziaWG interface, or nil when
-// the operator has not handed it over (wg-easy still owns the leg).
+// clientWGSpec resolves a master's client-facing AmneziaWG interface.
 //
 // The obfuscation and the MTU are NOT re-derived here: they are the same values
-// the client-facing WGServerSpec already carries, so a client configured before
-// the handover keeps working after it. That is the whole point of the transparent
-// migration — the server implementation changes underneath, the wire does not.
-// An ABSENT block is a command, not a shrug: the agent reads it as "the leg was
-// handed back", brings our interface down and lets compose restore wg-easy. So
-// nil may only ever express a DECISION the operator made — the knob is off, or the
-// agent is too old to own the leg. Every failure to find out returns an error
-// instead, which fails this master's spec render, fails PullSpec, and leaves the
-// node on its last-good config: unknown means leave it alone.
+// the client-facing WGServerSpec already carries.
+// An ABSENT block is a command, not a shrug: the agent reads it as "no client
+// interface" and brings ours down. So nil may only ever express a DECISION — the
+// master has no client_awg.address_pool, or its agent is too old to own the
+// interface. Every failure to find out returns an
+// error instead, which fails this master's spec render, fails PullSpec, and leaves
+// the node on its last-good config: unknown means leave it alone.
 func (b *Broker) clientWGSpec(ctx context.Context, master config.MasterConfig, server domain.WGServerSpec) (*domain.ClientWGSpec, error) {
-	if !master.ClientAWGManaged() {
+	if !master.ClientAWGEnabled() {
 		return nil, nil
 	}
 	node, err := b.store.GetNode(ctx, master.Name)
@@ -164,11 +161,10 @@ func (b *Broker) clientWGSpec(ctx context.Context, master config.MasterConfig, s
 		return nil, fmt.Errorf("client WG interface: cannot read the master's registration: %w", err)
 	}
 	if node.WireVersion < api.WireClientWG {
-		// A DECISION, not a failure: the agent predates wire v8, so it drops this
-		// block anyway and keeps wg-easy serving the client leg. Rendering nothing is
-		// the fail-safe half of that gate — the master converges exactly as before,
-		// and the operator sees why.
-		b.log.Warn("client WG interface not rendered: agent is too old to own the client leg",
+		// A DECISION, not a failure: the agent predates wire v8 and would drop this
+		// block anyway. Rendering nothing lets the rest of the master converge, and
+		// the operator sees why.
+		b.log.Warn("client WG interface not rendered: agent is too old to own the client interface; upgrade it",
 			"master", master.Name, "agent_wire", node.WireVersion, "need_wire", api.WireClientWG)
 		return nil, nil
 	}
@@ -231,8 +227,8 @@ func (b *Broker) clientWGSpec(ctx context.Context, master config.MasterConfig, s
 }
 
 // masterClientAddress returns the master's own address inside its client pool:
-// the first host, matching what wg-easy hands the interface today so the handover
-// does not move the gateway address out from under configured clients.
+// the first host. Configured clients carry it as their gateway, so it must not
+// move.
 func masterClientAddress(pool string) (string, error) {
 	addr, err := nthHost(pool, 1)
 	if err != nil {
@@ -251,15 +247,13 @@ func (b *Broker) masterConfig(name string) (config.MasterConfig, bool) {
 	return config.MasterConfig{}, false
 }
 
-// clientLegAWG resolves the obfuscation for the MANAGED client interface: the
-// same 2.0 params wg-easy served, plus whatever half of AmneziaWG 3.x the
+// clientLegAWG resolves the obfuscation for the client interface: the 2.0 params
+// derived for the client-facing WGServer, plus whatever half of AmneziaWG 3.x the
 // operator asked for.
 //
-// The 3.x half is applied to a COPY, never to server.AWG. On a master that struct
-// is read by the wg-easy planners and by nothing else, and wg-easy's schema has no
-// column for a single 3.0 parameter — so leaking them there would have the planner
-// write a partial set into its database on every reconcile pass. The client leg's
-// generation and wg-easy's are simply different questions.
+// The 3.x half is applied to a COPY, never to server.AWG, so the operator's 3.x
+// choice stays confined to the client leg and cannot leak into anything else
+// built from that struct.
 //
 // Both ends of this tunnel derive from the same seed, so the shared half the
 // client's .conf carries is byte-identical to the interface's by construction;

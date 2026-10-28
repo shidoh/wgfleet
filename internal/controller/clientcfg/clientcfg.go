@@ -51,7 +51,7 @@ type Source interface {
 }
 
 // ErrNotReady marks a master that cannot hand out a config YET — no published
-// interface key, no known endpoint, the leg not handed over. It is ours, not the
+// interface key, no known endpoint, no client interface spec. It is ours, not the
 // caller's: the portal answers "try later" (503), never "your link is dead", and
 // a device profile skips that master instead of failing whole.
 var ErrNotReady = errors.New("clientcfg: master not ready")
@@ -63,9 +63,9 @@ type notReady string
 func (e notReady) Error() string        { return string(e) }
 func (e notReady) Is(target error) bool { return target == ErrNotReady }
 
-// ErrNotManaged reports that the master's client interface still belongs to
-// wg-easy, so there is no config for the controller to render yet.
-var ErrNotManaged error = notReady("this master's client interface is not managed by the agent yet")
+// ErrNotManaged reports that the master's spec carries no client interface yet
+// (nil MasterSpec.ClientWG), so there is no config for the controller to render.
+var ErrNotManaged error = notReady("this master has no client interface (client_awg.address_pool is not set)")
 
 // Result is a rendered config and the credential it belongs to.
 type Result struct {

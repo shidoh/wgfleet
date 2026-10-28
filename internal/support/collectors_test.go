@@ -42,7 +42,7 @@ func TestNotCollectedNamesTheSecretBearingFiles(t *testing.T) {
 	got := strings.Join(NotCollected(), "\n")
 	for _, want := range []string{
 		"controller.yaml", "agent.yaml", "mihomo", "xray", "awg0.conf", "wgcf.conf",
-		"wg-easy", "node.key", "ca.key", "sops",
+		"wg0.conf", "client-wg.key", "node.key", "ca.key", "sops",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("NotCollected() does not mention %q", want)

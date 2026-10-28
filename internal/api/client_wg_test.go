@@ -43,8 +43,8 @@ func TestClientWGSpecRoundTrip(t *testing.T) {
 	}
 }
 
-// A master with no managed client interface must round-trip as nil rather than as
-// an empty struct: nil is what tells the agent "wg-easy still owns this leg".
+// A master with no client interface must round-trip as nil rather than as an
+// empty struct: nil is what tells the agent "no client interface".
 func TestClientWGSpecNilRoundTrip(t *testing.T) {
 	spec := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}}
 	got := SpecFromProto(SpecToProto(spec))

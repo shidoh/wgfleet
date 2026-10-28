@@ -115,8 +115,9 @@ func Restore(ctx context.Context, archive []byte, opts RestoreOptions) (RestoreP
 	ts := now().UTC().Format("20060102T150405Z")
 	plan := RestorePlan{Layers: m.Layers}
 	if len(m.Layers) == 1 && m.Layers[0] == LayerController {
-		plan.Warnings = append(plan.Warnings, "archive has no master layer: wg-easy clients and node identity are not restored")
+		plan.Warnings = append(plan.Warnings, "archive has no master layer: the master's keys and node identity are not restored")
 	}
+	items = dropRetired(items, &plan)
 
 	// The archive says where each item goes. That is untrusted input.
 	//
@@ -213,4 +214,18 @@ func writeAtomic(dest string, data []byte, mode os.FileMode) error {
 		return fmt.Errorf("rename into %q: %w", dest, err)
 	}
 	return nil
+}
+
+// dropRetired removes archive entries for components wgfleet no longer runs and
+// says so in the plan, so an archive made before they were retired still restores.
+func dropRetired(items []Item, plan *RestorePlan) []Item {
+	kept := make([]Item, 0, len(items))
+	for _, it := range items {
+		if retiredItems[it.Name] {
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("skipped %q: wgfleet no longer uses it", it.Name))
+			continue
+		}
+		kept = append(kept, it)
+	}
+	return kept
 }

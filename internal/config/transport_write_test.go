@@ -107,7 +107,7 @@ func TestSetExitActiveTransport_InsertWhenAbsent(t *testing.T) {
 
 func TestSetExitActiveTransport_TightensManifestPerms(t *testing.T) {
 	// A world-readable manifest (0644) must be rewritten owner-only: it holds WG/REALITY
-	// private keys and the wg-easy admin password. Preserving the mode kept it 0644.
+	// private keys. Preserving the mode kept it 0644.
 	p := filepath.Join(t.TempDir(), "controller.yaml")
 	if err := os.WriteFile(p, []byte(sampleManifest), 0o644); err != nil {
 		t.Fatalf("seed manifest: %v", err)

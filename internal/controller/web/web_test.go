@@ -292,20 +292,14 @@ func TestNodeDetailWithStatusAndSpec(t *testing.T) {
 	}
 }
 
-func TestMasterDetailShowsWGEasyLink(t *testing.T) {
-	h, st := newTestHandler(t, stubRenderer{spec: domain.NodeSpec{Role: domain.RoleMaster}})
+// wg-easy is not run anymore: no node page may link to its admin UI.
+func TestMasterDetailHasNoWGEasyLink(t *testing.T) {
+	h, st := newTestHandler(t, stubRenderer{spec: domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}}})
 	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, MgmtAddr: "10.20.25.254", State: domain.StateReady})
 
 	_, body := get(t, h, "/nodes/master-xa-1")
-	if !strings.Contains(body, "http://10.20.25.254:44423") {
-		t.Errorf("master detail missing wg-easy link to its mgmt addr:\n%s", body)
-	}
-
-	// An exit node must not show a wg-easy link.
-	seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, MgmtAddr: "10.20.0.5", State: domain.StateReady})
-	_, body = get(t, h, "/nodes/exit-de-1")
-	if strings.Contains(body, ":44423") {
-		t.Error("exit detail should not show a wg-easy link")
+	if strings.Contains(body, ":44423") || strings.Contains(body, "wg-easy") {
+		t.Errorf("master detail still links to wg-easy:\n%s", body)
 	}
 }
 
@@ -1396,26 +1390,6 @@ func TestTopologyRailIsLiveOnlyWhenTrafficFlows(t *testing.T) {
 	}
 	if !strings.Contains(body, "topo-trunk") {
 		t.Error("master trunk missing")
-	}
-}
-
-// A migrated master must not advertise a wg-easy admin UI that no longer exists.
-//
-// The handover removes the container; the link kept rendering and hung, three
-// rows above the AWG CLIENTS link that replaced it.
-func TestNodePageDropsTheWGEasyLinkOnceMigrated(t *testing.T) {
-	node := domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, MgmtAddr: "10.20.0.1"}
-
-	before := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}}
-	if got := wgEasyURL(node, before); got == "" {
-		t.Error("the link is missing while wg-easy still owns the client interface")
-	}
-
-	after := domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{
-		ClientWG: &domain.ClientWGSpec{ListenPort: 443, AddressPool: "10.80.0.0/24"},
-	}}
-	if got := wgEasyURL(node, after); got != "" {
-		t.Errorf("a migrated master still links to wg-easy: %q", got)
 	}
 }
 

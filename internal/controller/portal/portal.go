@@ -2,8 +2,7 @@
 // credential, their own config and QR. Nothing else.
 //
 // It is deliberately a SEPARATE handler on a SEPARATE listener rather than a page
-// inside the operator UI. wg-easy's admin UI could be opened to the client pool
-// because it managed clients and nothing more; the controller's UI provisions,
+// inside the operator UI. The controller's UI provisions,
 // decommissions and drains nodes and exports an encrypted backup of the whole
 // fleet. Exposing that to end users to replace a credential page would be a large
 // and quiet escalation, so the portal has no route that can change fleet state,

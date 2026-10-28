@@ -13,13 +13,10 @@ import (
 	"github.com/shidoh/wgfleet/internal/domain"
 )
 
-// managedFleet returns the test fleet with the master's client interface handed
-// to the agent.
+// managedFleet returns the test fleet; its master has a client pool, so the agent
+// carries a client interface.
 func managedFleet() config.FleetSection {
-	f := testFleet()
-	managed := true
-	f.Masters[0].ClientAWG.Managed = &managed
-	return f
+	return testFleet()
 }
 
 func brokerWithManagedMaster(t *testing.T) (*Broker, store.Store, context.Context) {
@@ -226,20 +223,19 @@ func TestRenderMasterSpecCarriesClientWG(t *testing.T) {
 	}
 }
 
-func TestRenderMasterSpecOmitsClientWGWhenUnmanaged(t *testing.T) {
+func TestRenderMasterSpecOmitsClientWGWithoutAPool(t *testing.T) {
 	ctx := context.Background()
-	b, st := newBroker(t) // testFleet(): managed unset ⇒ wg-easy still owns the leg
+	f := testFleet()
+	f.Masters[0].ClientAWG.AddressPool = "" // no pool ⇒ no client interface
+	b, st := newBrokerWithFleet(t, f)
 	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1",
 		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
-	if _, err := b.IssueWGClient(ctx, "master-xa-1", "laptop"); err != nil {
-		t.Fatalf("issue: %v", err)
-	}
 	spec, err := b.RenderNodeSpec(ctx, "master-xa-1")
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	if spec.Master.ClientWG != nil {
-		t.Fatal("an unmanaged master must not render a client WG spec, even with credentials issued")
+		t.Fatal("a master without a client pool must not render a client WG spec")
 	}
 }
 
@@ -277,10 +273,8 @@ func TestIssueWGClientNameValidation(t *testing.T) {
 
 // --- the wire gate -------------------------------------------------------
 //
-// The knob alone is not enough. A v7 agent drops MasterSpec.client_wg and keeps
-// wg-easy serving the client leg, while the controller has already stopped
-// reconciling wg-easy's database and treats its own store as the truth. Two
-// owners of the one interface end users dial, and neither side errors.
+// A v7 agent drops MasterSpec.client_wg, so the controller must not hand the
+// client interface to it.
 
 func TestClientWGSpecRefusedForATooOldAgent(t *testing.T) {
 	b, st := newBrokerWithFleet(t, managedFleet())
@@ -316,7 +310,7 @@ func TestClientWGSpecRenderedForACurrentAgent(t *testing.T) {
 	}
 }
 
-// managedFleetAWG3 is a handed-over master whose CLIENT leg opts into a 3.x mode.
+// managedFleetAWG3 is a master whose CLIENT leg opts into a 3.x mode.
 func managedFleetAWG3(mode config.ClientAWG3Mode) config.FleetSection {
 	f := managedFleet()
 	f.Masters[0].ClientAWG.AWG3 = string(mode)
@@ -324,7 +318,7 @@ func managedFleetAWG3(mode config.ClientAWG3Mode) config.FleetSection {
 }
 
 // renderedClientAWG renders the master spec and returns the client leg's params.
-func renderedClientAWG(t *testing.T, f config.FleetSection) (client domain.AWGParams, wgEasy domain.AWGParams) {
+func renderedClientAWG(t *testing.T, f config.FleetSection) (client domain.AWGParams, server domain.AWGParams) {
 	t.Helper()
 	b, st := newBrokerWithFleet(t, f)
 	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1",
@@ -338,7 +332,7 @@ func renderedClientAWG(t *testing.T, f config.FleetSection) (client domain.AWGPa
 		t.Fatal("no client interface params rendered")
 	}
 	if spec.WGServer.AWG == nil {
-		t.Fatal("no wg-easy params rendered")
+		t.Fatal("no WGServerSpec params rendered")
 	}
 	return *spec.Master.ClientWG.AWG, *spec.WGServer.AWG
 }
@@ -383,18 +377,15 @@ func TestClientLegFullModeAddsHeaderProtection(t *testing.T) {
 	}
 }
 
-// WGServerSpec.AWG is consumed on the master by the wg-easy planners alone, and
-// wg-easy has no columns for any 3.0 parameter. Leaking the client leg's 3.x
-// params into that struct would have the planner write a partial set into
-// wg-easy's database on every pass — so the two must stay separate even when the
-// client leg is fully on 3.x.
-func TestClientLegAWG3DoesNotReachWGEasyParams(t *testing.T) {
-	client, wgEasy := renderedClientAWG(t, managedFleetAWG3(config.ClientAWG3Full))
+// The client leg's 3.x parameters go onto a copy: they must stay confined to the
+// client interface and not leak into the shared WGServerSpec params.
+func TestClientLegAWG3StaysOnTheClientSpec(t *testing.T) {
+	client, server := renderedClientAWG(t, managedFleetAWG3(config.ClientAWG3Full))
 	if !client.AWG3Enabled() {
 		t.Fatal("precondition: the client leg was meant to be on 3.x")
 	}
-	if wgEasy.AWG3Enabled() {
-		t.Fatalf("3.x parameters reached the wg-easy params struct: %+v", wgEasy.Shared)
+	if server.AWG3Enabled() {
+		t.Fatalf("3.x parameters reached the WGServerSpec params: %+v", server.Shared)
 	}
 }
 
@@ -484,9 +475,9 @@ func TestClientWGSpecFailsRatherThanEmptyingTheInterface(t *testing.T) {
 	}
 }
 
-// The other half of the same rule: nil is a COMMAND to hand the interface back to
-// wg-easy, so it may only ever come from a decision the operator made — never from
-// a failure. An agent too old to own the leg is such a decision.
+// The other half of the same rule: nil is a COMMAND to take the interface down, so
+// it may only ever come from a decision — never from a failure. An agent too old
+// to own the interface is such a decision.
 func TestClientWGSpecNilOnlyOnDeliberateRelease(t *testing.T) {
 	b, st, ctx := brokerWithManagedMaster(t)
 	setWireVersion(t, st, "master-xa-1", api.WireClientWG-1)
@@ -525,14 +516,14 @@ func TestIssueWGClientRejectsAnInjectableName(t *testing.T) {
 	}
 }
 
-// A managed client interface must hand clients a resolver.
+// The client interface must hand clients a resolver.
 //
 // ClientAWGDNS() falls back to the raw compose.client_dns manifest key, and that
 // key is commented out in every shipped example because it "defaults to the exits'
-// mgmt addresses" — a default that lives in composeSpec and that the managed path
-// never consulted. So `client_awg.managed: true` on an un-edited manifest rendered
-// configs with NO `DNS =` line at all, and the phone kept its carrier resolver:
-// the two-tier DNS of ADR-0024 reached wg-easy's clients and stopped reaching ours.
+// mgmt addresses" — a default that lives in composeSpec and that the client
+// interface path never consulted. So an un-edited manifest rendered configs with
+// NO `DNS =` line at all, and the phone kept its carrier resolver, bypassing the
+// two-tier DNS of ADR-0024.
 func TestClientWGSpecHandsOutTheFleetResolver(t *testing.T) {
 	b, _, ctx := brokerWithManagedMaster(t)
 	// The manifest sets neither client_awg.dns nor compose.client_dns — the shipped
@@ -559,10 +550,10 @@ func TestClientWGSpecHandsOutTheFleetResolver(t *testing.T) {
 	if want := "10.80.0.1"; got[0] != want {
 		t.Errorf("client DNS = %v, want the master gateway %q first", got, want)
 	}
-	// And it must agree with what the compose stack hands wg-easy's clients: two
-	// renderers disagreeing about the resolver is how this broke in the first place.
+	// And it must agree with the compose spec's client DNS: two renderers
+	// disagreeing about the resolver is how this broke in the first place.
 	if compose := spec.Master.Compose.ClientDNS; len(compose) > 0 && compose[0] != got[0] {
-		t.Errorf("compose hands out %v but the managed interface hands out %v", compose, got)
+		t.Errorf("compose hands out %v but the client interface hands out %v", compose, got)
 	}
 }
 

@@ -12,7 +12,6 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/agent/restart"
 	"github.com/shidoh/wgfleet/internal/agent/tuning"
-	"github.com/shidoh/wgfleet/internal/awgmod"
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/dnsfilter"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -20,7 +19,6 @@ import (
 	"github.com/shidoh/wgfleet/internal/netfw"
 	"github.com/shidoh/wgfleet/internal/netns"
 	"github.com/shidoh/wgfleet/internal/wg"
-	"github.com/shidoh/wgfleet/internal/wgeasy"
 )
 
 // Input is everything the master planners need beyond the NodeSpec. PrivateKey
@@ -39,9 +37,8 @@ type Input struct {
 	// the SOCKS passwords derive from it. Empty ⇒ the portal planner defers.
 	PortalPrivateKey string
 	// ClientWGPrivateKey is the master's CLIENT-FACING WireGuard private key — the
-	// identity of the interface end users dial once the agent owns it. Agent-local
-	// (adopted from wg-easy's database on handover, else generated), never on the
-	// wire. Empty ⇒ the client-interface planner defers, like the vless one.
+	// identity of the interface end users dial. Agent-local (generated on-node),
+	// never on the wire. Empty ⇒ the client-interface planner defers, like the vless one.
 	ClientWGPrivateKey string
 	// SyntheticKey is the keypair of the master's OWN client — the peer it sends
 	// traffic through to measure whether a packet entering the client interface
@@ -64,12 +61,6 @@ type Input struct {
 	// Default is applied when empty. (The master masquerades on every egress except
 	// this interface, so a separate egress iface no longer needs detecting.)
 	ClientInterface string
-	// AdminUsername / AdminPassword seed wg-easy's unattended setup (INIT_*), so a
-	// fresh master never stops at the interactive setup wizard. They are resolved
-	// agent-locally — the password is generated and persisted on-node and never
-	// sent by the controller (ADR-0008). Empty password ⇒ no unattended setup.
-	AdminUsername string
-	AdminPassword string
 	// OverlayMSS clamps TCP MSS on the mgmt overlay (control-plane insurance);
 	// 0 disables. See config.AgentSection.MgmtOverlayMSS and netfw.RenderInput.
 	OverlayMSS int
@@ -95,7 +86,7 @@ type Input struct {
 	Restart *restart.Governor
 }
 
-const defaultClientInterface = "wg0"
+const defaultClientInterface = domain.ClientWGInterface
 
 // ClientWGInterface is the same name, exported for the agent's identity audit,
 // which has to ask the LIVE interface what key it is serving.
@@ -118,23 +109,14 @@ func Planners(in Input) []reconcile.Planner {
 		// ordering the bootstrap uses ("firewall before traffic").
 		firewallPlanner{path: in.Paths.FirewallNFT, overlayMSS: in.OverlayMSS, clientIface: in.ClientInterface,
 			netnsAttached: in.NetnsAttached},
-		// The client interface goes BEFORE compose, and the order is load-bearing in
-		// the REVERSE direction. On the rollback pass compose restores wg-easy and
-		// lets it recreate wg0; if we ran after it, we would tear down the interface
-		// it had just made — every pass, forever, because our config file stays on
-		// disk. Running first, we release the interface while it is still ours and
-		// compose then hands it to wg-easy cleanly.
-		//
-		// The handover direction is unaffected: claiming wg0 does not require
-		// wg-easy to be stopped first (we take the interface from it either way),
-		// and the compose planner in the same pass retires the container.
+		// The client interface goes BEFORE compose: blocky and mihomo bind the
+		// client gateway address, which exists only once wg0 is up.
 		clientWGPlanner{confPath: in.Paths.ClientWGConf, privateKey: in.ClientWGPrivateKey,
 			synthKey: in.SyntheticKey},
 		// After the client interface: the prober dials it, so it has to exist first.
 		synthPlanner{confPath: in.Paths.SynthConf, synthKey: in.SyntheticKey,
 			serverPub: in.ClientWGPublicKey},
-		composePlanner{path: in.Paths.Compose, adminUser: in.AdminUsername, adminPass: in.AdminPassword,
-			netnsAttached: in.NetnsAttached},
+		composePlanner{path: in.Paths.Compose, netnsAttached: in.NetnsAttached},
 		// Extra files (operator rule-provider lists like direct-domains.yaml) MUST be
 		// written before mihomo renders + hot-reloads its config, which references them
 		// as `file` rule-providers — otherwise the first reload points at a missing
@@ -157,22 +139,6 @@ func Planners(in Input) []reconcile.Planner {
 			netnsAttached: in.NetnsAttached, disturbed: in.OnMihomoDisturbed},
 		masterNATPlanner{path: in.Paths.NFT, v6Path: in.Paths.V6NFT, clientIface: in.ClientInterface,
 			netnsAttached: in.NetnsAttached},
-		// The client leg has exactly one owner. While wg-easy holds it these three
-		// keep its database converged; once the operator hands the leg to the agent
-		// they all no-op (see handedOver) and clientWGPlanner takes over. Writing to
-		// a database whose service we just stopped would be harmless but misleading —
-		// the plan would report work on a component that is gone.
-		//
-		// They sit AFTER the data plane rather than before it, and the reason is the
-		// pass on which client interception moves into mihomo's namespace. Compose
-		// puts mihomo in the namespace; the host stops intercepting only when the
-		// master NAT is re-rendered, several planners later — and in between, the host
-		// is still redirecting client traffic at listeners that have moved. Everything
-		// standing in that gap is time clients spend with no path, so only the things
-		// that MUST precede mihomo (its extra files, its dashboard) are left there.
-		wgEasyPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface, compose: in.Paths.Compose},
-		wgEasyUserConfigPlanner{dbPath: in.Paths.WGEasyDB, iface: wgeasy.DefaultInterface},
-		wgEasyMetricsPlanner{dbPath: in.Paths.WGEasyDB},
 		dockerfw.NewForwardPlanner(
 			"master forwarding (ip_forward + DOCKER-USER)",
 			in.ClientInterface, defaultClientInterface,
@@ -199,8 +165,8 @@ func Planners(in Input) []reconcile.Planner {
 		},
 		// Last: ensure mihomo's redirect listener is actually bound. It runs after the
 		// stack is up and wg0 exists, and self-heals the case where mihomo silently
-		// lost its redir bind (the client iface was recreated under it, e.g. a wg-easy
-		// restart flapped the bind address) — DNAT'd client TCP black-holes otherwise.
+		// lost its redir bind (the client iface was recreated under it and the bind
+		// address flapped) — DNAT'd client TCP black-holes otherwise.
 		mihomoRedirPlanner{compose: in.Paths.Compose, gov: in.Restart,
 			netnsAttached: in.NetnsAttached, disturbed: in.OnMihomoDisturbed},
 		// Also last: clear mihomo's leaked userspace AmneziaWG devices. A hot reload
@@ -243,13 +209,7 @@ type composePlanner struct {
 	// netnsAttached reports whether mihomo should join the namespace holder.
 	netnsAttached func() bool
 	path          string
-	adminUser     string                 // wg-easy unattended-setup admin user (INIT_USERNAME)
-	adminPass     string                 // wg-easy unattended-setup admin password (INIT_PASSWORD); agent-local
 	up            func(file string) bool // nil ⇒ real `docker compose ps` probe
-	// awgGen reads the AmneziaWG kernel module generation; nil ⇒ the real modinfo
-	// probe (tests inject). It selects the wg-easy image while wg-easy still owns
-	// the client leg — see compose.WGEasyImageFor.
-	awgGen func() (int, error)
 }
 
 func (composePlanner) Component() string { return "container stack (docker compose)" }
@@ -258,27 +218,15 @@ func (p composePlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]recon
 	if spec.Master == nil {
 		return nil, fmt.Errorf("compose: node has no master spec")
 	}
-	yamlText, err := compose.RenderMasterCompose(masterComposeInput(spec, p.adminUser, p.adminPass, p.netnsAttached, p.wgEasyGeneration()))
+	yamlText, err := compose.RenderMasterCompose(masterComposeInput(spec, p.netnsAttached))
 	if err != nil {
 		return nil, err
 	}
-	// Redact INIT_PASSWORD so the dry-run plan / Web UI preview never print the
-	// wg-easy admin password. Redaction is display-only — the password IS written
-	// verbatim to this file — so the mode is what actually protects it. It shipped
-	// 0644 while the comment claimed "root-only"; that claim is now enforced by
-	// FileAction, which refuses a group/world-readable mode for redacted content.
-	file, err := reconcile.FileAction(p.path, []byte(yamlText), 0o600, compose.RedactComposeEnv)
+	file, err := reconcile.FileAction(p.path, []byte(yamlText), 0o600, nil)
 	if err != nil {
 		return nil, err
 	}
 	actions := []reconcile.Action{file}
-	// Dropping the service from the file does NOT retire the container — compose
-	// treats it as an orphan and leaves it running, and `restart: unless-stopped`
-	// brings it back after a reboot. The explicit removal lives in the client
-	// interface planner instead, which is the only component that knows whether the
-	// replacement is actually carrying traffic yet; retiring the fallback from here,
-	// on the strength of the manifest knob alone, would remove it in the very pass
-	// where our own interface failed to come up.
 	switch {
 	case file.Changes():
 		// Definition changed: `up -d` recreates only the services whose config moved.
@@ -297,196 +245,11 @@ func (p composePlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]recon
 	return actions, nil
 }
 
-// wgEasyGeneration is the AmneziaWG module generation the wg-easy image is chosen
-// for. The kernel's answer when it has one; otherwise whatever generation the
-// compose file on disk was last rendered for, so that a module that is merely
-// UNLOADED — the few seconds of a `modprobe -r`/`modprobe` during an upgrade, or
-// the window before modules-load.d runs at boot — does not flip the container to
-// the other image and back. A planner must not recreate a container on a guess,
-// and "modinfo said nothing" is not a generation.
-func (p composePlanner) wgEasyGeneration() int {
-	gen := p.awgGen
-	if gen == nil {
-		gen = awgmod.ModuleGeneration
-	}
-	if g, err := gen(); err == nil {
-		return g
-	}
-	if b, err := os.ReadFile(p.path); err == nil && strings.Contains(string(b), compose.DefaultWGEasyImageAWG3) {
-		return 3
-	}
-	return 0
-}
-
 func (p composePlanner) isUp(ctx context.Context) bool {
 	if p.up == nil {
 		return compose.StackUp(ctx, p.path)
 	}
 	return p.up(p.path)
-}
-
-// masterMgmtAddr derives the master's mgmt address from the Clash external
-// controller (host:9090) so the compose render can bind wg-easy's UI to it.
-func masterMgmtAddr(spec domain.NodeSpec) string {
-	ec := spec.Master.ExternalController
-	if i := indexByte(ec, ':'); i > 0 {
-		return ec[:i]
-	}
-	return ec
-}
-
-func indexByte(s string, b byte) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == b {
-			return i
-		}
-	}
-	return -1
-}
-
-// --- wg-easy client-facing AWG obfuscation (SQLite-backed, ADR-0008) ---
-
-type wgEasyPlanner struct {
-	dbPath  string
-	iface   string
-	compose string
-}
-
-func (wgEasyPlanner) Component() string { return "wg-easy client AWG" }
-
-func (p wgEasyPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
-	if handedOver(spec) {
-		return []reconcile.Action{reconcile.NoChangeAction("wg-easy AWG", wgEasyHandedOver)}, nil
-	}
-	if spec.WGServer.AWG == nil {
-		return []reconcile.Action{reconcile.NoChangeAction("wg-easy AWG", "no client AWG params")}, nil
-	}
-	// Reconcile the obfuscation params AND the transport columns (port, pool, MTU):
-	// INIT_* env only seed those on first DB creation, so a manifest change to the
-	// client port/pool would never apply on a running node without writing the DB.
-	desired := wgeasy.ColumnsFromSpec(spec.WGServer)
-	display := wgeasy.RenderUpdateSQL(p.iface, desired)
-
-	// wg-easy must be set up first; if its DB is absent, surface a pending notice
-	// rather than failing the whole pass (the DB appears once wg-easy runs).
-	if _, err := os.Stat(p.dbPath); os.IsNotExist(err) {
-		return []reconcile.Action{reconcile.NoChangeAction("wg-easy interface",
-			"pending: wg-easy DB not found at "+p.dbPath+" (set up wg-easy first)")}, nil
-	}
-
-	current, found, err := wgeasy.ReadInterface(ctx, p.dbPath, p.iface)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return []reconcile.Action{reconcile.NoChangeAction("wg-easy interface",
-			"pending: wg-easy interface row not created yet")}, nil
-	}
-	if current == desired {
-		return []reconcile.Action{reconcile.NoChangeAction("wg-easy interface", "interface settings already current")}, nil
-	}
-
-	dbPath, iface := p.dbPath, p.iface
-	update := reconcile.CustomAction(reconcile.ActionUpdate, "wg-easy interface",
-		"set client-facing port/pool/MTU + obfuscation in wg-easy DB", display,
-		func(ctx context.Context) error { return wgeasy.UpdateInterface(ctx, dbPath, iface, desired) })
-
-	// wg-easy regenerates its .conf from the DB on (re)start.
-	return []reconcile.Action{update, composeRestart(p.compose, "wg-easy")}, nil
-}
-
-// --- wg-easy per-client defaults (SQLite-backed, ADR-0008) ---
-
-// wgEasyUserConfigPlanner reconciles wg-easy's user_configs_table: the defaults
-// wg-easy bakes into every generated client config (endpoint host/port, MTU, DNS,
-// allowed-IPs, and the client-side AmneziaWG junk j_c/j_min/j_max). INIT_* seed
-// only some of these and only at first DB creation; the client junk is not
-// seedable at all and its schema default underflows our transport-junk size S4, so
-// we enforce them by direct DB write (sibling of wgEasyPlanner).
-type wgEasyUserConfigPlanner struct {
-	dbPath string
-	iface  string
-}
-
-func (wgEasyUserConfigPlanner) Component() string { return "wg-easy client defaults" }
-
-func (p wgEasyUserConfigPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
-	if spec.Master == nil {
-		return nil, fmt.Errorf("wg-easy user config: node has no master spec")
-	}
-	if handedOver(spec) {
-		return []reconcile.Action{reconcile.NoChangeAction("wg-easy client defaults", wgEasyHandedOver)}, nil
-	}
-	if _, err := os.Stat(p.dbPath); os.IsNotExist(err) {
-		return []reconcile.Action{reconcile.NoChangeAction("wg-easy client defaults",
-			"pending: wg-easy DB not found at "+p.dbPath)}, nil
-	}
-	current, found, err := wgeasy.ReadUserConfig(ctx, p.dbPath, p.iface)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return []reconcile.Action{reconcile.NoChangeAction("wg-easy client defaults",
-			"pending: wg-easy user-config row not created yet")}, nil
-	}
-
-	cc := spec.Master.Compose
-	var allowedIPs []string
-	for _, ip := range strings.Split(cc.ClientAllowedIPs, ",") {
-		if ip = strings.TrimSpace(ip); ip != "" {
-			allowedIPs = append(allowedIPs, ip)
-		}
-	}
-	desired := wgeasy.DesiredUserConfig(current, spec.WGServer, cc.PublicIP, cc.ClientDNS, allowedIPs)
-	if desired.Equal(current) {
-		return []reconcile.Action{reconcile.NoChangeAction("wg-easy client defaults", "client defaults already current")}, nil
-	}
-
-	dbPath, iface := p.dbPath, p.iface
-	update := reconcile.CustomAction(reconcile.ActionUpdate, "wg-easy client defaults",
-		"set client-facing DNS/allowed-IPs/MTU/host/port + client AWG junk in wg-easy DB",
-		wgeasy.RenderUserConfigUpdateSQL(iface, desired),
-		func(ctx context.Context) error { return wgeasy.UpdateUserConfig(ctx, dbPath, iface, desired) })
-	// No restart: wg-easy reads user_configs live when generating client configs.
-	return []reconcile.Action{update}, nil
-}
-
-// --- wg-easy Prometheus metrics (SQLite-backed, like the AWG planner) ---
-
-type wgEasyMetricsPlanner struct {
-	dbPath string
-}
-
-func (wgEasyMetricsPlanner) Component() string { return "wg-easy metrics" }
-
-func (p wgEasyMetricsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
-	if handedOver(spec) {
-		return []reconcile.Action{reconcile.NoChangeAction("wg-easy metrics", wgEasyHandedOver)}, nil
-	}
-	// wg-easy must be set up first; if its DB is absent, defer (it appears once
-	// wg-easy runs) rather than failing the whole pass — same as the AWG planner.
-	if _, err := os.Stat(p.dbPath); os.IsNotExist(err) {
-		return []reconcile.Action{reconcile.NoChangeAction("wg-easy metrics",
-			"pending: wg-easy DB not found at "+p.dbPath)}, nil
-	}
-
-	enabled, found, err := wgeasy.ReadMetricsPrometheus(ctx, p.dbPath)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return []reconcile.Action{reconcile.NoChangeAction("wg-easy metrics",
-			"pending: wg-easy settings row not created yet")}, nil
-	}
-	if enabled {
-		return []reconcile.Action{reconcile.NoChangeAction("wg-easy metrics", "prometheus already enabled")}, nil
-	}
-
-	dbPath := p.dbPath
-	enable := reconcile.CustomAction(reconcile.ActionUpdate, "wg-easy prometheus metrics",
-		"enable the wg-easy Prometheus endpoint", wgeasy.EnablePrometheusSQL(),
-		func(ctx context.Context) error { return wgeasy.EnablePrometheus(ctx, dbPath) })
-	return []reconcile.Action{enable}, nil
 }
 
 // mihomo planners (mihomoPlanner config/reload + mihomoRedirPlanner self-heal)
@@ -1087,32 +850,15 @@ func (p masterNATPlanner) isLoaded() bool {
 // Master forwarding (ip_forward + DOCKER-USER accept, an earlier finding) is handled by
 // the shared dockerfw.ForwardPlanner, constructed in Planners() with iface wg0.
 
-// wgEasyHandedOver is the reason the wg-easy planners report once the agent owns
-// the client leg. Stated rather than silent: an operator reading a plan should
-// see that these components stood down deliberately, not that they vanished.
-const wgEasyHandedOver = "the agent owns the client interface; wg-easy is no longer managed"
-
-// handedOver reports whether this master's client leg belongs to the agent.
-func handedOver(spec domain.NodeSpec) bool {
-	return spec.Master != nil && spec.Master.ClientWG != nil
-}
-
 // masterComposeInput builds the compose render input from a spec. One function
 // rather than two call sites: the test helper used to assemble its own copy, so a
 // field added to the render (the namespace holder) made the fixture and the
 // planner disagree and the idempotency test failed for a reason that had nothing
 // to do with idempotency.
-func masterComposeInput(spec domain.NodeSpec, adminUser, adminPass string, attached func() bool, awgGen int) compose.RenderInput {
+func masterComposeInput(spec domain.NodeSpec, attached func() bool) compose.RenderInput {
 	return compose.RenderInput{
-		AWGModuleGeneration: awgGen,
-		Compose:             spec.Master.Compose,
-		ClientListenPort:    spec.WGServer.ListenPort,
-		ClientPool:          spec.WGServer.AddressPool,
-		MgmtAddr:            masterMgmtAddr(spec),
-		AdminUsername:       adminUser,
-		AdminPassword:       adminPass,
-		ClientWGManaged:     handedOver(spec),
-		NetnsHolderImage:    netnsHolderImage(spec),
+		Compose:          spec.Master.Compose,
+		NetnsHolderImage: netnsHolderImage(spec),
 		// Phase A renders the holder but does NOT move mihomo: the namespace stays
 		// inert until the interception rules move with it (see netnsAttach).
 		NetnsAttachMihomo: netnsAttach(attached),

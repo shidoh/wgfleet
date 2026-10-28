@@ -16,8 +16,7 @@ const (
 	KeyTypeClientVless = "client-vless"
 
 	// KeyTypeClientWG is the master's CLIENT-FACING WireGuard public key — the
-	// identity of the AmneziaWG interface end users dial once the agent owns it
-	// instead of wg-easy. Distinct from KeyTypeWireGuard, which is the node's
+	// identity of the AmneziaWG interface end users dial. Distinct from KeyTypeWireGuard, which is the node's
 	// fleet-internal identity: these are two different interfaces on one host, and
 	// the controller needs this one to render the .conf it hands a client.
 	KeyTypeClientWG = "client-wg"

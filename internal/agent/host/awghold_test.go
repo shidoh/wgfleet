@@ -91,8 +91,7 @@ func TestAWGHoldPlannerNoOpWhenAllHeld(t *testing.T) {
 
 // TestAWGHoldPlannerHoldsOnlyInstalled proves a package that is not installed is
 // not passed to apt-mark: `apt-mark hold` on an unknown package fails the whole
-// call, which would take the other two down with it. The master, for one, runs the
-// tools inside the wg-easy container and need not have them on the host.
+// call, which would take the other two down with it.
 func TestAWGHoldPlannerHoldsOnlyInstalled(t *testing.T) {
 	var gotHeld []string
 	p := awgHoldPlanner{

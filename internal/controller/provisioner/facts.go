@@ -28,7 +28,7 @@ type Facts struct {
 	HasConntrack bool // conntrack present
 	HasTracepath bool // tracepath present (WARP path-MTU auto-probe)
 	HasZeroTier  bool // zerotier-cli present
-	HasDocker    bool // docker engine present (needed for blocky/mihomo/wg-easy)
+	HasDocker    bool // docker engine present (needed for blocky/mihomo/xray)
 	HasFail2ban  bool // fail2ban present (SSH brute-force protection)
 	HasAge       bool // age present (controller backup/restore archive encryption)
 	// HasNodeExporter reports the host-metrics exporter (prometheus-node-exporter).

@@ -267,3 +267,42 @@ func tarOf(t *testing.T, items ...Item) []byte {
 	}
 	return raw
 }
+
+// Archives made before wg-easy was dropped carry its database and admin password.
+// Their destinations are no longer places this host keeps anything, so refusing
+// them would refuse the whole archive: restore skips them and says so.
+func TestRestoreSkipsRetiredWGEasyItems(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "state.db")
+	retired := filepath.Join(dir, "wg-easy.db")
+	items := []Item{
+		{Name: "controller/state.db", Dest: dest, Mode: 0o600, Layer: LayerController, Data: []byte("NEWDB")},
+		{Name: "master/wg-easy.db", Dest: retired, Mode: 0o600, Layer: LayerMaster, Data: []byte("OLD")},
+	}
+	m := Manifest{Schema: ArchiveSchema, WireVersion: 7, Layers: []Layer{LayerController, LayerMaster}}
+	for _, it := range items {
+		m.Entries = append(m.Entries, Entry{Name: it.Name, Dest: it.Dest, Mode: uint32(it.Mode), Layer: it.Layer})
+	}
+	archive, err := BuildTar(m, items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := func(_ context.Context, c []byte) ([]byte, error) { return c, nil }
+
+	plan, err := Restore(context.Background(), archive, RestoreOptions{
+		Decrypt: identity, WireVersion: 7,
+		AllowedDests: map[string]bool{filepath.Clean(dest): true},
+	})
+	if err != nil {
+		t.Fatalf("an archive with a retired wg-easy item was refused: %v", err)
+	}
+	if b, _ := os.ReadFile(dest); string(b) != "NEWDB" {
+		t.Errorf("the rest of the archive was not restored: %q", b)
+	}
+	if _, err := os.Stat(retired); err == nil {
+		t.Error("the retired wg-easy database was written")
+	}
+	if !strings.Contains(strings.Join(plan.Warnings, "\n"), "master/wg-easy.db") {
+		t.Errorf("the skip is not reported: %v", plan.Warnings)
+	}
+}

@@ -54,12 +54,10 @@ fleet:
       public_ip: 203.0.113.10               # endpoint clients dial, written into every client
                                             # config. May be a DNS name. Does NOT fall back to
                                             # ssh.host (that is often the mgmt overlay).
-      client_awg:
-        managed: true                       # the AGENT owns the client interface; credentials
-                                            # live in the controller's store and are managed in
-                                            # the console. Omit ⇒ wg-easy (legacy path).
+      client_awg:                           # the agent's client interface wg0; credentials live
+                                            # in the controller's store, managed in the console
         listen_port: 443                    # UDP
-        address_pool: 10.80.0.0/24          # client WG subnet
+        address_pool: 10.80.0.0/24          # client WG subnet; unset ⇒ no AWG client interface
         # ipv6: block                       # hand clients ::/0 AND refuse forwarded v6 with
                                             # ICMPv6, so dual-stack devices fall back to IPv4
         # mtu: 1360                         # client interface MTU; leave unset to derive
@@ -96,8 +94,6 @@ fleet:
               payload:
                 - mycompany.example
       compose:                              # master container stack; every image+tag is pin-able
-        wg_easy_image: ghcr.io/wg-easy/wg-easy   # repository (default …:15)
-        wg_easy_tag:   "15"                 # explicit tag overrides any tag in the image
         mihomo_image:  metacubex/mihomo
         mihomo_tag:    "v1.19.33"           # pin a version (NOT :latest, NOT Alpha). Default v1.19.33.
       ssh:                                  # bootstrap target
@@ -171,7 +167,7 @@ fleet:
         # host_key: "ssh-ed25519 AA..."
 ```
 
-Every dockerized component (wg-easy, mihomo, blocky) exposes an `image` +
+Every dockerized component (mihomo, blocky) exposes an `image` +
 `tag` pair so both can be pinned. An explicit `tag` overrides any tag embedded in
 `image`; either may be omitted to inherit the component's default.
 

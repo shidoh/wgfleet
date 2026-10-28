@@ -94,8 +94,7 @@ func checkManifestOnly(path string) (*config.ControllerConfig, error) {
 
 	// A warning, never a failure: the file is readable and valid either way, and an
 	// operator running a check should not have a non-zero exit hide behind a
-	// permissions nit. But the manifest carries private keys and the wg-easy admin
-	// password, so a loose mode is worth saying out loud — the startup self-heal
+	// permissions nit. But the manifest carries private keys, so a loose mode is worth saying out loud — the startup self-heal
 	// that would have fixed it does not run on a check.
 	if fi, statErr := os.Stat(path); statErr == nil {
 		if mode := fi.Mode().Perm(); mode&0o077 != 0 {
@@ -124,9 +123,28 @@ func unknownKeyWarnings(path string) []string {
 	}
 	out := make([]string, 0, len(keys))
 	for _, k := range keys {
+		if removedWithWGEasy(k) {
+			out = append(out, fmt.Sprintf("key %s was removed with wg-easy and is ignored; delete the line", k))
+			continue
+		}
 		out = append(out, fmt.Sprintf("unknown key %s — nothing reads it: misspelled, or indented under the wrong block", k))
 	}
 	return out
+}
+
+// wgEasyKeySuffixes are the manifest keys that configured wg-easy or the handover
+// from it. Old manifests still carry them; they are not typos.
+var wgEasyKeySuffixes = []string{
+	".client_awg.managed", ".compose.wg_easy_image", ".compose.wg_easy_tag", ".compose.wg_easy_web_port",
+}
+
+func removedWithWGEasy(key string) bool {
+	for _, s := range wgEasyKeySuffixes {
+		if strings.HasSuffix(key, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // manifestWarnings is everything about a valid manifest that is worth saying and

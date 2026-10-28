@@ -42,7 +42,7 @@ func TestGatherItemsControllerOnly(t *testing.T) {
 			t.Fatalf("missing item %q in %v", want, names)
 		}
 	}
-	if names["master/wg-easy.db"] {
+	if names["master/node.crt"] {
 		t.Fatal("master items must be absent when files do not exist")
 	}
 }
@@ -58,7 +58,7 @@ func TestGatherItemsIncludesMasterWhenPresent(t *testing.T) {
 	}
 	src := Sources{
 		ControllerYAML: w("controller.yaml"), CACert: w("ca.crt"), CAKey: w("ca.key"),
-		WGEasyDB: w("wg-easy.db"), WGEasyAdmin: w("admin"), NodeCert: w("node.crt"),
+		ClientWGKey: w("client-wg.key"), NodeCert: w("node.crt"),
 		NodeKey: w("node.key"), AgentYAML: w("agent.yaml"),
 	}
 	_, layers, err := GatherItems(src, w("snap.db"), os.Stat)

@@ -36,7 +36,7 @@ type MasterProbes struct {
 	// listening (ADR-0038); nil when not run.
 	RealityPortalUp Probe
 	// ClientWGOwned reports that the AGENT is carrying the client interface, not
-	// merely that an interface of that name exists (wg-easy's does too). nil when
+	// merely that an interface of that name exists (one someone else raised does too). nil when
 	// the agent does not manage the leg.
 	ClientWGOwned Probe
 	// ClientUDPReturn asserts that no UDP port this node holds silently black-holes
@@ -115,7 +115,7 @@ func MasterChecks(spec domain.NodeSpec, p MasterProbes) []Check {
 		checks = append(checks, Check{Name: "reality-portal", Probe: p.RealityPortalUp})
 	}
 	// When the agent owns the client leg, "an interface named wg0 exists" is not
-	// enough: it is also true while wg-easy holds it, and it stays true through
+	// enough: it is also true while something else holds it, and it stays true through
 	// every deferral the interface planner can report (no key yet, spec rejected,
 	// AmneziaWG 3.x refused). Without this check those states leave the node Ready
 	// and green with the client leg unmanaged — the operator's only signal would be

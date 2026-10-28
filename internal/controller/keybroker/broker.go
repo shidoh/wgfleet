@@ -682,7 +682,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 // AmneziaWG WireGuard proxy per registered exit. The master↔exit tunnels live in
 // mihomo, not in kernel WG interfaces (ADR-0007).
 func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfig) (domain.NodeSpec, error) {
-	// Client-facing AmneziaWG interface (wg-easy). Clients are configured
+	// Client-facing AmneziaWG interface. Clients are configured
 	// out-of-band with the matching shared params (same derivation seed).
 	clientSeed := wg.TunnelSeed(master.Name, "clients", awgSalt)
 	clientAWG := wg.DeriveAWGParams(clientSeed)
@@ -793,10 +793,10 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	if ms.ClientVLESS != nil {
 		spec.Firewall.PublicTCPPorts = append(spec.Firewall.PublicTCPPorts, ms.ClientVLESS.ListenPort)
 	}
-	// Client-facing AmneziaWG interface, when the agent owns it instead of wg-easy.
-	// It reuses the client-facing WGServer's obfuscation and MTU verbatim so the
-	// handover is invisible to already-configured clients; the listener's UDP port
-	// is already open via Firewall.WGPort above, which is the same port.
+	// Client-facing AmneziaWG interface, owned by the agent. It reuses the
+	// client-facing WGServer's obfuscation and MTU verbatim so the interface and the
+	// configs rendered from WGServer agree; the listener's UDP port is already open
+	// via Firewall.WGPort above, which is the same port.
 	cwSpec, err := b.clientWGSpec(ctx, master, spec.WGServer)
 	if err != nil {
 		return domain.NodeSpec{}, err
@@ -1506,14 +1506,11 @@ func mihomoStrategy(balance string) string {
 // clientResolvers is the fleet's answer to "what DNS does a client of this master
 // use", for every renderer that has to answer it.
 //
-// It used to live inline in composeSpec, which meant it reached wg-easy's clients
-// and nobody else: the managed client interface asked MasterConfig.ClientAWGDNS(),
-// whose fallback is the RAW compose.client_dns manifest key rather than this
-// derivation. That key is commented out in every shipped example — precisely
-// because it "defaults to the exits' mgmt addresses" — so a manifest that turned on
-// client_awg.managed rendered client configs with no `DNS =` line at all, and every
-// phone quietly kept its carrier resolver. ADR-0024's two-tier DNS stopped at the
-// door of the component that replaced wg-easy.
+// MasterConfig.ClientAWGDNS() alone is not enough: its fallback is the RAW
+// compose.client_dns manifest key rather than this derivation. That key is
+// commented out in every shipped example — precisely because it "defaults to the
+// exits' mgmt addresses" — so asking it directly rendered client configs with no
+// `DNS =` line at all, and every phone quietly kept its carrier resolver.
 //
 // One derivation, one answer, both renderers.
 func (b *Broker) clientResolvers(ctx context.Context, master config.MasterConfig) []string {
@@ -1540,18 +1537,16 @@ func (b *Broker) clientResolvers(ctx context.Context, master config.MasterConfig
 
 // composeSpec assembles the master's container-stack desired state. Client DNS
 // defaults to the exits' mgmt addresses (where blocky listens) when the operator
-// has not set it explicitly. The master's own public IP seeds wg-easy first run.
+// has not set it explicitly.
 func (b *Broker) composeSpec(ctx context.Context, master config.MasterConfig, publicIP string) domain.ComposeSpec {
 	cc := master.Compose
 	dns := b.clientResolvers(ctx, master)
-	// publicIP seeds wg-easy's INIT_HOST (the endpoint clients dial) and is needed
-	// for unattended setup to complete. Resolved by the caller from the master's
-	// node record it already holds (masterEndpointHost), so a DNS name survives.
+	// publicIP is the endpoint clients dial. Resolved by the caller from the
+	// master's node record it already holds (masterEndpointHost), so a DNS name
+	// survives.
 	return domain.ComposeSpec{
-		WGEasyImage:      config.ResolveImage(cc.WGEasyImage, cc.WGEasyTag, compose.DefaultWGEasyImage),
 		MihomoImage:      config.ResolveImage(cc.MihomoImage, cc.MihomoTag, compose.DefaultMihomoImage),
 		PublicIP:         publicIP,
-		WGEasyWebPort:    cc.WGEasyWebPort,
 		ClientDNS:        dns,
 		ClientAllowedIPs: cc.ClientAllowedIPs,
 		NetnsHolderImage: cc.NetnsHolderImage,

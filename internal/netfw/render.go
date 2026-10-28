@@ -129,7 +129,7 @@ type RenderInput struct {
 	// RedirInterface is the client-facing WG interface whose DNAT'd TCP must reach
 	// the local mihomo redir port (master role; defaults to "wg0"). Scoping the
 	// accept to this interface keeps clients off the master's other local services
-	// (Clash API, wg-easy UI) — only the redirect port is opened, only from clients.
+	// (Clash API, admin UIs) — only the redirect port is opened, only from clients.
 	RedirInterface string
 	// ClientAdminPorts are TCP ports (master role) the client pool is allowed to
 	// reach on the master's own address: the admin UIs (controller Web UI, mihomo

@@ -80,14 +80,14 @@ type ControllerSection struct {
 	//
 	// It is a SEPARATE listener from WebUI on purpose. The operator UI can
 	// provision, decommission and drain nodes and export an encrypted backup of the
-	// whole fleet; opening that to the client pool to replace wg-easy's credential
-	// page would be a quiet and large escalation.
+	// whole fleet; opening that to the client pool to serve a credential page
+	// would be a quiet and large escalation.
 	//
 	// Bind it on the MGMT address — NOT on the master's address inside the client
 	// pool, which reads as the obvious choice and does not work. Two reasons, both
 	// found live: the master DNATs client TCP into mihomo, and
-	// masters[].client_admin_ports opens ports on the mgmt address (which is why
-	// wg-easy's admin page was reachable there). Clients get to it as long as the
+	// masters[].client_admin_ports opens ports on the mgmt address to clients.
+	// Clients get to it as long as the
 	// mgmt subnet is in their AllowedIPs.
 	ClientPortal string `koanf:"client_portal"`
 	// ClientPortalURL is the base URL clients reach the portal on, e.g.
@@ -536,11 +536,8 @@ type MihomoConfig struct {
 // ComposeConfig is the operator-facing master container-stack tuning. Empty
 // fields fall back to defaults in the compose renderer.
 type ComposeConfig struct {
-	WGEasyImage      string   `koanf:"wg_easy_image"` // repository (optionally :tag)
-	WGEasyTag        string   `koanf:"wg_easy_tag"`   // explicit tag; overrides a tag in the image
-	MihomoImage      string   `koanf:"mihomo_image"`  // repository (optionally :tag)
-	MihomoTag        string   `koanf:"mihomo_tag"`    // explicit tag; overrides a tag in the image
-	WGEasyWebPort    int      `koanf:"wg_easy_web_port"`
+	MihomoImage      string   `koanf:"mihomo_image"`       // repository (optionally :tag)
+	MihomoTag        string   `koanf:"mihomo_tag"`         // explicit tag; overrides a tag in the image
 	ClientDNS        []string `koanf:"client_dns"`         // 0 ⇒ derived from exit mgmt addrs
 	ClientAllowedIPs string   `koanf:"client_allowed_ips"` // inverted RFC1918 list for clients
 	// NetnsHolderImage is the image for the container that owns mihomo's network
@@ -567,15 +564,9 @@ const DefaultMasterClientPort = 443
 type ClientAWGConfig struct {
 	ListenPort  int    `koanf:"listen_port"`  // UDP; 0 ⇒ DefaultMasterClientPort. Prefer 443/51820
 	AddressPool string `koanf:"address_pool"` // CIDR for client addresses
-	// Managed hands the interface to the agent instead of wg-easy: the controller
-	// owns the credentials, the agent renders and raises the interface. Pointer so
-	// an unset value is distinguishable from an explicit false — this is the
-	// cutover switch, and "not mentioned in the manifest" must mean "keep wg-easy",
-	// never "silently take the client leg over on upgrade".
-	Managed *bool `koanf:"managed"`
-	// Backend selects what carries a MANAGED interface: "kernel" (default, the
-	// AmneziaWG module as on the exits) or "userspace" (amneziawg-go, independent
-	// of the host's kernel-module generation). Ignored while unmanaged.
+	// Backend selects what carries the interface: "kernel" (default, the AmneziaWG
+	// module as on the exits) or "userspace" (amneziawg-go, independent of the
+	// host's kernel-module generation).
 	Backend string `koanf:"backend"`
 	// AWG3 opts the CLIENT-facing interface into AmneziaWG 3.x. Unlike the
 	// master↔exit knob (fleet.awg3) this is NOT a bool, because the two halves of
@@ -590,10 +581,6 @@ type ClientAWGConfig struct {
 	//   "full"    Timers plus header protection. Header protection is the one 3.x
 	//             parameter a 2.0 peer cannot survive, so this is a flag day: every
 	//             client must re-import before it works again.
-	//
-	// Requires managed: true. While wg-easy owns the leg there is nowhere to put
-	// these parameters — its schema has no column for any of them — so a value here
-	// would silently do nothing, which config validation refuses.
 	AWG3 string `koanf:"awg3"`
 
 	// IPv6 decides what a client is told about IPv6. "off" (the default, and what
@@ -661,14 +648,12 @@ func (m MasterConfig) ClientListenPort() int {
 	return m.ClientAWG.ListenPort
 }
 
-// ClientAWGManaged reports whether the agent — rather than wg-easy — owns the
-// master's client-facing interface. Unset means no: taking over the client leg is
-// always an explicit operator decision.
-func (m MasterConfig) ClientAWGManaged() bool {
-	return m.ClientAWG.Managed != nil && *m.ClientAWG.Managed
-}
+// ClientAWGEnabled reports whether the master has a client-facing AmneziaWG
+// interface: it does exactly when client_awg.address_pool is set, since the
+// interface is rendered from the pool.
+func (m MasterConfig) ClientAWGEnabled() bool { return m.ClientAWG.AddressPool != "" }
 
-// ClientAWGBackend resolves the data-plane backend for a managed interface,
+// ClientAWGBackend resolves the data-plane backend for the client interface,
 // defaulting an unset value to the kernel module.
 func (m MasterConfig) ClientAWGBackend() domain.ClientWGBackend {
 	if m.ClientAWG.Backend == "" {
@@ -681,8 +666,8 @@ func (m MasterConfig) ClientAWGBackend() domain.ClientWGBackend {
 // should derive it.
 func (m MasterConfig) ClientAWGMTU() int { return m.ClientAWG.MTU }
 
-// ClientAWGDNS resolves the client-facing DNS list, falling back to the
-// compose-era key so an un-edited manifest survives the handover.
+// ClientAWGDNS resolves the client-facing DNS list, falling back to the older
+// compose.client_dns key so a manifest that only sets that one keeps working.
 func (m MasterConfig) ClientAWGDNS() []string {
 	if len(m.ClientAWG.DNS) > 0 {
 		return append([]string(nil), m.ClientAWG.DNS...)

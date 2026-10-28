@@ -1,6 +1,6 @@
 // Package wgiface holds the interface-management helpers shared by the two
-// client-facing AmneziaWG interfaces the fleet raises: the master's (the leg
-// that used to be wg-easy's) and the exit's lifeline.
+// client-facing AmneziaWG interfaces the fleet raises: the master's wg0 and the
+// exit's lifeline.
 //
 // They were extracted from the master's client_wg planner rather than written
 // fresh, and deliberately so: that planner carries the most sensitive interface
@@ -88,8 +88,8 @@ func reader(live func(string) ([]string, error)) func(string) ([]string, error) 
 }
 
 // ServesPeers reports whether the live interface carries exactly the peers the
-// spec asks for. A mismatch means somebody else configured it (a wg-easy
-// container that survived a reboot) or our own apply half-failed; either way the
+// spec asks for. A mismatch means somebody else configured it (something
+// that raised the interface again after a reboot) or our own apply half-failed; either way the
 // answer is to re-apply.
 //
 // A probe that fails answers TRUE — "assume it matches". The alternative would
@@ -138,8 +138,8 @@ func ServesPeers(iface string, want []domain.WGClientPeer, live func(string) ([]
 // list had to be a SUBSET of the desired one, so a single revoked credential sent
 // the whole device through down/up and dropped every other session with it. What
 // the strict version was really guarding against is a peer list that is not ours
-// at all — a wg-easy container that recreated wg0 after a reboot, whose INTERFACE
-// parameters are wg-easy's too and which `awg set` cannot correct. An entirely
+// at all — something else that recreated the interface after a reboot, whose
+// INTERFACE parameters are its own too and which `awg set` cannot correct. An entirely
 // disjoint live list still means exactly that and still rebuilds the device; a
 // list that overlaps ours is ours, with somebody removed from it.
 //
@@ -182,7 +182,7 @@ func PeerDelta(iface string, want []domain.WGClientPeer, prevCfg, newCfg string,
 	// destroys every session on the device, so pausing or revoking ONE credential
 	// dropped everybody — on the lifeline, everybody who is there precisely because
 	// their normal path is already gone. The check it replaced was guarding against
-	// a DIFFERENT interface (wg-easy's wg0, whose peers are not ours to edit), and
+	// a DIFFERENT interface (one someone else raised, whose peers are not ours to edit), and
 	// two conditions already prove that cannot be the case here: the previously
 	// rendered [Interface] section has to match the one we are about to write, and
 	// the master additionally requires its claim before it calls this at all.

@@ -61,7 +61,6 @@ import (
 	"github.com/shidoh/wgfleet/internal/nodeexporter"
 	"github.com/shidoh/wgfleet/internal/version"
 	"github.com/shidoh/wgfleet/internal/wg"
-	"github.com/shidoh/wgfleet/internal/wgeasy"
 	"github.com/shidoh/wgfleet/internal/xray"
 )
 
@@ -119,9 +118,7 @@ func resolveMetricsBind(flagVal, mgmtAddr string) string {
 // wgIfacesForRole returns the WireGuard/AmneziaWG interfaces the WG metrics
 // collector probes for a node's role. An exit terminates the master tunnel on
 // awg0, egresses via the wgcf WARP interface, and may carry the reserve
-// client-facing lifeline on awgl0; a master's client WG runs inside the wg-easy
-// container (wg0 there, not on the host), so wg0 is listed but only reported if it
-// happens to be host-visible — the collector fails soft otherwise.
+// client-facing lifeline on awgl0; a master serves its clients on wg0.
 //
 // awgl0 is listed for EVERY exit, not only the ones a lifeline is enabled on. The
 // list is fixed at startup and the lifeline is a per-exit manifest knob that can be
@@ -308,8 +305,7 @@ func run() error {
 		// firewall stats. Both fail soft — a missing wg/nft, a down interface, or a
 		// non-Linux dev box simply yields no series. The WG interface set is
 		// role-dependent (exits run the awg0 client tunnel + the wgcf WARP leg; a
-		// master's client wg lives inside the wg-easy container, so wg0 is probed
-		// best-effort). Firewall metrics are only populated on exits (table inet
+		// master its client interface wg0). Firewall metrics are only populated on exits (table inet
 		// wgfleet), but the collector is safe to register everywhere.
 		metrics.NewWGCollector(reg, cfg.Agent.NodeID, string(role), wgIfacesForRole(role), nil)
 		// When this node's control-plane certificate expires. The agent renews it in
@@ -528,8 +524,7 @@ type agent struct {
 	restarts *restart.Governor
 
 	// clientKeyAudited records that the client-identity audit has run AND REACHED AN
-	// ANSWER. Per PASS would reopen wg-easy's database every reconcile forever; per
-	// RESTART is the right cadence for a fact that can only change when someone
+	// ANSWER. Per RESTART is the right cadence for a fact that can only change when someone
 	// intervenes, and it puts a fresh line in the journal after every restart.
 	//
 	// It is not a sync.Once, because a Once latches on the attempt rather than on
@@ -537,7 +532,7 @@ type agent struct {
 	// the first pass after a host reboot that interface does not exist yet — the
 	// client-interface planner raises it later in the very same pass. So the read
 	// failed, the check was skipped in silence, and the process's one opportunity
-	// was spent: the loudest guard in the whole handover ("the controller is handing
+	// was spent: the loudest guard on the client interface ("the controller is handing
 	// out configs pinned to a key nobody answers with") could never fire on a
 	// rebooted node, which is precisely the node most likely to need it.
 	clientKeyAudited atomic.Bool
@@ -607,22 +602,6 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	}
 	if ephemeral && plan {
 		a.log.Info("WG key absent; using an ephemeral key for the plan (apply would generate one)")
-	}
-
-	// Master only: resolve the wg-easy admin password that seeds unattended setup
-	// (so a fresh master never stops at the interactive wizard). Like the WG key it
-	// is persisted on first apply and generated ephemerally in plan mode; it never
-	// leaves the node (ADR-0008).
-	var adminUser, adminPass string
-	if a.role == domain.RoleMaster {
-		u, p, adminEph, aerr := a.ensureWGEasyAdmin(!plan)
-		if aerr != nil {
-			return fmt.Errorf("ensure wg-easy admin password: %w", aerr)
-		}
-		if adminEph && plan {
-			a.log.Info("wg-easy admin password absent; using an ephemeral one for the plan (apply would generate + persist it)")
-		}
-		adminUser, adminPass = u, p
 	}
 
 	// fromCache marks a pass running on the last-good spec because the controller
@@ -746,11 +725,8 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			}
 		}
 
-		// The client-facing WireGuard identity, resolved the same way and for the
-		// same reason: publish it unconditionally so the controller can render client
-		// configs the moment the operator hands the leg over. On a master that still
-		// runs wg-easy this ADOPTS wg-easy's own key, so the public key we publish is
-		// the one clients already pin.
+		// The client-facing WireGuard identity, resolved the same way and published
+		// unconditionally so the controller can render client configs.
 		cwKP, cwEph, cwErr := a.ensureClientWGKey(!plan)
 		if cwErr != nil {
 			return fmt.Errorf("ensure client wg key: %w", cwErr)
@@ -759,8 +735,6 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			a.log.Info("client WG key absent; using an ephemeral key for the plan (apply would resolve one)")
 		}
 		clientWGPriv = cwKP.PrivateKey
-		// An empty key means "deferred, wg-easy's database would not answer": publish
-		// nothing rather than a key we are not sure we should be using.
 		if !plan && !fromCache && cwKP.PublicKey != "" {
 			if err := a.client.PublishClientWGKey(ctx, cwKP.PublicKey); err != nil {
 				return fmt.Errorf("publish client wg key: %w", err)
@@ -846,7 +820,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	// the mechanism written to stop that was cancelling itself.
 	a.adoptNetnsMove(ctx, spec)
 
-	engine := reconcile.NewEngine(a.log, a.planners(kp.PrivateKey, realityPriv, clientWGPriv, lifelinePriv, adminUser, adminPass)...)
+	engine := reconcile.NewEngine(a.log, a.planners(kp.PrivateKey, realityPriv, clientWGPriv, lifelinePriv)...)
 	start := time.Now()
 	report, reconcileErr := engine.Reconcile(ctx, spec, mode)
 	elapsed := time.Since(start)
@@ -1232,7 +1206,7 @@ func (a *agent) masterPaths() master.Paths {
 // planners returns the role-appropriate reconcile planners. The master's data
 // plane is mihomo + NAT; the exit's is the WG/AWG interface + wgcf + routing +
 // nftables + DNS.
-func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, lifelinePrivateKey, adminUser, adminPass string) []reconcile.Planner {
+func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, lifelinePrivateKey string) []reconcile.Planner {
 	var base []reconcile.Planner
 	if a.role == domain.RoleMaster {
 		base = master.Planners(master.Input{
@@ -1246,8 +1220,6 @@ func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, life
 			SyntheticKey:       a.ensureSynthKeyQuiet(),
 			ClientWGPublicKey:  publicKeyOrEmpty(clientWGPrivateKey),
 			NetnsAttached:      a.netnsMove.Attached,
-			AdminUsername:      adminUser,
-			AdminPassword:      adminPass,
 			OverlayMSS:         a.cfg.Agent.MgmtOverlayMSS,
 			OnMihomoDisturbed:  a.noteMihomoDisturbed,
 		})
@@ -1409,15 +1381,8 @@ func ensureXrayKey(path, what string, persist bool) (priv, pub string, ephemeral
 // ensureClientWGKey resolves the master's CLIENT-FACING WireGuard identity: the
 // key of the interface end users dial.
 //
-// The order matters and is the whole migration story. An existing key file wins.
-// Failing that we ADOPT the key wg-easy generated, if its database still has one:
-// every client config in the field pins that public key, so adopting it makes the
-// handover invisible — the server implementation changes underneath a tunnel that
-// keeps working. Only with neither do we mint a fresh key, which is the right
-// answer for a master that never ran wg-easy at all.
-//
-// Adoption happens once. Afterwards the key lives in our own file and wg-easy's
-// database is never read again.
+// An existing key file wins; only a master without one mints a fresh key. Every
+// issued client config pins the public half, so the file is never replaced.
 func (a *agent) ensureClientWGKey(persist bool) (kp wg.KeyPair, ephemeral bool, err error) {
 	path := a.masterPaths().ClientWGKey
 	data, rerr := os.ReadFile(path)
@@ -1447,27 +1412,6 @@ func (a *agent) ensureClientWGKey(persist bool) (kp wg.KeyPair, ephemeral bool, 
 		return wg.KeyPair{}, false, fmt.Errorf("read client wg key %q: %w", path, rerr)
 	}
 
-	adopted, state := a.adoptWGEasyKey()
-	switch state {
-	case adoptOK:
-		if !persist {
-			return adopted, true, nil
-		}
-		if werr := writeKeyFile(path, adopted.PrivateKey); werr != nil {
-			return wg.KeyPair{}, false, werr
-		}
-		a.log.Info("adopted the client interface key from wg-easy; existing client configs stay valid",
-			"public_key", adopted.PublicKey)
-		return adopted, false, nil
-	case adoptUnreadable:
-		// wg-easy IS here and we could not read its key. Minting now would publish a
-		// server identity no client pins — the exact outcome the transparent handover
-		// exists to prevent — so hand back nothing. The client-interface planner
-		// reports "pending" and we retry on the next pass, which is what a locked or
-		// mid-write database needs.
-		return wg.KeyPair{}, false, nil
-	}
-
 	fresh, gerr := wg.GenerateKeyPair()
 	if gerr != nil {
 		return wg.KeyPair{}, false, gerr
@@ -1478,33 +1422,21 @@ func (a *agent) ensureClientWGKey(persist bool) (kp wg.KeyPair, ephemeral bool, 
 	if werr := writeKeyFile(path, fresh.PrivateKey); werr != nil {
 		return wg.KeyPair{}, false, werr
 	}
-	a.log.Info("generated a client interface key (no wg-easy key to adopt)", "public_key", fresh.PublicKey)
+	a.log.Info("generated a client interface key", "public_key", fresh.PublicKey)
 	return fresh, false, nil
 }
 
 // auditClientWGKey reports the client-facing identity this master serves, and
-// screams when it does not match the one wg-easy is still handing out.
-//
-// This is the pre-flight check the migration guide asks the operator to run by
-// hand — and asks too late, after the cutover, when everyone is already down. The
-// divergence it catches is silent by construction: an existing key file wins on
-// every subsequent pass, so a key minted once because wg-easy's database was
-// momentarily unrecognisable is never revisited. Nothing looks wrong until the
-// handover, at which point every config in the field stops handshaking at once.
-// auditClientWGKey reports whether it reached an answer. An inconclusive run — the
-// live interface not up yet, the database unreadable — returns false so the caller
-// tries again next pass instead of treating the attempt as the audit.
+// screams when the key file does not match what the LIVE interface is answering
+// handshakes with — the controller would then hand out configs pinned to a key
+// nobody serves. It reports whether it reached an answer: an interface that is
+// not up yet returns false so the caller tries again next pass.
 func (a *agent) auditClientWGKey(pub string) (conclusive bool) {
-	// First against the LIVE interface. This is the check that keeps working after
-	// wg-easy is gone, and it catches the case the database cannot see at all: a
-	// key file that no longer matches what is actually answering handshakes,
-	// because something else raised the interface.
 	live, lerr := master.InterfacePublicKey(master.ClientWGInterface)
 	switch {
 	case lerr != nil || live == "":
 		// Not up yet — ordinary on the first pass after a reboot, since the client
-		// interface planner raises it later in this same pass. Say so and report the
-		// run inconclusive so the next pass repeats it.
+		// interface planner raises it later in this same pass.
 		a.log.Info("client interface identity audit deferred: the live interface cannot be read yet",
 			"interface", master.ClientWGInterface, "err", lerr)
 		return false
@@ -1513,88 +1445,10 @@ func (a *agent) auditClientWGKey(pub string) (conclusive bool) {
 			"interface is serving. Clients authenticate against the live one, so the controller is handing out "+
 			"configs pinned to a key nobody answers with.",
 			"published", pub, "live", live, "interface", master.ClientWGInterface)
-	}
-
-	db := a.masterPaths().WGEasyDB
-	if _, err := os.Stat(db); err != nil {
-		// wg-easy is gone: after the handover this is the ordinary state, and there
-		// is nothing left to compare against. Still say what we serve.
-		a.log.Info("client interface identity", "public_key", pub)
 		return true
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	priv, found, err := wgeasy.ReadInterfacePrivateKey(ctx, db, wgeasy.DefaultInterface)
-	if err != nil || !found {
-		a.log.Info("client interface identity (wg-easy's key could not be read for comparison)",
-			"public_key", pub, "db", db)
-		return true
-	}
-	theirs, err := wg.PublicKeyOf(priv)
-	if err != nil {
-		a.log.Info("client interface identity (wg-easy's key is unusable)", "public_key", pub)
-		return true
-	}
-	if theirs == pub {
-		a.log.Info("client interface identity matches wg-easy's; existing client configs stay valid",
-			"public_key", pub)
-		return true
-	}
-	a.log.Error("CLIENT INTERFACE IDENTITY DIVERGED FROM wg-easy — every client config in the field would stop "+
-		"working at the handover. Do not set client_awg.managed until this is resolved: remove the agent's key "+
-		"file so it re-adopts wg-easy's, or confirm the clients have already been reissued.",
-		"agent_public_key", pub, "wg_easy_public_key", theirs, "key_file", a.masterPaths().ClientWGKey)
+	a.log.Info("client interface identity", "public_key", pub)
 	return true
-}
-
-// adoptState says what wg-easy's database had to offer.
-type adoptState int
-
-const (
-	// adoptAbsent: wg-easy was never set up here, so minting a fresh key is right.
-	adoptAbsent adoptState = iota
-	// adoptOK: a usable key was found and must be adopted verbatim.
-	adoptOK
-	// adoptUnreadable: the database is here but would not answer. NOT the same as
-	// absent — see ensureClientWGKey.
-	adoptUnreadable
-)
-
-// adoptWGEasyKey reads the interface private key out of wg-easy's database.
-func (a *agent) adoptWGEasyKey() (wg.KeyPair, adoptState) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	db := a.masterPaths().WGEasyDB
-	priv, found, err := wgeasy.ReadInterfacePrivateKey(ctx, db, wgeasy.DefaultInterface)
-	switch {
-	case err != nil:
-		a.log.Warn("wg-easy's database is present but unreadable; deferring rather than minting a new client key",
-			"db", db, "err", err)
-		return wg.KeyPair{}, adoptUnreadable
-	case !found:
-		// "Nothing to adopt" is TWO different facts and only one of them justifies
-		// minting. ReadInterfacePrivateKey reports found=false with no error for a
-		// missing database file AND for a database whose interfaces table or
-		// private-key column it could not recognise — the very rename its column
-		// discovery exists to survive. Treating the second as "wg-easy was never set
-		// up here" mints a fresh identity on a host that HAS one, and because an
-		// existing key file wins from then on, nothing ever re-adopts. The divergence
-		// stays invisible until the handover, when every config in the field stops
-		// handshaking at once.
-		if _, statErr := os.Stat(db); statErr == nil {
-			a.log.Warn("wg-easy's database is present but yielded no interface key; deferring rather than minting a new client key",
-				"db", db, "interface", wgeasy.DefaultInterface)
-			return wg.KeyPair{}, adoptUnreadable
-		}
-		return wg.KeyPair{}, adoptAbsent
-	}
-	pub, err := wg.PublicKeyOf(priv)
-	if err != nil {
-		a.log.Warn("wg-easy's stored interface key is unusable; deferring rather than minting a new client key", "err", err)
-		return wg.KeyPair{}, adoptUnreadable
-	}
-	return wg.KeyPair{PrivateKey: priv, PublicKey: pub}, adoptOK
 }
 
 // writeKeyFile persists a private key 0600, creating its directory.
@@ -1639,7 +1493,7 @@ func (a *agent) reportStatus(ctx context.Context, state domain.NodeState, checks
 	}
 	// A master reports its live client peers so the controller's client page shows
 	// the kernel's view rather than the desired state's. Best-effort by design: an
-	// interface that is not up yet (or still wg-easy's) simply contributes none.
+	// interface that is not up yet simply contributes none.
 	if a.role == domain.RoleMaster {
 		st.ClientPeers = health.ClientPeers(ctx, clientIfaceName(a.masterPaths().ClientWGConf))
 	}
@@ -1654,13 +1508,13 @@ func (a *agent) reportStatus(ctx context.Context, state domain.NodeState, checks
 
 // latestHandshake reads the node's freshest WireGuard handshake for the status
 // report's HANDSHAKE column (data-plane liveness): an exit's master↔exit kernel
-// AWG tunnel (awg0), or a master's wg-easy client interface (wg0). It is
+// AWG tunnel (awg0), or a master's client interface (wg0). It is
 // best-effort — zero (shown as "—") when the interface is absent or carries no WG
 // handshake (e.g. an exit whose active transport is REALITY, not kernel AWG).
 func (a *agent) latestHandshake(ctx context.Context) time.Time {
 	iface := "awg0" // exit: master↔exit kernel AWG tunnel (matches DefaultExitProbes)
 	if a.role == domain.RoleMaster {
-		iface = wgeasy.DefaultInterface
+		iface = domain.ClientWGInterface
 	}
 	return health.LatestHandshake(ctx, iface)
 }
@@ -1873,25 +1727,6 @@ func (a *agent) ensureWGKey(persist bool) (kp wg.KeyPair, ephemeral bool, err er
 	}
 	kp, err = wg.GenerateKeyPair()
 	return kp, true, err
-}
-
-// ensureWGEasyAdmin returns the wg-easy admin credentials that seed unattended
-// setup. With persist=true (apply mode) it loads or generates+persists the
-// password (0600, on-node only). With persist=false (plan mode) it loads an
-// existing password or generates an ephemeral one just for rendering, reporting
-// ephemeral=true, so dry-run never writes anything. The username is fixed
-// (wgeasy.AdminUsername); only the password is secret.
-func (a *agent) ensureWGEasyAdmin(persist bool) (user, pass string, ephemeral bool, err error) {
-	path := a.masterPaths().WGEasyAdmin
-	if persist {
-		pass, _, err = wgeasy.LoadOrCreateAdminPassword(path)
-		return wgeasy.AdminUsername, pass, false, err
-	}
-	if p, rerr := wgeasy.ReadAdminPassword(path); rerr == nil {
-		return wgeasy.AdminUsername, p, false, nil
-	}
-	pass, err = wgeasy.GeneratePassword()
-	return wgeasy.AdminUsername, pass, true, err
 }
 
 func buildClientTLS(cfg *config.AgentConfig) (*tls.Config, error) {
@@ -2347,16 +2182,12 @@ func (a *agent) decideNetnsMove(ctx context.Context, spec domain.NodeSpec, probe
 	before := a.netnsMove.Attached()
 	after := a.netnsMove.DecideWith(wanted,
 		func() error {
-			// The move is watched by the client-path prober, and the prober is a peer
-			// on the AGENT's client interface. While wg-easy still owns that interface
-			// there is no prober, no probe, and therefore no way to notice the move
-			// broke anyone — so it does not start. It used to: the empty probe set
-			// read as "path broken", the node moved, reverted, moved, reverted, and
-			// parked itself on the host path with a terminal verdict, three times
-			// per wg-easy master, for nothing. Measured on a stand and in a tester's
-			// journal, 2026-09-07.
+			// The move is watched by the client-path prober, a peer on the client
+			// interface. A master without one has no probe and no way to notice the
+			// move broke anyone, so it does not start: an empty probe set once read as
+			// "path broken" and parked nodes on the host path for nothing (2026-09-07).
 			if spec.Master.ClientWG == nil {
-				return errors.New("the client path cannot be measured while wg-easy owns the client interface (client_awg.managed is off); not moving until the agent carries it")
+				return errors.New("the client path cannot be measured without a client interface (client_awg); not moving")
 			}
 			return master.NamespaceReady(ctx, spec)
 		},

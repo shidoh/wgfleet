@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/api"
-	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/controller/web/auth"
@@ -71,7 +70,7 @@ type SpecRenderer interface {
 	// ClientVLESSRouteThrough returns the CIDRs the master's clients should route
 	// through the tunnel (for the routing object + subscription header).
 	ClientVLESSRouteThrough(masterID string) []string
-	// Client-facing WireGuard credentials (the leg wg-easy used to own). Unlike the
+	// Client-facing WireGuard credentials. Unlike the
 	// VLESS ones these carry a secret — the client's private key — because the
 	// controller renders the .conf and its QR; treat what ListWGClients returns
 	// accordingly.
@@ -1398,7 +1397,6 @@ type nodeData struct {
 	// of them passes on a healthy exit whose tunnel to the master carries nothing.
 	HeldOut    *exitHoldView
 	Flash      string // one-shot error surfaced from a failed action redirect
-	WGEasyURL  string // master only: link to its wg-easy admin UI (mgmt overlay)
 	MihomoURL  string // master only: link to its mihomo (Clash) web dashboard (mgmt overlay)
 	MetricsURL string // link to the node's agent Prometheus /metrics on the mgmt overlay
 	WireSkew   string // non-empty (reason) when the agent's wire version is incompatible
@@ -1461,15 +1459,13 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 		// Nothing to count with. "0 credentials" would be a claim, not a reading.
 		data.WGClientCountUnknown = true
 	}
-	// Render the desired spec once: for the preview text and, for a master, the
-	// wg-easy admin UI link.
+	// Render the desired spec once: for the preview text and the node links.
 	if h.renderer == nil {
 		data.SpecErr = "spec preview unavailable"
 	} else if spec, err := h.renderer.RenderNodeSpec(r.Context(), id); err != nil {
 		data.SpecErr = "cannot render spec: " + err.Error()
 	} else {
 		data.Spec, data.HasSpec = buildSpecView(spec), true
-		data.WGEasyURL = wgEasyURL(node, spec)
 		data.MihomoURL = mihomoURL(node, spec)
 		if spec.Role == domain.RoleExit {
 			data.Transports = spec.Transports()
@@ -1491,31 +1487,6 @@ func (h *Handler) handleNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.render(w, h.nodeTmpl, "layout", data)
-}
-
-// wgEasyURL builds the master's wg-easy admin UI URL on the mgmt/ZT overlay, or
-// "" for non-masters or when the mgmt address is unknown. The port follows the
-// rendered compose spec (operator override) or the default.
-func wgEasyURL(node domain.Node, spec domain.NodeSpec) string {
-	if node.Role != domain.RoleMaster || node.MgmtAddr == "" {
-		return ""
-	}
-	// Not once the agent owns the client interface. The handover removes the
-	// wg-easy container, so on a migrated master this link pointed at nothing and
-	// hung — three rows above the AWG CLIENTS link that replaced it. It was the
-	// most visible surviving artefact of the old world.
-	if spec.Master != nil && spec.Master.ClientWG != nil {
-		return ""
-	}
-	host := node.MgmtAddr
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	port := compose.DefaultWGEasyWebPort
-	if spec.Master != nil && spec.Master.Compose.WGEasyWebPort != 0 {
-		port = spec.Master.Compose.WGEasyWebPort
-	}
-	return fmt.Sprintf("http://%s:%d", host, port)
 }
 
 // metricsURL builds the node's agent Prometheus /metrics URL on the mgmt/ZT

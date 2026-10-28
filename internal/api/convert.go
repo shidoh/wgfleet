@@ -518,10 +518,8 @@ func composeToProto(c domain.ComposeSpec) *pb.ComposeSpec {
 		return nil
 	}
 	return &pb.ComposeSpec{
-		WgEasyImage:      c.WGEasyImage,
 		MihomoImage:      c.MihomoImage,
 		PublicIp:         c.PublicIP,
-		WgEasyWebPort:    int32(c.WGEasyWebPort),
 		ClientDns:        append([]string(nil), c.ClientDNS...),
 		ClientAllowedIps: c.ClientAllowedIPs,
 		NetnsHolderImage: c.NetnsHolderImage,
@@ -533,10 +531,8 @@ func composeFromProto(c *pb.ComposeSpec) domain.ComposeSpec {
 		return domain.ComposeSpec{}
 	}
 	return domain.ComposeSpec{
-		WGEasyImage:      c.GetWgEasyImage(),
 		MihomoImage:      c.GetMihomoImage(),
 		PublicIP:         c.GetPublicIp(),
-		WGEasyWebPort:    int(c.GetWgEasyWebPort()),
 		ClientDNS:        append([]string(nil), c.GetClientDns()...),
 		ClientAllowedIPs: c.GetClientAllowedIps(),
 		NetnsHolderImage: c.GetNetnsHolderImage(),

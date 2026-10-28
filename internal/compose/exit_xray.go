@@ -47,7 +47,7 @@ const privilegedPortMax = 1023
 // RenderXrayCompose renders docker-compose.yml for the exit's xray-core REALITY
 // inbound. xray runs on the host network so its listen port and SO_MARK'd outbound
 // (routed to WARP by host policy routing) operate in the host's network namespace,
-// matching the wg-easy/mihomo/blocky model. A plain VLESS+REALITY inbound needs no
+// matching the master's mihomo/blocky model. A plain VLESS+REALITY inbound needs no
 // elevated capabilities.
 func RenderXrayCompose(in XrayInput) (string, error) {
 	if in.ConfigPath == "" {

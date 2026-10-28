@@ -37,8 +37,7 @@ Both processes share the host network namespace, so their listeners must not col
 | controller /metrics | `127.0.0.1:9300` | mgmt/loopback only |
 | agent /metrics | `<mgmt>:9301` | pick a port ≠ 9300 |
 | mihomo Clash API | `<mgmt>:9090` | set by the master spec |
-| wg-easy web (legacy path only) | `<mgmt>:51821` (or your choice) | `compose.wg_easy_web_port` |
-| client AmneziaWG | `:443/udp` (or your choice) | `client_awg.listen_port` |
+| client AmneziaWG (`wg0`, the agent's) | `:443/udp` (or your choice) | `client_awg.listen_port` |
 
 ## Steps
 
@@ -52,7 +51,7 @@ sudo ./prepare-node.sh <zerotier-network-id>  # AmneziaWG DKMS module + ZeroTier
 sudo zerotier-cli listnetworks  # authorize the node, assign it a stable managed IP = <mgmt>
 
 # prepare-node.sh does NOT install Docker (normally the provisioner's job, and the
-# master is not provisioned). The master runs mihomo (+ wg-easy) in Docker:
+# master is not provisioned). The master runs mihomo in Docker:
 curl -fsSL https://get.docker.com | sh
 ```
 
@@ -89,10 +88,9 @@ fleet:
     - name: master-xa-1
       mgmt_addr: "<mgmt>"        # same ZT address as controller.listen host
       public_ip: "<public-ip>"  # the endpoint written into every client config
-      # managed: true hands the client interface to the AGENT; credentials live in the
-      # controller's store and issue/pause/rename/revoke are console actions. Leave it
-      # out and the master runs wg-easy instead (legacy path, kept for existing installs).
-      client_awg: { managed: true, listen_port: 443, address_pool: 10.80.0.0/24 }
+      # the agent carries the client interface wg0; credentials live in the controller's
+      # store and issue/pause/rename/revoke are console actions.
+      client_awg: { listen_port: 443, address_pool: 10.80.0.0/24 }
       routing:   { direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16], direct_geo: [RU], balance: health }
       mihomo:    { dashboard_disabled: false }  # dashboard is downloaded over the master's DIRECT path.
                                                 # If GitHub is blocked even directly from this box,
@@ -185,15 +183,10 @@ sudo wgfleet-agent --config /etc/wgfleet/agent.yaml --once --plan \
 Open the Web UI on `http://127.0.0.1:9000` (tunnel it over SSH/ZT). The master
 moves `Reconciling → Ready` once its data plane is up and the self-checks pass.
 
-> **Client credentials.** With `client_awg.managed: true` (above) issue, pause,
-> rename and revoke on the master's page in the console and hand each person their
-> self-service link. There is no admin UI and no password file.
->
-> Without that key the master runs wg-easy; its admin password stays on the master:
-> ```bash
-> sudo cat /etc/wgfleet/wg-easy-admin-password   # username: admin
-> ```
-> Either way `public_ip` (step 3) must be set: it is the endpoint clients dial.
+> **Client credentials.** Issue, pause, rename and revoke on the master's page in
+> the console and hand each person their self-service link. There is no admin UI
+> and no password file. `public_ip` (step 3) must be set: it is the endpoint
+> clients dial.
 
 ### 8. Add the exits (normal flow, from this same controller)
 
@@ -240,9 +233,6 @@ before the controller restart so the file exists before mihomo reloads.
 - **Start order:** controller before agent (the unit `Wants=`/`After=` handles it).
 - **The AmneziaWG kernel module is still required on this box** for the
   client-facing interface — do not skip OS prep because it is "only the controller host".
-- **`wg-easy` shows `unhealthy` in `docker ps` — cosmetic.** Its healthcheck runs
-  `wg show`, which cannot see AmneziaWG interfaces. The real signal is the agent's
-  `client-wg` health check.
 - **Pin the mihomo version**, not `:latest` or `Alpha` (a moving tag). Default is
   `v1.19.30`. `v1.19.27` and older **crash-loop on AmneziaWG-2.0 master↔exit junk**.
 - **mihomo's own downloads must not go through the exit.** Routed via `MATCH wg-best`

@@ -146,16 +146,11 @@ Existing client configs carry the old endpoint.
    sudo systemctl restart wgfleet-controller
    ```
 
-2. **With `client_awg.managed: true`** nothing else changes: configs are rendered
-   from `public_ip` on demand, so the console and the self-service portal now
-   serve the new endpoint.
+2. Nothing else changes: configs are rendered from `public_ip` on demand, so the
+   console and the self-service portal now serve the new endpoint.
 
-   **Without it** (legacy wg-easy path) the endpoint is baked into the restored
-   wg-easy database (`INIT_*` applies only when the database is first created).
-   Change the host in the wg-easy admin UI as well.
-
-3. Re-hand-out. Every already-imported peer needs a fresh config or QR. On the
-   managed path send each person their self-service link again.
+3. Re-hand-out. Every already-imported peer needs a fresh config or QR: send each
+   person their self-service link again.
 
 To avoid this step next time, put a **DNS name** in `public_ip`.
 
@@ -183,6 +178,6 @@ Then reassign the mgmt address back to the old node in ZeroTier Central.
          authorize in ZT Central with the OLD mgmt address
 3. old:  systemctl disable --now wgfleet-agent wgfleet-controller   (leave powered on)
 4. new:  fill placeholders  →  --restore --plan  →  --restore  →  start controller, then agent  →  verify
-5. new:  public IP changed?  manifest (+ wg-easy UI on the legacy path) + re-issue client configs
+5. new:  public IP changed?  manifest + re-issue client configs
 6. old:  decommission once exits are Ready and a client is tested
 ```

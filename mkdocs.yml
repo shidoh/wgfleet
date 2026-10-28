@@ -97,8 +97,8 @@ nav:
       - Operations: docs/operations.md
       - Upgrading: docs/upgrade.md
       - Support bundle: docs/support-bundle.md
+      - AmneziaWG 3.x for clients: docs/client-migration.md
   - Migrations:
-      - Client leg off wg-easy: docs/client-migration.md
       - Moving the master: docs/master-migration.md
   - Recipes:
       - RU split tunnel and DNS filtering: docs/recipes/ru-split-tunnel-dns-filter.md
