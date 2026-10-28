@@ -879,3 +879,77 @@ func TestHeldOutForgetsMembersThatLeaveTheTiers(t *testing.T) {
 		t.Fatalf("vn1 left every tier but is still held: %v", s.heldOut)
 	}
 }
+
+// sequenceProbe answers each member from its own list of results, one per call,
+// repeating the last one when the list runs out — a member that fails once and
+// then answers, the way a lossy moment looks from the master.
+func sequenceProbe(seq map[string][][2]int, hits map[string]int) memberProbe {
+	return func(_ context.Context, name string) (int, int, error) {
+		rs, ok := seq[name]
+		if !ok || len(rs) == 0 {
+			return 0, 0, errors.New("clash API unreachable")
+		}
+		i := hits[name]
+		hits[name]++
+		if i >= len(rs) {
+			i = len(rs) - 1
+		}
+		return rs[i][0], rs[i][1], nil
+	}
+}
+
+// Live 2026-10-28: one client's download filled a master's link, a single probe
+// of an exit reached 1 of 4 destinations, and it left the rotation — a third of all
+// sites moved to another exit and back a minute later. A member that fails once and
+// answers the moment it is asked again was never down; it lost a race with a full
+// queue. The first member sampled in a pass is re-asked before it is held out.
+func TestScoutThatFailsOnceIsReaskedNotHeld(t *testing.T) {
+	hits := map[string]int{}
+	seq := map[string][][2]int{"vn1": {{1, 4}, {4, 4}}, "vn2": {{4, 4}}}
+	s := newTestSelector(sequenceProbe(seq, hits))
+	s.warmEvery = 0
+	s.pass = len(primary) - 1 // the next pass starts its walk at vn1
+
+	if s.active(primary, reserve) {
+		t.Fatal("failed over on a member that answered when asked again")
+	}
+	if _, held := s.heldOut["vn1"]; held {
+		t.Fatalf("vn1 failed once and answered on the re-ask, but was held out: %v", s.heldOut)
+	}
+	if hits["vn1"] != 2 {
+		t.Fatalf("vn1 must be asked exactly twice (sample + re-ask), got %d", hits["vn1"])
+	}
+	if hits["vn2"] != 0 {
+		t.Fatalf("the re-ask answered, so the walk must stop at vn1; vn2 was probed %d times", hits["vn2"])
+	}
+}
+
+// The re-ask must not soften a real failure: a member that fails both times is
+// held out in the same pass, exactly as before.
+func TestScoutThatFailsTheReaskIsHeld(t *testing.T) {
+	hits := map[string]int{}
+	seq := map[string][][2]int{"vn1": {{0, 4}}, "vn2": {{4, 4}}}
+	s := newTestSelector(sequenceProbe(seq, hits))
+	s.warmEvery = 0
+	s.pass = len(primary) - 1
+
+	s.active(primary, reserve)
+	if _, held := s.heldOut["vn1"]; !held {
+		t.Fatalf("vn1 failed the sample and the re-ask but was not held: %v", s.heldOut)
+	}
+	if hits["vn1"] != 2 {
+		t.Fatalf("vn1 must be asked twice before being held, got %d", hits["vn1"])
+	}
+}
+
+// A blind re-ask (the phase budget ran out) is not evidence the member recovered:
+// judge it on the sample that was actually taken.
+func TestBlindReaskJudgesOnTheFirstSample(t *testing.T) {
+	s := newTestSelector(nil)
+	s.warmEvery = 0
+	s.pass = len(primary) - 1
+	s.budgetedPass(map[string][2]int{"vn1": {0, 4}, "vn2": {4, 4}}, 1, primary, reserve)
+	if _, held := s.heldOut["vn1"]; !held {
+		t.Fatalf("a failed sample with a blind re-ask must still hold the member: %v", s.heldOut)
+	}
+}

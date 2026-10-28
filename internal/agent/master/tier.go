@@ -507,7 +507,7 @@ func (s *TierSelector) tierUsable(ctx context.Context, probe memberProbe, member
 	// judged unusable and nothing since says otherwise — which is what still lets a
 	// genuinely dead tier fail over when one pass cannot cover every member.
 	anyKnown, anyUsable, freeBlind := false, false, false
-	sample := func(m string, isHeld bool) bool {
+	sample := func(m string, isHeld, reask bool) bool {
 		ok, total, err := probe(ctx, m)
 		if err != nil {
 			if !isHeld {
@@ -516,6 +516,9 @@ func (s *TierSelector) tierUsable(ctx context.Context, probe memberProbe, member
 			return false
 		}
 		anyKnown = true
+		if reask && !s.reaches(ok, total) {
+			ok, total = s.reaskOnce(ctx, probe, m, ok, total)
+		}
 		return s.judge(m, ok, total)
 	}
 
@@ -524,12 +527,17 @@ func (s *TierSelector) tierUsable(ctx context.Context, probe memberProbe, member
 	// phase budget every pass, the healthy members were never sampled, and the
 	// recovery streak reset forever (live, 2026-09-28). A healthy member answers in
 	// milliseconds, so going first costs the held-out re-probe almost nothing.
+	//
+	// This first member — the scout — is the only one re-asked before being held out
+	// (see reaskOnce). Members walked AFTER a failed scout are not: by then the tier
+	// itself looks sick, and a second timeout per member would only slow the failover
+	// a dead tier needs.
 	if len(free) > 0 {
-		anyUsable = sample(free[0], false)
+		anyUsable = sample(free[0], false, true)
 		free = free[1:]
 	}
 	for _, m := range held {
-		if sample(m, true) {
+		if sample(m, true, false) {
 			anyUsable = true
 		}
 	}
@@ -537,11 +545,46 @@ func (s *TierSelector) tierUsable(ctx context.Context, probe memberProbe, member
 		return true, true
 	}
 	for _, m := range free {
-		if sample(m, false) {
+		if sample(m, false, false) {
 			return true, true
 		}
 	}
 	return false, anyKnown && !freeBlind
+}
+
+// reaches reports whether a probe result counts as usable: enough destinations
+// answered, with the threshold clamped to how many were actually tried.
+func (s *TierSelector) reaches(ok, total int) bool {
+	return total > 0 && ok >= min(s.minReachable, total)
+}
+
+// reaskOnce probes a member that has just failed one more time and returns the
+// result to judge it on.
+//
+// One failed sample is weak evidence and the price of acting on it is high. Live
+// 2026-10-28: a single client's download filled a master's link, one probe of an exit
+// reached 1 of 4 destinations, and the exit left the rotation. wg-best hashes sites to
+// exits, so a third of all sites moved to another exit — and moved back when the
+// next pass found it fine. Every session pinned to an exit's address broke twice.
+// A member that answers the moment it is asked again was never down; it lost a race
+// with a full queue.
+//
+// The re-ask also undoes the damage of the first one: the failed `delay` call has
+// already written alive=false into mihomo, and a passing one writes it back within
+// seconds instead of leaving the exit out until the next pass.
+//
+// A blind re-ask (the phase is out of budget) is not evidence of recovery, so the
+// member is judged on the sample that was actually taken.
+func (s *TierSelector) reaskOnce(ctx context.Context, probe memberProbe, m string, ok, total int) (int, int) {
+	ok2, total2, err := probe(ctx, m)
+	if err != nil {
+		return ok, total
+	}
+	if s.reaches(ok2, total2) && s.log != nil {
+		s.log.Info("exit failed one probe and answered the re-ask; kept in rotation",
+			"exit", m, "first", ok, "of", total, "reask", ok2, "reask_of", total2)
+	}
+	return ok2, total2
 }
 
 // forgetDeparted drops held-out records for members that are in neither tier any
@@ -565,8 +608,7 @@ func (s *TierSelector) forgetDeparted(primary, reserve []string) {
 // judge turns one member's probe result into a usable/unusable verdict and keeps
 // the held-out set in step with it. Callers must not invoke it on a blind sample.
 func (s *TierSelector) judge(member string, ok, total int) bool {
-	need := min(s.minReachable, total)
-	if total > 0 && ok >= need {
+	if s.reaches(ok, total) {
 		s.release(member, ok, total)
 		return true
 	}
