@@ -841,6 +841,188 @@
           }
         }
       },
+      "panel-236": {
+        "kind": "Panel",
+        "spec": {
+          "id": 236,
+          "title": "Scanner knocks, last hour",
+          "description": "Packets opening a connection to the fleet from a scanner-feed network (C24Be + sngvy) in the last hour, all nodes. Dropped where the feed is enforced, only counted where it is observed. Replies to connections the fleet opened are never counted. A packet count: a scanner retrying a SYN counts again.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "sum(increase(wgfleet_fw_as_blacklist_hits_total{node=~\"$node\"}[1h]))"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "stat",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      },
+                      {
+                        "color": "orange",
+                        "value": 500
+                      },
+                      {
+                        "color": "red",
+                        "value": 5000
+                      }
+                    ]
+                  },
+                  "mappings": [],
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "noValue": "feed off",
+                  "decimals": 0
+                },
+                "overrides": []
+              },
+              "options": {
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "colorMode": "background",
+                "graphMode": "area",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto",
+                "wideLayout": true,
+                "showPercentChange": false
+              }
+            }
+          }
+        }
+      },
+      "panel-237": {
+        "kind": "Panel",
+        "spec": {
+          "id": 237,
+          "title": "Scanner knocks per hour, by node",
+          "description": "Interest in each server: packets opening a connection from a scanner-feed network, per hour. A step up on one node means it has been found; on all nodes at once, a new sweep. Source: wgfleet_fw_as_blacklist_hits_total.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "sum by (node) (increase(wgfleet_fw_as_blacklist_hits_total{node=~\"$node\"}[1h]))",
+                        "legendFormat": "{{node}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
+                  "custom": {
+                    "drawStyle": "bars",
+                    "lineWidth": 1,
+                    "fillOpacity": 80,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "mode": "none",
+                      "group": "A"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisSoftMin": 0
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      }
+                    ]
+                  },
+                  "decimals": 0
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "right",
+                  "showLegend": true,
+                  "calcs": [
+                    "sum",
+                    "max",
+                    "lastNotNull"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          }
+        }
+      },
       "panel-210": {
         "kind": "Panel",
         "spec": {
@@ -3394,6 +3576,194 @@
                     "sum"
                   ],
                   "fields": ""
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-238": {
+        "kind": "Panel",
+        "spec": {
+          "id": 238,
+          "title": "Scanner list, IPv4 addresses by source",
+          "description": "What each source gave the last good list, largest copy across nodes. C24Be has published half its list on a bad day (2026-10-31: 424 295 → 230 467); a drop here is the source, not the fleet.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "max by (src) (label_replace(wgfleet_fw_as_blacklist_source_ipv4_addresses, \"src\", \"$1\", \"source\", \"https://[^/]+/([^/]+)/.*\"))",
+                        "legendFormat": "{{src}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineWidth": 2,
+                    "fillOpacity": 10,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "mode": "none",
+                      "group": "A"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisSoftMin": 0
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      }
+                    ]
+                  },
+                  "decimals": 0
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "right",
+                  "showLegend": true,
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-239": {
+        "kind": "Panel",
+        "spec": {
+          "id": 239,
+          "title": "Scanner list in the kernel, per node (IPv4 entries)",
+          "description": "Entries in each node's as_blacklist set after merging. A node below the others is on an older list or failed to refresh; a node at zero with the feed on is open to scanners (fail-open). Masters show nothing while their feed is off.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "max by (node) (wgfleet_fw_as_blacklist_size{family=\"v4\",node=~\"$node\"})",
+                        "legendFormat": "{{node}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineWidth": 2,
+                    "fillOpacity": 10,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "mode": "none",
+                      "group": "A"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisSoftMin": 0
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      }
+                    ]
+                  },
+                  "decimals": 0
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "right",
+                  "showLegend": true,
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
                 }
               }
             }
@@ -6497,6 +6867,32 @@
                         "x": 21,
                         "y": 4
                       }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-236"
+                        },
+                        "height": 7,
+                        "width": 4,
+                        "x": 0,
+                        "y": 8
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-237"
+                        },
+                        "height": 7,
+                        "width": 20,
+                        "x": 4,
+                        "y": 8
+                      }
                     }
                   ]
                 }
@@ -6811,6 +7207,32 @@
                         "width": 24,
                         "x": 0,
                         "y": 4
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-238"
+                        },
+                        "height": 8,
+                        "width": 12,
+                        "x": 0,
+                        "y": 13
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-239"
+                        },
+                        "height": 8,
+                        "width": 12,
+                        "x": 12,
+                        "y": 13
                       }
                     }
                   ]

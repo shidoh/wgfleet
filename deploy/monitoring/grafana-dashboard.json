@@ -794,13 +794,162 @@
       }
     },
     {
+      "type": "stat",
+      "id": 236,
+      "title": "Scanner knocks, last hour",
+      "description": "Packets opening a connection to the fleet from a scanner-feed network (C24Be + sngvy) in the last hour, all nodes. Dropped where the feed is enforced, only counted where it is observed. Replies to connections the fleet opened are never counted. A packet count: a scanner retrying a SYN counts again.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 500
+              },
+              {
+                "color": "red",
+                "value": 5000
+              }
+            ]
+          },
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "feed off",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(increase(wgfleet_fw_as_blacklist_hits_total{node=~\"$node\"}[1h]))",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 4,
+        "h": 7
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 237,
+      "title": "Scanner knocks per hour, by node",
+      "description": "Interest in each server: packets opening a connection from a scanner-feed network, per hour. A step up on one node means it has been found; on all nodes at once, a new sweep. Source: wgfleet_fw_as_blacklist_hits_total.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 80,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "sum",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (node) (increase(wgfleet_fw_as_blacklist_hits_total{node=~\"$node\"}[1h]))",
+          "refId": "A",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "gridPos": {
+        "x": 4,
+        "y": 9,
+        "w": 20,
+        "h": 7
+      },
+      "interval": "1h"
+    },
+    {
       "type": "row",
       "id": 209,
       "title": "Clients",
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 9,
+        "y": 16,
         "w": 24,
         "h": 1
       }
@@ -874,7 +1023,7 @@
         "x": 0,
         "w": 8,
         "h": 8,
-        "y": 10
+        "y": 17
       }
     },
     {
@@ -954,7 +1103,7 @@
         "x": 8,
         "w": 16,
         "h": 8,
-        "y": 10
+        "y": 17
       }
     },
     {
@@ -1026,7 +1175,7 @@
         "x": 0,
         "w": 8,
         "h": 8,
-        "y": 18
+        "y": 25
       }
     },
     {
@@ -1098,7 +1247,7 @@
         "x": 8,
         "w": 8,
         "h": 8,
-        "y": 18
+        "y": 25
       }
     },
     {
@@ -1180,7 +1329,7 @@
         "x": 16,
         "w": 8,
         "h": 8,
-        "y": 18
+        "y": 25
       }
     },
     {
@@ -1447,7 +1596,7 @@
         "x": 0,
         "w": 15,
         "h": 11,
-        "y": 26
+        "y": 33
       }
     },
     {
@@ -1519,7 +1668,7 @@
         "x": 15,
         "w": 9,
         "h": 11,
-        "y": 26
+        "y": 33
       }
     },
     {
@@ -1529,7 +1678,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 37,
+        "y": 44,
         "w": 24,
         "h": 1
       }
@@ -1651,7 +1800,7 @@
         "x": 0,
         "w": 7,
         "h": 13,
-        "y": 38
+        "y": 45
       }
     },
     {
@@ -1745,7 +1894,7 @@
         "x": 7,
         "w": 17,
         "h": 13,
-        "y": 38
+        "y": 45
       }
     },
     {
@@ -1817,7 +1966,7 @@
         "x": 0,
         "w": 12,
         "h": 8,
-        "y": 51
+        "y": 58
       }
     },
     {
@@ -1893,7 +2042,7 @@
         "x": 12,
         "w": 12,
         "h": 8,
-        "y": 51
+        "y": 58
       }
     },
     {
@@ -1971,7 +2120,7 @@
         "x": 0,
         "w": 8,
         "h": 8,
-        "y": 59
+        "y": 66
       }
     },
     {
@@ -2048,7 +2197,7 @@
         "x": 8,
         "w": 8,
         "h": 8,
-        "y": 59
+        "y": 66
       }
     },
     {
@@ -2125,7 +2274,7 @@
         "x": 16,
         "w": 8,
         "h": 8,
-        "y": 59
+        "y": 66
       }
     },
     {
@@ -2201,7 +2350,7 @@
         "x": 0,
         "w": 12,
         "h": 8,
-        "y": 67
+        "y": 74
       },
       "interval": "1h"
     },
@@ -2278,7 +2427,7 @@
         "x": 12,
         "w": 12,
         "h": 8,
-        "y": 67
+        "y": 74
       },
       "interval": "1h"
     },
@@ -2289,7 +2438,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 75,
+        "y": 82,
         "w": 24,
         "h": 1
       }
@@ -2355,7 +2504,7 @@
         "x": 0,
         "w": 6,
         "h": 4,
-        "y": 76
+        "y": 83
       }
     },
     {
@@ -2425,7 +2574,7 @@
         "x": 6,
         "w": 6,
         "h": 4,
-        "y": 76
+        "y": 83
       }
     },
     {
@@ -2503,7 +2652,7 @@
         "x": 12,
         "w": 6,
         "h": 4,
-        "y": 76
+        "y": 83
       }
     },
     {
@@ -2581,7 +2730,7 @@
         "x": 18,
         "w": 6,
         "h": 4,
-        "y": 76
+        "y": 83
       }
     },
     {
@@ -2595,7 +2744,7 @@
         "x": 0,
         "w": 24,
         "h": 9,
-        "y": 80
+        "y": 87
       },
       "id": 21,
       "fieldConfig": {
@@ -2918,11 +3067,167 @@
       ]
     },
     {
+      "type": "timeseries",
+      "id": 238,
+      "title": "Scanner list, IPv4 addresses by source",
+      "description": "What each source gave the last good list, largest copy across nodes. C24Be has published half its list on a bad day (2026-10-31: 424 295 → 230 467); a drop here is the source, not the fleet.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (src) (label_replace(wgfleet_fw_as_blacklist_source_ipv4_addresses, \"src\", \"$1\", \"source\", \"https://[^/]+/([^/]+)/.*\"))",
+          "refId": "A",
+          "legendFormat": "{{src}}"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 96,
+        "w": 12,
+        "h": 8
+      },
+      "interval": ""
+    },
+    {
+      "type": "timeseries",
+      "id": 239,
+      "title": "Scanner list in the kernel, per node (IPv4 entries)",
+      "description": "Entries in each node's as_blacklist set after merging. A node below the others is on an older list or failed to refresh; a node at zero with the feed on is open to scanners (fail-open). Masters show nothing while their feed is off.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (node) (wgfleet_fw_as_blacklist_size{family=\"v4\",node=~\"$node\"})",
+          "refId": "A",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 96,
+        "w": 12,
+        "h": 8
+      },
+      "interval": ""
+    },
+    {
       "type": "row",
       "title": "Health",
       "gridPos": {
         "x": 0,
-        "y": 89,
+        "y": 104,
         "w": 24,
         "h": 1
       },
@@ -2941,7 +3246,7 @@
         "x": 0,
         "w": 4,
         "h": 8,
-        "y": 90
+        "y": 105
       },
       "id": 31,
       "fieldConfig": {
@@ -3017,7 +3322,7 @@
         "x": 4,
         "w": 20,
         "h": 8,
-        "y": 90
+        "y": 105
       },
       "id": 32,
       "fieldConfig": {
@@ -3109,7 +3414,7 @@
         "x": 0,
         "w": 24,
         "h": 6,
-        "y": 98
+        "y": 113
       },
       "id": 33,
       "fieldConfig": {
@@ -3231,7 +3536,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 104,
+        "y": 119,
         "w": 24,
         "h": 1
       },
@@ -3249,7 +3554,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 105
+            "y": 120
           },
           "id": 101,
           "fieldConfig": {
@@ -3310,7 +3615,7 @@
             "x": 4,
             "w": 12,
             "h": 8,
-            "y": 105
+            "y": 120
           },
           "id": 102,
           "fieldConfig": {
@@ -3385,7 +3690,7 @@
             "x": 16,
             "w": 4,
             "h": 8,
-            "y": 105
+            "y": 120
           },
           "id": 103,
           "fieldConfig": {
@@ -3490,7 +3795,7 @@
             "x": 20,
             "w": 4,
             "h": 8,
-            "y": 105
+            "y": 120
           },
           "id": 104,
           "fieldConfig": {
@@ -3551,7 +3856,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 113
+            "y": 128
           },
           "id": 96,
           "fieldConfig": {
@@ -3612,7 +3917,7 @@
             "x": 4,
             "w": 8,
             "h": 8,
-            "y": 113
+            "y": 128
           },
           "id": 97,
           "fieldConfig": {
@@ -3687,7 +3992,7 @@
             "x": 12,
             "w": 6,
             "h": 8,
-            "y": 113
+            "y": 128
           },
           "id": 106,
           "fieldConfig": {
@@ -3760,7 +4065,7 @@
             "x": 18,
             "w": 6,
             "h": 8,
-            "y": 113
+            "y": 128
           },
           "id": 107,
           "fieldConfig": {
@@ -3829,7 +4134,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 105,
+        "y": 120,
         "w": 24,
         "h": 1
       },
@@ -3847,7 +4152,7 @@
             "x": 0,
             "w": 12,
             "h": 8,
-            "y": 106
+            "y": 121
           },
           "id": 61,
           "fieldConfig": {
@@ -3952,7 +4257,7 @@
             "x": 12,
             "w": 12,
             "h": 8,
-            "y": 106
+            "y": 121
           },
           "id": 62,
           "fieldConfig": {
@@ -4024,7 +4329,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 106,
+        "y": 121,
         "w": 24,
         "h": 1
       },
@@ -4042,7 +4347,7 @@
             "x": 0,
             "w": 16,
             "h": 8,
-            "y": 107
+            "y": 122
           },
           "id": 41,
           "fieldConfig": {
@@ -4130,7 +4435,7 @@
             "x": 16,
             "w": 8,
             "h": 8,
-            "y": 107
+            "y": 122
           },
           "id": 42,
           "fieldConfig": {
@@ -4231,7 +4536,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 107,
+        "y": 122,
         "w": 24,
         "h": 1
       },
@@ -4249,7 +4554,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 108
+            "y": 123
           },
           "id": 71,
           "fieldConfig": {
@@ -4310,7 +4615,7 @@
             "x": 4,
             "w": 4,
             "h": 8,
-            "y": 108
+            "y": 123
           },
           "id": 72,
           "fieldConfig": {
@@ -4368,7 +4673,7 @@
             "x": 8,
             "w": 16,
             "h": 8,
-            "y": 108
+            "y": 123
           },
           "id": 73,
           "fieldConfig": {
@@ -4447,7 +4752,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 108,
+        "y": 123,
         "w": 24,
         "h": 1
       },
@@ -4464,7 +4769,7 @@
             "x": 0,
             "w": 6,
             "h": 8,
-            "y": 109
+            "y": 124
           },
           "id": 51,
           "fieldConfig": {
@@ -4541,7 +4846,7 @@
             "x": 6,
             "w": 6,
             "h": 8,
-            "y": 109
+            "y": 124
           },
           "id": 52,
           "fieldConfig": {
@@ -4600,7 +4905,7 @@
             "x": 12,
             "w": 6,
             "h": 8,
-            "y": 109
+            "y": 124
           },
           "id": 53,
           "fieldConfig": {
@@ -4657,7 +4962,7 @@
             "x": 18,
             "w": 6,
             "h": 8,
-            "y": 109
+            "y": 124
           },
           "id": 54,
           "fieldConfig": {
@@ -4735,7 +5040,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 109,
+        "y": 124,
         "w": 24,
         "h": 1
       },
@@ -4753,7 +5058,7 @@
             "x": 0,
             "w": 5,
             "h": 8,
-            "y": 110
+            "y": 125
           },
           "id": 81,
           "fieldConfig": {
@@ -4814,7 +5119,7 @@
             "x": 5,
             "w": 5,
             "h": 8,
-            "y": 110
+            "y": 125
           },
           "id": 82,
           "fieldConfig": {
@@ -4875,7 +5180,7 @@
             "x": 10,
             "w": 14,
             "h": 8,
-            "y": 110
+            "y": 125
           },
           "id": 83,
           "fieldConfig": {
@@ -4990,7 +5295,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 110,
+        "y": 125,
         "w": 24,
         "h": 1
       },
@@ -5008,7 +5313,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 111
+            "y": 126
           },
           "id": 111,
           "fieldConfig": {
@@ -5069,7 +5374,7 @@
             "x": 4,
             "w": 10,
             "h": 8,
-            "y": 111
+            "y": 126
           },
           "id": 112,
           "fieldConfig": {
@@ -5146,7 +5451,7 @@
             "x": 14,
             "w": 10,
             "h": 8,
-            "y": 111
+            "y": 126
           },
           "id": 113,
           "fieldConfig": {
@@ -5223,7 +5528,7 @@
             "x": 0,
             "w": 8,
             "h": 8,
-            "y": 119
+            "y": 134
           },
           "id": 114,
           "fieldConfig": {
@@ -5300,7 +5605,7 @@
             "x": 8,
             "w": 8,
             "h": 8,
-            "y": 119
+            "y": 134
           },
           "id": 115,
           "fieldConfig": {
@@ -5385,7 +5690,7 @@
             "x": 16,
             "w": 8,
             "h": 8,
-            "y": 119
+            "y": 134
           },
           "id": 116,
           "fieldConfig": {
