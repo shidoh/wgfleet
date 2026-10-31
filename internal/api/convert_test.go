@@ -53,7 +53,7 @@ func TestNodeSpecRoundTrip(t *testing.T) {
 				Overrides: map[string]any{"caching": map[string]any{"prefetching": true}},
 			},
 		},
-		Firewall: domain.FirewallSpec{ASBlacklist: true, Whitelist: []string{"10.20.0.0/16"}, WGPort: 51820},
+		Firewall: domain.FirewallSpec{ASBlacklist: true, ASBlacklistObserve: true, Whitelist: []string{"10.20.0.0/16"}, WGPort: 51820},
 		Routing: domain.RoutingSpec{
 			EgressInterface: "wgcf",
 			DirectCIDRs:     []string{"10.0.0.0/8"},

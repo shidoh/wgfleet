@@ -196,7 +196,8 @@ type RenderInput struct {
 	ClientMSS int
 	// ASBlacklistV4 / ASBlacklistV6 are scanner-ASN prefixes to drop, sourced from
 	// the daily-refreshed feed cache (internal/asnfeed). They populate the
-	// as_blacklist / as_blacklist_v6 sets only when Firewall.ASBlacklist is on.
+	// as_blacklist / as_blacklist_v6 sets only when the feed is in use
+	// (Firewall.ASBlacklist or Firewall.ASBlacklistObserve).
 	// Every element is re-validated and re-emitted from its parsed form here (never
 	// trusted verbatim), so a corrupt/hostile cache cannot inject nft syntax into a
 	// ruleset applied as root. Empty leaves the set(s) empty — fail-open, so a
@@ -319,7 +320,11 @@ func RenderRuleset(in RenderInput) (string, error) {
 	fmt.Fprintf(&b, "delete table inet %s\n\n", ExitTable)
 	fmt.Fprintf(&b, "table inet %s {\n", ExitTable)
 
-	if in.Firewall.ASBlacklist {
+	if in.Firewall.ASBlacklistActive() {
+		// One counter for both families, read by internal/metrics as
+		// wgfleet_fw_as_blacklist_hits_total. In observe mode it is the whole point;
+		// in enforce mode it says how much the drop is doing.
+		fmt.Fprintf(&b, "\tcounter %s {\n\t}\n\n", ASBlacklistHitsCounter)
 		// auto-merge is ESSENTIAL: the scanner feeds contain overlapping prefixes
 		// (e.g. a /22 and a /23 inside it, or 2a00:1148::/29 and ::/32), and an
 		// `interval` set rejects overlaps with "conflicting intervals specified",
@@ -408,10 +413,7 @@ func RenderRuleset(in RenderInput) (string, error) {
 	b.WriteString("\t\tip saddr @whitelist accept\n")
 	// Whitelist accept precedes the blacklist drop, so an explicitly trusted source
 	// (mgmt overlay, master IP) is never caught by a scanner feed.
-	if in.Firewall.ASBlacklist {
-		b.WriteString("\t\tip saddr @as_blacklist drop\n")
-		b.WriteString("\t\tip6 saddr @as_blacklist_v6 drop\n")
-	}
+	writeASBlacklistRules(&b, in.Firewall)
 	fmt.Fprintf(&b, "\t\ttcp dport %d accept\n", sshPort)
 	fmt.Fprintf(&b, "\t\tudp dport %d accept\n", ZeroTierPort)
 	fmt.Fprintf(&b, "\t\tudp dport %d accept\n", in.Firewall.WGPort)
@@ -766,4 +768,28 @@ func parseWhitelistEntry(e string) (canonical string, isV4 bool, err error) {
 		return "", false, aerr
 	}
 	return a.String(), a.Is4(), nil
+}
+
+// ASBlacklistHitsCounter names the counter on the scanner-feed rule.
+const ASBlacklistHitsCounter = "as_blacklist_hits"
+
+// writeASBlacklistRules emits the scanner-feed match into the input chain. It
+// sits after the established/related accept and the whitelist, so it only ever
+// sees the first packets of connections someone ELSE opened toward this node:
+// replies to what the node or its clients dialled out never reach it, which is
+// why a feed full of Russian networks does not cut clients off Russian sites.
+//
+// Observe renders the same match without a verdict, so the packet falls through
+// to the port accepts exactly as if the rule were absent, and only the counter
+// moves.
+func writeASBlacklistRules(b *strings.Builder, fw domain.FirewallSpec) {
+	if !fw.ASBlacklistActive() {
+		return
+	}
+	verdict := ""
+	if fw.ASBlacklist {
+		verdict = " drop"
+	}
+	fmt.Fprintf(b, "\t\tip saddr @as_blacklist counter name %q%s\n", ASBlacklistHitsCounter, verdict)
+	fmt.Fprintf(b, "\t\tip6 saddr @as_blacklist_v6 counter name %q%s\n", ASBlacklistHitsCounter, verdict)
 }

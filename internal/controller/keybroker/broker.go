@@ -717,6 +717,10 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 			// the overlay is how the control plane reaches this node, so a manifest
 			// typo must not be able to lock the controller out. Mirrors the exit.
 			Whitelist: mergeUnique(master.Whitelist, b.fleet.MgmtCIDRs()),
+			// The whitelist above is matched before the feed, so neither the
+			// overlay nor an operator-listed source can be caught by it.
+			ASBlacklist:        master.ScannerFeed() == config.ScannerFeedEnforce,
+			ASBlacklistObserve: master.ScannerFeed() == config.ScannerFeedObserve,
 			// World-facing TCP services on the master (e.g. the decoy web listener).
 			PublicTCPPorts: append([]int(nil), master.PublicTCPPorts...),
 			PublicUDPPorts: append([]int(nil), master.PublicUDPPorts...),

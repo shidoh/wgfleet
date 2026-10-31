@@ -475,8 +475,8 @@ func dnsGroup(d domain.DNSFilterSpec) specGroup {
 
 func firewallGroup(f domain.FirewallSpec) specGroup {
 	g := specGroup{Title: "Firewall", Rows: []specRow{
-		{Label: "AS blacklist", Value: boolWord(f.ASBlacklist, "on", "off"),
-			Hint: "drops known scanner ASNs before they reach the data plane"},
+		{Label: "AS blacklist", Value: scannerFeedWord(f),
+			Hint: "new inbound connections from scanner networks: on drops them, observe only counts them"},
 	}}
 	if f.WGPort > 0 {
 		g.Rows = append(g.Rows, kv("AWG port", fmt.Sprintf("%d/udp", f.WGPort)))
@@ -788,5 +788,17 @@ func bitsPerSec(bps int) string {
 		return fmt.Sprintf("%.0f kbit/s", float64(bps)/1_000)
 	default:
 		return fmt.Sprintf("%d bit/s", bps)
+	}
+}
+
+// scannerFeedWord names the scanner feed state the way the manifest does.
+func scannerFeedWord(f domain.FirewallSpec) string {
+	switch {
+	case f.ASBlacklist:
+		return "on"
+	case f.ASBlacklistObserve:
+		return "observe"
+	default:
+		return "off"
 	}
 }

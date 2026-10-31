@@ -1739,3 +1739,31 @@ func TestRegisterRealityPortalKey(t *testing.T) {
 		}
 	}
 }
+
+// masters[].as_blacklist reaches the master's firewall spec as exactly one of
+// the two flags, and off as neither.
+func TestMasterSpecCarriesTheScannerFeedMode(t *testing.T) {
+	for mode, want := range map[string][2]bool{
+		"":        {false, false},
+		"off":     {false, false},
+		"observe": {false, true},
+		"enforce": {true, false},
+	} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			fleet := testFleet()
+			fleet.Masters[0].ASBlacklist = mode
+			b, st := newBrokerWithFleet(t, fleet)
+			seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+			seedNode(t, st, "exit-de-1", "10.20.0.5", "198.51.100.7", "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
+
+			spec, err := b.RenderNodeSpec(context.Background(), "master-xa-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := [2]bool{spec.Firewall.ASBlacklist, spec.Firewall.ASBlacklistObserve}
+			if got != want {
+				t.Errorf("Firewall {ASBlacklist, ASBlacklistObserve} = %v, want %v", got, want)
+			}
+		})
+	}
+}

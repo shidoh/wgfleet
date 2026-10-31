@@ -17,6 +17,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/shidoh/wgfleet/internal/agent/asnplan"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -137,23 +138,27 @@ func wgIfacesForRole(role domain.Role) []string {
 }
 
 // scheduledProbes lists the timer-driven probes whose success/attempt markers the
-// probe collector reports on. Both are exit planners (the WARP path-MTU probe and
-// the scanner-ASN feed refresh); a master runs neither.
-func scheduledProbes(role domain.Role, paths exit.Paths) []metrics.Probe {
-	if role != domain.RoleExit {
-		return nil
+// probe collector reports on. An exit runs the WARP path-MTU probe and the
+// scanner feed refresh; a master runs only the feed refresh. Markers that never
+// get written (feed off) simply yield no series.
+func scheduledProbes(role domain.Role, exitPaths exit.Paths, masterPaths master.Paths) []metrics.Probe {
+	feed := func(cache string) metrics.Probe {
+		return metrics.Probe{Name: "as_blacklist_feed", SuccessPath: cache, AttemptPath: asnplan.AttemptPath(cache)}
 	}
-	return []metrics.Probe{
-		{
-			Name:        "warp_path_mtu",
-			SuccessPath: paths.WARPMTUCache,
-			AttemptPath: exit.AttemptMarkerPath(paths.WARPMTUCache),
-		},
-		{
-			Name:        "as_blacklist_feed",
-			SuccessPath: paths.ASBlacklist,
-			AttemptPath: exit.AttemptMarkerPath(paths.ASBlacklist),
-		},
+	switch role {
+	case domain.RoleExit:
+		return []metrics.Probe{
+			{
+				Name:        "warp_path_mtu",
+				SuccessPath: exitPaths.WARPMTUCache,
+				AttemptPath: exit.AttemptMarkerPath(exitPaths.WARPMTUCache),
+			},
+			feed(exitPaths.ASBlacklist),
+		}
+	case domain.RoleMaster:
+		return []metrics.Probe{feed(masterPaths.ASBlacklist)}
+	default:
+		return nil
 	}
 }
 
@@ -336,10 +341,8 @@ func run() error {
 		// Scheduled probes degrade silently by design (a failure keeps the last-good
 		// value and only WARNs), so without this a probe that fails 100% of the time
 		// looks exactly like one that works — which is how the WARP path-MTU probe
-		// stayed dead fleet-wide. Exit-only: both probes are exit
-		// planners, and on a master the markers never exist, so the collector would
-		// emit nothing anyway.
-		metrics.NewProbeCollector(reg, cfg.Agent.NodeID, string(role), scheduledProbes(role, a.paths))
+		// stayed dead fleet-wide.
+		metrics.NewProbeCollector(reg, cfg.Agent.NodeID, string(role), scheduledProbes(role, a.paths, a.masterPaths()))
 		metricsSrv := &http.Server{Addr: bind, Handler: metricsMux(reg)}
 		go func() {
 			// The mgmt/overlay (ZeroTier) address may not be on an interface yet at agent
@@ -1210,18 +1213,21 @@ func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, life
 	var base []reconcile.Planner
 	if a.role == domain.RoleMaster {
 		base = master.Planners(master.Input{
-			Tier:               a.tier,
-			Restart:            a.restarts,
-			Paths:              a.masterPaths(),
-			PrivateKey:         privateKey,
-			RealityPrivateKey:  realityPrivateKey,
-			PortalPrivateKey:   a.portalKey,
-			ClientWGPrivateKey: clientWGPrivateKey,
-			SyntheticKey:       a.ensureSynthKeyQuiet(),
-			ClientWGPublicKey:  publicKeyOrEmpty(clientWGPrivateKey),
-			NetnsAttached:      a.netnsMove.Attached,
-			OverlayMSS:         a.cfg.Agent.MgmtOverlayMSS,
-			OnMihomoDisturbed:  a.noteMihomoDisturbed,
+			Tier:                a.tier,
+			Restart:             a.restarts,
+			Paths:               a.masterPaths(),
+			PrivateKey:          privateKey,
+			RealityPrivateKey:   realityPrivateKey,
+			PortalPrivateKey:    a.portalKey,
+			ClientWGPrivateKey:  clientWGPrivateKey,
+			SyntheticKey:        a.ensureSynthKeyQuiet(),
+			ClientWGPublicKey:   publicKeyOrEmpty(clientWGPrivateKey),
+			NetnsAttached:       a.netnsMove.Attached,
+			OverlayMSS:          a.cfg.Agent.MgmtOverlayMSS,
+			OnMihomoDisturbed:   a.noteMihomoDisturbed,
+			ASBlacklistV4URL:    a.cfg.Agent.ASBlacklistV4URL,
+			ASBlacklistV6URL:    a.cfg.Agent.ASBlacklistV6URL,
+			ASBlacklistInterval: a.cfg.Agent.ASBlacklistInterval,
 		})
 	} else {
 		in := exit.Input{

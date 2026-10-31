@@ -3,10 +3,12 @@ package master
 import (
 	"context"
 	"fmt"
+	"github.com/shidoh/wgfleet/internal/agent/asnplan"
 	"net/netip"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/shidoh/wgfleet/internal/agent/dockerfw"
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
@@ -84,6 +86,12 @@ type Input struct {
 	// be owned by the caller and reused across passes; a governor built here would
 	// forget every restart it saw. nil ⇒ unthrottled (the pre-governor behaviour).
 	Restart *restart.Governor
+	// ASBlacklistV4URL / ASBlacklistV6URL / ASBlacklistInterval say where the
+	// scanner feed comes from; empty takes the asnfeed defaults. Whether it is used
+	// at all is spec.Firewall (from the wire), not this.
+	ASBlacklistV4URL    string
+	ASBlacklistV6URL    string
+	ASBlacklistInterval time.Duration
 }
 
 const defaultClientInterface = domain.ClientWGInterface
@@ -108,7 +116,7 @@ func Planners(in Input) []reconcile.Planner {
 		// Input firewall: bring the drop policy up before the services, the same
 		// ordering the bootstrap uses ("firewall before traffic").
 		firewallPlanner{path: in.Paths.FirewallNFT, overlayMSS: in.OverlayMSS, clientIface: in.ClientInterface,
-			netnsAttached: in.NetnsAttached},
+			netnsAttached: in.NetnsAttached, asBlacklistCache: in.Paths.ASBlacklist},
 		// The client interface goes BEFORE compose: blocky and mihomo bind the
 		// client gateway address, which exists only once wg0 is up.
 		clientWGPlanner{confPath: in.Paths.ClientWGConf, privateKey: in.ClientWGPrivateKey,
@@ -180,6 +188,14 @@ func Planners(in Input) []reconcile.Planner {
 		// master NAT holds the pin and the gate (DependsOn): clears the conntrack
 		// entries a restart leaves stuck on an exit-initiated tunnel's pinned port.
 		awgPinPlanner{},
+		// Last, as on the exit: it only writes the feed cache, and the firewall
+		// planner above renders it on the next pass.
+		asnplan.New(asnplan.Config{
+			CachePath: in.Paths.ASBlacklist,
+			V4URL:     in.ASBlacklistV4URL,
+			V6URL:     in.ASBlacklistV6URL,
+			Interval:  in.ASBlacklistInterval,
+		}),
 	}
 }
 
@@ -287,6 +303,9 @@ func (p extraFilesPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reco
 // table) and self-heals like masterNATPlanner when the kernel loses the table.
 type firewallPlanner struct {
 	path string
+	// asBlacklistCache is the scanner feed cache rendered into the as_blacklist
+	// sets while the feed is enforced or observed.
+	asBlacklistCache string
 	// overlayMSS clamps TCP MSS on the mgmt overlay (0 ⇒ no clamp).
 	overlayMSS int
 	// clientIface is the client-facing WG interface ("wg0") whose DNAT'd TCP must be
@@ -359,9 +378,15 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	if spec.Master != nil && spec.Master.BindAddress != "" {
 		tproxyMark = netfw.TProxyMark
 	}
+	var feedV4, feedV6 []string
+	if spec.Firewall.ASBlacklistActive() {
+		feedV4, feedV6 = asnplan.ReadCache(p.asBlacklistCache)
+	}
 	ruleset, err := netfw.RenderRuleset(netfw.RenderInput{
 		Firewall:         spec.Firewall,
 		Role:             domain.RoleMaster,
+		ASBlacklistV4:    feedV4,
+		ASBlacklistV6:    feedV6,
 		OverlayMSS:       p.overlayMSS,
 		RedirPort:        redir,
 		TProxyMark:       tproxyMark,

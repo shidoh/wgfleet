@@ -84,3 +84,26 @@ wgfleet_fw_uplink_handshake_packets_total{direction="synack_in",node="master-xa-
 		t.Fatal(err)
 	}
 }
+
+// The scanner-feed counter counts in observe mode too, so it is not a drop: it
+// gets its own series and stays out of wgfleet_fw_drops_total.
+func TestFWCollectorReportsScannerFeedHitsApartFromDrops(t *testing.T) {
+	const table = `{"nftables":[
+		{"counter":{"family":"inet","name":"scan_drops","table":"wgfleet","packets":42,"bytes":2520}},
+		{"counter":{"family":"inet","name":"as_blacklist_hits","table":"wgfleet","packets":317,"bytes":19020}}
+	]}`
+	reg := prometheus.NewRegistry()
+	NewFWCollector(reg, "master-xa-1", "master", func(context.Context) ([]byte, error) { return []byte(table), nil })
+
+	want := `
+# HELP wgfleet_fw_as_blacklist_hits_total Packets opening a connection to this node from a scanner-feed network: dropped when the feed is enforced, only counted when it is observed. Replies to connections the node or its clients opened are never counted.
+# TYPE wgfleet_fw_as_blacklist_hits_total counter
+wgfleet_fw_as_blacklist_hits_total{node="master-xa-1",role="master"} 317
+# HELP wgfleet_fw_drops_total Packets dropped by a named nftables drop counter in table inet wgfleet.
+# TYPE wgfleet_fw_drops_total counter
+wgfleet_fw_drops_total{counter="scan_drops",node="master-xa-1",role="master"} 42
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "wgfleet_fw_as_blacklist_hits_total", "wgfleet_fw_drops_total"); err != nil {
+		t.Fatal(err)
+	}
+}

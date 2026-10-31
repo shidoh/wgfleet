@@ -45,6 +45,9 @@ type Paths struct {
 	NetnsMoveState string
 	// SynthConf is the prober's device config, in `awg setconf` form.
 	SynthConf string
+	// ASBlacklist is the scanner feed cache. Under /var/lib like the exit's, so a
+	// reboot keeps the last good list instead of starting with empty sets.
+	ASBlacklist string
 }
 
 // DefaultPaths returns the production-default file locations.
@@ -75,6 +78,7 @@ func DefaultPaths() Paths {
 		SynthKey:       "/etc/wgfleet/client-wg-synth.key",
 		NetnsMoveState: "/etc/wgfleet/netns-move.json",
 		SynthConf:      "/etc/wgfleet/client-wg-synth.conf",
+		ASBlacklist:    "/var/lib/wgfleet/as-blacklist.lst",
 	}
 }
 
@@ -102,5 +106,6 @@ func PathsUnder(dir string) Paths {
 		SynthKey:         filepath.Join(dir, "client-wg-synth.key"),
 		NetnsMoveState:   filepath.Join(dir, "netns-move.json"),
 		SynthConf:        filepath.Join(dir, "client-wg-synth.conf"),
+		ASBlacklist:      filepath.Join(dir, "as-blacklist.lst"),
 	}
 }

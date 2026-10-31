@@ -723,11 +723,12 @@ func dnsFromProto(d *pb.DNSFilterSpec) domain.DNSFilterSpec {
 
 func firewallToProto(f domain.FirewallSpec) *pb.FirewallSpec {
 	out := &pb.FirewallSpec{
-		AsBlacklist:  f.ASBlacklist,
-		Whitelist:    append([]string(nil), f.Whitelist...),
-		WgPort:       int32(f.WGPort),
-		RealityPort:  int32(f.RealityPort),
-		LifelinePort: int32(f.LifelinePort),
+		AsBlacklist:        f.ASBlacklist,
+		AsBlacklistObserve: f.ASBlacklistObserve,
+		Whitelist:          append([]string(nil), f.Whitelist...),
+		WgPort:             int32(f.WGPort),
+		RealityPort:        int32(f.RealityPort),
+		LifelinePort:       int32(f.LifelinePort),
 	}
 	for _, p := range f.PublicTCPPorts {
 		out.PublicTcpPorts = append(out.PublicTcpPorts, int32(p))
@@ -743,11 +744,12 @@ func firewallFromProto(f *pb.FirewallSpec) domain.FirewallSpec {
 		return domain.FirewallSpec{}
 	}
 	out := domain.FirewallSpec{
-		ASBlacklist:  f.GetAsBlacklist(),
-		Whitelist:    append([]string(nil), f.GetWhitelist()...),
-		WGPort:       int(f.GetWgPort()),
-		RealityPort:  int(f.GetRealityPort()),
-		LifelinePort: int(f.GetLifelinePort()),
+		ASBlacklist:        f.GetAsBlacklist(),
+		ASBlacklistObserve: f.GetAsBlacklistObserve(),
+		Whitelist:          append([]string(nil), f.GetWhitelist()...),
+		WGPort:             int(f.GetWgPort()),
+		RealityPort:        int(f.GetRealityPort()),
+		LifelinePort:       int(f.GetLifelinePort()),
 	}
 	for _, p := range f.GetPublicTcpPorts() {
 		out.PublicTCPPorts = append(out.PublicTCPPorts, int(p))

@@ -3483,9 +3483,14 @@ type FirewallSpec struct {
 	// UDP port to open for the exit's lifeline listener (LifelineInterface). 0 =
 	// not opened (the exit carries no lifeline). Requires wire v11 — see
 	// WireLifeline in internal/api/wire.go.
-	LifelinePort  int32 `protobuf:"varint,7,opt,name=lifeline_port,json=lifelinePort,proto3" json:"lifeline_port,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	LifelinePort int32 `protobuf:"varint,7,opt,name=lifeline_port,json=lifelinePort,proto3" json:"lifeline_port,omitempty"`
+	// Count new inbound connections from the scanner feed without dropping them.
+	// Renders the same sets and rule as as_blacklist minus the verdict; ignored
+	// when as_blacklist is set. An agent that predates the field reads it as
+	// off, which is the safe reading: nothing is dropped.
+	AsBlacklistObserve bool `protobuf:"varint,8,opt,name=as_blacklist_observe,json=asBlacklistObserve,proto3" json:"as_blacklist_observe,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *FirewallSpec) Reset() {
@@ -3565,6 +3570,13 @@ func (x *FirewallSpec) GetLifelinePort() int32 {
 		return x.LifelinePort
 	}
 	return 0
+}
+
+func (x *FirewallSpec) GetAsBlacklistObserve() bool {
+	if x != nil {
+		return x.AsBlacklistObserve
+	}
+	return false
 }
 
 type RoutingSpec struct {
@@ -4122,7 +4134,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x04http\x18\x04 \x01(\x05R\x04http\"A\n" +
 	"\x11BootstrapUpstream\x12\x1a\n" +
 	"\bupstream\x18\x01 \x01(\tR\bupstream\x12\x10\n" +
-	"\x03ips\x18\x02 \x03(\tR\x03ips\"\x84\x02\n" +
+	"\x03ips\x18\x02 \x03(\tR\x03ips\"\xb6\x02\n" +
 	"\fFirewallSpec\x12!\n" +
 	"\fas_blacklist\x18\x01 \x01(\bR\vasBlacklist\x12\x1c\n" +
 	"\twhitelist\x18\x02 \x03(\tR\twhitelist\x12\x17\n" +
@@ -4130,7 +4142,8 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\freality_port\x18\x04 \x01(\x05R\vrealityPort\x12(\n" +
 	"\x10public_tcp_ports\x18\x05 \x03(\x05R\x0epublicTcpPorts\x12(\n" +
 	"\x10public_udp_ports\x18\x06 \x03(\x05R\x0epublicUdpPorts\x12#\n" +
-	"\rlifeline_port\x18\a \x01(\x05R\flifelinePort\"\x90\x01\n" +
+	"\rlifeline_port\x18\a \x01(\x05R\flifelinePort\x120\n" +
+	"\x14as_blacklist_observe\x18\b \x01(\bR\x12asBlacklistObserve\"\x90\x01\n" +
 	"\vRoutingSpec\x12)\n" +
 	"\x10egress_interface\x18\x01 \x01(\tR\x0fegressInterface\x12!\n" +
 	"\fdirect_cidrs\x18\x02 \x03(\tR\vdirectCidrs\x12\x1b\n" +

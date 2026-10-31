@@ -3,6 +3,7 @@ package exit
 import (
 	"context"
 	"fmt"
+	"github.com/shidoh/wgfleet/internal/agent/asnplan"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -100,7 +101,12 @@ func Planners(in Input) []reconcile.Planner {
 			domain.LifelineInterface),
 		// Last: refresh the scanner-ASN feed cache (network, Apply-side only). It only
 		// writes a file; the firewall (first) renders it into the nft sets next pass.
-		newASNFeedPlanner(in),
+		asnplan.New(asnplan.Config{
+			CachePath: in.Paths.ASBlacklist,
+			V4URL:     in.ASBlacklistV4URL,
+			V6URL:     in.ASBlacklistV6URL,
+			Interval:  in.ASBlacklistInterval,
+		}),
 		// Auto-probe the WARP path MTU (network, Apply-side only): writes the wgcf MTU
 		// to a cache file; the WARP + firewall planners read it via effectiveWARPMTU.
 		newWARPMTUPlanner(in),
@@ -214,8 +220,8 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	// Render the scanner-ASN blacklist from the on-disk feed cache (best-effort: a
 	// missing or corrupt cache yields empty sets, fail-open). Reading a local file
 	// keeps Plan side-effect-free; the feed planner does the network fetch Apply-side.
-	if spec.Firewall.ASBlacklist {
-		in.ASBlacklistV4, in.ASBlacklistV6 = readASBlacklistCache(p.asBlacklistCache)
+	if spec.Firewall.ASBlacklistActive() {
+		in.ASBlacklistV4, in.ASBlacklistV6 = asnplan.ReadCache(p.asBlacklistCache)
 	}
 	ruleset, err := netfw.RenderRuleset(in)
 	if err != nil {

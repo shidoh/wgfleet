@@ -3,6 +3,7 @@ package master
 import (
 	"context"
 	"fmt"
+	"github.com/shidoh/wgfleet/internal/agent/asnplan"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -105,6 +106,8 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 		{p.paths.NFT, "master NAT ruleset"},
 		{p.paths.V6NFT, "master client-facing IPv6 ruleset"},
 		{p.paths.FirewallNFT, "master input-firewall ruleset"},
+		{p.paths.ASBlacklist, "AS-blacklist feed cache"},
+		{asnplan.AttemptPath(p.paths.ASBlacklist), "AS-blacklist refresh marker"},
 		{p.paths.Compose, "container compose file"},
 		{p.paths.DNS, "blocky resolver config"},
 		{p.paths.DNSCompose, "blocky compose file"},

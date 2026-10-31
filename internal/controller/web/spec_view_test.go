@@ -302,3 +302,16 @@ func TestSpecViewShowsTheLifeline(t *testing.T) {
 		}
 	}
 }
+
+func TestSpecViewNamesTheScannerFeedState(t *testing.T) {
+	for want, fw := range map[string]domain.FirewallSpec{
+		"off":     {},
+		"observe": {ASBlacklistObserve: true},
+		"on":      {ASBlacklist: true},
+	} {
+		g := firewallGroup(fw)
+		if got := g.Rows[0].Value; got != want {
+			t.Errorf("AS blacklist row for %+v = %q, want %q", fw, got, want)
+		}
+	}
+}

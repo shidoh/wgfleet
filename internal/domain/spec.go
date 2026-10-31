@@ -240,11 +240,21 @@ type BootstrapUpstream struct {
 	IPs      []string
 }
 
+// ASBlacklistActive reports whether the scanner feed is in use at all, enforcing
+// or only counting: the feed has to be fetched and its sets rendered either way.
+func (f FirewallSpec) ASBlacklistActive() bool { return f.ASBlacklist || f.ASBlacklistObserve }
+
 // FirewallSpec is the nftables policy intent for a node.
 type FirewallSpec struct {
-	ASBlacklist bool     // drop scanning ASNs via an nftables set
-	Whitelist   []string // always-allow sources (mgmt overlay, master IP, ...)
-	WGPort      int      // UDP port to open for the WG listener
+	ASBlacklist bool // drop scanning ASNs via an nftables set
+	// ASBlacklistObserve counts what ASBlacklist would drop and drops nothing: the
+	// same sets, the same rule, no verdict. A way to see who a feed would cut off
+	// before cutting anyone. Ignored when ASBlacklist is set. omitempty keeps a
+	// spec that does not use it byte-identical to one rendered before it existed
+	// (keybroker's single-master goldens).
+	ASBlacklistObserve bool     `json:",omitempty"`
+	Whitelist          []string // always-allow sources (mgmt overlay, master IP, ...)
+	WGPort             int      // UDP port to open for the WG listener
 	// RealityPort is the TCP port the REALITY/XHTTP inbound (xray) listens on
 	// (ADR-0025). Unlike the AWG WGPort (UDP), this is TCP. 0 ⇒ not opened (the exit
 	// does not run the reality transport).

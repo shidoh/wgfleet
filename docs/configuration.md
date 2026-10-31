@@ -144,6 +144,7 @@ first, see [upgrade.md](upgrade.md).
 | `fleet.masters[].public_tcp_ports` | []int | none | TCP ports opened **to the whole internet** — e.g. `80` for a decoy web listener. Unscoped: keep it to genuinely public services |
 | `fleet.masters[].public_udp_ports` | []int | none | UDP ports opened **to the whole internet** — e.g. a second ZeroTier instance on a non-default port |
 | `fleet.masters[].whitelist` | []CIDR | mgmt scope | Additional source CIDRs the input firewall always accepts, regardless of port. The management overlay is merged in automatically |
+| `fleet.masters[].as_blacklist` | `off` \| `observe` \| `enforce` | `off` | Scanner feed (`fleet.as_blacklist_v4_url`/`_v6_url`) on this master's input firewall. `observe` counts new inbound connections from listed networks and drops nothing (`wgfleet_fw_as_blacklist_hits_total`); `enforce` drops them. Replies to connections the master or its clients opened are never matched; `whitelist` and the mgmt overlay are matched first. Turn off: set `off`, restart the controller |
 
 ### `client_awg` — the client-facing AmneziaWG listener
 

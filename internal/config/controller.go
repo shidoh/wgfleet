@@ -349,6 +349,40 @@ func (m MasterConfig) ClientAWG3() ClientAWG3Mode {
 	}
 }
 
+// ScannerFeedMode is how a master uses the scanner feed (masters[].as_blacklist).
+type ScannerFeedMode string
+
+const (
+	// ScannerFeedOff renders nothing and fetches nothing.
+	ScannerFeedOff ScannerFeedMode = "off"
+	// ScannerFeedObserve counts and drops nothing.
+	ScannerFeedObserve ScannerFeedMode = "observe"
+	// ScannerFeedEnforce drops.
+	ScannerFeedEnforce ScannerFeedMode = "enforce"
+)
+
+// ScannerFeed resolves masters[].as_blacklist, defaulting an unset value to off.
+// An unrecognised value also resolves to off: validation rejects it at startup,
+// and off is the reading that cannot lock anyone out if it ever gets past.
+func (m MasterConfig) ScannerFeed() ScannerFeedMode {
+	switch ScannerFeedMode(strings.ToLower(strings.TrimSpace(m.ASBlacklist))) {
+	case ScannerFeedObserve:
+		return ScannerFeedObserve
+	case ScannerFeedEnforce:
+		return ScannerFeedEnforce
+	default:
+		return ScannerFeedOff
+	}
+}
+
+func validScannerFeedMode(v string) bool {
+	switch ScannerFeedMode(strings.ToLower(strings.TrimSpace(v))) {
+	case "", ScannerFeedOff, ScannerFeedObserve, ScannerFeedEnforce:
+		return true
+	}
+	return false
+}
+
 // DefaultMinEgressThroughputKBytes is the egress throughput floor applied when the
 // fleet leaves min_egress_throughput_kbytes unset (0). Set the fleet key to a
 // NEGATIVE value to disable the watchdog entirely.
@@ -478,6 +512,13 @@ type MasterConfig struct {
 	// TCP control API). Source-scoping it here is the safe alternative to opening
 	// that port to the world via PublicTCPPorts.
 	Whitelist []string `koanf:"whitelist"`
+	// ASBlacklist is the scanner feed on this master's input firewall: off,
+	// observe (count new inbound connections from listed networks, drop nothing)
+	// or enforce (drop them). The master-side sibling of
+	// fleet.exits[].firewall.as_blacklist, with a counting step in between because
+	// a master is where testers connect from home and mobile networks. Replies to
+	// connections the master or its clients opened are never matched.
+	ASBlacklist string `koanf:"as_blacklist"`
 	// DNSFilter enables the master-tier blocky resolver (ADR-0024): a client-facing
 	// filtering resolver clients use as their DNS. It blocks + forwards local zones to
 	// internal DNS (DNS.overrides conditional mappings) + forwards everything else to
@@ -1297,6 +1338,10 @@ func (c ControllerConfig) Validate() error {
 		}
 		if err := validateMgmtAddr(m.MgmtAddr); err != nil {
 			errs = append(errs, fmt.Errorf("fleet.masters[%d]: %w", i, err))
+		}
+		if !validScannerFeedMode(m.ASBlacklist) {
+			errs = append(errs, fmt.Errorf("fleet.masters[%d]: as_blacklist %q invalid (want %q, %q or %q)",
+				i, m.ASBlacklist, ScannerFeedOff, ScannerFeedObserve, ScannerFeedEnforce))
 		}
 	}
 	// The portal's own checks live OUTSIDE the public-bind escape hatch: a malformed

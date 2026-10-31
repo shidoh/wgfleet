@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
+	"github.com/shidoh/wgfleet/internal/agent/asnplan"
 	"os"
 	"path/filepath"
 	"strings"
@@ -556,125 +556,27 @@ func TestExitSecondPlanIsNoChange(t *testing.T) {
 
 // --- scanner-ASN blacklist feed ---
 
-func TestASNFeedDisabled(t *testing.T) {
-	spec, _ := exitSpec(t)
-	spec.Firewall.ASBlacklist = false
-	p := asnFeedPlanner{cachePath: testPaths(t).ASBlacklist, interval: time.Hour}
-	acts, err := p.Plan(context.Background(), spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, a := range acts {
-		if a.Changes() {
-			t.Errorf("disabled feed must not change anything, got %+v", acts)
-		}
-	}
-}
-
+// The feed planner (internal/agent/asnplan) writes the cache; the exit firewall
+// renders it. This is the seam between the two.
 func TestASNFeedRefreshesWhenStaleThenFirewallRenders(t *testing.T) {
 	spec, _ := exitSpec(t) // ASBlacklist = true
 	paths := testPaths(t)
 	cacheBytes := asnfeed.EncodeCache([]string{"203.0.113.0/24"}, []string{"2001:db8::/32"}, time.Unix(0, 0))
 
-	var calls int
-	p := asnFeedPlanner{
-		cachePath: paths.ASBlacklist,
-		v4URL:     "http://v4", v6URL: "http://v6",
-		interval: time.Hour,
-		now:      func() time.Time { return time.Unix(1_000_000, 0) },
-		refresh: func(_ context.Context, _, _ string, _ time.Time) ([]byte, error) {
-			calls++
-			return cacheBytes, nil
-		},
-	}
-
-	// No cache yet ⇒ a refresh action that changes state.
-	acts, err := p.Plan(context.Background(), spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !hasChangingSummary(acts, "refresh scanner-ASN blacklist") {
-		t.Fatalf("expected a refresh action when the cache is absent, got %+v", acts)
-	}
-
-	// Apply writes the cache from the injected refresh.
+	p := asnplan.New(asnplan.Config{CachePath: paths.ASBlacklist, V4URL: "http://v4", V6URL: "http://v6", Interval: time.Hour}).
+		WithClock(func() time.Time { return time.Unix(1_000_000, 0) }).
+		WithRefresh(func(_ context.Context, _, _ string, _ time.Time) ([]byte, error) { return cacheBytes, nil })
 	if _, err := reconcile.NewEngine(nil, p).Reconcile(context.Background(), spec, reconcile.ModeApply); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if calls != 1 {
-		t.Errorf("refresh called %d times, want 1", calls)
-	}
-	if _, err := os.Stat(paths.ASBlacklist); err != nil {
-		t.Fatalf("cache not written: %v", err)
-	}
 
-	// The firewall planner now renders those elements into the nft sets.
 	fwActs, err := firewallPlanner{path: paths.NFT, asBlacklistCache: paths.ASBlacklist}.Plan(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(fwActs[0].Display, "203.0.113.0/24") {
-		t.Errorf("firewall must render the cached v4 prefix:\n%s", fwActs[0].Display)
-	}
-	if !strings.Contains(fwActs[0].Display, "2001:db8::/32") {
-		t.Errorf("firewall must render the cached v6 prefix:\n%s", fwActs[0].Display)
-	}
-}
-
-func TestASNFeedFreshNoChange(t *testing.T) {
-	spec, _ := exitSpec(t)
-	paths := testPaths(t)
-	if err := os.MkdirAll(filepath.Dir(paths.ASBlacklist), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(paths.ASBlacklist, asnfeed.EncodeCache([]string{"1.0.0.0/8"}, nil, time.Now()), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	p := asnFeedPlanner{cachePath: paths.ASBlacklist, interval: time.Hour, now: time.Now}
-	acts, err := p.Plan(context.Background(), spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, a := range acts {
-		if a.Changes() {
-			t.Errorf("a fresh cache must not refresh, got %+v", acts)
-		}
-	}
-}
-
-func TestASNFeedFailureNonFatalAndBacksOff(t *testing.T) {
-	spec, _ := exitSpec(t)
-	paths := testPaths(t)
-	now := time.Unix(2_000_000, 0)
-	p := asnFeedPlanner{
-		cachePath: paths.ASBlacklist,
-		v4URL:     "http://v4", v6URL: "http://v6",
-		interval: time.Hour,
-		now:      func() time.Time { return now },
-		refresh: func(_ context.Context, _, _ string, _ time.Time) ([]byte, error) {
-			return nil, errors.New("network down")
-		},
-	}
-	// Apply: the refresh fails but is swallowed (non-fatal), no cache is written, and
-	// the attempt marker is touched so the next pass backs off.
-	if _, err := reconcile.NewEngine(nil, p).Reconcile(context.Background(), spec, reconcile.ModeApply); err != nil {
-		t.Fatalf("a failed refresh must be non-fatal, got: %v", err)
-	}
-	if _, err := os.Stat(paths.ASBlacklist); !os.IsNotExist(err) {
-		t.Errorf("cache must not be written on failure (keep last-good)")
-	}
-	if _, err := os.Stat(paths.ASBlacklist + ".attempt"); err != nil {
-		t.Errorf("attempt marker must be written even on failure: %v", err)
-	}
-
-	// Within the retry window the next Plan must NOT attempt again.
-	acts, err := p.Plan(context.Background(), spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, a := range acts {
-		if a.Changes() {
-			t.Errorf("expected backoff (no refresh) within the retry window, got %+v", acts)
+	for _, want := range []string{"203.0.113.0/24", "2001:db8::/32"} {
+		if !strings.Contains(fwActs[0].Display, want) {
+			t.Errorf("firewall must render the cached prefix %s:\n%s", want, fwActs[0].Display)
 		}
 	}
 }

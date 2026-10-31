@@ -25,7 +25,7 @@ func TestRenderExitRuleset(t *testing.T) {
 		"policy drop;",
 		"ct state established,related accept",
 		"set as_blacklist",
-		"ip saddr @as_blacklist drop",
+		`ip saddr @as_blacklist counter name "as_blacklist_hits" drop`,
 		"elements = { 10.20.0.0/16, 203.0.113.20 }",
 		"tcp dport 22 accept",
 		"udp dport 9993 accept",
@@ -62,8 +62,8 @@ func TestRenderASBlacklistElements(t *testing.T) {
 		"set as_blacklist_v6 {",
 		"type ipv6_addr",
 		"elements = { 2001:db8::/32 }", // only the real v6 entry
-		"ip saddr @as_blacklist drop",
-		"ip6 saddr @as_blacklist_v6 drop",
+		`ip saddr @as_blacklist counter name "as_blacklist_hits" drop`,
+		`ip6 saddr @as_blacklist_v6 counter name "as_blacklist_hits" drop`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("ruleset missing %q:\n%s", want, out)
@@ -1072,5 +1072,87 @@ func TestRenderExitResolverPortsWithoutALifelineOpenNothing(t *testing.T) {
 	}
 	if strings.Contains(out, "awgl0") || strings.Contains(out, "dport 53 accept") || strings.Contains(out, "dport 853 accept") {
 		t.Errorf("no lifeline: ruleset must carry no resolver accepts:\n%s", out)
+	}
+}
+
+// renderMasterWithFeed renders a master firewall with a two-prefix scanner feed in
+// the given state, so the three states can be compared on the same input.
+func renderMasterWithFeed(t *testing.T, fw domain.FirewallSpec) string {
+	t.Helper()
+	fw.WGPort = 443
+	fw.Whitelist = []string{"10.147.17.0/24"}
+	out, err := RenderRuleset(RenderInput{
+		Role:          domain.RoleMaster,
+		Firewall:      fw,
+		ASBlacklistV4: []string{"198.51.100.0/24"},
+		ASBlacklistV6: []string{"2001:db8::/32"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestScannerFeedObserveCountsAndDropsNothing(t *testing.T) {
+	out := renderMasterWithFeed(t, domain.FirewallSpec{ASBlacklistObserve: true})
+
+	for _, want := range []string{
+		"counter as_blacklist_hits {",
+		"elements = { 198.51.100.0/24 }",
+		`ip saddr @as_blacklist counter name "as_blacklist_hits"` + "\n",
+		`ip6 saddr @as_blacklist_v6 counter name "as_blacklist_hits"` + "\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("observe ruleset missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "@as_blacklist counter name \"as_blacklist_hits\" drop") ||
+		strings.Contains(out, "@as_blacklist_v6 counter name \"as_blacklist_hits\" drop") {
+		t.Errorf("observe must not drop:\n%s", out)
+	}
+}
+
+func TestScannerFeedEnforceDropsOnAMaster(t *testing.T) {
+	out := renderMasterWithFeed(t, domain.FirewallSpec{ASBlacklist: true, ASBlacklistObserve: true})
+
+	want := `ip saddr @as_blacklist counter name "as_blacklist_hits" drop`
+	if !strings.Contains(out, want) {
+		t.Errorf("enforce ruleset missing %q:\n%s", want, out)
+	}
+	if n := strings.Count(out, "ip saddr @as_blacklist "); n != 1 {
+		t.Errorf("enforce with observe also set must render the v4 match once, got %d:\n%s", n, out)
+	}
+}
+
+func TestScannerFeedOffRendersNothing(t *testing.T) {
+	out := renderMasterWithFeed(t, domain.FirewallSpec{})
+
+	for _, absent := range []string{"as_blacklist", "198.51.100.0/24"} {
+		if strings.Contains(out, absent) {
+			t.Errorf("feed off must render no %q:\n%s", absent, out)
+		}
+	}
+}
+
+// The feed match must come after the reply accept and the whitelist: placed
+// before them it would cut replies to connections clients opened to sites in
+// the listed networks, and lock out whitelisted management.
+func TestScannerFeedMatchFollowsRepliesAndWhitelist(t *testing.T) {
+	for name, fw := range map[string]domain.FirewallSpec{
+		"observe": {ASBlacklistObserve: true},
+		"enforce": {ASBlacklist: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out := renderMasterWithFeed(t, fw)
+			replies := strings.Index(out, "ct state established,related accept")
+			whitelist := strings.Index(out, "ip saddr @whitelist accept")
+			match := strings.Index(out, "ip saddr @as_blacklist counter")
+			if replies < 0 || whitelist < 0 || match < 0 {
+				t.Fatalf("rules not found (replies=%d whitelist=%d match=%d):\n%s", replies, whitelist, match, out)
+			}
+			if match < replies || match < whitelist {
+				t.Errorf("feed match at %d precedes replies (%d) or whitelist (%d):\n%s", match, replies, whitelist, out)
+			}
+		})
 	}
 }

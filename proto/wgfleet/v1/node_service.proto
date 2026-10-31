@@ -612,6 +612,11 @@ message FirewallSpec {
   // not opened (the exit carries no lifeline). Requires wire v11 — see
   // WireLifeline in internal/api/wire.go.
   int32 lifeline_port = 7;
+  // Count new inbound connections from the scanner feed without dropping them.
+  // Renders the same sets and rule as as_blacklist minus the verdict; ignored
+  // when as_blacklist is set. An agent that predates the field reads it as
+  // off, which is the safe reading: nothing is dropped.
+  bool as_blacklist_observe = 8;
 }
 
 message RoutingSpec {

@@ -12,6 +12,10 @@ import (
 // nftListTimeout bounds the `nft -j list table inet wgfleet` exec per scrape.
 const nftListTimeout = 3 * time.Second
 
+// asBlacklistHitsCounter is netfw.ASBlacklistHitsCounter, the counter on the
+// scanner-feed rule. Spelled out rather than imported, like the uplink prefix.
+const asBlacklistHitsCounter = "as_blacklist_hits"
+
 // NFTFunc returns the `nft -j list table inet wgfleet` JSON output. Injected so
 // tests feed a fixture and so a missing nft / non-Linux box / absent table fails
 // soft (an error yields no firewall series, no panic). Safe on every role: a
@@ -27,6 +31,7 @@ type FWCollector struct {
 	list NFTFunc
 
 	blacklistSize *prometheus.Desc
+	blacklistHits *prometheus.Desc
 	drops         *prometheus.Desc
 	handshakes    *prometheus.Desc
 }
@@ -47,6 +52,10 @@ func NewFWCollector(reg *prometheus.Registry, node, role string, list NFTFunc) *
 			prometheus.BuildFQName(namespace, "fw", "as_blacklist_size"),
 			"Number of elements in the nftables AS-blacklist set, by address family.",
 			[]string{"family"}, cl),
+		blacklistHits: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "fw", "as_blacklist_hits_total"),
+			"Packets opening a connection to this node from a scanner-feed network: dropped when the feed is enforced, only counted when it is observed. Replies to connections the node or its clients opened are never counted.",
+			nil, cl),
 		drops: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "fw", "drops_total"),
 			"Packets dropped by a named nftables drop counter in table inet wgfleet.",
@@ -63,6 +72,7 @@ func NewFWCollector(reg *prometheus.Registry, node, role string, list NFTFunc) *
 // Describe implements prometheus.Collector.
 func (c *FWCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.blacklistSize
+	ch <- c.blacklistHits
 	ch <- c.drops
 	ch <- c.handshakes
 }
@@ -87,6 +97,10 @@ func (c *FWCollector) Collect(ch chan<- prometheus.Metric) {
 	for name, packets := range stats.counters {
 		if dir, ok := strings.CutPrefix(name, uplinkCounterPrefix); ok {
 			ch <- prometheus.MustNewConstMetric(c.handshakes, prometheus.CounterValue, packets, dir)
+			continue
+		}
+		if name == asBlacklistHitsCounter {
+			ch <- prometheus.MustNewConstMetric(c.blacklistHits, prometheus.CounterValue, packets)
 			continue
 		}
 		ch <- prometheus.MustNewConstMetric(c.drops, prometheus.CounterValue, packets, name)
