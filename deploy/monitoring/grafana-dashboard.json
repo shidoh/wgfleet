@@ -865,10 +865,10 @@
       }
     },
     {
-      "type": "timeseries",
+      "type": "bargauge",
       "id": 237,
-      "title": "Scanner knocks per hour, by node",
-      "description": "Interest in each server: packets opening a connection from a scanner-feed network, per hour. A step up on one node means it has been found; on all nodes at once, a new sweep. Source: wgfleet_fw_as_blacklist_hits_total.",
+      "title": "Scanner knocks in this range, by node",
+      "description": "Interest in each server over the dashboard's time range: packets opening a connection from a scanner-feed network, most-knocked node on top. Dropped where the feed is enforced, only counted where it is observed. A packet count: a scanner retrying a SYN counts again. Source: wgfleet_fw_as_blacklist_hits_total.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -876,23 +876,10 @@
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "custom": {
-            "drawStyle": "bars",
-            "lineWidth": 1,
-            "fillOpacity": 80,
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            },
-            "axisSoftMin": 0
-          },
+          "decimals": 0,
+          "min": 0,
           "color": {
-            "mode": "palette-classic"
+            "mode": "continuous-YlRd"
           },
           "thresholds": {
             "mode": "absolute",
@@ -903,25 +890,35 @@
               }
             ]
           },
-          "decimals": 0
+          "mappings": [],
+          "noValue": "no knocks"
         },
         "overrides": []
       },
       "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true,
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "valueMode": "color",
+        "namePlacement": "left",
+        "showUnfilled": true,
+        "sizing": "auto",
+        "minVizHeight": 10,
+        "minVizWidth": 0,
+        "maxVizHeight": 300,
+        "reduceOptions": {
           "calcs": [
-            "sum",
-            "max",
             "lastNotNull"
-          ]
+          ],
+          "fields": "",
+          "values": false
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "text": {}
       },
       "targets": [
         {
@@ -929,9 +926,11 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (node) (increase(wgfleet_fw_as_blacklist_hits_total{node=~\"$node\"}[1h]))",
+          "expr": "sort_desc(sum by (node) (increase(wgfleet_fw_as_blacklist_hits_total{node=~\"$node\"}[$__range])))",
           "refId": "A",
-          "legendFormat": "{{node}}"
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "range": false
         }
       ],
       "gridPos": {
@@ -939,8 +938,7 @@
         "y": 9,
         "w": 20,
         "h": 7
-      },
-      "interval": "1h"
+      }
     },
     {
       "type": "row",
