@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,24 +66,61 @@ func TestFeedIsFetchedInBothObserveAndEnforce(t *testing.T) {
 	}
 }
 
-func TestFreshCacheIsNotFetchedAgain(t *testing.T) {
+// writeCache writes a cache recorded as built from urls.
+func writeCache(t *testing.T, cache string, urls ...string) {
+	t.Helper()
+	var sources []asnfeed.SourceCount
+	for _, u := range urls {
+		sources = append(sources, asnfeed.SourceCount{URL: u, V4: 1, V4Addresses: 1})
+	}
+	if err := os.MkdirAll(filepath.Dir(cache), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data := asnfeed.EncodeCacheWithSources([]string{"1.0.0.0/8"}, nil, sources, time.Now())
+	if err := os.WriteFile(cache, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFreshCacheFromTheSameSourcesIsNotFetchedAgain(t *testing.T) {
 	calls := 0
 	p, cache := newTestPlanner(t, func(context.Context, string, string, time.Time) ([]byte, error) {
 		calls++
 		return nil, nil
 	})
 	p = p.WithClock(time.Now)
-	if err := os.MkdirAll(filepath.Dir(cache), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(cache, asnfeed.EncodeCache([]string{"1.0.0.0/8"}, nil, time.Now()), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeCache(t, cache, "http://v4", "http://v6", asnfeed.ScannerListURL)
 	if _, err := reconcile.NewEngine(nil, p).Reconcile(context.Background(), specWith(domain.FirewallSpec{ASBlacklist: true}), reconcile.ModeApply); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 0 {
 		t.Errorf("a fresh cache was fetched %d times", calls)
+	}
+}
+
+// After an upgrade adds a source, the cache on disk is fresh but was built
+// without it. Waiting out the interval would run a day on the old list.
+func TestFreshCacheFromOtherSourcesIsFetchedAtOnce(t *testing.T) {
+	for name, urls := range map[string][]string{
+		"written before sources were recorded": nil,
+		"missing the scanner list":             {"http://v4", "http://v6"},
+		"from a source no longer configured":   {"http://v4", "http://v6", asnfeed.ScannerListURL, "http://old"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			calls := 0
+			p, cache := newTestPlanner(t, func(context.Context, string, string, time.Time) ([]byte, error) {
+				calls++
+				return nil, errors.New("stop here")
+			})
+			p = p.WithClock(time.Now)
+			writeCache(t, cache, urls...)
+			if _, err := reconcile.NewEngine(nil, p).Reconcile(context.Background(), specWith(domain.FirewallSpec{ASBlacklist: true}), reconcile.ModeApply); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 1 {
+				t.Errorf("fetched %d times, want 1", calls)
+			}
+		})
 	}
 }
 
@@ -130,5 +168,29 @@ func TestUnreadableCacheRendersEmpty(t *testing.T) {
 	}
 	if v4, v6 := ReadCache(cache); v4 != nil || v6 != nil {
 		t.Errorf("corrupt cache must read as empty, got %v %v", v4, v6)
+	}
+}
+
+// Agents in the field have no extra-source key in agent.yaml; they must still
+// fetch the scanner list.
+func TestExtraSourcesDefaultToTheScannerList(t *testing.T) {
+	cache := filepath.Join(t.TempDir(), "as-blacklist.lst")
+	for name, tc := range map[string]struct {
+		extra []string
+		want  bool
+	}{
+		"unset takes the default": {nil, true},
+		"empty turns it off":      {[]string{}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := New(Config{CachePath: cache, ExtraURLs: tc.extra})
+			acts, err := p.Plan(context.Background(), specWith(domain.FirewallSpec{ASBlacklist: true}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(acts[0].Display, asnfeed.ScannerListURL); got != tc.want {
+				t.Errorf("plan fetches the scanner list = %v, want %v:\n%s", got, tc.want, acts[0].Display)
+			}
+		})
 	}
 }

@@ -603,6 +603,19 @@ wgfleet_agent_uplink_connect_seconds{peer}             # histogram, successful c
 wgfleet_fw_uplink_handshake_packets_total{direction}   # syn_out | synack_in on the uplink address
 ```
 
+**Scanner feed** (any node with `as_blacklist` on):
+
+```
+wgfleet_fw_as_blacklist_hits_total                         # packets opening a connection from a listed network; dropped in enforce, counted in observe
+wgfleet_fw_as_blacklist_size{family}                       # elements in the kernel set (after merging)
+wgfleet_fw_as_blacklist_source_prefixes{source,family}     # what each source gave the last good list
+wgfleet_fw_as_blacklist_source_ipv4_addresses{source}      # same, in IPv4 addresses
+```
+
+How often a node is scanned: `increase(wgfleet_fw_as_blacklist_hits_total[1h])`. The
+counter counts packets, so one scanner retrying a SYN counts more than once; it restarts
+from zero when the firewall table is re-applied, which `increase` absorbs.
+
 **Per-client traffic** (master agent):
 
 ```

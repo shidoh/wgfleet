@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
@@ -46,11 +47,13 @@ func ReadCache(path string) (v4, v6 []string) {
 }
 
 // Config says where the cache lives and where the feed comes from. Empty URLs
-// and a zero interval take the asnfeed defaults.
+// and a zero interval take the asnfeed defaults; nil ExtraURLs takes
+// asnfeed.DefaultExtraURLs, an empty non-nil slice turns the extras off.
 type Config struct {
 	CachePath string
 	V4URL     string
 	V6URL     string
+	ExtraURLs []string
 	Interval  time.Duration
 }
 
@@ -75,6 +78,9 @@ func New(cfg Config) Planner {
 	}
 	if cfg.V6URL == "" {
 		cfg.V6URL = asnfeed.DefaultV6URL
+	}
+	if cfg.ExtraURLs == nil {
+		cfg.ExtraURLs = asnfeed.DefaultExtraURLs()
 	}
 	if cfg.Interval <= 0 {
 		cfg.Interval = asnfeed.DefaultInterval
@@ -129,17 +135,54 @@ func (p Planner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Acti
 		return []reconcile.Action{reconcile.NoChangeAction(component, "no cache path configured")}, nil
 	}
 	now := p.nowTime()
-	if fi, err := os.Stat(cache); err == nil && now.Sub(fi.ModTime()) < p.cfg.Interval {
+	if fi, err := os.Stat(cache); err == nil && now.Sub(fi.ModTime()) < p.cfg.Interval && p.cacheHasSources(cache) {
 		return []reconcile.Action{reconcile.NoChangeAction(cache, "feed fresh (within interval)")}, nil
 	}
 	if ai, err := os.Stat(AttemptPath(cache)); err == nil && now.Sub(ai.ModTime()) < p.retryFloor() {
 		return []reconcile.Action{reconcile.NoChangeAction(cache, "feed stale; awaiting retry window")}, nil
 	}
-	display := fmt.Sprintf("GET %s\nGET %s", p.cfg.V4URL, p.cfg.V6URL)
+	display := "GET " + strings.Join(append([]string{p.cfg.V4URL, p.cfg.V6URL}, p.cfg.ExtraURLs...), "\nGET ")
 	return []reconcile.Action{reconcile.CustomAction(
 		reconcile.ActionUpdate, cache, "refresh scanner-ASN blacklist feed", display,
 		func(ctx context.Context) error { return p.apply(ctx, now) },
 	)}, nil
+}
+
+// configuredURLs is the set of sources this planner fetches.
+func (p Planner) configuredURLs() map[string]bool {
+	out := map[string]bool{}
+	for _, u := range append([]string{p.cfg.V4URL, p.cfg.V6URL}, p.cfg.ExtraURLs...) {
+		if u = strings.TrimSpace(u); u != "" {
+			out[u] = true
+		}
+	}
+	return out
+}
+
+// cacheHasSources reports whether the cache was built from exactly the sources
+// configured now. A cache from before a source was added (or from an agent that
+// did not record sources) is refetched at once instead of waiting out the
+// interval with the old list.
+func (p Planner) cacheHasSources(cache string) bool {
+	f, err := os.Open(cache)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	recorded, err := asnfeed.DecodeSources(f)
+	if err != nil {
+		return false
+	}
+	want := p.configuredURLs()
+	if len(recorded) != len(want) {
+		return false
+	}
+	for _, s := range recorded {
+		if !want[s.URL] {
+			return false
+		}
+	}
+	return true
 }
 
 func (p Planner) apply(ctx context.Context, now time.Time) error {
@@ -155,14 +198,13 @@ func (p Planner) apply(ctx context.Context, now time.Time) error {
 	refresh := p.refresh
 	if refresh == nil {
 		refresh = func(c context.Context, v4, v6 string, t time.Time) ([]byte, error) {
-			data, _, _, err := asnfeed.Refresh(c, &http.Client{}, v4, v6, t)
-			return data, err
+			return asnfeed.Refresh(c, &http.Client{}, v4, v6, p.cfg.ExtraURLs, t)
 		}
 	}
 	data, err := refresh(ctx, p.cfg.V4URL, p.cfg.V6URL, now)
 	if err != nil {
 		slog.Warn("AS-blacklist refresh failed (non-fatal; keeping last-good list)",
-			"v4", p.cfg.V4URL, "v6", p.cfg.V6URL, "err", err)
+			"v4", p.cfg.V4URL, "v6", p.cfg.V6URL, "extra", p.cfg.ExtraURLs, "err", err)
 		return nil
 	}
 	if err := atomicfile.Write(cache, data, 0o644); err != nil {

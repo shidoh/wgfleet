@@ -162,6 +162,14 @@ func scheduledProbes(role domain.Role, exitPaths exit.Paths, masterPaths master.
 	}
 }
 
+// feedCachePath is where this role keeps the scanner feed cache.
+func feedCachePath(role domain.Role, exitPaths exit.Paths, masterPaths master.Paths) string {
+	if role == domain.RoleMaster {
+		return masterPaths.ASBlacklist
+	}
+	return exitPaths.ASBlacklist
+}
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("agent exited with error", "err", err)
@@ -343,6 +351,7 @@ func run() error {
 		// looks exactly like one that works — which is how the WARP path-MTU probe
 		// stayed dead fleet-wide.
 		metrics.NewProbeCollector(reg, cfg.Agent.NodeID, string(role), scheduledProbes(role, a.paths, a.masterPaths()))
+		metrics.NewFeedCollector(reg, cfg.Agent.NodeID, string(role), feedCachePath(role, a.paths, a.masterPaths()))
 		metricsSrv := &http.Server{Addr: bind, Handler: metricsMux(reg)}
 		go func() {
 			// The mgmt/overlay (ZeroTier) address may not be on an interface yet at agent

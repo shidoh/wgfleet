@@ -98,7 +98,7 @@ provisioning, so changing them requires re-provisioning the node.
 | `fleet.reconcile_interval` | duration | `30s` | **baked.** How often every agent reconciles. Valid `5s`–`1h`. A node's own `agent.reconcile_interval` still wins |
 | `fleet.min_egress_throughput_kbytes` | int | `250` | Egress throughput floor in KiB/s below which an exit is pulled from the load balancer. Negative disables the watchdog fleet-wide |
 | `fleet.egress_throughput_probe_url` | URL | three targets | What each exit downloads to measure its own throughput. Unset, the agent tries three independent targets in order — Cloudflare's speed endpoint, then CacheFly, then OVH — and stops at the first that clears the floor. Setting the key **replaces** that list with the single URL you name |
-| `fleet.as_blacklist_v4_url` | URL | C24Be AS_Network_List v4 | **baked.** Source feed of scanner ASNs the exit firewall drops. Per-exit enable is `fleet.exits[].firewall.as_blacklist` |
+| `fleet.as_blacklist_v4_url` | URL | C24Be AS_Network_List v4 | **baked.** Source feed of scanner ASNs the firewall drops. Fetched together with the built-in sngvy/AntiScanner list. Per-node enable is `fleet.exits[].firewall.as_blacklist` and `fleet.masters[].as_blacklist` |
 | `fleet.as_blacklist_v6_url` | URL | C24Be AS_Network_List v6 | **baked.** IPv6 half of the same feed |
 | `fleet.as_blacklist_interval` | duration | `24h` | **baked.** Feed refresh cadence. Valid `1m`–`168h`. A failed refresh keeps the last-good list |
 | `fleet.reality_default_sni` | string | `www.python.org` | Fleet-wide REALITY camouflage SNI. **The target must support X25519MLKEM768** or the handshake fails silently — verify with `xray tls ping <host>` |
