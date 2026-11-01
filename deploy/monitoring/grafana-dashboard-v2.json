@@ -1022,6 +1022,103 @@
           }
         }
       },
+      "panel-240": {
+        "kind": "Panel",
+        "spec": {
+          "id": 240,
+          "title": "Scanner knocks per minute, by node",
+          "description": "Packets per minute opening a connection from a scanner-feed network, one line per node. Background is a few per minute on every node. A tall spike on one node for a few minutes is one sweep aimed at that node's address: it inflates that node's bar in \"Scanner knocks in this range\" without meaning steady extra interest. A step up that stays is a new, persistent source. Source: wgfleet_fw_as_blacklist_hits_total.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "sum by (node) (rate(wgfleet_fw_as_blacklist_hits_total{node=~\"$node\"}[$__rate_interval])) * 60",
+                        "legendFormat": "{{node}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
+                  "decimals": 1,
+                  "min": 0,
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineWidth": 1,
+                    "fillOpacity": 10,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "mode": "none",
+                      "group": "A"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    },
+                    "axisSoftMin": 0,
+                    "axisLabel": "knocks / min"
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      }
+                    ]
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "right",
+                  "showLegend": true,
+                  "calcs": [
+                    "mean",
+                    "max"
+                  ],
+                  "sortBy": "Max",
+                  "sortDesc": true
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          }
+        }
+      },
       "panel-210": {
         "kind": "Panel",
         "spec": {
@@ -6891,6 +6988,19 @@
                         "width": 20,
                         "x": 4,
                         "y": 8
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-240"
+                        },
+                        "height": 8,
+                        "width": 24,
+                        "x": 0,
+                        "y": 15
                       }
                     }
                   ]

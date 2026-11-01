@@ -941,13 +941,93 @@
       }
     },
     {
+      "type": "timeseries",
+      "id": 240,
+      "title": "Scanner knocks per minute, by node",
+      "description": "Packets per minute opening a connection from a scanner-feed network, one line per node. Background is a few per minute on every node. A tall spike on one node for a few minutes is one sweep aimed at that node's address: it inflates that node's bar in \"Scanner knocks in this range\" without meaning steady extra interest. A step up that stays is a new, persistent source. Source: wgfleet_fw_as_blacklist_hits_total.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 1,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "axisSoftMin": 0,
+            "axisLabel": "knocks / min"
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "sortBy": "Max",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (node) (rate(wgfleet_fw_as_blacklist_hits_total{node=~\"$node\"}[$__rate_interval])) * 60",
+          "refId": "A",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 8
+      }
+    },
+    {
       "type": "row",
       "id": 209,
       "title": "Clients",
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 16,
+        "y": 24,
         "w": 24,
         "h": 1
       }
@@ -1021,7 +1101,7 @@
         "x": 0,
         "w": 8,
         "h": 8,
-        "y": 17
+        "y": 25
       }
     },
     {
@@ -1101,7 +1181,7 @@
         "x": 8,
         "w": 16,
         "h": 8,
-        "y": 17
+        "y": 25
       }
     },
     {
@@ -1173,7 +1253,7 @@
         "x": 0,
         "w": 8,
         "h": 8,
-        "y": 25
+        "y": 33
       }
     },
     {
@@ -1245,7 +1325,7 @@
         "x": 8,
         "w": 8,
         "h": 8,
-        "y": 25
+        "y": 33
       }
     },
     {
@@ -1327,7 +1407,7 @@
         "x": 16,
         "w": 8,
         "h": 8,
-        "y": 25
+        "y": 33
       }
     },
     {
@@ -1594,7 +1674,7 @@
         "x": 0,
         "w": 15,
         "h": 11,
-        "y": 33
+        "y": 41
       }
     },
     {
@@ -1666,7 +1746,7 @@
         "x": 15,
         "w": 9,
         "h": 11,
-        "y": 33
+        "y": 41
       }
     },
     {
@@ -1676,7 +1756,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 44,
+        "y": 52,
         "w": 24,
         "h": 1
       }
@@ -1798,7 +1878,7 @@
         "x": 0,
         "w": 7,
         "h": 13,
-        "y": 45
+        "y": 53
       }
     },
     {
@@ -1892,7 +1972,7 @@
         "x": 7,
         "w": 17,
         "h": 13,
-        "y": 45
+        "y": 53
       }
     },
     {
@@ -1964,7 +2044,7 @@
         "x": 0,
         "w": 12,
         "h": 8,
-        "y": 58
+        "y": 66
       }
     },
     {
@@ -2040,7 +2120,7 @@
         "x": 12,
         "w": 12,
         "h": 8,
-        "y": 58
+        "y": 66
       }
     },
     {
@@ -2118,7 +2198,7 @@
         "x": 0,
         "w": 8,
         "h": 8,
-        "y": 66
+        "y": 74
       }
     },
     {
@@ -2195,7 +2275,7 @@
         "x": 8,
         "w": 8,
         "h": 8,
-        "y": 66
+        "y": 74
       }
     },
     {
@@ -2272,7 +2352,7 @@
         "x": 16,
         "w": 8,
         "h": 8,
-        "y": 66
+        "y": 74
       }
     },
     {
@@ -2348,7 +2428,7 @@
         "x": 0,
         "w": 12,
         "h": 8,
-        "y": 74
+        "y": 82
       },
       "interval": "1h"
     },
@@ -2425,7 +2505,7 @@
         "x": 12,
         "w": 12,
         "h": 8,
-        "y": 74
+        "y": 82
       },
       "interval": "1h"
     },
@@ -2436,7 +2516,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 82,
+        "y": 90,
         "w": 24,
         "h": 1
       }
@@ -2502,7 +2582,7 @@
         "x": 0,
         "w": 6,
         "h": 4,
-        "y": 83
+        "y": 91
       }
     },
     {
@@ -2572,7 +2652,7 @@
         "x": 6,
         "w": 6,
         "h": 4,
-        "y": 83
+        "y": 91
       }
     },
     {
@@ -2650,7 +2730,7 @@
         "x": 12,
         "w": 6,
         "h": 4,
-        "y": 83
+        "y": 91
       }
     },
     {
@@ -2728,7 +2808,7 @@
         "x": 18,
         "w": 6,
         "h": 4,
-        "y": 83
+        "y": 91
       }
     },
     {
@@ -2742,7 +2822,7 @@
         "x": 0,
         "w": 24,
         "h": 9,
-        "y": 87
+        "y": 95
       },
       "id": 21,
       "fieldConfig": {
@@ -3136,7 +3216,7 @@
       ],
       "gridPos": {
         "x": 0,
-        "y": 96,
+        "y": 104,
         "w": 12,
         "h": 8
       },
@@ -3214,7 +3294,7 @@
       ],
       "gridPos": {
         "x": 12,
-        "y": 96,
+        "y": 104,
         "w": 12,
         "h": 8
       },
@@ -3225,7 +3305,7 @@
       "title": "Health",
       "gridPos": {
         "x": 0,
-        "y": 104,
+        "y": 112,
         "w": 24,
         "h": 1
       },
@@ -3244,7 +3324,7 @@
         "x": 0,
         "w": 4,
         "h": 8,
-        "y": 105
+        "y": 113
       },
       "id": 31,
       "fieldConfig": {
@@ -3320,7 +3400,7 @@
         "x": 4,
         "w": 20,
         "h": 8,
-        "y": 105
+        "y": 113
       },
       "id": 32,
       "fieldConfig": {
@@ -3412,7 +3492,7 @@
         "x": 0,
         "w": 24,
         "h": 6,
-        "y": 113
+        "y": 121
       },
       "id": 33,
       "fieldConfig": {
@@ -3534,7 +3614,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 119,
+        "y": 127,
         "w": 24,
         "h": 1
       },
@@ -3552,7 +3632,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 120
+            "y": 128
           },
           "id": 101,
           "fieldConfig": {
@@ -3613,7 +3693,7 @@
             "x": 4,
             "w": 12,
             "h": 8,
-            "y": 120
+            "y": 128
           },
           "id": 102,
           "fieldConfig": {
@@ -3688,7 +3768,7 @@
             "x": 16,
             "w": 4,
             "h": 8,
-            "y": 120
+            "y": 128
           },
           "id": 103,
           "fieldConfig": {
@@ -3793,7 +3873,7 @@
             "x": 20,
             "w": 4,
             "h": 8,
-            "y": 120
+            "y": 128
           },
           "id": 104,
           "fieldConfig": {
@@ -3854,7 +3934,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 128
+            "y": 136
           },
           "id": 96,
           "fieldConfig": {
@@ -3915,7 +3995,7 @@
             "x": 4,
             "w": 8,
             "h": 8,
-            "y": 128
+            "y": 136
           },
           "id": 97,
           "fieldConfig": {
@@ -3990,7 +4070,7 @@
             "x": 12,
             "w": 6,
             "h": 8,
-            "y": 128
+            "y": 136
           },
           "id": 106,
           "fieldConfig": {
@@ -4063,7 +4143,7 @@
             "x": 18,
             "w": 6,
             "h": 8,
-            "y": 128
+            "y": 136
           },
           "id": 107,
           "fieldConfig": {
@@ -4132,7 +4212,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 120,
+        "y": 128,
         "w": 24,
         "h": 1
       },
@@ -4150,7 +4230,7 @@
             "x": 0,
             "w": 12,
             "h": 8,
-            "y": 121
+            "y": 129
           },
           "id": 61,
           "fieldConfig": {
@@ -4255,7 +4335,7 @@
             "x": 12,
             "w": 12,
             "h": 8,
-            "y": 121
+            "y": 129
           },
           "id": 62,
           "fieldConfig": {
@@ -4327,7 +4407,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 121,
+        "y": 129,
         "w": 24,
         "h": 1
       },
@@ -4345,7 +4425,7 @@
             "x": 0,
             "w": 16,
             "h": 8,
-            "y": 122
+            "y": 130
           },
           "id": 41,
           "fieldConfig": {
@@ -4433,7 +4513,7 @@
             "x": 16,
             "w": 8,
             "h": 8,
-            "y": 122
+            "y": 130
           },
           "id": 42,
           "fieldConfig": {
@@ -4534,7 +4614,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 122,
+        "y": 130,
         "w": 24,
         "h": 1
       },
@@ -4552,7 +4632,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 123
+            "y": 131
           },
           "id": 71,
           "fieldConfig": {
@@ -4613,7 +4693,7 @@
             "x": 4,
             "w": 4,
             "h": 8,
-            "y": 123
+            "y": 131
           },
           "id": 72,
           "fieldConfig": {
@@ -4671,7 +4751,7 @@
             "x": 8,
             "w": 16,
             "h": 8,
-            "y": 123
+            "y": 131
           },
           "id": 73,
           "fieldConfig": {
@@ -4750,7 +4830,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 123,
+        "y": 131,
         "w": 24,
         "h": 1
       },
@@ -4767,7 +4847,7 @@
             "x": 0,
             "w": 6,
             "h": 8,
-            "y": 124
+            "y": 132
           },
           "id": 51,
           "fieldConfig": {
@@ -4844,7 +4924,7 @@
             "x": 6,
             "w": 6,
             "h": 8,
-            "y": 124
+            "y": 132
           },
           "id": 52,
           "fieldConfig": {
@@ -4903,7 +4983,7 @@
             "x": 12,
             "w": 6,
             "h": 8,
-            "y": 124
+            "y": 132
           },
           "id": 53,
           "fieldConfig": {
@@ -4960,7 +5040,7 @@
             "x": 18,
             "w": 6,
             "h": 8,
-            "y": 124
+            "y": 132
           },
           "id": 54,
           "fieldConfig": {
@@ -5038,7 +5118,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 124,
+        "y": 132,
         "w": 24,
         "h": 1
       },
@@ -5056,7 +5136,7 @@
             "x": 0,
             "w": 5,
             "h": 8,
-            "y": 125
+            "y": 133
           },
           "id": 81,
           "fieldConfig": {
@@ -5117,7 +5197,7 @@
             "x": 5,
             "w": 5,
             "h": 8,
-            "y": 125
+            "y": 133
           },
           "id": 82,
           "fieldConfig": {
@@ -5178,7 +5258,7 @@
             "x": 10,
             "w": 14,
             "h": 8,
-            "y": 125
+            "y": 133
           },
           "id": 83,
           "fieldConfig": {
@@ -5293,7 +5373,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 125,
+        "y": 133,
         "w": 24,
         "h": 1
       },
@@ -5311,7 +5391,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 126
+            "y": 134
           },
           "id": 111,
           "fieldConfig": {
@@ -5372,7 +5452,7 @@
             "x": 4,
             "w": 10,
             "h": 8,
-            "y": 126
+            "y": 134
           },
           "id": 112,
           "fieldConfig": {
@@ -5449,7 +5529,7 @@
             "x": 14,
             "w": 10,
             "h": 8,
-            "y": 126
+            "y": 134
           },
           "id": 113,
           "fieldConfig": {
@@ -5526,7 +5606,7 @@
             "x": 0,
             "w": 8,
             "h": 8,
-            "y": 134
+            "y": 142
           },
           "id": 114,
           "fieldConfig": {
@@ -5603,7 +5683,7 @@
             "x": 8,
             "w": 8,
             "h": 8,
-            "y": 134
+            "y": 142
           },
           "id": 115,
           "fieldConfig": {
@@ -5688,7 +5768,7 @@
             "x": 16,
             "w": 8,
             "h": 8,
-            "y": 134
+            "y": 142
           },
           "id": 116,
           "fieldConfig": {

@@ -616,6 +616,11 @@ How often a node is scanned: `increase(wgfleet_fw_as_blacklist_hits_total[1h])`.
 counter counts packets, so one scanner retrying a SYN counts more than once; it restarts
 from zero when the firewall table is re-applied, which `increase` absorbs.
 
+A node far above the others over a range is often one sweep of a few minutes, not
+steady interest: check the dashboard panel "Scanner knocks per minute, by node"
+(`rate(wgfleet_fw_as_blacklist_hits_total[5m]) * 60`). A short spike on one line is a
+one-off sweep; a step up that stays is a new persistent source.
+
 **Per-client traffic** (master agent):
 
 ```
