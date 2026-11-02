@@ -10,12 +10,13 @@
 </p>
 
 <p align="center">
-  <a href="docs/QUICKSTART.md">Quickstart</a> ·
-  <a href="docs/manifest.md">Manifest</a> ·
-  <a href="docs/operations.md">Operations</a> ·
-  <a href="docs/cli.md">CLI</a> ·
-  <a href="DISCLAIMER.md">Disclaimer</a> ·
-  <a href="SECURITY.md">Security</a>
+  <a href="https://shidoh.github.io/wgfleet-docs/"><b>Documentation</b></a> ·
+  <a href="https://shidoh.github.io/wgfleet-docs/docs/QUICKSTART/">Quickstart</a> ·
+  <a href="https://shidoh.github.io/wgfleet-docs/docs/manifest/">Manifest</a> ·
+  <a href="https://shidoh.github.io/wgfleet-docs/docs/operations/">Operations</a> ·
+  <a href="https://shidoh.github.io/wgfleet-docs/docs/cli/">CLI</a> ·
+  <a href="https://shidoh.github.io/wgfleet-docs/DISCLAIMER/">Disclaimer</a> ·
+  <a href="https://shidoh.github.io/wgfleet-docs/SECURITY/">Security</a>
 </p>
 
 ---
@@ -33,7 +34,7 @@ loop.
 > only, provided **without warranty**. It operates VPN and traffic-obfuscation
 > infrastructure; the legality of deploying, operating, or using such tools
 > varies by jurisdiction and is **your responsibility**. Read
-> [DISCLAIMER.md](DISCLAIMER.md) before using it.
+> [the disclaimer](https://shidoh.github.io/wgfleet-docs/DISCLAIMER/) before using it.
 
 | Without wgfleet | With wgfleet |
 |---|---|
@@ -238,7 +239,7 @@ Applying is Linux-only: on macOS an apply stops at the first missing tool
 
 ## Deploy a real fleet
 
-**Start with [`docs/QUICKSTART.md`](docs/QUICKSTART.md)** — two blank Ubuntu
+**Start with [`docs/QUICKSTART.md`](https://shidoh.github.io/wgfleet-docs/docs/QUICKSTART/)** — two blank Ubuntu
 servers to a working VPN in about 30 minutes.
 
 Each release ships one version-stamped archive per architecture containing both
@@ -257,7 +258,7 @@ sudo ZT_NETWORK=<id> PUBLIC_IP=<ip> ./install.sh
 The installer is idempotent and **starts nothing** — the master needs a
 filled-in config and a locally-issued mTLS identity first, and it prints those
 exact steps. The annotated manual equivalent is
-[`docs/colocated-controller-master.md`](docs/colocated-controller-master.md).
+[`docs/colocated-controller-master.md`](https://shidoh.github.io/wgfleet-docs/docs/colocated-controller-master/).
 
 Adding an exit is one manifest entry plus one command (or the **Provision**
 button in the UI):
@@ -284,7 +285,7 @@ ssh root@<vm-ip> 'bash prepare-node.sh <zerotier-network-id>'
 ```
 
 The provisioner pre-flights the module and aborts if it is absent; it does not
-build DKMS for you. Full walkthrough: [`docs/onboarding.md`](docs/onboarding.md).
+build DKMS for you. Full walkthrough: [`docs/onboarding.md`](https://shidoh.github.io/wgfleet-docs/docs/onboarding/).
 
 ---
 
@@ -364,7 +365,7 @@ sooner means reissuing the CA. The gRPC endpoints are **not rate-limited**, and
 the Web UI speaks **plain HTTP** behind a password login; both rely on being
 bound to the management overlay.
 
-Reporting a vulnerability: [SECURITY.md](SECURITY.md).
+Reporting a vulnerability: [the security policy](https://shidoh.github.io/wgfleet-docs/SECURITY/).
 
 ---
 
@@ -393,7 +394,7 @@ MVP, in active development.
 
 Apply-side actions and live SSH are supported on **Linux**: Ubuntu 24.04 is
 the tested platform; 22.04 works but is not guaranteed
-([requirements](docs/requirements.md)).
+([requirements](https://shidoh.github.io/wgfleet-docs/docs/requirements/)).
 Automatic AmneziaWG → REALITY failover is not implemented; switching transports
 is a manual, per-exit action.
 
@@ -405,7 +406,7 @@ tunnel, and each agent requires a 3.x kernel module on its own node, so a
 premature flip stays on 2.0 rather than producing a dead tunnel. Header
 protection additionally needs a `fleet.awg3_key` secret and is incompatible with
 2.0 peers: every client must re-import. The timers half needs no client change.
-Enable order: [docs/client-migration.md](docs/client-migration.md).
+Enable order: [AmneziaWG 3.x for clients](https://shidoh.github.io/wgfleet-docs/docs/client-migration/).
 
 ---
 
@@ -413,21 +414,21 @@ Enable order: [docs/client-migration.md](docs/client-migration.md).
 
 | Document | What it covers |
 |---|---|
-| [docs/QUICKSTART.md](docs/QUICKSTART.md) | Two blank servers to a working VPN, start here |
-| [docs/requirements.md](docs/requirements.md) | System requirements and compatibility: supported OS, sizing, pinned versions, controller↔agent contract |
-| [docs/manifest.md](docs/manifest.md) | Annotated `controller.yaml` and `agent.yaml`, with secret schemes |
-| [docs/configuration.md](docs/configuration.md) | Exhaustive per-key reference |
-| [docs/cli.md](docs/cli.md) | Every flag on both binaries |
-| [docs/operations.md](docs/operations.md) | Dashboard, VLESS client access, backup/restore, metrics, health |
-| [docs/recipes/](docs/recipes/) | Task-oriented configs, e.g. split-tunnel + DNS filtering |
-| [docs/onboarding.md](docs/onboarding.md) | Node prerequisites and the provisioning walkthrough |
-| [docs/colocated-controller-master.md](docs/colocated-controller-master.md) | Running the controller on the master, the small-fleet default |
-| [docs/upgrade.md](docs/upgrade.md) | Agent upgrades and wire-contract versioning |
-| [docs/client-migration.md](docs/client-migration.md) | AmneziaWG 3.x on the client interface: `timers`, `full`, the `full` rollout |
-| [docs/master-migration.md](docs/master-migration.md) | Moving the controller and master to another host |
-| [docs/support-bundle.md](docs/support-bundle.md) | Collecting a secret-free diagnostic archive |
-| [docs/secrets-sops.md](docs/secrets-sops.md) | SOPS/age secret provider setup |
-| [SECURITY.md](SECURITY.md) | Reporting vulnerabilities and operating securely |
+| [Quickstart](https://shidoh.github.io/wgfleet-docs/docs/QUICKSTART/) | Two blank servers to a working VPN, start here |
+| [System requirements](https://shidoh.github.io/wgfleet-docs/docs/requirements/) | System requirements and compatibility: supported OS, sizing, pinned versions, controller↔agent contract |
+| [Manifest](https://shidoh.github.io/wgfleet-docs/docs/manifest/) | Annotated `controller.yaml` and `agent.yaml`, with secret schemes |
+| [Key reference](https://shidoh.github.io/wgfleet-docs/docs/configuration/) | Exhaustive per-key reference |
+| [CLI](https://shidoh.github.io/wgfleet-docs/docs/cli/) | Every flag on both binaries |
+| [Operations](https://shidoh.github.io/wgfleet-docs/docs/operations/) | Dashboard, VLESS client access, backup/restore, metrics, health |
+| [Recipes](https://shidoh.github.io/wgfleet-docs/docs/recipes/ru-split-tunnel-dns-filter/) | Task-oriented configs, e.g. split-tunnel + DNS filtering |
+| [Onboarding a node](https://shidoh.github.io/wgfleet-docs/docs/onboarding/) | Node prerequisites and the provisioning walkthrough |
+| [Controller on the master](https://shidoh.github.io/wgfleet-docs/docs/colocated-controller-master/) | Running the controller on the master, the small-fleet default |
+| [Upgrading](https://shidoh.github.io/wgfleet-docs/docs/upgrade/) | Agent upgrades and wire-contract versioning |
+| [AmneziaWG 3.x for clients](https://shidoh.github.io/wgfleet-docs/docs/client-migration/) | AmneziaWG 3.x on the client interface: `timers`, `full`, the `full` rollout |
+| [Moving the master](https://shidoh.github.io/wgfleet-docs/docs/master-migration/) | Moving the controller and master to another host |
+| [Support bundle](https://shidoh.github.io/wgfleet-docs/docs/support-bundle/) | Collecting a secret-free diagnostic archive |
+| [Secrets with SOPS](https://shidoh.github.io/wgfleet-docs/docs/secrets-sops/) | SOPS/age secret provider setup |
+| [Security policy](https://shidoh.github.io/wgfleet-docs/SECURITY/) | Reporting vulnerabilities and operating securely |
 
 ### Build & test
 
@@ -464,5 +465,5 @@ modified one purely for your own use, triggers no such obligation.
 This program is distributed in the hope that it will be useful, but **WITHOUT
 ANY WARRANTY**; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE. See the license for details, and
-[DISCLAIMER.md](DISCLAIMER.md) for the operational and legal caveats specific to
+[the disclaimer](https://shidoh.github.io/wgfleet-docs/DISCLAIMER/) for the operational and legal caveats specific to
 running censorship-circumvention infrastructure.
