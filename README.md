@@ -61,42 +61,42 @@ $ wgfleet-agent --config exit-agent.yaml --once --plan \
     --public-ip 198.51.100.7 --mgmt-addr 10.20.0.5 --state-dir state/exit-de-1
 
 reconcile plan — 30 change(s)
-
+…
 === firewall (nftables) ===
-  + create    state/exit-de-1/wgfleet.nft — 1740 bytes, mode 644
+  + create    state/exit-de-1/wgfleet.nft — 1839 bytes, mode 644
       | #!/usr/sbin/nft -f
       …
 
 === amneziawg interface ===
-  + create    state/exit-de-1/awg0.conf — 378 bytes, mode 600
+  + create    state/exit-de-1/awg0.conf — 379 bytes, mode 600
       | [Interface]
       | PrivateKey = <redacted>
       | Address = 10.81.0.1/24
       | ListenPort = 22891
       | MTU = 1360
-      | Jc = 5
-      | Jmin = 45
-      | Jmax = 105
-      | S1 = 27
-      | S2 = 38
-      | S3 = 63
-      | S4 = 23
-      | H1 = 29838687-159838687
-      | H2 = 717803267-847803267
-      | H3 = 1073039351-1203039351
-      | H4 = 1504901982-1634901982
+      | Jc = 10
+      | Jmin = 61
+      | Jmax = 93
+      | S1 = 23
+      | S2 = 46
+      | S3 = 50
+      | S4 = 31
+      | H1 = 336052447-466052447
+      | H2 = 655899159-785899159
+      | H3 = 1086998499-1216998499
+      | H4 = 1866144114-1996144114
       | I1 = <b 0x000100002112a442><r 12>
-      | I2 = <b 0xc3000000010e><r 14><b 0x0c><r 12><b 0x00><r 97>
+      | I2 = <b 0xc30000000110><r 16><b 0x07><r 7><b 0x00><r 158>
       …
   ! exec      awg-quick — bring interface up with new config
       | awg-quick up state/exit-de-1/awg0.conf
-
+…
 === policy routing ===
   + create    state/exit-de-1/routing.applied — 533 bytes, mode 644
       | sysctl -w net.ipv4.conf.all.rp_filter=0
       | sysctl -w net.ipv4.conf.default.rp_filter=0
       …
-
+…
 === reality inbound (xray) ===
     no-change reality inbound — disabled
 
@@ -132,6 +132,9 @@ clients can connect to the master over VLESS as well as AmneziaWG.
 
 - **Declarative fleet** — describe masters and exits once; the reconcile loop
   converges every node and keeps it there.
+- **Several masters** — every exit serves every master on one interface, client
+  profiles carry all of them, and the console shows each master's own view of
+  the exits.
 - **Autoprovisioning** — a prepared Ubuntu VM (kernel module + ZeroTier join by
   `prepare-node.sh`, then SSH only) becomes a `Ready` exit node and joins the
   load balancer, from the CLI or a button in the Web UI.
@@ -147,7 +150,10 @@ clients can connect to the master over VLESS as well as AmneziaWG.
 - **AmneziaWG obfuscation** — collision-safe S1–S4, per-end decoy traffic,
   computed MTU ([details](#amneziawg-done-right)).
 - **Censorship-adaptive egress** — block detection with automatic WARP ↔ direct
-  failover and a throughput watchdog that demotes a throttled path.
+  failover, a throughput watchdog that demotes a throttled path, and a WARP
+  endpoint that stops answering is replaced on its own.
+- **Exit-initiated tunnels** — where connections the master opens are cut, the
+  exit dials the master instead, for AmneziaWG and for REALITY.
 - **DPI-resistant client transport** — clients can connect over VLESS + REALITY
   + XHTTP alongside client AmneziaWG; credentials, QR and a ready-to-import
   Clash config are issued from the Web UI.
@@ -160,9 +166,11 @@ clients can connect to the master over VLESS as well as AmneziaWG.
 - **Two-tier DNS filtering** — blocky on the master and on every exit, with
   conditional forwarding for local zones.
 - **Scanner-resistant firewall** — rendered nftables with an auto-refreshed
-  scanner-ASN blacklist and a management-overlay allowlist.
-- **Observability** — Prometheus `/metrics` on every binary plus a built-in
-  dashboard with fleet topology and per-node health.
+  scanner blacklist (exits; masters in `observe` or `enforce` mode) and a
+  management-overlay allowlist.
+- **Observability** — Prometheus `/metrics` on every binary, service discovery
+  for the scrape targets, shipped alert rules and Grafana dashboards, plus a
+  built-in console with fleet topology and per-node health.
 - **Safe lifecycle** — graceful drain, decommission and teardown, versioned
   upgrades behind a wire-contract gate, and encrypted backup/restore.
 
@@ -203,10 +211,9 @@ fleet:
       firewall: { as_blacklist: true }
 YAML
 
-# Bootstrap the CA and issue each node an mTLS bundle.
+# Bootstrap the CA and issue the exit its mTLS bundle.
 bin/wgfleet-controller --config controller.yaml --init-pki
-bin/wgfleet-controller --config controller.yaml --issue-node master-1 --issue-out pki/master
-bin/wgfleet-controller --config controller.yaml --issue-node exit-de-1   --issue-out pki/exit
+bin/wgfleet-controller --config controller.yaml --issue-node exit-de-1 --issue-out pki/exit
 
 # Serve gRPC + Web UI + metrics.
 bin/wgfleet-controller --config controller.yaml &
@@ -219,15 +226,12 @@ agent:
   identity: { cert: "pki/exit/node.crt", key: "pki/exit/node.key", ca: "pki/exit/ca.crt" }
 YAML
 
-# Register + publish this node's public key so the master can peer it.
-bin/wgfleet-agent --config exit-agent.yaml --once \
-  --public-ip 198.51.100.7 --mgmt-addr 10.20.0.5 --state-dir state/exit-de-1
-
-# Plan it: renders awg0.conf, nftables, routing, wgcf and blocky — writes nothing.
+# Register with the controller, pull the spec and plan it: renders awg0.conf,
+# nftables, routing, wgcf and blocky — writes nothing on disk.
 bin/wgfleet-agent --config exit-agent.yaml --once --plan \
   --public-ip 198.51.100.7 --mgmt-addr 10.20.0.5 --state-dir state/exit-de-1
 
-open http://127.0.0.1:9000                       # dashboard
+open http://127.0.0.1:9000                       # dashboard; the first visit creates the admin
 curl -s http://127.0.0.1:9300/metrics | grep wgfleet_
 ```
 
@@ -304,8 +308,9 @@ build DKMS for you. Full walkthrough: [`docs/onboarding.md`](https://shidoh.gith
   is its node ID. Removing a node from the inventory, or decommissioning it, makes
   the controller refuse to renew that certificate — see the gaps note below.
 - **Self-checks drive lifecycle state.** After each apply the agent runs
-  role-specific checks — handshake freshness, egress reachability, WARP egress,
-  DNS filter, the lifeline interface, mihomo API — and the derived state feeds
+  role-specific checks — handshake freshness, WARP egress, DNS filter, the
+  REALITY inbound or bridge, the lifeline interface, the UDP return path, the
+  mihomo API — and the derived state feeds
   the dashboard and metrics.
   If an agent goes silent, a staleness sweep demotes its node to `Degraded`.
 - **Customization without forking renderers.** Operators inject deep-merged
@@ -389,6 +394,8 @@ MVP, in active development.
 | Client devices — one mihomo subscription per device, AWG + VLESS with automatic fallback | ✅ |
 | Lifeline — reserve client interface on exits, reserve profiles in the console and the portal | ✅ |
 | Tiered exit selection, throughput watchdog with auto-suspend, drain by config | ✅ |
+| Several masters — every exit peers every master, per-master console view | ✅ |
+| Exit-initiated AmneziaWG and REALITY for paths that cut master-opened connections | ✅ |
 | Console login, certificate self-renewal, node tombstones | ✅ |
 | AmneziaWG 3.x — plumbing shipped, **off by default** | ⏸ |
 
