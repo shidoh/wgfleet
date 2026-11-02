@@ -181,6 +181,7 @@ converges into mihomo. Per-client credentials are issued and revoked in the Web 
 | `fleet.masters[].client_vless.allow_ipv6` | bool | `false` | Let xray resolve the camouflage dest over IPv6. Leave off unless this node has IPv6 egress |
 | `fleet.masters[].client_vless.xhttp_path` | string | `/` | XHTTP path |
 | `fleet.masters[].client_vless.route_through_cidrs` | []CIDR | none | Internal networks a client must route **through** the tunnel (clients send RFC1918 direct by default). Routed to `wgfleet` in every device's mihomo profile, together with `client_awg.route_through_cidrs`. |
+| `fleet.masters[].client_vless.last_resort` | bool | `false` | Put this master's VLESS last in every device profile's `auto` group: after every master's AmneziaWG and every other master's VLESS. The inbound and the master's own group are unchanged. Devices pick it up on their next profile update |
 | `fleet.masters[].client_vless.image` | string | pinned xray | Container image |
 | `fleet.masters[].client_vless.tag` | string | — | Explicit tag, overriding any tag in `image` |
 

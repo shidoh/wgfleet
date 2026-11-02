@@ -73,6 +73,9 @@ type ClientMasterMeta struct {
 	MgmtCIDRs []string
 	// Sites is fleet.client_sites, the same for every master.
 	Sites []ClientSite
+	// VLESSLastResort is client_vless.last_resort: this master's VLESS goes last
+	// in the profile's fleet-wide fallback.
+	VLESSLastResort bool
 }
 
 // ClientSite is a network the operator owns that is sometimes the device's own

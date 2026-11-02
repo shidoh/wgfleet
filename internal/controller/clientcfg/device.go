@@ -177,6 +177,7 @@ func collectDevice(ctx context.Context, src ProfileSource, masters []string, dev
 			return deviceParts{}, fmt.Errorf("clientcfg: routing metadata of %q: %w", m, err)
 		}
 		pm.RouteThrough, pm.DNS, pm.ClientPool = meta.RouteThrough, meta.Resolvers, meta.ClientPool
+		pm.VLESSLastResort = meta.VLESSLastResort
 		p.mgmt, p.sites = meta.MgmtCIDRs, meta.Sites
 		p.masters = append(p.masters, pm)
 	}

@@ -84,6 +84,10 @@ type ClientProfileMaster struct {
 	RouteThrough []string
 	DNS          []string
 	ClientPool   string
+	// VLESSLastResort puts this master's VLESS after every other proxy in the
+	// fleet-wide groups (client_vless.last_resort): its path is known to be bad, so
+	// a device should reach it only when nothing else answers.
+	VLESSLastResort bool
 }
 
 // ClientProfileInput is a whole device: its masters in manifest order, plus the
@@ -108,6 +112,7 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 	var (
 		proxies, groups  []any
 		allAWG, allVLESS []string
+		lastResortVLESS  []string
 		pools            []string
 		nameservers      []string
 		endpoints        []string
@@ -148,7 +153,12 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 		if len(own) == 0 {
 			continue
 		}
-		allAWG, allVLESS = append(allAWG, ownAWG...), append(allVLESS, ownVLESS...)
+		allAWG = append(allAWG, ownAWG...)
+		if m.VLESSLastResort {
+			lastResortVLESS = append(lastResortVLESS, ownVLESS...)
+		} else {
+			allVLESS = append(allVLESS, ownVLESS...)
+		}
 		// The master's own group: its resolver and its client pool are reachable
 		// through ITS proxies only, whichever one is alive.
 		groups = append(groups, fallbackGroup(m.Name, own, ClientProfileMasterHealthInterval))
@@ -167,7 +177,8 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 	// WG device belongs to one proxy and the next master's is another, while VLESS
 	// is TCP over TCP: with each master's pair kept together, a stuck first AWG sent
 	// the device to the slowest path on the same master and left it there.
-	all := append(allAWG, allVLESS...)
+	// A last-resort VLESS (client_vless.last_resort) closes the list.
+	all := append(append(allAWG, allVLESS...), lastResortVLESS...)
 	groups = append(groups, siteGroups(in.Sites)...)
 	groups = append(groups,
 		fallbackGroup(ClientProfileAutoGroup, all, ClientProfileHealthInterval),

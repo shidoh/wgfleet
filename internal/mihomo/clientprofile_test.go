@@ -288,6 +288,28 @@ func TestClientProfileGroups(t *testing.T) {
 	}
 }
 
+// A master whose VLESS path is known to be bad (client_vless.last_resort) still
+// serves its VLESS, but only after every other master's: fallback walks the list
+// in order, so position is the whole of the priority.
+func TestClientProfileLastResortVLESSGoesLast(t *testing.T) {
+	doc := renderProfile(t, ClientProfileInput{Masters: []ClientProfileMaster{
+		{Name: "m1", AWG: profileAWG(t, "2.0"), VLESS: profileVLESS(domain.RealityModeXHTTP), VLESSLastResort: true},
+		{Name: "m2", AWG: profileAWG(t, "2.0"), VLESS: profileVLESS(domain.RealityModeXHTTP)},
+		{Name: "m3", VLESS: profileVLESS(domain.RealityModeXHTTP)},
+	}})
+	if got := strings.Join(toStrings(groupNamed(t, doc, "auto")["proxies"].([]any)), ","); got != "m1-awg,m2-awg,m2-vless,m3-vless,m1-vless" {
+		t.Errorf("auto = %s, want the last-resort VLESS after every other proxy", got)
+	}
+	if got := strings.Join(toStrings(groupNamed(t, doc, "wgfleet")["proxies"].([]any)), ","); got != "auto,m1-awg,m2-awg,m2-vless,m3-vless,m1-vless" {
+		t.Errorf("wgfleet = %s, want the same order as auto", got)
+	}
+	// The master's own group is untouched: its VLESS is already behind its AWG,
+	// and it is the only path to that master's resolver when the AWG is down.
+	if got := strings.Join(toStrings(groupNamed(t, doc, "m1")["proxies"].([]any)), ","); got != "m1-awg,m1-vless" {
+		t.Errorf("m1 group = %s", got)
+	}
+}
+
 // Review Focus #2: everything that must reach the tunnel precedes the rule that
 // sends RFC1918 direct — the portal on the mgmt overlay, the client pool, the
 // operator's internal nets all live in RFC1918.

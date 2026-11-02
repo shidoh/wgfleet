@@ -119,6 +119,30 @@ func TestClientMasterMeta(t *testing.T) {
 	}
 }
 
+// client_vless.last_resort reaches the profile through the master's metadata;
+// unset, a master keeps its manifest-order place.
+func TestClientMasterMetaCarriesVLESSLastResort(t *testing.T) {
+	f := deviceFleet()
+	f.Masters[0].ClientVLESS.LastResort = true
+	b, _ := newBrokerWithFleet(t, f)
+	m, err := b.ClientMasterMeta(context.Background(), f.Masters[0].Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.VLESSLastResort {
+		t.Error("last_resort set in the manifest, not in the metadata")
+	}
+	if len(f.Masters) > 1 {
+		other, err := b.ClientMasterMeta(context.Background(), f.Masters[1].Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if other.VLESSLastResort {
+			t.Error("a master without last_resort reads as last resort")
+		}
+	}
+}
+
 // Sites are fleet-wide: every master's metadata carries the same list.
 func TestClientMasterMetaCarriesSites(t *testing.T) {
 	f := deviceFleet()

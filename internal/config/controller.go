@@ -809,6 +809,11 @@ type ClientVLESSConfig struct {
 	// routing applies). Operator-managed — list the CIDRs the master can actually
 	// reach (its ZT mgmt subnet + any nets it forwards to).
 	RouteThroughCIDRs []string `koanf:"route_through_cidrs"`
+	// LastResort puts this master's VLESS at the very end of a device profile's
+	// fleet-wide fallback (`auto`): after every master's AmneziaWG and every other
+	// master's VLESS. For a master whose TCP path is known to be bad; the inbound
+	// itself is unchanged and the master's own group still offers it.
+	LastResort bool `koanf:"last_resort"`
 }
 
 // DestHostPort returns the camouflage target as "host:port" (dest_port 0 ⇒ 443),

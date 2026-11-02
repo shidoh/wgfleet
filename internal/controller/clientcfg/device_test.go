@@ -20,6 +20,8 @@ type devSrc struct {
 	devices map[string]domain.ClientDevice // by token
 	legacy  map[string]string              // unattached, live credential ID -> master
 	listErr map[string]error
+	// lastResort marks a master's VLESS as client_vless.last_resort.
+	lastResort map[string]bool
 }
 
 func (s devSrc) GetNode(_ context.Context, id string) (domain.Node, error) {
@@ -49,7 +51,8 @@ func (s devSrc) ExitEndpointHost(context.Context, string) (string, error)       
 func (s devSrc) NodeChecks(context.Context, string) ([]domain.HealthCheck, error) { return nil, nil }
 func (s devSrc) ClientMasterMeta(_ context.Context, m string) (domain.ClientMasterMeta, error) {
 	return domain.ClientMasterMeta{RouteThrough: []string{"10.20.0.0/16"},
-		Resolvers: s.specs[m].Master.ClientWG.DNS, ClientPool: s.specs[m].Master.ClientWG.AddressPool}, nil
+		Resolvers: s.specs[m].Master.ClientWG.DNS, ClientPool: s.specs[m].Master.ClientWG.AddressPool,
+		VLESSLastResort: s.lastResort[m]}, nil
 }
 func (s devSrc) GetDeviceByToken(_ context.Context, tok string) (domain.ClientDevice, error) {
 	if d, ok := s.devices[tok]; ok {
@@ -153,6 +156,31 @@ func TestBuildDeviceProfileSkipsANotReadyMasterOnly(t *testing.T) {
 	}
 	if strings.Contains(yml, "m2-awg") {
 		t.Error("m2 has no published key yet and must be skipped, not rendered broken")
+	}
+}
+
+// A master marked client_vless.last_resort keeps its VLESS in the profile, at
+// the very end of the fleet-wide fallback.
+func TestBuildDeviceProfileCarriesVLESSLastResort(t *testing.T) {
+	src := newDevSrc()
+	src.lastResort = map[string]bool{"m1": true}
+	p, err := collectDevice(context.Background(), src, masters, src.devices["tok-full"])
+	if err != nil {
+		t.Fatalf("collectDevice: %v", err)
+	}
+	var found bool
+	for _, m := range p.masters {
+		if m.Name == "m1" {
+			found = true
+			if !m.VLESSLastResort || m.VLESS == nil {
+				t.Errorf("m1 = last resort %v, vless %v; want both", m.VLESSLastResort, m.VLESS != nil)
+			}
+		} else if m.VLESSLastResort {
+			t.Errorf("%s marked last resort without being asked", m.Name)
+		}
+	}
+	if !found {
+		t.Fatal("m1 missing from the device's masters")
 	}
 }
 
