@@ -49,7 +49,7 @@ fleet:
                                              #   either gate fails, that exit stays on 2.0.
 
   masters:
-    - name: master-xa-1
+    - name: master-1
       mgmt_addr: 10.20.25.254              # ZeroTier address
       public_ip: 203.0.113.10               # endpoint clients dial, written into every client
                                             # config. May be a DNS name. Does NOT fall back to
@@ -177,7 +177,7 @@ One master needs neither key below. From the second master on:
 
 ```yaml
 fleet:
-  interface_anchor: master-xa-1        # = the name of the master in slot 0; never change it
+  interface_anchor: master-1        # = the name of the master in slot 0; never change it
   mgmt_subnet: 10.20.0.0/16            # set before adding a master
   master_dns:                          # resolver settings of every master; replaces masters[].dns
     allowlist: ["*.example.net"]
@@ -186,7 +186,7 @@ fleet:
         mapping:
           corp.example: 10.20.0.53
   masters:
-    - name: master-xa-1
+    - name: master-1
       slot: 0
       public_ip: 203.0.113.10
     - name: master-eu-1

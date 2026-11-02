@@ -57,9 +57,9 @@ func RenderXrayCompose(in XrayInput) (string, error) {
 
 	// Plain TCP listeners. Go 1.24+ (xray included) opens MPTCP listeners by
 	// default, and an MPTCP listener is what the CVE-2026-98432 remote root
-	// exploit needs; nobody on the fleet uses MPTCP (zero second subflows,
-	// measured 2026-11-02). Xray itself turned it off in 26.10.31; the env var
-	// does the same for the pinned 26.6.22 (checked on the stand).
+	// exploit needs; nothing here needs MPTCP (clients open no second
+	// subflows). Xray itself turned it off in 26.10.31; the env var
+	// does the same for the pinned 26.6.22 (checked on a test stand).
 	env := []any{"GODEBUG=multipathtcp=0"}
 	volumes := []any{in.ConfigPath + ":/etc/xray/config.json:ro"}
 	if in.Timezone != "" {
@@ -86,8 +86,8 @@ func RenderXrayCompose(in XrayInput) (string, error) {
 		// Bound the log, for the reason the master's own stack learned it: docker's
 		// json-file driver has no rotation at all, so a container that starts writing
 		// errors in a loop fills the disk of a node whose whole job is to keep running.
-		// Measured 2026-09-05: this one had reached 74 MB in six weeks of ordinary
-		// operation, on a fleet where only two containers out of eighteen had a limit.
+		// Unbounded, this one grows by tens of megabytes in a few weeks of ordinary
+		// operation.
 		"logging": map[string]any{
 			"driver":  "json-file",
 			"options": map[string]any{"max-size": "10m", "max-file": "3"},

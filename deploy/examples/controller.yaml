@@ -39,7 +39,7 @@ fleet:
   # awg3_key: file:///etc/wgfleet/awg3.key # 32+ random bytes (openssl rand -base64 48 > /etc/wgfleet/awg3.key; chmod 600); required when header protection is on anywhere. A file, because only a file travels in --backup
 
   masters:
-    - name: master-xa-1 # node identity; renaming re-issues its certificate
+    - name: master-1 # node identity; renaming re-issues its certificate
       mgmt_addr: 10.20.25.254 # ZeroTier/overlay address; binds admin surfaces
       client_awg:
         listen_port: 443 # UDP port clients dial (default 443)

@@ -140,7 +140,7 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 		}),
 		guardDrops: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "guard_drops_packets",
-			Help: "Packets each firewall guard chain has dropped since its ruleset was applied. These chains assert what must never happen — a client address on the wire, a client packet on a path nobody chose — so any value above zero is a fact somebody has to explain. Until this existed the counters were readable only by hand, and 200 dropped client packets on the live master were found by somebody looking.", ConstLabels: cl,
+			Help: "Packets each firewall guard chain has dropped since its ruleset was applied. These chains assert what must never happen — a client address on the wire, a client packet on a path nobody chose — so any value above zero is a fact somebody has to explain. Without it the counters are readable only by hand, and dropped client packets are found only by somebody looking.", ConstLabels: cl,
 		}, []string{"chain"}),
 		udpReturnKnown: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "udp_return_known",
@@ -355,7 +355,7 @@ func (m *AgentMetrics) ObserveStandbyMembers(usable map[string]bool) {
 
 // StandbyTransport identifies one exit's inactive transport — the path an
 // operator would switch that exit onto (ADR-0025). The transport is a label
-// because "vn0's standby is broken" and "which of the two is it" are the same
+// because "exit-a's standby is broken" and "which of the two is it" are the same
 // question at 4am.
 type StandbyTransport struct {
 	Exit      string
@@ -436,8 +436,8 @@ func (m *AgentMetrics) ObserveUDPReturn(bindable, known map[int]bool) {
 // Unclassified on purpose. Alerting on a specific message ("listenLocalConn")
 // catches only the failure already understood and fixed; the next one of this
 // class will say something else. What generalises is that the data plane is
-// complaining at all — 97787 lines over eight days with no metric is what let a
-// dead protocol look healthy.
+// complaining at all — tens of thousands of error lines with no metric is what
+// lets a dead protocol look healthy.
 func (m *AgentMetrics) ObserveMihomoErrors(n int) {
 	if n > 0 {
 		m.mihomoErrors.Add(float64(n))

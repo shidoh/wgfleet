@@ -16,7 +16,7 @@ import (
 // lightweight target, which censorship defeats trivially: an exit under a
 // destination-scoped block (or RKN's volume-freeze, which lets small responses
 // through and stalls real transfers) answers that one probe fast while every real
-// site times out through it. Observed live 2026-07-19: an exit returned
+// site times out through it. Seen in practice: an exit returned
 // cp.cloudflare.com/generate_204 in 113ms while google, github, youtube and
 // telegram were 0/16 through the same proxy — and mihomo kept it in rotation
 // because, by its measure, it was healthy.
@@ -36,9 +36,9 @@ var DefaultProbeURLs = []string{
 //
 // It exists because the phases stack. Every 10th pass the tier decision, the warm
 // probe of the inactive tier and the standby-transport sweep all run together: on
-// the live fleet that is 3 primary + 3 reserve + 5 standby = 11 members probed
-// back to back. Each member is bounded by one probeTimeout, so a fleet where a
-// probe destination is blocked costs 11 x 8s = 88s — three times the 30s reconcile
+// a mid-sized fleet that is easily 3 primary + 3 reserve + 5 standby = 11 members
+// probed back to back. Each member is bounded by one probeTimeout, so a fleet where
+// a probe destination is blocked costs 11 x 8s = 88s — three times the 30s reconcile
 // interval, and past it the status report that feeds WgfleetNodeReportStale
 // (critical at 180s) starts sliding. A per-member bound is not a bound on the pass.
 //

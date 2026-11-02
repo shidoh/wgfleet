@@ -17,7 +17,7 @@ import (
 
 // Automatic rotation of an exit-initiated tunnel's pinned port.
 //
-// Measured on the stand 2026-09-30: once a path filter poisons or freezes the
+// Once a path filter poisons or freezes the
 // pinned flow — it lost its state mid-flow, it forgot an idle flow and saw the
 // master speak first, it froze the flow on volume — the flow never recovers,
 // because every keepalive on the same tuple keeps the bad state alive. A new
@@ -202,7 +202,7 @@ func (b *Broker) exitInitiatedAddr(ctx context.Context, exit config.ExitConfig, 
 // awgCarries reports whether the exit's AWG tunnel is the one carrying its
 // traffic. A standby transport or a drained exit sees no traffic, so a stale
 // handshake there says nothing about the path: rotating it every ten minutes
-// was pure noise on the live fleet 2026-09-30.
+// would be pure noise.
 func awgCarries(exit config.ExitConfig, node domain.Node) bool {
 	if exit.Drain || node.Drain {
 		return false

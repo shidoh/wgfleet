@@ -662,8 +662,7 @@ a reset in answer is `refused`, none within 4 s is `fail`. All three count as ba
 
 `wgfleet:uplink_syn_per_synack:1d` is passive: the SYNs the master sent per SYN-ACK
 it got on the address its traffic leaves with. Near 1 on a clean uplink; it rises
-when handshakes are lost. Measured 2026-10-26: 1.22 on a filtered master, 0.98 on a
-clean one. A single-master fleet has no peers and no probe; the passive ratio still
+when handshakes are lost, e.g. ~1.2 on a filtered uplink, ~1.0 on a clean one. A single-master fleet has no peers and no probe; the passive ratio still
 works.
 
 ### Host metrics (yours to upgrade)

@@ -234,7 +234,7 @@ func isCPSTemplate(s string) bool { return containsByte(s, '<') }
 
 // userspaceTag matches the <c> (packet-counter) and <t> (timestamp) CPS tags,
 // which the kernel module supports but the userspace WireGuard-Go implementation
-// (mihomo proxies, Amnezia app clients) cannot parse (the reference deployment §5/§9).
+// (mihomo proxies, Amnezia app clients) cannot parse.
 var userspaceForbiddenTag = regexp.MustCompile(`<\s*[ct]\s*>`)
 
 // ValidateUserspace is Validate plus the userspace restriction: I1-I5 must not

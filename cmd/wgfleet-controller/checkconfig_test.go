@@ -136,7 +136,7 @@ func TestCheckStoreOpenableTouchesNothing(t *testing.T) {
 // GOOD manifest that this host cannot run — not as a bad manifest.
 //
 // The two verdicts were folded together at first, and the cost showed up
-// immediately: validating the live manifest from a laptop said "NOT valid" about
+// immediately: validating a real manifest from a workstation said "NOT valid" about
 // a file that was fine, which is exactly the wrong thing for a command whose job
 // is to be trusted before a restart.
 func TestCheckHostReadinessDoesNotCondemnTheManifest(t *testing.T) {
@@ -302,7 +302,7 @@ func TestManifestWarningsCarryTheDirectRuleCount(t *testing.T) {
 	}
 }
 
-// The tester's manifest from 2026-10-26: `key:` where `key_path:` belongs. The
+// A typical manifest typo: `key:` where `key_path:` belongs. The
 // warning names the exact key, so the reason for "ssh.key_path is required" is on
 // the same screen.
 func TestUnknownKeyWarningsNameTheKey(t *testing.T) {

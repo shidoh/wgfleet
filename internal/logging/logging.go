@@ -1,9 +1,8 @@
 // Package logging is the one place both binaries decide how much they say.
 //
-// Until 2026-09-07 the level was a constant: Info, with a handful of Debug calls
-// in the code that no build could ever print. On the day the controller silently
-// removed an exit from the load balancer four times in seven minutes, the
-// question "what did it decide and why" had no answer at any setting, because
+// The level used to be a constant: Info, with a handful of Debug calls in the
+// code that no build could ever print. When the controller silently removed an
+// exit from the load balancer several times in a few minutes, the question "what did it decide and why" had no answer at any setting, because
 // there was no setting. Five levels now, a flag and a config key to pick one,
 // and two signals to move between them on a running process — a node under
 // investigation must not need a restart to start talking.

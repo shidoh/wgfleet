@@ -85,7 +85,7 @@ controller:
 fleet:
   zerotier_network: "<zt-network-id>"  # 16-hex mgmt overlay id; exits join it during provisioning
   masters:
-    - name: master-xa-1
+    - name: master-1
       mgmt_addr: "<mgmt>"        # same ZT address as controller.listen host
       public_ip: "<public-ip>"  # the endpoint written into every client config
       # the agent carries the client interface wg0; credentials live in the controller's
@@ -119,7 +119,7 @@ The master's mTLS cert is issued **locally** instead of being shipped over SSH:
 ```bash
 sudo wgfleet-controller --config /etc/wgfleet/controller.yaml --init-pki
 sudo wgfleet-controller --config /etc/wgfleet/controller.yaml \
-     --issue-node master-xa-1 --issue-out /etc/wgfleet
+     --issue-node master-1 --issue-out /etc/wgfleet
 # → writes /etc/wgfleet/{node.crt,node.key,ca.crt}
 ```
 
@@ -129,7 +129,7 @@ sudo wgfleet-controller --config /etc/wgfleet/controller.yaml \
 agent:
   role: master
   controller: "<mgmt>:8443"     # the local controller, via the node's own ZT IP
-  node_id: "master-xa-1"        # must match masters[].name (and the issued cert CN)
+  node_id: "master-1"        # must match masters[].name (and the issued cert CN)
   mgmt_addr: "<mgmt>"           # ZT address; agent binds /metrics to <mgmt>:9301 by default
   reconcile_interval: 30s
   identity:

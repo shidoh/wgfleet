@@ -23,10 +23,10 @@ type MasterSpec struct {
 	// NetnsCIDR is the point-to-point link between the host and the namespace
 	// mihomo runs in — a /30, host .1, namespace .2. Empty ⇒ NetnsDefaultCIDR.
 	//
-	// It is CGNAT (RFC 6598) by default rather than anything from 10/8: on this
-	// fleet 10/8 is routed into the corporate tunnel, listed in direct_cidrs, and
-	// pulled into the tunnel by every client's route_through_cidrs — and each exit
-	// already owns a /24 there. RFC 6598 exists for exactly this: provider
+	// It is CGNAT (RFC 6598) by default rather than anything from 10/8: 10/8 may
+	// well be routed into another tunnel, listed in direct_cidrs, or pulled into
+	// the tunnel by clients' route_through_cidrs — and each exit already owns a /24
+	// there. RFC 6598 exists for exactly this: provider
 	// infrastructure that must not collide with the customer's private space.
 	NetnsCIDR string
 	// ClientViaNetns decides where client traffic is intercepted (ADR pending):
@@ -122,7 +122,7 @@ type ComposeSpec struct {
 	ClientAllowedIPs string   // AllowedIPs handed to clients (inverted RFC1918; operator-set)
 	// NetnsHolderImage overrides the image that owns mihomo's network namespace.
 	// Worth overriding on a node that cannot pull the default: the holder must be
-	// fetchable from behind the filtering this fleet exists to get around, and any
+	// fetchable from behind the filtering the fleet exists to get around, and any
 	// image with a shell and a sleep will do — including one the node already has.
 	NetnsHolderImage string
 }
@@ -258,7 +258,7 @@ func (m MasterSpec) NetnsLinkCIDR() string {
 // its own: it proves the namespace can resolve and reach an exit BEFORE moving
 // anything, measures the client path from its own synthetic client after, and
 // reverts itself if that path breaks. All of it was exercised end to end on a
-// two-VM stand on 2026-09-05, with the client interface on the production port —
+// two-VM test stand, with the client interface on the production port —
 // canary, full move, induced failure, automatic revert, reboot in the moved state.
 // The rehearsal found eight blockers that review had not; this constant was "off"
 // until they were closed.
@@ -275,7 +275,7 @@ const NetnsDefaultMode = "auto"
 // — one keystroke short of "off" — silently switched the feature ON.
 //
 // A CIDR is refused explicitly, and the message says why rather than just "no".
-// The mode existed, was implemented, and was measured on the stand 2026-09-05
+// The mode existed, was implemented, and was measured on a test stand
 // doing the opposite of what its name promises: mihomo moves as a whole, so the
 // host goes on steering every client OUTSIDE the named prefix at listeners that
 // have left, and the blast radius is everyone except the one device that was

@@ -26,7 +26,7 @@ func ghostHandler(t *testing.T, declared ...domain.Node) (*Handler, store.Store,
 	return h, st, removed
 }
 
-// The fn7 case: a node declared in the manifest whose server is gone and whose
+// A node declared in the manifest whose server is gone and whose
 // store row is already gone. It renders as a Pending card, and before this fix
 // every lifecycle action was unreachable — Drain failed with "store: not found",
 // which permanently gated Decommission, which permanently gated Delete. The node

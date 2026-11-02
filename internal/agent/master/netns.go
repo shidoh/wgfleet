@@ -86,7 +86,7 @@ func (p netnsPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 		// at priority 400 sorts ahead of the TPROXY mark rule, so once mihomo moves back
 		// to the host it sends every client packet into a namespace nothing is listening
 		// in: the operator's own back-out is what breaks the clients. Found on the stand
-		// 2026-09-05 by turning the knob off the way a user would; the automatic revert
+		// by turning the knob off the way a user would; the automatic revert
 		// had been cleaning up properly all along, so nothing else exercised this path.
 		if actions := p.detachActions(ctx, run); len(actions) > 0 {
 			return actions, nil
@@ -236,7 +236,7 @@ func (p netnsPlanner) interceptionActions(ctx context.Context, in netns.Input, s
 	//
 	// `ip rule … iif wg0 lookup 51822` takes the whole client interface, and table
 	// 51822 holds one default route into the namespace. Every destination that is
-	// supposed to stay off the proxy goes with it: the corporate networks clients
+	// supposed to stay off the proxy goes with it: the private networks clients
 	// carry in route_through_cidrs, the management overlay, the exits' own public
 	// addresses, client-to-client traffic inside the pool. Today those
 	// live as `ip daddr !=` guards in the host ruleset, which the move deletes.
@@ -391,7 +391,7 @@ func (p netnsPlanner) detachActions(ctx context.Context, run netns.Runner) []rec
 	// once mihomo has moved back out, and the next rule drops the datagram. So a
 	// namespace that is no longer carrying client traffic silently eats every UDP
 	// packet of its OWN — including the DNS query the readiness gate makes before
-	// the next attempt. Measured on the stand 2026-09-05: 38 dropped datagrams, the
+	// the next attempt. Measured on the stand: 38 dropped datagrams, the
 	// gate failing on DNS, and a node that could never move again because its last
 	// revert had broken the check that would have let it.
 	if nsPath, err := netns.Path(ctx, domain.NetnsHolder, run); err == nil {
@@ -462,7 +462,7 @@ func directDestinations(spec domain.NodeSpec) []string {
 // stops the whole pass at the first failure — so a master whose direct CIDRs
 // include any host address (its own public IP, and one per exit: exactly what the
 // controller derives) fails to converge ANYTHING after this planner, every thirty
-// seconds, for ever. Reproduced on the stand 2026-09-05: state=Error on every
+// seconds, for ever. Reproduced on the stand: state=Error on every
 // pass, with mihomo, the master NAT, DOCKER-USER and the resolver all frozen
 // behind it.
 func canonRule(s string) string {
@@ -822,13 +822,12 @@ func (p netnsPlanner) mihomoTargetsTheLiveHolder(ctx context.Context, run netns.
 //     and it is generated INSIDE the namespace, so it must leave through the veth
 //     whole.
 //
-// Sizing the veth to the inner leg therefore strangles the outer one. Measured on
-// the live master 2026-09-05: veth at 1360 against a 1500 uplink, ICMP with DF
-// passed at 1332 bytes and failed at 1400; WireGuard handshakes (148 bytes) got
-// through so every tunnel looked UP, while every health check through them failed.
-// Four exits' AmneziaWG proxies went dead within two minutes and the tier selector
-// failed over to the reserve — which survived only because it is TCP, where MSS
-// clamping does the fitting that UDP has nobody to do.
+// Sizing the veth to the inner leg therefore strangles the outer one. With the
+// veth at 1360 against a 1500 uplink, ICMP with DF passes at 1332 bytes and fails at
+// 1400; WireGuard handshakes (148 bytes) get through so every tunnel looks UP, while
+// every health check through them fails. The exits' AmneziaWG proxies go dead within
+// minutes and the tier selector fails over to the reserve — which survives only
+// because it is TCP, where MSS clamping does the fitting that UDP has nobody to do.
 //
 // So it is pinned to the uplink's own MTU rather than left alone. "Leave it at the
 // default" would be right on a fresh node and wrong on every node that already ran

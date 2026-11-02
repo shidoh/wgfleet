@@ -30,11 +30,10 @@ type StandbyTunnel struct {
 //
 // Why anyone wants this list: a standby transport is in no tier, so neither the
 // tier decision nor the standby-TIER warm probe ever dials it, and its mihomo
-// health readings therefore never update. Measured on the live fleet 2026-09-04,
-// five of six exits had a standby transport and not one had ever been
-// health-checked: four reported alive=1, which is mihomo's default for an
-// untested proxy rather than evidence, and the fifth was frozen on a verdict
-// nobody had rechecked in 82 minutes. ADR-0025's plan promised "per-transport
+// health readings therefore never update. Without it, no standby transport is
+// ever health-checked: most report alive=1, which is mihomo's default for an
+// untested proxy rather than evidence, and the rest stay frozen on a verdict
+// nobody rechecks. ADR-0025's plan promised "per-transport
 // reachability"; the active-transport metric shipped and this half did not.
 //
 // Order follows the spec so the probe load lands in a stable sequence.

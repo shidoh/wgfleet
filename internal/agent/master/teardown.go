@@ -63,7 +63,7 @@ func (p masterTeardownPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]rec
 			"ip", "rule", "del", "pref", fmt.Sprintf("%d", netfw.NetnsRulePref)),
 		reconcile.BestEffortExecAction("flush the namespace route table",
 			"ip", "route", "flush", "table", fmt.Sprintf("%d", netfw.NetnsRouteTable)),
-		// The destination exemptions that kept the corporate networks, the management
+		// The destination exemptions that kept the private networks, the management
 		// overlay and the exits' own addresses out of the namespace. They sit at their
 		// own priority and outlive every table here; on a repurposed host they would
 		// go on diverting those destinations to a policy nobody set.

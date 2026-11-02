@@ -138,7 +138,7 @@ Existing client configs carry the old endpoint.
    ```yaml
    # /etc/wgfleet/controller.yaml
    masters:
-     - name: master-xa-1
+     - name: master-1
        public_ip: <new-ip-or-dns-name>
    ```
 

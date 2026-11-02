@@ -191,12 +191,12 @@ type PeerSpec struct {
 // DNSFilterSpec configures the on-node filtering resolver. On MVP this is blocky
 // run as a Docker container (ADR-0013). Only safety/structural fields are
 // first-class: the binds are pinned to loopback + the mgmt/ZT address so the
-// resolver is never reachable on the public interface (docs/DESIGN.md §9), plus
+// resolver is never reachable on the public interface, plus
 // upstreams/bootstrap with safe defaults and a self-protection allowlist. The
 // richer blocky surface (denylists, conditional split-horizon mappings, caching
 // tuning, extra upstream groups) is operator-driven through Custom (deep-merged
 // overrides + extra include files), mirroring the mihomo renderer — we render a
-// base from desired state, not a fork per option (docs/DESIGN.md principle 7).
+// base from desired state, not a fork per option.
 type DNSFilterSpec struct {
 	Enabled  bool
 	MgmtAddr string // ZT/mgmt address — a non-loopback address blocky binds

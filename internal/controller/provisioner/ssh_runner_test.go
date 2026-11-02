@@ -109,8 +109,8 @@ func TestHostKeyCallbackInsecureIgnore(t *testing.T) {
 }
 
 // A TCP connection that opens and then says nothing is not a hypothetical: it is
-// what the fleet's public path does when it wedges (2026-09-09 and again
-// 2026-09-11 — ESTAB to the exit's port 22, 12 bytes in Send-Q, no movement).
+// what a public master→exit path does when it wedges (ESTAB to the exit's port
+// 22, a dozen bytes in Send-Q, no movement).
 //
 // ssh.ClientConfig.Timeout bounds only the TCP connect, so the handshake that
 // follows had NO bound at all and the dial blocked forever. Every caller inherits

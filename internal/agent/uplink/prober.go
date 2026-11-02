@@ -1,8 +1,8 @@
 // Package uplink measures a master's own uplink by opening TCP connections to
 // the other masters and closing them, never sending data.
 //
-// A filter that delays or drops a share of a host's handshakes (live 2026-10-16:
-// one master, ~15% of outbound SYNs answered only after the kernel's 1 s
+// A filter that delays or drops a share of a host's handshakes (for example, a
+// noticeable share of outbound SYNs answered only after the kernel's 1 s
 // retransmit) leaves ping clean and every tunnel up, so nothing else notices. A
 // connect slower than SlowAfter is that retransmit; the same pair measured from
 // the other end says whose uplink it is.

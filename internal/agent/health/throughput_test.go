@@ -113,9 +113,9 @@ func TestParseThroughput(t *testing.T) {
 	}
 }
 
-// One target is a measurement of that target. vn0, 2026-09-07: Cloudflare's speed
-// page answered at 140–270 KiB/s while three other CDNs through the same tunnel
-// gave megabytes per second, and the exit was declared degraded six times that day.
+// One target is a measurement of that target. Cloudflare's speed page can answer
+// below the floor while other CDNs through the same tunnel give megabytes per
+// second, and the exit is then declared degraded again and again.
 func TestProbeBestStopsAtTheFirstTargetThatClearsTheFloor(t *testing.T) {
 	ctx := context.Background()
 	calls := []string{}

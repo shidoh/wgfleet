@@ -31,7 +31,7 @@ const (
 	// ScannerListURL is sngvy/AntiScanner: a hand-kept list of the scanners
 	// themselves (GRCHC/CyberOK, Censys, Shodan, Shadowserver …), both families in
 	// one file. C24Be covers state networks by registry name and misses most of
-	// these; this list adds ~29 000 IPv4 addresses on top of it (2026-10-31).
+	// these; this list adds tens of thousands of IPv4 addresses on top of it.
 	ScannerListURL = "https://gist.githubusercontent.com/sngvy/07cee7ac810c9d222fbebddff8c1d1b8/raw/blacklist.txt"
 )
 

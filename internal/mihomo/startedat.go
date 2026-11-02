@@ -10,9 +10,9 @@ import (
 
 // StartedAt reports when the named container last started, as docker records it.
 //
-// It exists for a restart loop seen in production: a planner restarted
-// mihomo every pass, three exits fell out of rotation in three minutes, and the
-// only record was the master agent's journal. Every restart — a self-heal, a
+// It exists for a restart loop: a planner that restarts mihomo every pass
+// knocks exits out of rotation within minutes, and the
+// only record is the master agent's journal. Every restart — a self-heal, a
 // crash, docker's own restart policy — moves this timestamp, so changes() over
 // the resulting series counts restarts no single restarter has to confess to.
 func StartedAt(ctx context.Context, container string) (time.Time, error) {

@@ -153,7 +153,7 @@ func TestMasterNATIsUnchangedWithoutTheMove(t *testing.T) {
 // Destination exemptions are the second line of defence. The first is a routing
 // rule that keeps them out of the namespace; if one reaches here anyway, an
 // unguarded ruleset meets it with an unconditional DNAT for TCP and a fail-closed
-// drop for UDP — the corporate networks, the management overlay and the exits'
+// drop for UDP — private networks, the management overlay and the exits'
 // own public addresses, gone one way and silently.
 func TestNetnsNATGuardsDirectDestinations(t *testing.T) {
 	out, err := RenderNetnsNAT(NetnsNATInput{
@@ -221,7 +221,7 @@ func TestNetnsNATRefusesACraftedDirectCIDR(t *testing.T) {
 // every answer mihomo is waiting for: WireGuard packets coming back from an exit,
 // its own DNS replies, a geo-database download. Those are addressed to the
 // namespace itself, no transparent socket matches them, and the fail-closed drop
-// underneath eats them. Measured on the stand 2026-09-05: client UDP was
+// underneath eats them. Measured on a test stand: client UDP was
 // intercepted and proxied correctly while mihomo could not resolve a single name,
 // because its own answers died one hook before it reached them.
 func TestNetnsNATOnlyInterceptsTrafficFromClients(t *testing.T) {
@@ -252,8 +252,8 @@ func TestNetnsNATRefusesToRenderWithoutTheClientPool(t *testing.T) {
 // The gateway is the master's own address in the client pool, so it is where the
 // fleet resolver answers from. Its replies land on this veth with a source inside
 // the pool, and a scope written only as "from a client" hands them to a
-// transparent socket that does not exist and drops them. Measured on the stand
-// 2026-09-05: mihomo could not resolve a single name while the tunnel and the
+// transparent socket that does not exist and drops them. Measured on a test
+// stand: mihomo could not resolve a single name while the tunnel and the
 // interception both worked.
 func TestNetnsNATDoesNotInterceptRepliesFromTheGateway(t *testing.T) {
 	out, err := RenderNetnsNAT(netnsInput())
@@ -278,8 +278,8 @@ func TestNetnsNATDoesNotInterceptRepliesFromTheGateway(t *testing.T) {
 // the host rewrites the destination to this address, the packet arrives with a
 // destination no direct-CIDR guard covers, the interception claims it and sends it
 // to the redirect port — and mihomo, asked to proxy a connection to itself, closes
-// it. Measured on the live master 2026-09-05: the dashboard's TCP handshake
-// completed and was immediately FIN'd, from the client tunnel only.
+// it. The symptom: the dashboard's TCP handshake completes and is immediately
+// FIN'd, from the client tunnel only.
 func TestNetnsNATDoesNotInterceptTrafficAddressedToMihomoItself(t *testing.T) {
 	in := netnsInput()
 	in.SelfAddr = "100.127.255.2"
@@ -304,7 +304,7 @@ func TestNetnsNATDoesNotInterceptTrafficAddressedToMihomoItself(t *testing.T) {
 // veth, so the pass that carries a packet INTO the namespace takes the "no NAT"
 // decision for the whole connection, and the pass that carries it back out cannot
 // undo that. The source stays a client's, and the host's own leak guard drops it
-// one hook later. 201 packets in, 200 dropped, measured on the live master.
+// one hook later — nearly every packet in is a packet dropped.
 func TestForwardedClientTrafficLeavesTheNamespaceWithTheNamespacesAddress(t *testing.T) {
 	out, err := RenderNetnsNAT(NetnsNATInput{
 		PeerIface:  "mih0",
@@ -337,7 +337,7 @@ func TestForwardedClientTrafficLeavesTheNamespaceWithTheNamespacesAddress(t *tes
 
 // The rule at pref 400 hands every client a route to this namespace, and the
 // input chain's accept policy used to hand them everything mihomo binds on it.
-// Measured from a client-position namespace on the stand: the SOCKS bridge xray
+// Measured from a client-position namespace on a test stand: the SOCKS bridge xray
 // dials proxied for anyone, with no authentication, and the control API answered.
 //
 // A client has one legitimate destination here — the port its own intercepted TCP
@@ -375,8 +375,7 @@ func TestAClientReachesOnlyTheRedirectOnTheNamespaceAddress(t *testing.T) {
 // The host forwards the Clash API port INTO the namespace for clients when the
 // operator has put it in client_admin_ports. The namespace's own input closure
 // must know the same list, or the host opens the door and the namespace slams it:
-// measured on the live master 2026-09-06 — 2097 client SYNs to the dashboard
-// dropped by the closure, conntrack full of UNREPLIED DNAT entries.
+// client SYNs to the dashboard are dropped by the closure, conntrack full of UNREPLIED DNAT entries.
 func TestAClientReachesTheAdminPortsTheHostForwardsIntoTheNamespace(t *testing.T) {
 	out, err := RenderNetnsNAT(NetnsNATInput{
 		PeerIface:            "mih0",
@@ -445,9 +444,8 @@ func TestTheHostAndTheNamespaceAgreeOnTheClientAdminPort(t *testing.T) {
 // That dial never touches the host's redirect: it leaves the namespace for the
 // management address, where nothing has listened on the API port since the move,
 // and is refused. Redirecting it on the host instead would send it straight back
-// in wearing the namespace's own address as source. Measured on the live master
-// 2026-10-12: the same URL answered 200 over AmneziaWG and an empty reply over
-// VLESS, for as long as the client's fallback group sat on VLESS.
+// in wearing the namespace's own address as source. The symptom: the same URL
+// answers 200 over AmneziaWG and an empty reply over VLESS, for as long as the client's fallback group sat on VLESS.
 func TestClashAPIKeepsItsAddressForConnectionsMihomoDials(t *testing.T) {
 	out, err := RenderNetnsNAT(NetnsNATInput{
 		PeerIface: "mih0", ClientCIDR: "10.73.0.0/24",
@@ -459,8 +457,8 @@ func TestClashAPIKeepsItsAddressForConnectionsMihomoDials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	// The priority is numeric on purpose: the named form was refused on the live
-	// master 2026-10-12 and left the node in Error until this was corrected.
+	// The priority is numeric on purpose: older nft refuses the named form in an
+	// output chain, which leaves the node in Error.
 	if !strings.Contains(out, "type nat hook output priority -100;") {
 		t.Fatalf("no output NAT chain at priority -100 — a locally dialled connection is never redirected:\n%s", out)
 	}

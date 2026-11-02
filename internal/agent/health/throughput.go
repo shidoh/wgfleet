@@ -23,7 +23,7 @@ const (
 	// DefaultThroughputProbeURL downloads ~256 KiB from Cloudflare's speed endpoint.
 	// It is enough to separate a throttled path (tens of KB/s) from a healthy one
 	// (MB/s) while costing little data. Routing this through WARP still exposes a
-	// throttled exit (verified live: exit-3 stalled fetching it via wgcf). Override
+	// throttled exit (a throttled exit stalls fetching it via wgcf). Override
 	// per fleet for a stricter, non-Cloudflare target.
 	DefaultThroughputProbeURL = "https://speed.cloudflare.com/__down?bytes=262144"
 	// probeRangeBytes bounds every probe download to the same 256 KiB, whatever the
@@ -37,13 +37,13 @@ const (
 // at the first that clears the floor.
 //
 // One target is not a bandwidth measurement, it is a measurement of that target.
-// On 2026-09-07 vn0 was declared throughput-degraded for the sixth time that day:
-// speed.cloudflare.com answered its 256 KiB in 0.8–1.9 s (140–270 KiB/s, the floor
-// is 250) while three other CDNs, through the SAME WARP tunnel and the SAME egress
-// address that vn1 was using, answered in 60 ms at 1.5–3.7 MB/s. TCP and TLS to
-// Cloudflare took 2 ms and 42 ms; the delay was that endpoint deciding when to
-// start sending. Every verdict built on it — the check, the controller's
-// auto-suspend, the reload cascade behind it — was a verdict about a speed-test
+// An exit can be declared throughput-degraded repeatedly when
+// speed.cloudflare.com alone answers its 256 KiB slowly (hundreds of ms to seconds,
+// below the 250 KiB/s floor) while other CDNs, through the SAME WARP tunnel and the
+// SAME egress address, answer in tens of milliseconds at megabytes per second. TCP
+// and TLS to Cloudflare complete quickly; the delay is that endpoint deciding when
+// to start sending. Every verdict built on it — the check, the controller's
+// auto-suspend, the reload cascade behind it — is then a verdict about a speed-test
 // page. Spread across independent operators, like the exit-reachability probe.
 var DefaultThroughputProbeURLs = []string{
 	DefaultThroughputProbeURL,

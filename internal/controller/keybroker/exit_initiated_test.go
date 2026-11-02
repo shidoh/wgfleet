@@ -379,9 +379,9 @@ func TestExitInitiatedLeavesHealthyAndSilentTunnelsAlone(t *testing.T) {
 	}
 }
 
-// Measured on the live fleet 2026-09-30: an exit whose active transport was
-// REALITY had its standby AWG rotated every ten minutes — a standby tunnel
-// carries no traffic, so a stale handshake there says nothing about the path.
+// An exit whose active transport is REALITY must not have its standby AWG
+// rotated every ten minutes — a standby tunnel carries no traffic, so a stale
+// handshake there says nothing about the path.
 func TestExitInitiatedDoesNotRotateATunnelThatCarriesNothing(t *testing.T) {
 	cases := map[string]func(n *domain.Node){
 		"reality is the active transport": func(n *domain.Node) { n.ActiveTransport = domain.TransportRealityXHTTP },
@@ -414,11 +414,11 @@ func TestExitInitiatedDoesNotRotateATunnelThatCarriesNothing(t *testing.T) {
 	}
 }
 
-// Found on the stand 2026-10-09: an exit was switched from REALITY back to AWG and
-// five seconds later both masters' pinned ports were moved — "tunnel silent on its
-// pinned port". The tunnel had been idle for as long as REALITY carried the exit,
-// which is what a standby does; its stale handshake was judged the moment AWG
-// became the carrying transport. A tunnel that starts carrying gets a full
+// An exit switched from REALITY back to AWG must not have both masters' pinned
+// ports moved seconds later — "tunnel silent on its pinned port". The tunnel has
+// been idle for as long as REALITY carried the exit, which is what a standby does;
+// its stale handshake must not be judged the moment AWG becomes the carrying
+// transport. A tunnel that starts carrying gets a full
 // AWGRotateAfter to handshake before its silence means anything.
 func TestExitInitiatedGivesATunnelThatStartsCarryingItsOwnClock(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)

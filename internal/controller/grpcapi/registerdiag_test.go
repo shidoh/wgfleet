@@ -10,13 +10,12 @@ import (
 // When a re-registration DOES change something, the log must name the field.
 //
 // The guard that suppresses an unchanged re-registration works — there is an
-// integration test for it, and on the live fleet no exit ever appears in this log.
-// It does not hold for the master: measured 2026-09-04, `node registered` fired
-// 721 times in three hours for master-xa-1 alone, 97% of the controller's entire
-// journal, and each line is also a write to the store. Twenty fields and no way to
-// tell which one churns is what made that unfixable for weeks; it also buried the
-// events an operator needs, so the reason mihomo bounced twice in 36 seconds that
-// morning could not be reconstructed from this log at all.
+// integration test for it, and exits do not appear in this log. It can fail to
+// hold for a master: then `node registered` fires on every pass, dominates the
+// controller's journal, and each line is also a write to the store. Twenty fields
+// and no way to tell which one churns makes that hard to fix; it also buries the
+// events an operator needs, such as why mihomo bounced, which then cannot be
+// reconstructed from this log at all.
 func TestChangedNodeFieldsNamesWhatMoved(t *testing.T) {
 	before := domain.Node{ID: "n1", Name: "master-xa-1", Role: domain.RoleMaster, PublicIP: "1.2.3.4"}
 

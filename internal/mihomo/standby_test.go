@@ -34,8 +34,8 @@ func names(ts []StandbyTunnel) []string {
 // The standby transport of a dual-transport exit is drained on purpose so no new
 // traffic routes to it — and that is exactly why nothing probes it: it joins no
 // tier, so neither the tier decision nor the standby-TIER warm probe touches it.
-// Measured on the live fleet 2026-09-04: four standby proxies had never been
-// health-checked once and still reported alive=1, which is mihomo's default for
+// Without it, standby proxies are never health-checked once and still report
+// alive=1, which is mihomo's default for
 // an untested proxy, not a measurement. This function is what makes them
 // probeable.
 func TestStandbyTransportsFindsTheInactiveTransport(t *testing.T) {

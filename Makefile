@@ -13,7 +13,7 @@ ARCH      ?= amd64
 # TAR_NOXATTR is set only when tar accepts it (macOS bsdtar). GNU tar on the CI
 # builder neither needs nor has it. Without it, macOS packs its extended attributes
 # and GNU tar on the target prints ~40 lines of "Ignoring unknown extended header
-# keyword LIBARCHIVE.xattr.com.apple.provenance" — the first thing a tester sees on
+# keyword LIBARCHIVE.xattr.com.apple.provenance" — the first thing an operator sees on
 # unpacking, and it reads like a damaged archive.
 TAR_NOXATTR := $(shell tar --no-xattrs --version >/dev/null 2>&1 && echo --no-xattrs)
 
@@ -142,7 +142,7 @@ release-archive: agent-linux controller-linux
 	cp docs/upgrade.md                          $(DIST)/$(PKG)/UPGRADE.md
 	cp docs/operations.md                       $(DIST)/$(PKG)/OPERATIONS.md
 	cp docs/cli.md                              $(DIST)/$(PKG)/CLI.md
-	# Linked from the docs above and, until now, absent from the archive: a tester
+	# Linked from the docs above and, until now, absent from the archive: an operator
 	# following INSTALL.md hit a dead link on the first page.
 	cp docs/manifest.md                         $(DIST)/$(PKG)/MANIFEST.md
 	cp docs/colocated-controller-master.md      $(DIST)/$(PKG)/COLOCATED-CONTROLLER-MASTER.md
@@ -165,16 +165,16 @@ release-archive: agent-linux controller-linux
 	# Every doc links its siblings by their REPO name (docs/cli.md) and this target
 	# renames them on the way in (CLI.md). On a case-sensitive filesystem — which is
 	# every server these ship to — that left 16 dead links, starting on the first page
-	# a tester opens. Files under examples/ sit one level down, so they get ../.
+	# an operator opens. Files under examples/ sit one level down, so they get ../.
 	#
 	# The deploy/examples/*.yaml rules matter for the same reason and were missed the
 	# first time: three links pointed at ../deploy/examples/… which, from inside the
 	# package, resolves ABOVE the archive root. Those are the manifests the docs tell
-	# a tester to copy, so the dead link is on the path they are being walked down.
+	# an operator to copy, so the dead link is on the path they are being walked down.
 	@cd $(DIST)/$(PKG) && for f in *.md; do $(call fixlinks,$$f,); done
 	@cd $(DIST)/$(PKG) && for f in examples/*.md; do $(call fixlinks,$$f,../); done
 	# Both dashboard formats ship: Grafana 13 cannot import the classic file and
-	# older Grafana cannot read the v2 one, so leaving either out strands a tester
+	# older Grafana cannot read the v2 one, so leaving either out strands an operator
 	# on whichever version they happen to run.
 	cp deploy/monitoring/grafana-dashboard.json deploy/monitoring/grafana-dashboard-v2.json deploy/monitoring/README.md $(DIST)/$(PKG)/monitoring/
 	cp deploy/monitoring/servicemonitor.yaml deploy/monitoring/scrapeconfig.yaml deploy/monitoring/vmstaticscrape.yaml deploy/monitoring/vmscrapeconfig-sd.yaml $(DIST)/$(PKG)/monitoring/
@@ -183,7 +183,7 @@ release-archive: agent-linux controller-linux
 	chmod 0755 $(DIST)/$(PKG)/wgfleet-controller $(DIST)/$(PKG)/wgfleet-agent $(DIST)/$(PKG)/*.sh
 # COPYFILE_DISABLE stops macOS bsdtar packing its extended attributes, which GNU
 # tar on the target then reports as ~40 lines of "Ignoring unknown extended header
-# keyword LIBARCHIVE.xattr.com.apple.provenance" — the first thing a tester sees on
+# keyword LIBARCHIVE.xattr.com.apple.provenance" — the first thing an operator sees on
 # unpacking. Harmless, and it reads like the archive is damaged. No effect on Linux,
 # where the release is normally built.
 	COPYFILE_DISABLE=1 tar $(TAR_NOXATTR) -C $(DIST) -czf $(DIST)/$(ARCHIVE).tar.gz $(PKG)

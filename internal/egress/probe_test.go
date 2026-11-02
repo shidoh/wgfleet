@@ -36,7 +36,7 @@ func TestTracepathArgsCapsHops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hop cap %q is not a number (args %q)", args[i+1], args)
 	}
-	// Measured 2026-08-04 on three exits: capped at 10 hops tracepath exits 0 in
+	// Measured on several exits: capped at 10 hops tracepath exits 0 in
 	// 9-16s and prints "Resume: pmtu N". The bound keeps a later bump from silently
 	// walking back past the 30s deadline this cap exists to fit inside.
 	if n <= 0 || n > 15 {

@@ -15,8 +15,8 @@ import (
 	"github.com/shidoh/wgfleet/internal/netfw"
 )
 
-// legacyAWGPinTable is the table an operator added by hand on 2026-09-30 to pin
-// one exit's AWG flow before this feature existed. Removed once the agent's own pin is
+// legacyAWGPinTable is the table older setups used to pin one exit's AWG flow by
+// hand before this feature existed. Removed once the agent's own pin is
 // armed, so the two never compete and nobody has to remember it.
 const legacyAWGPinTable = "wgf_awg_pin"
 
@@ -27,8 +27,7 @@ const legacyAWGPinTable = "wgf_awg_pin"
 // flow that already has an entry does nothing for it. Worse, after a mihomo
 // restart the OLD entry keeps the pinned tuple: the exit's keepalives match its
 // reply side and refresh it forever, the new socket's flow sits UNREPLIED beside
-// it, and the tunnel never comes back on its own — observed on the live master
-// 2026-09-30. This planner deletes such entries; the next packet from mihomo
+// it, and the tunnel never comes back on its own. This planner deletes such entries; the next packet from mihomo
 // then starts one clean flow through the pin.
 //
 // It works from conntrack alone: reading mihomo's socket table would miss it
@@ -109,8 +108,8 @@ func (p awgPinPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 		// A flow NAT mapped to another port (it predates the pin) goes at once, heard
 		// or not. The master answers from that port, so the exit's endpoint roams
 		// back to it after every restore and the knock this would wait for never
-		// comes — the released v0.3.2 sat like that for minutes on the stand
-		// (2026-10-09). Deleted, mihomo's next packet waits at the gate until the
+		// comes — the released v0.3.2 sat like that for minutes on the stand.
+		// Deleted, mihomo's next packet waits at the gate until the
 		// exit's agent has restored the endpoint and its keepalive has knocked.
 		offPin, onPin := splitByPinnedPort(parseConntrackUDP(out), int(master.Port()))
 		drop := func(e ctEntry) {
@@ -165,7 +164,7 @@ func (p awgPinPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 // meet the SNAT, so the tunnel lives off its pinned port with the gate reading
 // armed. That one goes at once. Waiting for a knock would wait for good — the
 // exit's endpoint roams back to the wrong port after every restore, so it
-// hardly knocks at all (stand, kernel 5.15, 2026-10-09). Once the entry is gone
+// hardly knocks at all (stand, kernel 5.15). Once the entry is gone
 // the knock-drop rule refuses the exit's next packet there, its agent restores
 // the endpoint, and the knock that follows opens the gate.
 func exitOpenedFlowActions(ctx context.Context, list func(context.Context, string, int) (string, error),
@@ -319,7 +318,7 @@ func listConntrackKnocks(ctx context.Context, exitIP string, exitPort int) (stri
 // cannot give: which entries a live mihomo socket still owns. On kernel 5.15 the
 // new socket's flow never reaches conntrack after a restart — the NAT clash fails
 // its insert — so the old entry is the only one listed, ASSURED, answered by the
-// exit's keepalives, and owned by nobody. Found on the stand 2026-09-30.
+// exit's keepalives, and owned by nobody. Found on the stand.
 func staleAWGPinEntriesOwned(entries []ctEntry, pinnedPort int, owned map[string]bool) []ctEntry {
 	var stale []ctEntry
 	for _, e := range entries {

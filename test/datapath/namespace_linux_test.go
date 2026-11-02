@@ -10,12 +10,12 @@ import (
 	"testing"
 )
 
-// clientWGPort is the port the client-facing AmneziaWG interface listens on for
-// this fleet, and the port every one of these assertions is about.
+// clientWGPort is the port the client-facing AmneziaWG interface listens on by
+// default, and the port every one of these assertions is about.
 //
-// Written as a literal rather than derived, on purpose. The 2026-08-27 rehearsal
-// drove 5353 and 4433 — ports nothing held — and was green throughout the eight
-// days client QUIC was one-way. A rehearsal that picks a convenient port is a
+// Written as a literal rather than derived, on purpose. An earlier rehearsal
+// drove 5353 and 4433 — ports nothing held — and stayed green while client QUIC
+// was one-way. A rehearsal that picks a convenient port is a
 // rehearsal of a different system.
 const clientWGPort = 443
 
@@ -95,7 +95,7 @@ func TestNamespaceReplyStillCarriesTheServerAddress(t *testing.T) {
 	// Loopback inside a fresh namespace is a different loopback, so the reply cannot
 	// reach the outer client. What is asserted here is the part that IS namespace-
 	// local: the socket binds the server's address on the held port and accepts a
-	// send, which is the operation that returned EADDRINUSE for eight days.
+	// send, which is the operation that returns EADDRINUSE on a colliding host.
 	err = inNewNetNS(func() error {
 		if lerr := loopbackUp(); lerr != nil {
 			return lerr

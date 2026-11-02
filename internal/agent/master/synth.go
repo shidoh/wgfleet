@@ -55,8 +55,7 @@ func proberResolvers(cw domain.ClientWGSpec) []string {
 // synthPlanner builds the master's own client: a real AmneziaWG peer whose
 // decrypted side lives in an isolated namespace.
 //
-// The shape is decided by one kernel behaviour, verified on the stand
-// 2026-09-04: a WireGuard device keeps its UDP socket in the namespace where it
+// The shape is decided by one kernel behaviour, verified on the stand: a WireGuard device keeps its UDP socket in the namespace where it
 // was CREATED, even after the device is moved elsewhere. So the interface is
 // created in the host namespace — where it can dial the master's own client port
 // on loopback — and then moved into a namespace of its own, where its decrypted
@@ -130,8 +129,8 @@ func (p synthPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 	// unconditionally, which on a master WITHOUT dns_filter is an address nothing
 	// listens on: every tcp/443 probe died on "Resolving timed out", the move
 	// reverted, and after three of those the node parked itself on the host path
-	// for good — while real clients, pointed at the exits, resolved fine. A fresh
-	// stand, 2026-09-08. The gateway remains the fallback for a spec that carries
+	// for good — while real clients, pointed at the exits, resolved fine (found on a
+	// fresh stand). The gateway remains the fallback for a spec that carries
 	// no list at all.
 	if servers := proberResolvers(*cw); len(servers) > 0 {
 		resolvPath := p.resolvPath
@@ -172,7 +171,7 @@ func (p synthPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 		// those two steps leaves the interface on the host — where the check above,
 		// which looks only inside the namespace, cannot see it. Every pass afterwards
 		// plans the same `ip link add` and gets `File exists`, forever. Found on the
-		// stand 2026-09-06: the prober had been wedged since the previous day, and
+		// stand: the prober had been wedged for a day, and
 		// because this device is the judge of the automatic revert, the migration was
 		// reverted three times and then abandoned — by a netdev sitting in the wrong
 		// namespace. Best-effort: on the normal path there is nothing to delete.
@@ -195,7 +194,7 @@ func (p synthPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 		//
 		// `awg setconf` applies what the file says and cannot express what it no
 		// longer says: a parameter the device already carries and the config has
-		// dropped stays on the device. Measured on the stand 2026-09-05 — the prober
+		// dropped stays on the device. Measured on the stand — the prober
 		// was created while the spec carried AmneziaWG 3.x parameters, the spec then
 		// went back to 2.0, `setconf` re-applied cleanly, and the device kept its
 		// header protection key. The server had none, so not one handshake completed

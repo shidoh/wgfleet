@@ -1,4 +1,4 @@
-// Package support builds a read-only diagnostic bundle a beta tester can send
+// Package support builds a read-only diagnostic bundle an operator can send
 // without sending secrets. Everything it emits is plain text, and the archive
 // records both what it collected and what it deliberately did not.
 package support
@@ -43,7 +43,7 @@ type Runner interface {
 }
 
 // Collector is one named observation. Cmd is recorded verbatim in the manifest
-// so the tester can see exactly what was run. Fn overrides Cmd for sections
+// so the sender can see exactly what was run. Fn overrides Cmd for sections
 // produced in-process (the plan output, the metrics scrape); exactly one of the
 // two is set.
 type Collector struct {
@@ -83,7 +83,7 @@ type Node struct {
 	Entries []ManifestEntry
 }
 
-// Meta is archive-level context: the tester's own description of the problem and
+// Meta is archive-level context: the sender's own description of the problem and
 // the explicit boundary of what was not collected.
 type Meta struct {
 	Note         string
@@ -94,7 +94,7 @@ type Meta struct {
 // Collect runs each collector in order against r, appending each section to
 // Files[File] and recording a ManifestEntry for every collector, including
 // failures. A failing collector does not stop collection: a missing tool on a
-// tester's box is expected, and the bundle must exist anyway.
+// sender's box is expected, and the bundle must exist anyway.
 func Collect(ctx context.Context, r Runner, cs []Collector, opt Options) (*Node, error) {
 	maxSection := opt.MaxSection
 	if maxSection <= 0 {
@@ -305,7 +305,7 @@ func writeTarFile(tw *tar.Writer, name, body string) error {
 	return err
 }
 
-// renderManifest builds the tester's index: created-at, the note, a table of
+// renderManifest builds the sender's index: created-at, the note, a table of
 // <node>/<file>, collector name, command, byte count and any error, and a
 // final NOT COLLECTED section listing the deliberate boundary.
 func renderManifest(nodes []Node, meta Meta) string {

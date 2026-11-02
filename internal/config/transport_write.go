@@ -84,7 +84,7 @@ func findExitNameLine(lines []string, exitName string) (idx, indent int, found b
 			continue
 		}
 		rest := strings.TrimSpace(trimmed[2:])
-		// Compare the unquoted value: `name: fn7`, `name: "fn7"` and `name: 'fn7'` are
+		// Compare the unquoted value: `name: exit-a`, `name: "exit-a"` and `name: 'exit-a'` are
 		// the same exit to the YAML parser, so they must be the same exit here. Matching
 		// the raw text missed the single-quoted spelling, which made a delete report
 		// "not found" for an exit the manifest plainly declares.
@@ -120,7 +120,7 @@ const manifestMode = os.FileMode(0o600)
 // writeFileAtomic writes data to a temp file in the same directory and renames it
 // over path. It forces the secret-bearing manifest to 0600, tightening a
 // pre-existing 0644 rather than preserving it — the earlier mode-preserve behaviour
-// silently kept a world-readable manifest world-readable (2026-07-25 audit finding).
+// silently kept a world-readable manifest world-readable.
 func writeFileAtomic(path string, data []byte) error {
 	mode := manifestMode
 	dir := filepath.Dir(path)

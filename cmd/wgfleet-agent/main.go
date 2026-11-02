@@ -426,7 +426,7 @@ func run() error {
 			// which need the pass that builds the prober — so the decision cannot move
 			// earlier, but the pass that acts on it can come sooner.
 			//
-			// Measured on the stand 2026-09-06: after a reboot the decision landed at
+			// Measured on the stand: after a reboot the decision landed at
 			// 11.4s and the interception at 36.6s. Twenty-five of those seconds were
 			// this wait, with the master back in the port-collision configuration for
 			// all of them.
@@ -586,7 +586,7 @@ const (
 
 // reconcile runs one pass: register, publish the WG public key, pull the desired
 // spec, and converge the node toward it. In plan mode it renders the full plan
-// and prints it WITHOUT touching the node or reporting Ready (docs/DESIGN.md #4).
+// and prints it WITHOUT touching the node or reporting Ready.
 func (a *agent) reconcile(base context.Context, plan bool) error {
 	mode := reconcile.ModeApply
 	budget := applyReconcileTimeout
@@ -828,7 +828,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	// opposite: the planners read Attached() while they render, so a mover still in
 	// "waiting" makes the first pass of every restart tear the interception down,
 	// and by the time the decision runs there is nothing left to adopt. Measured on
-	// the stand 2026-09-06: `--plan` on a converged master printed a full teardown —
+	// the stand: `--plan` on a converged master printed a full teardown —
 	// the mechanism written to stop that was cancelling itself.
 	a.adoptNetnsMove(ctx, spec)
 
@@ -1539,8 +1539,8 @@ func (a *agent) latestHandshake(ctx context.Context) time.Time {
 const wgBestGroupName = "wg-best"
 
 // standbyTransportHealth relabels the tier selector's standby verdicts from the
-// mihomo PROXY name it probes ("vn0-reality") to the exit node plus transport an
-// operator actually reasons about ("vn0", "reality-xhttp"). The selector keeps
+// mihomo PROXY name it probes ("exit-a-reality") to the exit node plus transport an
+// operator actually reasons about ("exit-a", "reality-xhttp"). The selector keeps
 // proxy names because that is what a Clash probe addresses; the metric wants the
 // node, because a series keyed by a proxy name reads as an exit that does not
 // exist. Returns nil for a non-master or an exit with no standby transport.
@@ -2014,7 +2014,7 @@ func (a *agent) udpReturnObservations(spec domain.NodeSpec) (bindable, known map
 // wrong machine: the host still holds :443 and reports it as a black hole, while
 // mihomo's sockets are in a namespace where nothing is in their way — the metric
 // would go on reporting the outage the migration has just ended. Measured on the
-// stand 2026-09-05: the host held 443, 53, 5353, 546 and 68; the namespace held
+// stand: the host held 443, 53, 5353, 546 and 68; the namespace held
 // 1053, 7895 and 7896, and not one of them collides.
 //
 // It re-executes this binary under `nsenter`, the same mechanism the client-path
@@ -2200,7 +2200,7 @@ func (a *agent) decideNetnsMove(ctx context.Context, spec domain.NodeSpec, probe
 			// The move is watched by the client-path prober, a peer on the client
 			// interface. A master without one has no probe and no way to notice the
 			// move broke anyone, so it does not start: an empty probe set once read as
-			// "path broken" and parked nodes on the host path for nothing (2026-09-07).
+			// "path broken" and parked nodes on the host path for nothing.
 			if spec.Master.ClientWG == nil {
 				return errors.New("the client path cannot be measured without a client interface (client_awg); not moving")
 			}
@@ -2271,18 +2271,17 @@ func (a *agent) noteMihomoDisturbed() { a.mihomoDisturbedAt = time.Now() }
 
 // clientPathVerdict turns this pass's probes into what the mover may conclude
 // from them. A pass that succeeds is always evidence. A pass that fails inside
-// mihomoDisturbGrace of our own reload or restart of mihomo is not: on 2026-09-07
-// three self-heal restarts in a row failed the probe twice, the mover read that as
-// "the move broke the path" and put the interception back on the host — into the
-// port collision the migration exists to escape — for five minutes.
+// mihomoDisturbGrace of our own reload or restart of mihomo is not: a run of
+// self-heal restarts fails the probe twice, and the mover would read that as "the
+// move broke the path" and put the interception back on the host — into the port
+// collision the migration exists to escape — for five minutes.
 //
-// Nor is a pass that fails while the client interface itself is down. On
-// 2026-09-07 a tester's master lost wg0 to a kernel-module upgrade; every probe
-// through it failed, the mover spent all three attempts on a namespace that had
-// nothing to do with it, and recorded a terminal verdict that outlived the
-// outage — the interface came back, the interception stayed on the host, and the
-// port collision it exists to escape stayed with it until an operator toggled the
-// knob by hand.
+// Nor is a pass that fails while the client interface itself is down. When a
+// master loses wg0 to a kernel-module upgrade, every probe through it fails; the
+// mover would spend all three attempts on a namespace that has nothing to do with
+// it and record a terminal verdict that outlives the outage — the interface comes
+// back, the interception stays on the host, and the port collision it exists to
+// escape stays with it until an operator toggles the knob by hand.
 func (a *agent) clientPathVerdict(probes []master.ClientPathProbe) master.PathVerdict {
 	ok := master.ClientPathOK(probes)
 	if !ok && !anyDecisive(probes) {

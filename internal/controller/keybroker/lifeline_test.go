@@ -22,7 +22,7 @@ const masterPSK = "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc="
 // lifelineFleet is the smallest manifest that renders a lifeline: one master
 // with a client pool, one exit carrying the reserve interface. Names are
 // deliberately short and pools are documentation ranges — nothing here points at
-// the live fleet.
+// a real deployment.
 func lifelineFleet() config.FleetSection {
 	return config.FleetSection{
 		Masters: []config.MasterConfig{{
@@ -483,7 +483,7 @@ func TestExitEndpointHostRefusesAnUnknownExit(t *testing.T) {
 // client configs do.
 //
 // It used to copy the master's list, and on a master with exclude_from_tunnel that
-// list is 0.0.0.0/0 expanded into ~44 prefixes. Measured on a live client: with a
+// list is 0.0.0.0/0 expanded into ~44 prefixes. On a real client, with a
 // split list awg-quick installs one plain route per prefix, the route covering the
 // server's own address swallows the endpoint, and the profile handshakes and then
 // passes nothing. The same client works with 0.0.0.0/0, because only a literal /0

@@ -27,7 +27,7 @@ const (
 // Exported so the controller can resolve operator image/tag overrides against
 // the same canonical defaults the renderer falls back to.
 const (
-	// Pinned, NOT :latest and NOT :Alpha (docs/DESIGN.md #8) — reproducible/auditable
+	// Pinned, NOT :latest and NOT :Alpha — reproducible/auditable
 	// deploys. (The AWG-param safety that keeps mihomo's amneziawg-go from panicking is
 	// handled in the derivation: Jmin is floored ≥ S4, so no junk packet underflows its
 	// S4-strip — see internal/wg junkS4Margin. So this pin is for reproducibility, not a
@@ -74,7 +74,7 @@ type RenderInput struct {
 	// NetnsAttachMihomo moves mihomo INTO the holder's namespace. Separate from
 	// NetnsHolderImage on purpose, and the separation is the whole safety property
 	// of phase A: the holder and its veth can be created, inspected and repaired on
-	// a live master while mihomo keeps serving clients from the host namespace.
+	// a running master while mihomo keeps serving clients from the host namespace.
 	// Attaching is the irreversible-feeling half — mihomo's listeners bind an
 	// address that only exists inside the namespace — and it belongs with the
 	// interception rules that move at the same moment, not before them.
@@ -102,9 +102,9 @@ func RenderMasterCompose(in RenderInput) (string, error) {
 		"volumes":        []any{mihomoDir + ":/etc/mihomo"},
 		"command":        "-d /etc/mihomo",
 		// Bound the log. Docker's default json-file driver has NO rotation, and this
-		// container is the noisiest thing on the master: measured 2026-09-04 it had
-		// written 97787 error lines in 18 days, all of one kind, into a file nothing
-		// ever truncates. That is a disk leak on a 2 vCPU box, and it also makes
+		// container is the noisiest thing on the master: a broken data path can make it
+		// write tens of thousands of error lines of one kind into a file nothing
+		// ever truncates. That is a disk leak on a small box, and it also makes
 		// `docker logs --since` expensive — json-file has no index, so every read
 		// scans from the beginning of the file.
 		"logging": map[string]any{
@@ -118,10 +118,9 @@ func RenderMasterCompose(in RenderInput) (string, error) {
 	// the same kernel operation Kubernetes performs for a pod — setns(CLONE_NEWNET)
 	// onto a namespace someone else owns — so mihomo's transparent reply sockets no
 	// longer compete with whatever the HOST happens to bind. That competition is the
-	// whole bug: on the live master the client AmneziaWG interface holds
-	// 0.0.0.0:443 without SO_REUSEADDR, so every reply socket mihomo opened for a
-	// client's QUIC flow failed with EADDRINUSE and the packet was dropped in
-	// silence.
+	// whole bug: when the client AmneziaWG interface holds 0.0.0.0:443 without
+	// SO_REUSEADDR, every reply socket mihomo opens for a client's QUIC flow fails
+	// with EADDRINUSE and the packet is dropped in silence.
 	if in.NetnsHolderImage != "" {
 		services[domain.NetnsHolder] = map[string]any{
 			"image":          in.NetnsHolderImage,

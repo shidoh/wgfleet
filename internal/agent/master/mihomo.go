@@ -147,7 +147,7 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 		primary, reserve := mihomo.TierMembers(*spec.Master)
 		addr, secret := ClashAPIAddr(spec, p.netnsAttached != nil && p.netnsAttached()), clashSecret(spec.Master)
 		// One budget for the WHOLE phase, not per member. The three probe phases below
-		// coincide every 10th pass — 11 members on the live fleet — and each member is
+		// coincide every 10th pass — a dozen members on a mid-sized fleet — and each member is
 		// bounded only by its own timeout, so a blocked destination could push the pass
 		// far past the 30s interval and slide the status report toward the staleness
 		// alert.
@@ -189,9 +189,9 @@ func (p mihomoPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconc
 		// A rule provider of type file whose file is not on the node is a policy
 		// hole, not a startup error: mihomo logs one line at start and carries on
 		// with that provider empty, so the domains it was meant to send DIRECT go
-		// through the exits instead. A tester's manifest referenced
+		// through the exits instead. A manifest that references
 		// /etc/mihomo/direct-domains.yaml in mihomo.overrides without shipping it
-		// in mihomo.extra_files (2026-09-07), and nothing said so.
+		// in mihomo.extra_files would otherwise fail silently.
 		for _, missing := range mihomo.MissingProviderFiles(cfg, filepath.Dir(p.paths.MihomoConfig)) {
 			slog.Warn("mihomo config references a rule-provider file that is not on this node; that provider will be empty — ship it in mihomo.extra_files",
 				"path", missing)
@@ -292,8 +292,8 @@ func (p mihomoPlanner) applyConfigAction(spec domain.NodeSpec, cfgYAML, prevCfg 
 	// re-init an existing AmneziaWG device, so new S/H params silently never apply.
 	//
 	// The summary NAMES the proxies. A restart drops every client connection and
-	// every UDP NAT entry, so "why" belongs in the record: on 2026-09-04 the master
-	// bounced twice in 36 seconds and nothing on the box could say which proxy moved.
+	// every UDP NAT entry, so "why" belongs in the record: without it a master can
+	// bounce twice in a minute and nothing on the box can say which proxy moved.
 	if len(changedProxies) > 0 {
 		return reconcile.CustomAction(reconcile.ActionUpdate, "mihomo",
 			"restart mihomo (proxy definitions changed, hot reload can't re-init the device): "+
@@ -415,9 +415,8 @@ type mihomoRedirPlanner struct {
 	//
 	// Without these this planner asks the HOST's socket table about a listener that
 	// is in another namespace, gets "not there", and restarts mihomo — every pass.
-	// Each restart re-initialises mihomo's userspace WireGuard devices, and on the
-	// live master 2026-09-05 that took three exits out of the balancer within three
-	// minutes of the migration. The config, the API address and the health check had
+	// Each restart re-initialises mihomo's userspace WireGuard devices, which can
+	// take several exits out of the balancer within minutes of the migration. The config, the API address and the health check had
 	// all been made namespace-aware; this probe had not, and it is the one that
 	// ACTS on its answer.
 	netnsAttached func() bool
@@ -530,8 +529,7 @@ func (p mihomoRedirPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]r
 // device bound to its own UDP socket. A Clash API hot reload (PUT /configs)
 // constructs the new proxy set but does NOT always tear the old devices down, so a
 // second device for the same exit can survive with its keepalive/rekey timers still
-// running (observed live 2026-07-19: two sockets per exit, leaked at two of ~22
-// reloads). mihomoPlanner's ProxiesChanged guard forces a restart when the proxies
+// running (two sockets per exit, leaked at a minority of reloads). mihomoPlanner's ProxiesChanged guard forces a restart when the proxies
 // section itself changes, but the leak also happens on reloads that guard lets
 // through — hence this independent, evidence-based check.
 //
@@ -613,8 +611,7 @@ func (p mihomoWGDupPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]rec
 // mihomo's socket table. Only mihomo dials an exit's AWG port from the master, so
 // the peer address alone identifies its devices. The table is read inside
 // mihomo's own network namespace: read from the host, a mihomo that has moved
-// into its namespace has no sockets at all, and a leaked device went unseen on
-// the live master 2026-09-30. Reports ok=false when the table cannot be read, so
+// into its namespace has no sockets at all, and a leaked device would go unseen. Reports ok=false when the table cannot be read, so
 // callers can fail safe rather than act on a guess.
 func udpPeerSocketCount(addr string) (int, bool) {
 	out, ok := mihomoUDPSockets(context.Background())

@@ -9,7 +9,7 @@ import (
 
 // Exit-initiated REALITY (ADR-0038): the exit's xray is a reverse-proxy BRIDGE
 // that dials the master's PORTAL and keeps mux flows up to it; the master sends
-// client streams down them. The shapes below were measured on a live RU path
+// client streams down them. The shapes below were measured on a filtered RU path
 // (Xray 26.6.22) before they were written down here. They use their own types so
 // the forward and client-facing renders above stay byte-for-byte as they are.
 

@@ -156,8 +156,8 @@ func TestAWGPinPlannerWaitsForTheExitToBeHeard(t *testing.T) {
 // A flow NAT mapped to another port before the pin does not wait. The master
 // keeps answering from that port, so the exit's endpoint roams straight back to
 // it after every restore and the exit never knocks: on the stand the released
-// v0.3.2 sat off its pinned port for minutes with the gate reading armed
-// (2026-10-09). Deleted, mihomo's next packet waits at the gate, the exit's
+// v0.3.2 sat off its pinned port for minutes with the gate reading armed.
+// Deleted, mihomo's next packet waits at the gate, the exit's
 // agent restores the endpoint with nothing to pull it back, and its keepalive
 // opens the gate — one agent pass of outage instead of a pin that never applies.
 func TestAWGPinPlannerMovesAFlowOffThePinnedPortWithoutWaitingForAKnock(t *testing.T) {
@@ -219,7 +219,7 @@ func TestAWGPinPlannerDeletesAConfirmedKnock(t *testing.T) {
 	t.Fatalf("confirmed knock not deleted; actions: %+v", actions)
 }
 
-// Found on the stand (kernel 5.15, 2026-10-08): the exit's endpoint still pointed
+// Found on the stand (kernel 5.15): the exit's endpoint still pointed
 // at the port mihomo used before the pin, its packet there was accepted, and
 // mihomo's packets then left as replies of that entry — past the SNAT, off the
 // pinned port, while the exit's agent kept restoring the endpoint and the gate

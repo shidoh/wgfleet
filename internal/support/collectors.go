@@ -14,8 +14,8 @@ package support
 //
 // `awg show` is NOT self-redacting, whatever this comment used to claim. It hides
 // the private and preshared keys and then prints the AmneziaWG 3.x header
-// protection key in full; a real bundle from a live fleet carried it, in a file the
-// tool tells the operator to send to a tester. The redaction layer is what makes
+// protection key in full, so it must be masked before the bundle leaves the
+// node. The redaction layer is what makes
 // this command safe to collect, not the command's own manners — see
 // secrets.secretKeyRe, which now knows that name and the space-separated spelling
 // every WireGuard tool uses.
@@ -30,7 +30,7 @@ func NodeCollectors(role string) []Collector {
 		{File: "identity.txt", Name: "timezone", Cmd: "timedatectl show -p Timezone --value"},
 		{File: "identity.txt", Name: "agent version", Cmd: "/usr/local/bin/wgfleet-agent --version"},
 		{File: "identity.txt", Name: "controller version", Cmd: "/usr/local/bin/wgfleet-controller --version"},
-		// The versions a diagnosis turns on. On 2026-09-07 every one of these was
+		// The versions a diagnosis turns on. Without them every one has to be
 		// asked for by hand, one message at a time: the nftables version decided the
 		// outcome (1.0.2 rejects a ruleset 1.0.9 accepts), and the module's srcversion
 		// is the only thing that tells two PPA builds apart.
@@ -74,7 +74,7 @@ func NodeCollectors(role string) []Collector {
 		{File: "logs.txt", Name: "disk headroom", Cmd: "df -h /"},
 		{File: "logs.txt", Name: "journal lines per unit (last hour)", Cmd: "journalctl --since=-1h -n 20000 --no-pager -o short-iso | awk '{print $3}' | sed -E 's/\\[[0-9]+\\]:?$//;s/:$//' | sort | uniq -c | sort -rn | head -50"},
 
-		// containers.txt — bounded tails of the containers we know this fleet
+		// containers.txt — bounded tails of the containers we know a fleet
 		// runs (a container missing on a node of the other role is a normal
 		// failure, not an error to chase).
 		{File: "containers.txt", Name: "mihomo log", Cmd: "docker logs --tail 100 mihomo 2>&1"},
@@ -93,7 +93,7 @@ func NodeCollectors(role string) []Collector {
 }
 
 // NotCollected is the boundary rendered into every manifest: the files and
-// classes of file a support bundle never reads, so a tester can see what was
+// classes of file a support bundle never reads, so the sender can see what was
 // deliberately left out rather than only what was taken. Every entry here
 // carries a private key, a session key, or the material to derive one.
 func NotCollected() []string {

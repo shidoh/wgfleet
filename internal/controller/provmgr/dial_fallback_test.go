@@ -22,9 +22,9 @@ func fallbackManager(dial DialFunc) *Manager {
 
 // TestDialNodeFallsBackToMgmtAddrWhenPublicPathFails — a node whose public SSH
 // path is dead but whose overlay address answers must still be reachable for an
-// upgrade. Field case 2026-10-07: two exits completed the TCP three-way on their
-// public address and then timed out in the SSH handshake, so the rollout skipped
-// both while the controller was talking to them over the overlay the whole time.
+// upgrade. An exit can complete the TCP three-way on its public address and then
+// time out in the SSH handshake; without the fallback the rollout skips it while
+// the controller is talking to it over the overlay the whole time.
 func TestDialNodeFallsBackToMgmtAddrWhenPublicPathFails(t *testing.T) {
 	// Arrange
 	var dialled []string

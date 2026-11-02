@@ -75,8 +75,8 @@ spec:
           in the wgfleet job. Add their mgmt addresses to the VMStaticScrape.'
     - alert: WgfleetDNSMetricsMissing
       # A node the controller knows that no blocky target is UP for. The blocky job is
-      # a hand-kept list like the node-exporter one, and a second master went
-      # unscraped for days because nothing asked this question for DNS.
+      # a hand-kept list like the node-exporter one, and a new master can go
+      # unscraped for days unless something asks this question for DNS.
       expr: |
         wgfleet_node_info{state!="Decommissioning"} == 1
           unless on(node) (up{job="blocky"} == 1)
@@ -305,9 +305,9 @@ spec:
     - alert: WgfleetMihomoRestartLoop
       # Every restart of the container — a self-heal, a crash, docker's restart
       # policy — steps the start time forward, so this counts restarts no single
-      # restarter has to confess to. Once a planner restarted mihomo every
-      # pass, three exits fell out of rotation in three minutes, and the only record
-      # was the master agent's journal. Each restart drops mihomo's userspace
+      # restarter has to confess to. A planner that restarts mihomo every
+      # pass knocks exits out of rotation within minutes, and the only record
+      # is the master agent's journal. Each restart drops mihomo's userspace
       # WireGuard devices, which is why it is an outage and not a blip.
       expr: changes(wgfleet_agent_mihomo_start_time_seconds[30m]) > 2
       for: 5m
@@ -369,11 +369,9 @@ spec:
     interval: 30s
     rules:
     # The master↔exit tunnels are userspace mihomo proxies, not kernel WireGuard,
-    # so no wg_* series covers them and nothing here watched them at all. On
-    # 2026-09-04 three exits had been dropping out of the load balancer for two
-    # weeks — 27 recorded verdicts — and the only record was the master agent's
-    # journal. These rules exist so that never has to be reconstructed by hand
-    # again.
+    # so no wg_* series covers them. Without these rules an exit can drop out of
+    # the load balancer for weeks with the master agent's journal as the only
+    # record.
     - alert: WgfleetExitOutOfRotation
       # Two health criteria write mihomo's alive flag: its own group check (one
       # lightweight URL) and the master agent's multi-destination probe. When this
@@ -383,10 +381,10 @@ spec:
       # Scoped to the tier that actually carries traffic. A dual-transport exit
       # renders BOTH an AWG and a "<exit>-reality" proxy, but only one of them is in
       # a group — the other is configured, routed through by nobody, and never
-      # probed, so its alive/age readings drift forever. Live check the hour this
-      # rule was written: one exit's AWG proxy sat alive=0 with a 55-minute-old
-      # measurement while its reality proxy was fresh, i.e. this alert would have
-      # paged permanently on a tunnel with no traffic on it by design.
+      # probed, so its alive/age readings drift forever: an inactive AWG proxy can
+      # sit at alive=0 with an hour-old measurement while its reality proxy is
+      # fresh, and an unscoped alert would page permanently on a tunnel with no
+      # traffic on it by design.
       #
       # wgfleet_agent_exit_held_out enumerates exactly the active tier's members, so
       # it is the gate. The coupling is deliberate but worth knowing: it comes from
@@ -490,9 +488,9 @@ spec:
     - alert: WgfleetStandbyTierMemberUnusable
       # The tally next to this (standby_tier_usable/total) only fires when the LAST
       # reserve member dies, so one dead member hides inside "2 of 3 usable" and
-      # nothing ever names it. Live 2026-09-11: a reserve exit's active transport
-      # was failing for minutes at a time behind a confident 3/3, invisible in both
-      # the alerts and the console.
+      # nothing ever names it: a reserve exit's active transport can fail for
+      # minutes at a time behind a confident 3/3, invisible in both the alerts
+      # and the console.
       #
       # Not an outage and deliberately not critical: the reserve tier carries no
       # traffic while the primary is healthy. It is a fallback that would not
@@ -510,10 +508,8 @@ spec:
     - alert: WgfleetStandbyTransportUnusable
       # A dual-transport exit keeps its inactive transport configured but out of
       # the load-balance group, so nothing dials it and — until the probe behind
-      # this rule existed — nothing knew whether it worked. Measured on the live
-      # fleet 2026-09-04: five of six exits had a standby transport, none had ever
-      # been health-checked, and four of them reported mihomo's untested default
-      # of alive=1. A confident green on no evidence.
+      # this rule existed — nothing knew whether it worked: an untested standby
+      # reports mihomo's default of alive=1. A confident green on no evidence.
       #
       # This is not an outage: the exit is serving over its active transport. It is
       # a MISSING FALLBACK, and the switch that needs it is an emergency move made
@@ -552,8 +548,8 @@ spec:
     - alert: WgfleetExitFlapping
       # A hold-out of three minutes starts and ends between the 5 m that
       # WgfleetExitOutOfRotation waits, and the exit_held_out gauge misses it
-      # between scrapes. On 2026-10-26 a master kept dropping one exit out of the
-      # load balancer and the console was the only place it showed. The counter
+      # between scrapes, so a master can keep dropping one exit out of the load
+      # balancer with the console the only place it shows. The counter
       # sees every hold-out; two in six hours on one exit is already a pattern.
       expr: increase(wgfleet_agent_exit_holdouts_total[6h]) >= 2
       labels:
@@ -567,8 +563,8 @@ spec:
     - alert: WgfleetRealityBridgeUnstable
       # The bridge's watchdog kills a socket that received nothing for 30 s and the
       # exit redials, so WgfleetRealityBridgeDown never fires — but every kill is
-      # traffic frozen on that path. One exit's bridge to one master ran at 4-6 kills
-      # an hour for ten days (to the other master: under one), with no rule noticing.
+      # traffic frozen on that path. A bridge can run at several kills an hour for
+      # days with no other rule noticing.
       expr: increase(wgfleet_agent_reality_bridge_kills_total[1h]) > 3
       for: 1h
       labels:
@@ -585,9 +581,9 @@ spec:
     rules:
     # Blocking creeps in: a provider's TSPU box or a hoster's uplink starts
     # delaying or dropping a share of one path, and the share grows over days.
-    # Measured on one master from 2026-10-16: REALITY to two exits went from
-    # 5% slow probes to 38% in ten days while every rotation alert stayed quiet,
-    # because the median stayed at 100 ms and the tunnels never went down.
+    # A path can go from a few percent slow probes to over a third in ten days
+    # while every rotation alert stays quiet, because the median stays low and
+    # the tunnels never go down.
     #
     # A probe is BAD when it took over 1 s or failed (the delay series is absent
     # after a failed probe, the age series is not). Frozen readings (age > 300 s)
@@ -595,9 +591,8 @@ spec:
     #
     # The baseline is the path's BEST day of the two weeks before, not its
     # average: a creep that lasts a week becomes its own average and the alert
-    # would go quiet on the plateau (one exit at 45% against a 21% average, live
-    # 2026-10-26). A creep cannot raise the best day until all 14 days are bad,
-    # and a path that is always noisy has its noise as its best day.
+    # would go quiet on the plateau. A creep cannot raise the best day until all
+    # 14 days are bad, and a path that is always noisy has its noise as its best day.
     - record: wgfleet:exit_tunnel_bad_share:1d
       expr: avg_over_time((((wgfleet_exit_tunnel_delay_seconds > bool 1) or on(node, exit) (0 * wgfleet_exit_tunnel_last_test_age_seconds + 1)) and on(node, exit) (wgfleet_exit_tunnel_last_test_age_seconds < 300))[1d:2m])
     - record: wgfleet:exit_tunnel_bad_share:best_day_14d
@@ -608,11 +603,8 @@ spec:
     #   - it is 8 points worse than the best master's path to the same exit, so
     #     an exit that is slow from everywhere does not count here;
     #   - it is over twice its best day plus 3 points.
-    # Backtested on 2026-10-21..26 (10-day lookback, the history there was):
-    # master A from 2026-10-21, two episodes (5 paths: AWG to three exits and
-    # REALITY to two more), master B to one exit from 2026-10-22 (0% -> 22%).
-    # The other 22 paths stay silent. Gaps between firing hours were 1-5 h, which
-    # keep_firing_for covers. A path younger than a day stays silent.
+    # Gaps of a few hours between firing hours are covered by keep_firing_for.
+    # A path younger than a day stays silent.
     - alert: WgfleetMasterPathsDegrading
       # Two or more exits degrading from one master while the other masters reach
       # them fine: the master's own uplink, i.e. its hoster or a TSPU in front of
@@ -669,8 +661,7 @@ spec:
     - alert: WgfleetExitDegradingFromAllMasters
       # The case the per-path rules exclude by design: every master's path to one
       # exit degrades together - the exit's hoster, or its address being filtered
-      # from Russia. Needs at least two masters to say "all". Silent over the whole
-      # backtest, so it has not yet been seen firing on live data.
+      # where the masters are. Needs at least two masters to say "all".
       expr: |
         (min by (exit) (wgfleet:exit_tunnel_bad_share:1d) > 0.10)
         and (min by (exit) (wgfleet:exit_tunnel_bad_share:1d) < 0.8)
@@ -720,9 +711,8 @@ spec:
         / sum by (node) (increase(wgfleet_fw_uplink_handshake_packets_total{direction="synack_in"}[1d]))
     - alert: WgfleetMasterUplinkDegrading
       # Connects from this master to a peer degrade while the peer's connects
-      # back to it stay clean: the filter is on this master's side. Live
-      # 2026-10-26: 7 of 60 slow from master A to master B, 0 of 60 the
-      # other way. Under 80% only: a peer whose port closed is a dead target,
+      # back to it stay clean: the filter is on this master's side.
+      # Under 80% only: a peer whose port closed is a dead target,
       # not a creeping filter. Silent until a day of probes exists.
       expr: |
         (wgfleet:uplink_probe_bad_share:1d > 0.05)
@@ -799,10 +789,10 @@ spec:
     - alert: WgfleetClientPathDead
       # The master's own client cannot get traffic through the path its users take.
       # This is the only alert that measures the whole sentence rather than a
-      # component: during the eight days client QUIC was dead in August 2026, the
-      # master<->exit link was at 0% loss, exit egress at 30 MB/s, every proxy alive
-      # and no unit failed — because each of those measured a component and every
-      # component was fine.
+      # component: client QUIC can be dead for days while the master<->exit link
+      # shows 0% loss, exit egress is healthy, every proxy is alive and no unit has
+      # failed — because each of those measures a component and every component is
+      # fine.
       expr: wgfleet_agent_client_path_ok == 0
       for: 5m
       labels:
@@ -818,9 +808,8 @@ spec:
           on the master.
     - alert: WgfleetMihomoComplaining
       # mihomo writes its own failures to the container log and nothing read them.
-      # The TPROXY reply failure that killed every client QUIC flow from 2026-08-28
-      # announced itself 97787 times over eight days while every other metric stayed
-      # green. Deliberately unclassified: the next failure of this class will carry a
+      # A TPROXY reply failure that kills every client QUIC flow announces itself
+      # there on every packet while every other metric stays green. Deliberately unclassified: the next failure of this class will carry a
       # different message, and what generalises is that the data plane is complaining.
       expr: rate(wgfleet_agent_mihomo_errors_total[15m]) > 0
       for: 15m
@@ -845,8 +834,8 @@ spec:
       # Firing only on ports we have NOT decided about is what keeps this alert
       # meaningful: the ones we know about carry udp_return_known=1 and are listed
       # in the agent with a reason. This goes off when a NEW service binds a UDP
-      # port and breaks client traffic to it — the class of failure that ran for
-      # eight days on the live master in August 2026 with every other metric green.
+      # port and breaks client traffic to it — a class of failure that can run for
+      # days with every other metric green.
       expr: wgfleet_agent_udp_return_socket == 0 and on(node, port) wgfleet_agent_udp_return_known == 0
       for: 30m
       labels:
@@ -939,8 +928,8 @@ spec:
       # egress_leak_guard asserts that no client address reaches the wire un-NATed,
       # and it catches a steady trickle by design: late FIN/ACK stragglers of
       # intercepted flows whose conntrack entry has aged out carry no NAT binding.
-      # Measured on the live master 2026-09-06 — about 7 packets a minute against
-      # 569 concurrent client flows, with every check green. Alerting on any increase
+      # A few packets a minute is normal on a busy master with every check green.
+      # Alerting on any increase
       # there would mean an alert that is always on, and an alert that is always on
       # is one that gets silenced.
       #
@@ -1066,9 +1055,9 @@ spec:
     # Host metrics come from whichever exporter the node runs — the distro package
     # the bootstrap installs, or a build the operator put there — bound to the mgmt
     # overlay and adopted as-is by the agent's host planner (job wgfleet-node,
-    # one target per node, labelled node/role like the agent job). Three of seven
-    # nodes had these by accident of their hoster; the master — the client entry
-    # point and the fleet's CPU bottleneck — had none at all.
+    # one target per node, labelled node/role like the agent job). Without that, only
+    # nodes whose hoster happens to ship an exporter have these; the master — the
+    # client entry point and the fleet's CPU bottleneck — may have none at all.
     rules:
     - alert: WgfleetHostMetricsMissing
       # A node the controller knows about that no node-exporter target is UP for.

@@ -66,7 +66,7 @@ type ClientPathTargets struct {
 	// does" without depending on anything outside this node.
 	MgmtAddr string
 	// Direct are destinations the client is supposed to reach without going through
-	// an exit: exit public IPs, corporate networks. They are probed because moving
+	// an exit: exit public IPs, private networks. They are probed because moving
 	// interception into a namespace takes the whole client interface with it, and
 	// the destination-based exemptions that keep these direct live somewhere the
 	// move does not automatically carry.

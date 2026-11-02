@@ -12,11 +12,11 @@ permissions:
   contents: read
 
 jobs:
-  # Format, vet, build and the unprivileged test suite run on the self-hosted
-  # scale set in the sln cluster (label `sln`, gitops apps/gha-runner-sln): a
-  # persistent Go cache turns the nine-minute race run into seconds.
+  # Format, vet, build and the unprivileged test suite run on the maintainer's
+  # self-hosted runner scale set (label `sln`): a persistent Go cache turns the
+  # nine-minute race run into seconds.
   # Pull requests run on GitHub-hosted runners: a PR from a fork is untrusted
-  # code and must never execute inside the cluster.
+  # code and must never execute on the self-hosted runners.
   build-test:
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'sln' }}
     steps:
@@ -59,10 +59,10 @@ jobs:
         run: go test -race ./...
 
   # The data-path rehearsal needs CAP_NET_ADMIN: it opens the IP_TRANSPARENT
-  # reply socket mihomo opens, which is the one call the August 2026 outage
-  # turned on. Unprivileged it skips itself, and a test that always skips is a
+  # reply socket mihomo opens, which is the one call a past client-QUIC
+  # outage turned on. Unprivileged it skips itself, and a test that always skips is a
   # test nobody has, so it is run deliberately under sudo rather than left to
-  # the ordinary suite. A runner pod in the cluster has no such capability, so
+  # the ordinary suite. A self-hosted runner pod has no such capability, so
   # this job stays on a GitHub-hosted VM.
   datapath:
     runs-on: ubuntu-latest

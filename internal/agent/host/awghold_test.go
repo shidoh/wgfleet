@@ -44,7 +44,7 @@ func applyHold(t *testing.T, p awgHoldPlanner) {
 	}
 }
 
-// TestAWGHoldPlannerHoldsUnheldPackages is the vn1/vn2 drift: the AmneziaWG
+// TestAWGHoldPlannerHoldsUnheldPackages is the hold drift: the AmneziaWG
 // packages are installed but nothing holds them, while unattended-upgrades is on.
 // An automatic dkms/tools bump flips the node's AWG generation, and since AWG 3.0
 // broke the netlink ABI between tools and module, a half-applied upgrade takes the
@@ -135,10 +135,10 @@ func TestAWGHoldPlannerSurfacesStateError(t *testing.T) {
 	}
 }
 
-// TestAWGHoldPlannerSurvivesBusyDpkgLock is the vn1/vn2 failure of 2026-09-03:
-// `apt-mark hold` collided with unattended-upgrades holding the dpkg frontend
-// lock, the action returned that error, and the WHOLE reconcile pass failed —
-// node Error, alert fired, and the next pass 30s later fixed it by itself. The
+// TestAWGHoldPlannerSurvivesBusyDpkgLock is the busy-lock failure: `apt-mark
+// hold` collides with unattended-upgrades holding the dpkg frontend lock, the
+// action returns that error, and the WHOLE reconcile pass fails — node Error,
+// alert fired, and the next pass 30s later fixes it by itself. The
 // hold is convergent by construction (every pass re-checks and re-applies), so a
 // lock held by someone else is "not now", not a failure worth failing a pass for.
 func TestAWGHoldPlannerSurvivesBusyDpkgLock(t *testing.T) {

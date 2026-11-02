@@ -1,6 +1,5 @@
 // Package netfw renders nftables rulesets from the desired FirewallSpec. On MVP
-// we render a .nft script and apply it atomically with `nft -f` (ADR per
-// docs/DESIGN.md §5): the rendered text is easy to review in dry-run and mirrors what
+// we render a .nft script and apply it atomically with `nft -f`: the rendered text is easy to review in dry-run and mirrors what
 // we wrote by hand. Native netlink is a later milestone.
 package netfw
 
@@ -22,7 +21,7 @@ const (
 // mgmtOverlayIface is the nft iifname glob matching the management-overlay
 // interfaces (ZeroTier's ztXXXXXXXX). Inbound on the overlay is accepted wholesale:
 // it is the trust boundary for all management — admin UI, metrics, controller gRPC,
-// fleet-internal DNS (docs/DESIGN.md §9/§10) — and the operator reaches nodes over it.
+// fleet-internal DNS — and the operator reaches nodes over it.
 // Accepting the interface is a fail-safe so a missing mgmt entry in the whitelist
 // can never lock management out (the failure mode that left a rebooted node
 // unreachable until ZeroTier re-converged). If the mgmt overlay is ever abstracted
@@ -91,8 +90,8 @@ type RenderInput struct {
 	LifelineDoTPort int
 	// EgressInterface is the WARP/wgcf interface. When set, an MSS clamp is rendered
 	// in the forward chain so TLS through the double encapsulation (client→master→
-	// exit→WARP) does not stall when PMTU discovery is blocked (the reference deployment
-	// §4.10's `clamp-mss-to-pmtu`).
+	// exit→WARP) does not stall when PMTU discovery is blocked (the classic
+	// `clamp-mss-to-pmtu` remedy).
 	EgressInterface string
 	// UplinkAddr is the address the master's outbound traffic leaves with (master
 	// role; IPv4 only). When set, the master counts the TCP handshakes on it — see
@@ -175,7 +174,7 @@ type RenderInput struct {
 	// let the server advertise an MSS sized for the looser egress, so its response
 	// segments black-holed on the RETURN through the tighter master↔exit tunnel —
 	// the classic "connects but empty reply / timeouts" PMTU blackhole
-	// (verified live 2026-06-18: clamp 1320 fixed it). A fixed value
+	// (a fixed clamp of 1320 cures it). A fixed value
 	// (= min(tunnel, egress) − 40) bounds both directions; `rt mtu` cannot, since it only sees the
 	// immediate egress interface, not the tighter return hop.
 	ClampMSS int
@@ -244,7 +243,7 @@ func canonicalSetElems(prefixes []string, wantV4 bool) []string {
 // nft's `tcp option maxseg size set` is UNCONDITIONAL (unlike iptables
 // --clamp-mss-to-pmtu), so without the guard it RAISES a peer's already-smaller MSS
 // up to mss. That black-holes large segments whenever the real path is tighter than
-// mss — observed live 2026-06-18 when the client MTU was lowered to 1280 (advertising
+// mss — seen when the client MTU was lowered to 1280 (advertising
 // MSS ~1240) and the clamp set it back to 1280/1320, so TLS certs and downloads died
 // while ping/DNS survived. With the guard the rule only ever lowers — a true clamp.
 func mssClampExpr(mss int) string {
@@ -372,7 +371,7 @@ func RenderRuleset(in RenderInput) (string, error) {
 	fmt.Fprintf(&b, "\t\tiifname %q accept\n", mgmtOverlayIface)
 	// And the veth to mihomo's namespace — but only for what mihomo needs from this
 	// host, which is the resolver. blocky answers on plain DNS (:53) AND DNS-over-TLS
-	// (:853, TCP), and both must be admitted: a live capture on the master 2026-09-06
+	// (:853, TCP), and both must be admitted: a packet capture on a master
 	// showed EVERY REALITY client's DNS arriving on :853 and none on :53. The DoT is
 	// the client app's own doing (v2rayTun / Clash dial DoT regardless of a bare-IP
 	// nameserver) — not our VLESS/Clash config, which merely names the address — so
@@ -387,7 +386,7 @@ func RenderRuleset(in RenderInput) (string, error) {
 	// wholesale accept therefore offered every client a path to the controller's API
 	// and web panel and to ztnet — services whose own exposure was decided very
 	// deliberately elsewhere. (Not to sshd: this ruleset accepts tcp/22 from
-	// everywhere already, on its own argument. Measured on the stand, which is how
+	// everywhere already, on its own argument. Measured on a test stand, which is how
 	// the first draft of this comment turned out to be wrong about it.)
 	//
 	// Replies to connections this host opened INTO the namespace (the agent steering
@@ -517,8 +516,8 @@ func RenderRuleset(in RenderInput) (string, error) {
 	// it also has no NAT binding and the masquerade below never runs on it. Forwarded
 	// as-is, it leaves the egress carrying the master's PRIVATE tunnel source.
 	//
-	// That leak is not cosmetic. Traced live 2026-07-27: a late FIN (its entry already
-	// expired under Claude Code's heavy connection churn) escaped with SRC=10.74.0.3;
+	// That leak is not cosmetic. Traced end to end: a late FIN (its entry already
+	// expired under heavy connection churn) escaped with the private tunnel source;
 	// WARP then held a return path for that private address, so subsequent replies came
 	// back addressed to it. Conntrack reads such a reply as a NEW connection whose reply
 	// tuple collides with the still-live flow, and resolves the collision the only way
@@ -664,7 +663,7 @@ func RenderRuleset(in RenderInput) (string, error) {
 			//
 			// Two exclusions keep the counter meaningful. Without them it counted the
 			// node talking to itself and read as half a million caught leaks on a
-			// healthy exit — measured 2026-08-27, every single event was a locally
+			// healthy exit — every single event was a locally
 			// generated ICMP unreachable on `lo` carrying the node's own ZeroTier path
 			// probes. A number that alarming, and wrong, is worse than no number: it
 			// sends the next reader chasing a leak that is not happening.

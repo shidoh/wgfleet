@@ -750,7 +750,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // guard authorizes a mutating request. It is layered defense for the
-// unauthenticated admin surface (docs/DESIGN.md §10): a Sec-Fetch-Site check blocks
+// unauthenticated admin surface: a Sec-Fetch-Site check blocks
 // browser-driven cross-origin posts, and a CSRF token (rendered into every form,
 // also delivered as a double-submit cookie) is REQUIRED — so a request without
 // the token, even one a lenient Sec-Fetch-Site would let through, is rejected.
@@ -1335,8 +1335,8 @@ const decommissionSilence = 3 * time.Minute
 // decommissionStuck reports a decommission nobody will carry out. A decommission
 // is executed by the node's own agent; a node that is not reporting has no agent
 // to execute it, and a page that says "decommissioning" about it promises
-// something that will never happen — a tester watched one sit in that state
-// until the hoster's outage was over. Say what is true and offer the way out,
+// something that will never happen — it would sit in that state until the
+// hoster's outage was over. Say what is true and offer the way out,
 // which is Delete.
 func decommissionStuck(node domain.Node, hasStatus bool, st domain.NodeStatus) bool {
 	if !node.Decommission {

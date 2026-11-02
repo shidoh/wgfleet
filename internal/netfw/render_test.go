@@ -219,7 +219,7 @@ func TestRenderForwardDropsInvalid(t *testing.T) {
 	// Transit packets conntrack cannot place must be dropped, NOT forwarded. An
 	// INVALID packet carries no NAT binding, so forwarding it lets a client-pool
 	// source escape the egress un-masqueraded — which poisons the upstream return
-	// path and ends in mid-stream resets (traced live 2026-07-27). The rule belongs
+	// path and ends in mid-stream resets (traced end to end). The rule belongs
 	// to the forward chain specifically: input already had it, and an exit forwards.
 	for _, role := range []domain.Role{domain.RoleExit, domain.RoleMaster} {
 		out, err := RenderRuleset(RenderInput{
@@ -932,7 +932,7 @@ func TestInputChainOpensTheResolverToTheNamespaceAndNothingElse(t *testing.T) {
 		`iifname "mih-host" udp dport 53 accept`,
 		`iifname "mih-host" tcp dport 53 accept`,
 		// DNS-over-TLS: REALITY clients' app DNS engines dial blocky over DoT (:853),
-		// measured on the wire 2026-09-06 (every client DNS flow on :853, none on :53),
+		// as a packet capture shows (every client DNS flow on :853, none on :53),
 		// so admitting only :53 black-holes them.
 		`iifname "mih-host" tcp dport 853 accept`,
 	} {
@@ -949,8 +949,8 @@ func TestInputChainOpensTheResolverToTheNamespaceAndNothingElse(t *testing.T) {
 // hands the connection to mihomo, mihomo dials it DIRECT, and it arrives HERE on the
 // veth, not on wg0. The operator's client_admin_ports opt-in (the client portal
 // among them) must therefore hold on the veth too, or a device whose AWG is blocked
-// cannot refresh its subscription over VLESS — measured on the Lima stand
-// 2026-09-26: `dial DIRECT … 192.168.105.4:9010: i/o timeout` in mihomo's log.
+// cannot refresh its subscription over VLESS — measured on a Lima test
+// stand: `dial DIRECT … 192.168.105.4:9010: i/o timeout` in mihomo's log.
 func TestInputChainOpensTheClientAdminPortsToTheNamespace(t *testing.T) {
 	out, err := RenderRuleset(RenderInput{
 		Firewall:         domain.FirewallSpec{WGPort: 443},

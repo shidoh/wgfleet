@@ -21,14 +21,14 @@ import (
 // GROUP membership in place, but it does NOT re-initialise an existing wireguard
 // outbound's underlying device, so a change to a proxy's AmneziaWG params
 // (S1-S4 / H / keys / endpoint / MTU) silently does not take effect until the
-// container is fully restarted (verified live: a hot reload left stale S4 on the
+// container is fully restarted (seen in practice: a hot reload left stale S4 on the
 // proxies; only `docker compose restart mihomo` applied them).
 //
 // It returns NAMES rather than a bare bool because a restart drops every client's
-// connection, and "why" is not a nicety. On 2026-09-04 the master bounced twice in
-// 36 seconds and the reason could not be reconstructed afterwards from anything on
-// the box — the rendered config is not kept, and the controller's journal in that
-// window was 97% one unrelated line.
+// connection, and "why" is not a nicety. Without the names, a master that bounces twice
+// in a minute leaves no reason that can be reconstructed afterwards from anything
+// on the box — the rendered config is not kept, and the controller's journal may
+// be dominated by unrelated lines.
 //
 // Unparseable input is deliberately asymmetric. A NEW config we cannot parse, or a
 // pair that disagree about parseability, forces a restart: we cannot tell what

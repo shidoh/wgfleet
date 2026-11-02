@@ -440,8 +440,8 @@ func TestClientProfileRefusesNothingToDial(t *testing.T) {
 // sockets only once the tun is up; the profile's first health checks open the
 // AWG socket a few milliseconds earlier, so that socket's packets come back
 // through the tun. Without a rule ahead of everything they meet MATCH and are
-// sent into the very proxy that produced them. Measured 2026-10-14: AWG dead
-// after 3 of 4 cold starts, alive after 4 of 4 with these rules. Only the
+// sent into the very proxy that produced them. Measured on a phone: AWG dead
+// after most cold starts without these rules, alive every time with them. Only the
 // proxy's own server, port and network: SSH, ZeroTier or a web page on the same
 // address keep riding the tunnel.
 func TestClientProfileProxyEndpointsGoDirectFirst(t *testing.T) {
@@ -499,8 +499,8 @@ func TestClientProfileVLESSOffersMLKEM(t *testing.T) {
 }
 
 // The health check must make full-size packets cross the tunnel. A device whose
-// AmneziaWG passed small packets and lost large ones (2026-10-26: SSH stuck at the
-// server's key exchange reply, HTTP redirects fine) kept a plain-HTTP 204 green
+// AmneziaWG passed small packets and lost large ones (SSH stuck at the server's key
+// exchange reply, HTTP redirects fine) kept a plain-HTTP 204 green
 // and never failed over. Over HTTPS the server's certificate chain (~2.5 KB) does.
 func TestClientProfileHealthCheckIsHTTPS(t *testing.T) {
 	if !strings.HasPrefix(ClientProfileHealthURL, "https://") {

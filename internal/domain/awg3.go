@@ -16,7 +16,7 @@ import (
 // otherwise, and only ONE of them is actually known to require it.
 //
 // Measured against a 3.1 kernel module with both ends rendered by the production
-// renderers (2026-08-27), against an UNMODIFIED AmneziaWG 2.0 peer:
+// renderers, against an UNMODIFIED AmneziaWG 2.0 peer:
 //
 //   - HeaderProtectionKey MUST match. A 2.0 peer gets no handshake at all. This is
 //     the one parameter whose rollout is a flag day for every client.

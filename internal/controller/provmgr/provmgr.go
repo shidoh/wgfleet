@@ -274,7 +274,7 @@ func (m *Manager) UpgradeAgent(ctx context.Context, nodeID string, mode provisio
 // TriggerUpgrade failed instantly with "already has a provisioning/upgrade job in
 // flight" and never reached the node at all. That took out both of its callers:
 // the Web UI's upgrade button and the wire-version gate's self-heal for an agent
-// too old to be served a spec. Found by test, 2026-08-18.
+// too old to be served a spec.
 func (m *Manager) upgradeAgentLocked(ctx context.Context, node domain.Node, mode provisioner.Mode) (provisioner.Report, error) {
 	bin, err := os.ReadFile(m.opts.AgentBinPath)
 	if err != nil {
@@ -465,7 +465,7 @@ func (m *Manager) setState(ctx context.Context, nodeID string, state domain.Node
 // decommissioned node leaves Decommission=true in the store; the keybroker keeps
 // rendering NodeSpec.Decommission=true, and the (still mTLS-identified) agent tears
 // its data plane down on every reconcile instead of converging — an endless
-// "decommission complete" loop that never comes back up (observed live 2026-06-18).
+// "decommission complete" loop that never comes back up.
 func (m *Manager) ensureNode(ctx context.Context, node domain.Node, state domain.NodeState) error {
 	// Provisioning is the operator saying "this node, again": it lifts a delete.
 	if err := m.store.Readmit(ctx, node.ID); err != nil {

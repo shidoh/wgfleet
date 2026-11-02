@@ -54,7 +54,7 @@ func TestNetnsWantedModes(t *testing.T) {
 // A per-client selection is refused, and the refusal explains itself rather than
 // just saying no.
 //
-// It existed, was implemented, and was measured on the stand 2026-09-05 doing the
+// It existed, was implemented, and was measured on a test stand doing the
 // opposite of what its name promised: mihomo moves as a whole, so the host went on
 // steering every client OUTSIDE the prefix at listeners that had left — the blast
 // radius of a "canary" was everyone except the canary. `tproxy` can only reach a

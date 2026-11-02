@@ -48,7 +48,7 @@ func RenderDefaults(mgmtAddr string) string {
 		mgmtAddr = "127.0.0.1"
 	}
 	return fmt.Sprintf(`# Managed by wgfleet — do not edit; the agent re-asserts this every reconcile pass.
-# Host metrics are scraped over the management overlay only (see docs/DESIGN.md §9).
+# Host metrics are scraped over the management overlay only.
 ARGS="--web.listen-address=%s:%d"
 `, mgmtAddr, Port)
 }

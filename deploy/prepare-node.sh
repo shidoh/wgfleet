@@ -100,8 +100,7 @@ awg_pkg_versions() {
 # one AmneziaWG generation, and an unattended upgrade of one without the other
 # leaves `awg setconf` failing. So "apt-mark unhold && apt-get install" loses the
 # race with the agent — by the time apt-get update has finished, the hold is back
-# and apt refuses with "Held packages were changed and -y was used". Seen on a
-# tester's node 2026-09-07. Telling apt the hold may be changed is the honest way
+# and apt refuses with "Held packages were changed and -y was used". Telling apt the hold may be changed is the honest way
 # through: both packages move together, and the agent re-pins the new version.
 awg_install() {
   # shellcheck disable=SC2086
@@ -120,7 +119,7 @@ awg_install() {
 # Compared by srcversion (a hash of the module's source), NOT by version: upstream
 # rebuilds the PPA from master without bumping MODULE_VERSION, so two different
 # builds routinely both say "3.1.20260812". Judging by that string kept the old
-# code loaded after a successful package upgrade (Lima rehearsal, 2026-09-07).
+# code loaded after a successful package upgrade.
 awg_reload() {
   local loaded ondisk out
   loaded=$(cat /sys/module/amneziawg/srcversion 2>/dev/null || echo none)

@@ -93,7 +93,7 @@ func isBroadcast(prefix netip.Prefix, addr netip.Addr) bool {
 //
 // The synthetic client exists to measure the one fact no other metric covers:
 // that a packet entering on the client interface comes back. Every component
-// signal was green for the eight days client QUIC was dead, because each measured
+// signal stayed green while client QUIC was dead, because each measured
 // a component and all the components were fine.
 //
 // It needs a real address in the pool, which makes collision with a real client

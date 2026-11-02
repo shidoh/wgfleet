@@ -32,9 +32,9 @@ permissions:
   contents: write          # needed to create the release and upload assets
 
 jobs:
-  # Build, verify and publish on the self-hosted scale set in the sln cluster
-  # (label `sln`, deploy: gitops apps/gha-runner-sln). The announcement stays on
-  # a GitHub-hosted runner: Telegram is not reachable from that cluster.
+  # Build, verify and publish on the maintainer's self-hosted runner scale set
+  # (label `sln`). The announcement stays on a GitHub-hosted runner: Telegram is
+  # not reachable from there.
   build:
     runs-on: sln
     timeout-minutes: 30
@@ -60,7 +60,7 @@ jobs:
 
       # A tag can sit on a commit CI never saw: ci.yml runs on push-to-main and PRs
       # only, and workflow_dispatch will happily tag HEAD. Publishing binaries that
-      # nothing verified — to the fleet AND to testers — is the one place where a
+      # nothing verified — to anyone who installs them — is the one place where a
       # green tree is not optional.
       - name: Build tools (a stock actions-runner image has no make, C compiler or gh; a no-op on our own image)
         if: runner.environment == 'self-hosted'

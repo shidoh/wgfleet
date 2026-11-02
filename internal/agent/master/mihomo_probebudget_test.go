@@ -20,10 +20,10 @@ import (
 // own verdict — no log line, no metric, no alert.
 //
 // Under consistent-hashing that is a data-plane outage: every destination pinned
-// to an evicted exit fails until the group's own 30s check puts it back. Observed
-// live on 2026-09-05, when all three carrying exits were judged unreachable within
-// FOUR MILLISECONDS of each other — three independent network paths cannot fail
-// that way, so the verdict was a property of the prober, not of the exits.
+// to an evicted exit fails until the group's own 30s check puts it back. The tell
+// is every carrying exit judged unreachable within MILLISECONDS of each other —
+// independent network paths cannot fail that way, so the verdict is a property of
+// the prober, not of the exits.
 //
 // The bound on the phase is not the problem; abandoning a request to enforce it is.
 // A member we have no time for must be left UNPROBED, never probed-and-cancelled.

@@ -15,8 +15,7 @@ const referenceDoc = "../../docs/configuration.md"
 // TestConfigurationReferenceIsComplete fails when a koanf key exists in the config
 // structs but is not documented in docs/configuration.md.
 //
-// Closed-beta testers reported the config as "poorly documented", and they were
-// right: the annotated example covered roughly half the surface, with no way to
+// The config used to be poorly documented: the annotated example covered roughly half the surface, with no way to
 // tell what was missing. Documentation that is merely *intended* to be complete
 // drifts on the next feature; this makes completeness a build failure instead.
 //

@@ -6,7 +6,7 @@ import (
 
 // ProvisionMetrics instruments the controller's SSH bootstrap pipeline: how long
 // a node took to provision and whether it succeeded. It is the control-plane
-// counterpart to the agent's reconcile_duration histogram (docs/DESIGN.md §9), and is
+// counterpart to the agent's reconcile_duration histogram, and is
 // recorded around provmgr.Provision (the same path the CLI --provision and the
 // Web UI button drive).
 type ProvisionMetrics struct {

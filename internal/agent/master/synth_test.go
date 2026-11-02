@@ -25,7 +25,7 @@ func synthPlannerSpec() domain.NodeSpec {
 }
 
 // The prober's interface must be created in the HOST namespace and moved, in that
-// order. Verified on the stand 2026-09-04: a WireGuard device keeps its UDP socket
+// order. Verified on the stand: a WireGuard device keeps its UDP socket
 // in the namespace where it was created, so creating it inside the namespace would
 // leave it unable to reach the master's own client port at all — and the prober
 // would report the path broken while the path was fine.
@@ -132,7 +132,7 @@ func TestProberStandsDownOnATinyPool(t *testing.T) {
 
 // `awg setconf` applies what the file says and cannot express what it no longer
 // says: a parameter the device already carries and the config has dropped stays
-// on the device. Measured on the stand 2026-09-05 — the prober was built while
+// on the device. Measured on the stand — the prober was built while
 // the spec carried AmneziaWG 3.x parameters, the spec went back to 2.0, setconf
 // re-applied cleanly, and the device kept its header protection key. The server
 // had none, so not one handshake completed and every client-path probe was red,
@@ -184,7 +184,7 @@ func TestProberIsRebuiltWhenItsParametersChange(t *testing.T) {
 //
 // That is not a cosmetic loop: this device is the judge of the automatic revert,
 // so a prober that cannot be built makes every migration look broken. Found on the
-// stand 2026-09-06 after it had reverted a working migration three times and then
+// stand after it had reverted a working migration three times and then
 // given up on it.
 func TestABuildLeftHalfwayIsClearedBeforeTheNextAttempt(t *testing.T) {
 	run := func(_ context.Context, name string, args ...string) (string, error) {
@@ -229,7 +229,7 @@ func TestABuildLeftHalfwayIsClearedBeforeTheNextAttempt(t *testing.T) {
 // The prober resolves where the clients resolve: the list the controller writes
 // into client configs, not the gateway by assumption. On a master without its own
 // resolver the gateway answers nothing, and a prober pointed there reported the
-// namespace broken while every real client resolved fine (stand, 2026-09-08).
+// namespace broken while every real client resolved fine (on the stand).
 func TestProberResolvesWhereClientsResolve(t *testing.T) {
 	cw := domain.ClientWGSpec{ServerAddress: "10.80.0.1"}
 	if got := proberResolvers(cw); len(got) != 1 || got[0] != "10.80.0.1" {

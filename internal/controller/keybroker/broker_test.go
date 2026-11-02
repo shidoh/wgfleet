@@ -628,7 +628,7 @@ func TestAutoSuspendThroughputDegraded(t *testing.T) {
 	recordThroughputDegraded(t, st, "exit-de-2", false)
 
 	// One degraded report is not evidence: a probe that lands under the floor once
-	// must not re-render the master's data plane. vn0, 2026-09-07.
+	// must not re-render the master's data plane.
 	if drained("exit-de-2") {
 		t.Error("exit-de-2 was suspended on its first degraded report")
 	}
@@ -729,7 +729,7 @@ func suspendFleet(t *testing.T, clock *time.Time) (*Broker, store.Store, func(b 
 // straight back into the group, clients rode a throttled exit for
 // AutoSuspendAfter, and then it was pulled again — two re-renders of every
 // master's mihomo, each a container restart that drops every client connection
-// (stand 2026-10-09: a client's download closed 25 s after the controller restarted).
+// (a client's download closes seconds after the controller restarts).
 func TestAutoSuspendSurvivesAControllerRestart(t *testing.T) {
 	clock := time.Date(2026, 9, 7, 8, 30, 0, 0, time.UTC)
 	old, st, drained := suspendFleet(t, &clock)
@@ -1471,8 +1471,8 @@ func TestRenderMasterSpecCarriesMaxFailedTimes(t *testing.T) {
 // instead of terminating locally: SSH and admin access to the master from a
 // full-tunnel client then depend on the proxy being healthy, and the traffic
 // makes a pointless userspace round trip. Same class as the exit-public-IP fix,
-// which was never applied to the master itself (found live 2026-07-20: the DNAT
-// guard list carried all five exits and not the master).
+// applied to the master itself: otherwise the DNAT guard list carries every exit
+// and not the master.
 func TestRenderMasterSpecMasterOwnPublicIPIsDirect(t *testing.T) {
 	ctx := context.Background()
 	b, st := newBroker(t)

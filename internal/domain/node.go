@@ -325,9 +325,9 @@ func (n Node) AgentBackReason(want string, restartedAt, now time.Time, freshWith
 // BEFORE the upgrade: a node that was Degraded going in has come back when it is
 // Degraded again, not only when it is Ready.
 //
-// Demanding Ready of every node made a degraded node un-upgradeable: anz3 sat
-// Degraded on a throttled WARP path for a day, every rollout halted at it — rolled
-// it back, skipped the four nodes behind it — and the exit whose throughput check
+// Demanding Ready of every node made a degraded node un-upgradeable: an exit
+// sitting Degraded on a throttled WARP path halted every rollout — rolled it
+// back, skipped the nodes behind it — and the exit whose throughput check
 // was failing was, by construction, the one that could never receive a fix. The
 // gate exists to catch a binary that broke a node; a node that arrives broken and
 // leaves exactly as broken has not been broken by the binary. Error never passes:

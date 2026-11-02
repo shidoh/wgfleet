@@ -155,7 +155,7 @@ func (p clientWGPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	// Before deciding to recreate the device: can this be done as a peer edit?
 	//
 	// `awg-quick down` + `up` destroys the interface, and with it every established
-	// session on it — all seven devices on the live master lose their tunnel and
+	// session on it — every client device on the master loses its tunnel and
 	// re-handshake. That is a fair price for an interface-level change, which cannot
 	// be applied any other way. It is not a fair price for adding one peer, and the
 	// upgrade that introduces the path prober adds exactly one: every client on the

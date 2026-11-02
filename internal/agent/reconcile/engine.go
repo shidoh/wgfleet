@@ -144,9 +144,9 @@ func (e *Engine) Reconcile(ctx context.Context, spec domain.NodeSpec, mode Mode)
 			plan.Scheduled = true
 		}
 		// What every planner concluded, every pass — at debug, because at info it
-		// would be twenty lines every thirty seconds, and at nothing it was the
-		// question nobody could answer on 2026-09-07 ("what did the master decide
-		// between 11:30 and 11:37?"). Trace adds each action, no-change ones too.
+		// would be twenty lines every thirty seconds, and at nothing it leaves a
+		// question nobody can answer ("what did the master decide between 11:30
+		// and 11:37?"). Trace adds each action, no-change ones too.
 		e.log.Debug("planned", "component", p.Component(), "changes", changing(actions),
 			"actions", len(actions), "first", firstSummary(actions))
 		for _, a := range actions {

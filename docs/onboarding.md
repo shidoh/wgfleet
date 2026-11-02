@@ -87,7 +87,7 @@ interface; the provisioner and the agent also reach the controller over this ove
    ```yaml
    fleet:
      masters:
-       - name: master-xa-1
+       - name: master-1
          mgmt_addr: 10.20.0.10          # the ZeroTier managed IP from step 1
          public_ip: 203.0.113.10         # WG endpoint peers dial — see note below
          ssh: { host: 203.0.113.10, port: 22, user: root, key_path: ~/.ssh/id_ed25519, host_key: "ssh-ed25519 AAAA..." }
@@ -130,13 +130,13 @@ with no controller serving, the node sits in `Error` until the next retry
 1. Dry-run — `--plan` renders the full bootstrap and changes nothing:
 
    ```sh
-   ./wgfleet-controller --config controller.yaml --provision master-xa-1 --plan
+   ./wgfleet-controller --config controller.yaml --provision master-1 --plan
    ```
 
 2. Apply (drop `--plan`):
 
    ```sh
-   ./wgfleet-controller --config controller.yaml --provision master-xa-1
+   ./wgfleet-controller --config controller.yaml --provision master-1
    ```
 
    Expected: node's mTLS cert issued, sshd hardened, baseline firewall
@@ -167,7 +167,7 @@ on Pending/Error nodes).
    ```yaml
    fleet:
      masters:
-       - name: master-xa-1
+       - name: master-1
          public_ip: 203.0.113.10         # the endpoint every client config carries
          client_awg:
            address_pool: 10.80.0.0/24    # required

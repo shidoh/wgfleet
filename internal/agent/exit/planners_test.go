@@ -695,7 +695,7 @@ func TestXrayPlannerStopsWhenTransportRemoved(t *testing.T) {
 }
 
 // A reality-only exit must not keep an AWG server interface up. Rendering it
-// unconditionally left pn8 carrying awg0 with the master's stale peer, dropping
+// unconditionally left such an exit carrying awg0 with the master's stale peer, dropping
 // TX packets, and holding the pre-ADR-0030 shared key as a trap for re-enablement.
 func TestWGPlannerBringsInterfaceDownWhenAWGDisabled(t *testing.T) {
 	spec := domain.NodeSpec{
@@ -906,7 +906,7 @@ func TestRemovingADirectRuleForgetsOnlyThatDestination(t *testing.T) {
 // priorities with nothing to replace them: the rule of a master removed from the
 // manifest stayed in the kernel, and client traffic to that address kept leaving
 // direct instead of through the egress. Found on the stand with WARP egress
-// 2026-10-09 (`114: from all to 203.0.113.2 lookup main` after the master was gone).
+// (`114: from all to 203.0.113.2 lookup main` after the master was gone).
 func TestRemovingADirectRuleDeletesItsLeftoverPriority(t *testing.T) {
 	spec, pl := applyRoutingOnce(t)
 	n := len(spec.Routing.DirectCIDRs)
@@ -1010,7 +1010,7 @@ func TestChangingTheClientPoolStillFlushesConntrack(t *testing.T) {
 // Re-provisioning a node that is already running loads the bootstrap baseline
 // table again, next to the agent's own. The agent's ruleset is unchanged and
 // present, so nothing re-applied it, and the baseline — policy drop, SSH and the
-// overlay only — stayed for good: on the stand 2026-10-09 a re-provisioned master
+// overlay only — stayed for good: on the stand a re-provisioned master
 // stopped answering its clients on UDP/443 while every check of its own table
 // read clean. The baseline in the kernel is drift; applying the ruleset deletes it.
 func TestFirewallReappliesOverAReturnedBaseline(t *testing.T) {

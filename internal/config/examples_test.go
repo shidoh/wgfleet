@@ -13,7 +13,7 @@ func examplePath(name string) string {
 
 // The shipped examples are the first thing a new operator copies, and until now
 // nothing loaded them: a stale key, a YAML typo or a value that fails validation
-// would have reached testers intact. Load each one exactly as the binaries do
+// would have reached operators intact. Load each one exactly as the binaries do
 // (parse + env overlay + Validate).
 func TestShippedExamplesLoad(t *testing.T) {
 	t.Run("controller.yaml", func(t *testing.T) {
@@ -51,7 +51,7 @@ var examplePlaceholders = map[string]string{
 
 // The RU split-tunnel example ships with placeholders instead of real infra, so it
 // cannot be loaded as-is. Substitute them and validate the result: that catches a
-// YAML typo or an invalid structure in a file testers are told to copy, which
+// YAML typo or an invalid structure in a file operators are told to copy, which
 // "it has placeholders" must not be an excuse to leave unchecked.
 func TestSplitRUExampleIsValidOnceFilledIn(t *testing.T) {
 	raw, err := os.ReadFile(examplePath("controller-split-ru.yaml"))

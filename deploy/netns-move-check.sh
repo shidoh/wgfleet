@@ -2,15 +2,15 @@
 # netns-move-check.sh — assert that a master which moved client interception into
 # mihomo's namespace is STEADY there, and that nothing it was carrying was lost.
 #
-# It exists because two live attempts failed in ways no point-in-time check saw:
+# It exists because a move can fail in ways no point-in-time check sees:
 #
-#   2026-09-05 #1  a self-heal probe still aimed at the host restarted mihomo every
-#                  pass; each restart re-initialised its userspace WireGuard devices
-#                  and three exits fell out of the balancer in three minutes.
-#   2026-09-05 #2  the veth was sized to the CLIENT tunnel (1360) while the uplink
-#                  is 1500, so mihomo's own tunnel packets did not fit. WireGuard
-#                  handshakes are 148 bytes and passed, so every tunnel reported UP
-#                  while carrying nothing; four exits died and the tier failed over.
+#   #1  a self-heal probe still aimed at the host restarted mihomo every
+#      pass; each restart re-initialised its userspace WireGuard devices
+#      and exits fell out of the balancer within minutes.
+#   #2  the veth was sized to the CLIENT tunnel (1360) while the uplink
+#      is 1500, so mihomo's own tunnel packets did not fit. WireGuard
+#      handshakes are 148 bytes and passed, so every tunnel reported UP
+#      while carrying nothing; exits died and the tier failed over.
 #
 # Both were invisible to a snapshot: the first needs WATCHING, the second needs a
 # BIG packet. Neither is something you notice by looking at a dashboard.

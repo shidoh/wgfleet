@@ -312,12 +312,12 @@ func awgTransportDisabled(spec domain.NodeSpec) bool {
 
 func (p wgPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.Action, error) {
 	// A reality-only exit must not keep an AWG server interface up. Rendering it
-	// unconditionally left pn8 (awg.enabled=false) carrying awg0 with the master's
-	// stale peer and no endpoint, quietly accumulating TX drops — and, because the
-	// peer still held the pre-ADR-0030 shared master key, a live trap for whenever
-	// AWG got re-enabled there. Observed 2026-07-19; the interface was deleted by
-	// hand and the agent had rebuilt it within the day, which is what identified
-	// this planner rather than a leftover as the source.
+	// unconditionally left an exit with awg.enabled=false carrying awg0 with the
+	// master's stale peer and no endpoint, quietly accumulating TX drops — and,
+	// because the peer still held the pre-ADR-0030 shared master key, a live trap
+	// for whenever AWG got re-enabled there. Deleting the interface by hand did not
+	// help: the agent rebuilt it, which is what identified this planner rather than
+	// a leftover as the source.
 	if awgTransportDisabled(spec) {
 		if !p.isUp() {
 			return []reconcile.Action{reconcile.NoChangeAction("amneziawg interface",

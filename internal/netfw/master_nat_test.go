@@ -207,7 +207,7 @@ func TestMasterNATSendsClientUDPToMihomo(t *testing.T) {
 		}
 	}
 	// A datagram the tproxy could not take must be DROPPED, not forwarded. Measured
-	// on the stand: with mihomo stopped, the client's DNS kept working and left the
+	// on a test stand: with mihomo stopped, the client's DNS kept working and left the
 	// MASTER's own uplink — the exact leak this chain exists to end, invisible to the
 	// user because nothing broke.
 	dropLine := ""
@@ -435,9 +435,8 @@ func TestNamespaceGatewayWithoutTheVethIsRefused(t *testing.T) {
 // The control API keeps its address across the move.
 //
 // mihomo binds the far end of a /30 that exists on the master and is advertised
-// nowhere, so without this the dashboard and every API client simply lose it. On
-// 2026-09-05 that was the first thing an operator saw after the switch, and it
-// reads as "the exits are down" rather than "the page moved".
+// nowhere, so without this the dashboard and every API client simply lose it. That is
+// the first thing an operator sees after the switch, and it reads as "the exits are down" rather than "the page moved".
 func TestClashAPIKeepsItsAddressAcrossTheMove(t *testing.T) {
 	in := MasterNATInput{
 		ClientInterface: "wg0",
@@ -531,12 +530,11 @@ func TestClashAPIRedirectAlsoCoversTheMasterItself(t *testing.T) {
 
 // The redirect must follow the door the operator actually uses.
 //
-// On this fleet the dashboard is reached over the CLIENT tunnel — the manifest
-// opens 9090 in client_admin_ports for exactly that — not over the management
+// An operator may reach the dashboard over the CLIENT tunnel — a manifest can
+// open 9090 in client_admin_ports for exactly that — not over the management
 // overlay. A redirect scoped to the mgmt overlay alone therefore takes the
-// dashboard away at the moment of the move, which is what happened on the live
-// master 2026-09-05: the rule looked right, the check running ON the master passed
-// through the output chain, and the operator got nothing.
+// dashboard away at the moment of the move: the rule looks right, the check running ON the master passes
+// through the output chain, and the operator gets nothing.
 func TestAPIRedirectFollowsTheClientAdminPorts(t *testing.T) {
 	in := MasterNATInput{
 		ClientInterface: "wg0", ClientCIDR: "10.73.0.0/24", RedirAddr: "10.73.0.1:7895",
@@ -733,7 +731,7 @@ func TestThePathGuardIsAbsentUntilTheInterceptionMoves(t *testing.T) {
 // The output chain the moved state adds must carry a numeric priority: nftables
 // 1.0.2 (Ubuntu 22.04) rejects `dstnat` outside prerouting, and a rejected
 // ruleset is never written — the host then keeps intercepting clients mihomo
-// has left. Reproduced on a stock jammy nft, 2026-09-08.
+// has left. Reproduced on a stock jammy nft.
 func TestMovedStateOutputChainPriorityIsNumericForOldNftables(t *testing.T) {
 	in := MasterNATInput{
 		ClientInterface: "wg0", ClientCIDR: "10.80.0.0/24",

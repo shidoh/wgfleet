@@ -18,7 +18,7 @@ import (
 // every address on the port and is caught, while a holder bound to one address
 // only refuses that address, so a port like :53 held by 127.0.0.53 reads as
 // bindable — and it is, for every server a client will actually talk to.
-// Measured on the stand 2026-09-05: :443 refused, :53 allowed, on the same host.
+// Measured on the stand: :443 refused, :53 allowed, on the same host.
 var probeAddr = [4]byte{192, 0, 2, 1}
 
 // UDPReturnBindable reports whether this network namespace can still open the
@@ -29,9 +29,8 @@ var probeAddr = [4]byte{192, 0, 2, 1}
 // SO_REUSEADDR + IP_TRANSPARENT, then bind to the SERVER's address:port. When the
 // namespace already holds a wildcard socket on that port WITHOUT SO_REUSEADDR —
 // which is what a kernel WireGuard interface is — the bind fails with EADDRINUSE
-// and mihomo silently drops every reply packet on that port. Measured on the live
-// master 2026-09-04: 97787 dropped replies, every one of them on the client WG
-// port, none on any other port.
+// and mihomo silently drops every reply packet on that port — every dropped reply
+// lands on the client WG port, none on any other port.
 //
 // A false answer is a fact about this namespace, not an error. err is reserved for
 // a probe that could not be taken at all (no CAP_NET_ADMIN, no socket), so a caller

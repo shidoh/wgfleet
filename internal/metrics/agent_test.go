@@ -133,9 +133,9 @@ wgfleet_agent_standby_tier_usable{node="master-xa-1",role="master"} 1
 }
 
 // The standby transport is the path an operator switches an exit onto when the
-// active one is blocked — an emergency move. Nothing measured it: on the live
-// fleet 2026-09-04 five of six exits had one and none had ever been checked,
-// four of them reporting mihomo's untested default of alive=1. This series is
+// active one is blocked — an emergency move. Nothing measured it: most exits
+// had one and none had ever been checked, most of them reporting mihomo's
+// untested default of alive=1. This series is
 // the difference between "we tested it and it works" and "nobody has ever asked".
 func TestStandbyTransportMetricIsMasterOnly(t *testing.T) {
 	t.Run("master registers and observes", func(t *testing.T) {
@@ -389,8 +389,8 @@ func gatherFrom(t *testing.T, role domain.Role) float64 {
 }
 
 // A hold-out can begin and end between two scrapes; the gauge then never shows
-// it, and on 2026-10-26 a master held one exit out for three minutes at a time
-// while every rule stayed quiet. The counter counts each hold-out as it begins,
+// it — a master can hold an exit out for minutes at a time while every rule
+// stays quiet. The counter counts each hold-out as it begins,
 // and every exit in rotation starts at 0 so increase() sees the first one. An
 // exit missing from one pass (the tier flipped, or a pass cut short) and back
 // still held is the same hold-out, not a new one: counting it again would fire

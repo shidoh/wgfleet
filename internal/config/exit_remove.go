@@ -113,8 +113,8 @@ func RemoveExit(path, exitName string) error {
 
 // pruneReserveExits removes exitName from every `reserve_exits` list in lines,
 // handling both shapes an operator writes: the inline flow sequence
-// (`reserve_exits: [anz3, fn7, pn8]`) and the block sequence (`reserve_exits:`
-// followed by `- fn7` items). Lists that do not mention the name are untouched.
+// (`reserve_exits: [exit-a, exit-b, exit-c]`) and the block sequence
+// (`reserve_exits:` followed by `- exit-b` items). Lists that do not mention the name are untouched.
 func pruneReserveExits(lines []string, exitName string) []string {
 	out := make([]string, 0, len(lines))
 	for i := 0; i < len(lines); i++ {
@@ -176,7 +176,7 @@ func pruneInlineList(line, value, exitName string) string {
 
 // scalarValue extracts a YAML scalar from the text after a key, dropping the
 // optional quoting and any trailing `# comment`. This manifest annotates values
-// heavily, so `- name: fn7  # dead server` is an ordinary thing to find — and a
+// heavily, so `- name: exit-b  # dead server` is an ordinary thing to find — and a
 // matcher that misses it makes a declared exit look absent, which is the one
 // mistake this code must never make quietly.
 func scalarValue(s string) string {

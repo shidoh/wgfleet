@@ -1,7 +1,7 @@
 // Package dnsfilter renders the on-node filtering resolver (blocky) config from
 // a DNSFilterSpec, plus the docker-compose stack that runs it (ADR-0013). The
 // resolver binds loopback and the mgmt/ZT address only, never the public
-// interface (docs/DESIGN.md §9): the bind addresses are the primary enforcement of
+// interface: the bind addresses are the primary enforcement of
 // "port 53 is reachable on the overlay only".
 //
 // Only safety/structural fields are first-class. The rich blocky surface
@@ -97,10 +97,10 @@ func RenderBlocky(spec domain.DNSFilterSpec) (string, error) {
 			// proxied fleet 0.0.0.0 is a trap: the client treats it as a real answer and
 			// dials it, the connection matches the catch-all rule and is handed to the
 			// wg-best proxy group, and mihomo counts the inevitable failure AGAINST THE
-			// GROUP. Measured on the live master 2026-07-27: ~8400 bogus
-			// "dial wg-best ... connect tcp 0.0.0.0:443: connection was refused" and 1625
-			// "because wg-best failed multiple times, activate health check" in three
-			// hours — roughly 47 and 9 per minute, forever. That pollutes the exact health
+			// GROUP: thousands of bogus
+			// "dial wg-best ... connect tcp 0.0.0.0:443: connection was refused" and
+			// "because wg-best failed multiple times, activate health check" in a few
+			// hours, forever. That pollutes the exact health
 			// signal tiered exit selection reads to decide whether to fail over to the
 			// reserve tier, so a node's apparent health tracked how much ad traffic the
 			// clients generated. NXDOMAIN says the name does not exist, so the client

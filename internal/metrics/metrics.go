@@ -1,5 +1,5 @@
 // Package metrics exposes Prometheus instrumentation for the controller and the
-// agent (docs/DESIGN.md §9). The controller's fleet view is a scrape-time projection
+// agent. The controller's fleet view is a scrape-time projection
 // of the state store (no counters to keep in sync); the agent reports its own
 // reconcile/health counters. Both /metrics endpoints bind the mgmt/ZT address
 // only, never the public interface.

@@ -64,9 +64,8 @@ func TestRenderBlockyComposeRequiresConfigPath(t *testing.T) {
 // Every container this platform renders has a bounded log.
 //
 // Docker's json-file driver has no rotation, so an unbounded container is a disk
-// leak waiting for a loop to start. Measured across the fleet 2026-09-05: two
-// containers out of eighteen had a limit, and the biggest unbounded one had
-// reached 74 MB in six weeks of nothing going wrong.
+// leak waiting for a loop to start; even with nothing going wrong an unbounded
+// log grows by tens of megabytes in a few weeks.
 func TestEveryRenderedContainerBoundsItsLog(t *testing.T) {
 	dns, err := RenderBlockyCompose(BlockyInput{ConfigPath: "/etc/wgfleet/blocky/config.yml"})
 	if err != nil {

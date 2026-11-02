@@ -6,8 +6,7 @@ import (
 	"testing"
 )
 
-// The guards' counters were readable only by hand for a day, and in that day the
-// live master dropped two hundred client packets nobody saw.
+// Guard counters readable only by hand hide client packet drops nobody sees.
 func TestGuardDropsReadsWhatTheChainsCaught(t *testing.T) {
 	run := func(_ context.Context, name string, args ...string) (string, error) {
 		if len(args) < 5 {

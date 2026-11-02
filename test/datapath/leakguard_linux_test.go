@@ -140,7 +140,7 @@ func runGuardProbeProto(t *testing.T, ruleset, dst string, proto int) map[string
 	newGuardNS(t)
 
 	// Two dummies: the client interface the guard exempts, and an uplink standing in
-	// for ens3. A dummy swallows what it is handed, which is all this needs — the
+	// for the real one. A dummy swallows what it is handed, which is all this needs — the
 	// verdict is in the counter, not in a reply.
 	for _, argv := range [][]string{
 		{"ip", "link", "add", "cli", "type", "dummy"},

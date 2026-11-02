@@ -22,7 +22,7 @@ const (
 	ClientProfileSelectGroup = "wgfleet"
 	// ClientProfileHealthURL is fetched over HTTPS on purpose: the server's
 	// certificate chain (~2.5 KB) makes full-size packets cross the tunnel. A
-	// device whose AmneziaWG passed small packets and lost large ones (2026-10-26)
+	// device whose AmneziaWG passed small packets and lost large ones
 	// kept a plain-HTTP 204 green and never failed over.
 	ClientProfileHealthURL = "https://www.gstatic.com/generate_204"
 	// ClientProfileHealthInterval bounds how long a dead proxy stays selected in
@@ -63,7 +63,7 @@ var clientBootstrapResolvers = []string{"77.88.8.8", "1.1.1.1"}
 // resolver's queries enter the tun — ONLY under fake-ip (its enhance/tun.rs).
 // Under redir-host a resolver the router handed out over DHCP stays in place;
 // its LAN route never enters the tun, so every name the OS looks up leaves
-// beside the tunnel. Measured 2026-09-27 on the mihomo debug log. The profile
+// beside the tunnel, as mihomo's debug log shows. The profile
 // cannot tell which app fetched it; fake-ip is the others' usual mode anyway.
 const ClientDNSMode = "fake-ip"
 
@@ -223,7 +223,7 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 // up, while the profile's first health checks open the AWG socket a few
 // milliseconds earlier; that socket's packets then come back through the tun,
 // and MATCH would send them into the very proxy that produced them (AWG dead
-// after 3 of 4 cold starts, measured 2026-10-14). DIRECT re-sends them on a
+// after most cold starts, measured on a phone). DIRECT re-sends them on a
 // protected socket. Where the core's sockets never enter the tun (Clash Verge
 // Rev, FlClash on a desktop) the rule never matches. Narrow on purpose: SSH,
 // ZeroTier or a page on the same address keep riding the tunnel. no-resolve:

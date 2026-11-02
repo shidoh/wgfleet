@@ -62,7 +62,7 @@ func TestValidateAcceptsAFullOrAbsentSSHBlock(t *testing.T) {
 	}
 }
 
-// The tester's manifest: `key:` instead of `key_path:`. The decoder drops the
+// A real-world mistake: `key:` instead of `key_path:`. The decoder drops the
 // unknown key, the block is partial, and now the manifest is refused — and the
 // unknown key itself is named, so the reason is on the screen.
 func TestUnknownKeysNamesAMisspelledKey(t *testing.T) {

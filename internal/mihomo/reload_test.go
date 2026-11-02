@@ -67,8 +67,8 @@ func TestReloadNoControllerIsUnreachable(t *testing.T) {
 }
 
 // A restart drops every client's connection, so the plan must say which proxy
-// forced it. On 2026-09-04 the master bounced twice in 36 seconds and the reason
-// could not be reconstructed from anything left on the box.
+// forced it. Without the names, two bounces in a minute leave no reason that can
+// be reconstructed from anything left on the box.
 func TestChangedProxiesNamesWhatMoved(t *testing.T) {
 	oldCfg := []byte("proxies:\n  - name: vn0\n    mtu: 1360\n  - name: vn1\n    mtu: 1360\n")
 	newCfg := []byte("proxies:\n  - name: vn0\n    mtu: 1280\n  - name: vn1\n    mtu: 1360\n")

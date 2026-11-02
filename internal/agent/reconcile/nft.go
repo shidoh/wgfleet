@@ -33,7 +33,7 @@ var ErrNFTCheckUnavailable = errors.New("nft check unavailable")
 // itself unconverged and the node's state says why. It used to be a NoChange
 // line nobody reads — on a jammy master the moved-state ruleset was rejected by
 // nft 1.0.2 on every pass, the host kept intercepting clients mihomo had left,
-// and the only trace was client probes failing "connection refused" (2026-09-07).
+// and the only trace was client probes failing "connection refused".
 func refusedRuleset(path string, err error) []Action {
 	why := fmt.Sprintf("refusing to write a ruleset nft rejects: %v", err)
 	slog.Error("nft rejects the rendered ruleset; the previous one stays in the kernel", "file", path, "err", err)
@@ -50,7 +50,7 @@ var symbolicPriority = regexp.MustCompile(`(?m)^\s*type\s+\w+\s+hook\s+(\w+)\s+p
 // accepts. On nftables 1.0.2 (Ubuntu 22.04) `dstnat` is valid in the prerouting
 // hook only and `srcnat` in postrouting only; used elsewhere they fail `nft -c`
 // with "invalid priority expression value in this context". A ruleset that
-// passes the developer's nft 1.0.9 and fails a tester's 1.0.2 is exactly the
+// passes the developer's nft 1.0.9 and fails a 22.04 host's 1.0.2 is exactly the
 // defect a static check catches and a local `nft -c` cannot. The numeric values
 // (-100, 100) mean the same on every version; render those instead.
 func CheckNFTPortability(ruleset []byte) error {
@@ -69,8 +69,7 @@ func CheckNFTPortability(ruleset []byte) error {
 // ruleset and does NOT talk to the kernel, so it is safe to run during planning
 // alongside the other read-only probes (`nft list table`, `ip rule list`).
 //
-// It is necessary but NOT sufficient: verified on the live fleet 2026-09-04
-// (kernel 6.8.0-138, nft 1.0.9), `nft -c` accepts a `reject` statement in a
+// It is necessary but NOT sufficient: with nft 1.0.9, `nft -c` accepts a `reject` statement in a
 // prerouting chain that the nftables manual restricts to input/forward/output.
 // Whatever only the kernel can reject is caught by the apply itself, which is
 // atomic and therefore leaves the previous table in place.

@@ -347,8 +347,8 @@ func TestScrubAndGateAgreeAcrossValueShapes(t *testing.T) {
 }
 
 // A support bundle is a file the tool tells the operator to send to somebody else.
-// Everything below was found verbatim in a real bundle from a live fleet, or is
-// spelled the way this project spells it on disk.
+// Everything below is in the form `awg show` and the other collectors print it,
+// or is spelled the way this project spells it on disk.
 func TestScrubCoversTheNamesThisProjectActuallyUses(t *testing.T) {
 	for _, tc := range []struct{ name, line, secret string }{
 		// `awg show` prints this one in FULL, while hiding the two beside it — and

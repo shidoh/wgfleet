@@ -46,14 +46,14 @@ type MasterNATInput struct {
 	//
 	// Without it the move takes the dashboard with it: mihomo binds the far end of a
 	// /30 that exists on this host and is advertised nowhere, so from anywhere else
-	// the API is simply gone. On 2026-09-05 that was the first thing an operator saw
-	// after the switch, and it reads as "the exits are down" rather than "the page
+	// the API is simply gone. That is the first thing an operator sees after the
+	// switch, and it reads as "the exits are down" rather than "the page
 	// moved".
 	ClashAPI string
 	// ClientAdminPorts are the admin ports the operator has opened to the CLIENT
 	// pool (masters[].client_admin_ports). The API redirect follows them: an
 	// operator who reaches the dashboard over the client tunnel must keep reaching
-	// it, and on this fleet that is how they reach it — the mgmt overlay is not the
+	// it, and that may be how they reach it — the mgmt overlay is not the
 	// only door, it is just the one the code assumed.
 	ClientAdminPorts []int
 	// NetnsLinkCIDR is the point-to-point link to the namespace. Required with
@@ -95,7 +95,7 @@ const NetnsRouteTable = 51822
 // intercepted packet on this host.
 //
 // Explicit, because iproute2 assigns an unnumbered rule `lowest existing - 1`.
-// Observed on the stand 2026-09-05: with the namespace exemptions present at 390
+// Observed on a test stand: with the namespace exemptions present at 390
 // this rule landed at 389, and without them at 32765 — the same rule, two
 // positions, decided by what else happened to be in the table when it was added.
 // A relative order that changes across a re-apply is not an order.
@@ -168,7 +168,7 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// delete-first idiom, `nft -f` adds the chains' rules to the EXISTING chains on
 	// every re-apply, so DNAT/masquerade rules accumulate and stale rules from an
 	// older binary (e.g. a previous `oifname "ens3"` masquerade) linger forever
-	// (observed live 2026-06-18). `table` ensures it exists so `delete` never fails;
+	// (seen in practice). `table` ensures it exists so `delete` never fails;
 	// the whole script is one atomic nft transaction, so there is no unprotected
 	// window. Mirrors RenderRuleset's handling of the filter table.
 	fmt.Fprintf(&b, "table ip %s\n", MasterNATTable)
@@ -215,7 +215,7 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// A per-client split was tried and removed. mihomo moves as a whole, so once the
 	// gateway is set its listeners are in the namespace, and rules kept here for the
 	// remaining clients would steer them at an address nothing is on. Measured on
-	// the stand 2026-09-05: the non-selected client's TCP and UDP probes both at
+	// a test stand: the non-selected client's TCP and UDP probes both at
 	// zero while the selected one was fine — the blast radius of a "canary" was
 	// everyone except the canary.
 	hostIntercepts := in.NetnsGateway == ""
@@ -260,14 +260,14 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 		// And from the client tunnel, when the operator has opened this port to it.
 		// That opt-in already exists and already means "I reach the admin UI this
 		// way"; the redirect has to honour the same list or the move takes the
-		// dashboard away from whoever uses that door. Measured on the live master
-		// 2026-09-05: the mgmt-only rule looked right, the check run ON the master
+		// dashboard away from whoever uses that door. Without it, the mgmt-only
+		// rule looked right, the check run ON the master
 		// passed through the output chain, and the operator — coming over the client
 		// tunnel — got nothing.
 		//
 		// ClientForwardedPorts is the same call the namespace closure renders from:
 		// if this loop opens the door, that chain admits the port. Two readings of the
-		// spec drifted within a day (2026-09-06); one function cannot.
+		// spec can drift apart; one function cannot.
 		if in.ClientInterface != "" {
 			for _, ap := range ClientForwardedPorts(in.ClashAPI, in.ClientAdminPorts) {
 				fmt.Fprintf(&b, "\t\tiifname %q ip daddr %s tcp dport %d dnat to %s:%d\n",
@@ -336,7 +336,7 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// sees it — locally generated packets go straight to output — so without this
 	// every tool on the master that dials the management address stops working the
 	// moment the interception moves, including the check written to verify the move.
-	// Found on the stand 2026-09-05, one flip after the prerouting rule was added.
+	// Found on a test stand, one flip after the prerouting rule was added.
 	if apiAddr != "" {
 		b.WriteString("\n\tchain output {\n")
 		// Numeric, not `dstnat`. The symbolic name is only valid in the prerouting
@@ -345,7 +345,7 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 		// NFTApply then keeps the previous ruleset — so on a jammy master the host
 		// went on intercepting clients after mihomo had moved into its namespace,
 		// and every probe came back "connection refused". Reproduced against a
-		// stock jammy nft on 2026-09-08; -100 is what dstnat means on every version.
+		// stock jammy nft; -100 is what dstnat means on every version.
 		b.WriteString("\t\ttype nat hook output priority -100; policy accept;\n")
 		fmt.Fprintf(&b, "\t\tip daddr %s tcp dport %d dnat to %s:%d\n",
 			apiAddr, apiPort, in.NetnsGateway, apiPort)
@@ -358,9 +358,9 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// MASQUERADE client traffic on EVERY egress except back into the client
 	// interface itself. Client packets leave by more than one uplink: the public
 	// link (internet) AND the mgmt/ZT overlay (DNS to the exits' blocky, internal
-	// nets). Pinning a single egress iface (e.g. ens3) silently breaks the overlay
-	// path — DNS dies because blocky sees the un-NAT'd client source and can't
-	// route the reply back (the reference deployment §3.12 masquerades both ens3 and the ZT iface).
+	// nets). Pinning a single egress iface (e.g. the uplink) silently breaks the
+	// overlay path — DNS dies because blocky sees the un-NAT'd client source and
+	// can't route the reply back, so both the uplink and the ZT iface are masqueraded.
 	// The veth to mihomo's namespace is exempted for a reason that is not obvious
 	// and is fatal to miss: TPROXY works precisely because it does NOT rewrite the
 	// packet — mihomo reads the original (client, server) pair off the transparent
@@ -390,7 +390,7 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// a return path for it, later replies come back addressed to it, and conntrack
 	// resolves the resulting tuple collision by rewriting the TCP source port — the
 	// far end receives data on a port it never dialed and resets. Traced end-to-end on
-	// an exit 2026-07-27; the master masquerades its client pool the same way, for
+	// an exit; the master masquerades its client pool the same way, for
 	// split-tunnel traffic that bypasses mihomo, so the same failure is available here.
 	//
 	// This chain runs AFTER srcnat, so every packet NAT did translate has already
@@ -473,7 +473,7 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 		// interception is exempt here too. Note they are matched AFTER dnat: a
 		// service published through docker arrives here with the container's address,
 		// not the one the operator wrote, which is why the list has to cover the
-		// translated addresses too (on this fleet 172.16/12 covers docker's).
+		// translated addresses too (e.g. 172.16/12 covers docker's default ranges).
 		fmt.Fprintf(&b, "\t\tip saddr %s%s%s meta l4proto { tcp, udp } oifname != %q oifname != \"lo\"%s counter drop\n",
 			clientCIDR, gatewaySourceGuard(in.ClientCIDR), guards,
 			in.ClientInterface, netnsIfaceGuard(in.NetnsHostIface))

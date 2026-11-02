@@ -192,7 +192,7 @@ func RenderConfig(in RenderInput) (string, error) {
 	// This briefly listed the public resolvers behind the fleet's own, to keep a
 	// resolver that stops answering from taking the data plane down with it. That was
 	// wrong about mihomo: `nameserver` is a concurrent POOL, not an ordered fallback —
-	// it races every member and takes the first answer. Measured on a rehearsal, the
+	// it races every member and takes the first answer. Measured on a test stand, the
 	// result was permanent DoT connections from the master to 1.1.1.1:853 and
 	// 9.9.9.9:853, keepalives and all: a standing signature on the one uplink the
 	// censor is assumed to watch, and the full browsing metadata of every user handed
@@ -344,15 +344,15 @@ func RenderConfig(in RenderInput) (string, error) {
 	//
 	// This runs AFTER the override merge on purpose. The base config already points
 	// mihomo's resolvers at an address it can reach from in there, but an operator
-	// override replaces the value wholesale — and this fleet's manifest pins
+	// override replaces the value wholesale — and a manifest may pin
 	// `dns.nameserver: [127.0.0.1:53]`, meaning "the resolver on this host". Moved
 	// into a namespace, 127.0.0.1 is a loopback of its own with nothing on it, and
 	// every name mihomo has to resolve ITSELF fails.
 	//
 	// Which is not every name: a VLESS proxy can hand the hostname to the far end,
 	// so those kept working, while every WireGuard proxy — L3, so mihomo must
-	// resolve before it can send a packet — went dead. Measured on the live master
-	// 2026-09-05: four AmneziaWG exits down, all reality exits up, and
+	// resolve before it can send a packet — went dead: every AmneziaWG exit down,
+	// every reality exit up, and
 	// "can't resolve ip: read udp 127.0.0.1:...->127.0.0.1:53: connection refused"
 	// in the log.
 	//
@@ -785,7 +785,7 @@ func selectionGroup(name string, members []string, o groupOpts) map[string]any {
 // The worst case is not a dead tier but a DECEIVED one: under RKN's volume-freeze
 // a tiny HEAD probe still passes while real traffic dies, so no member is ever
 // marked dead, nothing escalates, and clients hashed onto the broken exit stay
-// broken indefinitely (observed live: pn8 answered the probe in 113ms while
+// broken indefinitely (seen in practice: an exit answered the probe in 113ms while
 // google/github/youtube/telegram were 0/16 through it).
 //
 // No combination of interval/url/expected-status/group-type fixes this; it is
@@ -834,8 +834,8 @@ func renderRules(spec domain.MasterSpec) []any {
 	// the name, fails, and charges the failure to the GROUP —
 	//   dial wg-best ... error: dns resolve failed: couldn't find ip
 	//   because wg-best failed multiple times, activate health check
-	// Measured live 2026-08-27: 37-69 health-check activations per hour on a fleet
-	// whose exits were all healthy, driven entirely by telemetry hosts
+	// Without this, a fleet whose exits are all healthy sees dozens of health-check
+	// activations per hour, driven entirely by telemetry hosts
 	// (sessions.bugsnag.com, analytics.google.com, ...). Rejecting them here
 	// attributes the failure to the rule instead, so a browser asking for ads can
 	// no longer degrade the health of the group that carries every client.

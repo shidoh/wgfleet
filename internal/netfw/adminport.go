@@ -35,10 +35,10 @@ func clashAPIEndpoint(clashAPI string) (addr string, port int, ok bool) {
 // Two rulesets depend on this answer. The host's NAT opens the door — a DNAT from
 // the client interface to the namespace address — and the namespace's input
 // closure decides what a client may reach on that address. Rendered from two
-// separate readings of the spec they drifted within a day: the host forwarded 9090,
+// separate readings of the spec they drifted apart: the host forwarded 9090,
 // the closure admitted only the redirect port, and every client SYN to the
-// dashboard died one hop past the rule that let it in (live master 2026-09-06,
-// 2097 drops, conntrack full of UNREPLIED entries). Same failure shape as the
+// dashboard died one hop past the rule that let it in (conntrack full of
+// UNREPLIED entries). Same failure shape as the
 // REALITY outage: two renderers, one fact, two sources. Hence one function.
 func ClientForwardedPorts(clashAPI string, clientAdminPorts []int) []int {
 	_, port, ok := clashAPIEndpoint(clashAPI)

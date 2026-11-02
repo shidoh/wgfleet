@@ -15,8 +15,8 @@ var composeBin = "docker"
 // applies it can be killed mid-pass (the agent restarted by a rollout) or fail (an
 // image that will not pull), and on the next pass the file is unchanged and the
 // OLD containers are running — a planner that only asks "did the file change"
-// and "is the stack up" then never retries. On 2026-10-28 that left a master on
-// the previous mihomo image after a rollout, with every check green.
+// and "is the stack up" then never retries, leaving a master on the previous
+// mihomo image after a rollout, with every check green.
 //
 // The receipt closes it: a file next to the compose file holding the hash of the
 // content the last SUCCESSFUL `up -d` applied. No receipt, or one for different

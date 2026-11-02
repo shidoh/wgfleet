@@ -15,9 +15,9 @@ var internalRefs = regexp.MustCompile(`ADR[- ]?\d{3,4}|lessons?[ -]?#\s*\d+|docs
 // repoRoot is this package's path relative to the repository root.
 const repoRoot = "../.."
 
-// Beta testers receive ONLY the release tarball — the repository is private — so an
+// Operators who install from the release archive have no source tree, so an
 // "(ADR-0021)" or a lesson number in a shipped file is a pointer to something they
-// cannot open. It reads as a citation and delivers nothing. Where such a reference
+// do not have. It reads as a citation and delivers nothing. Where such a reference
 // was the sole justification for a non-obvious default, the reason belongs inline.
 //
 // The file list is parsed out of the Makefile's release-archive recipe rather than
@@ -47,7 +47,7 @@ func TestShippedDocsHaveNoInternalReferences(t *testing.T) {
 		}
 		for i, line := range strings.Split(string(body), "\n") {
 			if m := internalRefs.FindString(line); m != "" {
-				t.Errorf("%s:%d ships an internal-only reference %q — testers have no repo access; inline the reason instead\n    %s",
+				t.Errorf("%s:%d ships an internal-only reference %q — archive readers have no source tree; inline the reason instead\n    %s",
 					rel, i+1, m, strings.TrimSpace(line))
 			}
 		}
@@ -111,8 +111,8 @@ func shippedFiles(t *testing.T) []string {
 //
 // The docs link each other by repo name (docs/cli.md); the release target renames
 // them on the way in (CLI.md). On a case-sensitive filesystem — every server these
-// ship to — that left 16 dead links, the first of them on the first page a tester
-// opens, and six more pointed at documents the archive did not carry at all. The
+// ship to — that left a batch of dead links, the first of them on the first page a
+// reader opens, and several more pointed at documents the archive did not carry at all. The
 // Makefile now rewrites the names and ships the missing files; this is what keeps
 // the two halves from drifting apart again.
 func TestShippedDocsLinkOnlyToShippedDocs(t *testing.T) {
@@ -152,7 +152,7 @@ func TestShippedDocsLinkOnlyToShippedDocs(t *testing.T) {
 
 	// Every relative link, not only the .md ones. The first version of this regex
 	// ended in `\.md`, so three links pointing at ../deploy/examples/*.yaml — the
-	// manifests the docs tell a tester to copy — were never examined at all, and
+	// manifests the docs tell an operator to copy — were never examined at all, and
 	// resolved from inside the package to a path ABOVE the archive root.
 	link := regexp.MustCompile(`\]\(([^)#][^)]*)\)`)
 	for repoPath, archiveName := range shipped {

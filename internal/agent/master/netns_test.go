@@ -207,7 +207,7 @@ func TestNetnsPlannerRefusesAKnobItCannotRead(t *testing.T) {
 
 // A per-client selection is refused, and the refusal explains itself.
 //
-// It was implemented, documented, and measured on the stand 2026-09-05 doing the
+// It was implemented, documented, and measured on the stand doing the
 // opposite of what its name promised: mihomo moves as a whole, so the host went on
 // steering every client OUTSIDE the prefix at listeners that had left — the blast
 // radius of a "canary" was everyone except the canary. `tproxy` can only reach a
@@ -286,7 +286,7 @@ func TestNamespaceCarriesTheTProxyPolicyRoute(t *testing.T) {
 
 // The routing rule takes the whole client interface, and table 51822 holds one
 // default route into the namespace — so every destination that must stay off the
-// proxy goes with it unless something keeps it out first. That is the corporate
+// proxy goes with it unless something keeps it out first. That is the private
 // networks, the management overlay, the exits' own public addresses
 // and client-to-client traffic. The failure is the same shape as the outage this
 // change exists to end: partial, one-way, invisible to every component metric.
@@ -424,7 +424,7 @@ func TestDetachRemovesEverythingTheMoveInstalled(t *testing.T) {
 // ruleset left behind turns the namespace into a black hole for its OWN UDP —
 // including the DNS query the readiness gate makes before the next attempt, which
 // is a node that can never move again because its last revert broke the check
-// that would have let it. Measured on the stand 2026-09-05: 38 dropped datagrams.
+// that would have let it. Measured on the stand: 38 dropped datagrams.
 func TestDetachRemovesTheInNamespaceRuleset(t *testing.T) {
 	run := func(_ context.Context, name string, args ...string) (string, error) {
 		line := name + " " + strings.Join(args, " ")
@@ -601,7 +601,7 @@ func TestDisablingTheKnobCleansUpWhatTheMoveInstalled(t *testing.T) {
 // A master whose direct CIDRs contain any host address fails to converge ANYTHING
 // after this planner, every thirty seconds, for ever. The controller derives
 // exactly such addresses: the master's own public IP and one per exit. Reproduced
-// on the stand 2026-09-05 as state=Error on every pass.
+// on the stand as state=Error on every pass.
 func TestHostAddressExemptionsAreNotReAddedEveryPass(t *testing.T) {
 	spec := netnsSpec()
 	spec.Master.DirectCIDRs = []string{"10.0.0.0/8", "192.168.105.4/32"}

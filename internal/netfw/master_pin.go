@@ -16,7 +16,7 @@ const AWGHeardSet = "awg_exit_heard"
 // stay SHORTER than the time the path filter remembers a flow: an exit gone quiet
 // longer than the filter remembers is an exit whose next packet on the tuple is
 // the MASTER's, and the filter then records the master as the initiator.
-// Measured on the RU path 2026-09-30: an exit-started flow still passed after
+// Measured on a filtered path: an exit-started flow still passed after
 // 300 s of silence and was forgotten by 600 s. Twice the widest keepalive
 // (wg.KeepaliveFor draws 15–28 s) sits far under that, and one lost keepalive
 // does not close the gate.
@@ -86,7 +86,7 @@ func renderPinGate(b *strings.Builder, pins []pinnedTuple) {
 	// the port mihomo used before the pin sends there, and once that packet is
 	// accepted mihomo's own packets are replies of its entry — they skip the SNAT
 	// and the tunnel lives off its pinned port with the gate reading armed. Found
-	// on the stand (kernel 5.15) 2026-10-08.
+	// on a test stand (kernel 5.15).
 	b.WriteString("\tchain awg_exit_knock_input {\n")
 	b.WriteString("\t\ttype filter hook input priority filter - 10; policy accept;\n")
 	for _, p := range pins {

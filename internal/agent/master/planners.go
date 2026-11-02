@@ -534,7 +534,7 @@ func NATInput(spec domain.NodeSpec, clientIface string, netnsAttached bool) netf
 	// and so does the readiness probe that decides whether the move may happen at
 	// all. Gating the masquerade on `attached` made that a circle: the gate asked the
 	// namespace to reach an exit, and the rule that let it do so was only rendered
-	// once the gate had passed. Measured on the stand 2026-09-05 — the namespace
+	// once the gate had passed. Measured on the stand — the namespace
 	// could not ping the exit, the gate never passed, and the migration never
 	// started. Before the move nothing but the probe sources traffic from this link,
 	// so arming it early costs nothing.
@@ -713,8 +713,8 @@ func (p masterNATPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]recon
 	// at a lower priority than both the direct-destination exemptions and the rule
 	// that routes clients into the namespace, so anything that ever carried the mark
 	// again — a rule somebody else writes, a mark reused — would be taken locally,
-	// past the whole scheme. On the live master these three lines outlived the move
-	// and nothing referenced them.
+	// past the whole scheme. Left alone, these three lines outlive the move and
+	// nothing references them.
 	switch {
 	case attached:
 		actions = append(actions, tproxyRouteTeardown(p.run)...)

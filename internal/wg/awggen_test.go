@@ -69,9 +69,9 @@ func TestJminAboveS4(t *testing.T) {
 
 const awgJMaxLimitTest = 1280
 
-// TestAWGSizesSafeOracle pins awgSizesSafe against the 11-point LIVE oracle that
-// diagnosed size collision: nine (S1,S2,S3,S4) sets that work on the fleet and two that
-// break it (~50% of new TLS connections dropped). The predicate must classify every
+// TestAWGSizesSafeOracle pins awgSizesSafe against the 11-point measured oracle that
+// diagnosed size collision: nine (S1,S2,S3,S4) sets that work in practice and two that
+// break (~50% of new TLS connections dropped). The predicate must classify every
 // row correctly — a real data packet of wire size 32+S4+16k must never alias a
 // handshake size (clause A) nor shadow an adjacent handshake pair (clause B).
 func TestAWGSizesSafeOracle(t *testing.T) {
@@ -182,8 +182,8 @@ func TestDeriveSignaturesAlwaysGenerated(t *testing.T) {
 	}
 }
 
-// TestISlotsAreStunQuicCombo pins the decision taken in ADR-0033's 2026-09-07
-// amendment after the field A/B on live RU carriers: the prologue is a two-packet
+// TestISlotsAreStunQuicCombo pins the decision taken in ADR-0033's amendment
+// after a field A/B across several RU mobile carriers: the prologue is a two-packet
 // cover — I1 a canonical STUN Binding Request, I2 a QUIC v1 Initial long header —
 // with I3-I5 empty. Field-measured, this beat noise on every mobile carrier (noise
 // was hard-blocked, rx=0) and the two-protocol opening hedged the time-varying

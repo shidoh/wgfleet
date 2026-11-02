@@ -1575,9 +1575,9 @@ func TestExitNodePageSaysWhenTheMasterHoldsItOutOfRotation(t *testing.T) {
 
 // A reserve exit is out of the rotation by design, so "held out" is the wrong
 // word for it — but an operator still has to know that the tier they are keeping
-// for an emergency contains a member that cannot reach anything. Live 2026-09-11:
-// 1cnode004's active path failed for minutes behind an aggregate "3 of 3 usable"
-// and the console showed a healthy reserve row.
+// for an emergency contains a member that cannot reach anything. Otherwise a
+// reserve exit's active path can fail for minutes behind an aggregate "3 of 3
+// usable" while the console shows a healthy reserve row.
 func TestTopologyFlagsAReserveExitTheWarmProbeCouldNotReachThrough(t *testing.T) {
 	h, st := newTestHandler(t, nil)
 	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})

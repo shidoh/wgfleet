@@ -81,7 +81,7 @@ func (p ForwardPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]reconcile.
 	//
 	// Docker sets the FORWARD policy to DROP, so everything that is not explicitly
 	// accepted here dies silently between two interfaces the operator never
-	// configured. Measured on the stand 2026-09-05: with the veth
+	// configured. Measured on the stand: with the veth
 	// missing from this list the namespace could not reach a single address off the
 	// host, its readiness gate never passed, and the migration never started — while
 	// every rule the agent renders in nftables looked exactly right.

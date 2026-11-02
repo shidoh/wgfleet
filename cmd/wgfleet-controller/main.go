@@ -184,7 +184,7 @@ func run() error {
 	}
 	// Self-heal the manifest mode: it carries WG/REALITY private keys, so it must be
 	// owner-only. A hand-created or hand-edited
-	// controller.yaml is easily left group/other-readable (a 2026-07-25 audit found it
+	// controller.yaml is easily left group/other-readable (an audit can find it
 	// 0644); tighten it best-effort on every startup rather than trusting every author.
 	if err := os.Chmod(*configPath, 0o600); err != nil && !os.IsNotExist(err) {
 		slog.Warn("could not tighten manifest permissions to 0600", "path", *configPath, "err", err)

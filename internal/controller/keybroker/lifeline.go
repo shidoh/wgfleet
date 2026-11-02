@@ -140,8 +140,8 @@ func (b *Broker) lifelineSpec(ctx context.Context, exit config.ExitConfig, exitN
 // default route, unless the operator overrode it per exit.
 //
 // It used to copy the master's list, on the argument that the reserve profile is
-// the same credential and should make the same routing decision. Measured on a
-// real client, that argument costs the profile its ability to connect at all.
+// the same credential and should make the same routing decision. On a real
+// client, that argument costs the profile its ability to connect at all.
 //
 // The master's list is a SPLIT one whenever `client_awg.exclude_from_tunnel` is
 // set: 0.0.0.0/0 expanded into ~44 prefixes with the private ranges cut out. A
@@ -151,15 +151,16 @@ func (b *Broker) lifelineSpec(ctx context.Context, exit config.ExitConfig, exitN
 //
 //   - The tunnel's own endpoint is swallowed. wg-quick installs its fwmark and
 //     `suppress_prefixlength 0` rules ONLY when it sees a literal /0; with a split
-//     list it does not, so the route covering the server's own address (192.128.0.0/11
-//     for a 192.144.x endpoint, 193.0.0.0/8 for a 193.x one) points at the tunnel
+//     list it does not, so the route covering the server's own address (whichever
+//     split prefix contains it, say for a 198.51.100.x endpoint) points at the tunnel
 //     device. The handshake completes — it goes out before the routes are added —
-//     and then every packet loops. Measured: DNS times out, nothing loads, and the
+//     and then every packet loops: DNS times out, nothing loads, and the
 //     interface counts gigabytes sent in seconds.
 //   - Any prefix the client already has a route for aborts the bring-up. A machine
-//     on the management overlay already owns 172.29.0.0/16, so `ip route add` returns
-//     "File exists", wg-quick rolls the whole thing back, and there is no interface at
-//     all. Measured on a live client, on the main profile and the reserve one alike.
+//     on a management overlay already has a route for the overlay's subnet; when the
+//     split list carries the same prefix, `ip route add` returns "File exists",
+//     wg-quick rolls the whole thing back, and there is no interface at all — on the
+//     main profile and the reserve one alike.
 //
 // With 0.0.0.0/0 neither happens: wg-quick puts the single default in its own
 // table behind the fwmark rules, adds nothing to the main table, and the client's

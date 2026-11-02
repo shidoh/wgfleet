@@ -1,8 +1,8 @@
 // Package pki provides the certificate authority and mTLS configuration that
 // secure the controller↔agent channel. Each node is issued a client
 // certificate whose Common Name is its node ID, so the authenticated identity
-// is the certificate itself: revoking a cert removes a node from the fleet
-// (docs/DESIGN.md §10). Node private keys are generated on the node and never reach
+// is the certificate itself: revoking a cert removes a node from the fleet.
+// Node private keys are generated on the node and never reach
 // the controller; this package only handles the control-channel PKI, not WG keys.
 package pki
 

@@ -335,7 +335,7 @@ func ValidWireGuardKey(s string) bool {
 // keepalive leaves the master unable to reach the client until the client speaks
 // first. Common NAT UDP timeouts start at 30 seconds, which is why WireGuard's
 // own documented value is 25. The floor only exists to stop a typo turning every
-// phone on the fleet into a one-second beacon.
+// phone on a fleet into a one-second beacon.
 const (
 	MinClientKeepalive = 5
 	MaxClientKeepalive = 120

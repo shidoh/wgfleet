@@ -363,8 +363,8 @@ func writeMasterCompose(t *testing.T, path string, spec domain.NodeSpec) {
 // `up -d` that should have applied it never succeeded (the agent was restarted
 // mid-pass by a rollout, or the image would not pull). The running containers
 // are the OLD definition; the planner must apply the file instead of reporting
-// the stack converged. On 2026-10-28 a master stayed on the previous mihomo
-// image this way after a rollout, with every check green.
+// the stack converged — otherwise a master stays on the previous mihomo image
+// after a rollout, with every check green.
 func TestComposePlannerAppliesAFileThatWasWrittenButNeverApplied(t *testing.T) {
 	spec, _ := masterSpec(t)
 	paths := testPaths(t)
@@ -832,7 +832,7 @@ func applyNonExec(t *testing.T, acts []reconcile.Action) {
 
 // iproute2 assigns an unnumbered rule `lowest existing - 1`, so the same rule
 // lands in different places depending on what else is in the table when it is
-// added. Observed on the stand 2026-09-05: with the namespace exemptions present
+// added. Observed on the stand: with the namespace exemptions present
 // this rule sat at 389, and without them at 32765.
 func TestTProxyRuleCarriesAnExplicitPriority(t *testing.T) {
 	var dump string
@@ -993,7 +993,7 @@ func TestTProxyTeardownActsWhenTheKernelWillNotAnswer(t *testing.T) {
 // Re-provisioning a node that is already running loads the bootstrap baseline
 // table again, next to the agent's own. The agent's ruleset is unchanged and
 // present, so nothing re-applied it, and the baseline — policy drop, SSH and the
-// overlay only — stayed for good: on the stand 2026-10-09 a re-provisioned master
+// overlay only — stayed for good: on the stand a re-provisioned master
 // stopped answering its clients on UDP/443 while every check of its own table
 // read clean. The baseline in the kernel is drift; applying the ruleset deletes it.
 func TestMasterFirewallReappliesOverAReturnedBaseline(t *testing.T) {

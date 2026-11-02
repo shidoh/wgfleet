@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// Errors arrive in BURSTS inside one second — the live master logged several
-// `listenLocalConn` failures per second for eight days — so the cursor has to be
+// Errors arrive in BURSTS inside one second — a broken master can log several
+// `listenLocalConn` failures per second — so the cursor has to be
 // finer than a second or every window boundary either double-counts a burst or
 // drops its tail. Docker's own `--timestamps` is nanosecond; the timestamp inside
 // mihomo's message is not.

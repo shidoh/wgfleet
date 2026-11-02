@@ -12,7 +12,7 @@
 // backoff (~seconds). BBR is loss-tolerant — it paces by measured bandwidth/RTT
 // and does NOT collapse on sporadic loss — which is exactly the right model for a
 // lossy tunnel. It directly addresses both the low ZeroTier-overlay throughput and
-// the HTTP/2-to-far-servers stalls observed live (see the project memory).
+// the HTTP/2-to-far-servers stalls seen over lossy tunnels.
 //
 // Applied on every managed node (master AND exits): the master terminates the
 // client↔mihomo and mihomo↔exit TCP, and any node-originated TCP (control plane,
@@ -102,9 +102,9 @@ func (p bbrPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]reconcile.Acti
 	// 1 and backing the RTO off to minutes. The connection never recovers — it hangs
 	// rather than fails, which is far worse to diagnose.
 	//
-	// Observed live 2026-08-07 on the master→exit path: an agent binary upload wedged
-	// with 41% of bytes retransmitted, only 2 KB ever acked, and no ACK for 9 minutes,
-	// while small packets flowed fine. Enabling probing lets the kernel shrink the
+	// On a master→exit path with an MTU black hole, an agent binary upload wedges
+	// with a large share of bytes retransmitted, a few KB ever acked, and no ACK for
+	// minutes, while small packets flow fine. Enabling probing lets the kernel shrink the
 	// segment size on its own and the transfer completes.
 	//
 	// Especially apt for this project: every managed node terminates or forwards

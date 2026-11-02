@@ -3,8 +3,8 @@
 // It exists because of one kernel rule with a large consequence: mihomo's TPROXY
 // reply path binds the SERVER's address:port to send a reply back with the right
 // source, so any UDP port the HOST already holds is unreachable for client traffic
-// to that port. On the live master that was 443 — the client AmneziaWG interface —
-// and every client QUIC flow was one-way for eight days. Giving mihomo a namespace
+// to that port. When that port is 443 — the client AmneziaWG interface — every
+// client QUIC flow goes one-way. Giving mihomo a namespace
 // of its own removes the collision as a category rather than fixing one port.
 //
 // Everything here is idempotent and injectable. Ensure runs on every reconcile
@@ -173,7 +173,7 @@ func Plan(ctx context.Context, in Input, run Runner) ([]Step, error) {
 		mtu := strconv.Itoa(in.MTU)
 		// `ip -br link show` does not print the MTU at all, so a brief read here matched
 		// nothing and re-set the MTU on every pass — a change reported forever over a
-		// value that was already right. Measured on the stand 2026-09-05.
+		// value that was already right. Measured on a test stand.
 		if out, err := run(ctx, "ip", "link", "show", in.HostIface); err != nil || !strings.Contains(out, " mtu "+mtu+" ") {
 			add("set the host end MTU to "+mtu, "ip", "link", "set", in.HostIface, "mtu", mtu)
 		}
@@ -259,7 +259,7 @@ func Ready(ctx context.Context, in Input, run Runner) error {
 	// reads the HOST's /etc/resolv.conf. On a systemd box that names 127.0.0.53, a
 	// stub resolver which inside this namespace is a loopback with nothing on it —
 	// so the gate failed on every master with systemd-resolved, whatever the
-	// namespace could actually do. Measured on the stand 2026-09-05.
+	// namespace could actually do. Measured on a test stand.
 	//
 	// The resolver to ask is the one mihomo will be pointed at once it moves, which
 	// only the agent knows. Asking that specific address is also the stronger
@@ -275,8 +275,8 @@ func Ready(ctx context.Context, in Input, run Runner) error {
 	//
 	// This check used to open a TCP connection to the exit's endpoint with bash's
 	// /dev/tcp. The endpoint is a WireGuard listener: it is UDP, nothing is on that
-	// port over TCP, and the dial could only ever time out. Measured on the stand
-	// 2026-09-05 — the gate never passed, so the migration never started, and the
+	// port over TCP, and the dial could only ever time out. Measured on a test
+	// stand — the gate never passed, so the migration never started, and the
 	// three blockers that would have made it fail were being hidden by a fourth.
 	//
 	// ICMP is the honest question at this layer: before mihomo moves there is no
@@ -290,7 +290,7 @@ func Ready(ctx context.Context, in Input, run Runner) error {
 	// and only that one, so a fleet whose first exit was down at its hoster could
 	// never move — the node sat in "waiting" indefinitely, on the host path with the
 	// port collision this migration exists to escape, while its other exit carried
-	// every client fine. A tester's fleet, 2026-09-07. The addresses are still
+	// every client fine. The addresses are still
 	// validated one by one: a hostname or nonsense in the list is a spec to refuse,
 	// not an exit to skip.
 	if len(in.ProbeHosts) > 0 {

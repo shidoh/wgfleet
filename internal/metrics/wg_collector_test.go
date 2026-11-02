@@ -11,7 +11,7 @@ import (
 // The dump command must be the one the fleet actually has.
 //
 // This shelled to `wg show` alone, on the strength of a comment claiming "wg reads
-// awg kernel interfaces too, so one command covers both". Measured on a live fleet:
+// awg kernel interfaces too, so one command covers both". In practice:
 // the master has no `wg` at all (only `awg`), and on an exit `wg show awg0 dump`
 // answers "Operation not supported". So `wgfleet_wg_*` was emitted by nobody, on
 // any node — and WgfleetNoClientPeers, the one alert that says "your users have

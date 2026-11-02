@@ -624,7 +624,7 @@ func groupsByName(t *testing.T, cfg string) map[string]map[string]any {
 // commit the new fixtures with the reasoning. Never hand-edit them.
 //
 // A fixture per balance kind matters because the fleet is NOT deployed on
-// consistent-hashing on day one: the live master runs url-test at the moment
+// consistent-hashing on day one: an existing master may run url-test at the moment
 // these binaries roll out, and only migrates to consistent-hashing via a
 // deliberate manifest change afterward (ADR-0029). Pinning only the
 // consistent-hashing render — what sampleInput() happens to default to —
@@ -1113,14 +1113,13 @@ func TestTProxyPortFollowsAnOverriddenRedirPort(t *testing.T) {
 // An operator override pinning a loopback resolver must not survive the move.
 //
 // The base config already points mihomo's resolvers somewhere reachable, but an
-// override replaces the value wholesale — and this fleet's manifest pins
+// override replaces the value wholesale — and a manifest may pin
 // `dns.nameserver: [127.0.0.1:53]`, meaning "the resolver on this host". Inside a
 // namespace that is a loopback of its own with nothing on it.
 //
 // The blast radius is not uniform, which is what made it hard to read: a VLESS
 // proxy hands the hostname to the far end and kept working, while every WireGuard
 // proxy — L3, so mihomo must resolve before it can send a packet — went dead.
-// Measured on the live master 2026-09-05.
 func TestLoopbackResolverIsTranslatedWhenMihomoMoves(t *testing.T) {
 	spec := domain.MasterSpec{
 		BindAddress: "10.73.0.1",

@@ -37,7 +37,7 @@ func quietLogger() *slog.Logger {
 // therefore left the node with no host NAT, no DOCKER-USER accept, no DNS filter
 // and no client VLESS inbound, every thirty seconds, for as long as the cause
 // lasted. The blast radius of a fault had nothing to do with what the fault was
-// about. That is the shape of the three-hour outage of 2026-09-05, generalised.
+// about. A single stuck component can turn into an hours-long outage this way.
 func TestOneFailedComponentDoesNotStopTheOthers(t *testing.T) {
 	var ran []string
 	note := func(name string) Planner {

@@ -12,16 +12,16 @@ import (
 // only — never values, so it is safe in a journal that also holds the redacted
 // plan. Empty when the documents are equal.
 //
-// It exists because on 2026-09-07 the master rewrote mihomo's config four times
-// in seven minutes, each rewrite a hot reload, each reload leaking a WireGuard
-// device, each leak a restart — and the journal recorded "update
-// /etc/mihomo/config.yaml" four times and nothing else. The rendered config is
-// not kept, the trigger was gone with the previous bytes, and the only honest
-// answer afterwards was "something in the render input was flapping". This is
+// It exists because a master can rewrite mihomo's config several times in a few
+// minutes, each rewrite a hot reload, each reload leaking a WireGuard
+// device, each leak a restart — and the journal recording "update
+// /etc/mihomo/config.yaml" each time and nothing else. The rendered config is
+// not kept, the trigger is gone with the previous bytes, and the only honest
+// answer afterwards is "something in the render input was flapping". This is
 // what turns that sentence into a name.
 //
 // Sections that are lists of named entries — proxies, proxy-groups, listeners —
-// are described per entry, with the fields that moved: `proxies: vn1 (server,
+// are described per entry, with the fields that moved: `proxies: exit-b (server,
 // port)`. Maps are described one level down: `dns: nameserver`. Anything else
 // by its top-level key.
 func DescribeChange(oldCfg, newCfg []byte) string {

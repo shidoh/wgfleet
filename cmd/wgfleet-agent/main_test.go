@@ -101,9 +101,9 @@ func TestAChangedDecisionAsksForAnotherPassAtOnce(t *testing.T) {
 }
 
 // A failing client-path probe while the client interface is DOWN is not evidence
-// about the namespace. On 2026-09-07 a master that had lost wg0 to a module
-// upgrade spent all three namespace attempts on it and parked the interception
-// on the host — into the port collision — long after the interface came back.
+// about the namespace. A master that has lost wg0 to a module upgrade would
+// otherwise spend all three namespace attempts on it and park the interception
+// on the host — into the port collision — long after the interface comes back.
 func TestClientPathVerdictDoesNotJudgeWhileTheClientInterfaceIsDown(t *testing.T) {
 	failing := []master.ClientPathProbe{{Name: "udp/53", Decisive: true, OK: false}}
 

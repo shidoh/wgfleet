@@ -16,13 +16,13 @@ import (
 // blocked dial simply never returns. A deadline can only be noticed by a call that
 // comes back.
 //
-// That is not theoretical. The fleet's public master→exit path wedges in a
-// specific way: the TCP connection ESTABLISHES and then swallows everything, so
-// the dial blocks inside the SSH handshake with nothing to time it out. Measured
-// 2026-09-11: a rolling upgrade sat 13 minutes on its first node under a
-// five-minute per-node deadline, upgraded nothing, and had to be SIGKILLed.
+// A public master→exit path can wedge in a specific way: the TCP connection
+// ESTABLISHES and then swallows everything, so the dial blocks inside the SSH
+// handshake with nothing to time it out. A rolling upgrade then sits on its first
+// node well past a five-minute per-node deadline, upgrades nothing, and has to be
+// killed.
 //
-// provisioner.DialSSH now bounds its own handshake, which fixes the case we have
+// provisioner.DialSSH now bounds its own handshake, which fixes the case above.
 // hit. This is the belt to that pair of braces: it holds for ANY DialFunc,
 // including an injected one, and it is what makes the caller's deadline mean
 // something rather than depend on the politeness of the dialler.
@@ -61,9 +61,8 @@ func dialCtx(ctx context.Context, dial DialFunc, target domain.SSHTarget) (provi
 //
 // The public master→exit path and the overlay fail independently, and the public
 // one fails in a way that looks alive — the TCP connection opens and the SSH
-// handshake then times out. Field case 2026-10-07: a rollout skipped two exits on
-// exactly that while the controller held a working control channel to both over
-// the overlay. Pointing ssh.host at the overlay by hand fixes one node and is a
+// handshake then times out. A rollout can skip exits on exactly that while the
+// controller holds a working control channel to them over the overlay. Pointing ssh.host at the overlay by hand fixes one node and is a
 // step the operator has to know to take; the fallback makes it unnecessary.
 //
 // The order is deliberate. A first bootstrap has no overlay yet, so the manifest

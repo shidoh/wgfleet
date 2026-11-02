@@ -66,14 +66,14 @@ func execSummaries(acts []reconcile.Action) string {
 	return strings.Join(out, "; ")
 }
 
-// The 2026-09-21 incident, and the reason this planner exists in this shape.
+// The reason this planner exists in this shape.
 //
-// The operator replaced the distro package with a newer upstream node_exporter and
-// masked the package's unit so the two would not fight over the port. Host metrics
-// never stopped flowing. The agent, which recognised only the package, tried to
-// start the masked unit every thirty seconds and held master, 1cnode004 and pn8 in
-// Error for twelve hours — and an Error pass skips every self-check and, on an
-// exit, the egress failover with them.
+// An operator may replace the distro package with a newer upstream node_exporter
+// and mask the package's unit so the two do not fight over the port. Host metrics
+// never stop flowing. An agent that recognised only the package would try to start
+// the masked unit every thirty seconds and hold those nodes in Error indefinitely —
+// and an Error pass skips every self-check and, on an exit, the egress failover
+// with them.
 //
 // An optional component the operator may upgrade on their own schedule is adopted
 // by WHAT IT DOES. Something is serving host metrics on the overlay ⇒ nothing to do,

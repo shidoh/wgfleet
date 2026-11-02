@@ -1,7 +1,7 @@
-# The self-hosted runner image for the sln scale set: the stock actions-runner
+# The self-hosted runner image for the maintainer's self-hosted runner scale set: the stock actions-runner
 # plus what the wgfleet workflows call directly — a C toolchain for the race
 # detector, make for the archives, gh for publishing. Built by
-# .github/workflows/runner-image.yml, consumed by gitops apps/gha-runner-sln.
+# .github/workflows/runner-image.yml, consumed by that scale set.
 ARG RUNNER_VERSION=2.338.2
 FROM ghcr.io/actions/actions-runner:${RUNNER_VERSION}
 USER root

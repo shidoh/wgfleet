@@ -45,8 +45,8 @@ WHAT="both"
 PLAN=0
 # Bandwidth cap for the binary copy, in kbit/s. Empty ⇒ unlimited. A ~28 MB
 # binary pushed at line rate fills the uplink queue and makes interactive SSH to
-# the same host unusable for the duration (observed live 2026-07-20: the box was
-# idle at load 0.04 while ssh crawled — bufferbloat on the path, not the server).
+# the same host unusable for the duration (the box stays idle while ssh crawls —
+# bufferbloat on the path, not the server).
 SCP_LIMIT="${SCP_LIMIT:-}"
 # On-the-wire compression. Go binaries compress well (~50%), so this roughly
 # halves both transfer time and queue pressure. Set 0 to disable.
@@ -86,7 +86,7 @@ elif [ -f "$_here/wgfleet-agent" ] || [ -f "$_here/wgfleet-controller" ]; then :
 else
   die "run this from a wgfleet repo root, or from the unpacked release archive (where the binaries are)"
 fi
-# The toolchain is only needed when there is nothing prebuilt to ship: a tester
+# The toolchain is only needed when there is nothing prebuilt to ship: an operator
 # running this from the unpacked archive on a bare VM has no go and needs none.
 if [ ! -f "$_here/wgfleet-agent" ] && [ ! -f "$_here/wgfleet-controller" ]; then
   command -v go >/dev/null 2>&1 || die "go toolchain not found (needed to cross-build)"
@@ -131,8 +131,8 @@ local_sha256() {
 # This used to always pass -t. Without a controlling terminal (a CI job, a
 # background invocation, a tool driving the script) sshd's tty request hangs
 # instead of failing, and the deploy stalls mid-way with the binary already staged
-# — observed live 2026-07-19, where killing the stuck run truncated the in-flight
-# copy and left a half-written binary on the master.
+# — and killing the stuck run truncates the in-flight copy and leaves a
+# half-written binary on the master.
 ssh_run() {
   if [ -t 1 ]; then ssh -t "$MASTER" "$1"; else ssh "$MASTER" "$1"; fi
 }
@@ -163,8 +163,8 @@ deploy_one() {
 
     # VERIFY BEFORE INSTALLING. An interrupted transfer leaves a truncated binary
     # that is indistinguishable from success at the command level: scp exits 0, the
-    # file exists, and the service then dies with SIGSEGV on a partial ELF. That is
-    # not hypothetical — it crash-looped this master 42 times on 2026-07-19.
+    # file exists, and the service then dies with SIGSEGV on a partial ELF. A crash loop,
+    # not a clean failure.
     got=\$(sha256sum '$staged' | cut -d' ' -f1)
     if [ \"\$got\" != '$want' ]; then
       rm -f '$staged'
@@ -289,9 +289,9 @@ remote_wire() {
 #                                 fields it does not know.
 #
 # So on a bump, controller-first is safe to interrupt at ANY point, while
-# agent-first leaves a hard-dead agent if the controller copy fails. That is not
-# hypothetical: it stranded this master for ~10 minutes on 2026-07-20 when a
-# 28 MB controller upload stalled after the agent had already been installed.
+# agent-first leaves a hard-dead agent if the controller copy fails. A stalled
+# controller upload after the agent is already installed strands the master
+# until the copy is retried.
 wire_order_flip() {
   local lw rw
   lw="$(local_wire)"

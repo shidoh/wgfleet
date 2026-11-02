@@ -189,7 +189,7 @@ controller:
     ca_key:  "file://state/ca.key"
 fleet:
   masters:
-    - name: master-xa-1
+    - name: master-1
       mgmt_addr: 10.20.25.254
       client_awg: { listen_port: 443, address_pool: 10.80.0.0/24 }
       routing:    { direct_cidrs: [10.0.0.0/8], direct_geo: [RU], balance: health }
@@ -205,7 +205,7 @@ YAML
 
 # Bootstrap the CA and issue each node an mTLS bundle.
 bin/wgfleet-controller --config controller.yaml --init-pki
-bin/wgfleet-controller --config controller.yaml --issue-node master-xa-1 --issue-out pki/master
+bin/wgfleet-controller --config controller.yaml --issue-node master-1 --issue-out pki/master
 bin/wgfleet-controller --config controller.yaml --issue-node exit-de-1   --issue-out pki/exit
 
 # Serve gRPC + Web UI + metrics.

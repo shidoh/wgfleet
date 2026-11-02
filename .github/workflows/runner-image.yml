@@ -1,6 +1,6 @@
 # Builds the self-hosted runner image (stock actions-runner + gcc, make, gh)
-# and pushes it to ghcr.io/shidoh/wgfleet-runner:<runner version>. The gitops
-# scale set (apps/gha-runner-sln) pins that tag. Runs on GitHub-hosted runners:
+# and pushes it to ghcr.io/shidoh/wgfleet-runner:<runner version>. The
+# maintainer's self-hosted runner scale set pins that tag. Runs on GitHub-hosted runners:
 # it needs Docker, and the image is what our own runners are made of.
 name: runner-image
 on:

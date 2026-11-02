@@ -141,7 +141,7 @@ func TestEffectiveSpec(t *testing.T) {
 // The operator moved the exit from direct to WARP in the manifest. The selector
 // still held "direct" from the old chain and read it as a fallback it was failed
 // over to — and stayed there for as long as the recovery probe did not pass, on
-// an egress the manifest no longer lists. Found on the stand 2026-10-09: the exit
+// an egress the manifest no longer lists. Found on the stand: the exit
 // ran direct until its agent was restarted.
 func TestSelectorDropsAnActiveEgressTheChainNoLongerLists(t *testing.T) {
 	ctx := context.Background()

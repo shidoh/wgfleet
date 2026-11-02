@@ -303,8 +303,8 @@ func rulePrefsOf(script string) map[int]bool {
 // installed a rule at and the next one does not. A rule is replaced by priority
 // (ipRuleReplace), so a rule whose priority the next script no longer uses has
 // nothing to replace it and stays in the kernel: the tail of a direct-CIDR list
-// that got shorter, or the master rule once no master holds slot 0. Seen on the
-// stand 2026-10-09 — a master removed from the manifest left its `to <ip> lookup
+// that got shorter, or the master rule once no master holds slot 0. Seen on a
+// test stand — a master removed from the manifest left its `to <ip> lookup
 // main` behind, and client traffic to that address kept leaving direct.
 func RulePrefsDropped(prev, next string) []int {
 	is := rulePrefsOf(next)

@@ -419,9 +419,9 @@ func contains(s, sub string) bool {
 	return false
 }
 
-// anz3, 2026-09-07: Degraded on a throttled WARP path before the rollout, Degraded
-// on the new binary after it — and the rollout halted at it, rolled it back and
-// skipped four healthy nodes. A node that comes back exactly as it went in has
+// A node Degraded on a throttled WARP path before the rollout is still Degraded
+// on the new binary after it — and halting the rollout at it would roll it back
+// and skip every healthy node behind it. A node that comes back exactly as it went in has
 // been upgraded, not broken.
 func TestADegradedNodeThatComesBackDegradedPassesTheGate(t *testing.T) {
 	clk := newClock()
@@ -456,10 +456,10 @@ func TestADegradedNodeThatComesBackDegradedPassesTheGate(t *testing.T) {
 // A node that accepts the connection and then never answers must cost the rollout
 // one node, not the fleet.
 //
-// This is the 2026-09-09 incident: the controller sat on the first exit for eleven
-// minutes with twelve bytes stuck in the socket's send queue, upgraded nothing, and
-// said nothing, while five healthy exits waited behind it. There was no deadline on
-// the upload at all — only on the come-back gate, which is never reached.
+// Without a per-node deadline the controller sits on the first exit indefinitely
+// with a few bytes stuck in the socket's send queue, upgrades nothing, and says
+// nothing, while every healthy exit waits behind it. A deadline on the come-back
+// gate alone does not help: that gate is never reached.
 func TestNodeThatNeverAnswersIsGivenUpOnAndTheNextOneProceeds(t *testing.T) {
 	clk := newClock()
 	up := newUpgrader("new")

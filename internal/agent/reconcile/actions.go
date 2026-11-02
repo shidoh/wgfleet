@@ -31,7 +31,7 @@ func FileAction(target string, content []byte, perm os.FileMode, redact Redactor
 	// wg.RedactConfig / xray.RedactConfig) and the master side quietly broke: the
 	// rendered mihomo config went out 0644 while holding one WireGuard private key
 	// per exit, and the master compose file 0644 while holding a container admin
-	// password. Found in review 2026-07-20. A convention that is only documented
+	// password. Found in review. A convention that is only documented
 	// gets violated; make it an invariant the code enforces.
 	if redact != nil && perm&0o077 != 0 {
 		return Action{}, fmt.Errorf("refusing to write %q with mode %#o: content is "+

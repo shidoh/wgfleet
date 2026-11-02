@@ -5,7 +5,7 @@
 // reconcile render byte-identical files, so a hand-edit or a partial overwrite is
 // repaired on the next reconcile pass rather than drifting until the next
 // re-provision. A partial overwrite of the sshd drop-in once silently re-enabled
-// password auth fleet-wide (2026-07-25); the reconcile planner exists to catch that.
+// password auth fleet-wide; the reconcile planner exists to catch that.
 package hardening
 
 import (

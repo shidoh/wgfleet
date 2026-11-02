@@ -2214,7 +2214,7 @@ type ComposeSpec struct {
 	// Image for the container that owns mihomo's network namespace. Empty ⇒ the
 	// agent's default. Worth setting on a node that cannot pull the default: the
 	// holder only has to exist and sleep, so any image already on the node will do,
-	// and a master behind the filtering this fleet exists to get around is exactly
+	// and a master behind the filtering the fleet exists to get around is exactly
 	// where a pull fails.
 	NetnsHolderImage string `protobuf:"bytes,7,opt,name=netns_holder_image,json=netnsHolderImage,proto3" json:"netns_holder_image,omitempty"`
 	unknownFields    protoimpl.UnknownFields

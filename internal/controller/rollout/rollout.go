@@ -104,10 +104,10 @@ type Config struct {
 	//
 	// Without it a wedged path stops the fleet. The controller dials the exit's
 	// declared address over SSH, and that path can accept a TCP connection and then
-	// black-hole: on 2026-09-09 a rollout sat on the first node for eleven minutes
-	// with twelve bytes stuck in the socket's send queue, upgraded nothing, and said
-	// nothing — every other exit waited behind a node that was never going to answer.
-	// A deadline turns that into one failed node and five upgraded ones.
+	// black-hole: a rollout can then sit on its first node indefinitely with a few
+	// bytes stuck in the socket's send queue, upgrade nothing, and say nothing —
+	// every other exit waits behind a node that is never going to answer. A
+	// deadline turns that into one failed node and the rest upgraded.
 	UpgradeTimeout time.Duration
 	// PollInterval is how often the gate re-reads the node.
 	PollInterval time.Duration
@@ -458,9 +458,9 @@ func nodeUntouched(err error) bool {
 // roll it back" only holds when there was something to roll back — and .prev is
 // not a general-purpose escape hatch, it is whatever some EARLIER upgrade
 // displaced. Restoring it after a dial timeout downgrades a node that was
-// perfectly healthy, which is exactly what happened to pn8 on 2026-08-18: an SSH
-// dial timed out, the rollback restored a week-old snapshot, and a node running
-// wire 6 came back on wire 5. The failure still halts the rollout — only the
+// perfectly healthy: when an SSH dial times out, the rollback would restore a
+// snapshot from some older upgrade, and a node running the current wire version
+// would come back on an older one. The failure still halts the rollout — only the
 // pointless mutation is dropped.
 func (c *Coordinator) fail(ctx context.Context, i int, cause error) error {
 	id := c.nodeID(i)

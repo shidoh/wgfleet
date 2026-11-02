@@ -9,10 +9,10 @@ import (
 // unset. Exported so the controller resolves image/tag overrides against the
 // same canonical default the renderer falls back to.
 //
-// Pinned, NOT :latest — same rule as mihomo and xray (docs/DESIGN.md #8). The
+// Pinned, NOT :latest — same rule as mihomo and xray. The
 // moving tag gave neither reproducibility nor freshness: docker only re-reads a
-// tag when something pulls it, so every exit sat on v0.32.1 (pulled 2026-06-20)
-// while upstream had moved three releases on, and nothing in the fleet said so.
+// tag when something pulls it, so every exit sat on v0.32.1 while upstream
+// had moved three releases on, and nothing in the fleet said so.
 //
 // Bumped :latest -> v0.35.0 (2026-09-10, upstream released 2026-09-05). What we
 // care about in 0.33-0.35: DoH queries are retried when a pooled connection is
@@ -60,8 +60,7 @@ func RenderBlockyCompose(in BlockyInput) (string, error) {
 		// Bound the log, for the reason the master's own stack learned it: docker's
 		// json-file driver has no rotation at all, so a container that starts writing
 		// errors in a loop fills the disk of a node whose whole job is to keep running.
-		// Measured across the fleet 2026-09-05: two containers out of eighteen had a
-		// limit, and this one had reached 45 MB on an exit nobody had looked at.
+		// Unbounded, this one grows by tens of megabytes on an exit nobody looks at.
 		"logging": map[string]any{
 			"driver":  "json-file",
 			"options": map[string]any{"max-size": "10m", "max-file": "3"},

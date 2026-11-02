@@ -42,7 +42,7 @@ const (
 	agentVersion  = "v0.2.4"
 	adminUser     = "demo"
 	adminPassword = "demo"
-	masterName    = "master-xa-1"
+	masterName    = "master-1"
 	masterMgmt    = "10.20.0.1"
 	masterPublic  = "198.51.100.10"
 	clientPool    = "10.80.0.0/24"

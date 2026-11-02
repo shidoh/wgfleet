@@ -18,9 +18,9 @@ const LogScanTimeout = 3 * time.Second
 // timestamp of the last line it counted so the next call can continue from there.
 //
 // It exists because mihomo's own errors were invisible. The TPROXY reply failure
-// that black-holed every client QUIC flow from 2026-08-28 announced itself 97787
+// that black-holed every client QUIC flow announced itself tens of thousands of
 // times in the container log and produced no metric, no alert and no state change:
-// the fleet stayed green for eight days while a whole protocol was dead. Anything
+// the fleet stayed green for days while a whole protocol was dead. Anything
 // the data plane says about itself has to reach a counter.
 //
 // Deduplication is by Docker's OWN timestamp, not the one inside mihomo's message.

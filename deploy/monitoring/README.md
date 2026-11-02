@@ -287,17 +287,15 @@ would be indistinguishable from a broken probe.
 Why they exist: these probes fail *softly* by design — the error is non-fatal, the
 last-good/default value stays in force, and only a `WARN` is logged. That is the
 right behaviour, but it makes total failure look exactly like normal operation.
-The WARP path-MTU probe failed on 100% of runs on every node while the whole fleet
-reported `Ready`, so auto-MTU discovery was dead and a real PMTU
-regression would have gone unnoticed. These two timestamps make "attempting on
+A WARP path-MTU probe can fail on every run on every node while the whole fleet
+reports `Ready`, leaving auto-MTU discovery dead and a real PMTU
+regression unnoticed. These two timestamps make "attempting on
 schedule, never succeeding" a visible state.
 
 The `wgfleet_exit_tunnel_*` family is the **only** view of the master↔exit tunnels.
 They are userspace mihomo proxies, not kernel WireGuard, so no `wgfleet_wg_*` series
-covers them — and until 2026-09-04 nothing else did either. Three exits had been
-dropping out of the load balancer for two weeks and the sole record was the master
-agent's journal, which is why an exit falling out of rotation could not be seen on a
-dashboard at all.
+covers them. Without this family an exit can drop out of the load balancer for weeks
+with the master agent's journal as the sole record.
 
 Read it together with `wgfleet_agent_exit_held_out`. Two health criteria write
 mihomo's alive flag: mihomo's own group check (one lightweight URL, every interval)
@@ -313,10 +311,9 @@ it by hand, in an emergency, precisely when the active path has been blocked.
 
 The distinction matters because the second one is invisible by construction: a
 standby transport is deliberately drained, so it sits in no proxy group, so
-neither mihomo's own health check nor the tier probe ever dials it. Measured on
-the live fleet 2026-09-04, five of six exits had a standby transport and none had
-ever been health-checked — four reported `alive=1`, which is mihomo's default for
-an untested proxy rather than a measurement.
+neither mihomo's own health check nor the tier probe ever dials it. Unprobed, it
+reports `alive=1`, which is mihomo's default for an untested proxy rather than a
+measurement.
 
 ## 4. Alerts
 
@@ -399,7 +396,7 @@ Two notes worth carrying in your head:
 - **`WgfleetWARPEgress{Blocked,Degraded}` only fire on an exit running WARP.** The
   reachability classifier produces nothing without a `warp-egress` health check, so an
   exit on direct egress publishes no such series and cannot raise these. They were
-  called `WgfleetEgress*` until 2026-08-28; if you have Alertmanager routes or
+  called `WgfleetEgress*` in earlier releases; if you have Alertmanager routes or
   silences on the old names, they match nothing now.
 - **`WgfleetNodeCert{Expiring,Expired}` mean renewal is BROKEN, not that a birthday is
   near.** Agents renew themselves between 70% and 90% of the certificate's life, so by

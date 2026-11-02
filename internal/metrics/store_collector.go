@@ -44,8 +44,8 @@ type StoreCollector struct {
 	// The master's view of each master↔exit tunnel. These tunnels are userspace
 	// mihomo proxies, not kernel WireGuard, so NO wg_* series covers them — this is
 	// their only representation in metrics. Their absence is what made an exit
-	// dropping out of the load balancer invisible on every dashboard: the
-	// 2026-09-04 investigation had to be reconstructed from the master agent's
+	// dropping out of the load balancer invisible on every dashboard: an
+	// investigation had to be reconstructed from the master agent's
 	// journal because nothing recorded which exits were in rotation when.
 	exitTunnelAlive    *prometheus.Desc
 	exitTunnelDelay    *prometheus.Desc

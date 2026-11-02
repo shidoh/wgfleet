@@ -88,7 +88,7 @@ func TestSSHDHardeningPlanner_ConvergedNoReload(t *testing.T) {
 }
 
 func TestSSHDHardeningPlanner_DriftRepaired(t *testing.T) {
-	// A partial overwrite (the 2026-07-25 incident: only X11Forwarding survived) must be
+	// A partial overwrite (e.g. only X11Forwarding survived) must be
 	// repaired: the full hardening returns and sshd is reloaded.
 	sshd, _, sshdPath, _ := plannersFor(t, nil)
 	if err := os.WriteFile(sshdPath, []byte("X11Forwarding no\n"), 0o644); err != nil {

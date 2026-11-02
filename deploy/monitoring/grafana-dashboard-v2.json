@@ -3683,7 +3683,7 @@
         "spec": {
           "id": 238,
           "title": "Scanner list, IPv4 addresses by source",
-          "description": "What each source gave the last good list, largest copy across nodes. C24Be has published half its list on a bad day (2026-10-31: 424 295 → 230 467); a drop here is the source, not the fleet.",
+          "description": "What each source gave the last good list, largest copy across nodes. A source can publish half its list on a bad day; a drop here is the source, not the fleet.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -4668,7 +4668,7 @@
         "spec": {
           "id": 97,
           "title": "UDP reply socket possible, by port",
-          "description": "1 = a TPROXY reply socket can still be opened for that destination port; 0 = a socket this host already holds makes it impossible. Port 443 sitting at 0 is the client AmneziaWG interface holding it, which is why client QUIC had no return path from 2026-08-28.",
+          "description": "1 = a TPROXY reply socket can still be opened for that destination port; 0 = a socket this host already holds makes it impossible. Port 443 sitting at 0 is the client AmneziaWG interface holding it, which leaves client QUIC with no return path.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -5064,7 +5064,7 @@
         "spec": {
           "id": 62,
           "title": "Standby transport usable",
-          "description": "Whether each dual-transport exit's INACTIVE transport — the one an operator would switch it onto — can actually reach the internet. Absent means never measured, which is not the same as healthy: an untested mihomo proxy reports alive=1 by default, so before this was probed the fleet showed a confident green on no evidence. The switch is an emergency move, made exactly when the active path is blocked.",
+          "description": "Whether each dual-transport exit's INACTIVE transport — the one an operator would switch it onto — can actually reach the internet. Absent means never measured, which is not the same as healthy: an untested mihomo proxy reports alive=1 by default, so an unprobed standby shows a confident green on no evidence. The switch is an emergency move, made exactly when the active path is blocked.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -5884,7 +5884,7 @@
         "spec": {
           "id": 54,
           "title": "mihomo restarts (30m) and self-heal throttle",
-          "description": "Restarts of mihomo's container in a trailing 30 minutes, from docker's own start time — every restart counts, whoever caused it — plus 1 while the agent's restart governor is refusing further self-heal restarts. Once a planner restarted mihomo every pass, three exits fell out of rotation in three minutes, and the only record was a journal. A throttle is the same defect with the symptom muted.",
+          "description": "Restarts of mihomo's container in a trailing 30 minutes, from docker's own start time — every restart counts, whoever caused it — plus 1 while the agent's restart governor is refusing further self-heal restarts. A planner that restarts mihomo every pass knocks exits out of rotation within minutes, and the only record is a journal. A throttle is the same defect with the symptom muted.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -6287,7 +6287,7 @@
         "spec": {
           "id": 111,
           "title": "Nodes without host metrics",
-          "description": "Nodes the controller knows that have no node-exporter target up. Three of seven had host metrics by accident of their hoster; the master had none. A node here is one whose CPU, memory and disk are invisible — re-provision it, or check its prometheus-node-exporter unit.",
+          "description": "Nodes the controller knows that have no node-exporter target up. Without the bootstrap's exporter only nodes whose hoster ships one have host metrics. A node here is one whose CPU, memory and disk are invisible — re-provision it, or check its prometheus-node-exporter unit.",
           "links": [],
           "data": {
             "kind": "QueryGroup",

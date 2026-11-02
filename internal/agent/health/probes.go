@@ -450,8 +450,8 @@ func LifelineUpProbe(confPath, iface string) Probe {
 // is blocked and ACCEPTED is a known, declared state — the ruleset refuses client
 // traffic to it, or the operator has taken the loss knowingly. A port that is
 // blocked and NOT accepted is a silent black hole: the client sends and sends and
-// nothing ever comes back, which ran for eight days on the live master before
-// anyone asked (97787 dropped replies, all on the client WG port).
+// nothing ever comes back, which can run for days before anyone asks (every
+// dropped reply on the client WG port).
 //
 // bindable and accepted are injected so the decision logic is testable off Linux;
 // production passes UDPReturnBindable and the rendered refusal set.

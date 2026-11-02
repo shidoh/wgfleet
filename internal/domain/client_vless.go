@@ -61,9 +61,9 @@ type ClientVLESSServerSpec struct {
 	// empty ⇒ XHTTP.
 	Mode string
 	// AllowEmptySNI adds "" to the inbound serverNames so a ClientHello without an
-	// SNI extension is accepted. Reported as a strong RU-TSPU bypass (2026 recon,
-	// empty-SNI lifted the block in 100% of one field test), so it defaults ON for
-	// the client leg — clients then send no SNI.
+	// SNI extension is accepted. Reported as a strong RU-TSPU bypass (empty-SNI
+	// lifted the block in every attempt of one field test), so it defaults ON for
+	// the client interface — clients then send no SNI.
 	AllowEmptySNI bool
 	// AllowIPv6 false ⇒ the rendered config pins xray to IPv4 resolution, so the
 	// IPv4-only data plane never black-holes an AAAA-preferring client (#20).
@@ -138,7 +138,7 @@ func (c ClientVLESSServerSpec) Validate() error {
 // reality-opts.support-x25519mlkem768 the one built-in profile whose ClientHello
 // carries X25519MLKEM768, which REALITY ≥ 26.9.8 requires (firefox-120 is refused
 // there). It was firefox while chrome was reported flagged by RU TSPU; an A/B from
-// a home ISP on 2026-10-16 (90 fresh handshakes, both masters) found no difference
+// a home ISP (dozens of fresh handshakes, two masters) found no difference
 // between firefox, chrome and chrome+PQ. STABLE on purpose: a per-connection
 // randomized fingerprint can trip the freeze-under-change heuristic. Mux defaults ON because amortizing the REALITY handshake is the top
 // handshake-parallelism-freeze mitigation. See config.ClientVLESSConfig for the

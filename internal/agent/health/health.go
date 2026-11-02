@@ -1,5 +1,5 @@
 // Package health runs an agent's self-checks after a reconcile and aggregates
-// them into a node lifecycle state (docs/DESIGN.md §7, Phase 4 "Verify & Ready"). A
+// them into a node lifecycle state. A
 // node is Ready only when every check passes; a failing check makes it Degraded;
 // a failed reconcile makes it Error. The checks themselves are role-specific
 // (exit: WG handshake freshness, WARP egress, DNS; master: mihomo API) and their

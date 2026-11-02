@@ -27,7 +27,7 @@ var awgAptPackages = []string{"amneziawg", "amneziawg-dkms", "amneziawg-tools"}
 // A dependency that updates itself must be pinned; this makes that rule
 // converge. The holds used to be applied by hand during fleet hardening, and a
 // hand-applied invariant drifts exactly the way this one did: nodes provisioned
-// later (vn1/vn2, 2026-08-05) came up with unattended-upgrades enabled and no hold
+// later came up with unattended-upgrades enabled and no hold
 // at all, so an automatic dkms/tools bump could have flipped their AWG generation
 // under a running data plane.
 //
@@ -86,9 +86,9 @@ func (p awgHoldPlanner) Plan(ctx context.Context, _ domain.NodeSpec) ([]reconcil
 			// A dpkg lock held by someone else is "not now", not a failure. The
 			// hold is convergent by construction — every pass re-reads the state
 			// and re-applies — so the next pass 30s later sets it, by which time
-			// unattended-upgrades has long finished. Failing here instead cost us
-			// four spurious Error states in a week (vn1/vn2, 2026-09-03): the node
-			// went Error, the alert fired, and the pass after it was already green.
+			// unattended-upgrades has long finished. Failing here instead produces
+			// spurious Error states: the node goes Error, the alert fires, and the
+			// pass after it is already green.
 			// Any OTHER failure still fails the pass: a hold that silently stops
 			// being applied is exactly the drift this planner exists to prevent.
 			if err != nil && (errors.Is(err, errDpkgLockBusy) || isDpkgLockBusy(err.Error())) {
@@ -142,8 +142,8 @@ func aptPackageState(ctx context.Context) (installed, held map[string]bool, err 
 // know to stdout and "no packages found matching X" to stderr. When NONE is known
 // stdout is empty and the exit code is still 1 — which the first version of this
 // read as a failed probe, failing the whole reconcile pass every 30 s on a node
-// whose module came from source rather than the PPA (a stand, 2026-09-07; any
-// node built outside our own scripts). Exit code 1 is an answer, not an error:
+// whose module came from source rather than the PPA (a stand, or any node built
+// outside our own scripts). Exit code 1 is an answer, not an error:
 // "not installed". Anything else — exit 2 (usage/database trouble) or a signal —
 // stays an error, because a planner that cannot see the node must not report it
 // converged.

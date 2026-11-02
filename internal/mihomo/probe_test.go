@@ -44,7 +44,7 @@ func TestProbeMemberCountsReachableDestinations(t *testing.T) {
 	}
 }
 
-// The pn8 signature: exactly one destination answers, the rest time out.
+// The destination-scoped block signature: exactly one destination answers, the rest time out.
 func TestProbeMemberReportsPartialReachability(t *testing.T) {
 	addr, _ := clashStub(t, func(target string) bool { return target == "http://good" })
 	ok, total, err := ProbeMember(context.Background(), addr, "", "pn8",

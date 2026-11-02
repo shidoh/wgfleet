@@ -38,8 +38,8 @@ const warpEndpointWindow = 3 * time.Minute
 const warpEndpointMaxDwell = 30 * time.Minute
 
 // warpEndpointPorts are the UDP ports Cloudflare's WARP endpoint serves. One
-// port can be refused while the others answer: on 2026-10-26 an exit's
-// handshakes to :2408 drew ICMP port-unreachable and :500, :1701, :4500 answered.
+// port can be refused while the others answer: an exit's handshakes to :2408 can
+// draw ICMP port-unreachable while :500, :1701, :4500 answer.
 var warpEndpointPorts = []string{"2408", "500", "1701", "4500"}
 
 const bootIDPath = "/proc/sys/kernel/random/boot_id"

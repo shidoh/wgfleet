@@ -57,7 +57,7 @@ func TestRenderWGCFRequiresSecrets(t *testing.T) {
 }
 
 func TestParseWGCFProfile(t *testing.T) {
-	// The exact shape `wgcf generate` writes (verified live on a WARP-registered node).
+	// The exact shape `wgcf generate` writes (as on a WARP-registered node).
 	profile := `[Interface]
 PrivateKey = aPrivKeyBase64ExampleForTestingPurposesOnly=
 Address = 172.16.0.2/32

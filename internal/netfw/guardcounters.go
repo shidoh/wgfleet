@@ -16,9 +16,8 @@ var GuardChains = []string{"egress_leak_guard", "egress_path_guard"}
 
 // GuardDrops reads each guard chain's packet counter.
 //
-// The counters existed for a day before anything read them, and in that day the
-// live master dropped two hundred client packets that nobody saw — found by an
-// engineer running `nft list chain` by hand. A number that is only readable by
+// Counters that nothing exports can drop client packets for days without anyone
+// noticing, until someone runs `nft list chain` by hand. A number that is only readable by
 // hand is a number nobody reads.
 //
 // A missing chain is omitted rather than reported as zero: on a master that has

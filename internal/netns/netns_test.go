@@ -326,7 +326,7 @@ func TestADownLinkWithTheUPFlagIsStillBroughtUp(t *testing.T) {
 
 // The reachability check must not be a TCP dial. The endpoint it is given is a
 // WireGuard listener — UDP — so a TCP connection there can only ever time out,
-// and on the stand 2026-09-05 that made the readiness gate impossible to pass and
+// and on a test stand that made the readiness gate impossible to pass and
 // the migration impossible to start.
 func TestReadyDoesNotDialTCPAtAWireGuardEndpoint(t *testing.T) {
 	r := &recorder{out: map[string]string{
@@ -363,7 +363,7 @@ func TestReadyFailsWhenTheExitCannotBeReached(t *testing.T) {
 // The kernel takes the MAXIMUM of `all` and the interface's own rp_filter, so
 // setting `all` and stopping there proves nothing.
 //
-// Measured in the live namespace: all=0, mih0=2, default=2 — loose filtering in
+// Measured in a real namespace: all=0, mih0=2, default=2 — loose filtering in
 // force while the code believed it had turned filtering off. Harmless with one
 // interface and one route back; a silent one-way drop the day there are two.
 func TestReversePathFilteringIsPinnedOnEveryKeyTheKernelConsults(t *testing.T) {

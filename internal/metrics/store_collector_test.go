@@ -242,8 +242,8 @@ func (e errString) Error() string { return string(e) }
 // WireGuard, so no wg_* series covers them. It reached the store already (the
 // agent has reported ExitHealth since the exit-tunnel work) but was never
 // exported, which is why an exit dropping out of the load balancer could not be
-// seen on a dashboard at all — the 2026-09-04 investigation had to be
-// reconstructed from the master agent's journal.
+// seen on a dashboard at all — an investigation had to be reconstructed
+// from the master agent's journal.
 func TestStoreCollectorExitTunnelHealth(t *testing.T) {
 	reg, st, c := newCollectorWithStore(t)
 	ctx := context.Background()

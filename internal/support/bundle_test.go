@@ -55,7 +55,7 @@ func readArchive(t *testing.T, raw []byte) map[string]string {
 	return files
 }
 
-// A collector that fails must not abort the bundle: a missing tool on a tester's
+// A collector that fails must not abort the bundle: a missing tool on a sender's
 // box is expected, and a bundle that refuses to exist because `conntrack` is not
 // installed is useless exactly when it is needed.
 func TestCollectRecordsFailuresAndKeepsGoing(t *testing.T) {
@@ -205,7 +205,7 @@ func TestRenderManifestListsBothNodesWhenNamesCollide(t *testing.T) {
 	}
 }
 
-// The manifest is the tester's index of what they are about to send. It must
+// The manifest is the sender's index of what they are about to send. It must
 // list every file actually in the archive, and the boundary of what was not
 // collected, or "you can see what you send" is not true.
 func TestWriteArchiveManifestMatchesContents(t *testing.T) {

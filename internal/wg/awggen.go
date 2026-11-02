@@ -56,7 +56,7 @@ const (
 	// (shipped in mihomo up to ≥ v1.19.27) does this WITHOUT a length guard, so a junk
 	// packet shorter than S4+4 panics it (`slice bounds out of range [S4:len]` in
 	// handleTransport). Guaranteeing every junk packet ≥ S4 + margin avoids it on the
-	// buggy version (newer amneziawg-go added the guard). Verified live: with Jmin<S4
+	// buggy version (newer amneziawg-go added the guard). Verified: with Jmin<S4
 	// the master↔exit tunnel crash-looped mihomo v1.19.27; flooring Jmin fixes it.
 	junkS4Margin = domain.AWGJunkS4Margin
 
@@ -72,7 +72,7 @@ const (
 
 	// awgSignatureSlots is the number of I-packet (I1-I5) slots the domain model
 	// carries. We fill the first two (STUN, QUIC); I3-I5 stay empty (see
-	// deriveSignatures and ADR-0033's 2026-09-07 amendment).
+	// deriveSignatures and ADR-0033's amendment).
 	awgSignatureSlots = 5
 
 	// stunBindingI1 is the first cover packet: a canonical STUN Binding Request —
@@ -96,7 +96,8 @@ const (
 	// Length varint and Packet Number that a full parser (or a stateful censor)
 	// needs, and stays well under the ~1200 B minimum for a genuine client Initial.
 	// The target is the mobile operators' first-packet prefix filter, which keys on
-	// byte0 / version / CID framing — field-measured to admit it (carrier A/carrier B 100%).
+	// byte0 / version / CID framing — field-measured to admit it (every attempt on two
+	// mobile carriers).
 	// A deep inspector still sees malformed QUIC; that case is the per-credential
 	// none/noise knob (ADR-0033 Open items), not this default.
 	quicCIDLow, quicCIDHigh = 4, 18   // DCID/SCID length
@@ -137,15 +138,15 @@ func deriveJunk(seed string) (jc, jmin, jmax int) {
 // We fill exactly two: I1 a canonical STUN Binding Request, I2 a QUIC v1 Initial;
 // I3-I5 stay empty.
 //
-// This is the 2026-09-07 amendment to ADR-0033, decided by a field A/B on live RU
-// carriers (carrier A, carrier B, carrier C, a home ISP). The prior design filled all five slots
+// This is an amendment to ADR-0033, decided by a field A/B across several RU
+// mobile carriers and a home ISP. The prior design filled all five slots
 // with opaque noise `<r N>`; that measured WORST on every mobile carrier — the
 // operators' per-flow prefix filter hard-blocked the opening (the server never
 // answered, rx=0) — while a valid protocol cover was admitted. A single cover is
-// carrier- and time-varying (STUN led carrier A in one window and was blocked in
-// another), so the two-packet STUN+QUIC opening is a hedge: when one protocol is
-// being dropped, the other carries the flow. Measured F=I1 STUN+I2 QUIC hit 100 %
-// on carrier A and carrier B and beat STUN-alone (80 %) on carrier B although both send the
+// carrier- and time-varying (STUN led on carrier A in one window and was blocked
+// in another), so the two-packet STUN+QUIC opening is a hedge: when one protocol is
+// being dropped, the other carries the flow. Measured, I1 STUN + I2 QUIC got through every
+// time on carriers A and B and beat STUN-alone on carrier B although both send the
 // same I1 — proof the filter reads past the first packet.
 //
 // The stand's adversary (a stateful censor that follows the flow) wants the

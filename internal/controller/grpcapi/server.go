@@ -172,12 +172,12 @@ func (s *Service) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Re
 	//
 	// The guard above is supposed to make this line rare: in steady state a
 	// re-registration carries nothing new, so there is nothing to persist and
-	// nothing to announce. Measured on the live master 2026-09-04 it fired 721
-	// times in three hours — 97% of the controller's entire journal, for one node,
-	// while not a single exit appeared — which means the guard never holds there and
-	// the row is rewritten every ~15 seconds forever. It also buried the events an
-	// operator actually needs: the reason mihomo bounced twice in 36 seconds that
-	// morning could not be reconstructed from this log at all.
+	// nothing to announce. Where the guard does not hold — it has been seen not to
+	// for a master while every exit stayed silent — this line fires on every
+	// re-registration, becomes most of the controller's journal for one node, and
+	// the row is rewritten every ~15 seconds forever. That also buries the events
+	// an operator actually needs, such as why mihomo bounced, which then cannot be
+	// reconstructed from this log at all.
 	//
 	// Naming the differing fields and the caller turns "it happens" into "this field,
 	// from this peer", which is the difference between a mystery and a fix.

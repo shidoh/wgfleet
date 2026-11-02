@@ -78,7 +78,7 @@ func ProbeWARPMTU(ctx context.Context, endpoint string) (int, error) {
 // beyond the cap is still safe — ProbeWARPMTU clamps to wg.DefaultWARPMTU, so a
 // missed constraint leaves the conservative default rather than raising the MTU.
 //
-// Measured 2026-08-04 on vn0/anz3/pn80: capped, tracepath exits 0 in 9-16s and
+// Measured on several exits: capped, tracepath exits 0 in 9-16s and
 // prints "Resume: pmtu N", which is what lastPMTU parses.
 const maxProbeHops = 10
 

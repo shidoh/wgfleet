@@ -30,16 +30,16 @@ type NetnsNATInput struct {
 	// every answer mihomo is waiting for: the WireGuard packets coming back from an
 	// exit, its own DNS replies, a geo-database download. Those are addressed to the
 	// namespace itself, no transparent socket matches them, and the fail-closed drop
-	// underneath eats them. Measured on the stand 2026-09-05: client UDP was
-	// intercepted and proxied correctly, and mihomo could not resolve a single name
-	// because its own answers were being dropped one hook before it — 27 datagrams
-	// in a minute, on the rule written to prevent leaks.
+	// underneath eats them. Measured on a test stand: client UDP was intercepted and
+	// proxied correctly, and mihomo could not resolve a single name because its own
+	// answers were being dropped one hook before it, on the rule written to prevent
+	// leaks.
 	//
 	// The host ruleset has always been scoped this way, by `iifname <client iface>`.
 	// In here the interface is shared by both directions, so the source is what
 	// separates them.
 	ClientCIDR string
-	// DirectCIDRs are destinations that must NOT be intercepted: the corporate
+	// DirectCIDRs are destinations that must NOT be intercepted: private
 	// networks clients route through the master, the management overlay, the exits'
 	// own public addresses (SSH to an exit from a full-tunnel client).
 	//
@@ -60,9 +60,9 @@ type NetnsNATInput struct {
 	// admin connection in here: the host rewrites the destination to this address,
 	// the packet arrives with a destination no direct-CIDR guard covers any more,
 	// the interception below claims it and sends it to the redirect port — and
-	// mihomo, asked to proxy a connection to itself, closes it. Measured on the live
-	// master 2026-09-05: the dashboard's TCP handshake completed and was immediately
-	// FIN'd, from the client tunnel only.
+	// mihomo, asked to proxy a connection to itself, closes it. The symptom: the
+	// dashboard's TCP handshake completes and is immediately FIN'd, from the client
+	// tunnel only.
 	SelfAddr string
 	// ClientForwardedPorts are the TCP ports on SelfAddr that the HOST forwards in
 	// here on behalf of clients — the Clash API port when the operator has opened it
@@ -81,8 +81,7 @@ type NetnsNATInput struct {
 	// namespace: it reaches the host's management address, where nothing has
 	// listened on the API port since the move, and is refused. Redirecting it on
 	// the host would send it back in with this namespace's own address as source.
-	// Measured on the live master 2026-10-12: 200 over AmneziaWG, an empty reply
-	// over VLESS, same URL.
+	// The symptom: 200 over AmneziaWG, an empty reply over VLESS, same URL.
 	OperatorAPIAddr string
 }
 
@@ -95,10 +94,10 @@ type NetnsNATInput struct {
 // "move the rules" as two separately reversible steps.
 //
 // What the move buys is that mihomo's reply sockets no longer compete with
-// whatever the host binds. On the live master the client AmneziaWG interface
-// holds 0.0.0.0:443 without SO_REUSEADDR, so every reply socket mihomo opened for
-// a client's QUIC flow failed with EADDRINUSE and the datagram was dropped in
-// silence for eight days. In here nothing else binds anything.
+// whatever the host binds. When the client AmneziaWG interface holds
+// 0.0.0.0:443 without SO_REUSEADDR, every reply socket mihomo opens for a
+// client's QUIC flow fails with EADDRINUSE and the datagram is dropped in
+// silence. In here nothing else binds anything.
 // portOf returns the port half of a host:port, so a rule can name it without the
 // address that would make it a different rule.
 func portOf(addr string) (string, error) {
@@ -137,7 +136,7 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	// the fleet resolver answers from — and its replies land on this veth with a
 	// source inside the pool, match a scope written as "from a client", get handed
 	// to a transparent socket that does not exist, and die on the fail-closed drop
-	// underneath. Measured on the stand 2026-09-05: 24 datagrams a minute, mihomo
+	// underneath. Measured on a test stand: mihomo
 	// unable to resolve a single name, and every TCP probe failing with the tunnel
 	// and the interception both working perfectly.
 	//
@@ -215,9 +214,9 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	// scoped `oifname != <veth>`, so the first postrouting pass (host → namespace)
 	// is exempt and conntrack records "no NAT" for the whole connection. The second
 	// pass, namespace → uplink, is the same connection: NAT will not fire, the source
-	// is still a client's, and the host's egress_leak_guard eats it. Measured on the
-	// live master 2026-09-05: 201 packets forwarded in here, 200 dropped there —
-	// client ping and traceroute black-holed since the move, in silence.
+	// is still a client's, and the host's egress_leak_guard eats it. Without this,
+	// nearly every packet forwarded in here is dropped there — client ping and
+	// traceroute black-hole after the move, in silence.
 	//
 	// The consequence is worth stating plainly, because it is a choice: these
 	// packets leave by the MASTER's address, not through an exit, so a traceroute
@@ -239,7 +238,7 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	// binding; upstream then holds a return path for the untranslated address,
 	// conntrack resolves the resulting tuple collision by rewriting the source port,
 	// and the far end receives data on a port it never dialled and resets. Traced
-	// end to end on an exit 2026-07-27, fixed there with this rule, and the reason
+	// end to end on an exit, fixed there with this rule, and the reason
 	// it belongs in every namespace that forwards client traffic.
 	b.WriteString("\t\tct state invalid drop\n")
 	// A client may reach exactly one thing on this namespace's own address: the
@@ -260,7 +259,7 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	}
 	// Plus whatever the host forwards in here for clients (the dashboard, when the
 	// operator opened it): a port the host DNATs to this address and this chain then
-	// drops is the exact regression measured on the live master 2026-09-06.
+	// drops is an easy regression to introduce.
 	rp, aerr := strconv.Atoi(redirPort)
 	if aerr != nil {
 		return "", fmt.Errorf("netfw netns NAT: redirect port %q is not a number: %w", redirPort, aerr)
@@ -281,9 +280,9 @@ func RenderNetnsNAT(in NetnsNATInput) (string, error) {
 	// namespace and onto the uplink, is the same connection: NAT will not fire, the
 	// source is still the client's, and the host's egress_leak_guard eats it.
 	//
-	// Measured on the live master 2026-09-05: 201 packets counted in here, 200
-	// counted by that guard on the way out. Client ping and traceroute have been
-	// black-holed since the move, in silence, and this counter is the only place the
+	// Without the masquerade, nearly every packet counted in here is counted again by
+	// that guard on the way out. Client ping and traceroute black-hole after the
+	// move, in silence, and this counter is the only place the
 	// two halves can be compared. Whether that traffic should leave at all — masked
 	// as the master, which is what a masquerade in this namespace would produce — is
 	// an open question for the operator, not one to settle in a comment.

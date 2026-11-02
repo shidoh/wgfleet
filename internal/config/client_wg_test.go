@@ -432,7 +432,7 @@ func TestNetnsCIDRMustNotOverlapAnyPool(t *testing.T) {
 	}
 }
 
-// The default is RFC 6598 and collides with nothing this fleet uses.
+// The default is RFC 6598 and collides with nothing a typical deployment uses.
 func TestDefaultNetnsCIDRIsAccepted(t *testing.T) {
 	f := FleetSection{
 		Masters: []MasterConfig{{

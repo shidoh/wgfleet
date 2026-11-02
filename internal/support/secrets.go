@@ -47,8 +47,7 @@ import (
 //   - It knew nothing of "header protection key". `awg show` deliberately prints
 //     "private key: (hidden)" and this file's own comment cites that as proof the
 //     command is safe to collect — but it prints the AmneziaWG 3.x header
-//     protection key IN FULL. A real bundle carried the live key of a live fleet,
-//     in a tarball the tool tells the operator to send to a tester. Also added:
+//     protection key IN FULL, so it must be masked. Also added:
 //     psk, uuid, passphrase, and a bare "key" term reached through the name
 //     prefix, which is what catches awg3_key, ca_key and anything else this
 //     project names that way without listing each one.

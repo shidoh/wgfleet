@@ -407,7 +407,7 @@ const SyntheticPeerName = "wgfleet-synthetic-probe"
 // It is an ordinary client in every respect, and that is the point: a prober that
 // takes a shortcut measures the shortcut. It handshakes with the same obfuscation,
 // gets the same MTU, traverses the same nftables chains and the same proxy as the
-// people this fleet exists for. The only thing special about it is the address,
+// people the fleet exists for. The only thing special about it is the address,
 // which is reserved out of the allocator's reach (domain.SyntheticClientAddress).
 //
 // The keypair is generated and kept on the node. The controller never sees it and

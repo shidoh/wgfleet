@@ -29,11 +29,11 @@ const (
 	// The revert exists to undo a move that BROKE the client path. A move that has
 	// carried clients cleanly and then starts failing hours later is far more likely
 	// to be looking at the path beyond it — a busy link, a slow exit — than at
-	// itself, and two passes are too few to tell the two apart. Live 2026-10-28 13:53:
-	// a client download filled a master's link, the DNS leg of the probe (pinned
-	// by wg-best to the two exits carrying the download) missed two passes running,
-	// and the mover recreated mihomo twice to move every client out and back in.
-	// Over the half hour before, misses never ran longer than two passes.
+	// itself, and two passes are too few to tell the two apart. A client download
+	// can fill a master's link so that the DNS part of the probe (pinned by wg-best
+	// to the exits carrying the download) misses two passes running, and with the
+	// unsettled limit the mover would recreate mihomo twice to move every client out
+	// and back in. Under ordinary load misses rarely run longer than two passes.
 	//
 	// It is still a revert, not an alert: a path that stays down for three minutes is
 	// down, and the host path is the known-good fallback.
@@ -44,7 +44,7 @@ const (
 	// into the namespace, the namespace planner arms the rules, the master NAT
 	// disarms the host — and the client path is measured at the END of that same
 	// pass, against a container Docker has just replaced and which may not have
-	// bound its listeners yet. Measured on the stand 2026-09-05: every attempt
+	// bound its listeners yet. Measured on the stand: every attempt
 	// attached, failed its next two probes on exactly that, and reverted; three
 	// attempts and the node gave up on a migration that was working.
 	//
@@ -227,9 +227,9 @@ func (m *netnsMover) Decide(wanted bool, ready func() error, pathOK func() bool)
 // PathVerdict is what the client-path probe says this pass. Known=false means the
 // probe's answer is not evidence about the namespace — mihomo was just reloaded
 // or restarted, and a probe that fails while the container is coming back says
-// nothing about where the interception lives. On 2026-09-07 three self-heal
-// restarts in a row failed the probe twice, the mover read that as "the move broke
-// the path" and put the interception back on the host — into the port collision
+// nothing about where the interception lives. Without this, a run of self-heal
+// restarts fails the probe twice, the mover reads that as "the move broke the
+// path" and puts the interception back on the host — into the port collision
 // this whole migration exists to escape — for five minutes. Why carries the
 // reason into the journal.
 type PathVerdict struct {
@@ -249,8 +249,8 @@ func (m *netnsMover) DecideWith(wanted bool, ready func() error, path func() Pat
 		// its own. An operator disabling the migration is not an oscillation, and
 		// neither is the flip that disabling undid: nothing failed. Left in place, the
 		// hold outlives the decision that caused it, so the next `auto` waits out five
-		// minutes for a flip that was deliberately reversed. Measured on the stand
-		// 2026-09-05: the knob went on at 11:51:02 and the node moved at 11:55:16 —
+		// minutes for a flip that was deliberately reversed. Measured on the stand: the
+		// knob went on and the node moved only four minutes later —
 		// four minutes of a feature that had already been asked for and was not
 		// happening, with the reason nowhere but a Debug log.
 		//
@@ -258,7 +258,7 @@ func (m *netnsMover) DecideWith(wanted bool, ready func() error, path func() Pat
 		// "staying on the host path until someone looks" — this is someone looking.
 		// Clear FIRST, then record. save() serialises the CURRENT state, so calling it
 		// before the mutation persists the verdict it was meant to erase: on the stand
-		// 2026-09-05 the file kept `gave_up: true` with `attempts: 0`, the machine
+		// the file kept `gave_up: true` with `attempts: 0`, the machine
 		// looked reset in memory, and every agent restart loaded the verdict back.
 		wasStuck := m.state == moveGaveUp || m.attempts > 0
 		m.state, m.reason = moveWaiting, "disabled by master.client_via_netns"

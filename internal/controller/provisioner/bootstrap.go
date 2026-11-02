@@ -127,14 +127,14 @@ func BuildPlan(in BootstrapInput) Plan {
 	}
 
 	// Phase 1c-1: pin the AmneziaWG packages. An unattended `apt-get upgrade` of
-	// these has already taken the fleet down once: amneziawg-tools v1.0.20260618
+	// these can take a fleet down: amneziawg-tools v1.0.20260618
 	// parsed H1/H2 with `== NULL`, so the params never reached the kernel and every
 	// master<->exit handshake died silently (fixed in v1.0.20260618-2). The kernel
 	// module is equally load-bearing — a DKMS rebuild against a new kernel is a
 	// deliberate act, not something an unattended upgrade should trigger.
 	//
 	// Applied unconditionally, not only when we just installed something: nodes
-	// provisioned before this step exist and are unpinned (pn80 was, 2026-07-20).
+	// provisioned before this step existed are unpinned.
 	// `apt-mark hold` is idempotent and succeeds on an already-held package.
 	steps = append(steps, runStep("hold AmneziaWG packages (no unattended upgrades)",
 		"apt-mark hold "+join(awgHeldPackages)))

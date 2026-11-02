@@ -126,7 +126,7 @@ var migrations = []string{
 	// re-registered on its next pass and auto-created the row again — the exit an
 	// operator had just deleted was back on the fleet page, back in the master's
 	// tunnel list, and back in front of the namespace readiness gate, within a
-	// minute (a tester's fleet, 2026-09-07). A retired id is refused at Register
+	// minute. A retired id is refused at Register
 	// until an explicit Provision re-admits it.
 	`CREATE TABLE IF NOT EXISTS retired_nodes (
 		id         TEXT PRIMARY KEY,

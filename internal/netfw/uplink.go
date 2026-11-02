@@ -16,8 +16,8 @@ const (
 // renderUplinkCounters counts the SYNs the master sends from in.UplinkAddr and
 // the SYN-ACKs that come back to it. Their ratio is the master's handshake
 // health: a filter that drops or delays SYNs past the kernel's 1 s retransmit
-// makes the host send more SYNs per answer. Measured 2026-10-26 over six
-// minutes: 169/138 on the filtered master, 126/128 on the clean one.
+// makes the host send more SYNs per answer: a filtered path shows noticeably
+// more SYNs than SYN-ACKs, a clean one about one to one.
 //
 // Counting only, never a verdict: both chains accept everything. The SYN is
 // counted after source NAT (a SYN from mihomo's namespace carries the host's

@@ -21,9 +21,9 @@ import (
 // This is asserted over the SET of call sites rather than per site, because the
 // defect is the set. Four places needed the change; review and the stand caught
 // three. The fourth — mihomoRedirPlanner, which probes the redirect listener and
-// RESTARTS mihomo when it cannot find it — reached production on 2026-09-05: it
-// restarted mihomo every pass, each restart re-initialised the userspace WireGuard
-// devices, and three exits fell out of the balancer within three minutes.
+// RESTARTS mihomo when it cannot find it — slipped through: it restarted mihomo
+// every pass, each restart re-initialised the userspace WireGuard devices, and
+// exits fell out of the balancer within minutes.
 //
 // A per-site unit test would not have caught that, and neither would a file-level
 // allow-list: the miss was in the same file as two of the fixes.

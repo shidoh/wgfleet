@@ -30,17 +30,17 @@ func TestExpandAllowedIPsRoutesTheRightAddresses(t *testing.T) {
 		addr, why string
 		want      bool
 	}{
-		{"172.26.1.100", "a home service on another LAN subnet", false},
+		{"172.26.1.100", "a service on another LAN subnet", false},
 		{"172.18.3.199", "the client's own LAN", false},
 		{"192.168.1.1", "the most common home router", false},
 		{"100.100.0.1", "carrier-grade NAT", false},
 		{"169.254.1.1", "link-local", false},
-		{"10.200.99.1", "a work resolver reached through the tunnel", true},
-		{"10.0.163.5", "a work subnet inside the broad 10/8", true},
-		{"172.19.57.10", "a work subnet re-added inside an excluded range", true},
+		{"10.200.99.1", "a resolver reached through the tunnel", true},
+		{"10.0.163.5", "a subnet inside the broad 10/8", true},
+		{"172.19.57.10", "a subnet re-added inside an excluded range", true},
 		{"172.29.3.10", "the management overlay", true},
 		{"8.8.8.8", "the public internet", true},
-		{"198.51.100.108", "a public address that happens to be at home", true},
+		{"198.51.100.108", "an ordinary public address", true},
 	} {
 		if in(tc.addr) != tc.want {
 			t.Errorf("%s (%s): in tunnel = %v, want %v", tc.addr, tc.why, in(tc.addr), tc.want)

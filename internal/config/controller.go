@@ -208,7 +208,7 @@ type FleetSection struct {
 	// the real TLS-1.3 site the inbound borrows a cert from / falls back to for probes.
 	// A per-exit exits[].reality.{server_name,dest} overrides it; empty here ⇒ a safe
 	// built-in (keybroker.DefaultRealitySNI). Pick a target whose hosting ASN is
-	// plausible for the exit's provider (recon 2026-06-25) — a single fleet default is
+	// plausible for the exit's provider — a single fleet default is
 	// a starting point, but ASN-diverse exits SHOULD set it per-exit.
 	RealityDefaultSNI  string `koanf:"reality_default_sni"`
 	RealityDefaultDest string `koanf:"reality_default_dest"`
@@ -516,7 +516,7 @@ type MasterConfig struct {
 	// observe (count new inbound connections from listed networks, drop nothing)
 	// or enforce (drop them). The master-side sibling of
 	// fleet.exits[].firewall.as_blacklist, with a counting step in between because
-	// a master is where testers connect from home and mobile networks. Replies to
+	// a master is where users connect from home and mobile networks. Replies to
 	// connections the master or its clients opened are never matched.
 	ASBlacklist string `koanf:"as_blacklist"`
 	// DNSFilter enables the master-tier blocky resolver (ADR-0024): a client-facing
@@ -565,12 +565,12 @@ type MihomoConfig struct {
 	// The namespace exists to remove a whole class of failure rather than one
 	// instance of it: mihomo's TPROXY reply path binds the SERVER's address:port,
 	// so every UDP port the HOST holds is a silent black hole for client traffic to
-	// that port. On this fleet that was 443, and client QUIC was one-way for eight
-	// days with every component metric green.
+	// that port. When that port is 443, client QUIC goes one-way while every
+	// component metric stays green.
 	ClientViaNetns string `koanf:"client_via_netns"`
 	// NetnsCIDR overrides the point-to-point link between the host and that
 	// namespace — a /30, host .1, namespace .2. Empty ⇒ 100.127.255.0/30 (RFC 6598,
-	// chosen because 10/8 on this fleet is routed into the corporate tunnel).
+	// chosen because 10/8 is often routed into another tunnel or private network).
 	NetnsCIDR string `koanf:"netns_cidr"`
 }
 
@@ -675,7 +675,7 @@ type ClientAWGConfig struct {
 	// every WireGuard config means by "everything".
 	ExcludeFromTunnel []string `koanf:"exclude_from_tunnel"`
 	// RouteThroughCIDRs are networks put BACK into the tunnel after the exclusion
-	// above — an operator work subnet that sits inside an excluded range, or the
+	// above — an operator subnet that sits inside an excluded range, or the
 	// management overlay. Same name and meaning as the client_vless knob.
 	// Meaningless without exclude_from_tunnel, since nothing has been taken out.
 	RouteThroughCIDRs []string `koanf:"route_through_cidrs"`
@@ -739,9 +739,8 @@ func (m MasterConfig) ClientAWGAllowedIPs() []string {
 }
 
 // ClientVLESSEmptySNIDefault is the empty_sni default for the client-facing VLESS
-// inbound: ON. An SNI-less ClientHello lifted the RU TSPU block in 100% of one
-// 2026 field test (docs/research/2026-07-client-transport-dpi.md), so the client
-// leg opts in by default; an operator can force it off with empty_sni: false.
+// inbound: ON. An SNI-less ClientHello lifted the RU TSPU block in every attempt
+// of one field test, so the client interface opts in by default; an operator can force it off with empty_sni: false.
 const ClientVLESSEmptySNIDefault = true
 
 // ClientVLESSFingerprintDefault / ClientVLESSMuxDefault re-export the client-leg
@@ -883,8 +882,8 @@ type MasterRouting struct {
 	// ReserveExits names the exits this master keeps as a SECOND tier: traffic uses
 	// them only when every primary exit is down (ADR-0029). The primary tier is
 	// everything not listed here, so a newly added exit defaults to primary and no
-	// exit can fall out of both tiers. Entries are manifest exit names ("1cnode004"),
-	// not rendered proxy names ("1cnode004-reality") — the transport suffix is an
+	// exit can fall out of both tiers. Entries are manifest exit names ("exit-a"),
+	// not rendered proxy names ("exit-a-reality") — the transport suffix is an
 	// implementation detail. Empty ⇒ a single flat group, exactly as before.
 	ReserveExits []string `koanf:"reserve_exits"`
 }
@@ -1239,7 +1238,7 @@ func (c ControllerConfig) Validate() error {
 		}
 	}
 	// The Web UI and /metrics endpoints have no authentication; their only
-	// protection is binding the mgmt/ZT overlay (docs/DESIGN.md §9/§10). Refuse a
+	// protection is binding the mgmt/ZT overlay. Refuse a
 	// public/unspecified bind so a misconfigured manifest can't silently expose
 	// destructive node actions (drain/decommission/delete/provision) or fleet
 	// topology. Set WGFLEET_ALLOW_PUBLIC_BIND=1 to override (behind your own

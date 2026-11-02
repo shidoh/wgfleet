@@ -1,5 +1,5 @@
 // Package keybroker is the controller's key registry and topology renderer. It
-// realizes docs/DESIGN.md principle #2: the controller stores only public keys and
+// follows one design principle: the controller stores only public keys and
 // renders each node's peer list from them — it never holds a private key.
 //
 // MVP topology (the reference master↔exit mesh): exits run a WG server; the
@@ -91,11 +91,11 @@ type suspendTrack struct {
 }
 
 // Auto-suspend hysteresis, in MINUTES. The exit's own throughput watchdog already
-// smooths the check over three probes (90 s), and that was the whole gate: on
-// 2026-09-07 vn0's WARP path sat at the 250 KiB/s floor, its check flipped three
-// times in seven minutes, and every flip re-rendered the master's mihomo config —
-// a hot reload that leaks WireGuard devices, so each one cost a container restart
-// and ten minutes of clients on the floor. Removing an exit from the balancer is
+// smooths the check over three probes (90 s), and that alone is not enough of a
+// gate: an exit whose WARP path sits at the 250 KiB/s floor flips its check
+// several times in a few minutes, and every flip re-renders the master's mihomo
+// config — a hot reload that leaks WireGuard devices, so each one costs a
+// container restart and minutes of clients on the floor. Removing an exit from the balancer is
 // an expensive act on the master; it has to be earned by minutes of evidence, and
 // undone by minutes of evidence, not by one probe either way.
 const (
@@ -759,9 +759,8 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	// client TCP to the master's own address and sends it into mihomo instead of
 	// letting it terminate locally: SSH and the admin UIs then hang off the proxy
 	// being healthy, and every packet takes a pointless userspace round trip.
-	// Found live 2026-07-20 — the DNAT guard list carried all five exits and not
-	// the master, because the exit-public-IP fix was never applied to the node
-	// that hosts the rule.
+	// Without it the DNAT guard list would carry every exit and not the master:
+	// the exit-public-IP handling must also apply to the node that hosts the rule.
 	if addr, ok := masterRoutableIP(master, masterNode); ok {
 		bits := 32
 		if addr.Is6() {
@@ -1086,7 +1085,7 @@ const (
 	// AND the X25519MLKEM768 post-quantum key exchange — modern xray/mihomo uTLS
 	// clients offer mlkem768, and a dest that can't echo it fails the authorized
 	// REALITY handshake ("handshake did not complete successfully"), even though the
-	// plain decoy still works (proven live 2026-06-25; XTLS PR #4779). www.microsoft.com
+	// plain decoy still works (XTLS PR #4779). www.microsoft.com
 	// does NOT support mlkem768 and must not be used. Verify any target with
 	// `xray tls ping <host>`. Operators SHOULD still override per exit with an
 	// ASN-plausible, inconspicuous, mlkem768-capable target.
@@ -1572,13 +1571,13 @@ func (b *Broker) renderDNS(ctx context.Context, exit config.ExitConfig) domain.D
 	}
 	node, _, _ := b.lookupPubKey(ctx, exit.Name)
 	d := exit.DNS
-	prometheus := true // default on (docs/DESIGN.md §9: no blind components)
+	prometheus := true // default on: no blind components
 	if d.Prometheus != nil {
 		prometheus = *d.Prometheus
 	}
 	return domain.DNSFilterSpec{
 		Enabled:  true,
-		MgmtAddr: node.MgmtAddr, // mgmt/ZT address only, never public (docs/DESIGN.md §9)
+		MgmtAddr: node.MgmtAddr, // mgmt/ZT address only, never public
 		Ports: domain.DNSPorts{
 			DNS:   d.Ports.DNS,
 			TLS:   d.Ports.TLS,
@@ -1604,7 +1603,7 @@ func (b *Broker) renderMasterDNS(master config.MasterConfig, exitUpstreams []str
 		return domain.DNSFilterSpec{}
 	}
 	d := b.fleet.MasterDNSFor(master)
-	prometheus := true // default on (docs/DESIGN.md §9: no blind components)
+	prometheus := true // default on: no blind components
 	if d.Prometheus != nil {
 		prometheus = *d.Prometheus
 	}

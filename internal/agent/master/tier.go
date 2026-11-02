@@ -20,8 +20,8 @@ const (
 	// defaultTierMinHold is the minimum time between flips. The hard floor on churn:
 	// each flip rewrites config.yaml and reloads mihomo, and a reload resets every
 	// group's health state — so a flapping exit could otherwise drive a feedback loop
-	// where instability causes reloads and reloads deepen instability (observed
-	// 2026-07-19: 22 reloads in a day while the fleet was sick).
+	// where instability causes reloads and reloads deepen instability (without it
+	// a sick fleet can reload mihomo dozens of times a day).
 	defaultTierMinHold = 10 * time.Minute
 	// defaultMinReachable is how many probe destinations a member must reach to
 	// count as usable. Above 1 on purpose: a member that answers exactly one
@@ -32,9 +32,8 @@ const (
 	//
 	// It exists because the flat-group rendering (ADR-0029 rev 2) leaves the
 	// inactive tier's proxies configured but in no group, so mihomo never dials
-	// them. Observed live 2026-07-19: within ~1.5h of the cutover the only AWG
-	// reserve exit went Degraded on `wg-handshake — stale handshake (1h23m45s
-	// old)` while every other check passed. Two problems, and the second is the
+	// them. Without warming, an AWG reserve exit goes Degraded within a couple of
+	// hours on `wg-handshake — stale handshake` while every other check passes. Two problems, and the second is the
 	// real one:
 	//
 	//  1. An idle reserve exit LOOKS broken, which is noise at best and blocks a
@@ -59,10 +58,10 @@ const (
 	// while keeping a path we deliberately keep quiet quiet: it carries no traffic,
 	// so every probe on it is pure cost.
 	//
-	// Measured live 2026-09-04: five of six exits had a standby transport and none
-	// had ever been health-checked. Four reported alive=1 — mihomo's default for an
-	// untested proxy, not a measurement — so the fleet showed a confident green on
-	// no evidence at all, and the fifth was frozen on an 82-minute-old verdict.
+	// Without this sweep no standby transport is ever health-checked. Untested
+	// proxies report alive=1 — mihomo's default for an untested proxy, not a
+	// measurement — so the fleet shows a confident green on no evidence at all,
+	// and others sit frozen on verdicts that are hours old.
 	// ADR-0025's plan item 6 promised "per-transport reachability"; the
 	// active-transport metric shipped and this half did not.
 	defaultStandbyEvery = 10
@@ -192,7 +191,7 @@ func (s *TierSelector) ReserveIsActive() bool { return s.reserveActive }
 // ProbeStandbyTransports keeps a verdict on each STANDBY transport: the inactive
 // half of a dual-transport exit, drained on purpose and therefore in no tier, so
 // no other probe in this file ever reaches it (see defaultStandbyEvery for what
-// that cost on the live fleet).
+// that costs).
 //
 // It is deliberately NOT part of any decision. Nothing here fails over on a
 // standby's condition — the switch is the operator's, by explicit design
@@ -249,7 +248,7 @@ func (s *TierSelector) ProbeStandbyTransports(ctx context.Context, probe memberP
 
 // StandbyTransportHealth reports the last verdict per standby-transport proxy.
 // An absent entry means never sampled, which is NOT the same as healthy — the
-// distinction the live fleet lost when four untested proxies reported alive=1.
+// distinction that is lost when untested proxies report mihomo's default alive=1.
 func (s *TierSelector) StandbyTransportHealth() map[string]bool {
 	out := make(map[string]bool, len(s.standbyTransport))
 	for k, v := range s.standbyTransport {
@@ -463,27 +462,24 @@ func (s *TierSelector) flip(toReserve bool, why string) {
 // The walk STARTS AT A ROTATING OFFSET. Stopping at the first usable member is what
 // keeps the probe cheap on a healthy tier, but starting at index 0 every time meant
 // members[0] absorbed the entire probe load forever while the rest were never
-// sampled. Measured live 2026-07-19/20: vn1 took ~5 samples per 30s cycle against
-// vn2's 1, and vn1's latency spread was 27ms (90-117) versus vn2's 1ms (96-97) — in
-// the same datacentre off the same floor. The "vn1/vn2 latency spike" chased all
-// evening as a network fault was substantially self-inflicted probe contention.
+// sampled. The first member then takes several times the probe load of its
+// peers and shows a latency spread they do not — a "latency spike" that looks like
+// a network fault but is self-inflicted probe contention.
 // Rotating spreads the load without giving up the early exit.
 // A verdict here is not just an observation, and that is the part the original
 // version of this function missed. `GET /proxies/{name}/delay` — how ProbeMember
 // asks the question — RECORDS its result in mihomo and flips the proxy's `alive`
 // flag, which is exactly what removes a member from a load-balance group.
-// Verified against the live master 2026-09-04: probing a reserve proxy at an
-// unroutable address turned alive false, probing it at cp.cloudflare.com turned it
-// back true.
+// Probing a reserve proxy at an unroutable address turns alive false; probing it
+// at cp.cloudflare.com turns it back true.
 //
 // So this probe and the group's own health check write the SAME flag under
 // DIFFERENT criteria — ours across four independent destinations, mihomo's against
 // one lightweight URL every `interval`. Ours evicts a censored or dead exit;
 // mihomo's revives it on the weaker test. Whoever wrote last wins, and the early
 // exit meant a failing member often went several passes unprobed, so mihomo won
-// almost every time: measured on the live fleet, 27 failed verdicts in 13 days
-// (vn2 x13, vn0 x9, vn1 x5) and a broken exit that flapped in and out of rotation
-// instead of leaving it.
+// almost every time: failed verdicts were undone rather than sustained, and a
+// broken exit flapped in and out of rotation instead of leaving it.
 //
 // Held-out members are therefore re-probed ALL of them, every pass — right after
 // one member of the live rotation (see below for why not before it). A
@@ -502,8 +498,7 @@ func (s *TierSelector) tierUsable(ctx context.Context, probe memberProbe, member
 	}
 
 	// A member the phase budget never reached is UNKNOWN, not down. Counting it as
-	// down is how the live fleet failed over on 2026-09-28 without vn2 ever being
-	// asked. A skipped held-out member keeps its standing verdict instead — it was
+	// down lets a tier fail over while a healthy member was never even asked. A skipped held-out member keeps its standing verdict instead — it was
 	// judged unusable and nothing since says otherwise — which is what still lets a
 	// genuinely dead tier fail over when one pass cannot cover every member.
 	anyKnown, anyUsable, freeBlind := false, false, false
@@ -525,7 +520,7 @@ func (s *TierSelector) tierUsable(ctx context.Context, probe memberProbe, member
 	// One member of the live rotation goes FIRST. Held-out members are usually dead
 	// and each burns a whole probe timeout; asked first, two of them exhausted the
 	// phase budget every pass, the healthy members were never sampled, and the
-	// recovery streak reset forever (live, 2026-09-28). A healthy member answers in
+	// recovery streak reset forever. A healthy member answers in
 	// milliseconds, so going first costs the held-out re-probe almost nothing.
 	//
 	// This first member — the scout — is the only one re-asked before being held out
@@ -561,11 +556,11 @@ func (s *TierSelector) reaches(ok, total int) bool {
 // reaskOnce probes a member that has just failed one more time and returns the
 // result to judge it on.
 //
-// One failed sample is weak evidence and the price of acting on it is high. Live
-// 2026-10-28: a single client's download filled a master's link, one probe of an exit
-// reached 1 of 4 destinations, and the exit left the rotation. wg-best hashes sites to
-// exits, so a third of all sites moved to another exit — and moved back when the
-// next pass found it fine. Every session pinned to an exit's address broke twice.
+// One failed sample is weak evidence and the price of acting on it is high. A
+// single client's download can fill a master's link, so one probe of an exit
+// reaches 1 of 4 destinations and the exit leaves the rotation. wg-best hashes sites to
+// exits, so that exit's share of sites moves to another exit — and moves back when
+// the next pass finds it fine. Every session pinned to an exit's address breaks twice.
 // A member that answers the moment it is asked again was never down; it lost a race
 // with a full queue.
 //

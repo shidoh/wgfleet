@@ -239,7 +239,7 @@ func TestMoveWithoutAStatePathWritesNothing(t *testing.T) {
 // The flip is a pass, not an action: compose recreates mihomo into the namespace,
 // the namespace planner arms the rules, the master NAT disarms the host — and the
 // client path is measured at the END of that same pass, against a container
-// Docker has just replaced. Measured on the stand 2026-09-05: every attempt
+// Docker has just replaced. Measured on the stand: every attempt
 // attached, failed its next two probes on exactly that, and reverted, until the
 // node gave up on a migration that was working.
 func TestMoveIsNotJudgedWhileItIsStillHappening(t *testing.T) {
@@ -285,7 +285,7 @@ func TestSettlingDoesNotDelayConfirmationForever(t *testing.T) {
 // The retry hold exists to stop a node oscillating on its own. An operator
 // disabling the migration is not an oscillation, and neither is the flip that
 // disabling undid — nothing failed. Left in place, the hold outlives the decision
-// that caused it. Measured on the stand 2026-09-05: the knob went on and the node
+// that caused it. Measured on the stand: the knob went on and the node
 // sat still for four minutes waiting out a hold for a flip it had been told to
 // reverse.
 func TestDisablingClearsTheHoldSoReEnablingIsImmediate(t *testing.T) {
@@ -484,8 +484,8 @@ func TestARecordFromAnOlderBuildDoesNotHoldTheMove(t *testing.T) {
 }
 
 // A probe that fails while mihomo is being restarted is not evidence against the
-// namespace. 2026-09-07: three self-heal restarts in a row, two failed probes, and
-// the mover reverted a working move into the port collision it exists to escape.
+// namespace. A run of self-heal restarts gives two failed probes, and without this
+// the mover reverts a working move into the port collision it exists to escape.
 func TestMoveIsNotJudgedOnAnUnknownVerdict(t *testing.T) {
 	m, clock := testMover()
 	if !m.Decide(true, isReady, pathUp) {
@@ -513,10 +513,10 @@ func TestMoveIsNotJudgedOnAnUnknownVerdict(t *testing.T) {
 	}
 }
 
-// Live 2026-10-28 13:53: hours after the move had settled, a busy link made the
-// client-path DNS probe miss twice in a row and the mover put every client back on
-// the host path — two mihomo recreations, two full drops, for a move that had
-// nothing to do with it. The revert is there to undo a move that BROKE the path; a
+// Hours after the move has settled, a busy link can make the client-path DNS
+// probe miss twice in a row; without a longer streak the mover puts every client
+// back on the host path — two mihomo recreations, two full drops, for a move that
+// had nothing to do with it. The revert is there to undo a move that BROKE the path; a
 // move that has carried clients cleanly is held to a longer streak before it is
 // blamed.
 func TestASettledMoveRidesOutABriefBadPatch(t *testing.T) {

@@ -59,7 +59,7 @@ func TestTierFailsOverOnlyAfterStreak(t *testing.T) {
 	}
 }
 
-// The pn8 case: an exit that answers exactly one destination is censored, not
+// The destination-scoped block: an exit that answers exactly one destination is censored, not
 // healthy. A single-URL check would keep it in rotation.
 func TestTierTreatsSingleReachableDestinationAsUnusable(t *testing.T) {
 	s := newTestSelector(fixedProbe(map[string][2]int{"vn1": {1, 4}, "vn2": {1, 4}}))
@@ -189,8 +189,8 @@ func countingProbe(t map[string][2]int, hits map[string]int) memberProbe {
 }
 
 // The flat group (ADR-0029 rev 2) leaves reserve proxies in no group, so nothing
-// dials them and their WireGuard tunnels go cold — observed live as a reserve exit
-// going Degraded on "stale handshake (1h23m45s old)" while every other check passed.
+// dials them and their WireGuard tunnels go cold — a reserve exit then goes
+// Degraded on "stale handshake" while every other check passes.
 func TestTierWarmsIdleReserve(t *testing.T) {
 	hits := map[string]int{}
 	table := map[string][2]int{"vn1": {4, 4}, "vn2": {4, 4}, "1cnode004": {4, 4}}
@@ -305,8 +305,8 @@ func TestTierStreaksSurviveAcrossPasses(t *testing.T) {
 }
 
 // The early exit keeps a healthy tier cheap, but a fixed start index made
-// members[0] absorb every probe forever: measured live, vn1 took ~5 samples per
-// cycle to vn2's 1, and only vn1 showed latency spread. Probing must rotate.
+// members[0] absorb every probe forever: the first member takes several times the
+// samples of its peers, and only it shows latency spread. Probing must rotate.
 func TestTierProbeLoadRotatesAcrossMembers(t *testing.T) {
 	hits := map[string]int{}
 	table := map[string][2]int{"vn1": {4, 4}, "vn2": {4, 4}, "1cnode004": {4, 4}}
@@ -384,12 +384,11 @@ func TestTierRecoveryFromStarvationUsesHysteresis(t *testing.T) {
 // check mihomo's own group runs (one lightweight URL, every `interval`). Both
 // write the SAME state: `GET /proxies/{name}/delay` is not a read — it records the
 // result and flips the proxy's `alive` flag, which is what removes a member from a
-// load-balance group. Verified on the live master 2026-09-04.
+// load-balance group.
 //
 // So the two criteria fight over one flag. Ours evicts a censored or dead exit;
-// mihomo's weaker check puts it straight back within the interval. Measured on the
-// live fleet: 27 "failed multi-destination probe" verdicts in 13 days (vn2 x13,
-// vn0 x9, vn1 x5) — and every one of them was undone rather than sustained,
+// mihomo's weaker check puts it straight back within the interval. "Failed
+// multi-destination probe" verdicts were undone rather than sustained,
 // because the early exit below meant we often did not probe that member again for
 // several passes. A broken exit therefore MIGRATED in and out of rotation instead
 // of staying out of it.
@@ -542,9 +541,9 @@ func TestReserveIsActiveDoesNotProbe(t *testing.T) {
 
 // A standby transport is in no tier, so nothing here dials it: not the tier
 // decision (it probes the active tier), not warmStandby (it probes the inactive
-// TIER). Measured live 2026-09-04 — five of six exits had a standby transport and
-// none had ever been health-checked; four reported alive=1, which is mihomo's
-// default for an untested proxy rather than a measurement.
+// TIER). Without its own sweep no standby transport is ever health-checked, and
+// an untested one reports alive=1, which is mihomo's default for an untested
+// proxy rather than a measurement.
 //
 // The cost of not knowing is paid at the worst moment: switching transport is an
 // emergency move made precisely when the active path is blocked, and it is not
@@ -721,8 +720,8 @@ func TestRotationVerdictClearsWhenTheMemberRecovers(t *testing.T) {
 // The warm probe of the idle reserve tier knew which member failed and threw the
 // name away, reporting only "1 of 3 usable". An aggregate cannot be acted on: the
 // alert only fires when EVERY reserve member is dead, and until then the console
-// shows a reserve exit that looks exactly like a healthy one. Live 2026-09-11:
-// 1cnode004's active path was failing for minutes at a time behind a 3/3.
+// shows a reserve exit that looks exactly like a healthy one: a reserve exit's
+// active path can fail for minutes at a time behind a 3/3.
 func TestWarmProbeKeepsAPerMemberVerdictNotJustTheTally(t *testing.T) {
 	table := map[string][2]int{
 		"vn1": {4, 4}, "vn2": {4, 4},
@@ -788,10 +787,10 @@ func (s *testSelector) budgetedPass(table map[string][2]int, n int, primary, res
 	return s.active(primary, reserve)
 }
 
-// Live 2026-09-28: vn0 and vn0-reality were dead and held out, and each burned a
-// full probe timeout every pass. The phase budget ran out on them, the healthy
-// member was never asked, and the pass counted as "primary unusable" — so the
-// recovery streak reset every minute or two and the fleet sat on the reserve.
+// Two dead, held-out members (both transports of one exit) each burn a full
+// probe timeout every pass. If the phase budget runs out on them, the healthy
+// member is never asked and the pass counts as "primary unusable" — so the
+// recovery streak resets every minute or two and the fleet sits on the reserve.
 func TestDeadHeldMembersDoNotStarveAHealthyOne(t *testing.T) {
 	members := []string{"vn0", "vn0-reality", "vn1", "vn2"}
 	table := map[string][2]int{"vn0": {0, 4}, "vn0-reality": {0, 4}, "vn1": {4, 4}, "vn2": {0, 4}}
@@ -813,8 +812,8 @@ func TestDeadHeldMembersDoNotStarveAHealthyOne(t *testing.T) {
 	t.Fatalf("still on the reserve after %d passes with a healthy primary member", s.recoverStreak)
 }
 
-// Live 2026-09-28 10:34: the failover was decided while vn2 had not been probed at
-// all. A member the budget never reached is unknown, not down.
+// A failover must not be decided while a member has not been probed at all. A
+// member the budget never reached is unknown, not down.
 func TestUnprobedMemberIsNotCountedAsDown(t *testing.T) {
 	members := []string{"vn0", "vn0-reality", "vn1", "vn2"}
 	table := map[string][2]int{"vn0": {0, 4}, "vn0-reality": {0, 4}, "vn1": {0, 4}, "vn2": {4, 4}}
@@ -865,8 +864,8 @@ func TestBlindPassWithHeldMembersHoldsTheDecision(t *testing.T) {
 	}
 }
 
-// Live 2026-09-28: after vd* moved from AWG to REALITY the selector kept holding
-// the AWG proxy names, which were no longer in any tier and were never probed again.
+// After exits move from AWG to REALITY the selector must not keep holding the AWG
+// proxy names, which are no longer in any tier and are never probed again.
 func TestHeldOutForgetsMembersThatLeaveTheTiers(t *testing.T) {
 	s := newTestSelector(fixedProbe(map[string][2]int{"vn1": {0, 4}, "vn1-reality": {4, 4}}))
 	s.warmEvery = 0
@@ -898,9 +897,9 @@ func sequenceProbe(seq map[string][][2]int, hits map[string]int) memberProbe {
 	}
 }
 
-// Live 2026-10-28: one client's download filled a master's link, a single probe
-// of an exit reached 1 of 4 destinations, and it left the rotation — a third of all
-// sites moved to another exit and back a minute later. A member that fails once and
+// One client's download can fill a master's link, so a single probe of an exit
+// reaches 1 of 4 destinations and it leaves the rotation — its share of sites moves
+// to another exit and back a minute later. A member that fails once and
 // answers the moment it is asked again was never down; it lost a race with a full
 // queue. The first member sampled in a pass is re-asked before it is held out.
 func TestScoutThatFailsOnceIsReaskedNotHeld(t *testing.T) {

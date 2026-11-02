@@ -936,7 +936,7 @@ func TestPortalDevicePageLeadsWithTheSubscription(t *testing.T) {
 
 // The subscription and the AmneziaWG .conf carry the same key, so running both
 // apps at once makes the server answer whichever spoke last — the connection
-// breaks every few seconds (seen live, 2026-09-27). And a subscription update
+// breaks every few seconds. And a subscription update
 // replaces the profile whole, so edits made inside it are lost. The page says
 // both before the person finds out.
 func TestPortalDevicePageWarnsAboutTwoAppsAndLocalEdits(t *testing.T) {
@@ -950,7 +950,7 @@ func TestPortalDevicePageWarnsAboutTwoAppsAndLocalEdits(t *testing.T) {
 }
 
 // The card's padding must sit inside its width: content-box made it 56px wider
-// than min(420px, 92vw), and a 390px phone scrolled sideways (found 2026-09-27).
+// than min(420px, 92vw), and a 390px phone scrolled sideways.
 func TestPortalCardFitsAPhone(t *testing.T) {
 	i := strings.Index(portalCSS, ".card {")
 	if i < 0 {

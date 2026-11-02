@@ -83,9 +83,9 @@ func TestRenderMasterComposeNeverShipsWGEasy(t *testing.T) {
 
 // The noisiest container on the master must not write an unbounded log.
 //
-// Docker's json-file driver does not rotate by default. Measured on the live
-// master 2026-09-04: 97787 error lines in 18 days, all of one kind, in a file
-// nothing truncates — a slow disk leak on a 2 vCPU box, and the reason reading
+// Docker's json-file driver does not rotate by default. A broken
+// data path can produce tens of thousands of error lines of one kind in a file
+// nothing truncates — a slow disk leak on a small box, and the reason reading
 // recent lines is expensive (json-file has no index, so `--since` scans from the
 // start of the file).
 func TestMihomoLogIsRotated(t *testing.T) {
@@ -139,7 +139,7 @@ func TestWithoutAHolderMihomoStaysOnHostNetworking(t *testing.T) {
 }
 
 // Phase A: the holder exists, mihomo does not move. This is what makes the
-// namespace inspectable on a live master at no risk — the container and its veth
+// namespace inspectable on a running master at no risk — the container and its veth
 // are inert until the interception rules move, and mihomo keeps serving clients
 // from the host namespace the whole time.
 func TestHolderAloneDoesNotMoveMihomo(t *testing.T) {

@@ -95,9 +95,9 @@ func TestMihomoPlannerDefersInsteadOfAbortingThePass(t *testing.T) {
 // The probing phase must be bounded as a WHOLE, not per member.
 //
 // Every 10th pass three phases coincide — the tier decision, the warm probe of the
-// inactive tier and the standby-transport sweep — which on the live fleet is 11
-// members probed back to back. Each is bounded only by its own 8s timeout, so a
-// blocked probe destination costs 88s against a 30s reconcile interval, and the
+// inactive tier and the standby-transport sweep — which on a mid-sized fleet is a
+// dozen members probed back to back. Each is bounded only by its own 8s timeout, so a
+// blocked probe destination costs well over a minute against a 30s reconcile interval, and the
 // status report that feeds WgfleetNodeReportStale (critical at 180s) starts
 // sliding behind. A member-sized bound is not a bound on the pass.
 //
@@ -280,12 +280,11 @@ func testKey(t *testing.T) string {
 
 // After the move, the redirect self-heal must find mihomo where it now is.
 //
-// This is the defect that reached production on 2026-09-05. The probe read the
-// HOST's socket table for the HOST's bind address; mihomo was in a namespace
-// binding another one, so the answer was always "listener down" and the planner
-// restarted the container every pass. Each restart re-initialised mihomo's
-// userspace WireGuard devices and three exits fell out of the balancer within
-// three minutes.
+// The defect this guards: the probe read the HOST's socket table for the HOST's
+// bind address; mihomo was in a namespace binding another one, so the answer was
+// always "listener down" and the planner restarted the container every pass. Each
+// restart re-initialises mihomo's userspace WireGuard devices and knocks exits out
+// of the balancer within minutes.
 func TestRedirectSelfHealLooksInsideTheNamespaceOnceMoved(t *testing.T) {
 	var asked []string
 	run := func(_ context.Context, name string, args ...string) (string, error) {
@@ -392,8 +391,8 @@ func TestRedirectSelfHealDefersWhenTheHolderIsDown(t *testing.T) {
 
 // The journal is the only record of why mihomo was reloaded — the previous config
 // is gone the moment the file is overwritten. So the reload action has to SAY what
-// moved, as key paths: on 2026-09-07 four reloads in seven minutes each recorded
-// "update config.yaml" and nothing else, and the trigger could not be found.
+// moved, as key paths: a burst of reloads that each record only "update
+// config.yaml" leaves the trigger impossible to find.
 func TestMihomoReloadActionNamesWhatChanged(t *testing.T) {
 	paths := PathsUnder(t.TempDir())
 	spec := domain.NodeSpec{Master: &domain.MasterSpec{

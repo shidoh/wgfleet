@@ -303,7 +303,7 @@ func TestConcurrentRemoveExitDoesNotLoseUpdates(t *testing.T) {
 	}
 }
 
-// `name: fn7`, `name: "fn7"` and `name: 'fn7'` are the same exit to the parser, so
+// `name: exit-a`, `name: "exit-a"` and `name: 'exit-a'` are the same exit to the parser, so
 // they must be the same exit here — matching raw text missed the single-quoted
 // spelling and reported "not found" for an exit the manifest plainly declares.
 func TestRemoveExitMatchesEveryQuotingOfTheName(t *testing.T) {

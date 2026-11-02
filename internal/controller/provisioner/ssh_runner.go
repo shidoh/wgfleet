@@ -98,12 +98,11 @@ func DialSSH(target domain.SSHTarget, hostKey ssh.HostKeyCallback) (*SSHRunner, 
 	// it, so a path that completes the handshake's three-way and then swallows every
 	// packet leaves this call blocked forever — and every caller with it.
 	//
-	// That is not a thought experiment: it is what the fleet's public master→exit
-	// path does when it wedges (2026-09-09, and again 2026-09-11 with the fix for
-	// the first one in place). The socket sits ESTABLISHED with a dozen bytes in
-	// Send-Q and no movement; the rolling upgrade sat 13 minutes on its first node
-	// under a five-minute per-node deadline, because a deadline can only be noticed
-	// by a call that comes back. Bounding the handshake here fixes it for every dial
+	// That is not a thought experiment: it is what a public master→exit path does
+	// when it wedges. The socket sits ESTABLISHED with a dozen bytes in Send-Q and
+	// no movement; a rolling upgrade then sits on its first node far past a
+	// five-minute per-node deadline, because a deadline can only be noticed by a
+	// call that comes back. Bounding the handshake here fixes it for every dial
 	// path at once — provision, facts, support bundle, upgrade — rather than asking
 	// each caller to wrap this one in a goroutine.
 	conn, err := net.DialTimeout("tcp", addr, sshConnectTimeout)

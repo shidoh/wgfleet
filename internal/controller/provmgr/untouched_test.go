@@ -15,8 +15,8 @@ func untouched(err error) bool {
 // TestUntouchedErrorIsRecognisedStructurally pins the contract the coordinator
 // relies on. If this type ever stops satisfying the behaviour — renamed method,
 // value/pointer receiver change, a wrapper that drops Unwrap — the coordinator
-// silently goes back to rolling back nodes it never reached, which is the pn8
-// downgrade of 2026-08-18.
+// silently goes back to rolling back nodes it never reached — and downgrading
+// healthy ones to a stale snapshot.
 func TestUntouchedErrorIsRecognisedStructurally(t *testing.T) {
 	if !untouched(untouchedf("ssh dial %q: %v", "pn8", errors.New("i/o timeout"))) {
 		t.Error("untouchedf must produce an error the coordinator recognises")

@@ -16,13 +16,14 @@ type untouchedErr struct{ error }
 
 func (untouchedErr) NodeUntouched() bool { return true }
 
-// TestNoRollbackWhenNodeWasNeverTouched is the pn8 regression of 2026-08-18.
+// TestNoRollbackWhenNodeWasNeverTouched guards against downgrading a node the
+// upgrade never reached.
 //
-// The upgrade failed at its very first step — the SSH dial timed out — so nothing
-// was uploaded, no rollback snapshot was taken in that attempt and the agent was
-// never restarted. The coordinator rolled the node back anyway, restoring a STALE
-// .prev left by some earlier upgrade. A healthy node running wire 6 was downgraded
-// to wire 5 by an upgrade attempt that never reached it.
+// When the upgrade fails at its very first step — the SSH dial times out — nothing
+// is uploaded, no rollback snapshot is taken in that attempt and the agent is
+// never restarted. Rolling the node back anyway would restore a STALE .prev left
+// by some earlier upgrade, downgrading a healthy node to an older wire version by
+// an upgrade attempt that never reached it.
 //
 // "It failed, so roll it back" only holds when there was something to roll back.
 func TestNoRollbackWhenNodeWasNeverTouched(t *testing.T) {
@@ -76,7 +77,7 @@ func TestRollbackStillRunsWhenTheNodeWasModified(t *testing.T) {
 //
 // This is the failure the rollout meets most often — a path that accepts a TCP
 // connection and then black-holes — and it says nothing whatsoever about the
-// binary. Holding five healthy exits on the old build because a sixth would not
+// binary. Holding every healthy exit on the old build because one would not
 // answer is the outcome a rolling upgrade exists to prevent.
 func TestUnreachableNodeIsSkippedAndTheRestAreUpgraded(t *testing.T) {
 	clk := newClock()

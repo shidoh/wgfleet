@@ -1,5 +1,5 @@
 // Package reconcile is the agent's convergence engine. Its central contract is
-// docs/DESIGN.md principle #4: every reconcile can run in plan (dry-run) mode, which
+// that every reconcile can run in plan (dry-run) mode, which
 // renders the desired artifacts and the changes they imply WITHOUT mutating the
 // node. Apply mode performs exactly the actions plan showed.
 //

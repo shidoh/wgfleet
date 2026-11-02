@@ -23,7 +23,7 @@ import (
 //
 // routeThrough is applied AFTER the subtraction, so a network listed there wins
 // over a broader exclusion — `exclude: 172.16.0.0/12` with
-// `routeThrough: 172.19.57.0/24` keeps that one work subnet in the tunnel while
+// `routeThrough: 172.19.57.0/24` keeps that one subnet in the tunnel while
 // the rest of the range stays local.
 //
 // An empty exclude list yields the single default route: with nothing subtracted

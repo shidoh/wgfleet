@@ -14,7 +14,7 @@ import (
 )
 
 // KeyPair is a WireGuard private/public key pair, base64-encoded. The private
-// key is a secret that stays on the node (docs/DESIGN.md principle #2).
+// key is a secret that stays on the node.
 type KeyPair struct {
 	PrivateKey string
 	PublicKey  string

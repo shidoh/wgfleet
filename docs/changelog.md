@@ -159,7 +159,7 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 !!! note "New: the exit can start the master↔exit AmneziaWG tunnel"
 
-    For exits whose path cuts flows the master opens and passes flows the exit opens. Measured: a flow the master starts gets 1 packet of 10 through, a flow the exit starts gets 10 of 10.
+    For exits whose path cuts flows the master opens and passes flows the exit opens. On such a path a flow the master starts barely gets through, while a flow the exit starts passes cleanly.
 
     - Per exit, off by default: `fleet.exits[].transports.awg.exit_initiated: true`.
     - The exit knocks on a pinned UDP port of the master; the master answers only from that port and only after it has heard the exit.
@@ -325,7 +325,7 @@ A master still served by wg-easy survives an AmneziaWG module upgrade, the names
 ### Changed
 
 - Drop design-note references and rationale from console copy, help text and the headers of rendered files; the console now says what a control does, not why it exists.
-- Default the client and exit I-packet prologue to a per-end STUN+QUIC cover, measured across four mobile operators; the previous plain-noise default was the worst of the set on mobile.
+- Default the client and exit I-packet prologue to a per-end STUN+QUIC cover, chosen after testing on mobile networks; the previous plain-noise default fared worst on mobile.
 - Earn an exit's auto-suspend with minutes of evidence rather than passes, and measure egress throughput against several independent targets instead of one speed-test page.
 - Name the console buttons Drain and Undrain, label the topology's second group NOT CARRYING instead of RESERVE, and show a decommission the node cannot carry out as stuck, with Delete as the way out.
 - Move client interception into mihomo's namespace only when it can be watched: no move while wg-easy owns the client interface, no verdict from a pass in which nothing was measured or the interface was down, readiness satisfied by any reachable exit, and the prober resolving where the clients resolve; a revert names the probes that failed.

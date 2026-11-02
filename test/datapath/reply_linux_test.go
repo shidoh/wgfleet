@@ -60,7 +60,7 @@ func TestReplySocketOpensForAFreePort(t *testing.T) {
 
 // The collision itself, and the namespace that removes it, are asserted on the
 // REAL port in namespace_linux_test.go. An earlier version of this file made that
-// claim on an ephemeral port instead — a port nothing in production holds — which
+// claim on an ephemeral port instead — a port nothing on a real master holds — which
 // meant it was asserting that the BUG exists: true before the fix, true after it,
 // green forever.
 

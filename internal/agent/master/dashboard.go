@@ -35,9 +35,9 @@ const (
 //
 // Why the agent and not mihomo: mihomo's own external-ui download follows the
 // proxy rules (the master's catch-all MATCH → wg-best → exit → WARP), and its
-// external-ui-download-detour is NOT honored by the running build — so on a RU
-// master the download TLS-times-out even though the host reaches GitHub directly
-// in well under a second (verified live 2026-06-18). The agent runs on that host
+// external-ui-download-detour is NOT honored by the running build — so on a master
+// behind filtering the download TLS-times-out even though the host reaches GitHub
+// directly in well under a second. The agent runs on that host
 // with the direct path, so it fetches and unpacks the dashboard; the renderer
 // then emits external-ui (the dir) WITHOUT external-ui-url, and mihomo only serves.
 type dashboardPlanner struct {
