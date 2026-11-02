@@ -10,25 +10,25 @@
     "AWG": {
       "Shared": {
         "H1": {
-          "Min": 119440710,
-          "Max": 249440710
+          "Min": 212468739,
+          "Max": 342468739
         },
         "H2": {
-          "Min": 853052489,
-          "Max": 983052489
+          "Min": 604021083,
+          "Max": 734021083
         },
         "H3": {
-          "Min": 1240338360,
-          "Max": 1370338360
+          "Min": 1090148969,
+          "Max": 1220148969
         },
         "H4": {
-          "Min": 1676329226,
-          "Max": 1806329226
+          "Min": 1802715554,
+          "Max": 1932715554
         },
-        "S1": 39,
-        "S2": 61,
-        "S3": 48,
-        "S4": 26,
+        "S1": 28,
+        "S2": 43,
+        "S3": 29,
+        "S4": 18,
         "HeaderProtectionKey": "",
         "ContentPaddingAddition": "",
         "RekeyAfterTime": "",
@@ -38,22 +38,22 @@
         "MaxHandshakeAttempts": ""
       },
       "Local": {
-        "Jc": 4,
-        "Jmin": 43,
-        "Jmax": 123,
+        "Jc": 6,
+        "Jmin": 56,
+        "Jmax": 95,
         "I1": "\u003cb 0x000100002112a442\u003e\u003cr 12\u003e",
-        "I2": "\u003cb 0xc3000000010b\u003e\u003cr 11\u003e\u003cb 0x0a\u003e\u003cr 10\u003e\u003cb 0x00\u003e\u003cr 118\u003e",
+        "I2": "\u003cb 0xc3000000010d\u003e\u003cr 13\u003e\u003cb 0x04\u003e\u003cr 4\u003e\u003cb 0x00\u003e\u003cr 122\u003e",
         "I3": "",
         "I4": "",
         "I5": ""
       }
     },
     "ClientAWGLocal": {
-      "Jc": 6,
-      "Jmin": 56,
-      "Jmax": 105,
+      "Jc": 5,
+      "Jmin": 37,
+      "Jmax": 90,
       "I1": "\u003cb 0x000100002112a442\u003e\u003cr 12\u003e",
-      "I2": "\u003cb 0xc3000000010d\u003e\u003cr 13\u003e\u003cb 0x12\u003e\u003cr 18\u003e\u003cb 0x00\u003e\u003cr 158\u003e",
+      "I2": "\u003cb 0xc30000000104\u003e\u003cr 4\u003e\u003cb 0x0a\u003e\u003cr 10\u003e\u003cb 0x00\u003e\u003cr 102\u003e",
       "I3": "",
       "I4": "",
       "I5": ""
@@ -122,39 +122,39 @@
         "AWG": {
           "Shared": {
             "H1": {
-              "Min": 29838687,
-              "Max": 159838687
+              "Min": 168762632,
+              "Max": 298762632
             },
             "H2": {
-              "Min": 717803267,
-              "Max": 847803267
+              "Min": 874545291,
+              "Max": 1004545291
             },
             "H3": {
-              "Min": 1073039351,
-              "Max": 1203039351
+              "Min": 1205599599,
+              "Max": 1335599599
             },
             "H4": {
-              "Min": 1504901982,
-              "Max": 1634901982
+              "Min": 1779461569,
+              "Max": 1909461569
             },
-            "S1": 27,
-            "S2": 38,
-            "S3": 63,
-            "S4": 23,
-            "HeaderProtectionKey": "7MyssL8LA3I67y4/S/wLO6YB/DDWLLvDMM9lGrdSqVQ=",
+            "S1": 16,
+            "S2": 41,
+            "S3": 49,
+            "S4": 18,
+            "HeaderProtectionKey": "/Gl8LucA8CzncjnHznKXuLMOyLaum4B6nZKcH2fMfoY=",
             "ContentPaddingAddition": "",
-            "RekeyAfterTime": "120-149",
-            "RekeyTimeout": "5-8",
-            "RejectAfterTime": "180-191",
-            "KeepaliveTimeout": "10-15",
+            "RekeyAfterTime": "120-147",
+            "RekeyTimeout": "5-6",
+            "RejectAfterTime": "180-211",
+            "KeepaliveTimeout": "10-13",
             "MaxHandshakeAttempts": "18"
           },
           "Local": {
-            "Jc": 8,
-            "Jmin": 43,
-            "Jmax": 72,
+            "Jc": 4,
+            "Jmin": 30,
+            "Jmax": 86,
             "I1": "\u003cb 0x000100002112a442\u003e\u003cr 12\u003e",
-            "I2": "\u003cb 0xc30000000109\u003e\u003cr 9\u003e\u003cb 0x0d\u003e\u003cr 13\u003e\u003cb 0x00\u003e\u003cr 137\u003e",
+            "I2": "\u003cb 0xc3000000010a\u003e\u003cr 10\u003e\u003cb 0x09\u003e\u003cr 9\u003e\u003cb 0x00\u003e\u003cr 175\u003e",
             "I3": "",
             "I4": "",
             "I5": ""
@@ -165,7 +165,7 @@
         "Drained": false,
         "MasterKeyTunnel": "",
         "Reserve": false,
-        "MasterAddr": "203.0.113.1:29963"
+        "MasterAddr": "203.0.113.1:31049"
       },
       {
         "Name": "exit-de-1-reality",
@@ -177,12 +177,12 @@
         "AWG": null,
         "Transport": "reality-xhttp",
         "Reality": {
-          "UUID": "6f723a11-7e03-456e-a620-ee3bdce35e19",
+          "UUID": "f1870e1a-31be-41ef-9be2-4db3a9f3056d",
           "PublicKey": "Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYmFyYmE=",
-          "ShortID": "bf4cbd2b",
+          "ShortID": "1d572692",
           "ServerName": "www.python.org",
           "Fingerprint": "",
-          "XHTTPPath": "/bf4cbd2b",
+          "XHTTPPath": "/1d572692",
           "XHTTPMode": "packet-up",
           "Mode": "",
           "EmptySNI": false,
@@ -203,39 +203,39 @@
         "AWG": {
           "Shared": {
             "H1": {
-              "Min": 359508485,
-              "Max": 489508485
+              "Min": 333039651,
+              "Max": 463039651
             },
             "H2": {
-              "Min": 833563846,
-              "Max": 963563846
+              "Min": 756716009,
+              "Max": 886716009
             },
             "H3": {
-              "Min": 1081589419,
-              "Max": 1211589419
+              "Min": 1106932129,
+              "Max": 1236932129
             },
             "H4": {
-              "Min": 1671427735,
-              "Max": 1801427735
+              "Min": 1648757925,
+              "Max": 1778757925
             },
-            "S1": 52,
-            "S2": 55,
-            "S3": 59,
-            "S4": 21,
-            "HeaderProtectionKey": "FL8RNTPqDqwAPRXlyUi6EyeQ9xEGk2qvk3H2wZnKjt8=",
+            "S1": 22,
+            "S2": 59,
+            "S3": 44,
+            "S4": 27,
+            "HeaderProtectionKey": "2kMEvR+zQxDCbsfi0ByakMvg7LetInfeScFYoZzsfcY=",
             "ContentPaddingAddition": "",
-            "RekeyAfterTime": "120-148",
-            "RekeyTimeout": "5-7",
-            "RejectAfterTime": "180-195",
-            "KeepaliveTimeout": "10-13",
+            "RekeyAfterTime": "120-139",
+            "RekeyTimeout": "5-8",
+            "RejectAfterTime": "180-192",
+            "KeepaliveTimeout": "10-16",
             "MaxHandshakeAttempts": "18"
           },
           "Local": {
-            "Jc": 7,
-            "Jmin": 49,
-            "Jmax": 80,
+            "Jc": 5,
+            "Jmin": 66,
+            "Jmax": 112,
             "I1": "\u003cb 0x000100002112a442\u003e\u003cr 12\u003e",
-            "I2": "\u003cb 0xc30000000106\u003e\u003cr 6\u003e\u003cb 0x09\u003e\u003cr 9\u003e\u003cb 0x00\u003e\u003cr 106\u003e",
+            "I2": "\u003cb 0xc3000000010f\u003e\u003cr 15\u003e\u003cb 0x06\u003e\u003cr 6\u003e\u003cb 0x00\u003e\u003cr 167\u003e",
             "I3": "",
             "I4": "",
             "I5": ""
@@ -292,25 +292,25 @@
       "AWG": {
         "Shared": {
           "H1": {
-            "Min": 119440710,
-            "Max": 249440710
+            "Min": 212468739,
+            "Max": 342468739
           },
           "H2": {
-            "Min": 853052489,
-            "Max": 983052489
+            "Min": 604021083,
+            "Max": 734021083
           },
           "H3": {
-            "Min": 1240338360,
-            "Max": 1370338360
+            "Min": 1090148969,
+            "Max": 1220148969
           },
           "H4": {
-            "Min": 1676329226,
-            "Max": 1806329226
+            "Min": 1802715554,
+            "Max": 1932715554
           },
-          "S1": 39,
-          "S2": 61,
-          "S3": 48,
-          "S4": 26,
+          "S1": 28,
+          "S2": 43,
+          "S3": 29,
+          "S4": 18,
           "HeaderProtectionKey": "",
           "ContentPaddingAddition": "",
           "RekeyAfterTime": "",
@@ -320,11 +320,11 @@
           "MaxHandshakeAttempts": ""
         },
         "Local": {
-          "Jc": 4,
-          "Jmin": 43,
-          "Jmax": 123,
+          "Jc": 6,
+          "Jmin": 56,
+          "Jmax": 95,
           "I1": "\u003cb 0x000100002112a442\u003e\u003cr 12\u003e",
-          "I2": "\u003cb 0xc3000000010b\u003e\u003cr 11\u003e\u003cb 0x0a\u003e\u003cr 10\u003e\u003cb 0x00\u003e\u003cr 118\u003e",
+          "I2": "\u003cb 0xc3000000010d\u003e\u003cr 13\u003e\u003cb 0x04\u003e\u003cr 4\u003e\u003cb 0x00\u003e\u003cr 122\u003e",
           "I3": "",
           "I4": "",
           "I5": ""

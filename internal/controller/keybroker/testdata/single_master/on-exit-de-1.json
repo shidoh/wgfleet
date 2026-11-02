@@ -12,39 +12,39 @@
     "AWG": {
       "Shared": {
         "H1": {
-          "Min": 29838687,
-          "Max": 159838687
+          "Min": 168762632,
+          "Max": 298762632
         },
         "H2": {
-          "Min": 717803267,
-          "Max": 847803267
+          "Min": 874545291,
+          "Max": 1004545291
         },
         "H3": {
-          "Min": 1073039351,
-          "Max": 1203039351
+          "Min": 1205599599,
+          "Max": 1335599599
         },
         "H4": {
-          "Min": 1504901982,
-          "Max": 1634901982
+          "Min": 1779461569,
+          "Max": 1909461569
         },
-        "S1": 27,
-        "S2": 38,
-        "S3": 63,
-        "S4": 23,
-        "HeaderProtectionKey": "7MyssL8LA3I67y4/S/wLO6YB/DDWLLvDMM9lGrdSqVQ=",
+        "S1": 16,
+        "S2": 41,
+        "S3": 49,
+        "S4": 18,
+        "HeaderProtectionKey": "/Gl8LucA8CzncjnHznKXuLMOyLaum4B6nZKcH2fMfoY=",
         "ContentPaddingAddition": "",
-        "RekeyAfterTime": "120-149",
-        "RekeyTimeout": "5-8",
-        "RejectAfterTime": "180-191",
-        "KeepaliveTimeout": "10-15",
+        "RekeyAfterTime": "120-147",
+        "RekeyTimeout": "5-6",
+        "RejectAfterTime": "180-211",
+        "KeepaliveTimeout": "10-13",
         "MaxHandshakeAttempts": "18"
       },
       "Local": {
-        "Jc": 5,
-        "Jmin": 45,
-        "Jmax": 105,
+        "Jc": 10,
+        "Jmin": 48,
+        "Jmax": 127,
         "I1": "\u003cb 0x000100002112a442\u003e\u003cr 12\u003e",
-        "I2": "\u003cb 0xc3000000010e\u003e\u003cr 14\u003e\u003cb 0x0c\u003e\u003cr 12\u003e\u003cb 0x00\u003e\u003cr 97\u003e",
+        "I2": "\u003cb 0xc30000000107\u003e\u003cr 7\u003e\u003cb 0x0b\u003e\u003cr 11\u003e\u003cb 0x00\u003e\u003cr 159\u003e",
         "I3": "",
         "I4": "",
         "I5": ""
@@ -54,9 +54,9 @@
   },
   "Peers": [
     {
-      "Name": "master-xa-1 (per-tunnel)",
+      "Name": "master-gold (per-tunnel)",
       "PublicKey": "7cMEov2tnVVtAWWAlAAmoLbAJ4U902afnaMpAt0QbUk=",
-      "Endpoint": "203.0.113.1:29963",
+      "Endpoint": "203.0.113.1:31049",
       "AllowedIPs": [
         "10.81.0.3/32"
       ],
@@ -125,11 +125,11 @@
   "ActiveTransport": "awg",
   "Reality": {
     "ListenPort": 443,
-    "UUID": "6f723a11-7e03-456e-a620-ee3bdce35e19",
-    "ShortID": "bf4cbd2b",
+    "UUID": "f1870e1a-31be-41ef-9be2-4db3a9f3056d",
+    "ShortID": "1d572692",
     "ServerName": "www.python.org",
     "Dest": "www.python.org:443",
-    "XHTTPPath": "/bf4cbd2b",
+    "XHTTPPath": "/1d572692",
     "XHTTPMode": "packet-up",
     "Mode": "",
     "AllowEmptySNI": false,

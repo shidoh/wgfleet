@@ -24,6 +24,9 @@ const (
 	goldenMasterPriv = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA="
 	goldenExitPub    = "kXr4jF0G0mYB0kQ0s2Yz8mJ1o8m0Qd0l5nJ8Zc1vS2I="
 	goldenRealityPub = "Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYmFyYmE="
+	// goldenMaster names the master in the snapshots. AmneziaWG parameters are
+	// derived from node names, so it is fixed here rather than inherited.
+	goldenMaster = "master-gold"
 )
 
 // goldenFleet is one master and two exits that between them take the branches the
@@ -33,6 +36,7 @@ const (
 func goldenFleet(phase domain.PerTunnelKeyPhase) config.FleetSection {
 	on := true
 	f := testFleet()
+	f.Masters[0].Name = goldenMaster
 	f.AWG3 = &on
 	f.Masters[0].PublicIP = "203.0.113.1"
 	f.Masters[0].Routing.ReserveExits = []string{"exit-nl-1"}
@@ -98,7 +102,7 @@ func TestSingleMasterRenderIsUnchanged(t *testing.T) {
 				WithClock(func() time.Time { return clock }), WithAWG3Key("golden-awg3-key"))
 			seedGolden(t, st, fleet, clock)
 			// The master first: its render is what records the exit's confirmation.
-			for _, id := range []string{"master-xa-1", "exit-de-1", "exit-nl-1"} {
+			for _, id := range []string{goldenMaster, "exit-de-1", "exit-nl-1"} {
 				spec, err := b.RenderNodeSpec(context.Background(), id)
 				if err != nil {
 					t.Fatalf("render %s: %v", id, err)
@@ -130,18 +134,18 @@ func assertGolden(t *testing.T, name string, spec domain.NodeSpec) {
 // fleet renders as it always has"; a test that could be regenerated would let the
 // definition drift to whatever the code does today.
 var goldenSums = map[string]string{
-	"dual-exit-de-1.json":     "47da8f329eef08f86f4e0597403215679be6698041d341b8081a192d10fd629f",
-	"dual-exit-nl-1.json":     "d4389b9b243453698f60ef55b3952a6b61f950e720ca27e26386ad76de9675b5",
-	"dual-master-xa-1.json":   "06ab34c9cdea1b7d39e7dedfc0b4fd134207ec13db78eb9e7903f744f3223fd3",
-	"off-exit-de-1.json":      "7721255e45b48475b4ef432d342b928738b8b00a75d0809ce5e90b6ef9bdf2fc",
-	"off-exit-nl-1.json":      "b770852022322d6eb038ac7aa3e762dc6489c4b71ccbbc692d2264d36f8bff90",
-	"off-master-xa-1.json":    "06ab34c9cdea1b7d39e7dedfc0b4fd134207ec13db78eb9e7903f744f3223fd3",
-	"on-exit-de-1.json":       "101ef6af560d2e2f9d8c45817b987f5ed622f38924a942f13271d7d9722d017a",
-	"on-exit-nl-1.json":       "2aba44f0e06c1d12f48d7c4b9fce9a28a5169192457b8a0c77e8adbd70985cfa",
-	"on-master-xa-1.json":     "027085012714f3235acc368225a25d75af6c68b1b2cf1ea2accde326aa67319b",
-	"switch-exit-de-1.json":   "6a60e594c5c7b891ccfaa9811c4f9ce9042214e57f8c6a74167418a02c9e2f86",
-	"switch-exit-nl-1.json":   "d4389b9b243453698f60ef55b3952a6b61f950e720ca27e26386ad76de9675b5",
-	"switch-master-xa-1.json": "027085012714f3235acc368225a25d75af6c68b1b2cf1ea2accde326aa67319b",
+	"dual-exit-de-1.json":     "8969bd427fe63271d0ee09bfbeef5a15f1717ea318cd3b6d63a967b25b5cad98",
+	"dual-exit-nl-1.json":     "0494f82c817ba307125f0f8f62ac8766a58de0cf0a5960d7520f75a05ed7427b",
+	"dual-master-gold.json":   "252de514a08c5dee0acce317f03a4a2fa59e88b96eb7b837baf6740bec4a125b",
+	"off-exit-de-1.json":      "d90031d9ec435c7024323938d04eb70573a4eb8c9d2884bebf6fd74cd0597d55",
+	"off-exit-nl-1.json":      "a2c7a8c6961664223cebdbcfd527fe9e01a241955d81de635caaf8c6a86e1f97",
+	"off-master-gold.json":    "252de514a08c5dee0acce317f03a4a2fa59e88b96eb7b837baf6740bec4a125b",
+	"on-exit-de-1.json":       "589a4ca73b7be2f0b540390b0a852f18c76223571a667e6393e082caede5e35e",
+	"on-exit-nl-1.json":       "401e9ebd0e86b567721869a20fb7a383f3b95ba8bc4943e78cd6aaef089a61ed",
+	"on-master-gold.json":     "c07582b533f3717f507813d427ecc6db4d2b963f385536d8415cab696855e41b",
+	"switch-exit-de-1.json":   "6676871b8e9c0d92ecdf9ff45498a8edfdc6d3c36cc4ea38875d5625516c347c",
+	"switch-exit-nl-1.json":   "0494f82c817ba307125f0f8f62ac8766a58de0cf0a5960d7520f75a05ed7427b",
+	"switch-master-gold.json": "c07582b533f3717f507813d427ecc6db4d2b963f385536d8415cab696855e41b",
 }
 
 func TestGoldenFilesAreFrozen(t *testing.T) {
