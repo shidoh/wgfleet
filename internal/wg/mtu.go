@@ -1,11 +1,11 @@
 // Package wg holds WireGuard/AmneziaWG helpers shared across the codebase. The
 // config rendering and wgctrl wrappers land here in later milestones; for now it
-// provides the MTU primitives that encode docs/DESIGN.md an earlier finding ("MTU is computed,
+// provides the MTU primitives that encode the rule ("MTU is computed,
 // not guessed").
 package wg
 
 // MTU overhead constants. Each WireGuard layer subtracts a fixed header cost;
-// nesting tunnels stacks these, which is exactly the trap an earlier finding warns about.
+// nesting tunnels stacks these, which is exactly the trap to avoid.
 const (
 	// DefaultPhysicalMTU is the assumed underlying link MTU when none is probed.
 	DefaultPhysicalMTU = 1500
@@ -17,7 +17,7 @@ const (
 	WGOverheadIPv6 = 80
 
 	// AWGExtraOverhead is the *additional* headroom reserved for AmneziaWG
-	// obfuscation on top of the plain WG overhead. an earlier finding notes AWG adds
+	// obfuscation on top of the plain WG overhead. AWG adds
 	// ">60"; we reserve conservatively so junk/decoy packets never fragment.
 	AWGExtraOverhead = 80
 
@@ -67,7 +67,7 @@ func FleetTunnelMTU(awg, ipv6 bool) int {
 // MinMTU returns the smallest of the given hop MTUs, i.e. the largest payload
 // that survives every hop without fragmenting. The client interface must be set
 // to this so a full-size client packet never fragments at a downstream hop
-// (an earlier finding: the "first N requests fail" / "message too long" trap).
+// (the "first N requests fail" / "message too long" trap).
 func MinMTU(mtus ...int) int {
 	if len(mtus) == 0 {
 		return 0

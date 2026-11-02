@@ -10,7 +10,7 @@ import (
 //
 // The data plane is IPv4-only on purpose — v6 forwarding is off, mihomo runs
 // ipv6: false, and WARP's v6 egress is dead — so clients are handed 0.0.0.0/0 and
-// nothing else. That closed an earlier finding's black hole and opened a quieter hole in
+// nothing else. That closed the black hole and opened a quieter hole in
 // its place: a phone with working carrier IPv6 keeps its native v6 route, and
 // happy eyeballs prefers v6 to every dual-stack host worth naming, so Google,
 // Cloudflare and most CDNs leave the tunnel entirely while the UI says "connected".
@@ -19,7 +19,7 @@ import (
 // refuse it audibly: give the client a ::/0 route into the tunnel so its own v6
 // path is no longer preferred, and have the master answer with ICMPv6
 // administratively-prohibited so the OS falls back to IPv4 in milliseconds instead
-// of stalling on a silent drop. The difference between that and an earlier finding is
+// of stalling on a silent drop. The difference between that and the IPv6 black hole is
 // exactly the ICMP.
 //
 // The prefix is DERIVED from the v4 pool rather than configured, because both ends

@@ -117,7 +117,7 @@ func commandExists(ctx context.Context, r Runner, bin string) bool {
 // awgKmodDiag reports whether the AmneziaWG kernel module is available (loaded,
 // or built/installable for the running kernel) and returns a one-line diagnostic
 // suitable for logs. Building it via DKMS is a pre-flight requirement we check
-// rather than attempt (docs/DESIGN.md an earlier finding / open Q7).
+// rather than attempt.
 //
 // The verdict is carried by an explicit AWGKMOD=yes|no marker matched with
 // Contains — NOT an exact-equality check on the output. The Runner merges the
@@ -166,7 +166,7 @@ func (f Facts) MissingPackages() []string {
 	}
 	if !f.HasWGTools {
 		// Vanilla WireGuard tooling: wg-quick/wg drive the wgcf WARP interface
-		// (Cloudflare can't do AmneziaWG, an earlier finding), so awg-quick is not enough.
+		// (Cloudflare can't do AmneziaWG), so awg-quick is not enough.
 		pkgs = append(pkgs, "wireguard-tools")
 	}
 	if !f.HasNft {

@@ -12,7 +12,7 @@ type ExitProbes struct {
 	// WG handshake to the Cloudflare endpoint is fresh). Run only when WARPEgress
 	// has failed repeatedly, it distinguishes an ISP/DPI block from a transient
 	// blip — see EgressClassifier. Non-destructive (read-only; never re-registers
-	// wgcf, which would churn the node's WARP account — an earlier finding).
+	// wgcf, which would churn the node's WARP account).
 	EgressConfirm Probe
 	// RealityInbound checks the xray REALITY inbound is listening (ADR-0025). Run
 	// in place of the WG-handshake check when REALITY is the active transport.

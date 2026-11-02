@@ -55,7 +55,7 @@ func TestLoadOrCreateKey(t *testing.T) {
 
 func TestRenderExitInterfaceNoEndpointForDialingPeer(t *testing.T) {
 	// Exit is the server; the master dials in, so the master peer must have NO
-	// Endpoint line (lesson: bogus endpoint breaks the tunnel).
+	// Endpoint line (a bogus endpoint breaks the tunnel).
 	cfg, err := RenderInterface(RenderInput{
 		Spec: domain.WGServerSpec{
 			ListenPort:  51820,

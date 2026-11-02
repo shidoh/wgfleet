@@ -156,7 +156,7 @@ message NodeSpec {
   ExportersSpec exporters = 8;
   MasterSpec master = 9; // master nodes only (mihomo data plane); unset for exits
   bool decommission = 10; // tear the node down (reverse reconcile) instead of converging
-  int32 warp_mtu = 11; // exit warp egress: WARP interface MTU; 0 = compute (1440), set when the real WARP path is smaller (an earlier finding: 1320-1420)
+  int32 warp_mtu = 11; // exit warp egress: WARP interface MTU; 0 = compute (1440), set when the real WARP path is smaller (1320-1420)
   repeated string egress_chain = 12; // egress priority chain for censorship-adaptive failover (ADR-0017); [0] = preferred (== egress), later = fallbacks; empty ⇒ no failover
   int32 egress_throughput_min_bps = 13; // exit egress throughput floor in bytes/sec; 0 = watchdog disabled (ADR-0021)
   string egress_throughput_probe_url = 14; // URL the throughput watchdog downloads through the active egress; empty = agent default
@@ -359,7 +359,7 @@ message ClientWGSpec {
   // It travels with allowed_ips containing "::/0" and is the thing that makes that
   // route safe: the master addresses itself inside this prefix and answers forwarded
   // IPv6 with ICMPv6 administratively-prohibited, so a dual-stack client falls back
-  // to IPv4 in milliseconds. Handing out "::/0" WITHOUT it is an earlier finding — the
+  // to IPv4 in milliseconds. Handing out "::/0" WITHOUT it is the IPv6 black hole — the
   // client's own v6 path is abandoned for one that silently drops, and pages stall
   // in a way that looks like an MTU problem for days.
   string ipv6_prefix = 11;

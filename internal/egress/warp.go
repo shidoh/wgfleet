@@ -1,6 +1,6 @@
 // Package egress renders egress-method configs for exit nodes. On MVP the only
 // rendered egress is Cloudflare WARP via wgcf. The renderer enforces the two
-// invariants that cost us real downtime by hand: Table = off (an earlier finding, so
+// invariants that cost us real downtime by hand: Table = off (so
 // wg-quick does not steal the default route and lock us out over SSH) and an
 // explicit, computed MTU.
 package egress
@@ -26,7 +26,7 @@ const WARPKeepaliveSeconds = 25
 
 // WARPConfig is the material needed to render a wgcf.conf. PrivateKey and the
 // addresses come from `wgcf register` / `wgcf generate` on the node — each exit
-// registers its own (an earlier finding: one WARP private key per server). They are
+// registers its own (one WARP private key per server). They are
 // secrets and are redacted in dry-run output.
 type WARPConfig struct {
 	PrivateKey    string // WARP interface private key (secret)
@@ -90,8 +90,8 @@ func RenderWGCF(c WARPConfig) (string, error) {
 // ParseWGCFProfile parses the wgcf-profile.conf produced by `wgcf generate` into
 // the credential fields of a WARPConfig: the interface private key + assigned
 // addresses and the Cloudflare peer's public key + endpoint. MTU/DNS/Table from
-// the profile are intentionally ignored — the platform sets MTU itself (earlier findings
-// ) and routes via policy routing with Table = off.
+// the profile are intentionally ignored — the platform sets MTU itself and
+// routes via policy routing with Table = off.
 func ParseWGCFProfile(data []byte) (WARPConfig, error) {
 	var c WARPConfig
 	for _, raw := range strings.Split(string(data), "\n") {

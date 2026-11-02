@@ -719,7 +719,7 @@ func awgOption(p domain.AWGParams) map[string]any {
 
 // urlTestToleranceMS is the latency hysteresis for the url-test group: a better
 // exit must beat the current one by more than this to trigger a switch. Tunnel
-// round-trips are inherently high (full WG path to the probe — an earlier finding), so a
+// round-trips are inherently high (full WG path to the probe), so a
 // generous tolerance prevents flapping between two similar exits.
 const urlTestToleranceMS = 150
 

@@ -5884,7 +5884,7 @@
         "spec": {
           "id": 54,
           "title": "mihomo restarts (30m) and self-heal throttle",
-          "description": "Restarts of mihomo's container in a trailing 30 minutes, from docker's own start time — every restart counts, whoever caused it — plus 1 while the agent's restart governor is refusing further self-heal restarts. an earlier finding: a planner restarted mihomo every pass, three exits fell out of rotation in three minutes, and the only record was a journal. A throttle is the same defect with the symptom muted.",
+          "description": "Restarts of mihomo's container in a trailing 30 minutes, from docker's own start time — every restart counts, whoever caused it — plus 1 while the agent's restart governor is refusing further self-heal restarts. Once a planner restarted mihomo every pass, three exits fell out of rotation in three minutes, and the only record was a journal. A throttle is the same defect with the symptom muted.",
           "links": [],
           "data": {
             "kind": "QueryGroup",

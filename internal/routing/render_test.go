@@ -31,7 +31,7 @@ func TestRenderWARPRouting(t *testing.T) {
 	}
 	all := argvJoin(steps)
 
-	// an earlier finding: rp_filter relaxed on all AND the egress interface (the kernel takes
+	// rp_filter relaxed on all AND the egress interface (the kernel takes
 	// max(all, iface), so a host drop-in pinning the iface to 2 would otherwise win).
 	if !strings.Contains(all, "sysctl -w net.ipv4.conf.all.rp_filter=0") {
 		t.Errorf("missing all.rp_filter=0:\n%s", all)
@@ -39,11 +39,11 @@ func TestRenderWARPRouting(t *testing.T) {
 	if !strings.Contains(all, "sysctl -w net.ipv4.conf.wgcf.rp_filter=0") {
 		t.Errorf("missing per-egress-iface rp_filter=0:\n%s", all)
 	}
-	// an earlier finding: conntrack flushed.
+	// Conntrack flushed.
 	if !strings.Contains(all, "conntrack -D") {
 		t.Errorf("missing conntrack flush:\n%s", all)
 	}
-	// an earlier finding: master kept on main table.
+	// Master kept on main table.
 	if !strings.Contains(all, "ip rule add to 203.0.113.1 lookup main") {
 		t.Errorf("master not kept direct:\n%s", all)
 	}
@@ -51,7 +51,7 @@ func TestRenderWARPRouting(t *testing.T) {
 	if !strings.Contains(all, "ip rule add to 10.0.0.0/8 lookup main") {
 		t.Errorf("direct cidr missing:\n%s", all)
 	}
-	// an earlier finding: fwmark kept on main (NOT CONNMARK).
+	// Fwmark kept on main (NOT CONNMARK).
 	if !strings.Contains(all, "ip rule add fwmark 0x1 lookup main") {
 		t.Errorf("fwmark rule missing:\n%s", all)
 	}
@@ -59,7 +59,7 @@ func TestRenderWARPRouting(t *testing.T) {
 	if !strings.Contains(all, "ip route replace default dev wgcf table 51820") {
 		t.Errorf("egress default route missing:\n%s", all)
 	}
-	// an earlier finding: the egress rule MUST be scoped to the client source subnet, never
+	// The egress rule MUST be scoped to the client source subnet, never
 	// `from all` — else the host's own traffic is pulled into WARP and the node is
 	// cut off when WARP is down.
 	if !strings.Contains(all, "ip rule add from 10.81.0.0/24 lookup 51820") {

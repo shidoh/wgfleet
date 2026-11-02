@@ -28,7 +28,7 @@ type Probe struct {
 // for an unknown length of time (an unforced tracepath following an AAAA answer
 // into a v6 black hole on an IPv4-only data plane) while the whole fleet reported
 // Ready: auto-MTU discovery was dead, and a real PMTU regression — the one thing
-// the probe exists to catch — would have gone unnoticed. See an earlier finding.
+// the probe exists to catch — would have gone unnoticed.
 //
 // The two timestamps make "attempting regularly, never succeeding" a first-class
 // signal: attempts advance while last-success stays put (or stays 0, meaning the

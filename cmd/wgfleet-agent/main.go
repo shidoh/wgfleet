@@ -985,7 +985,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			}
 			// When mihomo's container last started. Every restart — a self-heal, a
 			// crash, docker's own policy — steps this forward, so a restart loop is a
-			// staircase no single restarter has to confess to. an earlier finding: the planner
+			// staircase no single restarter has to confess to. The planner
 			// that restarted mihomo every pass was found by a person, not by a metric.
 			if started, serr := mihomo.StartedAt(ctx, "mihomo"); serr == nil {
 				a.metrics.ObserveMihomoStart(started)

@@ -356,7 +356,7 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 	// hops, which the controller already computed into WGServer.MTU). The master is
 	// the only node that sees every client flow and knows this value; without it the
 	// exit's looser clamp and the unclamped master-local path black-hole large
-	// segments (an earlier finding, see netfw.RenderInput.ClientMSS).
+	// segments (see netfw.RenderInput.ClientMSS).
 	clientMSS := 0
 	if spec.WGServer.MTU > 0 {
 		clientMSS = spec.WGServer.MTU - mssTCPIPOverhead
@@ -880,7 +880,7 @@ func (p masterNATPlanner) isLoaded() bool {
 	return netfw.TableLoaded("ip", netfw.MasterNATTable)
 }
 
-// Master forwarding (ip_forward + DOCKER-USER accept, an earlier finding) is handled by
+// Master forwarding (ip_forward + DOCKER-USER accept) is handled by
 // the shared dockerfw.ForwardPlanner, constructed in Planners() with iface wg0.
 
 // masterComposeInput builds the compose render input from a spec. One function

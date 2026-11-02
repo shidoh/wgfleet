@@ -66,7 +66,7 @@ func execSummaries(acts []reconcile.Action) string {
 	return strings.Join(out, "; ")
 }
 
-// The lesson of 2026-09-21, and the reason this planner exists in this shape.
+// The 2026-09-21 incident, and the reason this planner exists in this shape.
 //
 // The operator replaced the distro package with a newer upstream node_exporter and
 // masked the package's unit so the two would not fight over the port. Host metrics

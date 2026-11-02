@@ -145,7 +145,7 @@ func TestClientAWGInheritsComposeEraValues(t *testing.T) {
 	}
 }
 
-// An IPv6 default route in the client AllowedIPs is the an earlier finding black hole and
+// An IPv6 default route in the client AllowedIPs is the IPv6 black hole and
 // must be refused in the manifest, not just in the domain validator.
 func TestClientAWGRejectsIPv6DefaultRoute(t *testing.T) {
 	cfg := ControllerConfig{Fleet: FleetSection{Masters: []MasterConfig{

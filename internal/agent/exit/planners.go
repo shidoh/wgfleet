@@ -87,7 +87,7 @@ func Planners(in Input) []reconcile.Planner {
 		// host-originated outbound is mark-routed to WARP by the routing planner.
 		xrayPlanner{configPath: in.Paths.XrayConfig, composePath: in.Paths.XrayCompose, privateKey: in.RealityPrivateKey},
 		// blocky runs in Docker, which sets the nft FORWARD policy to DROP and would
-		// silently black-hole client traffic forwarded awg0→wgcf (an earlier finding, same as
+		// silently black-hole client traffic forwarded awg0→wgcf (same as
 		// the master). Runs after dnsPlanner so the DOCKER-USER chain exists.
 		dockerfw.NewForwardPlanner(
 			"exit forwarding (ip_forward + DOCKER-USER)",
@@ -181,8 +181,8 @@ func (p firewallPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconc
 		OverlayMSS:      p.overlayMSS,
 	}
 	// On an egress-routed exit, mark this node's WG-server reply/handshake packets
-	// so the routing `ip rule fwmark` keeps them off the WARP interface (earlier findings
-	// ). The mark MUST match the routing ip-rule's, so both resolve it the same
+	// so the routing `ip rule fwmark` keeps them off the WARP interface.
+	// The mark MUST match the routing ip-rule's, so both resolve it the same
 	// way. Direct egress ⇒ no egress interface ⇒ no mark needed.
 	if spec.Routing.EgressInterface != "" {
 		in.WGReplyMark = routing.EffectiveFwMark(spec.Routing)
@@ -462,7 +462,7 @@ func (p warpPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.
 	// the routing planner points at it (active == warp), so recovery can be probed
 	// without disrupting client traffic (ADR-0017).
 	if p.warp == nil {
-		// No parsed credentials yet: register (once — one key per node, an earlier finding;
+		// No parsed credentials yet: register (once — one key per node;
 		// --accept-tos avoids the interactive ToS prompt that fails on EOF) and
 		// generate the profile. Idempotent: register only when there is no account
 		// file, generate every pass (it just rewrites the profile from the account).
@@ -481,8 +481,8 @@ func (p warpPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.
 		// ADR-0014): the master↔exit tunnel terminates here and the bare payload is
 		// re-encapsulated afresh, so WARP's carrier is the physical MTU, never the
 		// inner master↔exit MTU (that would set WARP below the client MTU and
-		// fragment every egress packet, an earlier finding). The controller pins the value in
-		// the operator override (spec.WARPMTU, an earlier finding's 1320-1420 band), else the
+		// fragment every egress packet). The controller pins the value in
+		// the operator override (spec.WARPMTU, the 1320-1420 band), else the
 		// auto-probed path MTU from the cache, else wg.DefaultWARPMTU (effectiveWARPMTU).
 		// WARP is vanilla WG — Cloudflare can't do AmneziaWG.
 		cfg.MTU = effectiveWARPMTU(spec, p.warpMTUCache)
@@ -598,8 +598,8 @@ func (p routingPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 
 	// Gate the routing commands on a state file describing the desired intent.
 	// The kernel keeps applied rules until reboot, so re-running `ip rule add` /
-	// `conntrack -D` every pass is both wasteful and wrong: an earlier finding says flush
-	// conntrack on route CHANGE, not on a timer. The state file lives on tmpfs
+	// `conntrack -D` every pass is both wasteful and wrong: conntrack must be
+	// flushed on route CHANGE, not on a timer. The state file lives on tmpfs
 	// (/run), so a reboot clears it alongside the kernel rules and the next pass
 	// re-applies from scratch.
 	script := routing.Script(steps)

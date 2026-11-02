@@ -522,7 +522,7 @@ func TestExitLinkMTULowersTunnelAndClientMTU(t *testing.T) {
 	fleet := testFleet()
 	// The exit sits on a narrow path (master→exit ping caps near 1400); pin link_mtu
 	// so the master↔exit AmneziaWG carrier packets fit instead of black-holing (the
-	// "tunnel up but intermittently hangs" symptom, an earlier finding).
+	// "tunnel up but intermittently hangs" symptom).
 	fleet.Exits[0].LinkMTU = 1400
 	b := New(st, fleet, log)
 	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)

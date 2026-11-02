@@ -48,7 +48,7 @@ type RenderInput struct {
 	// WGReplyMark, when non-zero, renders an nft mangle rule that marks this node's
 	// WG-server reply/handshake packets (source port = Firewall.WGPort) with the
 	// mark, so the routing `ip rule fwmark <mark> lookup main` keeps them OFF the
-	// egress (WARP) interface (an earlier finding: otherwise clients/the master see a
+	// egress (WARP) interface (otherwise clients/the master see a
 	// Cloudflare source and drop the peer). Set only on egress-routed nodes; the
 	// value must equal routing.EffectiveFwMark for the same spec.
 	WGReplyMark int
@@ -91,7 +91,7 @@ type RenderInput struct {
 	LifelineDoTPort int
 	// EgressInterface is the WARP/wgcf interface. When set, an MSS clamp is rendered
 	// in the forward chain so TLS through the double encapsulation (client→master→
-	// exit→WARP) does not stall when PMTU discovery is blocked (an earlier finding; the reference deployment
+	// exit→WARP) does not stall when PMTU discovery is blocked (the reference deployment
 	// §4.10's `clamp-mss-to-pmtu`).
 	EgressInterface string
 	// UplinkAddr is the address the master's outbound traffic leaves with (master
@@ -166,7 +166,7 @@ type RenderInput struct {
 	// the datagram to a transparent socket without rewriting it, so it reaches INPUT
 	// still addressed to whatever the client asked for. An accept on the tproxy port
 	// would match nothing and the drop policy would eat every intercepted datagram —
-	// pings and DNS fine, all other client UDP silently gone (an earlier finding's shape).
+	// pings and DNS fine, all other client UDP silently gone (the shape).
 	TProxyMark int
 	// ClampMSS, when > 0 (exit role), clamps forwarded TCP SYN/SYN-ACK MSS in BOTH
 	// directions to this value. Client traffic crosses the master↔exit tunnel
@@ -174,9 +174,9 @@ type RenderInput struct {
 	// the binding hop: clamping only there (the old `oifname <egress> rt mtu` rule)
 	// let the server advertise an MSS sized for the looser egress, so its response
 	// segments black-holed on the RETURN through the tighter master↔exit tunnel —
-	// the classic "connects but empty reply / timeouts" PMTU blackhole (an earlier finding;
-	// verified live 2026-06-18: clamp 1320 fixed it). A fixed value (= min(tunnel,
-	// egress) − 40) bounds both directions; `rt mtu` cannot, since it only sees the
+	// the classic "connects but empty reply / timeouts" PMTU blackhole
+	// (verified live 2026-06-18: clamp 1320 fixed it). A fixed value
+	// (= min(tunnel, egress) − 40) bounds both directions; `rt mtu` cannot, since it only sees the
 	// immediate egress interface, not the tighter return hop.
 	ClampMSS int
 	// ClientMSS, when > 0 (master role), clamps TCP MSS on traffic leaving toward the
@@ -189,8 +189,8 @@ type RenderInput struct {
 	// master host, the mgmt-bound admin UIs) is forwarded by nothing and so is clamped
 	// nowhere. Without this, large server→client segments (SSH KEX, dashboard HTML, any
 	// sustained download) black-hole while pings/DNS/short requests survive — the
-	// "connects but hangs / can't SSH to the master / throughput stalls" symptom
-	//. A postrouting clamp catches both forwarded and locally
+	// "connects but hangs / can't SSH to the master / throughput stalls" symptom.
+	// A postrouting clamp catches both forwarded and locally
 	// originated SYN/SYN-ACK toward the client; it only lowers an MSS, so it is a no-op
 	// when nothing exceeds it. Value = spec.WGServer.MTU − 40.
 	ClientMSS int
@@ -458,7 +458,7 @@ func RenderRuleset(in RenderInput) (string, error) {
 	// Master only: let client TCP that prerouting DNAT'd to the local mihomo redir
 	// port reach mihomo. After DNAT the destination is the master's own address, so
 	// the packet hits this INPUT chain; without this accept the drop policy swallows
-	// every redirected web connection while ICMP/DNS still work (an earlier finding sibling).
+	// every redirected web connection while ICMP/DNS still work.
 	if in.Role == domain.RoleMaster {
 		redirIface := in.RedirInterface
 		if redirIface == "" {
@@ -541,8 +541,8 @@ func RenderRuleset(in RenderInput) (string, error) {
 	b.WriteString("\t\ttype filter hook output priority 0; policy accept;\n")
 	b.WriteString("\t}\n")
 
-	// Mark WG-server reply/handshake packets so source routing keeps them direct
-	//. `type route hook output` re-runs the route lookup after the
+	// Mark WG-server reply/handshake packets so source routing keeps them direct.
+	// `type route hook output` re-runs the route lookup after the
 	// mark is set, so the routing `ip rule fwmark` actually diverts them to the main
 	// table instead of the egress (WARP) interface. Only emitted on egress-routed
 	// nodes (WGReplyMark != 0).
@@ -552,8 +552,7 @@ func RenderRuleset(in RenderInput) (string, error) {
 		if in.Firewall.LifelinePort > 0 {
 			// One rule, an anonymous set of both server ports: the lifeline is a second
 			// independent AWG listener whose replies need the exact same fwmark
-			// treatment as the primary WGPort's, for the exact same reason (earlier findings
-			// ). A second standalone rule would work too, but this keeps the mangle
+			// treatment as the primary WGPort's, for the exact same reason. A second standalone rule would work too, but this keeps the mangle
 			// chain to one line per node regardless of how many listener ports it runs.
 			fmt.Fprintf(&b, "\t\tmeta l4proto udp udp sport { %d, %d } meta mark set 0x%x\n",
 				in.Firewall.WGPort, in.Firewall.LifelinePort, in.WGReplyMark)

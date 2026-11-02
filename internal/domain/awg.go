@@ -18,7 +18,7 @@ import (
 //     validate incoming packets (receive.c), so the sender must match.
 //   - MAY differ per end: Jc, Jmin, Jmax and I1-I5. Each end sends its own junk
 //     and I-packets; the peer ignores them (send.c). This matches the original
-//     project an earlier finding and the wg-easy table.
+//     the wg-easy table.
 const (
 	awgJcMin     = 1 // junk packet count: 1 ≤ Jc ≤ 128 (recommended 4-12)
 	awgJcMax     = 128

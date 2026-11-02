@@ -70,7 +70,7 @@ func TestJminAboveS4(t *testing.T) {
 const awgJMaxLimitTest = 1280
 
 // TestAWGSizesSafeOracle pins awgSizesSafe against the 11-point LIVE oracle that
-// diagnosed an earlier finding: nine (S1,S2,S3,S4) sets that work on the fleet and two that
+// diagnosed size collision: nine (S1,S2,S3,S4) sets that work on the fleet and two that
 // break it (~50% of new TLS connections dropped). The predicate must classify every
 // row correctly — a real data packet of wire size 32+S4+16k must never alias a
 // handshake size (clause A) nor shadow an adjacent handshake pair (clause B).
@@ -98,7 +98,7 @@ func TestAWGSizesSafeOracle(t *testing.T) {
 	}
 }
 
-// TestDeriveSharedAlwaysSizeSafe guards an earlier finding end to end: every derived tunnel
+// TestDeriveSharedAlwaysSizeSafe guards the size-collision rule end to end: every derived tunnel
 // must carry a NON-ZERO S4 (AWG-2.0 transport masking is mandatory) AND a
 // collision-safe message-size set, across many seeds and both tunnel ends.
 func TestDeriveSharedAlwaysSizeSafe(t *testing.T) {

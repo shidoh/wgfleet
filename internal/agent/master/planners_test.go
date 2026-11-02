@@ -299,7 +299,7 @@ func TestMihomoRejectedConfigRolledBackOnDisk(t *testing.T) {
 
 // TestMihomoRestartsOnProxyChange proves a wireguard-proxy AmneziaWG-param change
 // forces a full container restart (a Clash API hot reload can't re-init the proxy
-// device, so new S/H params would silently never apply — the an earlier finding deploy gap).
+// device, so new S/H params would silently never apply).
 func TestMihomoRestartsOnProxyChange(t *testing.T) {
 	paths := testPaths(t)
 	spec, priv := masterSpec(t)

@@ -60,14 +60,14 @@ const (
 	// treats the credentials in its own store as the truth, while a v7 agent (which
 	// still ran wg-easy) drops the field, keeps that container running, and serves
 	// whatever it last knew. Two sources of truth for the one leg end users
-	// actually dial, with no error on either side. Deploy the controller FIRST
-	//; a nil client_wg is the safe state — the controller renders no
+	// actually dial, with no error on either side. Deploy the controller FIRST;
+	// a nil client_wg is the safe state — the controller renders no
 	// client configs for that master.
 	// v9 adds ClientWGSpec.ipv6_prefix. A v8 agent drops it and brings the client
 	// interface up IPv4-only — while the controller, if it were not gated, would
 	// already be writing "::/0" into every client config. The client would then
 	// abandon its own working IPv6 path for one that silently drops, which is
-	// an earlier finding restaged: stalls that read as an MTU fault for days. Hence
+	// the IPv6 black hole restaged: stalls that read as an MTU fault for days. Hence
 	// WireClientIPv6 below, and hence the two must be rendered together or not at all.
 	// v10 adds RenewCertificate. An agent below it has no way to renew and will run
 	// to expiry in silence, so the gate is what tells the operator which nodes still
@@ -94,8 +94,7 @@ const (
 	// v14 adds RealityServerSpec.bridge, RealityTunnel.reverse and
 	// MasterSpec.reality_portal — the exit-initiated REALITY mode. A v13 exit drops
 	// the bridge and opens no flow to any master; a v13 master drops the portal and
-	// keeps dialling an exit whose inbound is gone. Deploy the controller FIRST
-	//.
+	// keeps dialling an exit whose inbound is gone. Deploy the controller FIRST.
 	WireContractVersion uint32 = 14
 
 	// WireClientWG is the wire version that introduced MasterSpec.client_wg. The

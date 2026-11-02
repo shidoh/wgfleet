@@ -30,8 +30,8 @@ const DefaultXHTTPMode = "packet-up"
 
 // EgressMark is the SO_MARK xray stamps on its outbound (freedom) sockets so the
 // exit's host policy routing sends them through WARP, not the host default route.
-// xray dials FROM THE HOST, so the client-pool `from <pool>` egress rule (earlier findings
-// ) does not catch these; a dedicated fwmark rule does (added by the exit's
+// xray dials FROM THE HOST, so the client-pool `from <pool>` egress rule does
+// not catch these; a dedicated fwmark rule does (added by the exit's
 // routing planner). 0 ⇒ no sockopt.mark emitted (direct egress).
 const EgressMark = 0x33 // 51
 

@@ -30,7 +30,7 @@ type NodeSpec struct {
 	Master      *MasterSpec // master nodes only: mihomo data plane; nil for exits
 	// WARPMTU is the MTU for the exit's WARP egress interface (warp egress only).
 	// 0 means compute it from the sequential model (1440); set it when the real
-	// WARP→Cloudflare path MTU is smaller than the physical link (an earlier finding: the
+	// WARP→Cloudflare path MTU is smaller than the physical link (the
 	// observed band is 1320-1420 depending on the channel). The controller also
 	// folds the smallest exit WARP MTU into the client-facing MTU so client
 	// packets never fragment at egress.
@@ -163,7 +163,7 @@ const CheckEgressThroughput = "egress-throughput"
 // WireGuard because it terminates on Cloudflare. AmneziaWG obfuscation lives in
 // the [Interface] section only — hence on the server spec, never on peers.
 type WGServerSpec struct {
-	ListenPort  int        // UDP; prefer standard ports (443/51820), see an earlier finding
+	ListenPort  int        // UDP; prefer standard ports (443/51820), least conspicuous
 	AddressPool string     // CIDR the server hands out, e.g. "10.81.0.0/24"
 	Address     string     // this server's own address inside the pool
 	MTU         int        // computed along the tunnel chain, never guessed
@@ -295,8 +295,7 @@ type FirewallSpec struct {
 }
 
 // RoutingSpec captures policy-routing intent, translated to ip rule/route by
-// the routing reconciler. The fields encode the hard-won rules from earlier findings
-// : WARP must not capture management/handshake traffic.
+// the routing reconciler. The fields encode hard-won rules: WARP must not capture management/handshake traffic.
 type RoutingSpec struct {
 	// EgressInterface is the interface client traffic should leave through
 	// (e.g. the wgcf/WARP interface on an exit node).
@@ -312,8 +311,8 @@ type RoutingSpec struct {
 	// ClientCIDR is the SOURCE subnet whose traffic is sent to the egress table.
 	// The egress ip-rule MUST be scoped `from <ClientCIDR>` — never `from all`, or
 	// the node's OWN host traffic (SSH, DNS, package/image pulls, the wgcf handshake
-	// itself) is pulled into WARP and the box is cut off when WARP is down (earlier findings
-	// ). It is the exit's WG pool, populated agent-side from WGServer.AddressPool
+	// itself) is pulled into WARP and the box is cut off when WARP is down.
+	// It is the exit's WG pool, populated agent-side from WGServer.AddressPool
 	// (so it needs no wire field); empty ⇒ no egress rule is rendered (fail-safe).
 	ClientCIDR string
 	// RealityEgressMark is the SO_MARK the xray REALITY inbound stamps on its

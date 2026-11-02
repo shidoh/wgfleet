@@ -10,7 +10,7 @@ import (
 
 // StartedAt reports when the named container last started, as docker records it.
 //
-// It exists for the restart loop that an earlier finding describes: a planner restarted
+// It exists for a restart loop seen in production: a planner restarted
 // mihomo every pass, three exits fell out of rotation in three minutes, and the
 // only record was the master agent's journal. Every restart — a self-heal, a
 // crash, docker's own restart policy — moves this timestamp, so changes() over

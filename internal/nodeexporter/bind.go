@@ -16,7 +16,7 @@ import (
 // It replaces the question the planner used to ask — "is our package installed
 // and is its unit running" — with the question that actually matters: is
 // something serving host metrics, and is it reachable only over the management
-// overlay. The difference is the whole point of ADR-less lesson from 2026-09-21:
+// overlay. The difference is the whole point of the 2026-09-21 incident:
 // the operator upgraded the exporter out of band (distro package out, upstream
 // node_exporter in, the package's unit masked so the two would not fight over the
 // port), and the agent, which recognised only the package, spent twelve hours

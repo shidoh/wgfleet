@@ -864,7 +864,7 @@ func TestRenderRulesetPublicUDPPortsStable(t *testing.T) {
 // the CLIENT chose — tproxy hands it to a transparent socket without rewriting
 // anything. So an accept keyed on the tproxy port would never match, and the
 // master's drop policy would swallow every intercepted datagram: client UDP
-// silently dead, exactly the shape of an earlier finding (pings and DNS fine, the
+// silently dead, exactly the classic shape (pings and DNS fine, the
 // redirected protocol gone). The mark the tproxy chain set is the only thing that
 // identifies these packets, so the accept has to key on that.
 func TestMasterInputAcceptsTProxyMarkedPackets(t *testing.T) {

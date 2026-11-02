@@ -211,7 +211,7 @@ func (p synthPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconci
 		// correct — it had been rewritten by an earlier pass — while the DEVICE still
 		// carried the old key, so `file.Changes()` was false and nothing ever repaired
 		// it. What has to be compared is the kernel against the intent, which is the
-		// same lesson NFTApply learned about `.applied` markers.
+		// same rule NFTApply follows for `.applied` markers.
 		actions = append(actions, nsExec("remove the prober's interface (its parameters changed)",
 			"ip", "link", "del", synthIface))
 		actions = append(actions, build...)

@@ -770,7 +770,7 @@ type NodeSpec struct {
 	Exporters                *ExportersSpec         `protobuf:"bytes,8,opt,name=exporters,proto3" json:"exporters,omitempty"`
 	Master                   *MasterSpec            `protobuf:"bytes,9,opt,name=master,proto3" json:"master,omitempty"`                                                                          // master nodes only (mihomo data plane); unset for exits
 	Decommission             bool                   `protobuf:"varint,10,opt,name=decommission,proto3" json:"decommission,omitempty"`                                                            // tear the node down (reverse reconcile) instead of converging
-	WarpMtu                  int32                  `protobuf:"varint,11,opt,name=warp_mtu,json=warpMtu,proto3" json:"warp_mtu,omitempty"`                                                       // exit warp egress: WARP interface MTU; 0 = compute (1440), set when the real WARP path is smaller (an earlier finding: 1320-1420)
+	WarpMtu                  int32                  `protobuf:"varint,11,opt,name=warp_mtu,json=warpMtu,proto3" json:"warp_mtu,omitempty"`                                                       // exit warp egress: WARP interface MTU; 0 = compute (1440), set when the real WARP path is smaller (1320-1420)
 	EgressChain              []string               `protobuf:"bytes,12,rep,name=egress_chain,json=egressChain,proto3" json:"egress_chain,omitempty"`                                            // egress priority chain for censorship-adaptive failover (ADR-0017); [0] = preferred (== egress), later = fallbacks; empty ⇒ no failover
 	EgressThroughputMinBps   int32                  `protobuf:"varint,13,opt,name=egress_throughput_min_bps,json=egressThroughputMinBps,proto3" json:"egress_throughput_min_bps,omitempty"`      // exit egress throughput floor in bytes/sec; 0 = watchdog disabled (ADR-0021)
 	EgressThroughputProbeUrl string                 `protobuf:"bytes,14,opt,name=egress_throughput_probe_url,json=egressThroughputProbeUrl,proto3" json:"egress_throughput_probe_url,omitempty"` // URL the throughput watchdog downloads through the active egress; empty = agent default
@@ -1830,7 +1830,7 @@ type ClientWGSpec struct {
 	// It travels with allowed_ips containing "::/0" and is the thing that makes that
 	// route safe: the master addresses itself inside this prefix and answers forwarded
 	// IPv6 with ICMPv6 administratively-prohibited, so a dual-stack client falls back
-	// to IPv4 in milliseconds. Handing out "::/0" WITHOUT it is an earlier finding — the
+	// to IPv4 in milliseconds. Handing out "::/0" WITHOUT it is the IPv6 black hole — the
 	// client's own v6 path is abandoned for one that silently drops, and pages stall
 	// in a way that looks like an MTU problem for days.
 	Ipv6Prefix    string `protobuf:"bytes,11,opt,name=ipv6_prefix,json=ipv6Prefix,proto3" json:"ipv6_prefix,omitempty"`

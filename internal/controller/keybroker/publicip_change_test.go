@@ -91,7 +91,7 @@ func TestExitPublicIPFallsBackToStore(t *testing.T) {
 }
 
 // Same for the master's own address: the exit's direct route back to the master
-// (an earlier finding — the return path must not go into WARP) and the master's own DNAT
+// (the return path must not go into WARP) and the master's own DNAT
 // guard must follow the manifest, not the store snapshot.
 func TestMasterPublicIPChangeInManifestWins(t *testing.T) {
 	ctx := context.Background()
@@ -218,7 +218,7 @@ func TestExitNonIPPublicIPFallsThrough(t *testing.T) {
 // public_ip so a future move is a DNS record change. That name is right for client
 // profiles and unusable for the kernel: `ip rule add to <name>` does not resolve,
 // and that step is not best-effort — a name reaching it fails every WARP exit's
-// routing reconcile on every pass, so an earlier finding's "replies to the master stay
+// routing reconcile on every pass, so the "replies to the master stay
 // direct" rule never gets installed. The two uses must resolve separately.
 func TestMasterDNSNameServesClientsButNotTheKernel(t *testing.T) {
 	ctx := context.Background()

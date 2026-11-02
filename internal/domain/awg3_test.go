@@ -43,7 +43,7 @@ func TestAWG3AbsentIsUnchanged(t *testing.T) {
 	}
 }
 
-// TestAWG3HeaderProtectionRequiresSFloor is an earlier finding. The kernel takes the
+// TestAWG3HeaderProtectionRequiresSFloor: the kernel takes the
 // 12-byte header-protection nonce from the START of the Sx padding, so a shorter
 // pad makes the two ends derive different nonces and every packet is dropped —
 // with the interface UP. The module only rejects S<12 for values arriving in the

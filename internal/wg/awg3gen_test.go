@@ -61,8 +61,8 @@ func TestWithAWG3KeyIs32Bytes(t *testing.T) {
 
 // TestWithAWG3AlwaysValidates is the real guard: whatever the seed, the derived
 // block must satisfy every domain rule — above all the S1-S4 >= 12 floor that
-// header protection imposes and that the kernel accepts silently when violated
-//. Sweeping many seeds because the S values are themselves derived.
+// header protection imposes and that the kernel accepts silently when violated.
+// Sweeping many seeds because the S values are themselves derived.
 func TestWithAWG3AlwaysValidates(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		seed := "tunnel-" + strconv.Itoa(i)

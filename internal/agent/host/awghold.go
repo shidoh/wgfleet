@@ -24,7 +24,7 @@ var awgAptPackages = []string{"amneziawg", "amneziawg-dkms", "amneziawg-tools"}
 
 // awgHoldPlanner keeps `apt-mark hold` set on the AmneziaWG packages.
 //
-// This is an earlier finding ("a dependency that updates itself must be pinned") made to
+// A dependency that updates itself must be pinned; this makes that rule
 // converge. The holds used to be applied by hand during fleet hardening, and a
 // hand-applied invariant drifts exactly the way this one did: nodes provisioned
 // later (vn1/vn2, 2026-08-05) came up with unattended-upgrades enabled and no hold

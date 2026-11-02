@@ -173,7 +173,7 @@ func (b *Broker) lifelineSpec(ctx context.Context, exit config.ExitConfig, exitN
 // An operator who does need a split list on the reserve door writes it out in
 // `lifeline.allowed_ips`. IPv6 prefixes are dropped from it by FAMILY: the
 // lifeline spec carries no IPv6 prefix for the interface to answer from, so a v6
-// route here is the black hole an earlier finding is about. An entry that does not parse
+// route here is the IPv6 black hole. An entry that does not parse
 // is left alone for validation to complain about.
 func lifelineAllowedIPs(exit config.ExitConfig) []string {
 	if len(exit.Lifeline.AllowedIPs) == 0 {
@@ -206,8 +206,8 @@ func (b *Broker) lifelineResolvers(exit config.ExitConfig, gateway netip.Addr) [
 	return nil
 }
 
-// lifelineMTU sizes the reserve interface. MTU is computed, not guessed (earlier findings
-// ): the lifeline is one AmneziaWG layer over the exit's own physical link,
+// lifelineMTU sizes the reserve interface. MTU is computed, not guessed: the
+// lifeline is one AmneziaWG layer over the exit's own physical link,
 // which is the same arithmetic the master↔exit tunnel on that link already does.
 //
 // A WARP-egressing lifeline takes the MINIMUM of that and the wgcf interface MTU

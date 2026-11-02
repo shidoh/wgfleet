@@ -14,7 +14,7 @@ const MasterNATTable = "wgfleet_master"
 // MasterNATInput is the context for rendering the master's NAT/mangle ruleset.
 // On the master, client traffic arriving on the client WG interface is DNAT'd to
 // mihomo's redir-port, masqueraded outbound, and QUIC (UDP/443) is dropped so
-// browsers fall back to TCP paths the router can handle (the reference deployment §3.11, an earlier finding context).
+// browsers fall back to TCP paths the router can handle.
 type MasterNATInput struct {
 	ClientInterface string // client WG interface, e.g. "wg0"
 	ClientCIDR      string // client WG pool, e.g. "10.80.0.0/24"
@@ -309,7 +309,7 @@ func RenderMasterNAT(in MasterNATInput) (string, error) {
 	// for it to catch, since this chain has no ct-state guard and re-intercepts every
 	// packet anyway. What it DID match was client datagrams addressed to mihomo's own
 	// listeners, which the guard below deliberately excludes and the input drop policy
-	// would otherwise eat; accepting those is the an earlier finding self-dial shape.
+	// would otherwise eat; accepting those is the self-dial shape.
 	if in.TProxyAddr != "" && hostIntercepts {
 		b.WriteString("\tchain client_udp_tproxy {\n")
 		b.WriteString("\t\ttype filter hook prerouting priority mangle; policy accept;\n")

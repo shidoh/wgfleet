@@ -21,8 +21,8 @@ type XrayInput struct {
 	// Timezone synchronizes container log timestamps with the host (optional).
 	Timezone string
 	// NetAdmin grants CAP_NET_ADMIN. Only the EXIT inbound needs it: its freedom
-	// outbound sets SO_MARK so host policy routing sends egress through WARP (ADR-0025,
-	// an earlier finding). The client-facing MASTER inbound forwards to a loopback SOCKS
+	// outbound sets SO_MARK so host policy routing sends egress through WARP (ADR-0025).
+	// The client-facing MASTER inbound forwards to a loopback SOCKS
 	// (mihomo) and never marks a socket, so it leaves this false and runs with all
 	// capabilities dropped (#9, least privilege).
 	NetAdmin bool
@@ -100,8 +100,8 @@ func RenderXrayCompose(in XrayInput) (string, error) {
 	var capAdd []any
 	if in.NetAdmin {
 		// NET_ADMIN lets the freedom outbound set SO_MARK (sockopt.mark), which the
-		// host policy routing matches to send xray's egress through WARP (ADR-0025,
-		// an earlier finding). Without it the mark is silently dropped and egress misroutes.
+		// host policy routing matches to send xray's egress through WARP (ADR-0025).
+		// Without it the mark is silently dropped and egress misroutes.
 		// The client-facing master inbound forwards to a loopback SOCKS and never marks
 		// a socket, so it does not request this.
 		capAdd = append(capAdd, "NET_ADMIN")

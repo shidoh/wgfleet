@@ -30,8 +30,8 @@ const (
 
 	// S4 (transport_packet_junk_size) is prepended to EVERY data packet, so unlike
 	// S1-S3 it consumes per-packet MTU. Bounded to the Amnezia docs' 0-32 range
-	// (well within AWGExtraOverhead, so a full data packet never fragments — earlier findings
-	// ; TestS4FitsMTUCushion guards s4High ≤ AWGExtraOverhead). Never 0: AWG-2.0
+	// (well within AWGExtraOverhead, so a full data packet never fragments;
+	// TestS4FitsMTUCushion guards s4High ≤ AWGExtraOverhead). Never 0: AWG-2.0
 	// transport masking is mandatory.
 	s4Low  = 16
 	s4High = 32
@@ -249,7 +249,7 @@ func DeriveAWGShared(seed string) domain.AWGShared {
 
 // deriveSafeS deterministically derives (S1,S2,S3,S4) from seed, re-deriving from
 // an incremented sub-seed until the four decorated message sizes avoid the
-// amneziawg-go classifier collisions (awgSizesSafe; an earlier finding). Both tunnel ends
+// amneziawg-go classifier collisions (awgSizesSafe). Both tunnel ends
 // run the identical loop and converge on the same values. The safe set is large
 // (a handful of mod-16 residues are excluded), so it converges in the first few
 // iterations; the Amnezia-default fallback is a proven-safe last resort.

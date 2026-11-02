@@ -41,7 +41,7 @@ type NetnsNATInput struct {
 	ClientCIDR string
 	// DirectCIDRs are destinations that must NOT be intercepted: the corporate
 	// networks clients route through the master, the management overlay, the exits'
-	// own public addresses (an earlier finding — SSH to an exit from a full-tunnel client).
+	// own public addresses (SSH to an exit from a full-tunnel client).
 	//
 	// On the host these have always been `ip daddr !=` guards on the interception
 	// rules. Routing the whole client interface into a namespace takes them with it,

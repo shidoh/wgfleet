@@ -285,7 +285,7 @@ func dedupe(in []string) []string {
 
 // clientWireguardProxy renders the AWG proxy from the .conf's own input. Same
 // shape as the master↔exit wireguardProxy (peers list, proxy-level keepalive —
-// mihomo drops a peer-level one, an earlier finding), same awgOption.
+// mihomo drops a peer-level one), same awgOption.
 func clientWireguardProxy(name string, in wg.ClientConfigInput) (map[string]any, error) {
 	if err := in.Validate(); err != nil {
 		return nil, err

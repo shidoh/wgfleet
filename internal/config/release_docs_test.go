@@ -16,7 +16,7 @@ var internalRefs = regexp.MustCompile(`ADR[- ]?\d{3,4}|lessons?[ -]?#\s*\d+|docs
 const repoRoot = "../.."
 
 // Beta testers receive ONLY the release tarball — the repository is private — so an
-// "(ADR-0021)" or "" in a shipped file is a pointer to something they
+// "(ADR-0021)" or a lesson number in a shipped file is a pointer to something they
 // cannot open. It reads as a citation and delivers nothing. Where such a reference
 // was the sole justification for a non-obvious default, the reason belongs inline.
 //

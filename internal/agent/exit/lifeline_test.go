@@ -531,7 +531,7 @@ func TestFirewallLeavesTheLifelineOutWhenTheSpecHasNone(t *testing.T) {
 // A WARP lifeline egresses through WARP like the exit's primary pool, so its
 // traffic needs the same policy-routing rule. Without it the reserve clients'
 // packets follow the host default route and leave with the exit's own address,
-// which is the leak an earlier finding is about.
+// which is the WARP leak this guards against.
 func TestRoutingSendsTheLifelinePoolToTheEgressTable(t *testing.T) {
 	spec := lifelineExitSpec(t)
 	acts, err := routingPlanner{statePath: testPaths(t).RoutingState}.Plan(context.Background(), spec)

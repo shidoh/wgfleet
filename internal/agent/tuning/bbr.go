@@ -108,8 +108,7 @@ func (p bbrPlanner) Plan(_ context.Context, _ domain.NodeSpec) ([]reconcile.Acti
 	// segment size on its own and the transfer completes.
 	//
 	// Especially apt for this project: every managed node terminates or forwards
-	// traffic over multi-hop obfuscated paths whose MTU we do not control (an earlier finding
-	// and #18 are the same failure mode seen from the tunnel side).
+	// traffic over multi-hop obfuscated paths whose MTU we do not control.
 	//
 	// Only "0" is corrected — a non-zero value means probing is already on, and an
 	// operator who chose the more aggressive mode 2 keeps it.

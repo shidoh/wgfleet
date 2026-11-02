@@ -175,7 +175,7 @@ func TestRenderConfigRejectsOwnRedirAddress(t *testing.T) {
 // collides with the REALITY proxy of node "exit-a". mihomo does not surface this
 // as a clean rejection: it takes one of the two and the tier silently routes to
 // the wrong exit. Failing the render is the fail-safe — the planner errors and the
-// previous good config keeps running (cf. lesson: the engine's own check does not
+// previous good config keeps running (the engine's own check does not
 // catch structural inconsistencies; validate before handing anything over).
 func TestRenderConfigRejectsDuplicateProxyNames(t *testing.T) {
 	in := sampleInput()

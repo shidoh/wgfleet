@@ -188,7 +188,7 @@ func TestMasterNATSendsClientUDPToMihomo(t *testing.T) {
 	// No divert chain: `socket transparent 1` is a TCP idiom that for UDP can only
 	// ever match datagrams addressed to mihomo's own listeners — which the guard
 	// below deliberately excludes — and accepting those bypasses the input drop
-	// policy into the self-dial shape of an earlier finding.
+	// policy into the self-dial shape.
 	if strings.Contains(out, "socket transparent 1") {
 		t.Errorf("the divert chain is back; it accepts client UDP addressed to mihomo itself:\n%s", out)
 	}

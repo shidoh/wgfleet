@@ -221,7 +221,7 @@ func validateAddressPoolsDisjoint(f FleetSection) []error {
 		add(fmt.Sprintf("exits[%s].address_pool", e.Name), e.AddressPool)
 		// The lifeline pool is a client-facing pool like the exit's own and the
 		// master's, projected by the same controller — it collides the same quiet
-		// way (lesson from the two checks above) if left out of this scan.
+		// way as the two checks above if left out of this scan.
 		if e.Lifeline != nil {
 			add(fmt.Sprintf("exits[%s].lifeline.address_pool", e.Name), e.Lifeline.AddressPool)
 		}

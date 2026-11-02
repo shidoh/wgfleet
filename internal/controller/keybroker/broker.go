@@ -494,7 +494,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 
 	// The exit's server carries the master↔exit tunnel. It is AmneziaWG over its
 	// own physical link, so its MTU subtracts one AWG-obfuscated layer (sequential
-	// model, ADR-0014; an earlier finding). When the operator pins link_mtu (the exit's
+	// model, ADR-0014). When the operator pins link_mtu (the exit's
 	// real path is below 1500), the tunnel drops accordingly so carrier packets fit.
 	serverMTU := exitTunnelMTU(exit, exitAddr.Is6())
 
@@ -577,7 +577,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		return spec, nil
 	}
 	// Routing intent: client traffic egresses via WARP, but management and the
-	// path back to every master must stay direct (an earlier finding–#5).
+	// path back to every master must stay direct.
 	//
 	// The direct list an exit inherits is the base master's, exactly as before:
 	// taking every master's would change where the OTHER masters' clients leave
@@ -599,7 +599,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 	// store read here would have to swallow its own error, and "the store is
 	// briefly busy" would then render, apply and report a spec with no route back
 	// to the master — the return path silently falling into WARP, which is the
-	// failure an earlier finding exists to prevent. It is also an IP literal or nothing:
+	// failure this rule exists to prevent. It is also an IP literal or nothing:
 	// routing.Render feeds it to `ip rule add to <X>`, which cannot resolve a name.
 	type hostRoute struct {
 		slot int
@@ -928,7 +928,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 		// ssh.host is repointed there when a node's direct path is black-holed (the
 		// documented workaround), and with public_ip unset that address silently
 		// becomes the tunnel endpoint too — the tunnel comes UP, every check stays
-		// green, and throughput collapses to the overlay's ceiling. an earlier finding.
+		// green, and throughput collapses to the overlay's ceiling.
 		if haveIP && exit.PublicIP == "" && b.inMgmtOverlay(exitIP) {
 			b.warnOnce("exit-endpoint-on-overlay:"+exit.Name, endpoint,
 				"exit endpoint is a management-overlay address (public_ip unset, taken from ssh.host); "+
@@ -1078,7 +1078,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 // is published and read back from the store.
 const (
 	// DefaultRealityListenPort is the exit's VLESS port when the manifest leaves it
-	// unset — 443, the standard HTTPS port (least conspicuous; an earlier finding). It must
+	// unset — 443, the standard HTTPS port (least conspicuous). It must
 	// differ from the AWG awg0 port so both transports run warm; the AWG port is a
 	// high stable-random one, so 443 does not collide.
 	DefaultRealityListenPort = 443
@@ -1473,8 +1473,8 @@ func exitTunnelMTU(exit config.ExitConfig, ipv6 bool) int {
 
 // clientFacingMTU is the MTU the master hands to VPN clients: the minimum across
 // every hop a client payload traverses. The client↔master AWG hop binds at 1360;
-// each master↔exit AWG hop may be narrower if that exit's link_mtu is below 1500
-//, and a warp-egress exit that pins a smaller WARP MTU lowers it
+// each master↔exit AWG hop may be narrower if that exit's link_mtu is below 1500,
+// and a warp-egress exit that pins a smaller WARP MTU lowers it
 // further. Taking the min keeps client packets from fragmenting at the narrowest
 // downstream hop (sequential model, ADR-0014).
 func (b *Broker) clientFacingMTU() int {
@@ -1724,7 +1724,7 @@ func masterEndpointHost(m config.MasterConfig, node domain.Node) string {
 // It is deliberately not masterEndpointHost: that one may hold a DNS name, and
 // `ip rule add to <name>` does not resolve — the step is not best-effort, so a
 // name there fails every WARP exit's routing reconcile on every pass and leaves
-// an earlier finding's rule uninstalled fleet-wide. So take the first source that is an
+// the rule uninstalled fleet-wide. So take the first source that is an
 // IP LITERAL: a name in public_ip keeps serving clients while the kernel-level
 // guards fall back to the address the store holds.
 func masterRoutableIP(m config.MasterConfig, node domain.Node) (netip.Addr, bool) {
@@ -1746,7 +1746,7 @@ func firstIPLiteral(cands ...string) (netip.Addr, bool) {
 // inMgmtOverlay reports whether addr falls inside the management overlay — either
 // the declared mgmt_subnet or, when there is none, one of the nodes' own mgmt
 // addresses (MgmtCIDRs renders those as /32s). Used to catch an exit whose tunnel
-// endpoint has quietly become its overlay address; see an earlier finding.
+// endpoint has quietly become its overlay address.
 func (b *Broker) inMgmtOverlay(addr netip.Addr) bool {
 	for _, c := range b.fleet.MgmtCIDRs() {
 		p, err := netip.ParsePrefix(c)

@@ -160,8 +160,8 @@ type FleetSection struct {
 	ZeroTierNetwork string `koanf:"zerotier_network"`
 	// MgmtSubnet is the CIDR of the management overlay (ZeroTier). When set it is
 	// the authoritative trust scope the platform applies WITHOUT the operator
-	// hand-listing it on every node: exits route it DIRECT (never via WARP — earlier findings
-	// ) and accept it in their firewall. Empty ⇒ the broker derives the scope
+	// hand-listing it on every node: exits route it DIRECT (never via WARP) and
+	// accept it in their firewall. Empty ⇒ the broker derives the scope
 	// from the individual mgmt_addr /32s of every fleet node (see MgmtCIDRs).
 	MgmtSubnet string `koanf:"mgmt_subnet"`
 	// ClientSites are the operator's own networks a device is sometimes on and
@@ -634,7 +634,7 @@ type ClientAWGConfig struct {
 	//
 	// It is NOT "carry v6": the data plane is IPv4-only (forwarding off, mihomo
 	// ipv6:false, WARP's v6 egress dead) and that is a separate project. The
-	// difference between "block" and an earlier finding's black hole is the ICMP, and
+	// difference between "block" and the black hole is the ICMP, and
 	// nothing else — which is why this defaults off and wants a rehearsal before an
 	// operator turns it on.
 	IPv6 string `koanf:"ipv6"`
@@ -794,7 +794,7 @@ type ClientVLESSConfig struct {
 	// mitigation. Only effective in xhttp mode. Set `mux: false` to disable.
 	Mux *bool `koanf:"mux"`
 	// AllowIPv6 lets xray resolve the camouflage dest over IPv6. Default false ⇒
-	// pinned to IPv4 (the data plane is IPv4-only, an earlier finding).
+	// pinned to IPv4 (the data plane is IPv4-only).
 	AllowIPv6 bool   `koanf:"allow_ipv6"`
 	XHTTPPath string `koanf:"xhttp_path"` // XHTTP path; empty ⇒ "/"
 	Image     string `koanf:"image"`      // xray image (repo, optionally :tag); empty ⇒ default pinned
@@ -923,7 +923,7 @@ type ExitConfig struct {
 	// console is a store flag that a re-provision clears.
 	Drain          bool     `koanf:"drain"`
 	EgressFallback []string `koanf:"egress_fallback"` // ordered fallbacks for censorship-adaptive failover (ADR-0017), e.g. [direct]; empty ⇒ no failover
-	WARPMTU        int      `koanf:"warp_mtu"`        // WARP interface MTU; 0 ⇒ computed (1440). Set when the real WARP path is smaller (an earlier finding: 1320-1420)
+	WARPMTU        int      `koanf:"warp_mtu"`        // WARP interface MTU; 0 ⇒ computed (1440). Set when the real WARP path is smaller (1320-1420)
 	// LinkMTU is the physical/path MTU of the master↔exit link — the largest packet
 	// that reaches this exit without fragmentation. Measure it with `ping -M do -s N
 	// <exit-ip>` from the master (path MTU = largest passing N + 28) and set the
@@ -1052,7 +1052,7 @@ type RealityTransportConfig struct {
 	Mux bool `koanf:"mux"`
 	// AllowIPv6 lets xray resolve the camouflage dest (and egress) over IPv6. Default
 	// false ⇒ xray is pinned to IPv4 (queryStrategy UseIPv4): the exit data plane is
-	// IPv4-only (no IPv6 egress, an earlier finding), so a dest that resolves AAAA-only (e.g.
+	// IPv4-only (no IPv6 egress), so a dest that resolves AAAA-only (e.g.
 	// some Fastly anycast) would otherwise black-hole the REALITY steal/egress. Set
 	// true only on an exit that genuinely has working IPv6 egress.
 	AllowIPv6 bool   `koanf:"allow_ipv6"`

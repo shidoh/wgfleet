@@ -250,7 +250,7 @@ func TestObserveClientPathForgetsProbesNoLongerTaken(t *testing.T) {
 }
 
 // A mihomo restart is the event that took three exits out of rotation in three
-// minutes (an earlier finding) and the only record of it was the master agent's journal.
+// minutes and the only record of it was the master agent's journal.
 // The container's start time makes every restart — ours, docker's, a crash — a
 // step in one series; the self-heal snapshot says which of them were ours, and
 // whether the governor has stopped trying (the same defect with the symptom off).

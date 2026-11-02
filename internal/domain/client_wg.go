@@ -69,7 +69,7 @@ type ClientWGSpec struct {
 	// master address itself in v6 and answer a forwarded v6 packet with ICMPv6
 	// administratively-prohibited, so a dual-stack client falls back to IPv4 at once
 	// instead of stalling. Validate() refuses "::/0" without it, because that pairing
-	// is an earlier finding — a v6 default route into a data plane that drops it silently.
+	// is the IPv6 black hole — a v6 default route into a data plane that drops it silently.
 	IPv6Prefix string
 	// Clients are the ENABLED peers only. A muted credential is absent here, so a
 	// re-render drops it from the interface while the user's config stays valid.
@@ -279,7 +279,7 @@ func validateClientPeer(i int, c WGClientPeer, pool netip.Prefix, server netip.A
 // validateClientAllowedIPs rejects a malformed prefix and, specifically, an IPv6
 // default route that nothing is prepared to answer.
 //
-// "::/0" on its own is an earlier finding: the data plane is IPv4-only, so a dual-stack
+// "::/0" on its own is a black hole: the data plane is IPv4-only, so a dual-stack
 // client abandons its own working v6 path for one that drops silently, and pages
 // stall in a way that reads as an MTU fault for days. Paired with ipv6Prefix it is
 // the opposite — the master addresses itself in that prefix and answers forwarded

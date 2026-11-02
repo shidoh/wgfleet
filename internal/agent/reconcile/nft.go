@@ -180,7 +180,7 @@ func NFTApply(path string, ruleset []byte, loaded func() bool, check func([]byte
 // above — no pre-check, no applied marker, no previous ruleset, no kernel
 // comparison — and did so in the ONE place where the consequences are least
 // visible: a ruleset inside a namespace, where nobody runs `nft list ruleset` by
-// reflex. That is an earlier finding in its purest form: a fix written for one resource is
+// reflex. A fix written for one resource is
 // not a fix until it is applied to all of them.
 func NFTApplyWith(nftPrefix []string, path string, ruleset []byte, loaded func() bool, check func([]byte) error, summary string) ([]Action, error) {
 	if len(nftPrefix) == 0 {

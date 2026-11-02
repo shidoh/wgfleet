@@ -1,9 +1,9 @@
 // Package routing renders the policy-routing intent (RoutingSpec) into a
 // deterministic, idempotent sequence of shell steps (ip rule/route, sysctl,
-// conntrack, nft mangle). It encodes the hard-won routing lessons directly
-// (docs/DESIGN.md #2–#5, #9) so the platform cannot reintroduce the failures we hit
-// by hand. Steps are returned as data; the reconcile layer wraps them as exec
-// actions, so dry-run shows the exact commands without running them.
+// conntrack, nft mangle). It encodes the hard-won routing rules directly so
+// the platform cannot reintroduce the failures we hit by hand. Steps are
+// returned as data; the reconcile layer wraps them as exec actions, so dry-run
+// shows the exact commands without running them.
 package routing
 
 import (
@@ -57,7 +57,7 @@ const (
 // MaxDirectCIDRs caps the number of direct-CIDR rules. Each consumes priority
 // prefDirect0+i, so without a cap a large list would walk into prefFwmark (200)
 // and silently overwrite the fwmark rule that keeps WG handshake/reply traffic on
-// the main table — reintroducing an earlier finding (clients see a Cloudflare source and
+// the main table — reintroducing the return-path leak (clients see a Cloudflare source and
 // drop, the master loses peers). The cap leaves a margin below prefFwmark.
 const MaxDirectCIDRs = prefFwmark - prefDirect0 - 10 // 80
 
@@ -87,7 +87,7 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 
 	var steps []Step
 
-	// an earlier finding: packets arrive on one interface and leave via another (wgcf);
+	// Packets arrive on one interface and leave via another (wgcf);
 	// strict reverse-path filtering would drop them. The kernel uses
 	// max(conf.all.rp_filter, conf.<iface>.rp_filter) per ingress, so all=0 alone is
 	// NOT enough when a host hardening drop-in pins default.rp_filter=2 — the egress
@@ -98,7 +98,7 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 		sysctl("net.ipv4.conf."+spec.EgressInterface+".rp_filter", "0"),
 	)
 
-	// an earlier finding: stale conntrack entries remember the old path; flush so the new
+	// Stale conntrack entries remember the old path; flush so the new
 	// egress takes effect immediately instead of after a timeout. BestEffort:
 	// `conntrack -D` exits non-zero ("0 flow entries have been deleted") on a fresh
 	// node with an empty table, which must NOT abort the first routing reconcile.
@@ -108,7 +108,7 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 		BestEffort: true,
 	})
 
-	// an earlier finding: traffic back to the master must stay direct, else the master
+	// Traffic back to the master must stay direct, else the master
 	// sees a Cloudflare source and drops the peer.
 	if spec.MasterIP != "" {
 		steps = append(steps, ipRuleReplace(prefMaster,
@@ -117,7 +117,7 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 		)...)
 	}
 
-	// an earlier finding: private/RU/own networks go direct, never through egress.
+	// Private/RU/own networks go direct, never through egress.
 	for i, cidr := range spec.DirectCIDRs {
 		steps = append(steps, ipRuleReplace(prefDirect0+i,
 			fmt.Sprintf("direct route for %s", cidr),
@@ -125,7 +125,7 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 		)...)
 	}
 
-	// an earlier finding: WG handshake/reply packets are marked by source port in
+	// WG handshake/reply packets are marked by source port in
 	// nftables mangle and kept on the main table via this fwmark rule.
 	steps = append(steps, ipRuleReplace(prefFwmark,
 		fmt.Sprintf("keep fwmark 0x%x (WG replies/handshake) on main", mark),
@@ -136,7 +136,7 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 	// MUST be scoped `from <ClientCIDR>`: a bare `lookup` is `from all`, which pulls
 	// the node's OWN host traffic — SSH, DNS, image pulls, even the wgcf handshake
 	// to Cloudflare — into WARP, cutting the box off the moment WARP is down/blocked
-	// (an earlier finding; recovered only via the provider console). With no ClientCIDR we
+	// (recovered only via the provider console). With no ClientCIDR we
 	// render NO egress rule rather than risk `from all`: client egress won't work,
 	// but the host stays reachable.
 	if spec.ClientCIDR != "" {
@@ -149,7 +149,7 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 	// A lifeline is a second client pool on the exit (its own WGServer, distinct
 	// from the primary ClientCIDR); when the exit's egress is WARP, its traffic
 	// must ALSO reach the egress table, scoped the same way and for the same
-	// reason as ClientCIDR (an earlier finding: never `from all`).
+	// reason as ClientCIDR (never `from all`).
 	if spec.LifelineCIDR != "" {
 		steps = append(steps, ipRuleReplace(prefLifeline,
 			fmt.Sprintf("send lifeline client traffic (from %s) to the egress table", spec.LifelineCIDR),
@@ -185,7 +185,7 @@ func Render(spec domain.RoutingSpec) ([]Step, error) {
 // Script serializes steps into a deterministic, one-command-per-line blob. It is
 // the canonical text form of the routing intent: the reconcile layer writes it
 // to a state file and diffs it, so the routing commands (and the conntrack flush
-// in particular, an earlier finding) run only when the intent actually changes rather than
+// in particular) run only when the intent actually changes rather than
 // on every pass.
 func Script(steps []Step) string {
 	var b strings.Builder
@@ -225,7 +225,7 @@ func withoutDirectRules(script string) string {
 
 // OnlyDirectRulesDiffer reports whether two routing scripts differ in nothing but
 // their direct-CIDR rules. Such a change needs no flush of the whole conntrack
-// table: an earlier finding is about flows remembering an egress path that changed, and
+// table: the flush is about flows remembering an egress path that changed, and
 // here the only flows whose path changed are the ones to the destinations that
 // came or went — DirectCIDRsChanged names them. prev=="" is a first apply and is
 // never "only direct rules".
@@ -343,7 +343,7 @@ func WithoutConntrackFlush(steps []Step) []Step {
 
 // TeardownActions reverses Render: it flushes the egress routing table and
 // deletes the ip rules pointing at it, plus flushes conntrack so the old WARP
-// path is forgotten immediately (an earlier finding, in reverse).
+// path is forgotten immediately (in reverse).
 //
 // Two callers: decommissioning an exit, and the WARP→direct failover (ADR-0017),
 // where "render nothing" had been mistaken for "undo the previous something" and

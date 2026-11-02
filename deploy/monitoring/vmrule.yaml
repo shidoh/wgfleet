@@ -305,7 +305,7 @@ spec:
     - alert: WgfleetMihomoRestartLoop
       # Every restart of the container — a self-heal, a crash, docker's restart
       # policy — steps the start time forward, so this counts restarts no single
-      # restarter has to confess to. an earlier finding: a planner restarted mihomo every
+      # restarter has to confess to. Once a planner restarted mihomo every
       # pass, three exits fell out of rotation in three minutes, and the only record
       # was the master agent's journal. Each restart drops mihomo's userspace
       # WireGuard devices, which is why it is an outage and not a blip.

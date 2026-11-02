@@ -16,7 +16,7 @@ const EgressBlockThreshold = 3
 // EgressClassifier turns each pass's warp-egress check result into an
 // EgressReachability classification, tracking consecutive failures so a transient
 // Cloudflare blip reads as "degraded" and only a persistent failure whose active
-// path confirmation also fails reads as "blocked" (ISP/DPI — an earlier finding). It is
+// path confirmation also fails reads as "blocked" (ISP/DPI). It is
 // detect-only: it produces a signal (a self-check + classification), it does not
 // switch transport. Hold one instance per agent; Classify mutates the streak.
 type EgressClassifier struct {

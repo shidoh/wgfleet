@@ -16,7 +16,7 @@ import (
 )
 
 // HandshakeMaxAge is the freshness threshold for a WG handshake. Older than this
-// and the tunnel is considered stale (an earlier finding: latency through the tunnel is
+// and the tunnel is considered stale (latency through the tunnel is
 // expected to be high, so we judge liveness by handshake age, not RTT).
 const HandshakeMaxAge = 3 * time.Minute
 

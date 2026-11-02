@@ -158,7 +158,7 @@ func BuildPlan(in BootstrapInput) Plan {
 	// wgcfVersion would reach new exits only and the fleet would drift apart
 	// forever. Replacing the binary disturbs nothing — wgcf is not a daemon, it
 	// only registers, and the account toml and the live WARP interface are
-	// untouched (an earlier finding: one PrivateKey = one WARP server).
+	// untouched (one PrivateKey = one WARP server).
 	if in.Node.Role == domain.RoleExit && in.Facts.WgcfVersion != wgcfVersion {
 		what := "install"
 		if in.Facts.HasWgcf {

@@ -2,8 +2,8 @@
 // both the master and exit agents. Docker sets the nft filter FORWARD policy to
 // DROP and accepts only its own bridge traffic, so client packets routed through
 // a WG interface to the uplink/egress are dropped in the forward hook while the
-// AmneziaWG handshake (an INPUT match, not forward) keeps looking healthy
-//. A node's own `inet wgfleet` forward chain cannot override this —
+// AmneziaWG handshake (an INPUT match, not forward) keeps looking healthy.
+// A node's own `inet wgfleet` forward chain cannot override this —
 // a drop in Docker's base chain is final regardless of an accept in another base
 // chain at the same hook. The sanctioned fix is an ACCEPT in DOCKER-USER, which
 // Docker never flushes. The exit and master differ only in the client interface

@@ -328,8 +328,8 @@ func TestWARPMTUIsPhysicalNotNested(t *testing.T) {
 
 func TestWARPMTUFollowsSpecOverride(t *testing.T) {
 	// When the controller pins a constrained WARP MTU (spec.WARPMTU), the WARP
-	// planner must use it verbatim rather than the computed 1440 (ADR-0014 / earlier findings
-	// : real WARP paths land in 1320-1420).
+	// planner must use it verbatim rather than the computed 1440 (ADR-0014;
+	// real WARP paths land in 1320-1420).
 	paths := testPaths(t)
 	spec, priv := exitSpec(t)
 	spec.WARPMTU = 1340
@@ -398,7 +398,7 @@ func TestRoutingIdempotentAfterApply(t *testing.T) {
 	}
 
 	// Second plan, unchanged intent: no routing command re-runs. In particular
-	// `conntrack -D` must NOT reappear — an earlier finding flushes on change, not per pass.
+	// `conntrack -D` must NOT reappear — conntrack is flushed on change, not per pass.
 	// Stub the kernel probe as healthy so this isolates the state-file gate from
 	// live-kernel drift repair (which has its own test).
 	healthy := func(domain.RoutingSpec) bool { return true }
@@ -411,7 +411,7 @@ func TestRoutingIdempotentAfterApply(t *testing.T) {
 			t.Errorf("steady routing should be no-change, got %s %s", a.Kind, a.Target)
 		}
 		if strings.Contains(a.Summary, "conntrack") {
-			t.Error("conntrack flush re-emitted on unchanged intent (an earlier finding violation)")
+			t.Error("conntrack flush re-emitted on unchanged intent (must flush on change only)")
 		}
 	}
 
@@ -445,7 +445,7 @@ func TestRoutingFlushesConntrackOnSwitchToDirect(t *testing.T) {
 
 	// Failover WARP→direct: routing.Render yields no steps, but the transition must
 	// flush conntrack once so flows pinned to the now-dead WARP path re-resolve
-	// immediately instead of black-holing for the conntrack timeout (an earlier finding, M-3).
+	// immediately instead of black-holing for the conntrack timeout (M-3).
 	direct := warp
 	direct.Egress = domain.EgressDirect
 	direct.Routing.EgressInterface = ""
@@ -472,7 +472,7 @@ func TestRoutingFlushesConntrackOnSwitchToDirect(t *testing.T) {
 	}
 	for _, a := range steady {
 		if strings.Contains(a.Summary, "conntrack") {
-			t.Error("steady direct egress must not re-flush conntrack (an earlier finding: on change only)")
+			t.Error("steady direct egress must not re-flush conntrack (on change only)")
 		}
 	}
 }
