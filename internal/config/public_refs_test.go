@@ -10,7 +10,7 @@ import (
 )
 
 // lessonRef matches a numbered pointer into the maintainer's private lessons file
-// ("an earlier finding", "an earlier finding:", "an earlier finding", "an earlier finding"), including one
+// ("lesson #N", "Lesson N:", "lessons #N/#M", "lesson-#N"), including one
 // wrapped across a comment line break.
 var lessonRef = regexp.MustCompile(`(?i)\blessons?\b[\s/]*-?\s*#?\s*\d`)
 
