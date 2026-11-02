@@ -63,6 +63,26 @@ func TestRenderXrayComposeNoNetAdmin(t *testing.T) {
 	}
 }
 
+// TestRenderXrayComposeDisablesMPTCP guards that every xray container (exit,
+// client-facing VLESS, portal) listens with plain TCP: Go 1.24+ opens MPTCP
+// listeners by default, and an MPTCP listener is what the CVE-2026-98432 remote
+// root exploit needs. Checked for both the bare and the timezone-carrying render,
+// since the environment list is built in two steps.
+func TestRenderXrayComposeDisablesMPTCP(t *testing.T) {
+	for _, in := range []XrayInput{
+		{ConfigPath: "/etc/wgfleet/xray/config.json", NetAdmin: true, ListenPort: 443},
+		{ConfigPath: "/etc/wgfleet/client-vless/config.json", Timezone: "Europe/Moscow"},
+	} {
+		out, err := RenderXrayCompose(in)
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		if !strings.Contains(out, "GODEBUG=multipathtcp=0") {
+			t.Errorf("compose for %s must disable MPTCP:\n%s", in.ConfigPath, out)
+		}
+	}
+}
+
 func TestRenderXrayComposeRequiresConfigPath(t *testing.T) {
 	if _, err := RenderXrayCompose(XrayInput{}); err == nil {
 		t.Error("expected error when config path is empty")

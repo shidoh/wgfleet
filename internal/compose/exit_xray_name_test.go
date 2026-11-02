@@ -7,6 +7,7 @@ import (
 
 // The exit's and the client-facing xray share this renderer and are deployed to
 // every node already; a byte of drift recreates the container on all of them.
+// Last deliberate change: GODEBUG=multipathtcp=0 (2026-11-02, CVE-2026-98432).
 func TestRenderXrayComposeDefaultIsByteStable(t *testing.T) {
 	cases := []struct {
 		in   XrayInput
@@ -27,6 +28,7 @@ func TestRenderXrayComposeDefaultIsByteStable(t *testing.T) {
       - /etc/xray/config.json
     container_name: xray
     environment:
+      - GODEBUG=multipathtcp=0
       - TZ=Europe/Moscow
     image: ghcr.io/xtls/xray-core:26.6.22
     logging:
@@ -55,6 +57,8 @@ func TestRenderXrayComposeDefaultIsByteStable(t *testing.T) {
       - -c
       - /etc/xray/config.json
     container_name: xray
+    environment:
+      - GODEBUG=multipathtcp=0
     image: ghcr.io/xtls/xray-core:26.6.22
     logging:
       driver: json-file

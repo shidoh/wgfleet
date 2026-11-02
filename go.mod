@@ -4,6 +4,9 @@ go 1.26.0
 
 toolchain go1.27.3
 
+// Plain TCP listeners: Go 1.24+ defaults to MPTCP, which CVE-2026-98432 exploits.
+godebug multipathtcp=0
+
 require (
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/knadh/koanf/parsers/yaml v1.1.1

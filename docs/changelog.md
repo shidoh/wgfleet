@@ -6,6 +6,7 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 ## v0.3.5 — unreleased
 
+- MPTCP is off on every listener the fleet runs: the agent, the controller and the xray containers (exit REALITY, client VLESS, REALITY portal). Go opens MPTCP listeners by default, and an MPTCP listener is what the published remote root exploit for the Linux kernel bug CVE-2026-98432 needs. Clients that ask for MPTCP get plain TCP; no fleet client asks for it. The xray compose files change, so every xray container is recreated once after the upgrade; its connections drop for a few seconds. The kernel bug itself is fixed only by a patched kernel (Ubuntu 24.04: 6.8.0-149, 22.04: 5.15.0-203); install it when Ubuntu releases it.
 - Release binaries are built with Go 1.27.3. v0.3.4 and earlier archives were built with Go 1.26.0 and lack its security fixes to crypto/tls, crypto/x509 and the HTTP/2 server behind the portal. Upgrade the controller and every agent.
 - gRPC 1.85.0 (was 1.82.1): fixes memory exhaustion from fragmented HTTP/2 DATA frames and a server panic on a request without `:authority`. Only a node with a fleet certificate could reach either.
 - mihomo on the masters is v1.19.33 (was v1.19.32): a probe answered in under a millisecond is no longer counted as a failure, fake-ip allocations survive a config reload, abandoned DoH queries no longer pile up. The image change restarts mihomo once on every master that does not pin `mihomo_tag`; client connections drop for a few seconds.

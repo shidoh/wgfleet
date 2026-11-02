@@ -55,7 +55,12 @@ func RenderXrayCompose(in XrayInput) (string, error) {
 	}
 	image := orDefault(in.Image, DefaultXrayImage)
 
-	env := []any{}
+	// Plain TCP listeners. Go 1.24+ (xray included) opens MPTCP listeners by
+	// default, and an MPTCP listener is what the CVE-2026-98432 remote root
+	// exploit needs; nobody on the fleet uses MPTCP (zero second subflows,
+	// measured 2026-11-02). Xray itself turned it off in 26.10.31; the env var
+	// does the same for the pinned 26.6.22 (checked on the stand).
+	env := []any{"GODEBUG=multipathtcp=0"}
 	volumes := []any{in.ConfigPath + ":/etc/xray/config.json:ro"}
 	if in.Timezone != "" {
 		env = append(env, "TZ="+in.Timezone)
@@ -110,9 +115,7 @@ func RenderXrayCompose(in XrayInput) (string, error) {
 	if len(capAdd) > 0 {
 		svc["cap_add"] = capAdd
 	}
-	if len(env) > 0 {
-		svc["environment"] = env
-	}
+	svc["environment"] = env
 
 	doc := map[string]any{
 		"services": map[string]any{"xray": svc},
