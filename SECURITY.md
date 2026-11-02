@@ -5,8 +5,6 @@
 If you discover a security vulnerability in wgfleet, please report it
 **privately**. Do not open a public issue for security problems.
 
-- **During the closed beta:** report to the operator directly, through the chat
-  you were invited from. The channels below apply once the repository is public.
 - Open a [GitHub security advisory](https://github.com/shidoh/wgfleet/security/advisories/new)
   (preferred), or
 - Contact the maintainer privately through the contact listed on the GitHub

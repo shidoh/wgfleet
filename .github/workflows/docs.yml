@@ -1,7 +1,6 @@
-# Publishes the operator documentation as a static site into a SEPARATE, public
-# repository (shidoh/wgfleet-docs, branch gh-pages), so the site is public while
-# this repository stays private: GitHub Pages on a private repository needs a
-# paid plan, and even then the source would be one setting away from public.
+# Publishes the operator documentation as a static site into a separate
+# repository (shidoh/wgfleet-docs, branch gh-pages), which serves it on GitHub
+# Pages at shidoh.github.io/wgfleet-docs.
 #
 # Requires one secret: DOCS_DEPLOY_KEY — the private half of a deploy key added
 # to shidoh/wgfleet-docs with write access. Only main publishes.
