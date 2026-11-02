@@ -60,3 +60,8 @@ coverage.*
 # mkdocs build output and the root page staged into docs/ at build time
 /site/
 /build-docs/
+
+# Architecture decision records and maintainer tooling — kept local with the
+# rest of the engineering notes, not published.
+/docs/adr/
+/tools/check-awg3-status.sh

@@ -155,7 +155,7 @@ clients can connect to the master over VLESS as well as AmneziaWG.
 - **Reserve configs on exits (lifeline)** — an exit can carry a second
   client-facing AmneziaWG interface holding every issued credential; each person
   gets a reserve profile per such exit, added in advance, so losing the master
-  does not cut them off ([ADR-0034](docs/adr/0034-lifeline-reserve-configs.md)).
+  does not cut them off.
 - **Two-tier DNS filtering** — blocky on the master and on every exit, with
   conditional forwarding for local zones.
 - **Scanner-resistant firewall** — rendered nftables with an auto-refreshed

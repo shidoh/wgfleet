@@ -74,9 +74,6 @@ wgfleet/
 │   ├── configuration.md        COMPLETE config reference (every key) + upstream doc links
 │   ├── cli.md                  every flag on both binaries
 │   ├── operations.md           dashboard, VLESS clients, backup/restore, metrics, health
-│   ├── DESIGN.md               full project context + conventions
-│   ├── lessons.md              hard-won operational lessons baked into reconcile
-│   ├── adr/                    architecture decision records (0001–0032)
 │   ├── onboarding.md           node provisioning walkthrough
 │   ├── colocated-controller-master.md  co-location on the master (default for small fleets)
 │   ├── recipes/                task-oriented config recipes (RU split-tunnel + DNS filter, …)
@@ -98,14 +95,13 @@ wgfleet/
 - **Tests** are table-driven; provisioning is tested against SSH mocks, not live
   nodes. Keep `gofmt`, `go vet` and `go test -race ./...` clean — those four steps are the
   gate, and `make lint` is not one of them (there is no such rule).
-- **Significant architectural decisions** get an ADR under `docs/adr/`.
 
 ## Before opening a pull request
 
 1. `make all` is green (fmt, vet, test, build).
 2. New behavior has tests.
 3. No secrets, real IPs, or hostnames in the diff.
-4. Docs/ADRs updated if behavior or architecture changed.
+4. Docs updated if behavior changed.
 
 ## Cutting a release
 
@@ -145,9 +141,6 @@ also inside the archive (`VERSION`, and `--version` on either binary).
 ## Background reading
 
 - `README.md` — architecture, configuration, CLI, operations.
-- `docs/DESIGN.md` — full project context and conventions.
-- `maintainer notes` — hard-won operational lessons the platform must honor.
-- `docs/adr/` — architecture decision records.
 
 ## License of contributions
 
