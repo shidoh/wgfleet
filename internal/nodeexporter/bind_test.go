@@ -13,21 +13,21 @@ func tcpTable(rows ...string) string {
 	return header + strings.Join(rows, "\n") + "\n"
 }
 
-// 9100 = 0x238C. 172.29.3.10 little-endian per word = 0A0319AC.
+// 9100 = 0x238C. 10.20.3.10 little-endian per word = 0A03140A.
 const (
-	listenMgmt     = "   0: 0A0319AC:238C 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12345 1 0000 100 0 0 10 0"
+	listenMgmt     = "   0: 0A03140A:238C 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12345 1 0000 100 0 0 10 0"
 	listenWildcard = "   1: 00000000:238C 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12346 1 0000 100 0 0 10 0"
 	listenLoopback = "   2: 0100007F:238C 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12347 1 0000 100 0 0 10 0"
-	listenOther    = "   3: 0A0319AC:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12348 1 0000 100 0 0 10 0"
+	listenOther    = "   3: 0A03140A:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12348 1 0000 100 0 0 10 0"
 	// A scrape in flight: same port, but it has a peer, so it is a conversation
 	// and not a listener. Counting it would make the planner believe the exporter
 	// is bound for as long as somebody is talking to a dead one.
-	establishedOnPort = "   4: 0A0319AC:238C AC1B0164:C142 01 00000000:00000000 00:00000000 00000000     0        0 12349 1 0000 100 0 0 10 0"
+	establishedOnPort = "   4: 0A03140A:238C AC1B0164:C142 01 00000000:00000000 00:00000000 00000000     0        0 12349 1 0000 100 0 0 10 0"
 )
 
 func TestListenAddrsFromTable_OnlyListenersOnThePort(t *testing.T) {
 	got := ListenAddrsFrom(strings.NewReader(tcpTable(listenMgmt, listenOther, establishedOnPort)), 9100, false)
-	if len(got) != 1 || got[0] != "172.29.3.10" {
+	if len(got) != 1 || got[0] != "10.20.3.10" {
 		t.Fatalf("want just the listener on 9100, got %v", got)
 	}
 }
@@ -51,7 +51,7 @@ func TestListenAddrsFromTable_V6Wildcard(t *testing.T) {
 }
 
 func TestClassifyBind(t *testing.T) {
-	const mgmt = "172.29.3.10"
+	const mgmt = "10.20.3.10"
 	for _, tc := range []struct {
 		name  string
 		addrs []string
