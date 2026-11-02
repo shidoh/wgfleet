@@ -15,8 +15,10 @@ jobs:
   # Format, vet, build and the unprivileged test suite run on the self-hosted
   # scale set in the sln cluster (label `sln`, gitops apps/gha-runner-sln): a
   # persistent Go cache turns the nine-minute race run into seconds.
+  # Pull requests run on GitHub-hosted runners: a PR from a fork is untrusted
+  # code and must never execute inside the cluster.
   build-test:
-    runs-on: sln
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'sln' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
