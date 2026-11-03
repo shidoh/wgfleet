@@ -540,6 +540,9 @@ func RenderRuleset(in RenderInput) (string, error) {
 	b.WriteString("\t\ttype filter hook output priority 0; policy accept;\n")
 	b.WriteString("\t}\n")
 
+	// Clear DSCP on what leaves our AmneziaWG ports (see renderAWGDSCPScrub).
+	renderAWGDSCPScrub(&b, in)
+
 	// Mark WG-server reply/handshake packets so source routing keeps them direct.
 	// `type route hook output` re-runs the route lookup after the
 	// mark is set, so the routing `ip rule fwmark` actually diverts them to the main
