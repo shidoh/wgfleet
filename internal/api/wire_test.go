@@ -68,15 +68,18 @@ func indexOf(s, sub string) int {
 
 // Guard: the wire version must never drift by accident. Changing it is a
 // deliberate act with a rollout consequence, so it takes a deliberate test edit.
-func TestWireContractVersionIs14(t *testing.T) {
-	if WireContractVersion != 14 {
-		t.Fatalf("WireContractVersion = %d, want 14 (bumped for the exit-initiated REALITY bridge and the master's portal)", WireContractVersion)
+func TestWireContractVersionIs15(t *testing.T) {
+	if WireContractVersion != 15 {
+		t.Fatalf("WireContractVersion = %d, want 15 (bumped for AmneziaWG 3.1 random trailers)", WireContractVersion)
 	}
 }
 
-func TestRealityReverseGateIsNamedAndCurrent(t *testing.T) {
-	if WireRealityReverse != WireContractVersion {
-		t.Errorf("WireRealityReverse = %d but the contract is at %d", WireRealityReverse, WireContractVersion)
+func TestAWG3TrackBGateIsNamedAndCurrent(t *testing.T) {
+	if WireAWG3TrackB != WireContractVersion {
+		t.Errorf("WireAWG3TrackB = %d but the contract is at %d", WireAWG3TrackB, WireContractVersion)
+	}
+	if WireRealityReverse >= WireAWG3TrackB {
+		t.Errorf("WireRealityReverse = %d must stay the version that introduced it, below %d", WireRealityReverse, WireAWG3TrackB)
 	}
 }
 

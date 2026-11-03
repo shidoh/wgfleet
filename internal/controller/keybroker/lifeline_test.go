@@ -61,8 +61,8 @@ func brokerWithLifeline(t *testing.T, fleet config.FleetSection) (*Broker, store
 		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
 	seedNode(t, st, "e", "10.20.0.5", "198.51.100.7",
 		"A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY=", domain.RoleExit)
-	setWireVersion(t, st, "m", api.WireLifeline)
-	setWireVersion(t, st, "e", api.WireLifeline)
+	setWireVersion(t, st, "m", api.WireAWG3TrackB)
+	setWireVersion(t, st, "e", api.WireAWG3TrackB)
 
 	add := func(c domain.WGClient) {
 		t.Helper()

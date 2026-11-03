@@ -12,37 +12,38 @@
     "AWG": {
       "Shared": {
         "H1": {
-          "Min": 168762632,
-          "Max": 298762632
+          "Min": 1,
+          "Max": 1
         },
         "H2": {
-          "Min": 874545291,
-          "Max": 1004545291
+          "Min": 2,
+          "Max": 2
         },
         "H3": {
-          "Min": 1205599599,
-          "Max": 1335599599
+          "Min": 3,
+          "Max": 3
         },
         "H4": {
-          "Min": 1779461569,
-          "Max": 1909461569
+          "Min": 4,
+          "Max": 4
         },
-        "S1": 16,
-        "S2": 41,
-        "S3": 49,
-        "S4": 18,
+        "S1": 29,
+        "S2": 29,
+        "S3": 29,
+        "S4": 29,
         "HeaderProtectionKey": "/Gl8LucA8CzncjnHznKXuLMOyLaum4B6nZKcH2fMfoY=",
+        "RandomTrailers": true,
         "ContentPaddingAddition": "",
-        "RekeyAfterTime": "120-147",
-        "RekeyTimeout": "5-6",
-        "RejectAfterTime": "180-211",
-        "KeepaliveTimeout": "10-13",
-        "MaxHandshakeAttempts": "18"
+        "RekeyAfterTime": "120-134",
+        "RekeyTimeout": "",
+        "RejectAfterTime": "",
+        "KeepaliveTimeout": "10-14",
+        "MaxHandshakeAttempts": ""
       },
       "Local": {
         "Jc": 10,
-        "Jmin": 48,
-        "Jmax": 127,
+        "Jmin": 59,
+        "Jmax": 138,
         "I1": "\u003cb 0x000100002112a442\u003e\u003cr 12\u003e",
         "I2": "\u003cb 0xc30000000107\u003e\u003cr 7\u003e\u003cb 0x0b\u003e\u003cr 11\u003e\u003cb 0x00\u003e\u003cr 159\u003e",
         "I3": "",

@@ -167,7 +167,10 @@ func ClientAWGParams(spec domain.ClientWGSpec, c domain.WGClient) (*domain.AWGPa
 	if spec.AWG == nil {
 		return nil, nil
 	}
-	params := *spec.AWG
+	// The 3.x timers belong to the server's interface only: they are per-end, so
+	// a client needs none, and carrying them would make a 2.0-compatible profile
+	// one that older apps refuse. Header protection, which must match, stays.
+	params := spec.AWG.WithoutAWG3Timers()
 	params.Local = clientDecoy(spec, c)
 	if err := params.ValidateUserspace(); err != nil {
 		return nil, fmt.Errorf("wg render: client config: %w", err)
@@ -184,7 +187,7 @@ func ClientTunnelV6(spec domain.ClientWGSpec, v4 string) (string, error) {
 // RenderClientConfig renders one end user's .conf.
 //
 // The obfuscation is split by end on purpose: the SHARED params (S1-S4, H1-H4 and
-// the 3.x block) must match the server interface byte for byte, while the LOCAL
+// the 3.x header protection) must match the server interface byte for byte, while the LOCAL
 // decoy (Jc/Jmin/Jmax, I1-I5) is this end's own and deliberately differs from the
 // server's. Mixing the two up produces a config that looks right and never
 // completes a handshake.
@@ -490,7 +493,9 @@ func RenderSyntheticSetConf(in SyntheticSetConfInput) (string, error) {
 		fmt.Fprintf(&b, "ListenPort = %d\n", in.ListenPort)
 	}
 	if in.Spec.AWG != nil {
-		params := *in.Spec.AWG
+		// Exactly what an end user's config carries — timers stripped, see
+		// ClientAWGParams — or the prober measures a tunnel no client has.
+		params := in.Spec.AWG.WithoutAWG3Timers()
 		// The same per-credential decoy an end user gets: the junk profile is derived
 		// from the credential, so a prober using the master's profile would present a
 		// fingerprint no client presents.

@@ -210,6 +210,15 @@ func (b *Broker) clientWGSpec(ctx context.Context, master config.MasterConfig, s
 	if mtu == 0 {
 		mtu = server.MTU
 	}
+	if master.ClientAWG3() == config.ClientAWG3Full && node.WireVersion < api.WireAWG3TrackB {
+		// The configs handed to devices come from this controller and would carry
+		// the trailers; an older agent would bring wg0 up without them. Hold the
+		// whole leg at timers until the agent catches up — no device notices.
+		b.warnOnce("client-awg3-held:"+master.Name, fmt.Sprint(node.WireVersion),
+			"client_awg.awg3 is full, but this master's agent is too old for it; the client interface stays at timers until it is upgraded",
+			"master", master.Name, "agent_wire", node.WireVersion, "need_wire", api.WireAWG3TrackB)
+		master.ClientAWG.AWG3 = string(config.ClientAWG3Timers)
+	}
 	awg := clientLegAWG(master, server, b.awg3Key)
 	return &domain.ClientWGSpec{
 		ListenPort:    master.ClientListenPort(),
@@ -257,7 +266,10 @@ func (b *Broker) masterConfig(name string) (config.MasterConfig, bool) {
 //
 // Both ends of this tunnel derive from the same seed, so the shared half the
 // client's .conf carries is byte-identical to the interface's by construction;
-// only the local decoy differs per end, which AmneziaWG allows and we want.
+// only the local decoy differs per end, which AmneziaWG allows and we want. The
+// 3.x timers set here are the exception: they are per-end, and the client-side
+// renderers drop them (wg.ClientAWGParams), so "timers" changes this interface
+// and no client config at all.
 func clientLegAWG(master config.MasterConfig, server domain.WGServerSpec, awg3Key string) *domain.AWGParams {
 	if server.AWG == nil {
 		return nil

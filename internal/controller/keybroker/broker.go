@@ -39,6 +39,13 @@ import (
 // key, which is keyed on fleet.awg3_key instead — see wg.deriveHeaderProtectionKey.
 const awgSalt = "wgfleet-awg-v1"
 
+// realitySalt seeds the REALITY tunnel identities (UUID, short-id). It holds the
+// value awgSalt has always had and must keep it: the identities were derived
+// with it, and a change re-derives every exit's UUID and short-id and drops the
+// REALITY transport fleet-wide. Its own constant so the AmneziaWG derivation can
+// move on without taking REALITY with it.
+const realitySalt = "wgfleet-awg-v1"
+
 // Broker renders NodeSpecs from fleet config plus the inventory/pubkey registry.
 type Broker struct {
 	store store.Store
@@ -1166,7 +1173,7 @@ func (b *Broker) ExitTransportInfo(node domain.Node) (active domain.MasterTransp
 }
 
 func realitySeed(exitName, masterName string) string {
-	return fmt.Sprintf("%s|%s|%s|reality", awgSalt, masterName, exitName)
+	return fmt.Sprintf("%s|%s|%s|reality", realitySalt, masterName, exitName)
 }
 
 // deriveRealityIDs derives a stable VLESS UUID and REALITY short-id from a seed,

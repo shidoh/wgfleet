@@ -87,3 +87,16 @@ func TestAWGOptionPartialAWG3StillVersion3(t *testing.T) {
 		t.Error("unset 3.0 keys must be omitted, not emitted empty")
 	}
 }
+
+// Key spelling from mihomo v1.19.33's AmneziaWGOption: an unknown key is ignored
+// silently, which would bring the proxy up without trailers against an end that
+// sends them.
+func TestAWGOptionRandomTrailers(t *testing.T) {
+	p := domain.AWGParams{Shared: domain.AWGShared{HeaderProtectionKey: "x", RandomTrailers: true}}
+	if opt := awgOption(p); opt["random-trailers"] != true || opt["version"] != 3 {
+		t.Errorf("awgOption = %v, want random-trailers: true with version 3", opt)
+	}
+	if opt := awgOption(domain.AWGParams{}); opt["random-trailers"] != nil {
+		t.Errorf("2.0 params rendered random-trailers: %v", opt)
+	}
+}

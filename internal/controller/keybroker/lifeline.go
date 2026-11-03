@@ -241,7 +241,9 @@ func lifelineMTU(exit config.ExitConfig) int {
 // recognise the other. The 3.x generation, however, follows the MASTER's
 // client_awg.awg3 knob rather than the fleet's exit knob — the lifeline hands out
 // the same client configs the master's interface does, so a client that speaks
-// 3.x there must find 3.x here and one that does not must find neither.
+// 3.x there must find 3.x here and one that does not must find neither. As on
+// the master, the timers land on the exit's reserve interface only; client
+// configs rendered from this spec drop them (wg.ClientAWGParams).
 //
 // awg3Enabled takes the exit's record alone. This is the controller's half of the
 // gate and it can only see wire versions; the exit's kernel-module generation is

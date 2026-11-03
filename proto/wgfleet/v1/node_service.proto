@@ -549,6 +549,9 @@ message AWGShared {
   string reject_after_time = 13;
   string keepalive_timeout = 14;
   string max_handshake_attempts = 15;
+  // AmneziaWG 3.1 random trailers. Must match on both ends; the fleet sets it
+  // only together with header protection (wire v15).
+  bool random_trailers = 16;
 }
 
 // AWGLocal — MAY differ between the two ends: Jc/Jmin/Jmax and I1-I5.

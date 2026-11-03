@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -60,12 +61,30 @@ func (p AWGParams) AWG3Enabled() bool { return p.Shared.awg3Enabled() }
 
 func (s AWGShared) awg3Enabled() bool {
 	return s.HeaderProtectionKey != "" ||
+		s.RandomTrailers ||
 		s.ContentPaddingAddition != "" ||
 		s.RekeyAfterTime != "" ||
 		s.RekeyTimeout != "" ||
 		s.RejectAfterTime != "" ||
 		s.KeepaliveTimeout != "" ||
 		s.MaxHandshakeAttempts != ""
+}
+
+// WithoutAWG3Timers returns p with every AmneziaWG 3.0 timer cleared and
+// everything else — header protection and content padding included — untouched.
+//
+// The timers are a property of the END that sets them, not of the tunnel: a peer
+// on the defaults keeps working against one that randomises them. So a config
+// handed to a client never carries them. Emitting them there would buy nothing
+// and would turn a 2.0-compatible profile into one older apps refuse (mihomo's
+// `version: 3`, timer keys in the .conf).
+func (p AWGParams) WithoutAWG3Timers() AWGParams {
+	p.Shared.RekeyAfterTime = ""
+	p.Shared.RekeyTimeout = ""
+	p.Shared.RejectAfterTime = ""
+	p.Shared.KeepaliveTimeout = ""
+	p.Shared.MaxHandshakeAttempts = ""
+	return p
 }
 
 // validateAWG3 returns every AmneziaWG 3.0 violation in s. It is a no-op on a
@@ -75,6 +94,10 @@ func (s AWGShared) validateAWG3() []error {
 		return nil
 	}
 	var errs []error
+
+	if s.RandomTrailers && s.HeaderProtectionKey == "" {
+		errs = append(errs, errors.New("RandomTrailers needs HeaderProtectionKey: the fleet sets them together, as AmneziaWG 3.1 recommends"))
+	}
 
 	if s.HeaderProtectionKey != "" {
 		raw, err := base64.StdEncoding.DecodeString(s.HeaderProtectionKey)

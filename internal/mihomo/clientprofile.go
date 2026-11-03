@@ -351,8 +351,10 @@ func clientWireguardProxy(name string, in wg.ClientConfigInput) (map[string]any,
 		return nil, err
 	}
 	if params != nil {
-		// version: 3 appears exactly when the credential's mode (client_awg.awg3)
-		// put 3.x fields into the spec — nothing here enables it.
+		// version: 3 appears exactly when a client-side 3.x field survives
+		// wg.ClientAWGParams — header protection in client_awg.awg3: full. The
+		// timers are server-only and stripped there, so "timers" renders the same
+		// profile as "off".
 		proxy["amnezia-wg-option"] = awgOption(*params)
 	}
 	return proxy, nil

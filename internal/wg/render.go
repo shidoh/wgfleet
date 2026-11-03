@@ -145,6 +145,10 @@ func writeAWG3(b *strings.Builder, s domain.AWGShared) {
 			fmt.Fprintf(b, "%s = %s\n", kv.key, kv.value)
 		}
 	}
+	// A boolean in the tools: "on"/"off", nothing else (config.c parse_bool).
+	if s.RandomTrailers {
+		b.WriteString("RandomTrailers = on\n")
+	}
 }
 
 // interfaceAddress renders the [Interface] Address as "ip/prefixlen", taking the

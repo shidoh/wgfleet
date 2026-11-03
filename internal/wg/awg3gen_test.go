@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/shidoh/wgfleet/internal/domain"
 )
 
 // testAWG3Key stands in for fleet.awg3_key. Its value is irrelevant to these
@@ -82,36 +84,54 @@ func TestWithAWG3AlwaysValidates(t *testing.T) {
 }
 
 // TestWithAWG3TimerOrdering — rekey must always begin before the session is
-// rejected. Randomising both ranges is the whole point of the 3.0 timers, so the
-// bands have to be constructed so the invariant cannot be violated by any seed.
+// rejected. RejectAfterTime is never set, so the bound is the WireGuard default;
+// the randomised rekey must stay below it, and below the receive-side refresh
+// threshold (Reject − Keepalive − RekeyTimeout), for every seed.
 func TestWithAWG3TimerOrdering(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		seed := "tunnel-" + strconv.Itoa(i)
 		s := WithAWG3(DeriveAWGParamsForEnd(seed, "master", false), seed, testAWG3Key).Shared
+		if s.RejectAfterTime != "" {
+			t.Fatalf("seed %q: RejectAfterTime = %q, must stay at the default", seed, s.RejectAfterTime)
+		}
 		_, rekeyHi := splitRange(t, s.RekeyAfterTime)
-		rejectLo, _ := splitRange(t, s.RejectAfterTime)
-		if rekeyHi >= rejectLo {
-			t.Fatalf("seed %q: RekeyAfterTime %q can outlast RejectAfterTime %q — the session is rejected before rekey starts",
-				seed, s.RekeyAfterTime, s.RejectAfterTime)
+		_, keepaliveHi := splitRange(t, s.KeepaliveTimeout)
+		refresh := defaultRejectAfterTime - keepaliveHi - defaultRekeyTimeout
+		if rekeyHi >= refresh || rekeyHi >= defaultRejectAfterTime {
+			t.Fatalf("seed %q: RekeyAfterTime %q reaches the refresh threshold %ds (KeepaliveTimeout %q) or the %ds reject",
+				seed, s.RekeyAfterTime, refresh, s.KeepaliveTimeout, defaultRejectAfterTime)
 		}
 	}
 }
 
-// TestWithAWG3TimersAreRanges — a scalar timer is a timing fingerprint, which is
-// the passive-classification vector ADR-0025 names as the real adversary and the
-// reason the 3.0 timers exist at all. A derivation that collapsed them to single
-// values would look fine and buy nothing.
-func TestWithAWG3TimersAreRanges(t *testing.T) {
-	s := WithAWG3(DeriveAWGParamsForEnd("seed", "master", false), "seed", testAWG3Key).Shared
-	for _, f := range []struct{ name, value string }{
-		{"RekeyAfterTime", s.RekeyAfterTime},
-		{"RekeyTimeout", s.RekeyTimeout},
-		{"RejectAfterTime", s.RejectAfterTime},
-		{"KeepaliveTimeout", s.KeepaliveTimeout},
-	} {
-		lo, hi := splitRange(t, f.value)
-		if lo >= hi {
-			t.Errorf("%s = %q is a fixed value, not a range", f.name, f.value)
+// TestWithAWG3TimerSet — exactly two timers are randomised, the others stay at
+// the defaults because kernel and Go implementations disagree on them. A scalar
+// timer would be a timing fingerprint, so the two that are set must be ranges
+// starting at the WireGuard default.
+func TestWithAWG3TimerSet(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		seed := "tunnel-" + strconv.Itoa(i)
+		s := WithAWG3(DeriveAWGParamsForEnd(seed, "master", false), seed, testAWG3Key).Shared
+		for _, f := range []struct {
+			name, value      string
+			lo, hiMin, hiMax int
+		}{
+			{"RekeyAfterTime", s.RekeyAfterTime, 120, 130, 140},
+			{"KeepaliveTimeout", s.KeepaliveTimeout, 10, 12, 15},
+		} {
+			lo, hi := splitRange(t, f.value)
+			if lo != f.lo || hi < f.hiMin || hi > f.hiMax {
+				t.Fatalf("seed %q: %s = %q, want %d-[%d..%d]", seed, f.name, f.value, f.lo, f.hiMin, f.hiMax)
+			}
+		}
+		for _, f := range []struct{ name, value string }{
+			{"RekeyTimeout", s.RekeyTimeout},
+			{"RejectAfterTime", s.RejectAfterTime},
+			{"MaxHandshakeAttempts", s.MaxHandshakeAttempts},
+		} {
+			if f.value != "" {
+				t.Fatalf("seed %q: %s = %q, must stay unset (WireGuard default)", seed, f.name, f.value)
+			}
 		}
 	}
 }
@@ -130,18 +150,54 @@ func TestWithAWG3LeavesContentPaddingUnset(t *testing.T) {
 
 // TestWithAWG3PreservesAWG2 — the 3.0 block is additive; nothing about the 2.0
 // params may shift, or an in-place upgrade would rewrite every interface.
-func TestWithAWG3PreservesAWG2(t *testing.T) {
-	base := DeriveAWGParamsForEnd("seed", "master", false)
-	got := WithAWG3(base, "seed", testAWG3Key)
-	if got.Local != base.Local {
-		t.Errorf("local params must be untouched:\n%+v\n%+v", got.Local, base.Local)
+// Header protection brings Track B with it: random trailers, one padding size for
+// all four message types (upstream 3.1: with trailers, unequal S makes the
+// receiver drop transport packets — amneziawg-go #186), the stock header types,
+// and a junk window moved by exactly the change in S4.
+func TestWithAWG3HeaderProtectionIsTrackB(t *testing.T) {
+	for i := 0; i < 300; i++ {
+		seed := "tunnel-" + strconv.Itoa(i)
+		base := DeriveAWGParamsForEnd(seed, "master", false)
+		got := WithAWG3(base, seed, testAWG3Key)
+		s := got.Shared
+		if !s.RandomTrailers || s.HeaderProtectionKey == "" {
+			t.Fatalf("seed %q: trailers %v, key %q", seed, s.RandomTrailers, s.HeaderProtectionKey)
+		}
+		if s.S1 != s.S2 || s.S2 != s.S3 || s.S3 != s.S4 || s.S1 < 12 || s.S1 > 31 || s.S1 == 16 {
+			t.Fatalf("seed %q: S = %d/%d/%d/%d, want one value in [12,31] other than 16", seed, s.S1, s.S2, s.S3, s.S4)
+		}
+		for j, h := range []domain.AWGHeader{s.H1, s.H2, s.H3, s.H4} {
+			if h.Min != uint32(j+1) || h.Max != uint32(j+1) {
+				t.Fatalf("seed %q: H%d = %v, want %d", seed, j+1, h, j+1)
+			}
+		}
+		if d := got.Local.Jmin - base.Local.Jmin; d != s.S4-base.Shared.S4 || got.Local.Jmax-base.Local.Jmax != d {
+			t.Fatalf("seed %q: junk window moved by %d, S4 by %d", seed, d, s.S4-base.Shared.S4)
+		}
+		if got.Local.I1 != base.Local.I1 || got.Local.Jc != base.Local.Jc {
+			t.Fatalf("seed %q: the decoy changed beyond the junk window", seed)
+		}
+		if err := got.ValidateUserspace(); err != nil {
+			t.Fatalf("seed %q: %v", seed, err)
+		}
 	}
-	if got.Shared.S1 != base.Shared.S1 || got.Shared.S4 != base.Shared.S4 ||
-		got.Shared.H1 != base.Shared.H1 || got.Shared.H4 != base.Shared.H4 {
-		t.Error("AWG 2.0 shared params must be untouched")
-	}
-	if base.AWG3Enabled() {
+	if base := DeriveAWGParamsForEnd("seed", "master", false); base.AWG3Enabled() {
 		t.Error("the base derivation must stay pure AWG 2.0")
+	}
+}
+
+// The padding comes from the fleet secret: under Track B it is the one size every
+// message carries, and it must not be computable from a node name.
+func TestTrackBPaddingDependsOnTheSecret(t *testing.T) {
+	differs := 0
+	for i := 0; i < 50; i++ {
+		seed := "tunnel-" + strconv.Itoa(i)
+		if deriveTrackBPadding(seed, "secret-a") != deriveTrackBPadding(seed, "secret-b") {
+			differs++
+		}
+	}
+	if differs < 30 {
+		t.Errorf("padding differs between secrets for only %d of 50 tunnels", differs)
 	}
 }
 

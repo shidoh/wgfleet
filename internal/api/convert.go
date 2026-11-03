@@ -604,6 +604,7 @@ func awgToProto(a *domain.AWGParams) *pb.AWGParams {
 			RejectAfterTime:        s.RejectAfterTime,
 			KeepaliveTimeout:       s.KeepaliveTimeout,
 			MaxHandshakeAttempts:   s.MaxHandshakeAttempts,
+			RandomTrailers:         s.RandomTrailers,
 		},
 		Local: awgLocalToProto(&a.Local),
 	}
@@ -627,6 +628,7 @@ func awgFromProto(a *pb.AWGParams) *domain.AWGParams {
 			RejectAfterTime:        s.GetRejectAfterTime(),
 			KeepaliveTimeout:       s.GetKeepaliveTimeout(),
 			MaxHandshakeAttempts:   s.GetMaxHandshakeAttempts(),
+			RandomTrailers:         s.GetRandomTrailers(),
 		}
 	}
 	if l := awgLocalFromProto(a.GetLocal()); l != nil {

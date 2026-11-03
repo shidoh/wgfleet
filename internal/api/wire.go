@@ -95,7 +95,7 @@ const (
 	// MasterSpec.reality_portal — the exit-initiated REALITY mode. A v13 exit drops
 	// the bridge and opens no flow to any master; a v13 master drops the portal and
 	// keeps dialling an exit whose inbound is gone. Deploy the controller FIRST.
-	WireContractVersion uint32 = 14
+	WireContractVersion uint32 = 15
 
 	// WireClientWG is the wire version that introduced MasterSpec.client_wg. The
 	// controller refuses to render the client interface for a master below it: such
@@ -164,6 +164,14 @@ const (
 	// master is too. Named rather than compared against WireContractVersion so a
 	// later bump does not re-close it.
 	WireRealityReverse uint32 = 14
+
+	// WireAWG3TrackB is the wire version that carries AWGShared.random_trailers.
+	// Header protection now comes with trailers, equal S1-S4 and H1-H4 = 1-4
+	// (AmneziaWG 3.1 "Track B"), and an agent below it would drop the trailers
+	// flag and bring its end up without them while the other end — or the
+	// device configs the controller renders — sends them. So every AmneziaWG 3.x
+	// decision gates on this rather than on WireAWG3.
+	WireAWG3TrackB uint32 = 15
 
 	// MinSupportedWire is the oldest agent wire version the controller will serve
 	// a spec to. Agents below it are refused (fail-safe) and, where possible,
