@@ -89,6 +89,13 @@ func (b *Broker) tunnelPeer(ctx context.Context, st domain.NodeStatus, exit conf
 // speakingKey identifies the peer tunnelPeer reads for this pair: the master's
 // key in the exit's current phase, or "" for an exit below api.WireMasterPeers,
 // whose single field has no per-peer identity (and for a key not published yet).
+//
+// It also names the tunnel's AmneziaWG generation. Switching a tunnel to 3.x
+// rebuilds the exit's interface, and the rebuilt peer reports no handshake at
+// all; judged on a confirmation earned under 2.0, that zero read as minutes of
+// silence and moved the pinned port of every exit-initiated tunnel seconds after
+// the switch. A generation change is a new peer for the silence clock, exactly
+// like a phase change.
 func (b *Broker) speakingKey(ctx context.Context, exit config.ExitConfig, exitNode domain.Node,
 	master config.MasterConfig, masterNode domain.Node) string {
 	if exitNode.WireVersion < api.WireMasterPeers {
@@ -98,8 +105,15 @@ func (b *Broker) speakingKey(ctx context.Context, exit config.ExitConfig, exitNo
 	if err != nil {
 		return ""
 	}
+	if iface, ok, err := b.exitInterface(ctx, exit, exitNode); err == nil && ok && iface.awg3 {
+		key += awg3GenerationTag
+	}
 	return key
 }
+
+// awg3GenerationTag marks a speakingKey whose tunnel runs AmneziaWG 3.x. It is
+// stored with the confirmation, so a key without it is a 2.0 confirmation.
+const awg3GenerationTag = "|awg3"
 
 // exitInitiatedAddr is the master's pinned "ip:port" the exit knocks on when the
 // exit starts the master↔exit AWG flow, or ok=false when the feature is not live

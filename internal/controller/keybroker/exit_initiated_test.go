@@ -1005,3 +1005,71 @@ func TestAPairThatWasNotCarriedConfirmsAfreshOnItsReturn(t *testing.T) {
 		t.Errorf("generation = %d, want 1: a tunnel silent for AWGRotateAfter since it returned is rotated", gen())
 	}
 }
+
+// Switching the fleet to AmneziaWG 3.x rebuilds the exit's interface, and the
+// rebuilt peer reports no handshake. Judged on the confirmation it earned under
+// 2.0, that zero read as minutes of silence and moved the pinned port of every
+// exit-initiated tunnel on the first render after the switch. The switch is a new
+// peer for the silence clock; a tunnel that stays silent past AWGRotateAfter on
+// the new generation is still moved.
+func TestAnAWG3SwitchDoesNotRotateAHealthyTunnel(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	phase := domain.PerTunnelKeyOff
+	s := eiTwoMasters(t, phase, &now)
+	ctx := context.Background()
+	pins := map[string]string{
+		"master-xa-1": pinnedFor("master-xa-1", "203.0.113.1"),
+		"master-xa-2": pinnedFor("master-xa-2", "203.0.113.2"),
+	}
+	report := func(hs time.Time) {
+		var peers []domain.MasterPeerStatus
+		for _, m := range []string{"master-xa-1", "master-xa-2"} {
+			peers = append(peers, domain.MasterPeerStatus{PublicKey: s.tunnelKeyIn(phase, m), Endpoint: pins[m], LastHandshake: hs})
+		}
+		recordExit(t, s.st, now, "", peers...)
+		recordMasters(t, s.st, now)
+	}
+	render := func() {
+		for _, id := range []string{"exit-de-1", "master-xa-1", "master-xa-2", "exit-de-1"} {
+			mustRender(t, s.b, id)
+		}
+	}
+	gens := func(when string, want int) {
+		t.Helper()
+		for _, m := range []string{"master-xa-1", "master-xa-2"} {
+			g, _, err := s.st.GetAWGPortRotation(ctx, m, "exit-de-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if g != want {
+				t.Errorf("%s: %s generation = %d, want %d", when, m, g, want)
+			}
+		}
+	}
+
+	off := false
+	s.b.fleet.AWG3 = &off
+	s.b.fleet.Exits[0].AWG3 = nil
+	report(now)
+	render()
+	now = now.Add(AWGRotateAfter + time.Minute)
+	report(now)
+	render()
+	gens("healthy on 2.0", 0)
+
+	on := true
+	s.b.fleet.AWG3 = &on
+	report(time.Time{})
+	render()
+	gens("right after the switch to 3.x", 0)
+
+	now = now.Add(AWGRotateAfter - time.Minute)
+	report(time.Time{})
+	render()
+	gens("silent on 3.x for less than the limit", 0)
+
+	now = now.Add(2 * time.Minute)
+	report(time.Time{})
+	render()
+	gens("silent on 3.x past the limit", 1)
+}
