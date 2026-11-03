@@ -15,9 +15,12 @@ const AWGDSCPScrubChain = "awg_dscp_scrub"
 // renderAWGDSCPScrub writes a chain that rewrites DSCP to CS0 (0) on every UDP
 // packet this node sends from one of its AmneziaWG listen ports.
 //
-// The kernel WireGuard/AmneziaWG module marks handshake packets AF41 (TOS 0x88)
-// and copies the inner packet's DSCP to the outer header on data packets; the
-// userspace implementation sets neither. A non-default DSCP on UDP from a VPN
+// The kernel AmneziaWG module marks handshake packets AF41 (TOS 0x88); the
+// userspace implementation does not. On data packets the module carries only
+// the inner packet's ECN bits to the outer header, not its DSCP (measured on the
+// 3.1.20260906 build), so in practice the rule rewrites handshakes; it stays on
+// data packets as well, in case a module build starts copying DSCP. A
+// non-default DSCP on UDP from a VPN
 // port is a free classifier feature for a middlebox, and it also tells the two
 // implementations apart. CS0 is what almost all other UDP on the internet
 // carries.
