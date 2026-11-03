@@ -40,6 +40,10 @@ type Options struct {
 	// only as an IP literal on the bound port — the Host header is the caller's to
 	// write, and a link the page tells someone to import must not be.
 	Bind string
+	// Fetches, when set, records each device's latest profile download.
+	Fetches FetchRecorder
+	// Now is the clock for that record; nil means time.Now.
+	Now func() time.Time
 }
 
 // Handler serves the portal.
@@ -56,6 +60,8 @@ type Handler struct {
 	// someone can grind, and a per-IP consecutive-failure lock costs a legitimate
 	// user nothing.
 	limit *auth.IPLimiter
+	// fetches skips download records that would say nothing new.
+	fetches fetchLog
 }
 
 // New builds the portal handler over a source of node/spec/credential/device
@@ -503,6 +509,7 @@ func (h *Handler) handleProfile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Profile-Update-Interval", "24")
 	w.Header().Set("Content-Disposition", clientcfg.AttachmentHeader(clientcfg.ProfileFileName(dev)))
 	_, _ = w.Write([]byte(yml))
+	h.recordFetch(r, dev, domain.FetchProfile)
 }
 
 func (h *Handler) handleProfileQR(w http.ResponseWriter, r *http.Request) {

@@ -245,6 +245,17 @@ var migrations = []string{
 		created_at TEXT NOT NULL,
 		PRIMARY KEY (master_id, exit_id)
 	)`,
+	// v32: the latest portal download of each kind per device — profile or proxy
+	// provider. Before a change a stale profile cannot follow (a new AmneziaWG
+	// generation), the operator needs to see that every device has fetched since.
+	// One row per (device, kind), not a log: it is a gate, not an audit trail.
+	`CREATE TABLE IF NOT EXISTS client_device_fetches (
+		device_id  TEXT NOT NULL REFERENCES client_devices(id) ON DELETE CASCADE,
+		kind       TEXT NOT NULL,
+		fetched_at TEXT NOT NULL,
+		user_agent TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (device_id, kind)
+	)`,
 }
 
 // MigrationCount is how many schema migrations this build knows. Exported so a

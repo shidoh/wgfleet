@@ -141,6 +141,8 @@ type Handler struct {
 	// devices is the client device registry (ADR-0035). nil ⇒ the Devices section
 	// is absent (404) — same optional-dependency shape as roller.
 	devices DeviceManager
+	// fetches is each device's latest portal download. nil ⇒ no column.
+	fetches ProfileFetchLister
 }
 
 // SetPortalBase wires the client portal's public URL. Optional and set after New

@@ -416,3 +416,34 @@ func TestDevicePageOffersTheProfileFile(t *testing.T) {
 		t.Error("no Download profile (.yaml) button")
 	}
 }
+
+type fakeFetches []domain.ProfileFetch
+
+func (f fakeFetches) ListProfileFetches(context.Context) ([]domain.ProfileFetch, error) {
+	return f, nil
+}
+
+func TestDevicesListShowsTheLastDownload(t *testing.T) {
+	h, _ := deviceHandler(t)
+	h.SetProfileFetches(fakeFetches{
+		{DeviceID: "d1", Kind: domain.FetchProfile, At: time.Now().Add(-3 * time.Hour), UserAgent: "clash-verge/v2.5.9"},
+		{DeviceID: "d1", Kind: domain.FetchProvider, At: time.Now().Add(-72 * time.Hour), UserAgent: "clash.meta/v1.19.33"},
+	})
+	_, body := get(t, h, "/devices")
+	for _, want := range []string{"Last download", "profile 3h ago", "clash-verge 2.5.9", "provider 3d ago", "core 1.19.33",
+		`title="not fetched for over 48 hours"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("list page lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Count(body, "not fetched for over 48 hours") != 1 {
+		t.Errorf("only the 72-hour-old download is stale:\n%s", body)
+	}
+}
+
+func TestDevicesListWithoutFetchRecordHasNoColumn(t *testing.T) {
+	h, _ := deviceHandler(t)
+	if _, body := get(t, h, "/devices"); strings.Contains(body, "Last download") {
+		t.Errorf("column shown without a fetch record")
+	}
+}

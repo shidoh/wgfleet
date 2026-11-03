@@ -181,6 +181,13 @@ type Store interface {
 	// credentials it held. Returns ErrNotFound if the device is absent.
 	DeleteDevice(ctx context.Context, id string) error
 
+	// RecordProfileFetch stores a device's latest portal download of one kind,
+	// keeping the later of the stored and the given fetch. The row goes with
+	// the device.
+	RecordProfileFetch(ctx context.Context, f domain.ProfileFetch) error
+	// ListProfileFetches returns every device's latest download of each kind.
+	ListProfileFetches(ctx context.Context) ([]domain.ProfileFetch, error)
+
 	// AttachCredential links an existing credential (kind, masterID, ref) to a
 	// device. Returns ErrNotFound if the device or the credential is absent,
 	// ErrDeviceSlotTaken if the device already holds a credential of this kind on

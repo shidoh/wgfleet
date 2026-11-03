@@ -580,6 +580,8 @@ wgfleet_node_drain{node}                                   # 1 if administrative
 wgfleet_node_decommission{node}                            # 1 if flagged for decommission (data plane torn down)
 wgfleet_node_client_vless_clients{node}                    # VLESS/REALITY clients issued on a master
 wgfleet_client_info{node,peer,client,device,kind}          # name and device behind a client key (awg|vless)
+wgfleet_client_profile_fetch_age_seconds{device,kind}      # since the device last downloaded its profile (absent if never)
+wgfleet_client_profile_fetch_info{device,kind,app,app_version,core_version}  # software behind that download (=1)
 ```
 
 **Agent** (its own reconcile/health counters):

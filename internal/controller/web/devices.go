@@ -38,6 +38,7 @@ func (h *Handler) SetDevices(d DeviceManager) { h.devices = d }
 type deviceRow struct {
 	ID, Name, PageURL, SubURL string
 	Creds                     []domain.DeviceCredential
+	Fetches                   []fetchView
 }
 
 // credChoice is one selectable credential; LiveLink marks an AWG credential whose
@@ -58,8 +59,10 @@ type devicesData struct {
 	NodeCount                         int
 	PortalBase                        string
 	Devices                           []deviceRow
-	Device                            *deviceRow
-	Slots                             []masterSlots
+	// ShowFetches adds the "Last download" column.
+	ShowFetches bool
+	Device      *deviceRow
+	Slots       []masterSlots
 	// MultiMaster prefixes each connection badge in the list with its master;
 	// with one master the prefix repeats the same name on every row.
 	MultiMaster bool
@@ -134,9 +137,12 @@ func (h *Handler) handleDevices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := h.devicesData(w, r, "Devices")
+	data.ShowFetches = h.fetches != nil
+	fetches := h.deviceFetches(r.Context())
 	for _, d := range devs {
 		page, sub := h.deviceLinks(d)
-		data.Devices = append(data.Devices, deviceRow{ID: d.ID, Name: d.Name, PageURL: page, SubURL: sub, Creds: d.Credentials})
+		data.Devices = append(data.Devices, deviceRow{ID: d.ID, Name: d.Name, PageURL: page, SubURL: sub,
+			Creds: d.Credentials, Fetches: fetches[d.ID]})
 	}
 	if data.Slots, err = h.freeSlots(r.Context(), devs, domain.ClientDevice{}); err != nil {
 		httpError(w, "list credentials", err)

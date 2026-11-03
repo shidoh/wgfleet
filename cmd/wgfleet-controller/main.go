@@ -446,6 +446,7 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 	if cfg.Controller.Metrics != "" {
 		reg = metrics.NewRegistry()
 		metrics.NewStoreCollector(reg, st)
+		metrics.NewProfileFetchCollector(reg, st)
 		metrics.RegisterBuildInfo(reg, "controller", version.Version, version.Commit)
 		metrics.NewConfigCollector(reg, configPath, effective)
 		metrics.NewCAExpiryCollector(reg, ca.NotAfter())
@@ -569,6 +570,7 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 		// derive from its bind, and without it the client page has no link to show.
 		webHandler.SetPortalBase(cfg.Controller.ClientPortalURL)
 		webHandler.SetDevices(broker)
+		webHandler.SetProfileFetches(st)
 		webHandler.SetRoller(&webRoller{
 			co:     rollout.New(provMgr, st, rollout.Config{}, slog.Default()),
 			st:     st,
@@ -587,7 +589,7 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 	var portalSrv *http.Server
 	if cfg.Controller.ClientPortal != "" {
 		portalHandler, err := portal.New(portalSource{st: st, broker: broker}, broker.Masters,
-			portal.Options{PublicURL: cfg.Controller.ClientPortalURL, Bind: cfg.Controller.ClientPortal})
+			portal.Options{PublicURL: cfg.Controller.ClientPortalURL, Bind: cfg.Controller.ClientPortal, Fetches: st})
 		if err != nil {
 			return fmt.Errorf("build client portal: %w", err)
 		}

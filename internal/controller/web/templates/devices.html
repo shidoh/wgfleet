@@ -12,7 +12,7 @@
   {{else}}
   <div class="spec-table-wrap">
   <table class="spec-table devices-table">
-    <thead><tr><th scope="col">Device</th><th scope="col">Connections</th><th scope="col">Subscription link</th></tr></thead>
+    <thead><tr><th scope="col">Device</th><th scope="col">Connections</th>{{if .ShowFetches}}<th scope="col">Last download</th>{{end}}<th scope="col">Subscription link</th></tr></thead>
     <tbody>
       {{range .Devices}}
       <tr>
@@ -22,6 +22,10 @@
           <span class="conn-badges">{{range .Creds}}<span class="xport {{credSlug .Kind}}" title="{{credLabel .Kind}} on {{.MasterID}}">{{if $.MultiMaster}}{{.MasterID}} · {{end}}{{credLabel .Kind}}</span>{{end}}</span>
           {{else}}<span class="dim">none: the profile is empty</span>{{end}}
         </td>
+        {{if $.ShowFetches}}<td class="devices-fetch">
+          {{range .Fetches}}<div{{if .Stale}} class="error-note" title="not fetched for over 48 hours"{{end}}>{{.Kind}} {{.Ago}}{{if .Software}} · <span class="mono">{{.Software}}</span>{{end}}</div>
+          {{else}}<span class="dim">never</span>{{end}}
+        </td>{{end}}
         <td class="devices-link">
           {{if $.PortalBase}}
           <input class="input mono" type="text" readonly value="{{.SubURL}}" onclick="this.select()" aria-label="subscription link for {{.Name}}">
