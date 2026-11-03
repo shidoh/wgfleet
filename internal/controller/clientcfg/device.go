@@ -234,17 +234,42 @@ func addVLESS(ctx context.Context, src ProfileSource, m, ref string, pm *mihomo.
 // BuildDeviceProfile renders the device's mihomo profile. A store failure fails
 // it whole: a profile missing a proxy is cached by the app for a day as truth.
 func BuildDeviceProfile(ctx context.Context, src ProfileSource, masters []string, dev domain.ClientDevice) (string, error) {
-	p, err := collectDevice(ctx, src, masters, dev)
+	return BuildDeviceProfileWithProviders(ctx, src, masters, dev, "")
+}
+
+// BuildDeviceProfileWithProviders is BuildDeviceProfile with the AmneziaWG
+// proxies in a provider fetched from providerURL; "" keeps them inline.
+func BuildDeviceProfileWithProviders(ctx context.Context, src ProfileSource, masters []string, dev domain.ClientDevice, providerURL string) (string, error) {
+	in, err := deviceProfileInput(ctx, src, masters, dev)
 	if err != nil {
 		return "", err
 	}
+	in.ProviderURL = providerURL
+	return mihomo.RenderClientProfile(in)
+}
+
+// BuildDeviceProviderProxies renders the AmneziaWG provider of the device's
+// profile, from the same walk as the profile itself.
+func BuildDeviceProviderProxies(ctx context.Context, src ProfileSource, masters []string, dev domain.ClientDevice) (string, error) {
+	in, err := deviceProfileInput(ctx, src, masters, dev)
+	if err != nil {
+		return "", err
+	}
+	return mihomo.RenderClientProviderProxies(in)
+}
+
+func deviceProfileInput(ctx context.Context, src ProfileSource, masters []string, dev domain.ClientDevice) (mihomo.ClientProfileInput, error) {
+	p, err := collectDevice(ctx, src, masters, dev)
+	if err != nil {
+		return mihomo.ClientProfileInput{}, err
+	}
 	switch {
 	case p.active == 0:
-		return "", ErrNoActiveCredential
+		return mihomo.ClientProfileInput{}, ErrNoActiveCredential
 	case len(p.masters) == 0:
-		return "", fmt.Errorf("device %q: %w", dev.Name, ErrNotReady)
+		return mihomo.ClientProfileInput{}, fmt.Errorf("device %q: %w", dev.Name, ErrNotReady)
 	}
-	return mihomo.RenderClientProfile(mihomo.ClientProfileInput{Masters: p.masters, MgmtCIDRs: p.mgmt, Sites: p.sites})
+	return mihomo.ClientProfileInput{Masters: p.masters, MgmtCIDRs: p.mgmt, Sites: p.sites}, nil
 }
 
 // DeviceView is what the portal page shows.

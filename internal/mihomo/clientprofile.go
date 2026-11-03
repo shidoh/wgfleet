@@ -40,7 +40,7 @@ const (
 // rule target elsewhere in the same document (clientRules).
 func isReservedProfileName(name string) bool {
 	switch name {
-	case ClientProfileAutoGroup, ClientProfileSelectGroup, "DIRECT", "REJECT":
+	case ClientProfileAutoGroup, ClientProfileSelectGroup, ClientProfileBlockedProxy, "DIRECT", "REJECT":
 		return true
 	default:
 		return false
@@ -96,6 +96,10 @@ type ClientProfileInput struct {
 	Masters   []ClientProfileMaster
 	MgmtCIDRs []string
 	Sites     []domain.ClientSite
+	// ProviderURL, when set, moves the AmneziaWG proxies out of the profile into
+	// a proxy provider fetched from this URL (RenderClientProviderProxies is what
+	// it serves). Empty keeps every proxy inline.
+	ProviderURL string
 }
 
 // ClientNameserver is how every client config the controller hands out names a
@@ -116,6 +120,8 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 		pools            []string
 		nameservers      []string
 		endpoints        []string
+		layout           []providerMaster
+		byName           = map[string]any{}
 	)
 	if err := validateSiteNames(in.Sites, in.Masters); err != nil {
 		return "", err
@@ -141,13 +147,16 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 			}
 			proxies, own = append(proxies, p), append(own, m.Name+"-awg")
 			ownAWG = append(ownAWG, m.Name+"-awg")
+			byName[m.Name+"-awg"] = p
 			if host, port, err := splitEndpoint(m.AWG.Endpoint); err == nil {
 				endpoints = appendEndpointRule(endpoints, "UDP", host, port)
 			}
 		}
 		if m.VLESS != nil {
-			proxies, own = append(proxies, clientVLESSProxy(m.Name+"-vless", *m.VLESS)), append(own, m.Name+"-vless")
+			p := clientVLESSProxy(m.Name+"-vless", *m.VLESS)
+			proxies, own = append(proxies, p), append(own, m.Name+"-vless")
 			ownVLESS = append(ownVLESS, m.Name+"-vless")
+			byName[m.Name+"-vless"] = p
 			endpoints = appendEndpointRule(endpoints, "TCP", m.VLESS.Host, m.VLESS.Port)
 		}
 		if len(own) == 0 {
@@ -162,6 +171,7 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 		// The master's own group: its resolver and its client pool are reachable
 		// through ITS proxies only, whichever one is alive.
 		groups = append(groups, fallbackGroup(m.Name, own, ClientProfileMasterHealthInterval))
+		layout = append(layout, providerMaster{name: m.Name, awg: ownAWG, vless: ownVLESS, lastResort: m.VLESSLastResort})
 		through = append(through, m.RouteThrough...)
 		if m.ClientPool != "" {
 			pools = append(pools, "IP-CIDR,"+m.ClientPool+","+m.Name)
@@ -199,6 +209,12 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 		"proxy-groups": groups,
 		"rules": append(toAnySlice(append(dedupe(endpoints), siteRules(in.Sites)...)),
 			clientRules(dedupe(through), pools)...),
+	}
+	if in.ProviderURL != "" && providerFormFits(layout) {
+		providers, pgroups := providerLayout(in.ProviderURL, layout, byName, siteGroups(in.Sites))
+		delete(doc, "proxies")
+		doc["proxy-providers"] = providers
+		doc["proxy-groups"] = pgroups
 	}
 	if len(nameservers) > 0 {
 		doc["dns"] = map[string]any{

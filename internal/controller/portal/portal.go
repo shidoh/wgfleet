@@ -40,6 +40,9 @@ type Options struct {
 	// only as an IP literal on the bound port — the Host header is the caller's to
 	// write, and a link the page tells someone to import must not be.
 	Bind string
+	// Providers is controller.client_profile_providers: the profile carries its
+	// AmneziaWG proxies as a provider at /c/{token}/mihomo/proxies.
+	Providers bool
 	// Fetches, when set, records each device's latest profile download.
 	Fetches FetchRecorder
 	// Now is the clock for that record; nil means time.Now.
@@ -93,6 +96,10 @@ func New(src clientcfg.PortalSource, masters func() []string, opts Options) (*Ha
 	// instead of a re-import.
 	h.mux.HandleFunc("GET /c/{token}/mihomo", h.handleProfile)
 	h.mux.HandleFunc("GET /c/{token}/mihomo/qr", h.handleProfileQR)
+	// The AmneziaWG provider a provider-form profile points at. Served whether or
+	// not Providers is on: a device keeps fetching it until its app refreshes the
+	// profile, and switching the option off must not cut that device off first.
+	h.mux.HandleFunc("GET /c/{token}/mihomo/proxies", h.handleProviderProxies)
 	// The reserve doors, under the same token. They are handed out from the same
 	// page as the main profile — the day the master stops answering is the day
 	// nobody can be told a new URL.
@@ -491,7 +498,15 @@ func (h *Handler) handleProfile(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
-	yml, err := clientcfg.BuildDeviceProfile(r.Context(), h.src, h.masters(), dev)
+	providerURL := ""
+	if h.opts.Providers {
+		// A link the portal cannot vouch for is not one to put in a profile; the
+		// device then gets the inline form, which works without it.
+		if link := h.subscriptionURL(r, dev.Token); link != "" {
+			providerURL = link + "/proxies"
+		}
+	}
+	yml, err := clientcfg.BuildDeviceProfileWithProviders(r.Context(), h.src, h.masters(), dev, providerURL)
 	if err != nil {
 		h.fail(w, err)
 		return
@@ -510,6 +525,26 @@ func (h *Handler) handleProfile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", clientcfg.AttachmentHeader(clientcfg.ProfileFileName(dev)))
 	_, _ = w.Write([]byte(yml))
 	h.recordFetch(r, dev, domain.FetchProfile)
+}
+
+func (h *Handler) handleProviderProxies(w http.ResponseWriter, r *http.Request) {
+	dev, err := h.resolveDevice(r)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	yml, err := clientcfg.BuildDeviceProviderProxies(r.Context(), h.src, h.masters(), dev)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	h.limit.Reset(clientIP(r))
+	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
+	// The body carries the device's AWG private key.
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	_, _ = w.Write([]byte(yml))
+	h.recordFetch(r, dev, domain.FetchProvider)
 }
 
 func (h *Handler) handleProfileQR(w http.ResponseWriter, r *http.Request) {

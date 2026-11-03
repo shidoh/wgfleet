@@ -589,7 +589,8 @@ func serve(cfg *config.ControllerConfig, ca *pki.CA, provider config.SecretProvi
 	var portalSrv *http.Server
 	if cfg.Controller.ClientPortal != "" {
 		portalHandler, err := portal.New(portalSource{st: st, broker: broker}, broker.Masters,
-			portal.Options{PublicURL: cfg.Controller.ClientPortalURL, Bind: cfg.Controller.ClientPortal, Fetches: st})
+			portal.Options{PublicURL: cfg.Controller.ClientPortalURL, Bind: cfg.Controller.ClientPortal,
+				Providers: cfg.Controller.ClientProfileProviders, Fetches: st})
 		if err != nil {
 			return fmt.Errorf("build client portal: %w", err)
 		}

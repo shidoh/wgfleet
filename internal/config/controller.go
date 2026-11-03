@@ -94,10 +94,16 @@ type ControllerSection struct {
 	// "http://10.20.0.1:8080" (the mgmt address — see ClientPortal above). The controller cannot derive it — it knows the bind,
 	// not the address a phone types — and without it the operator has no link to
 	// hand out, which makes the portal unreachable however well it works.
-	ClientPortalURL string         `koanf:"client_portal_url"`
-	AgentBin        string         `koanf:"agent_bin"` // wgfleet-agent binary installed during UI-triggered provisioning
-	PKI             PKISection     `koanf:"pki"`
-	Secrets         SecretsSection `koanf:"secrets"` // backing store for secret:// references
+	ClientPortalURL string `koanf:"client_portal_url"`
+	// ClientProfileProviders moves the AmneziaWG proxies of every device profile
+	// into a proxy provider the mihomo core re-fetches every hour by itself, so a
+	// change of AmneziaWG keys or generation reaches a device without its app
+	// refreshing the profile. Off by default: turning it on changes the profile's
+	// shape, which each device picks up on its next profile refresh.
+	ClientProfileProviders bool           `koanf:"client_profile_providers"`
+	AgentBin               string         `koanf:"agent_bin"` // wgfleet-agent binary installed during UI-triggered provisioning
+	PKI                    PKISection     `koanf:"pki"`
+	Secrets                SecretsSection `koanf:"secrets"` // backing store for secret:// references
 	// StalenessAfter marks a Ready/Reconciling node Degraded when it has not
 	// reported status for this long (a silent/dead agent). 0 disables the sweep.
 	StalenessAfter time.Duration `koanf:"staleness_after"`
