@@ -146,7 +146,7 @@ func providerFormFits(masters []providerMaster) bool {
 // built by the same code as the inline profile's.
 func RenderClientProviderProxies(in ClientProfileInput) (string, error) {
 	var proxies []any
-	for _, m := range in.Masters {
+	for _, m := range mastersAWGFirst(in.Masters) {
 		if m.AWG == nil {
 			continue
 		}

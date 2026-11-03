@@ -188,6 +188,7 @@ func RenderClientProfile(in ClientProfileInput) (string, error) {
 	// is TCP over TCP: with each master's pair kept together, a stuck first AWG sent
 	// the device to the slowest path on the same master and left it there.
 	// A last-resort VLESS (client_vless.last_resort) closes the list.
+	allAWG = awgFirstByGeneration(allAWG, in.Masters)
 	all := append(append(allAWG, allVLESS...), lastResortVLESS...)
 	groups = append(groups, siteGroups(in.Sites)...)
 	groups = append(groups,
