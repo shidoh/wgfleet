@@ -154,3 +154,10 @@ func TestAWG3EnabledDetectsAnyField(t *testing.T) {
 		})
 	}
 }
+
+func TestRandomTrailersNeedHeaderProtection(t *testing.T) {
+	s := AWGShared{RandomTrailers: true, S1: 20, S2: 20, S3: 20, S4: 20}
+	if errs := s.validateAWG3(); len(errs) == 0 {
+		t.Error("RandomTrailers without HeaderProtectionKey was accepted")
+	}
+}

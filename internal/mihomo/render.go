@@ -713,6 +713,10 @@ func awgOption(p domain.AWGParams) map[string]any {
 				opt[kv.key] = kv.value
 			}
 		}
+		// mihomo v1.19.33 AmneziaWGOption: `random-trailers` (bool, 3.1+).
+		if p.Shared.RandomTrailers {
+			opt["random-trailers"] = true
+		}
 	}
 	return opt
 }

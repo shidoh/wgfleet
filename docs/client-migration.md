@@ -6,7 +6,7 @@
 |---|---|---|---|---|
 | `off` | AmneziaWG 2.0 | AmneziaWG 2.0 | no | — |
 | `timers` | adds `RekeyAfterTime` and `KeepaliveTimeout` ranges | unchanged, byte for byte the same as `off` | no | yes |
-| `full` | adds the timers and `HeaderProtectionKey` | adds `HeaderProtectionKey` (mihomo: `version: 3`); no timers | **every client must re-import before it works again**; the new config cannot be delivered through the tunnel | **no** — reverting to `timers` breaks the config they just imported, in the same silent way |
+| `full` | adds the timers, `HeaderProtectionKey`, `RandomTrailers = on`, one padding size for S1–S4 and H1–H4 = 1–4 | the same shared values (mihomo: `version: 3`, `random-trailers: true`); no timers | **every client must re-import before it works again**; the new config cannot be delivered through the tunnel | **no** — reverting to `timers` breaks the config they just imported, in the same silent way |
 
 The timers are per end: a client on the default timers works against a `wg0` with randomised ones, so client configs never carry them. Apps that refuse AmneziaWG 3.x settings (AmneziaWG 2.x apps, AmneziaVPN before 5.0.0.5, older mihomo cores) keep working under `timers`.
 
@@ -85,6 +85,8 @@ All keys: [configuration.md#3-fleet-fleet-wide-settings](configuration.md#3-flee
 | interface will not come up, log says 3.x refused | module is older than the config asks for |
 | "the VPN is connected but nothing loads" after `full` | the client still has a pre-`full` config — re-import |
 | no `HeaderProtectionKey` in `awg showconf wg0` after `full` | the master has not converged yet — one reconcile pass |
+| `full` set, but `wg0` and the configs stay on `timers`; the controller logs `client_awg.awg3 is full, but this master's agent is too old` | the master's agent is below wire 15 — upgrade it |
+| clients on `full` connect but pages stall | the client app predates AmneziaWG 3.1 random trailers — update the app (AmneziaWG 3.1, or a mihomo core with `random-trailers`) |
 
 ## See also
 

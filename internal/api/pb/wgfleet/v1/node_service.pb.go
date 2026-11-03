@@ -2943,8 +2943,11 @@ type AWGShared struct {
 	RejectAfterTime        string `protobuf:"bytes,13,opt,name=reject_after_time,json=rejectAfterTime,proto3" json:"reject_after_time,omitempty"`
 	KeepaliveTimeout       string `protobuf:"bytes,14,opt,name=keepalive_timeout,json=keepaliveTimeout,proto3" json:"keepalive_timeout,omitempty"`
 	MaxHandshakeAttempts   string `protobuf:"bytes,15,opt,name=max_handshake_attempts,json=maxHandshakeAttempts,proto3" json:"max_handshake_attempts,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// AmneziaWG 3.1 random trailers. Must match on both ends; the fleet sets it
+	// only together with header protection (wire v15).
+	RandomTrailers bool `protobuf:"varint,16,opt,name=random_trailers,json=randomTrailers,proto3" json:"random_trailers,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *AWGShared) Reset() {
@@ -3080,6 +3083,13 @@ func (x *AWGShared) GetMaxHandshakeAttempts() string {
 		return x.MaxHandshakeAttempts
 	}
 	return ""
+}
+
+func (x *AWGShared) GetRandomTrailers() bool {
+	if x != nil {
+		return x.RandomTrailers
+	}
+	return false
 }
 
 // AWGLocal — MAY differ between the two ends: Jc/Jmin/Jmax and I1-I5.
@@ -4085,7 +4095,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x03mtu\x18\x06 \x01(\x05R\x03mtu\"/\n" +
 	"\tAWGHeader\x12\x10\n" +
 	"\x03min\x18\x01 \x01(\rR\x03min\x12\x10\n" +
-	"\x03max\x18\x02 \x01(\rR\x03max\"\xb3\x04\n" +
+	"\x03max\x18\x02 \x01(\rR\x03max\"\xdc\x04\n" +
 	"\tAWGShared\x12%\n" +
 	"\x02h1\x18\x01 \x01(\v2\x15.wgfleet.v1.AWGHeaderR\x02h1\x12%\n" +
 	"\x02h2\x18\x02 \x01(\v2\x15.wgfleet.v1.AWGHeaderR\x02h2\x12%\n" +
@@ -4102,7 +4112,8 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\rrekey_timeout\x18\f \x01(\tR\frekeyTimeout\x12*\n" +
 	"\x11reject_after_time\x18\r \x01(\tR\x0frejectAfterTime\x12+\n" +
 	"\x11keepalive_timeout\x18\x0e \x01(\tR\x10keepaliveTimeout\x124\n" +
-	"\x16max_handshake_attempts\x18\x0f \x01(\tR\x14maxHandshakeAttempts\"\x92\x01\n" +
+	"\x16max_handshake_attempts\x18\x0f \x01(\tR\x14maxHandshakeAttempts\x12'\n" +
+	"\x0frandom_trailers\x18\x10 \x01(\bR\x0erandomTrailers\"\x92\x01\n" +
 	"\bAWGLocal\x12\x0e\n" +
 	"\x02jc\x18\x01 \x01(\x05R\x02jc\x12\x12\n" +
 	"\x04jmin\x18\x02 \x01(\x05R\x04jmin\x12\x12\n" +

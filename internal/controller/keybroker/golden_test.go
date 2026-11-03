@@ -66,10 +66,10 @@ func seedGolden(t *testing.T, st store.Store, fleet config.FleetSection, clock t
 	}
 	m := fleet.Masters[0]
 	seedNode(t, st, m.Name, m.MgmtAddr, m.PublicIP, masterPub, domain.RoleMaster)
-	setWireVersion(t, st, m.Name, api.WireAWGExitInitiated)
+	setWireVersion(t, st, m.Name, api.WireAWG3TrackB)
 	for i, e := range fleet.Exits {
 		seedNode(t, st, e.Name, fmt.Sprintf("10.20.25.%d", i+1), e.PublicIP, goldenExitPub, domain.RoleExit)
-		setWireVersion(t, st, e.Name, api.WireAWGExitInitiated)
+		setWireVersion(t, st, e.Name, api.WireAWG3TrackB)
 		seedTunnelKey(t, st, m.Name, e.Name, goldenMasterPriv)
 		if err := st.SetNodeRealityKey(ctx, e.Name, goldenRealityPub); err != nil {
 			t.Fatal(err)
@@ -134,18 +134,18 @@ func assertGolden(t *testing.T, name string, spec domain.NodeSpec) {
 // fleet renders as it always has"; a test that could be regenerated would let the
 // definition drift to whatever the code does today.
 var goldenSums = map[string]string{
-	"dual-exit-de-1.json":     "a24e5108d1cee940a2e5b5a2e43a0e4268d7f946c99cce00ba3db5c589c514f4",
-	"dual-exit-nl-1.json":     "54141d1a1693769748c193f80fc582cc52af72ecb03a36d52c6e283e770986d4",
-	"dual-master-gold.json":   "a759e24a31d7dca3d32d0fd63ae035d0bcbc84eaca408e7bdc5b606cd2b43881",
-	"off-exit-de-1.json":      "967d147caf91193276d7684cf13c89cacd66ec3c0c5d0cc460511cbdb0862983",
-	"off-exit-nl-1.json":      "9995aae8c3a165cd8e081a10569ce6a7a59b486ad87e619977bf8b5e6470e7a3",
-	"off-master-gold.json":    "a759e24a31d7dca3d32d0fd63ae035d0bcbc84eaca408e7bdc5b606cd2b43881",
-	"on-exit-de-1.json":       "73424beb64528f9a8c08cad3396109eccb80b1b769dec406f93746a59431b5d4",
-	"on-exit-nl-1.json":       "169240816b3520728becff7f61c64ca829b51441fa62c1e30bcc47e9d1774f0a",
-	"on-master-gold.json":     "9ddcbfc0c557aa6150cde2b35c24c37df38875629f6cca6f2cc9ad2c10fc23e1",
-	"switch-exit-de-1.json":   "913adb9b32c36946378a9023881c53f7e89bb88b0ae794a85735cc1a2a1a7980",
-	"switch-exit-nl-1.json":   "54141d1a1693769748c193f80fc582cc52af72ecb03a36d52c6e283e770986d4",
-	"switch-master-gold.json": "9ddcbfc0c557aa6150cde2b35c24c37df38875629f6cca6f2cc9ad2c10fc23e1",
+	"dual-exit-de-1.json":     "5aa758252fbb0d05990e8a512b20213aa7b2fb78cc02e0aead33dd7f194a73ac",
+	"dual-exit-nl-1.json":     "dab88c693698943748ca5777e754b40672b56aad11bb6356c762db61649c1155",
+	"dual-master-gold.json":   "754b45ae0094161fd849692284ff1ab77b17cdc8ce35b75fe7e8f6c8a327ccf3",
+	"off-exit-de-1.json":      "d91d9e9391c30f87c579c3cfce6a1c5b73400541da0a02f60d3a021517d25d6d",
+	"off-exit-nl-1.json":      "c91bf699058eaf61beed624cdf3a806ff22062d0fedb6dcaac09aefa20ae0642",
+	"off-master-gold.json":    "754b45ae0094161fd849692284ff1ab77b17cdc8ce35b75fe7e8f6c8a327ccf3",
+	"on-exit-de-1.json":       "cb54749edcb2a15f423b555174ab28510780d844734c6ab6290dac4f2923298a",
+	"on-exit-nl-1.json":       "724f842a6d4b09f02af45f1aab252b5982519506cb2667d2b587b9732e7e36bb",
+	"on-master-gold.json":     "0fd9074d94cdc3433a52cd0c6b9ef826ae97955c47ec8259b183a02073f14b2b",
+	"switch-exit-de-1.json":   "a24d1224973f47ebe3bea24c7274e02f3790cc120fa8b69d420e4686afa0175d",
+	"switch-exit-nl-1.json":   "dab88c693698943748ca5777e754b40672b56aad11bb6356c762db61649c1155",
+	"switch-master-gold.json": "0fd9074d94cdc3433a52cd0c6b9ef826ae97955c47ec8259b183a02073f14b2b",
 }
 
 func TestGoldenFilesAreFrozen(t *testing.T) {

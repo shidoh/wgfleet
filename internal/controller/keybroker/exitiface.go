@@ -50,10 +50,10 @@ func (b *Broker) exitInterface(ctx context.Context, exit config.ExitConfig, exit
 		ends = append(ends, node)
 		// The spec says only that the interface is on 2.0. With several masters the
 		// operator cannot tell which of them is the reason without this line.
-		if optIn && node.WireVersion < api.WireAWG3 {
+		if optIn && node.WireVersion < api.WireAWG3TrackB {
 			b.warnOnce("awg3-held-by-master:"+exit.Name+"/"+m.Name, fmt.Sprint(node.WireVersion),
 				"AmneziaWG 3.0 is switched on for this exit, but a master holds this exit's interface at AmneziaWG 2.0: its agent is too old",
-				"exit", exit.Name, "master", m.Name, "master_wire", node.WireVersion, "need_wire", api.WireAWG3)
+				"exit", exit.Name, "master", m.Name, "master_wire", node.WireVersion, "need_wire", api.WireAWG3TrackB)
 		}
 	}
 	seed := wg.TunnelSeed(exit.Name, anchor, awgSalt)

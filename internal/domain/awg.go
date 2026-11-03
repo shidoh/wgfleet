@@ -96,6 +96,11 @@ type AWGShared struct {
 	// HeaderProtectionKey is the base64 chacha20 key for header protection.
 	// Setting it imposes S1-S4 >= 12; see validateAWG3.
 	HeaderProtectionKey string
+	// RandomTrailers appends random bytes to handshake and short data packets so
+	// their sizes stop falling on fixed residues. Must match on both ends. Only
+	// with header protection: the pair is what upstream's 3.1 recommends, and the
+	// classifier bug it trips without equal S is worse than the residue it hides.
+	RandomTrailers bool
 	// ContentPaddingAddition pads transport packets. The receiver strips exactly
 	// this much, so it must match on both ends.
 	ContentPaddingAddition string

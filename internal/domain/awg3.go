@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -60,6 +61,7 @@ func (p AWGParams) AWG3Enabled() bool { return p.Shared.awg3Enabled() }
 
 func (s AWGShared) awg3Enabled() bool {
 	return s.HeaderProtectionKey != "" ||
+		s.RandomTrailers ||
 		s.ContentPaddingAddition != "" ||
 		s.RekeyAfterTime != "" ||
 		s.RekeyTimeout != "" ||
@@ -92,6 +94,10 @@ func (s AWGShared) validateAWG3() []error {
 		return nil
 	}
 	var errs []error
+
+	if s.RandomTrailers && s.HeaderProtectionKey == "" {
+		errs = append(errs, errors.New("RandomTrailers needs HeaderProtectionKey: the fleet sets them together, as AmneziaWG 3.1 recommends"))
+	}
 
 	if s.HeaderProtectionKey != "" {
 		raw, err := base64.StdEncoding.DecodeString(s.HeaderProtectionKey)

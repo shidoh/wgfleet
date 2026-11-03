@@ -21,15 +21,15 @@ func TestAWG3EnabledRequiresOptInAndWire(t *testing.T) {
 		wire  uint32
 		want  bool
 	}{
-		{"opted in, current agent", true, api.WireAWG3, true},
-		{"opted in, newer agent", true, api.WireAWG3 + 1, true},
-		{"opted in, agent one version too old", true, api.WireAWG3 - 1, false},
+		{"opted in, current agent", true, api.WireAWG3TrackB, true},
+		{"opted in, newer agent", true, api.WireAWG3TrackB + 1, true},
+		{"opted in, agent one version too old", true, api.WireAWG3TrackB - 1, false},
 		{"opted in, agent never reported", true, 0, false},
-		{"not opted in, current agent", false, api.WireAWG3, false},
+		{"not opted in, current agent", false, api.WireAWG3TrackB, false},
 		{"not opted in, old agent", false, 1, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := awg3Enabled(tc.optIn, domain.Node{WireVersion: tc.wire}, domain.Node{WireVersion: api.WireAWG3})
+			got := awg3Enabled(tc.optIn, domain.Node{WireVersion: tc.wire}, domain.Node{WireVersion: api.WireAWG3TrackB})
 			if got != tc.want {
 				t.Errorf("awg3Enabled(optIn=%v, wire=%d) = %v, want %v", tc.optIn, tc.wire, got, tc.want)
 			}
@@ -47,8 +47,8 @@ func TestAWG3EnabledRequiresOptInAndWire(t *testing.T) {
 // rollout.BuildPlan excludes masters by construction, so "exits ahead of the
 // master" is the fleet's normal state, not a rare one.
 func TestAWG3EnabledRequiresBothEnds(t *testing.T) {
-	cur := api.WireAWG3
-	old := api.WireAWG3 - 1
+	cur := api.WireAWG3TrackB
+	old := api.WireAWG3TrackB - 1
 	for _, tc := range []struct {
 		name              string
 		exitWire, mstWire uint32

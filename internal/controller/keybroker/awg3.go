@@ -27,6 +27,10 @@ import (
 // its exits is the fleet's ordinary state. Enabling fleet.awg3 in that state put
 // every exit on 3.x and left the master's mihomo on 2.0: the entire data plane.
 //
+// Since header protection brings Track B with it (wg.WithAWG3HeaderProtection),
+// the bar is WireAWG3TrackB, the version that carries random_trailers: an agent
+// at WireAWG3 would take the key and drop the trailers.
+//
 // A node that has never reported a wire version (0 — never registered, or a build
 // too old to send the metadata) is treated as too old, which is the same fail-safe
 // direction api.CheckWire takes.
@@ -40,7 +44,7 @@ func awg3Enabled(optIn bool, ends ...domain.Node) bool {
 		return false
 	}
 	for _, n := range ends {
-		if n.WireVersion < api.WireAWG3 {
+		if n.WireVersion < api.WireAWG3TrackB {
 			return false
 		}
 	}

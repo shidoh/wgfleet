@@ -24,7 +24,7 @@ func renderClientLeg(t *testing.T, mode config.ClientAWG3Mode, user domain.WGCli
 	t.Helper()
 	b, st := newBrokerWithFleet(t, managedFleetAWG3(mode))
 	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1", serverPub, domain.RoleMaster)
-	setWireVersion(t, st, "master-xa-1", api.WireClientWG)
+	setWireVersion(t, st, "master-xa-1", api.WireAWG3TrackB)
 	spec, err := b.RenderNodeSpec(context.Background(), "master-xa-1")
 	if err != nil {
 		t.Fatalf("render: %v", err)

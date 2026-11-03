@@ -102,9 +102,61 @@ func WithAWG3Timers(p domain.AWGParams, tunnelSeed string) domain.AWGParams {
 // Enabling it on a live interface disconnects every peer that does not carry the
 // same key, so it belongs behind a deliberate operator decision rather than
 // behind "turn on 3.x".
+//
+// It brings the rest of AmneziaWG 3.1's "Track B" with it, because every piece of
+// it must match on both ends and the key already forces every peer to take a new
+// config: random trailers, one padding size S for all four message types, and
+// the stock header types 1-4. Upstream's 3.1 guidance is exactly this pairing —
+// with trailers on and S1-S4 different, the receiver's classifier mistakes
+// transport packets for handshakes and drops them (amneziawg-go #186, kernel
+// module #226), and under header protection the type field is encrypted, so
+// custom H ranges add nothing but classifier ambiguity.
 func WithAWG3HeaderProtection(p domain.AWGParams, tunnelSeed, fleetSecret string) domain.AWGParams {
 	p.Shared.HeaderProtectionKey = deriveHeaderProtectionKey(tunnelSeed, fleetSecret)
+	p.Shared.RandomTrailers = true
+	size := deriveTrackBPadding(tunnelSeed, fleetSecret)
+	p.Local = shiftJunkForS4(p.Local, p.Shared.S4, size)
+	p.Shared.S1, p.Shared.S2, p.Shared.S3, p.Shared.S4 = size, size, size, size
+	for i, h := range []*domain.AWGHeader{&p.Shared.H1, &p.Shared.H2, &p.Shared.H3, &p.Shared.H4} {
+		*h = domain.AWGHeader{Min: uint32(i + 1), Max: uint32(i + 1)}
+	}
 	return p
+}
+
+// Track B padding: one size for all four message types. At least the 12 bytes
+// header protection reads its nonce from; at most 31, because S4 is prepended to
+// every data packet and is paid for out of the MTU cushion; never 16, which puts
+// transport sizes back on vanilla WireGuard's residue class modulo 16.
+const (
+	trackBPaddingLo = 12
+	trackBPaddingHi = 31
+)
+
+// deriveTrackBPadding draws the padding from the fleet secret, not from the
+// public salt alone: under Track B every message type carries the same S, so S
+// is the one size a censor would otherwise compute from a node name.
+func deriveTrackBPadding(seed, fleetSecret string) int {
+	mac := hmac.New(sha256.New, []byte(fleetSecret))
+	mac.Write([]byte(seed + "|awg3|padding"))
+	sum := mac.Sum(nil)
+	for i := 0; i+4 <= len(sum); i += 4 {
+		size := int(mapU32(binary.BigEndian.Uint32(sum[i:i+4]), trackBPaddingLo, trackBPaddingHi))
+		if size != 16 {
+			return size
+		}
+	}
+	return trackBPaddingLo + 5 // every draw was 16: 1 in 20^8, still deterministic
+}
+
+// shiftJunkForS4 moves this end's junk window by the change in S4, the same
+// constant shift DeriveAWGParamsForEnd applies, so the window stays as far above
+// the S4 a receiver strips as it was, and distinct draws stay distinct.
+func shiftJunkForS4(local domain.AWGLocal, oldS4, newS4 int) domain.AWGLocal {
+	shift := func(s4 int) int { return max(0, s4+junkS4Margin-jminLow) }
+	d := shift(newS4) - shift(oldS4)
+	local.Jmin += d
+	local.Jmax += d
+	return local
 }
 
 // deriveHeaderProtectionKey derives the 32-byte chacha20 key from the tunnel seed

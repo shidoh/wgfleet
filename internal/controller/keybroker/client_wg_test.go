@@ -323,7 +323,7 @@ func renderedClientAWG(t *testing.T, f config.FleetSection) (client domain.AWGPa
 	b, st := newBrokerWithFleet(t, f)
 	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1",
 		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
-	setWireVersion(t, st, "master-xa-1", api.WireClientWG)
+	setWireVersion(t, st, "master-xa-1", api.WireAWG3TrackB)
 	spec, err := b.RenderNodeSpec(context.Background(), "master-xa-1")
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -396,7 +396,7 @@ func TestClientLegAWG3IsSharedWithTheClientConfig(t *testing.T) {
 	b, st := newBrokerWithFleet(t, managedFleetAWG3(config.ClientAWG3Full))
 	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1",
 		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
-	setWireVersion(t, st, "master-xa-1", api.WireClientWG)
+	setWireVersion(t, st, "master-xa-1", api.WireAWG3TrackB)
 	spec, err := b.RenderNodeSpec(context.Background(), "master-xa-1")
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -423,7 +423,7 @@ func TestClientKeepaliveReachesTheSpec(t *testing.T) {
 	b, st := newBrokerWithFleet(t, f)
 	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1",
 		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
-	setWireVersion(t, st, "master-xa-1", api.WireClientWG)
+	setWireVersion(t, st, "master-xa-1", api.WireAWG3TrackB)
 
 	spec, err := b.RenderNodeSpec(context.Background(), "master-xa-1")
 	if err != nil {
@@ -647,5 +647,26 @@ func TestIssuedClientsNeverGetTheSyntheticAddress(t *testing.T) {
 	}
 	if len(taken) == 0 {
 		t.Fatal("no addresses were issuable at all")
+	}
+}
+
+// full brings trailers, which an agent below WireAWG3TrackB drops: the device
+// configs (rendered here) would carry them and wg0 (rendered by that agent) would
+// not. The leg holds at timers until the agent catches up — no device notices.
+func TestClientLegFullHeldAtTimersForAnOldAgent(t *testing.T) {
+	b, st := newBrokerWithFleet(t, managedFleetAWG3(config.ClientAWG3Full))
+	seedNode(t, st, "master-xa-1", "10.20.25.254", "203.0.113.1",
+		"FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc=", domain.RoleMaster)
+	setWireVersion(t, st, "master-xa-1", api.WireAWG3TrackB-1)
+	spec, err := b.RenderNodeSpec(context.Background(), "master-xa-1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	s := spec.Master.ClientWG.AWG.Shared
+	if s.HeaderProtectionKey != "" || s.RandomTrailers {
+		t.Errorf("an agent below wire %d got Track B: %+v", api.WireAWG3TrackB, s)
+	}
+	if s.RekeyAfterTime == "" {
+		t.Errorf("the leg should still get the server-only timers: %+v", s)
 	}
 }
