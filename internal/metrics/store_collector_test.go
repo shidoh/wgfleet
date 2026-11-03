@@ -125,6 +125,27 @@ wgfleet_node_client_vless_clients{node="master-xa-1"} 2
 	}
 }
 
+func TestStoreCollectorAWGModuleInfo(t *testing.T) {
+	reg, st, _ := newCollectorWithStore(t)
+	ctx := context.Background()
+	_ = st.UpsertNode(ctx, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady,
+		AWGModule: domain.AWGModuleBuild{PackageVersion: "1.0.0-0~202609061402+4569c4c", SrcVersion: "A1B2C3D4E5F60718293A4B5"}})
+	_ = st.UpsertNode(ctx, domain.Node{ID: "exit-nl-1", Name: "exit-nl-1", Role: domain.RoleExit, State: domain.StateReady,
+		AWGModule: domain.AWGModuleBuild{PackageVersion: "1.0.0-0~202609061402+4569c4c", SrcVersion: "0123456789ABCDEF0123456", ReloadPending: true}})
+	_ = st.UpsertNode(ctx, domain.Node{ID: "master-1", Name: "master-1", Role: domain.RoleMaster, State: domain.StateReady})
+
+	want := `
+# HELP wgfleet_node_awg_module_info AmneziaWG kernel module build the node runs (amneziawg-dkms build timestamp, or "unknown") and the module's srcversion; value is always 1.
+# TYPE wgfleet_node_awg_module_info gauge
+wgfleet_node_awg_module_info{build="202609061402",node="exit-de-1",srcversion="A1B2C3D4E5F60718293A4B5"} 1
+wgfleet_node_awg_module_info{build="unknown",node="exit-nl-1",srcversion="0123456789ABCDEF0123456"} 1
+wgfleet_node_awg_module_info{build="unknown",node="master-1",srcversion=""} 1
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "wgfleet_node_awg_module_info"); err != nil {
+		t.Error(err)
+	}
+}
+
 func TestStoreCollectorLastReportAge(t *testing.T) {
 	_, st, c := newCollectorWithStore(t)
 	ctx := context.Background()

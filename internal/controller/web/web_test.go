@@ -292,6 +292,60 @@ func TestNodeDetailWithStatusAndSpec(t *testing.T) {
 	}
 }
 
+// The module version cannot tell AmneziaWG builds apart, so the node page shows
+// the package build and srcversion the agent reported — and says so plainly when
+// nothing was reported or a newer build waits for a module reload.
+func TestNodeDetailShowsAWGModuleBuild(t *testing.T) {
+	tests := []struct {
+		name    string
+		build   domain.AWGModuleBuild
+		want    []string
+		notWant []string
+	}{
+		{
+			name:    "reported",
+			build:   domain.AWGModuleBuild{PackageVersion: "1.0.0-0~202609061402+4569c4c", SrcVersion: "A1B2C3D4E5F60718293A4B5"},
+			want:    []string{"AWG module", "1.0.0-0~202609061402&#43;4569c4c", "srcversion A1B2C3D4E5F60718293A4B5"},
+			notWant: []string{"reload pending", "not reported"},
+		},
+		{
+			name: "reload pending",
+			build: domain.AWGModuleBuild{
+				PackageVersion: "1.0.0-0~202609061402+4569c4c", SrcVersion: "0123456789ABCDEF0123456", ReloadPending: true,
+			},
+			want: []string{"1.0.0-0~202609061402&#43;4569c4c", "srcversion 0123456789ABCDEF0123456", "reload pending"},
+		},
+		{
+			name:    "module without the package",
+			build:   domain.AWGModuleBuild{SrcVersion: "A1B2C3D4E5F60718293A4B5"},
+			want:    []string{"build unknown", "srcversion A1B2C3D4E5F60718293A4B5"},
+			notWant: []string{"reload pending"},
+		},
+		{
+			name: "not reported",
+			want: []string{"AWG module", "— (not reported)"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h, st := newTestHandler(t, nil)
+			seed(t, st, domain.Node{ID: "exit-de-1", Name: "exit-de-1", Role: domain.RoleExit, State: domain.StateReady,
+				AgentVersion: "v0.3.5", WireVersion: 14, AWGModule: tc.build})
+			_, body := get(t, h, "/nodes/exit-de-1")
+			for _, w := range tc.want {
+				if !strings.Contains(body, w) {
+					t.Errorf("node page missing %q", w)
+				}
+			}
+			for _, w := range tc.notWant {
+				if strings.Contains(body, w) {
+					t.Errorf("node page shows %q, should not", w)
+				}
+			}
+		})
+	}
+}
+
 // wg-easy is not run anymore: no node page may link to its admin UI.
 func TestMasterDetailHasNoWGEasyLink(t *testing.T) {
 	h, st := newTestHandler(t, stubRenderer{spec: domain.NodeSpec{Role: domain.RoleMaster, Master: &domain.MasterSpec{}}})

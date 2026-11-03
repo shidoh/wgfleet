@@ -182,6 +182,10 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 	}
 	now := s.now().UTC()
 
+	awgModule, err := json.Marshal(n.AWGModule)
+	if err != nil {
+		return fmt.Errorf("marshal awg module build for %q: %w", n.ID, err)
+	}
 	// Preserve the original created_at on update via COALESCE against the
 	// existing row; new rows fall back to now.
 	const q = `
@@ -189,9 +193,9 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 			id, name, role, region, mgmt_addr, public_ip, public_key, reality_public_key,
 			client_vless_public_key, client_wg_public_key, lifeline_public_key, reality_portal_public_key, state,
 			drain, decommission, active_transport, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
-			agent_version, wire_version,
+			agent_version, wire_version, awg_module_json,
 			created_at, updated_at, last_seen
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			name=excluded.name, role=excluded.role, region=excluded.region,
 			mgmt_addr=excluded.mgmt_addr, public_ip=excluded.public_ip,
@@ -207,15 +211,16 @@ func (s *SQLiteStore) UpsertNode(ctx context.Context, n domain.Node) error {
 			ssh_host=excluded.ssh_host, ssh_port=excluded.ssh_port,
 			ssh_user=excluded.ssh_user, ssh_key_path=excluded.ssh_key_path,
 			agent_version=excluded.agent_version, wire_version=excluded.wire_version,
+			awg_module_json=excluded.awg_module_json,
 			updated_at=excluded.updated_at, last_seen=excluded.last_seen`
-	_, err := s.db.ExecContext(ctx, q,
+	_, err = s.db.ExecContext(ctx, q,
 		n.ID, n.Name, string(n.Role), n.Region, n.MgmtAddr, n.PublicIP,
 		n.PublicKey, n.RealityPublicKey, n.ClientVLESSPublicKey, n.ClientWGPublicKey, n.LifelinePublicKey,
 		n.RealityPortalPublicKey,
 		string(n.State), boolToInt(n.Drain), boolToInt(n.Decommission),
 		string(n.ActiveTransport), n.LastError,
 		n.SSH.Host, n.SSH.Port, n.SSH.User, n.SSH.KeyPath,
-		n.AgentVersion, n.WireVersion,
+		n.AgentVersion, n.WireVersion, string(awgModule),
 		fmtTime(orDefault(n.CreatedAt, now)), fmtTime(now), fmtTime(n.LastSeen),
 	)
 	if err != nil {
@@ -229,7 +234,7 @@ func (s *SQLiteStore) GetNode(ctx context.Context, id string) (domain.Node, erro
 	const q = `SELECT id, name, role, region, mgmt_addr, public_ip, public_key, reality_public_key,
 		client_vless_public_key, client_wg_public_key, lifeline_public_key, reality_portal_public_key,
 		state, drain, decommission, active_transport, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
-		agent_version, wire_version, created_at, updated_at, last_seen FROM nodes WHERE id = ?`
+		agent_version, wire_version, awg_module_json, created_at, updated_at, last_seen FROM nodes WHERE id = ?`
 	return scanNode(s.db.QueryRowContext(ctx, q, id))
 }
 
@@ -238,7 +243,7 @@ func (s *SQLiteStore) ListNodes(ctx context.Context) ([]domain.Node, error) {
 	const q = `SELECT id, name, role, region, mgmt_addr, public_ip, public_key, reality_public_key,
 		client_vless_public_key, client_wg_public_key, lifeline_public_key, reality_portal_public_key,
 		state, drain, decommission, active_transport, last_error, ssh_host, ssh_port, ssh_user, ssh_key_path,
-		agent_version, wire_version, created_at, updated_at, last_seen FROM nodes ORDER BY name`
+		agent_version, wire_version, awg_module_json, created_at, updated_at, last_seen FROM nodes ORDER BY name`
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("list nodes: %w", err)
@@ -679,12 +684,13 @@ func scanNode(row rowScanner) (domain.Node, error) {
 		roleS, stateS, activeXport string
 		drain, decommission        int
 		createdAt, updatedAt, seen string
+		awgModuleJSON              string
 	)
 	err := row.Scan(
 		&n.ID, &n.Name, &roleS, &n.Region, &n.MgmtAddr, &n.PublicIP, &n.PublicKey, &n.RealityPublicKey,
 		&n.ClientVLESSPublicKey, &n.ClientWGPublicKey, &n.LifelinePublicKey, &n.RealityPortalPublicKey,
 		&stateS, &drain, &decommission, &activeXport, &n.LastError, &n.SSH.Host, &n.SSH.Port, &n.SSH.User, &n.SSH.KeyPath,
-		&n.AgentVersion, &n.WireVersion,
+		&n.AgentVersion, &n.WireVersion, &awgModuleJSON,
 		&createdAt, &updatedAt, &seen,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -698,6 +704,12 @@ func scanNode(row rowScanner) (domain.Node, error) {
 	n.ActiveTransport = domain.MasterTransport(activeXport)
 	n.Drain = drain != 0
 	n.Decommission = decommission != 0
+	// An unreadable build is the unknown build, not an unreadable node: the gates
+	// that use it already fail closed on unknown, and the node itself must stay
+	// listable and renderable.
+	if err := json.Unmarshal([]byte(awgModuleJSON), &n.AWGModule); err != nil {
+		n.AWGModule = domain.AWGModuleBuild{}
+	}
 	n.CreatedAt = parseTime(createdAt)
 	n.UpdatedAt = parseTime(updatedAt)
 	n.LastSeen = parseTime(seen)

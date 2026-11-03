@@ -49,6 +49,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/agent/uplink"
 	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/atomicfile"
+	"github.com/shidoh/wgfleet/internal/awgmod"
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/pki"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -624,7 +625,11 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 		fromCache bool
 	)
 
-	state, err := a.client.Register(ctx, a.role, a.publicIP, "", a.mgmtAddr)
+	// Read every pass, not once at start: the module is upgraded under a running
+	// agent (prepare-node.sh --upgrade-awg), and the controller gates features both
+	// kernel ends must speak on what this reports.
+	awgModule := awgmod.ReadModuleBuild(ctx, awgmod.BuildProbe{})
+	state, err := a.client.Register(ctx, a.role, a.publicIP, "", a.mgmtAddr, awgModule)
 	if err != nil {
 		// Every subsystem on this node — interfaces, routing, nftables, mihomo,
 		// blocky — is converged by the pass this error used to abort, so a node that

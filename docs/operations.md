@@ -572,6 +572,7 @@ Manifest for a `vmagent`: `monitoring/vmscrapeconfig-sd.yaml` in the release arc
 wgfleet_nodes{state="Ready"}                               # node count per lifecycle state
 wgfleet_node_info{node,role,region,state}                  # inventory info (=1)
 wgfleet_node_agent_info{node,agent_version,wire_version}   # agent build + wire version (=1)
+wgfleet_node_awg_module_info{node,build,srcversion}        # AmneziaWG module build (amneziawg-dkms timestamp or "unknown") + srcversion (=1)
 wgfleet_node_last_report_age_seconds{node}                 # since last status report
 wgfleet_node_reconcile_failed{node}                        # 1 if last reconcile errored
 wgfleet_node_health_check{node,check}                      # 1 ok / 0 failing

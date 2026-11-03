@@ -116,6 +116,10 @@ type Node struct {
 	AgentVersion string
 	WireVersion  uint32
 
+	// AWGModule is the AmneziaWG kernel module build the agent last reported with
+	// its registration. Zero (unknown) until an agent that reports it registers.
+	AWGModule AWGModuleBuild
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	LastSeen  time.Time // last status report received from the agent

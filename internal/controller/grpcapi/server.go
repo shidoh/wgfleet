@@ -152,6 +152,12 @@ func (s *Service) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Re
 	}
 	node.AgentVersion = agentVersion
 	node.WireVersion = wire
+	// Overwritten on every registration, never kept from an earlier one, unlike
+	// region or public IP above. The build gates features both kernel ends must
+	// speak, so a stale "new enough" is the dangerous direction: an agent that
+	// stops reporting (rolled back, or a pass that could not read the package)
+	// must read as unknown, not as the last good answer.
+	node.AWGModule = api.AWGModuleBuildFromProto(req.GetAwgModule())
 	if node.State == "" || node.State == domain.StatePending {
 		node.State = domain.StateReconciling
 	}

@@ -44,6 +44,20 @@ message RegisterRequest {
   string public_ip = 2; // discovered public IP for peer endpoints
   string region = 3;
   string mgmt_addr = 4; // node's management/ZT address (admin + metrics bind)
+  // awg_module is the AmneziaWG kernel module build this node runs. Additive and
+  // observational: an older agent sends none and the controller records the build
+  // as unknown, which every build gate treats as too old; an older controller
+  // ignores it. No wire bump.
+  AWGModuleBuild awg_module = 5;
+}
+
+// AWGModuleBuild identifies a kernel module build. The module's own version
+// string is the same for every build of a release line, so the package revision
+// and srcversion are what tell them apart.
+message AWGModuleBuild {
+  string package_version = 1; // installed amneziawg-dkms version; empty = unknown
+  string srcversion = 2; // srcversion of the loaded module (on-disk one if none loaded)
+  bool reload_pending = 3; // on-disk module differs from the loaded one
 }
 
 message RegisterResponse {

@@ -133,6 +133,64 @@ func TestUpsertRoundTripsAgentVersion(t *testing.T) {
 	}
 }
 
+func TestUpsertRoundTripsAWGModuleBuild(t *testing.T) {
+	tests := []struct {
+		name  string
+		build domain.AWGModuleBuild
+	}{
+		{name: "known", build: domain.AWGModuleBuild{
+			PackageVersion: "1.0.0-0~202609061402+4569c4c", SrcVersion: "A1B2C3D4E5F60718293A4B5"}},
+		{name: "reload pending", build: domain.AWGModuleBuild{
+			PackageVersion: "1.0.0-0~202609061402+4569c4c", SrcVersion: "0123456789ABCDEF0123456", ReloadPending: true}},
+		{name: "unknown", build: domain.AWGModuleBuild{}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			s := newTestStore(t)
+			n := sampleNode()
+			n.AWGModule = tc.build
+			if err := s.UpsertNode(ctx, n); err != nil {
+				t.Fatalf("upsert: %v", err)
+			}
+			got, err := s.GetNode(ctx, n.ID)
+			if err != nil {
+				t.Fatalf("get: %v", err)
+			}
+			if got.AWGModule != tc.build {
+				t.Errorf("GetNode build = %+v, want %+v", got.AWGModule, tc.build)
+			}
+			list, err := s.ListNodes(ctx)
+			if err != nil || len(list) != 1 || list[0].AWGModule != tc.build {
+				t.Errorf("ListNodes = %+v (err %v), want one node with build %+v", list, err, tc.build)
+			}
+		})
+	}
+}
+
+// A row written before the column existed, or holding something unreadable,
+// must load as the unknown build rather than make the node unreadable.
+func TestAWGModuleBuildColumnDefaultsToUnknown(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	n := sampleNode()
+	if err := s.UpsertNode(ctx, n); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	for _, raw := range []string{"{}", "not json"} {
+		if _, err := s.db.ExecContext(ctx, `UPDATE nodes SET awg_module_json = ? WHERE id = ?`, raw, n.ID); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.GetNode(ctx, n.ID)
+		if err != nil {
+			t.Fatalf("get with awg_module_json %q: %v", raw, err)
+		}
+		if got.AWGModule != (domain.AWGModuleBuild{}) {
+			t.Errorf("awg_module_json %q loaded as %+v, want the unknown build", raw, got.AWGModule)
+		}
+	}
+}
+
 func TestMigrateIsIdempotentAcrossReopen(t *testing.T) {
 	// A file-backed store, reopened, must re-run migrate() without error — the
 	// ALTER TABLE migrations would fail if run twice without user_version gating.

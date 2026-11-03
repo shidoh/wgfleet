@@ -177,6 +177,7 @@ ones — is documented at the top of that script.
 | `wgfleet_node_health_check` | `node,check` | 1 ok / 0 failing (incl. `egress-throughput`, `egress-reachability`, `client-vless`, `lifeline`) |
 | `wgfleet_node_egress_info` | `node,egress_ip` | observed egress IP (=1) |
 | `wgfleet_node_agent_info` | `node,agent_version,wire_version` | reported agent build (=1) |
+| `wgfleet_node_awg_module_info` | `node,build,srcversion` | AmneziaWG kernel module build the node runs (=1). `build` is the build timestamp from the `amneziawg-dkms` package version (`1.0.0-0~202609061402+4569c4c` → `202609061402`); `unknown` when the agent is older than v0.3.5, the package is not installed, or a newer package waits for a module reload. `srcversion` is the loaded module's hash. The module's own version string is the same for every build, so this is the only way to tell them apart |
 | `wgfleet_node_drain` / `wgfleet_node_decommission` | `node` | admin intent (0/1) |
 | `wgfleet_node_client_vless_clients` | `node` | VLESS/REALITY clients issued for a master's client-facing inbound; masters only |
 | `wgfleet_client_info` | `node,peer,client,device,kind` | one per client credential (=1); `node` is the master. `kind=awg`: `peer` is the WireGuard key in the agents' 8-character form — join `on(peer)` to `wgfleet_wg_peer_*` on the master's `wg0` and an exit's lifeline `awgl0`. `kind=vless`: `peer` is the VLESS stats id — join to `wgfleet_vless_user_*{user}` |
