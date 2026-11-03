@@ -163,7 +163,7 @@ func TestRenderExitMangleMark(t *testing.T) {
 	}
 	// Without a mark (direct egress), no mangle chain.
 	out2, _ := RenderRuleset(RenderInput{Role: domain.RoleExit, Firewall: domain.FirewallSpec{WGPort: 51820}})
-	if strings.Contains(out2, "mangle") {
+	if strings.Contains(out2, "mangle_output") || strings.Contains(out2, "meta mark set") {
 		t.Errorf("no mangle chain expected without WGReplyMark:\n%s", out2)
 	}
 }

@@ -334,6 +334,7 @@ All keys: [configuration.md#3-fleet-fleet-wide-settings](configuration.md#3-flee
 | Overlay accept | The input chain accepts `iifname "zt*"` ahead of `masters[].whitelist`, `public_udp_ports`, `public_tcp_ports` and the AS blacklist. |
 | Leak guard | The egress leak guard cannot touch a master. |
 | Public SSH port | Opened **after** the AS-blacklist drop, so direct SSH from a flagged address can be refused while the overlay still works. |
+| DSCP scrub | Chain `awg_dscp_scrub` (output hook, both roles) sets DSCP to 0 on UDP the node sends from its AmneziaWG listen ports: the client port on a master, the tunnel and lifeline ports on an exit. Packets leaving through the tunnel interfaces themselves and forwarded traffic are not touched; ECN bits are kept. Check: `nft list chain inet wgfleet awg_dscp_scrub`. |
 
 - **Keep a second SSH session open** on the master for the whole of any firewall,
   routing or client-interface change. Run `wgfleet-agent --once --plan` in it to
