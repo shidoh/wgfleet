@@ -34,6 +34,7 @@ type StoreCollector struct {
 	nodeHealthCheck  *prometheus.Desc
 	nodeEgressInfo   *prometheus.Desc
 	nodeAgentInfo    *prometheus.Desc
+	nodeAWGModule    *prometheus.Desc
 	nodeDrain        *prometheus.Desc
 	nodeDecommission *prometheus.Desc
 	nodeVLESSClients *prometheus.Desc
@@ -100,6 +101,10 @@ func NewStoreCollector(reg *prometheus.Registry, st store.Store) *StoreCollector
 			prometheus.BuildFQName(namespace, "node", "agent_info"),
 			"Agent build + wire version reported by the node; value is always 1.",
 			[]string{"node", "agent_version", "wire_version"}, nil),
+		nodeAWGModule: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "node", "awg_module_info"),
+			"AmneziaWG kernel module build the node runs (amneziawg-dkms build timestamp, or \"unknown\") and the module's srcversion; value is always 1.",
+			[]string{"node", "build", "srcversion"}, nil),
 		nodeDrain: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "node", "drain"),
 			"1 if the node is administratively drained (out of the LB, connections preserved), else 0.",
@@ -146,6 +151,7 @@ func (c *StoreCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.nodeHealthCheck
 	ch <- c.nodeEgressInfo
 	ch <- c.nodeAgentInfo
+	ch <- c.nodeAWGModule
 	ch <- c.nodeDrain
 	ch <- c.nodeDecommission
 	ch <- c.nodeVLESSClients
@@ -195,6 +201,11 @@ func (c *StoreCollector) Collect(ch chan<- prometheus.Metric) {
 			ch <- prometheus.MustNewConstMetric(c.nodeAgentInfo, prometheus.GaugeValue, 1,
 				n.Name, n.AgentVersion, strconv.FormatUint(uint64(n.WireVersion), 10))
 		}
+		// Emitted for every node, unknown included: the module version cannot tell
+		// builds apart, and "which nodes would hold a build-gated feature back" is
+		// exactly the count of build="unknown" plus the too-old ones.
+		ch <- prometheus.MustNewConstMetric(c.nodeAWGModule, prometheus.GaugeValue, 1,
+			n.Name, n.AWGModule.Label(), n.AWGModule.SrcVersion)
 
 		// Only masters run the client-facing VLESS inbound (ADR-0031). Emitting the
 		// gauge just for masters keeps exits out of the series entirely rather than

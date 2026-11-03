@@ -88,12 +88,16 @@ func versionStreamInterceptor(ctx context.Context, desc *grpc.StreamDesc, cc *gr
 func (c *Client) Close() error { return c.conn.Close() }
 
 // Register announces this node to the controller and returns its current state.
-func (c *Client) Register(ctx context.Context, role domain.Role, publicIP, region, mgmtAddr string) (domain.NodeState, error) {
+// awgModule is the kernel module build this node runs; the zero value reports it
+// as unknown.
+func (c *Client) Register(ctx context.Context, role domain.Role, publicIP, region, mgmtAddr string,
+	awgModule domain.AWGModuleBuild) (domain.NodeState, error) {
 	resp, err := c.rpc.Register(ctx, &pb.RegisterRequest{
-		Role:     string(role),
-		PublicIp: publicIP,
-		Region:   region,
-		MgmtAddr: mgmtAddr,
+		Role:      string(role),
+		PublicIp:  publicIP,
+		Region:    region,
+		MgmtAddr:  mgmtAddr,
+		AwgModule: api.AWGModuleBuildToProto(awgModule),
 	})
 	if err != nil {
 		return "", fmt.Errorf("register: %w", err)

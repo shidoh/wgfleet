@@ -22,11 +22,16 @@ const (
 )
 
 type RegisterRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Role          string                 `protobuf:"bytes,1,opt,name=role,proto3" json:"role,omitempty"`                         // "master" | "exit"; cross-checked against inventory
-	PublicIp      string                 `protobuf:"bytes,2,opt,name=public_ip,json=publicIp,proto3" json:"public_ip,omitempty"` // discovered public IP for peer endpoints
-	Region        string                 `protobuf:"bytes,3,opt,name=region,proto3" json:"region,omitempty"`
-	MgmtAddr      string                 `protobuf:"bytes,4,opt,name=mgmt_addr,json=mgmtAddr,proto3" json:"mgmt_addr,omitempty"` // node's management/ZT address (admin + metrics bind)
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Role     string                 `protobuf:"bytes,1,opt,name=role,proto3" json:"role,omitempty"`                         // "master" | "exit"; cross-checked against inventory
+	PublicIp string                 `protobuf:"bytes,2,opt,name=public_ip,json=publicIp,proto3" json:"public_ip,omitempty"` // discovered public IP for peer endpoints
+	Region   string                 `protobuf:"bytes,3,opt,name=region,proto3" json:"region,omitempty"`
+	MgmtAddr string                 `protobuf:"bytes,4,opt,name=mgmt_addr,json=mgmtAddr,proto3" json:"mgmt_addr,omitempty"` // node's management/ZT address (admin + metrics bind)
+	// awg_module is the AmneziaWG kernel module build this node runs. Additive and
+	// observational: an older agent sends none and the controller records the build
+	// as unknown, which every build gate treats as too old; an older controller
+	// ignores it. No wire bump.
+	AwgModule     *AWGModuleBuild `protobuf:"bytes,5,opt,name=awg_module,json=awgModule,proto3" json:"awg_module,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -89,6 +94,76 @@ func (x *RegisterRequest) GetMgmtAddr() string {
 	return ""
 }
 
+func (x *RegisterRequest) GetAwgModule() *AWGModuleBuild {
+	if x != nil {
+		return x.AwgModule
+	}
+	return nil
+}
+
+// AWGModuleBuild identifies a kernel module build. The module's own version
+// string is the same for every build of a release line, so the package revision
+// and srcversion are what tell them apart.
+type AWGModuleBuild struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	PackageVersion string                 `protobuf:"bytes,1,opt,name=package_version,json=packageVersion,proto3" json:"package_version,omitempty"` // installed amneziawg-dkms version; empty = unknown
+	Srcversion     string                 `protobuf:"bytes,2,opt,name=srcversion,proto3" json:"srcversion,omitempty"`                               // srcversion of the loaded module (on-disk one if none loaded)
+	ReloadPending  bool                   `protobuf:"varint,3,opt,name=reload_pending,json=reloadPending,proto3" json:"reload_pending,omitempty"`   // on-disk module differs from the loaded one
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *AWGModuleBuild) Reset() {
+	*x = AWGModuleBuild{}
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AWGModuleBuild) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AWGModuleBuild) ProtoMessage() {}
+
+func (x *AWGModuleBuild) ProtoReflect() protoreflect.Message {
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AWGModuleBuild.ProtoReflect.Descriptor instead.
+func (*AWGModuleBuild) Descriptor() ([]byte, []int) {
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *AWGModuleBuild) GetPackageVersion() string {
+	if x != nil {
+		return x.PackageVersion
+	}
+	return ""
+}
+
+func (x *AWGModuleBuild) GetSrcversion() string {
+	if x != nil {
+		return x.Srcversion
+	}
+	return ""
+}
+
+func (x *AWGModuleBuild) GetReloadPending() bool {
+	if x != nil {
+		return x.ReloadPending
+	}
+	return false
+}
+
 type RegisterResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"` // echoed back (derived from cert CN)
@@ -99,7 +174,7 @@ type RegisterResponse struct {
 
 func (x *RegisterResponse) Reset() {
 	*x = RegisterResponse{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[1]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -111,7 +186,7 @@ func (x *RegisterResponse) String() string {
 func (*RegisterResponse) ProtoMessage() {}
 
 func (x *RegisterResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[1]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -124,7 +199,7 @@ func (x *RegisterResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterResponse.ProtoReflect.Descriptor instead.
 func (*RegisterResponse) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{1}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *RegisterResponse) GetNodeId() string {
@@ -155,7 +230,7 @@ type PublishPublicKeyRequest struct {
 
 func (x *PublishPublicKeyRequest) Reset() {
 	*x = PublishPublicKeyRequest{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[2]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -167,7 +242,7 @@ func (x *PublishPublicKeyRequest) String() string {
 func (*PublishPublicKeyRequest) ProtoMessage() {}
 
 func (x *PublishPublicKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[2]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -180,7 +255,7 @@ func (x *PublishPublicKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishPublicKeyRequest.ProtoReflect.Descriptor instead.
 func (*PublishPublicKeyRequest) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{2}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *PublishPublicKeyRequest) GetPublicKey() string {
@@ -206,7 +281,7 @@ type PublishPublicKeyResponse struct {
 
 func (x *PublishPublicKeyResponse) Reset() {
 	*x = PublishPublicKeyResponse{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[3]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -218,7 +293,7 @@ func (x *PublishPublicKeyResponse) String() string {
 func (*PublishPublicKeyResponse) ProtoMessage() {}
 
 func (x *PublishPublicKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[3]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -231,7 +306,7 @@ func (x *PublishPublicKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishPublicKeyResponse.ProtoReflect.Descriptor instead.
 func (*PublishPublicKeyResponse) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{3}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *PublishPublicKeyResponse) GetAccepted() bool {
@@ -249,7 +324,7 @@ type PullSpecRequest struct {
 
 func (x *PullSpecRequest) Reset() {
 	*x = PullSpecRequest{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[4]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -261,7 +336,7 @@ func (x *PullSpecRequest) String() string {
 func (*PullSpecRequest) ProtoMessage() {}
 
 func (x *PullSpecRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[4]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -274,7 +349,7 @@ func (x *PullSpecRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PullSpecRequest.ProtoReflect.Descriptor instead.
 func (*PullSpecRequest) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{4}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{5}
 }
 
 type StatusReport struct {
@@ -307,7 +382,7 @@ type StatusReport struct {
 
 func (x *StatusReport) Reset() {
 	*x = StatusReport{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[5]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -319,7 +394,7 @@ func (x *StatusReport) String() string {
 func (*StatusReport) ProtoMessage() {}
 
 func (x *StatusReport) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[5]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -332,7 +407,7 @@ func (x *StatusReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusReport.ProtoReflect.Descriptor instead.
 func (*StatusReport) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{5}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *StatusReport) GetState() string {
@@ -410,7 +485,7 @@ type MasterPeerStatus struct {
 
 func (x *MasterPeerStatus) Reset() {
 	*x = MasterPeerStatus{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[6]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -422,7 +497,7 @@ func (x *MasterPeerStatus) String() string {
 func (*MasterPeerStatus) ProtoMessage() {}
 
 func (x *MasterPeerStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[6]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -435,7 +510,7 @@ func (x *MasterPeerStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MasterPeerStatus.ProtoReflect.Descriptor instead.
 func (*MasterPeerStatus) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{6}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *MasterPeerStatus) GetPublicKey() string {
@@ -477,7 +552,7 @@ type ClientPeerStatus struct {
 
 func (x *ClientPeerStatus) Reset() {
 	*x = ClientPeerStatus{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[7]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -489,7 +564,7 @@ func (x *ClientPeerStatus) String() string {
 func (*ClientPeerStatus) ProtoMessage() {}
 
 func (x *ClientPeerStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[7]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -502,7 +577,7 @@ func (x *ClientPeerStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientPeerStatus.ProtoReflect.Descriptor instead.
 func (*ClientPeerStatus) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{7}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ClientPeerStatus) GetPublicKey() string {
@@ -545,7 +620,7 @@ type HealthCheck struct {
 
 func (x *HealthCheck) Reset() {
 	*x = HealthCheck{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[8]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -557,7 +632,7 @@ func (x *HealthCheck) String() string {
 func (*HealthCheck) ProtoMessage() {}
 
 func (x *HealthCheck) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[8]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -570,7 +645,7 @@ func (x *HealthCheck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthCheck.ProtoReflect.Descriptor instead.
 func (*HealthCheck) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{8}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *HealthCheck) GetName() string {
@@ -623,7 +698,7 @@ type ExitTunnelHealth struct {
 
 func (x *ExitTunnelHealth) Reset() {
 	*x = ExitTunnelHealth{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[9]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -635,7 +710,7 @@ func (x *ExitTunnelHealth) String() string {
 func (*ExitTunnelHealth) ProtoMessage() {}
 
 func (x *ExitTunnelHealth) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[9]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -648,7 +723,7 @@ func (x *ExitTunnelHealth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExitTunnelHealth.ProtoReflect.Descriptor instead.
 func (*ExitTunnelHealth) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{9}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ExitTunnelHealth) GetName() string {
@@ -723,7 +798,7 @@ type ReportStatusAck struct {
 
 func (x *ReportStatusAck) Reset() {
 	*x = ReportStatusAck{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[10]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -735,7 +810,7 @@ func (x *ReportStatusAck) String() string {
 func (*ReportStatusAck) ProtoMessage() {}
 
 func (x *ReportStatusAck) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[10]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -748,7 +823,7 @@ func (x *ReportStatusAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportStatusAck.ProtoReflect.Descriptor instead.
 func (*ReportStatusAck) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{10}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ReportStatusAck) GetReceived() uint32 {
@@ -797,7 +872,7 @@ type NodeSpec struct {
 
 func (x *NodeSpec) Reset() {
 	*x = NodeSpec{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[11]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -809,7 +884,7 @@ func (x *NodeSpec) String() string {
 func (*NodeSpec) ProtoMessage() {}
 
 func (x *NodeSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[11]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -822,7 +897,7 @@ func (x *NodeSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeSpec.ProtoReflect.Descriptor instead.
 func (*NodeSpec) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{11}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *NodeSpec) GetRole() string {
@@ -972,7 +1047,7 @@ type LifelineSpec struct {
 
 func (x *LifelineSpec) Reset() {
 	*x = LifelineSpec{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[12]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -984,7 +1059,7 @@ func (x *LifelineSpec) String() string {
 func (*LifelineSpec) ProtoMessage() {}
 
 func (x *LifelineSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[12]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -997,7 +1072,7 @@ func (x *LifelineSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LifelineSpec.ProtoReflect.Descriptor instead.
 func (*LifelineSpec) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{12}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *LifelineSpec) GetClientWg() *ClientWGSpec {
@@ -1029,7 +1104,7 @@ type HardeningSpec struct {
 
 func (x *HardeningSpec) Reset() {
 	*x = HardeningSpec{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[13]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1041,7 +1116,7 @@ func (x *HardeningSpec) String() string {
 func (*HardeningSpec) ProtoMessage() {}
 
 func (x *HardeningSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[13]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1054,7 +1129,7 @@ func (x *HardeningSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HardeningSpec.ProtoReflect.Descriptor instead.
 func (*HardeningSpec) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{13}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *HardeningSpec) GetSshd() bool {
@@ -1101,7 +1176,7 @@ type RealitySrvSpec struct {
 
 func (x *RealitySrvSpec) Reset() {
 	*x = RealitySrvSpec{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[14]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1113,7 +1188,7 @@ func (x *RealitySrvSpec) String() string {
 func (*RealitySrvSpec) ProtoMessage() {}
 
 func (x *RealitySrvSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[14]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1126,7 +1201,7 @@ func (x *RealitySrvSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RealitySrvSpec.ProtoReflect.Descriptor instead.
 func (*RealitySrvSpec) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{14}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *RealitySrvSpec) GetListenPort() int32 {
@@ -1223,7 +1298,7 @@ type RealityBridgeSpec struct {
 
 func (x *RealityBridgeSpec) Reset() {
 	*x = RealityBridgeSpec{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[15]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1235,7 +1310,7 @@ func (x *RealityBridgeSpec) String() string {
 func (*RealityBridgeSpec) ProtoMessage() {}
 
 func (x *RealityBridgeSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[15]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1248,7 +1323,7 @@ func (x *RealityBridgeSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RealityBridgeSpec.ProtoReflect.Descriptor instead.
 func (*RealityBridgeSpec) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{15}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *RealityBridgeSpec) GetPortals() []*RealityPortalPeer {
@@ -1274,7 +1349,7 @@ type RealityPortalPeer struct {
 
 func (x *RealityPortalPeer) Reset() {
 	*x = RealityPortalPeer{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[16]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1286,7 +1361,7 @@ func (x *RealityPortalPeer) String() string {
 func (*RealityPortalPeer) ProtoMessage() {}
 
 func (x *RealityPortalPeer) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[16]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1299,7 +1374,7 @@ func (x *RealityPortalPeer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RealityPortalPeer.ProtoReflect.Descriptor instead.
 func (*RealityPortalPeer) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{16}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *RealityPortalPeer) GetMaster() string {
@@ -1423,7 +1498,7 @@ type MasterSpec struct {
 
 func (x *MasterSpec) Reset() {
 	*x = MasterSpec{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[17]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1435,7 +1510,7 @@ func (x *MasterSpec) String() string {
 func (*MasterSpec) ProtoMessage() {}
 
 func (x *MasterSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[17]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1448,7 +1523,7 @@ func (x *MasterSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MasterSpec.ProtoReflect.Descriptor instead.
 func (*MasterSpec) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{17}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *MasterSpec) GetBindAddress() string {
@@ -1610,7 +1685,7 @@ type UplinkProbeTarget struct {
 
 func (x *UplinkProbeTarget) Reset() {
 	*x = UplinkProbeTarget{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[18]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1622,7 +1697,7 @@ func (x *UplinkProbeTarget) String() string {
 func (*UplinkProbeTarget) ProtoMessage() {}
 
 func (x *UplinkProbeTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[18]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1635,7 +1710,7 @@ func (x *UplinkProbeTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UplinkProbeTarget.ProtoReflect.Descriptor instead.
 func (*UplinkProbeTarget) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{18}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *UplinkProbeTarget) GetName() string {
@@ -1670,7 +1745,7 @@ type RealityPortalSpec struct {
 
 func (x *RealityPortalSpec) Reset() {
 	*x = RealityPortalSpec{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[19]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1682,7 +1757,7 @@ func (x *RealityPortalSpec) String() string {
 func (*RealityPortalSpec) ProtoMessage() {}
 
 func (x *RealityPortalSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[19]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1695,7 +1770,7 @@ func (x *RealityPortalSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RealityPortalSpec.ProtoReflect.Descriptor instead.
 func (*RealityPortalSpec) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{19}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *RealityPortalSpec) GetListenPort() int32 {
@@ -1759,7 +1834,7 @@ type RealityPortalClient struct {
 
 func (x *RealityPortalClient) Reset() {
 	*x = RealityPortalClient{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[20]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1771,7 +1846,7 @@ func (x *RealityPortalClient) String() string {
 func (*RealityPortalClient) ProtoMessage() {}
 
 func (x *RealityPortalClient) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[20]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1784,7 +1859,7 @@ func (x *RealityPortalClient) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RealityPortalClient.ProtoReflect.Descriptor instead.
 func (*RealityPortalClient) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{20}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *RealityPortalClient) GetExit() string {
@@ -1840,7 +1915,7 @@ type ClientWGSpec struct {
 
 func (x *ClientWGSpec) Reset() {
 	*x = ClientWGSpec{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[21]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1852,7 +1927,7 @@ func (x *ClientWGSpec) String() string {
 func (*ClientWGSpec) ProtoMessage() {}
 
 func (x *ClientWGSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[21]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1865,7 +1940,7 @@ func (x *ClientWGSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientWGSpec.ProtoReflect.Descriptor instead.
 func (*ClientWGSpec) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{21}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ClientWGSpec) GetListenPort() int32 {
@@ -1954,7 +2029,7 @@ type WGClientPeer struct {
 
 func (x *WGClientPeer) Reset() {
 	*x = WGClientPeer{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[22]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1966,7 +2041,7 @@ func (x *WGClientPeer) String() string {
 func (*WGClientPeer) ProtoMessage() {}
 
 func (x *WGClientPeer) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[22]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1979,7 +2054,7 @@ func (x *WGClientPeer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WGClientPeer.ProtoReflect.Descriptor instead.
 func (*WGClientPeer) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{22}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *WGClientPeer) GetName() string {
@@ -2035,7 +2110,7 @@ type ClientVlessSpec struct {
 
 func (x *ClientVlessSpec) Reset() {
 	*x = ClientVlessSpec{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[23]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2047,7 +2122,7 @@ func (x *ClientVlessSpec) String() string {
 func (*ClientVlessSpec) ProtoMessage() {}
 
 func (x *ClientVlessSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[23]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2060,7 +2135,7 @@ func (x *ClientVlessSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientVlessSpec.ProtoReflect.Descriptor instead.
 func (*ClientVlessSpec) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{23}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ClientVlessSpec) GetListenPort() int32 {
@@ -2154,7 +2229,7 @@ type VlessClient struct {
 
 func (x *VlessClient) Reset() {
 	*x = VlessClient{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[24]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2166,7 +2241,7 @@ func (x *VlessClient) String() string {
 func (*VlessClient) ProtoMessage() {}
 
 func (x *VlessClient) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[24]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2179,7 +2254,7 @@ func (x *VlessClient) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VlessClient.ProtoReflect.Descriptor instead.
 func (*VlessClient) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{24}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *VlessClient) GetName() string {
@@ -2223,7 +2298,7 @@ type ComposeSpec struct {
 
 func (x *ComposeSpec) Reset() {
 	*x = ComposeSpec{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[25]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2235,7 +2310,7 @@ func (x *ComposeSpec) String() string {
 func (*ComposeSpec) ProtoMessage() {}
 
 func (x *ComposeSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[25]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2248,7 +2323,7 @@ func (x *ComposeSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComposeSpec.ProtoReflect.Descriptor instead.
 func (*ComposeSpec) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{25}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ComposeSpec) GetMihomoImage() string {
@@ -2324,7 +2399,7 @@ type ExitTunnel struct {
 
 func (x *ExitTunnel) Reset() {
 	*x = ExitTunnel{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[26]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2336,7 +2411,7 @@ func (x *ExitTunnel) String() string {
 func (*ExitTunnel) ProtoMessage() {}
 
 func (x *ExitTunnel) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[26]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2349,7 +2424,7 @@ func (x *ExitTunnel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExitTunnel.ProtoReflect.Descriptor instead.
 func (*ExitTunnel) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{26}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ExitTunnel) GetName() string {
@@ -2471,7 +2546,7 @@ type RealityTunnel struct {
 
 func (x *RealityTunnel) Reset() {
 	*x = RealityTunnel{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[27]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2483,7 +2558,7 @@ func (x *RealityTunnel) String() string {
 func (*RealityTunnel) ProtoMessage() {}
 
 func (x *RealityTunnel) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[27]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2496,7 +2571,7 @@ func (x *RealityTunnel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RealityTunnel.ProtoReflect.Descriptor instead.
 func (*RealityTunnel) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{27}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *RealityTunnel) GetUuid() string {
@@ -2588,7 +2663,7 @@ type CustomConfig struct {
 
 func (x *CustomConfig) Reset() {
 	*x = CustomConfig{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[28]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2600,7 +2675,7 @@ func (x *CustomConfig) String() string {
 func (*CustomConfig) ProtoMessage() {}
 
 func (x *CustomConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[28]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2613,7 +2688,7 @@ func (x *CustomConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CustomConfig.ProtoReflect.Descriptor instead.
 func (*CustomConfig) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{28}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *CustomConfig) GetOverridesJson() string {
@@ -2641,7 +2716,7 @@ type ManagedFile struct {
 
 func (x *ManagedFile) Reset() {
 	*x = ManagedFile{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[29]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2653,7 +2728,7 @@ func (x *ManagedFile) String() string {
 func (*ManagedFile) ProtoMessage() {}
 
 func (x *ManagedFile) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[29]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2666,7 +2741,7 @@ func (x *ManagedFile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ManagedFile.ProtoReflect.Descriptor instead.
 func (*ManagedFile) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{29}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ManagedFile) GetPath() string {
@@ -2709,7 +2784,7 @@ type WGServerSpec struct {
 
 func (x *WGServerSpec) Reset() {
 	*x = WGServerSpec{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[30]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2721,7 +2796,7 @@ func (x *WGServerSpec) String() string {
 func (*WGServerSpec) ProtoMessage() {}
 
 func (x *WGServerSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[30]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2734,7 +2809,7 @@ func (x *WGServerSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WGServerSpec.ProtoReflect.Descriptor instead.
 func (*WGServerSpec) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{30}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *WGServerSpec) GetListenPort() int32 {
@@ -2793,7 +2868,7 @@ type PeerSpec struct {
 
 func (x *PeerSpec) Reset() {
 	*x = PeerSpec{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[31]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2805,7 +2880,7 @@ func (x *PeerSpec) String() string {
 func (*PeerSpec) ProtoMessage() {}
 
 func (x *PeerSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[31]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2818,7 +2893,7 @@ func (x *PeerSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PeerSpec.ProtoReflect.Descriptor instead.
 func (*PeerSpec) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{31}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *PeerSpec) GetName() string {
@@ -2875,7 +2950,7 @@ type AWGHeader struct {
 
 func (x *AWGHeader) Reset() {
 	*x = AWGHeader{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[32]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2887,7 +2962,7 @@ func (x *AWGHeader) String() string {
 func (*AWGHeader) ProtoMessage() {}
 
 func (x *AWGHeader) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[32]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2900,7 +2975,7 @@ func (x *AWGHeader) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AWGHeader.ProtoReflect.Descriptor instead.
 func (*AWGHeader) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{32}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *AWGHeader) GetMin() uint32 {
@@ -2952,7 +3027,7 @@ type AWGShared struct {
 
 func (x *AWGShared) Reset() {
 	*x = AWGShared{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[33]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2964,7 +3039,7 @@ func (x *AWGShared) String() string {
 func (*AWGShared) ProtoMessage() {}
 
 func (x *AWGShared) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[33]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2977,7 +3052,7 @@ func (x *AWGShared) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AWGShared.ProtoReflect.Descriptor instead.
 func (*AWGShared) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{33}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *AWGShared) GetH1() *AWGHeader {
@@ -3109,7 +3184,7 @@ type AWGLocal struct {
 
 func (x *AWGLocal) Reset() {
 	*x = AWGLocal{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[34]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3121,7 +3196,7 @@ func (x *AWGLocal) String() string {
 func (*AWGLocal) ProtoMessage() {}
 
 func (x *AWGLocal) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[34]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3134,7 +3209,7 @@ func (x *AWGLocal) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AWGLocal.ProtoReflect.Descriptor instead.
 func (*AWGLocal) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{34}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *AWGLocal) GetJc() int32 {
@@ -3203,7 +3278,7 @@ type AWGParams struct {
 
 func (x *AWGParams) Reset() {
 	*x = AWGParams{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[35]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3215,7 +3290,7 @@ func (x *AWGParams) String() string {
 func (*AWGParams) ProtoMessage() {}
 
 func (x *AWGParams) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[35]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3228,7 +3303,7 @@ func (x *AWGParams) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AWGParams.ProtoReflect.Descriptor instead.
 func (*AWGParams) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{35}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *AWGParams) GetShared() *AWGShared {
@@ -3265,7 +3340,7 @@ type DNSFilterSpec struct {
 
 func (x *DNSFilterSpec) Reset() {
 	*x = DNSFilterSpec{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[36]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3277,7 +3352,7 @@ func (x *DNSFilterSpec) String() string {
 func (*DNSFilterSpec) ProtoMessage() {}
 
 func (x *DNSFilterSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[36]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3290,7 +3365,7 @@ func (x *DNSFilterSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DNSFilterSpec.ProtoReflect.Descriptor instead.
 func (*DNSFilterSpec) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{36}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *DNSFilterSpec) GetEnabled() bool {
@@ -3368,7 +3443,7 @@ type DNSPorts struct {
 
 func (x *DNSPorts) Reset() {
 	*x = DNSPorts{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[37]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3380,7 +3455,7 @@ func (x *DNSPorts) String() string {
 func (*DNSPorts) ProtoMessage() {}
 
 func (x *DNSPorts) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[37]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3393,7 +3468,7 @@ func (x *DNSPorts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DNSPorts.ProtoReflect.Descriptor instead.
 func (*DNSPorts) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{37}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *DNSPorts) GetDns() int32 {
@@ -3434,7 +3509,7 @@ type BootstrapUpstream struct {
 
 func (x *BootstrapUpstream) Reset() {
 	*x = BootstrapUpstream{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[38]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3446,7 +3521,7 @@ func (x *BootstrapUpstream) String() string {
 func (*BootstrapUpstream) ProtoMessage() {}
 
 func (x *BootstrapUpstream) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[38]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3459,7 +3534,7 @@ func (x *BootstrapUpstream) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BootstrapUpstream.ProtoReflect.Descriptor instead.
 func (*BootstrapUpstream) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{38}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *BootstrapUpstream) GetUpstream() string {
@@ -3505,7 +3580,7 @@ type FirewallSpec struct {
 
 func (x *FirewallSpec) Reset() {
 	*x = FirewallSpec{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[39]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3517,7 +3592,7 @@ func (x *FirewallSpec) String() string {
 func (*FirewallSpec) ProtoMessage() {}
 
 func (x *FirewallSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[39]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3530,7 +3605,7 @@ func (x *FirewallSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FirewallSpec.ProtoReflect.Descriptor instead.
 func (*FirewallSpec) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{39}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *FirewallSpec) GetAsBlacklist() bool {
@@ -3601,7 +3676,7 @@ type RoutingSpec struct {
 
 func (x *RoutingSpec) Reset() {
 	*x = RoutingSpec{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[40]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3613,7 +3688,7 @@ func (x *RoutingSpec) String() string {
 func (*RoutingSpec) ProtoMessage() {}
 
 func (x *RoutingSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[40]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3626,7 +3701,7 @@ func (x *RoutingSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RoutingSpec.ProtoReflect.Descriptor instead.
 func (*RoutingSpec) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{40}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *RoutingSpec) GetEgressInterface() string {
@@ -3668,7 +3743,7 @@ type ExportersSpec struct {
 
 func (x *ExportersSpec) Reset() {
 	*x = ExportersSpec{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[41]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3680,7 +3755,7 @@ func (x *ExportersSpec) String() string {
 func (*ExportersSpec) ProtoMessage() {}
 
 func (x *ExportersSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[41]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3693,7 +3768,7 @@ func (x *ExportersSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportersSpec.ProtoReflect.Descriptor instead.
 func (*ExportersSpec) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{41}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ExportersSpec) GetNode() bool {
@@ -3729,7 +3804,7 @@ type RenewCertificateRequest struct {
 
 func (x *RenewCertificateRequest) Reset() {
 	*x = RenewCertificateRequest{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[42]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3741,7 +3816,7 @@ func (x *RenewCertificateRequest) String() string {
 func (*RenewCertificateRequest) ProtoMessage() {}
 
 func (x *RenewCertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[42]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3754,7 +3829,7 @@ func (x *RenewCertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenewCertificateRequest.ProtoReflect.Descriptor instead.
 func (*RenewCertificateRequest) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{42}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *RenewCertificateRequest) GetCsrDer() []byte {
@@ -3776,7 +3851,7 @@ type RenewCertificateResponse struct {
 
 func (x *RenewCertificateResponse) Reset() {
 	*x = RenewCertificateResponse{}
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[43]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3788,7 +3863,7 @@ func (x *RenewCertificateResponse) String() string {
 func (*RenewCertificateResponse) ProtoMessage() {}
 
 func (x *RenewCertificateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_wgfleet_v1_node_service_proto_msgTypes[43]
+	mi := &file_wgfleet_v1_node_service_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3801,7 +3876,7 @@ func (x *RenewCertificateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenewCertificateResponse.ProtoReflect.Descriptor instead.
 func (*RenewCertificateResponse) Descriptor() ([]byte, []int) {
-	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{43}
+	return file_wgfleet_v1_node_service_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *RenewCertificateResponse) GetCertPem() []byte {
@@ -3823,12 +3898,20 @@ var File_wgfleet_v1_node_service_proto protoreflect.FileDescriptor
 const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\n" +
 	"\x1dwgfleet/v1/node_service.proto\x12\n" +
-	"wgfleet.v1\"w\n" +
+	"wgfleet.v1\"\xb2\x01\n" +
 	"\x0fRegisterRequest\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12\x1b\n" +
 	"\tpublic_ip\x18\x02 \x01(\tR\bpublicIp\x12\x16\n" +
 	"\x06region\x18\x03 \x01(\tR\x06region\x12\x1b\n" +
-	"\tmgmt_addr\x18\x04 \x01(\tR\bmgmtAddr\"A\n" +
+	"\tmgmt_addr\x18\x04 \x01(\tR\bmgmtAddr\x129\n" +
+	"\n" +
+	"awg_module\x18\x05 \x01(\v2\x1a.wgfleet.v1.AWGModuleBuildR\tawgModule\"\x80\x01\n" +
+	"\x0eAWGModuleBuild\x12'\n" +
+	"\x0fpackage_version\x18\x01 \x01(\tR\x0epackageVersion\x12\x1e\n" +
+	"\n" +
+	"srcversion\x18\x02 \x01(\tR\n" +
+	"srcversion\x12%\n" +
+	"\x0ereload_pending\x18\x03 \x01(\bR\rreloadPending\"A\n" +
 	"\x10RegisterResponse\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x14\n" +
 	"\x05state\x18\x02 \x01(\tR\x05state\"S\n" +
@@ -4188,111 +4271,113 @@ func file_wgfleet_v1_node_service_proto_rawDescGZIP() []byte {
 	return file_wgfleet_v1_node_service_proto_rawDescData
 }
 
-var file_wgfleet_v1_node_service_proto_msgTypes = make([]protoimpl.MessageInfo, 44)
+var file_wgfleet_v1_node_service_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
 var file_wgfleet_v1_node_service_proto_goTypes = []any{
 	(*RegisterRequest)(nil),          // 0: wgfleet.v1.RegisterRequest
-	(*RegisterResponse)(nil),         // 1: wgfleet.v1.RegisterResponse
-	(*PublishPublicKeyRequest)(nil),  // 2: wgfleet.v1.PublishPublicKeyRequest
-	(*PublishPublicKeyResponse)(nil), // 3: wgfleet.v1.PublishPublicKeyResponse
-	(*PullSpecRequest)(nil),          // 4: wgfleet.v1.PullSpecRequest
-	(*StatusReport)(nil),             // 5: wgfleet.v1.StatusReport
-	(*MasterPeerStatus)(nil),         // 6: wgfleet.v1.MasterPeerStatus
-	(*ClientPeerStatus)(nil),         // 7: wgfleet.v1.ClientPeerStatus
-	(*HealthCheck)(nil),              // 8: wgfleet.v1.HealthCheck
-	(*ExitTunnelHealth)(nil),         // 9: wgfleet.v1.ExitTunnelHealth
-	(*ReportStatusAck)(nil),          // 10: wgfleet.v1.ReportStatusAck
-	(*NodeSpec)(nil),                 // 11: wgfleet.v1.NodeSpec
-	(*LifelineSpec)(nil),             // 12: wgfleet.v1.LifelineSpec
-	(*HardeningSpec)(nil),            // 13: wgfleet.v1.HardeningSpec
-	(*RealitySrvSpec)(nil),           // 14: wgfleet.v1.RealitySrvSpec
-	(*RealityBridgeSpec)(nil),        // 15: wgfleet.v1.RealityBridgeSpec
-	(*RealityPortalPeer)(nil),        // 16: wgfleet.v1.RealityPortalPeer
-	(*MasterSpec)(nil),               // 17: wgfleet.v1.MasterSpec
-	(*UplinkProbeTarget)(nil),        // 18: wgfleet.v1.UplinkProbeTarget
-	(*RealityPortalSpec)(nil),        // 19: wgfleet.v1.RealityPortalSpec
-	(*RealityPortalClient)(nil),      // 20: wgfleet.v1.RealityPortalClient
-	(*ClientWGSpec)(nil),             // 21: wgfleet.v1.ClientWGSpec
-	(*WGClientPeer)(nil),             // 22: wgfleet.v1.WGClientPeer
-	(*ClientVlessSpec)(nil),          // 23: wgfleet.v1.ClientVlessSpec
-	(*VlessClient)(nil),              // 24: wgfleet.v1.VlessClient
-	(*ComposeSpec)(nil),              // 25: wgfleet.v1.ComposeSpec
-	(*ExitTunnel)(nil),               // 26: wgfleet.v1.ExitTunnel
-	(*RealityTunnel)(nil),            // 27: wgfleet.v1.RealityTunnel
-	(*CustomConfig)(nil),             // 28: wgfleet.v1.CustomConfig
-	(*ManagedFile)(nil),              // 29: wgfleet.v1.ManagedFile
-	(*WGServerSpec)(nil),             // 30: wgfleet.v1.WGServerSpec
-	(*PeerSpec)(nil),                 // 31: wgfleet.v1.PeerSpec
-	(*AWGHeader)(nil),                // 32: wgfleet.v1.AWGHeader
-	(*AWGShared)(nil),                // 33: wgfleet.v1.AWGShared
-	(*AWGLocal)(nil),                 // 34: wgfleet.v1.AWGLocal
-	(*AWGParams)(nil),                // 35: wgfleet.v1.AWGParams
-	(*DNSFilterSpec)(nil),            // 36: wgfleet.v1.DNSFilterSpec
-	(*DNSPorts)(nil),                 // 37: wgfleet.v1.DNSPorts
-	(*BootstrapUpstream)(nil),        // 38: wgfleet.v1.BootstrapUpstream
-	(*FirewallSpec)(nil),             // 39: wgfleet.v1.FirewallSpec
-	(*RoutingSpec)(nil),              // 40: wgfleet.v1.RoutingSpec
-	(*ExportersSpec)(nil),            // 41: wgfleet.v1.ExportersSpec
-	(*RenewCertificateRequest)(nil),  // 42: wgfleet.v1.RenewCertificateRequest
-	(*RenewCertificateResponse)(nil), // 43: wgfleet.v1.RenewCertificateResponse
+	(*AWGModuleBuild)(nil),           // 1: wgfleet.v1.AWGModuleBuild
+	(*RegisterResponse)(nil),         // 2: wgfleet.v1.RegisterResponse
+	(*PublishPublicKeyRequest)(nil),  // 3: wgfleet.v1.PublishPublicKeyRequest
+	(*PublishPublicKeyResponse)(nil), // 4: wgfleet.v1.PublishPublicKeyResponse
+	(*PullSpecRequest)(nil),          // 5: wgfleet.v1.PullSpecRequest
+	(*StatusReport)(nil),             // 6: wgfleet.v1.StatusReport
+	(*MasterPeerStatus)(nil),         // 7: wgfleet.v1.MasterPeerStatus
+	(*ClientPeerStatus)(nil),         // 8: wgfleet.v1.ClientPeerStatus
+	(*HealthCheck)(nil),              // 9: wgfleet.v1.HealthCheck
+	(*ExitTunnelHealth)(nil),         // 10: wgfleet.v1.ExitTunnelHealth
+	(*ReportStatusAck)(nil),          // 11: wgfleet.v1.ReportStatusAck
+	(*NodeSpec)(nil),                 // 12: wgfleet.v1.NodeSpec
+	(*LifelineSpec)(nil),             // 13: wgfleet.v1.LifelineSpec
+	(*HardeningSpec)(nil),            // 14: wgfleet.v1.HardeningSpec
+	(*RealitySrvSpec)(nil),           // 15: wgfleet.v1.RealitySrvSpec
+	(*RealityBridgeSpec)(nil),        // 16: wgfleet.v1.RealityBridgeSpec
+	(*RealityPortalPeer)(nil),        // 17: wgfleet.v1.RealityPortalPeer
+	(*MasterSpec)(nil),               // 18: wgfleet.v1.MasterSpec
+	(*UplinkProbeTarget)(nil),        // 19: wgfleet.v1.UplinkProbeTarget
+	(*RealityPortalSpec)(nil),        // 20: wgfleet.v1.RealityPortalSpec
+	(*RealityPortalClient)(nil),      // 21: wgfleet.v1.RealityPortalClient
+	(*ClientWGSpec)(nil),             // 22: wgfleet.v1.ClientWGSpec
+	(*WGClientPeer)(nil),             // 23: wgfleet.v1.WGClientPeer
+	(*ClientVlessSpec)(nil),          // 24: wgfleet.v1.ClientVlessSpec
+	(*VlessClient)(nil),              // 25: wgfleet.v1.VlessClient
+	(*ComposeSpec)(nil),              // 26: wgfleet.v1.ComposeSpec
+	(*ExitTunnel)(nil),               // 27: wgfleet.v1.ExitTunnel
+	(*RealityTunnel)(nil),            // 28: wgfleet.v1.RealityTunnel
+	(*CustomConfig)(nil),             // 29: wgfleet.v1.CustomConfig
+	(*ManagedFile)(nil),              // 30: wgfleet.v1.ManagedFile
+	(*WGServerSpec)(nil),             // 31: wgfleet.v1.WGServerSpec
+	(*PeerSpec)(nil),                 // 32: wgfleet.v1.PeerSpec
+	(*AWGHeader)(nil),                // 33: wgfleet.v1.AWGHeader
+	(*AWGShared)(nil),                // 34: wgfleet.v1.AWGShared
+	(*AWGLocal)(nil),                 // 35: wgfleet.v1.AWGLocal
+	(*AWGParams)(nil),                // 36: wgfleet.v1.AWGParams
+	(*DNSFilterSpec)(nil),            // 37: wgfleet.v1.DNSFilterSpec
+	(*DNSPorts)(nil),                 // 38: wgfleet.v1.DNSPorts
+	(*BootstrapUpstream)(nil),        // 39: wgfleet.v1.BootstrapUpstream
+	(*FirewallSpec)(nil),             // 40: wgfleet.v1.FirewallSpec
+	(*RoutingSpec)(nil),              // 41: wgfleet.v1.RoutingSpec
+	(*ExportersSpec)(nil),            // 42: wgfleet.v1.ExportersSpec
+	(*RenewCertificateRequest)(nil),  // 43: wgfleet.v1.RenewCertificateRequest
+	(*RenewCertificateResponse)(nil), // 44: wgfleet.v1.RenewCertificateResponse
 }
 var file_wgfleet_v1_node_service_proto_depIdxs = []int32{
-	8,  // 0: wgfleet.v1.StatusReport.checks:type_name -> wgfleet.v1.HealthCheck
-	9,  // 1: wgfleet.v1.StatusReport.exit_health:type_name -> wgfleet.v1.ExitTunnelHealth
-	7,  // 2: wgfleet.v1.StatusReport.client_peers:type_name -> wgfleet.v1.ClientPeerStatus
-	6,  // 3: wgfleet.v1.StatusReport.master_peers:type_name -> wgfleet.v1.MasterPeerStatus
-	30, // 4: wgfleet.v1.NodeSpec.wg_server:type_name -> wgfleet.v1.WGServerSpec
-	31, // 5: wgfleet.v1.NodeSpec.peers:type_name -> wgfleet.v1.PeerSpec
-	36, // 6: wgfleet.v1.NodeSpec.dns:type_name -> wgfleet.v1.DNSFilterSpec
-	39, // 7: wgfleet.v1.NodeSpec.firewall:type_name -> wgfleet.v1.FirewallSpec
-	40, // 8: wgfleet.v1.NodeSpec.routing:type_name -> wgfleet.v1.RoutingSpec
-	41, // 9: wgfleet.v1.NodeSpec.exporters:type_name -> wgfleet.v1.ExportersSpec
-	17, // 10: wgfleet.v1.NodeSpec.master:type_name -> wgfleet.v1.MasterSpec
-	14, // 11: wgfleet.v1.NodeSpec.reality:type_name -> wgfleet.v1.RealitySrvSpec
-	13, // 12: wgfleet.v1.NodeSpec.hardening:type_name -> wgfleet.v1.HardeningSpec
-	12, // 13: wgfleet.v1.NodeSpec.lifeline:type_name -> wgfleet.v1.LifelineSpec
-	21, // 14: wgfleet.v1.LifelineSpec.client_wg:type_name -> wgfleet.v1.ClientWGSpec
-	15, // 15: wgfleet.v1.RealitySrvSpec.bridge:type_name -> wgfleet.v1.RealityBridgeSpec
-	16, // 16: wgfleet.v1.RealityBridgeSpec.portals:type_name -> wgfleet.v1.RealityPortalPeer
-	26, // 17: wgfleet.v1.MasterSpec.exit_tunnels:type_name -> wgfleet.v1.ExitTunnel
-	28, // 18: wgfleet.v1.MasterSpec.custom:type_name -> wgfleet.v1.CustomConfig
-	25, // 19: wgfleet.v1.MasterSpec.compose:type_name -> wgfleet.v1.ComposeSpec
-	23, // 20: wgfleet.v1.MasterSpec.client_vless:type_name -> wgfleet.v1.ClientVlessSpec
-	21, // 21: wgfleet.v1.MasterSpec.client_wg:type_name -> wgfleet.v1.ClientWGSpec
-	19, // 22: wgfleet.v1.MasterSpec.reality_portal:type_name -> wgfleet.v1.RealityPortalSpec
-	18, // 23: wgfleet.v1.MasterSpec.uplink_probe_targets:type_name -> wgfleet.v1.UplinkProbeTarget
-	20, // 24: wgfleet.v1.RealityPortalSpec.clients:type_name -> wgfleet.v1.RealityPortalClient
-	35, // 25: wgfleet.v1.ClientWGSpec.awg:type_name -> wgfleet.v1.AWGParams
-	22, // 26: wgfleet.v1.ClientWGSpec.clients:type_name -> wgfleet.v1.WGClientPeer
-	24, // 27: wgfleet.v1.ClientVlessSpec.clients:type_name -> wgfleet.v1.VlessClient
-	35, // 28: wgfleet.v1.ExitTunnel.awg:type_name -> wgfleet.v1.AWGParams
-	27, // 29: wgfleet.v1.ExitTunnel.reality:type_name -> wgfleet.v1.RealityTunnel
-	29, // 30: wgfleet.v1.CustomConfig.files:type_name -> wgfleet.v1.ManagedFile
-	35, // 31: wgfleet.v1.WGServerSpec.awg:type_name -> wgfleet.v1.AWGParams
-	34, // 32: wgfleet.v1.WGServerSpec.client_awg_local:type_name -> wgfleet.v1.AWGLocal
-	32, // 33: wgfleet.v1.AWGShared.h1:type_name -> wgfleet.v1.AWGHeader
-	32, // 34: wgfleet.v1.AWGShared.h2:type_name -> wgfleet.v1.AWGHeader
-	32, // 35: wgfleet.v1.AWGShared.h3:type_name -> wgfleet.v1.AWGHeader
-	32, // 36: wgfleet.v1.AWGShared.h4:type_name -> wgfleet.v1.AWGHeader
-	33, // 37: wgfleet.v1.AWGParams.shared:type_name -> wgfleet.v1.AWGShared
-	34, // 38: wgfleet.v1.AWGParams.local:type_name -> wgfleet.v1.AWGLocal
-	37, // 39: wgfleet.v1.DNSFilterSpec.ports:type_name -> wgfleet.v1.DNSPorts
-	38, // 40: wgfleet.v1.DNSFilterSpec.bootstrap_dns:type_name -> wgfleet.v1.BootstrapUpstream
-	28, // 41: wgfleet.v1.DNSFilterSpec.custom:type_name -> wgfleet.v1.CustomConfig
-	0,  // 42: wgfleet.v1.NodeService.Register:input_type -> wgfleet.v1.RegisterRequest
-	2,  // 43: wgfleet.v1.NodeService.PublishPublicKey:input_type -> wgfleet.v1.PublishPublicKeyRequest
-	42, // 44: wgfleet.v1.NodeService.RenewCertificate:input_type -> wgfleet.v1.RenewCertificateRequest
-	4,  // 45: wgfleet.v1.NodeService.PullSpec:input_type -> wgfleet.v1.PullSpecRequest
-	5,  // 46: wgfleet.v1.NodeService.ReportStatus:input_type -> wgfleet.v1.StatusReport
-	1,  // 47: wgfleet.v1.NodeService.Register:output_type -> wgfleet.v1.RegisterResponse
-	3,  // 48: wgfleet.v1.NodeService.PublishPublicKey:output_type -> wgfleet.v1.PublishPublicKeyResponse
-	43, // 49: wgfleet.v1.NodeService.RenewCertificate:output_type -> wgfleet.v1.RenewCertificateResponse
-	11, // 50: wgfleet.v1.NodeService.PullSpec:output_type -> wgfleet.v1.NodeSpec
-	10, // 51: wgfleet.v1.NodeService.ReportStatus:output_type -> wgfleet.v1.ReportStatusAck
-	47, // [47:52] is the sub-list for method output_type
-	42, // [42:47] is the sub-list for method input_type
-	42, // [42:42] is the sub-list for extension type_name
-	42, // [42:42] is the sub-list for extension extendee
-	0,  // [0:42] is the sub-list for field type_name
+	1,  // 0: wgfleet.v1.RegisterRequest.awg_module:type_name -> wgfleet.v1.AWGModuleBuild
+	9,  // 1: wgfleet.v1.StatusReport.checks:type_name -> wgfleet.v1.HealthCheck
+	10, // 2: wgfleet.v1.StatusReport.exit_health:type_name -> wgfleet.v1.ExitTunnelHealth
+	8,  // 3: wgfleet.v1.StatusReport.client_peers:type_name -> wgfleet.v1.ClientPeerStatus
+	7,  // 4: wgfleet.v1.StatusReport.master_peers:type_name -> wgfleet.v1.MasterPeerStatus
+	31, // 5: wgfleet.v1.NodeSpec.wg_server:type_name -> wgfleet.v1.WGServerSpec
+	32, // 6: wgfleet.v1.NodeSpec.peers:type_name -> wgfleet.v1.PeerSpec
+	37, // 7: wgfleet.v1.NodeSpec.dns:type_name -> wgfleet.v1.DNSFilterSpec
+	40, // 8: wgfleet.v1.NodeSpec.firewall:type_name -> wgfleet.v1.FirewallSpec
+	41, // 9: wgfleet.v1.NodeSpec.routing:type_name -> wgfleet.v1.RoutingSpec
+	42, // 10: wgfleet.v1.NodeSpec.exporters:type_name -> wgfleet.v1.ExportersSpec
+	18, // 11: wgfleet.v1.NodeSpec.master:type_name -> wgfleet.v1.MasterSpec
+	15, // 12: wgfleet.v1.NodeSpec.reality:type_name -> wgfleet.v1.RealitySrvSpec
+	14, // 13: wgfleet.v1.NodeSpec.hardening:type_name -> wgfleet.v1.HardeningSpec
+	13, // 14: wgfleet.v1.NodeSpec.lifeline:type_name -> wgfleet.v1.LifelineSpec
+	22, // 15: wgfleet.v1.LifelineSpec.client_wg:type_name -> wgfleet.v1.ClientWGSpec
+	16, // 16: wgfleet.v1.RealitySrvSpec.bridge:type_name -> wgfleet.v1.RealityBridgeSpec
+	17, // 17: wgfleet.v1.RealityBridgeSpec.portals:type_name -> wgfleet.v1.RealityPortalPeer
+	27, // 18: wgfleet.v1.MasterSpec.exit_tunnels:type_name -> wgfleet.v1.ExitTunnel
+	29, // 19: wgfleet.v1.MasterSpec.custom:type_name -> wgfleet.v1.CustomConfig
+	26, // 20: wgfleet.v1.MasterSpec.compose:type_name -> wgfleet.v1.ComposeSpec
+	24, // 21: wgfleet.v1.MasterSpec.client_vless:type_name -> wgfleet.v1.ClientVlessSpec
+	22, // 22: wgfleet.v1.MasterSpec.client_wg:type_name -> wgfleet.v1.ClientWGSpec
+	20, // 23: wgfleet.v1.MasterSpec.reality_portal:type_name -> wgfleet.v1.RealityPortalSpec
+	19, // 24: wgfleet.v1.MasterSpec.uplink_probe_targets:type_name -> wgfleet.v1.UplinkProbeTarget
+	21, // 25: wgfleet.v1.RealityPortalSpec.clients:type_name -> wgfleet.v1.RealityPortalClient
+	36, // 26: wgfleet.v1.ClientWGSpec.awg:type_name -> wgfleet.v1.AWGParams
+	23, // 27: wgfleet.v1.ClientWGSpec.clients:type_name -> wgfleet.v1.WGClientPeer
+	25, // 28: wgfleet.v1.ClientVlessSpec.clients:type_name -> wgfleet.v1.VlessClient
+	36, // 29: wgfleet.v1.ExitTunnel.awg:type_name -> wgfleet.v1.AWGParams
+	28, // 30: wgfleet.v1.ExitTunnel.reality:type_name -> wgfleet.v1.RealityTunnel
+	30, // 31: wgfleet.v1.CustomConfig.files:type_name -> wgfleet.v1.ManagedFile
+	36, // 32: wgfleet.v1.WGServerSpec.awg:type_name -> wgfleet.v1.AWGParams
+	35, // 33: wgfleet.v1.WGServerSpec.client_awg_local:type_name -> wgfleet.v1.AWGLocal
+	33, // 34: wgfleet.v1.AWGShared.h1:type_name -> wgfleet.v1.AWGHeader
+	33, // 35: wgfleet.v1.AWGShared.h2:type_name -> wgfleet.v1.AWGHeader
+	33, // 36: wgfleet.v1.AWGShared.h3:type_name -> wgfleet.v1.AWGHeader
+	33, // 37: wgfleet.v1.AWGShared.h4:type_name -> wgfleet.v1.AWGHeader
+	34, // 38: wgfleet.v1.AWGParams.shared:type_name -> wgfleet.v1.AWGShared
+	35, // 39: wgfleet.v1.AWGParams.local:type_name -> wgfleet.v1.AWGLocal
+	38, // 40: wgfleet.v1.DNSFilterSpec.ports:type_name -> wgfleet.v1.DNSPorts
+	39, // 41: wgfleet.v1.DNSFilterSpec.bootstrap_dns:type_name -> wgfleet.v1.BootstrapUpstream
+	29, // 42: wgfleet.v1.DNSFilterSpec.custom:type_name -> wgfleet.v1.CustomConfig
+	0,  // 43: wgfleet.v1.NodeService.Register:input_type -> wgfleet.v1.RegisterRequest
+	3,  // 44: wgfleet.v1.NodeService.PublishPublicKey:input_type -> wgfleet.v1.PublishPublicKeyRequest
+	43, // 45: wgfleet.v1.NodeService.RenewCertificate:input_type -> wgfleet.v1.RenewCertificateRequest
+	5,  // 46: wgfleet.v1.NodeService.PullSpec:input_type -> wgfleet.v1.PullSpecRequest
+	6,  // 47: wgfleet.v1.NodeService.ReportStatus:input_type -> wgfleet.v1.StatusReport
+	2,  // 48: wgfleet.v1.NodeService.Register:output_type -> wgfleet.v1.RegisterResponse
+	4,  // 49: wgfleet.v1.NodeService.PublishPublicKey:output_type -> wgfleet.v1.PublishPublicKeyResponse
+	44, // 50: wgfleet.v1.NodeService.RenewCertificate:output_type -> wgfleet.v1.RenewCertificateResponse
+	12, // 51: wgfleet.v1.NodeService.PullSpec:output_type -> wgfleet.v1.NodeSpec
+	11, // 52: wgfleet.v1.NodeService.ReportStatus:output_type -> wgfleet.v1.ReportStatusAck
+	48, // [48:53] is the sub-list for method output_type
+	43, // [43:48] is the sub-list for method input_type
+	43, // [43:43] is the sub-list for extension type_name
+	43, // [43:43] is the sub-list for extension extendee
+	0,  // [0:43] is the sub-list for field type_name
 }
 
 func init() { file_wgfleet_v1_node_service_proto_init() }
@@ -4306,7 +4391,7 @@ func file_wgfleet_v1_node_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_wgfleet_v1_node_service_proto_rawDesc), len(file_wgfleet_v1_node_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   44,
+			NumMessages:   45,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

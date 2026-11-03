@@ -256,6 +256,11 @@ var migrations = []string{
 		user_agent TEXT NOT NULL DEFAULT '',
 		PRIMARY KEY (device_id, kind)
 	)`,
+	// v33: the AmneziaWG kernel module build the agent reports with its
+	// registration (domain.AWGModuleBuild). One JSON column rather than three: the
+	// parts are only ever read together, and the default '{}' is the unknown build
+	// every gate treats as too old.
+	`ALTER TABLE nodes ADD COLUMN awg_module_json TEXT NOT NULL DEFAULT '{}'`,
 }
 
 // MigrationCount is how many schema migrations this build knows. Exported so a

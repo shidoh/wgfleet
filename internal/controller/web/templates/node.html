@@ -298,6 +298,7 @@
     <dt>Public key</dt><dd class="dim">{{or .Node.PublicKey "— (not registered)"}}</dd>
     {{if .Node.RealityPublicKey}}<dt>REALITY key</dt><dd class="dim">{{.Node.RealityPublicKey}}</dd>{{end}}
     <dt>Agent</dt><dd class="dim">{{if .Node.AgentVersion}}{{.Node.AgentVersion}} (wire v{{.Node.WireVersion}}){{else}}— (not reported){{end}}</dd>
+    {{with .Node.AWGModule}}<dt>AWG module</dt><dd class="dim">{{if or .PackageVersion .SrcVersion}}{{or .PackageVersion "build unknown"}}{{if .SrcVersion}} · srcversion {{.SrcVersion}}{{end}}{{if .ReloadPending}} <span class="subbadge skew" title="A newer build is installed but the kernel still runs the previous one; reload the module or reboot">reload pending</span>{{end}}{{else}}— (not reported){{end}}</dd>{{end}}
     <dt>Created</dt><dd class="dim">{{absTime .Node.CreatedAt}}</dd>
   </dl>
   {{if or .MetricsURL .MihomoURL}}

@@ -116,7 +116,7 @@ func TestEndToEndExitOnboarding(t *testing.T) {
 
 	// 1. Master comes up first and publishes its pubkey so exits can peer it.
 	master := h.agentFor(t, "master-xa-1")
-	if _, err := master.Register(ctx, domain.RoleMaster, "203.0.113.1", "ru", "10.20.25.254"); err != nil {
+	if _, err := master.Register(ctx, domain.RoleMaster, "203.0.113.1", "ru", "10.20.25.254", domain.AWGModuleBuild{}); err != nil {
 		t.Fatalf("master register: %v", err)
 	}
 	if err := master.PublishPublicKey(ctx, "FmJoBTB+ew7wVUxXhRs6xCNPjPi9SQJRU6vIVW4Igyc="); err != nil {
@@ -125,7 +125,7 @@ func TestEndToEndExitOnboarding(t *testing.T) {
 
 	// 2. Exit registers, publishes its pubkey, pulls its spec.
 	exit := h.agentFor(t, "exit-de-1")
-	state, err := exit.Register(ctx, domain.RoleExit, "198.51.100.7", "de", "10.20.0.5")
+	state, err := exit.Register(ctx, domain.RoleExit, "198.51.100.7", "de", "10.20.0.5", domain.AWGModuleBuild{})
 	if err != nil {
 		t.Fatalf("exit register: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestIdentityIsFromCertNotRequest(t *testing.T) {
 	// The agent's cert CN is "exit-de-1"; even though it could put anything in
 	// the request, the controller keys everything off the verified CN.
 	exit := h.agentFor(t, "exit-de-1")
-	if _, err := exit.Register(ctx, domain.RoleExit, "198.51.100.7", "de", "10.20.0.5"); err != nil {
+	if _, err := exit.Register(ctx, domain.RoleExit, "198.51.100.7", "de", "10.20.0.5", domain.AWGModuleBuild{}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	if err := exit.PublishPublicKey(ctx, "A/3Hs1FWpM4iZiG09od1cESePk+PiG2Tg1jKlvX3BFY="); err != nil {
@@ -235,7 +235,7 @@ func TestEndToEndPerTunnelKeyPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	master := h.agentFor(t, "master-xa-1")
-	if _, err := master.Register(ctx, domain.RoleMaster, "203.0.113.1", "", "10.20.25.254"); err != nil {
+	if _, err := master.Register(ctx, domain.RoleMaster, "203.0.113.1", "", "10.20.25.254", domain.AWGModuleBuild{}); err != nil {
 		t.Fatalf("register master: %v", err)
 	}
 	if err := master.PublishPublicKey(ctx, masterPriv.PublicKey); err != nil {
@@ -261,7 +261,7 @@ func TestEndToEndPerTunnelKeyPublication(t *testing.T) {
 	}
 
 	exit := h.agentFor(t, "exit-de-1")
-	if _, err := exit.Register(ctx, domain.RoleExit, "198.51.100.1", "de", "10.20.25.1"); err != nil {
+	if _, err := exit.Register(ctx, domain.RoleExit, "198.51.100.1", "de", "10.20.25.1", domain.AWGModuleBuild{}); err != nil {
 		t.Fatalf("register exit: %v", err)
 	}
 	spec, err := exit.PullSpec(ctx)
@@ -290,7 +290,7 @@ func TestPublishUnknownKeyTypeRejected(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t, integrationFleet())
 	master := h.agentFor(t, "master-xa-1")
-	if _, err := master.Register(ctx, domain.RoleMaster, "203.0.113.1", "", "10.20.25.254"); err != nil {
+	if _, err := master.Register(ctx, domain.RoleMaster, "203.0.113.1", "", "10.20.25.254", domain.AWGModuleBuild{}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	kp, err := wg.GenerateKeyPair()
@@ -309,7 +309,7 @@ func TestPublishRealityPortalKeyLandsInItsOwnColumn(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t, integrationFleet())
 	master := h.agentFor(t, "master-xa-1")
-	if _, err := master.Register(ctx, domain.RoleMaster, "203.0.113.1", "", "10.20.25.254"); err != nil {
+	if _, err := master.Register(ctx, domain.RoleMaster, "203.0.113.1", "", "10.20.25.254", domain.AWGModuleBuild{}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	_, pub, err := xray.GenerateKeypair()

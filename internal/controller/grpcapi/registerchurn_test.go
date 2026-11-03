@@ -25,7 +25,7 @@ func TestRegisterDoesNotRewriteUnchangedNode(t *testing.T) {
 	}
 
 	agent := h.agentFor(t, "exit-de-1")
-	if _, err := agent.Register(ctx, domain.RoleExit, "198.51.100.7", "", "10.20.0.5"); err != nil {
+	if _, err := agent.Register(ctx, domain.RoleExit, "198.51.100.7", "", "10.20.0.5", domain.AWGModuleBuild{}); err != nil {
 		t.Fatalf("first register: %v", err)
 	}
 	first, err := h.store.GetNode(ctx, "exit-de-1")
@@ -36,7 +36,7 @@ func TestRegisterDoesNotRewriteUnchangedNode(t *testing.T) {
 	// Sleep past the clock's resolution so a second write would be visibly later.
 	time.Sleep(5 * time.Millisecond)
 
-	if _, err := agent.Register(ctx, domain.RoleExit, "198.51.100.7", "", "10.20.0.5"); err != nil {
+	if _, err := agent.Register(ctx, domain.RoleExit, "198.51.100.7", "", "10.20.0.5", domain.AWGModuleBuild{}); err != nil {
 		t.Fatalf("second register: %v", err)
 	}
 	second, err := h.store.GetNode(ctx, "exit-de-1")
@@ -49,7 +49,7 @@ func TestRegisterDoesNotRewriteUnchangedNode(t *testing.T) {
 	}
 
 	// A real change must still be persisted — the dedup must not freeze the row.
-	if _, err := agent.Register(ctx, domain.RoleExit, "203.0.113.9", "", "10.20.0.5"); err != nil {
+	if _, err := agent.Register(ctx, domain.RoleExit, "203.0.113.9", "", "10.20.0.5", domain.AWGModuleBuild{}); err != nil {
 		t.Fatalf("changed register: %v", err)
 	}
 	third, err := h.store.GetNode(ctx, "exit-de-1")
@@ -78,7 +78,7 @@ func TestRegisterRefusesADeletedNodeUntilProvisioned(t *testing.T) {
 		t.Fatal(err)
 	}
 	agent := h.agentFor(t, "exit-de-1")
-	if _, err := agent.Register(ctx, domain.RoleExit, "198.51.100.7", "", "10.20.0.5"); err == nil {
+	if _, err := agent.Register(ctx, domain.RoleExit, "198.51.100.7", "", "10.20.0.5", domain.AWGModuleBuild{}); err == nil {
 		t.Fatal("a deleted node registered itself back into the fleet")
 	}
 	if _, err := h.store.GetNode(ctx, "exit-de-1"); err == nil {
@@ -87,7 +87,7 @@ func TestRegisterRefusesADeletedNodeUntilProvisioned(t *testing.T) {
 	if err := h.store.Readmit(ctx, "exit-de-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.Register(ctx, domain.RoleExit, "198.51.100.7", "", "10.20.0.5"); err != nil {
+	if _, err := agent.Register(ctx, domain.RoleExit, "198.51.100.7", "", "10.20.0.5", domain.AWGModuleBuild{}); err != nil {
 		t.Fatalf("readmitted node refused: %v", err)
 	}
 }
