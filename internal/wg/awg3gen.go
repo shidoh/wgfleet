@@ -12,40 +12,46 @@ import (
 
 // AmneziaWG 3.0 derivation bands.
 //
-// Every timer keeps its WireGuard default as the LOWER bound and randomises only
-// the upper one. That is what makes the ordering invariant hold by construction
-// rather than by luck: rekey always begins before the session is rejected,
-// whatever the seed draws (TestWithAWG3TimerOrdering).
+// Only TWO timers are randomised: RekeyAfterTime and KeepaliveTimeout. Both are
+// intervals an observer can read straight off the wire (a fixed 120-second rekey
+// and a fixed 10-second passive keepalive are a timing signature that survives
+// every payload-level obfuscation we apply), and both are per-end: a peer that
+// runs the defaults keeps working against one that randomises them.
 //
-// Randomising the timers at all is the point of the 3.0 block for us. A fixed
-// 25-second keepalive and a fixed 120-second rekey are a timing signature that
-// survives every payload-level obfuscation we apply, and passive classification
-// by traffic shape — not by fingerprint — is the adversary ADR-0025 names.
+// RejectAfterTime, RekeyTimeout and MaxHandshakeAttempts are left UNSET, i.e. at
+// the WireGuard defaults (180 s, 5 s, 18 attempts). The kernel module and the Go
+// implementation treat those three differently (amneziawg kernel module issues
+// #227 and #272: diverging semantics, and keys that can end up zeroed), so
+// randomising them buys a little timing entropy at the price of an interop risk
+// between our two backends. Not worth it.
+//
+// Every randomised timer keeps its WireGuard default as the LOWER bound and draws
+// only the upper one, in a narrow band. That is what makes the ordering against
+// the untouched defaults hold for every seed (TestWithAWG3TimerOrdering):
+//
+//   - RekeyAfterTime tops out at 140 s. WireGuard's receive-side refresh fires once
+//     a session is older than RejectAfterTime − KeepaliveTimeout − RekeyTimeout,
+//     which with our widest keepalive is 180 − 15 − 5 = 160 s; staying at or below
+//     140 s keeps the scheduled rekey ahead of that path, and 40 s ahead of the
+//     hard reject at 180 s.
+//   - KeepaliveTimeout tops out at 15 s. It also sets how long a silent peer goes
+//     unnoticed (KeepaliveTimeout + RekeyTimeout before a new handshake), so the
+//     band stays close to the 10 s default rather than buying entropy with
+//     slower dead-peer detection.
 const (
-	// Rekey starts at the WireGuard default of 120s; the upper bound stays well
-	// below rejectAfterLo so a rekey always has room to complete.
 	rekeyAfterLo    = 120
 	rekeyAfterHiMin = 130
-	rekeyAfterHiMax = 150
-
-	// The session becomes unusable at the default 180s at the earliest — above
-	// rekeyAfterHiMax by construction.
-	rejectAfterLo    = 180
-	rejectAfterHiMin = 190
-	rejectAfterHiMax = 220
-
-	rekeyTimeoutLo    = 5
-	rekeyTimeoutHiMin = 6
-	rekeyTimeoutHiMax = 9
+	rekeyAfterHiMax = 140
 
 	keepaliveLo    = 10
 	keepaliveHiMin = 12
-	keepaliveHiMax = 18
+	keepaliveHiMax = 15
 
-	// Left a scalar on purpose: the attempt COUNT is not observable on the wire the
-	// way an interval is, so randomising it buys no obfuscation while making a
-	// handshake-failure budget harder to reason about.
-	maxHandshakeAttempts = 18
+	// defaultRejectAfterTime is WireGuard's REJECT_AFTER_TIME. We never set it; it
+	// is here so the ordering test can hold the randomised rekey against it.
+	defaultRejectAfterTime = 180
+	// defaultRekeyTimeout is WireGuard's REKEY_TIMEOUT, likewise never set.
+	defaultRekeyTimeout = 5
 
 	// headerProtectionKeyLen mirrors HEADER_PROTECTION_KEY_SIZE (= CHACHA_KEY_SIZE)
 	// in the kernel module: header protection is chacha20 over the packet header.
@@ -74,27 +80,20 @@ func WithAWG3(p domain.AWGParams, tunnelSeed, fleetSecret string) domain.AWGPara
 	return WithAWG3HeaderProtection(WithAWG3Timers(p, tunnelSeed), tunnelSeed, fleetSecret)
 }
 
-// WithAWG3Timers adds ONLY the 3.0 timer ranges. It is the half an operator can
-// switch on without touching a single client.
+// WithAWG3Timers adds ONLY the 3.0 timer ranges — RekeyAfterTime and
+// KeepaliveTimeout, nothing else (see the band comment above for why).
 //
-// The split is not cosmetic. Measured against a real 3.1 kernel module with both
-// ends rendered by the production renderers, a server running these timers keeps
-// an UNMODIFIED AmneziaWG 2.0 peer working — handshake, traffic and repeated
-// rekeys — while a server running header protection cuts that peer off outright.
-// So the two halves have completely different costs: this one is free, the other
-// one is a flag day on which every client must re-import. Bundling them, as this
-// function used to, priced the free half at the expensive half's rate and was the
-// reason the client leg stayed on 2.0.
-//
-// This is also the half that carries the anti-fingerprint value: a fixed
-// 25-second keepalive and a fixed 120-second rekey are a timing signature that
-// survives every payload-level obfuscation we apply.
+// The timers are a property of ONE end, not of the tunnel. Measured against a
+// real 3.1 kernel module, a server running these timers keeps an UNMODIFIED
+// AmneziaWG 2.0 peer working — handshake, traffic and repeated rekeys. So they
+// belong in the render of the interface that sets them and nowhere else: the
+// client leg puts them on the master's interface only, and every config handed
+// to a client is stripped of them (domain.AWGParams.WithoutAWG3Timers). Header
+// protection is the opposite case — it must match on both ends — which is why
+// the two halves are separate functions.
 func WithAWG3Timers(p domain.AWGParams, tunnelSeed string) domain.AWGParams {
 	p.Shared.RekeyAfterTime = deriveRange(tunnelSeed, "rekey-after", rekeyAfterLo, rekeyAfterHiMin, rekeyAfterHiMax)
-	p.Shared.RekeyTimeout = deriveRange(tunnelSeed, "rekey-timeout", rekeyTimeoutLo, rekeyTimeoutHiMin, rekeyTimeoutHiMax)
-	p.Shared.RejectAfterTime = deriveRange(tunnelSeed, "reject-after", rejectAfterLo, rejectAfterHiMin, rejectAfterHiMax)
 	p.Shared.KeepaliveTimeout = deriveRange(tunnelSeed, "keepalive", keepaliveLo, keepaliveHiMin, keepaliveHiMax)
-	p.Shared.MaxHandshakeAttempts = fmt.Sprintf("%d", maxHandshakeAttempts)
 	return p
 }
 

@@ -161,7 +161,7 @@ func TestClientProfileAWGEqualsTheConf(t *testing.T) {
 				}
 				eq(confKey, confVal, optVal)
 			}
-			if _, has := opt["version"]; has != (mode != "2.0") {
+			if _, has := opt["version"]; has != (mode == "full") {
 				t.Errorf("version: 3 present=%v for mode %s", has, mode)
 			}
 			ns := strings.Join(toStrings(doc["dns"].(map[string]any)["nameserver"].([]any)), ",")

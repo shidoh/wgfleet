@@ -33,11 +33,11 @@
         "S4": 27,
         "HeaderProtectionKey": "2kMEvR+zQxDCbsfi0ByakMvg7LetInfeScFYoZzsfcY=",
         "ContentPaddingAddition": "",
-        "RekeyAfterTime": "120-139",
-        "RekeyTimeout": "5-8",
-        "RejectAfterTime": "180-192",
-        "KeepaliveTimeout": "10-16",
-        "MaxHandshakeAttempts": "18"
+        "RekeyAfterTime": "120-135",
+        "RekeyTimeout": "",
+        "RejectAfterTime": "",
+        "KeepaliveTimeout": "10-13",
+        "MaxHandshakeAttempts": ""
       },
       "Local": {
         "Jc": 4,

@@ -65,8 +65,10 @@ fleet:
         # backend: kernel                   # kernel (default) | userspace
         # allowed_ips: [0.0.0.0/0]          # what the client routes INTO the tunnel
         # exclude_from_tunnel: [192.168.0.0/16]   # carved back OUT of allowed_ips
-        # awg3: timers                      # off (default) | timers | full. `full` requires
-                                            # every client config to be reissued. Needs fleet.awg3_key.
+        # awg3: timers                      # off (default) | timers | full. `timers` changes the
+                                            # master's wg0 only, no client config changes. `full`
+                                            # requires every client config to be reissued and
+                                            # needs fleet.awg3_key.
       client_vless:                         # DPI-resistant client transport, alongside client_awg
         enabled: true                       # omit the block to leave it off
         # listen_port: 0 ⇒ per-master high port in [40000,60000]

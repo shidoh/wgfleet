@@ -82,36 +82,54 @@ func TestWithAWG3AlwaysValidates(t *testing.T) {
 }
 
 // TestWithAWG3TimerOrdering — rekey must always begin before the session is
-// rejected. Randomising both ranges is the whole point of the 3.0 timers, so the
-// bands have to be constructed so the invariant cannot be violated by any seed.
+// rejected. RejectAfterTime is never set, so the bound is the WireGuard default;
+// the randomised rekey must stay below it, and below the receive-side refresh
+// threshold (Reject − Keepalive − RekeyTimeout), for every seed.
 func TestWithAWG3TimerOrdering(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		seed := "tunnel-" + strconv.Itoa(i)
 		s := WithAWG3(DeriveAWGParamsForEnd(seed, "master", false), seed, testAWG3Key).Shared
+		if s.RejectAfterTime != "" {
+			t.Fatalf("seed %q: RejectAfterTime = %q, must stay at the default", seed, s.RejectAfterTime)
+		}
 		_, rekeyHi := splitRange(t, s.RekeyAfterTime)
-		rejectLo, _ := splitRange(t, s.RejectAfterTime)
-		if rekeyHi >= rejectLo {
-			t.Fatalf("seed %q: RekeyAfterTime %q can outlast RejectAfterTime %q — the session is rejected before rekey starts",
-				seed, s.RekeyAfterTime, s.RejectAfterTime)
+		_, keepaliveHi := splitRange(t, s.KeepaliveTimeout)
+		refresh := defaultRejectAfterTime - keepaliveHi - defaultRekeyTimeout
+		if rekeyHi >= refresh || rekeyHi >= defaultRejectAfterTime {
+			t.Fatalf("seed %q: RekeyAfterTime %q reaches the refresh threshold %ds (KeepaliveTimeout %q) or the %ds reject",
+				seed, s.RekeyAfterTime, refresh, s.KeepaliveTimeout, defaultRejectAfterTime)
 		}
 	}
 }
 
-// TestWithAWG3TimersAreRanges — a scalar timer is a timing fingerprint, which is
-// the passive-classification vector ADR-0025 names as the real adversary and the
-// reason the 3.0 timers exist at all. A derivation that collapsed them to single
-// values would look fine and buy nothing.
-func TestWithAWG3TimersAreRanges(t *testing.T) {
-	s := WithAWG3(DeriveAWGParamsForEnd("seed", "master", false), "seed", testAWG3Key).Shared
-	for _, f := range []struct{ name, value string }{
-		{"RekeyAfterTime", s.RekeyAfterTime},
-		{"RekeyTimeout", s.RekeyTimeout},
-		{"RejectAfterTime", s.RejectAfterTime},
-		{"KeepaliveTimeout", s.KeepaliveTimeout},
-	} {
-		lo, hi := splitRange(t, f.value)
-		if lo >= hi {
-			t.Errorf("%s = %q is a fixed value, not a range", f.name, f.value)
+// TestWithAWG3TimerSet — exactly two timers are randomised, the others stay at
+// the defaults because kernel and Go implementations disagree on them. A scalar
+// timer would be a timing fingerprint, so the two that are set must be ranges
+// starting at the WireGuard default.
+func TestWithAWG3TimerSet(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		seed := "tunnel-" + strconv.Itoa(i)
+		s := WithAWG3(DeriveAWGParamsForEnd(seed, "master", false), seed, testAWG3Key).Shared
+		for _, f := range []struct {
+			name, value      string
+			lo, hiMin, hiMax int
+		}{
+			{"RekeyAfterTime", s.RekeyAfterTime, 120, 130, 140},
+			{"KeepaliveTimeout", s.KeepaliveTimeout, 10, 12, 15},
+		} {
+			lo, hi := splitRange(t, f.value)
+			if lo != f.lo || hi < f.hiMin || hi > f.hiMax {
+				t.Fatalf("seed %q: %s = %q, want %d-[%d..%d]", seed, f.name, f.value, f.lo, f.hiMin, f.hiMax)
+			}
+		}
+		for _, f := range []struct{ name, value string }{
+			{"RekeyTimeout", s.RekeyTimeout},
+			{"RejectAfterTime", s.RejectAfterTime},
+			{"MaxHandshakeAttempts", s.MaxHandshakeAttempts},
+		} {
+			if f.value != "" {
+				t.Fatalf("seed %q: %s = %q, must stay unset (WireGuard default)", seed, f.name, f.value)
+			}
 		}
 	}
 }

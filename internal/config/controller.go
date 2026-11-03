@@ -327,11 +327,13 @@ type ClientAWG3Mode string
 const (
 	// ClientAWG3Off keeps the leg on AmneziaWG 2.0.
 	ClientAWG3Off ClientAWG3Mode = "off"
-	// ClientAWG3Timers randomises the 3.x timers and nothing else: backward
-	// compatible with every config already handed out.
+	// ClientAWG3Timers randomises the 3.x timers on the master's interface only.
+	// Timers are per-end, so no client config changes: every config already
+	// handed out keeps working and nothing has to be re-imported.
 	ClientAWG3Timers ClientAWG3Mode = "timers"
-	// ClientAWG3Full adds header protection, which disconnects every client that
-	// has not re-imported.
+	// ClientAWG3Full adds header protection, which must match on both ends: it
+	// goes into client configs and disconnects every client that has not
+	// re-imported. The timers stay server-only in this mode too.
 	ClientAWG3Full ClientAWG3Mode = "full"
 )
 

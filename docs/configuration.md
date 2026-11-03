@@ -153,7 +153,7 @@ first, see [upgrade.md](upgrade.md).
 | `fleet.masters[].client_awg.listen_port` | int | `443` | UDP port VPN clients connect to |
 | `fleet.masters[].client_awg.address_pool` | CIDR | — | Address pool handed to clients. Set ⇒ the agent raises the client interface `wg0`; unset ⇒ the master has no AmneziaWG clients, and `awg3`, `ipv6: block` and an exit `lifeline` are refused. Must not overlap any other pool in the fleet; the controller refuses to start on an overlap |
 | `fleet.masters[].client_awg.backend` | `kernel` \| `userspace` | `kernel` | What carries the client interface `wg0`. `userspace` is a fallback, not an override: on a node with a kernel module, the module carries the interface regardless. `userspace` with an AmneziaWG 3.x profile is refused unless the node has no usable module and the `amneziawg-go` daemon is installed |
-| `fleet.masters[].client_awg.awg3` | `off` \| `timers` \| `full` | `off` | AmneziaWG 3.x on the client leg. `timers` randomises the 3.x timers only — existing client configs keep working. `full` adds header protection — **every client must re-import**. Requires a 3.x kernel module on the master; without the module the agent keeps the last-good config |
+| `fleet.masters[].client_awg.awg3` | `off` \| `timers` \| `full` | `off` | AmneziaWG 3.x on the client leg. `timers` randomises `RekeyAfterTime` and `KeepaliveTimeout` on the master's `wg0` (and an exit's lifeline interface) only — client configs and mihomo profiles stay exactly as under `off`. `full` also puts `HeaderProtectionKey` into client configs; the timers stay server-only. `full` adds header protection — **every client must re-import**. Requires a 3.x kernel module on the master; without the module the agent keeps the last-good config |
 | `fleet.masters[].client_awg.ipv6` | `off` \| `block` | `off` | What a client is told about IPv6. `off` says nothing, so a dual-stack client keeps its own IPv6 route. `block` hands the client `::/0` and answers forwarded IPv6 with ICMPv6 administratively-prohibited, so the device falls back to IPv4. The data plane stays IPv4-only. Requires an agent on wire v9; the controller refuses to render the route for an older agent |
 | `fleet.masters[].client_awg.mtu` | int | derived | Override the client interface MTU. Unset derives it from the hop chain |
 | `fleet.masters[].client_awg.keepalive` | int or `min-max` | `25` | `PersistentKeepalive` in generated client configs. A bare number pins one interval; a band gives each credential its own stable value. Keep it under the shortest NAT UDP timeout on the path (commonly 30s). Range 5-120 |
@@ -474,9 +474,12 @@ or with `--backup` or `--certs`, it is refused.
 ## AmneziaWG 3.0
 
 `fleet.awg3` (and its per-exit override) switches the **master↔exit** tunnels to
-AmneziaWG 3.0: chacha20 header protection plus randomised rekey/keepalive timers. Off
-by default: enabling it changes the wire format of a live tunnel. The client leg has
-its own switch, `fleet.masters[].client_awg.awg3`; both need `fleet.awg3_key`.
+AmneziaWG 3.0: chacha20 header protection plus randomised `RekeyAfterTime` (120 s up to
+130–140 s) and `KeepaliveTimeout` (10 s up to 12–15 s). `RejectAfterTime`,
+`RekeyTimeout` and `MaxHandshakeAttempts` stay at the WireGuard defaults. Off by
+default: enabling it changes the wire format of a live tunnel. The client leg has its
+own switch, `fleet.masters[].client_awg.awg3`; header protection on either needs
+`fleet.awg3_key`.
 
 ### Before you turn it on
 

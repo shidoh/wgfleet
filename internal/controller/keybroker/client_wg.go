@@ -257,7 +257,10 @@ func (b *Broker) masterConfig(name string) (config.MasterConfig, bool) {
 //
 // Both ends of this tunnel derive from the same seed, so the shared half the
 // client's .conf carries is byte-identical to the interface's by construction;
-// only the local decoy differs per end, which AmneziaWG allows and we want.
+// only the local decoy differs per end, which AmneziaWG allows and we want. The
+// 3.x timers set here are the exception: they are per-end, and the client-side
+// renderers drop them (wg.ClientAWGParams), so "timers" changes this interface
+// and no client config at all.
 func clientLegAWG(master config.MasterConfig, server domain.WGServerSpec, awg3Key string) *domain.AWGParams {
 	if server.AWG == nil {
 		return nil
