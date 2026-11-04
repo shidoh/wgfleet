@@ -12,8 +12,8 @@ import (
 // this node's AmneziaWG listen ports.
 const AWGDSCPScrubChain = "awg_dscp_scrub"
 
-// renderAWGDSCPScrub writes a chain that rewrites DSCP to CS0 (0) on every UDP
-// packet this node sends from one of its AmneziaWG listen ports.
+// renderAWGDSCPScrub writes a chain that rewrites DSCP to CS0 and ECN to Not-ECT
+// on every UDP packet this node sends from one of its AmneziaWG listen ports.
 //
 // The kernel AmneziaWG module marks handshake packets AF41 (TOS 0x88); the
 // userspace implementation does not. On data packets the module carries only
@@ -40,9 +40,15 @@ const AWGDSCPScrubChain = "awg_dscp_scrub"
 // Only egress is scrubbed. The DSCP a peer sends has already crossed the path by
 // the time it reaches us; rewriting it on arrival hides nothing from anyone.
 //
-// The `!= cs0` guard keeps the rule from rewriting (and re-checksumming) packets
-// that are already clean, which is every packet from a userspace implementation.
-// `dscp set` touches only the six DSCP bits; ECN is left as it was.
+// The ECN bits are cleared too. The module sends each junk packet with a random
+// TOS byte, so after the DSCP rewrite the two ECN bits are still random and flip
+// between packets of one burst — no ordinary UDP sender does that, and a
+// middlebox can key every handshake on it. Data packets carry the inner packet's
+// ECN bits; clearing them only turns off ECN signalling through the tunnel, and
+// the flow falls back to loss-based congestion control, as on most UDP.
+//
+// The `!=` guards keep the rules from rewriting (and re-checksumming) packets that
+// are already clean, which is almost every packet from a userspace implementation.
 func renderAWGDSCPScrub(b *strings.Builder, in RenderInput) {
 	ports, ifaces := awgOwnedPortsAndIfaces(in)
 	if len(ports) == 0 {
@@ -53,6 +59,8 @@ func renderAWGDSCPScrub(b *strings.Builder, in RenderInput) {
 	b.WriteString("\t\ttype filter hook output priority mangle; policy accept;\n")
 	fmt.Fprintf(b, "\t\t%s ip dscp != cs0 ip dscp set cs0\n", match)
 	fmt.Fprintf(b, "\t\t%s ip6 dscp != cs0 ip6 dscp set cs0\n", match)
+	fmt.Fprintf(b, "\t\t%s ip ecn != not-ect ip ecn set not-ect\n", match)
+	fmt.Fprintf(b, "\t\t%s ip6 ecn != not-ect ip6 ecn set not-ect\n", match)
 	b.WriteString("\t}\n")
 }
 
