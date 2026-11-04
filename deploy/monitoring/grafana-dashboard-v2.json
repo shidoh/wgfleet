@@ -3077,7 +3077,7 @@
         "spec": {
           "id": 242,
           "title": "AmneziaWG generation per interface",
-          "description": "Read from the live interface on each node (awg show): 3.x = header protection on, 2.0 = off. awg0 on an exit is its master↔exit tunnel, awgl0 its lifeline, wg0 on a master its client interface. A switch shows as a change of colour; WgfleetAWGGenerationSwitchNoHandshake warns when an interface switched and has had no live peer for 10 minutes since. A gap = the agent could not read the interface.",
+          "description": "Read from the live interface on each node (awg show): 3.x = header protection on, 2.0 = off. Each row is one interface: master↔exit = an exit's tunnel to the masters (awg0), lifeline = an exit's reserve client interface (awgl0, follows the base master's client interface), clients = a master's client interface (wg0). An exit with a lifeline has two rows. A switch shows as a change of colour; WgfleetAWGGenerationSwitchNoHandshake warns when an interface switched and has had no live peer for 10 minutes since. A gap = the agent could not read the interface.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -3096,8 +3096,8 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "max by (node, iface) (wgfleet_awg_header_protection{iface!=\"wgcf\",node=~\"$node\"})",
-                        "legendFormat": "{{node}} {{iface}}"
+                        "expr": "label_replace(label_replace(label_replace(max by (node, iface) (wgfleet_awg_header_protection{iface!=\"wgcf\",node=~\"$node\"}), \"leg\", \"master↔exit\", \"iface\", \"awg0\"), \"leg\", \"lifeline\", \"iface\", \"awgl0\"), \"leg\", \"clients\", \"iface\", \"wg0\")",
+                        "legendFormat": "{{node}} · {{leg}}"
                       }
                     }
                   }
