@@ -411,7 +411,7 @@ func TestClientConfigsGetTheirOwnDecoy(t *testing.T) {
 	b := render("b", testClientPubB)
 
 	// The per-end unique half: junk decoy plus the QUIC cover packet (I2), whose
-	// DCID/SCID/payload sizes are drawn from the client's own seed.
+	// connection IDs and keys are drawn from the client's own seed.
 	for _, key := range []string{"Jc", "Jmin", "Jmax", "I2"} {
 		if line(a, key) == line(b, key) {
 			t.Errorf("two clients share %s (%q) — their traffic is correlatable", key, line(a, key))
