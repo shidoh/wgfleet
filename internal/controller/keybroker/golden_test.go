@@ -134,18 +134,18 @@ func assertGolden(t *testing.T, name string, spec domain.NodeSpec) {
 // fleet renders as it always has"; a test that could be regenerated would let the
 // definition drift to whatever the code does today.
 var goldenSums = map[string]string{
-	"dual-exit-de-1.json":     "f6d3c807f26cee01e905d875fa3cd6582422383ca3e0feb61c4bda362ff6133f",
-	"dual-exit-nl-1.json":     "91aad47ec90dc49ce9304fd4a5007d773be18d3f681abf96073ba369d13e5093",
-	"dual-master-gold.json":   "c918bdc49f2382f257891f7c7dbccffb5dad02ac690446d8dc211c3c565703c6",
-	"off-exit-de-1.json":      "39bf05fdeabc15504153d47aa4ad50aeaecddfb7061817056efb4d8c6d373579",
-	"off-exit-nl-1.json":      "90ed763e122bbc2d1f5eb8fddf99e250011178fd059115e9f15a59dd5c829ee5",
-	"off-master-gold.json":    "c918bdc49f2382f257891f7c7dbccffb5dad02ac690446d8dc211c3c565703c6",
-	"on-exit-de-1.json":       "7f53d4279944c50d86d33c48acb592fbe876dcbd32762e9e1d46dee455ce60f9",
-	"on-exit-nl-1.json":       "ac93621d05ca4a3444f9b987dc63155aa3075843789aa6246ef233bcd83b1d35",
-	"on-master-gold.json":     "20ddae7fbc38b0789481aae8944400b2f0e7e8100c58e5848b040881188054ef",
-	"switch-exit-de-1.json":   "8582c2e79257c931cc2ce31b3e8ffa92cb6924c22839df1d33e9158933b6a0ac",
-	"switch-exit-nl-1.json":   "91aad47ec90dc49ce9304fd4a5007d773be18d3f681abf96073ba369d13e5093",
-	"switch-master-gold.json": "20ddae7fbc38b0789481aae8944400b2f0e7e8100c58e5848b040881188054ef",
+	"dual-exit-de-1.json":     "9a3a537f1e722c25fd0efaa174d0654babb3eefe229129e81f55196a4e0a7f6c",
+	"dual-exit-nl-1.json":     "9e2236d08da9e65c11b19bf0b253f9023942743c4084a0d592e7e6af0c12dc04",
+	"dual-master-gold.json":   "7fc195da3d2a46d0f7f044595efab01ca210c8e269f1f62c47b943a3459de957",
+	"off-exit-de-1.json":      "4609de79ba6887a2770649ae090f269d308d0acfe2cfeab657fe21cbec859339",
+	"off-exit-nl-1.json":      "253884390d745409cfa59334701706a70f7fa0b5f302d9138a92d008f5c281e8",
+	"off-master-gold.json":    "7fc195da3d2a46d0f7f044595efab01ca210c8e269f1f62c47b943a3459de957",
+	"on-exit-de-1.json":       "6f54944fc78ce5362eea5c230779adf3d08d75854150715300be4ae04daab13f",
+	"on-exit-nl-1.json":       "f07dfa2a43e29801b2eb6888e0bda04cf8c50faf526d12cbf01ba98dbeceb08c",
+	"on-master-gold.json":     "49b1e18bec93a9d24e74b5821e8ce03b2fc158e2d2c76a626d053f6e0f37439e",
+	"switch-exit-de-1.json":   "e8d64b0b4b276e1f0fed012f741457206618166c9b5bcf6763041435aa83c814",
+	"switch-exit-nl-1.json":   "9e2236d08da9e65c11b19bf0b253f9023942743c4084a0d592e7e6af0c12dc04",
+	"switch-master-gold.json": "49b1e18bec93a9d24e74b5821e8ce03b2fc158e2d2c76a626d053f6e0f37439e",
 }
 
 func TestGoldenFilesAreFrozen(t *testing.T) {

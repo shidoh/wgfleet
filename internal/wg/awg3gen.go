@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -120,7 +121,36 @@ func WithAWG3HeaderProtection(p domain.AWGParams, tunnelSeed, fleetSecret string
 	for i, h := range []*domain.AWGHeader{&p.Shared.H1, &p.Shared.H2, &p.Shared.H3, &p.Shared.H4} {
 		*h = domain.AWGHeader{Min: uint32(i + 1), Max: uint32(i + 1)}
 	}
+	// Re-key the QUIC cover (I2) off the fleet secret. DeriveAWGLocal draws it from
+	// the public salt, which in a published repository means a censor who knows a
+	// node name can reproduce the exact cover bytes (DCID, keys, client random,
+	// template and SNI choice). The I-packets are LOCAL — each end sends its own and
+	// nothing matches them against the peer — so re-deriving I2 here changes nothing
+	// on the wire contract and only removes its reproducibility. Same reasoning as
+	// the header-protection key and S. I1 (the STUN request) is a fixed valid
+	// packet with no per-end variation to protect, so it is left as is.
+	p.Local.I2 = mustQUICInitialCover(deriveSecretSeed(tunnelSeed, fleetSecret, "i2quic"))
 	return p
+}
+
+// deriveSecretSeed returns a tunnel- and secret-keyed seed string for a local
+// obfuscation parameter, so its value cannot be reproduced from the public salt
+// and a node name alone. HMAC keyed by the fleet secret, same construction as the
+// header-protection key.
+func deriveSecretSeed(tunnelSeed, fleetSecret, label string) string {
+	mac := hmac.New(sha256.New, []byte(fleetSecret))
+	mac.Write([]byte(tunnelSeed + "|awg3|secret-seed|" + label))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// mustQUICInitialCover panics on the builder's only error path (a ClientHello that
+// outgrows the datagram), which the templates rule out — matching deriveSignatures.
+func mustQUICInitialCover(seed string) string {
+	cover, err := quicInitialCover(seed)
+	if err != nil {
+		panic(fmt.Sprintf("wg: QUIC cover for Track B seed %q: %v", seed, err))
+	}
+	return cover
 }
 
 // Track B padding: one size for all four message types. At least the 12 bytes
