@@ -1750,13 +1750,162 @@
       }
     },
     {
+      "type": "table",
+      "id": 241,
+      "title": "Device profile downloads",
+      "description": "When each device last downloaded its mihomo profile from the portal, and what software did it. kind: profile — the whole profile, refreshed by the app; provider — the AmneziaWG proxy provider, refreshed by the mihomo core on its own every 15 minutes. A device with a recent provider row picks up new AmneziaWG keys or a new AmneziaWG generation without anyone touching it — check this before switching a master's client interface. core: the mihomo version from the User-Agent, empty when the app does not send it. A device that never downloaded since the controller started recording has no row.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "last download"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 3600
+                    },
+                    {
+                      "color": "red",
+                      "value": 172800
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "kind"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 90
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "sortBy": [
+          {
+            "displayName": "device",
+            "desc": false
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (device, kind) (wgfleet_client_profile_fetch_age_seconds) * on(device, kind) group_left(app, app_version, core_version) max by (device, kind, app, app_version, core_version) (wgfleet_client_profile_fetch_info)",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "instance": true,
+              "role": true,
+              "service": true,
+              "namespace": true,
+              "endpoint": true,
+              "pod": true,
+              "prometheus": true
+            },
+            "renameByName": {
+              "Value": "last download",
+              "app_version": "app version",
+              "core_version": "core"
+            },
+            "indexByName": {
+              "device": 0,
+              "kind": 1,
+              "Value": 2,
+              "app": 3,
+              "app_version": 4,
+              "core_version": 5
+            }
+          }
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 24,
+        "h": 9
+      }
+    },
+    {
       "type": "row",
       "id": 90,
       "title": "Master → exit",
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 52,
+        "y": 61,
         "w": 24,
         "h": 1
       }
@@ -1878,7 +2027,7 @@
         "x": 0,
         "w": 7,
         "h": 13,
-        "y": 53
+        "y": 62
       }
     },
     {
@@ -1972,7 +2121,7 @@
         "x": 7,
         "w": 17,
         "h": 13,
-        "y": 53
+        "y": 62
       }
     },
     {
@@ -2044,7 +2193,7 @@
         "x": 0,
         "w": 12,
         "h": 8,
-        "y": 66
+        "y": 75
       }
     },
     {
@@ -2120,7 +2269,7 @@
         "x": 12,
         "w": 12,
         "h": 8,
-        "y": 66
+        "y": 75
       }
     },
     {
@@ -2198,7 +2347,7 @@
         "x": 0,
         "w": 8,
         "h": 8,
-        "y": 74
+        "y": 83
       }
     },
     {
@@ -2275,7 +2424,7 @@
         "x": 8,
         "w": 8,
         "h": 8,
-        "y": 74
+        "y": 83
       }
     },
     {
@@ -2352,7 +2501,7 @@
         "x": 16,
         "w": 8,
         "h": 8,
-        "y": 74
+        "y": 83
       }
     },
     {
@@ -2428,7 +2577,7 @@
         "x": 0,
         "w": 12,
         "h": 8,
-        "y": 82
+        "y": 91
       },
       "interval": "1h"
     },
@@ -2505,9 +2654,81 @@
         "x": 12,
         "w": 12,
         "h": 8,
-        "y": 82
+        "y": 91
       },
       "interval": "1h"
+    },
+    {
+      "type": "state-timeline",
+      "id": 242,
+      "title": "AmneziaWG generation per interface",
+      "description": "Read from the live interface on each node (awg show): 3.x = header protection on, 2.0 = off. awg0 on an exit is its master↔exit tunnel, awgl0 its lifeline, wg0 on a master its client interface. A switch shows as a change of colour; WgfleetAWGGenerationSwitchNoHandshake warns when an interface switched and has had no live peer for 10 minutes since. A gap = the agent could not read the interface.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "2.0",
+                  "color": "orange",
+                  "index": 0
+                },
+                "1": {
+                  "text": "3.x",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "auto",
+        "rowHeight": 0.8,
+        "mergeValues": true,
+        "alignValue": "left",
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (node, iface) (wgfleet_awg_header_protection{iface!=\"wgcf\",node=~\"$node\"})",
+          "legendFormat": "{{node}} {{iface}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 99,
+        "w": 24,
+        "h": 8
+      }
     },
     {
       "type": "row",
@@ -2516,7 +2737,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 90,
+        "y": 107,
         "w": 24,
         "h": 1
       }
@@ -2582,7 +2803,7 @@
         "x": 0,
         "w": 6,
         "h": 4,
-        "y": 91
+        "y": 108
       }
     },
     {
@@ -2652,7 +2873,7 @@
         "x": 6,
         "w": 6,
         "h": 4,
-        "y": 91
+        "y": 108
       }
     },
     {
@@ -2730,7 +2951,7 @@
         "x": 12,
         "w": 6,
         "h": 4,
-        "y": 91
+        "y": 108
       }
     },
     {
@@ -2808,7 +3029,7 @@
         "x": 18,
         "w": 6,
         "h": 4,
-        "y": 91
+        "y": 108
       }
     },
     {
@@ -2822,7 +3043,7 @@
         "x": 0,
         "w": 24,
         "h": 9,
-        "y": 95
+        "y": 112
       },
       "id": 21,
       "fieldConfig": {
@@ -3216,7 +3437,7 @@
       ],
       "gridPos": {
         "x": 0,
-        "y": 104,
+        "y": 121,
         "w": 12,
         "h": 8
       },
@@ -3294,18 +3515,96 @@
       ],
       "gridPos": {
         "x": 12,
-        "y": 104,
+        "y": 121,
         "w": 12,
         "h": 8
       },
       "interval": ""
     },
     {
+      "type": "table",
+      "id": 243,
+      "title": "AmneziaWG module build, per node",
+      "description": "The AmneziaWG kernel module package each agent reports at registration (dpkg amneziawg-dkms) and the srcversion of the loaded module. Builds of one upstream version print the same `modinfo version`; only these tell them apart. AmneziaWG 3.1 random trailers need the 3.1.20260906 build or newer on every kernel end. unknown = not a packaged module, or a loaded module that differs from the one on disk (reload pending).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "sortBy": [
+          {
+            "displayName": "node",
+            "desc": false
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (node, build, srcversion) (wgfleet_node_awg_module_info{node=~\"$node\"})",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "instance": true,
+              "role": true,
+              "service": true,
+              "namespace": true,
+              "endpoint": true,
+              "pod": true,
+              "prometheus": true,
+              "Value": true
+            },
+            "indexByName": {
+              "node": 0,
+              "build": 1,
+              "srcversion": 2
+            }
+          }
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 129,
+        "w": 24,
+        "h": 8
+      }
+    },
+    {
       "type": "row",
       "title": "Health",
       "gridPos": {
         "x": 0,
-        "y": 112,
+        "y": 137,
         "w": 24,
         "h": 1
       },
@@ -3324,7 +3623,7 @@
         "x": 0,
         "w": 4,
         "h": 8,
-        "y": 113
+        "y": 138
       },
       "id": 31,
       "fieldConfig": {
@@ -3400,7 +3699,7 @@
         "x": 4,
         "w": 20,
         "h": 8,
-        "y": 113
+        "y": 138
       },
       "id": 32,
       "fieldConfig": {
@@ -3492,7 +3791,7 @@
         "x": 0,
         "w": 24,
         "h": 6,
-        "y": 121
+        "y": 146
       },
       "id": 33,
       "fieldConfig": {
@@ -3614,7 +3913,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 127,
+        "y": 152,
         "w": 24,
         "h": 1
       },
@@ -3632,7 +3931,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 128
+            "y": 153
           },
           "id": 101,
           "fieldConfig": {
@@ -3693,7 +3992,7 @@
             "x": 4,
             "w": 12,
             "h": 8,
-            "y": 128
+            "y": 153
           },
           "id": 102,
           "fieldConfig": {
@@ -3768,7 +4067,7 @@
             "x": 16,
             "w": 4,
             "h": 8,
-            "y": 128
+            "y": 153
           },
           "id": 103,
           "fieldConfig": {
@@ -3873,7 +4172,7 @@
             "x": 20,
             "w": 4,
             "h": 8,
-            "y": 128
+            "y": 153
           },
           "id": 104,
           "fieldConfig": {
@@ -3934,7 +4233,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 136
+            "y": 161
           },
           "id": 96,
           "fieldConfig": {
@@ -3995,7 +4294,7 @@
             "x": 4,
             "w": 8,
             "h": 8,
-            "y": 136
+            "y": 161
           },
           "id": 97,
           "fieldConfig": {
@@ -4070,7 +4369,7 @@
             "x": 12,
             "w": 6,
             "h": 8,
-            "y": 136
+            "y": 161
           },
           "id": 106,
           "fieldConfig": {
@@ -4143,7 +4442,7 @@
             "x": 18,
             "w": 6,
             "h": 8,
-            "y": 136
+            "y": 161
           },
           "id": 107,
           "fieldConfig": {
@@ -4212,7 +4511,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 128,
+        "y": 153,
         "w": 24,
         "h": 1
       },
@@ -4230,7 +4529,7 @@
             "x": 0,
             "w": 12,
             "h": 8,
-            "y": 129
+            "y": 154
           },
           "id": 61,
           "fieldConfig": {
@@ -4335,7 +4634,7 @@
             "x": 12,
             "w": 12,
             "h": 8,
-            "y": 129
+            "y": 154
           },
           "id": 62,
           "fieldConfig": {
@@ -4407,7 +4706,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 129,
+        "y": 154,
         "w": 24,
         "h": 1
       },
@@ -4425,7 +4724,7 @@
             "x": 0,
             "w": 16,
             "h": 8,
-            "y": 130
+            "y": 155
           },
           "id": 41,
           "fieldConfig": {
@@ -4513,7 +4812,7 @@
             "x": 16,
             "w": 8,
             "h": 8,
-            "y": 130
+            "y": 155
           },
           "id": 42,
           "fieldConfig": {
@@ -4614,7 +4913,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 130,
+        "y": 155,
         "w": 24,
         "h": 1
       },
@@ -4632,7 +4931,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 131
+            "y": 156
           },
           "id": 71,
           "fieldConfig": {
@@ -4693,7 +4992,7 @@
             "x": 4,
             "w": 4,
             "h": 8,
-            "y": 131
+            "y": 156
           },
           "id": 72,
           "fieldConfig": {
@@ -4751,7 +5050,7 @@
             "x": 8,
             "w": 16,
             "h": 8,
-            "y": 131
+            "y": 156
           },
           "id": 73,
           "fieldConfig": {
@@ -4830,7 +5129,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 131,
+        "y": 156,
         "w": 24,
         "h": 1
       },
@@ -4847,7 +5146,7 @@
             "x": 0,
             "w": 6,
             "h": 8,
-            "y": 132
+            "y": 157
           },
           "id": 51,
           "fieldConfig": {
@@ -4924,7 +5223,7 @@
             "x": 6,
             "w": 6,
             "h": 8,
-            "y": 132
+            "y": 157
           },
           "id": 52,
           "fieldConfig": {
@@ -4983,7 +5282,7 @@
             "x": 12,
             "w": 6,
             "h": 8,
-            "y": 132
+            "y": 157
           },
           "id": 53,
           "fieldConfig": {
@@ -5040,7 +5339,7 @@
             "x": 18,
             "w": 6,
             "h": 8,
-            "y": 132
+            "y": 157
           },
           "id": 54,
           "fieldConfig": {
@@ -5118,7 +5417,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 132,
+        "y": 157,
         "w": 24,
         "h": 1
       },
@@ -5136,7 +5435,7 @@
             "x": 0,
             "w": 5,
             "h": 8,
-            "y": 133
+            "y": 158
           },
           "id": 81,
           "fieldConfig": {
@@ -5197,7 +5496,7 @@
             "x": 5,
             "w": 5,
             "h": 8,
-            "y": 133
+            "y": 158
           },
           "id": 82,
           "fieldConfig": {
@@ -5258,7 +5557,7 @@
             "x": 10,
             "w": 14,
             "h": 8,
-            "y": 133
+            "y": 158
           },
           "id": 83,
           "fieldConfig": {
@@ -5373,7 +5672,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 133,
+        "y": 158,
         "w": 24,
         "h": 1
       },
@@ -5391,7 +5690,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 134
+            "y": 159
           },
           "id": 111,
           "fieldConfig": {
@@ -5452,7 +5751,7 @@
             "x": 4,
             "w": 10,
             "h": 8,
-            "y": 134
+            "y": 159
           },
           "id": 112,
           "fieldConfig": {
@@ -5529,7 +5828,7 @@
             "x": 14,
             "w": 10,
             "h": 8,
-            "y": 134
+            "y": 159
           },
           "id": 113,
           "fieldConfig": {
@@ -5606,7 +5905,7 @@
             "x": 0,
             "w": 8,
             "h": 8,
-            "y": 142
+            "y": 167
           },
           "id": 114,
           "fieldConfig": {
@@ -5683,7 +5982,7 @@
             "x": 8,
             "w": 8,
             "h": 8,
-            "y": 142
+            "y": 167
           },
           "id": 115,
           "fieldConfig": {
@@ -5768,7 +6067,7 @@
             "x": 16,
             "w": 8,
             "h": 8,
-            "y": 142
+            "y": 167
           },
           "id": 116,
           "fieldConfig": {

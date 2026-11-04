@@ -2003,6 +2003,174 @@
           }
         }
       },
+      "panel-241": {
+        "kind": "Panel",
+        "spec": {
+          "id": 241,
+          "title": "Device profile downloads",
+          "description": "When each device last downloaded its mihomo profile from the portal, and what software did it. kind: profile — the whole profile, refreshed by the app; provider — the AmneziaWG proxy provider, refreshed by the mihomo core on its own every 15 minutes. A device with a recent provider row picks up new AmneziaWG keys or a new AmneziaWG generation without anyone touching it — check this before switching a master's client interface. core: the mihomo version from the User-Agent, empty when the app does not send it. A device that never downloaded since the controller started recording has no row.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "max by (device, kind) (wgfleet_client_profile_fetch_age_seconds) * on(device, kind) group_left(app, app_version, core_version) max by (device, kind, app, app_version, core_version) (wgfleet_client_profile_fetch_info)",
+                        "instant": true,
+                        "format": "table"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": [
+                {
+                  "kind": "Transformation",
+                  "group": "organize",
+                  "spec": {
+                    "options": {
+                      "excludeByName": {
+                        "Time": true,
+                        "__name__": true,
+                        "job": true,
+                        "instance": true,
+                        "role": true,
+                        "service": true,
+                        "namespace": true,
+                        "endpoint": true,
+                        "pod": true,
+                        "prometheus": true
+                      },
+                      "renameByName": {
+                        "Value": "last download",
+                        "app_version": "app version",
+                        "core_version": "core"
+                      },
+                      "indexByName": {
+                        "device": 0,
+                        "kind": 1,
+                        "Value": 2,
+                        "app": 3,
+                        "app_version": 4,
+                        "core_version": 5
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "table",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "align": "auto",
+                    "cellOptions": {
+                      "type": "auto"
+                    },
+                    "inspect": false
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      }
+                    ]
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "last download"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "s"
+                      },
+                      {
+                        "id": "decimals",
+                        "value": 0
+                      },
+                      {
+                        "id": "custom.cellOptions",
+                        "value": {
+                          "type": "color-text"
+                        }
+                      },
+                      {
+                        "id": "thresholds",
+                        "value": {
+                          "mode": "absolute",
+                          "steps": [
+                            {
+                              "color": "green",
+                              "value": 0
+                            },
+                            {
+                              "color": "orange",
+                              "value": 3600
+                            },
+                            {
+                              "color": "red",
+                              "value": 172800
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "kind"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.width",
+                        "value": 90
+                      }
+                    ]
+                  }
+                ]
+              },
+              "options": {
+                "showHeader": true,
+                "cellHeight": "sm",
+                "footer": {
+                  "show": false
+                },
+                "sortBy": [
+                  {
+                    "displayName": "device",
+                    "desc": false
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
       "panel-220": {
         "kind": "Panel",
         "spec": {
@@ -2898,6 +3066,95 @@
                 "tooltip": {
                   "mode": "multi",
                   "sort": "desc"
+                }
+              }
+            }
+          }
+        }
+      },
+      "panel-242": {
+        "kind": "Panel",
+        "spec": {
+          "id": 242,
+          "title": "AmneziaWG generation per interface",
+          "description": "Read from the live interface on each node (awg show): 3.x = header protection on, 2.0 = off. awg0 on an exit is its master↔exit tunnel, awgl0 its lifeline, wg0 on a master its client interface. A switch shows as a change of colour; WgfleetAWGGenerationSwitchNoHandshake warns when an interface switched and has had no live peer for 10 minutes since. A gap = the agent could not read the interface.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "max by (node, iface) (wgfleet_awg_header_protection{iface!=\"wgcf\",node=~\"$node\"})",
+                        "legendFormat": "{{node}} {{iface}}"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "state-timeline",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "fixed",
+                    "fixedColor": "text"
+                  },
+                  "mappings": [
+                    {
+                      "type": "value",
+                      "options": {
+                        "0": {
+                          "text": "2.0",
+                          "color": "orange",
+                          "index": 0
+                        },
+                        "1": {
+                          "text": "3.x",
+                          "color": "green",
+                          "index": 1
+                        }
+                      }
+                    }
+                  ],
+                  "custom": {
+                    "fillOpacity": 80,
+                    "lineWidth": 0
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "showValue": "auto",
+                "rowHeight": 0.8,
+                "mergeValues": true,
+                "alignValue": "left",
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom"
+                },
+                "tooltip": {
+                  "mode": "single",
+                  "sort": "none"
                 }
               }
             }
@@ -3861,6 +4118,103 @@
                   "mode": "multi",
                   "sort": "desc"
                 }
+              }
+            }
+          }
+        }
+      },
+      "panel-243": {
+        "kind": "Panel",
+        "spec": {
+          "id": 243,
+          "title": "AmneziaWG module build, per node",
+          "description": "The AmneziaWG kernel module package each agent reports at registration (dpkg amneziawg-dkms) and the srcversion of the loaded module. Builds of one upstream version print the same `modinfo version`; only these tell them apart. AmneziaWG 3.1 random trailers need the 3.1.20260906 build or newer on every kernel end. unknown = not a packaged module, or a loaded module that differs from the one on disk (reload pending).",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "max by (node, build, srcversion) (wgfleet_node_awg_module_info{node=~\"$node\"})",
+                        "instant": true,
+                        "format": "table"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": [
+                {
+                  "kind": "Transformation",
+                  "group": "organize",
+                  "spec": {
+                    "options": {
+                      "excludeByName": {
+                        "Time": true,
+                        "__name__": true,
+                        "job": true,
+                        "instance": true,
+                        "role": true,
+                        "service": true,
+                        "namespace": true,
+                        "endpoint": true,
+                        "pod": true,
+                        "prometheus": true,
+                        "Value": true
+                      },
+                      "indexByName": {
+                        "node": 0,
+                        "build": 1,
+                        "srcversion": 2
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "table",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "align": "auto",
+                    "cellOptions": {
+                      "type": "auto"
+                    },
+                    "inspect": false
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "showHeader": true,
+                "cellHeight": "sm",
+                "footer": {
+                  "show": false
+                },
+                "sortBy": [
+                  {
+                    "displayName": "node",
+                    "desc": false
+                  }
+                ]
               }
             }
           }
@@ -7107,6 +7461,19 @@
                         "x": 15,
                         "y": 16
                       }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-241"
+                        },
+                        "height": 9,
+                        "width": 24,
+                        "x": 0,
+                        "y": 27
+                      }
                     }
                   ]
                 }
@@ -7238,6 +7605,19 @@
                         "x": 12,
                         "y": 29
                       }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-242"
+                        },
+                        "height": 8,
+                        "width": 24,
+                        "x": 0,
+                        "y": 37
+                      }
                     }
                   ]
                 }
@@ -7342,6 +7722,19 @@
                         "width": 12,
                         "x": 12,
                         "y": 13
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-243"
+                        },
+                        "height": 8,
+                        "width": 24,
+                        "x": 0,
+                        "y": 21
                       }
                     }
                   ]

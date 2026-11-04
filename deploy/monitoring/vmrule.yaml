@@ -794,8 +794,13 @@ spec:
       # the other side has not reached yet — and this is the window to look before
       # going on with the next step of a migration. Warning: the rest of the fleet
       # carries traffic, and a quiet interface outside that window is someone
-      # else's alert. wgcf is the WARP uplink, never ours to switch.
-      expr: changes(wgfleet_awg_header_protection{iface!="wgcf"}[30m]) > 0
+      # else's alert. wgcf is the WARP uplink, never ours to switch; awgl0 is the
+      # lifeline, whose peers are offline files by design and never handshake
+      # until a master is lost. The offset arm keeps a series that only just
+      # appeared (a new agent) from counting as a switch: VictoriaMetrics counts
+      # the first sample of a series as a change.
+      expr: changes(wgfleet_awg_header_protection{iface!~"wgcf|awgl0"}[30m]) > 0
+        and on(node, iface) (wgfleet_awg_header_protection offset 30m)
         and on(node, iface) wgfleet_wg_peers_active == 0
       for: 10m
       labels:
