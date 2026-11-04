@@ -6,6 +6,15 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 ## v0.3.5 — unreleased
 
+!!! tip "What stands out in this release"
+
+    - **Harder to spot.** AmneziaWG 3.1 header protection encrypts the service fields DPI used to recognise WireGuard, and the handshake now opens with a packet that looks like a real browser starting a QUIC connection — a valid Initial a QUIC parser accepts, with a server name — while the header bits that used to mark the traffic (DSCP and ECN) are cleared. Turning it on is a one-time switch that asks every client to re-import or re-subscribe; see the breaking note below.
+    - **Subscriptions keep themselves current.** With `controller.client_profile_providers`, the app pulls the node list every 15 minutes on its own, so a device keeps working across a change even if nobody refreshes the subscription. The Devices page now shows when each device last downloaded its profile.
+    - **A remote-root Linux kernel hole is closed.** MPTCP is off on every listener the fleet runs (CVE-2026-98432), and the binaries are built with a newer Go that carries TLS and certificate fixes. Install your distribution's patched kernel as well.
+    - **wg-easy is gone.** A master now serves its AmneziaWG clients directly — no extra container and no separate console.
+
+    Full detail, manifest keys and upgrade steps are in the entries below.
+
 - New agent metric `wgfleet_awg_header_protection{iface}`: 1 when the live AmneziaWG interface has a header-protection key (3.x), 0 when it has none, read from `awg show`. New warning alert `WgfleetAWGGenerationSwitchNoHandshake`: an interface switched generation in the last 30 minutes and has had no peer with a live handshake for 10 minutes (the lifeline interface `awgl0` and the WARP uplink are not watched). Apply the updated `deploy/monitoring/vmrule.yaml` or `prometheusrule.yaml`. Dashboard: new panels "AmneziaWG generation per interface", "Device profile downloads" and "AmneziaWG module build, per node"; paste `deploy/monitoring/grafana-dashboard-v2.json` into the dashboard's JSON editor to update it.
 - Switching a tunnel between AmneziaWG 2.0 and 3.x no longer moves the pinned port of an exit-initiated tunnel. The switch rebuilds the exit's interface, and the rebuilt peer reports no handshake yet; the controller read that as minutes of silence and moved the pinned port seconds after the switch. A generation change now restarts the silence clock, the same way a per-tunnel-key phase change does. A tunnel that stays silent for 5 minutes on the new generation is still moved.
 - In a device profile, a master whose client interface runs AmneziaWG 3.x header protection (`client_awg.awg3: full`) now goes first among the AmneziaWG proxies of the `auto` and `wgfleet` groups; the others follow in manifest order. Moving masters to 3.x one at a time then costs subscribed devices nothing: a device with the new profile uses the moved master, a device with the old one fails it and falls through to the next. Profiles without `full` are unchanged.
