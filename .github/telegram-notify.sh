@@ -73,6 +73,26 @@ if [ -n "$DRY_RUN" ]; then
   exit 0
 fi
 
+# Wait for the docs site to actually serve this release's section before posting a
+# link to it. The release build and this announcement both run on a tag push, but
+# the docs deploy (to the gh-pages repo) and GitHub Pages' CDN lag behind by
+# minutes, so an immediate post can link to a page that still shows the previous
+# content. Poll for the section's anchor for up to ~10 minutes, then post anyway
+# rather than hold the release indefinitely. Skipped when the heading is absent
+# (the link just opens the page) or when WAIT_FOR_DOCS=0.
+if [ -n "$ANCHOR" ] && [ "${WAIT_FOR_DOCS:-1}" != "0" ]; then
+  live=""
+  for _ in $(seq 1 60); do
+    if curl -fsS --max-time 10 "$PAGE" 2>/dev/null | grep -q "id=\"$ANCHOR\""; then
+      live=1
+      echo "docs section #$ANCHOR is live"
+      break
+    fi
+    sleep 10
+  done
+  [ -n "$live" ] || echo "WARNING: docs section #$ANCHOR not live after ~10 min; posting anyway"
+fi
+
 echo "Posting the album: ${#FILES[@]} file(s), changelog link $LINK"
 if [ "${#FILES[@]}" -eq 1 ]; then
   # sendMediaGroup needs 2..10 items; a lone file goes via sendDocument.
