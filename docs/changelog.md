@@ -4,7 +4,7 @@ What changed for operators in each wgfleet release — behaviour, manifest keys,
 Every release archive carries this page as `CHANGELOG.md`.
 New releases are announced, with the archives attached, in the Telegram channel [t.me/wgfleet](https://t.me/wgfleet).
 
-## v0.3.5 — unreleased
+## v0.3.5 — 2026-11-04
 
 !!! tip "What stands out in this release"
 
