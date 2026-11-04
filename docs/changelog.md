@@ -1,3 +1,4 @@
+<!-- rebuilt for the v0.3.5 release page, 2026-11-04 -->
 # Changelog
 
 What changed for operators in each wgfleet release — behaviour, manifest keys, CLI flags, the console, the scripts in the archive, and the steps an upgrade asks of you.
