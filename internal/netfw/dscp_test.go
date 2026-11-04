@@ -41,6 +41,8 @@ func TestDSCPScrubOnExit(t *testing.T) {
 		"type filter hook output priority mangle; policy accept;",
 		`oifname != "awg0" udp sport 51820 ip dscp != cs0 ip dscp set cs0`,
 		`oifname != "awg0" udp sport 51820 ip6 dscp != cs0 ip6 dscp set cs0`,
+		`oifname != "awg0" udp sport 51820 ip ecn != not-ect ip ecn set not-ect`,
+		`oifname != "awg0" udp sport 51820 ip6 ecn != not-ect ip6 ecn set not-ect`,
 	}
 	got := scrubChainLines(t, out, AWGDSCPScrubChain)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -63,6 +65,8 @@ func TestDSCPScrubOnExitCoversTheLifeline(t *testing.T) {
 	for _, want := range []string{
 		`oifname != { "awg0", "awgl0" } udp sport { 41827, 51820 } ip dscp != cs0 ip dscp set cs0`,
 		`oifname != { "awg0", "awgl0" } udp sport { 41827, 51820 } ip6 dscp != cs0 ip6 dscp set cs0`,
+		`oifname != { "awg0", "awgl0" } udp sport { 41827, 51820 } ip ecn != not-ect ip ecn set not-ect`,
+		`oifname != { "awg0", "awgl0" } udp sport { 41827, 51820 } ip6 ecn != not-ect ip6 ecn set not-ect`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("lifeline exit: missing %q in\n%s", want, got)
@@ -85,6 +89,8 @@ func TestDSCPScrubOnMaster(t *testing.T) {
 		"type filter hook output priority mangle; policy accept;",
 		`oifname != "wg0" udp sport 443 ip dscp != cs0 ip dscp set cs0`,
 		`oifname != "wg0" udp sport 443 ip6 dscp != cs0 ip6 dscp set cs0`,
+		`oifname != "wg0" udp sport 443 ip ecn != not-ect ip ecn set not-ect`,
+		`oifname != "wg0" udp sport 443 ip6 ecn != not-ect ip6 ecn set not-ect`,
 	}
 	got := scrubChainLines(t, out, AWGDSCPScrubChain)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -111,6 +117,9 @@ func TestDSCPScrubTouchesOnlyAWGPorts(t *testing.T) {
 	if n := strings.Count(out, "dscp set"); n != 2 {
 		t.Errorf("want exactly two DSCP rewrites (v4+v6), got %d:\n%s", n, out)
 	}
+	if n := strings.Count(out, "ecn set"); n != 2 {
+		t.Errorf("want exactly two ECN rewrites (v4+v6), got %d:\n%s", n, out)
+	}
 	body := strings.Join(scrubChainLines(t, out, AWGDSCPScrubChain), "\n")
 	for _, foreign := range []string{"9994", "8443", "9993", "53", "tcp"} {
 		if strings.Contains(body, foreign) {
@@ -125,13 +134,13 @@ func TestDSCPScrubTouchesOnlyAWGPorts(t *testing.T) {
 }
 
 // The drift probe compares per-chain rule counts against the kernel; the new
-// chain must count as the two rules nft will report.
+// chain must count as the four rules nft will report.
 func TestDSCPScrubChainCountsForDrift(t *testing.T) {
 	out, err := RenderRuleset(RenderInput{Role: domain.RoleMaster, Firewall: domain.FirewallSpec{WGPort: 443}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := renderedChainCounts(out)[AWGDSCPScrubChain]; n != 2 {
-		t.Errorf("drift count for %s = %d, want 2", AWGDSCPScrubChain, n)
+	if n := renderedChainCounts(out)[AWGDSCPScrubChain]; n != 4 {
+		t.Errorf("drift count for %s = %d, want 4", AWGDSCPScrubChain, n)
 	}
 }
