@@ -499,7 +499,7 @@ func (h *Handler) handleProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	providerURL := ""
-	if h.opts.Providers {
+	if h.opts.Providers && !fetchedByBareCore(r) {
 		// A link the portal cannot vouch for is not one to put in a profile; the
 		// device then gets the inline form, which works without it.
 		if link := h.subscriptionURL(r, dev.Token); link != "" {
@@ -525,6 +525,18 @@ func (h *Handler) handleProfile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", clientcfg.AttachmentHeader(clientcfg.ProfileFileName(dev)))
 	_, _ = w.Write([]byte(yml))
 	h.recordFetch(r, dev, domain.FetchProfile)
+}
+
+// fetchedByBareCore reports a profile request from a mihomo core with no app in
+// front of it — a User-Agent naming the core (clash.meta/…, mihomo/…) and nothing
+// else. A core fetches a URL itself when its own config uses it as a proxy
+// provider, and a provider reads nothing but the top-level proxies list, which
+// the provider form of the profile does not have: such a device would read an
+// empty list on every refresh and keep running on whatever it fetched before.
+// It gets the inline form. Apps fetch the profile under their own name.
+func fetchedByBareCore(r *http.Request) bool {
+	a := clientcfg.ParseUserAgent(r.UserAgent())
+	return a.App == "" && a.CoreVersion != ""
 }
 
 func (h *Handler) handleProviderProxies(w http.ResponseWriter, r *http.Request) {

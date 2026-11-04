@@ -2,6 +2,7 @@ package portal
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -67,5 +68,35 @@ func TestPortalProviderBadTokenIs404(t *testing.T) {
 	h := testPortal(t)
 	if res, _ := fetch(t, h, "/c/deadbeefdeadbeefdeadbeefdeadbeef/mihomo/proxies"); res.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", res.StatusCode)
+	}
+}
+
+// A core that fetches the profile URL itself uses it as a proxy provider and
+// reads only the top-level proxies list; the provider form has none. It gets the
+// inline form, apps keep the provider form.
+func TestPortalBareCoreGetsTheInlineProfile(t *testing.T) {
+	h := testPortal(t)
+	withVLESS(t, h)
+	h.opts.Providers = true
+	for ua, wantProviders := range map[string]bool{
+		"clash.meta/v1.19.33":                false,
+		"mihomo/1.19.40":                     false,
+		"clash-verge/v2.5.10":                true,
+		"ClashMetaForAndroid/2.11.36.Meta":   true,
+		"FlClash/v0.9.2 clash.meta/v1.19.33": true,
+		"":                                   true,
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/c/"+devTok+"/mihomo", nil)
+		req.RemoteAddr = "10.80.0.2:51820"
+		req.Header.Set("User-Agent", ua)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if got := strings.Contains(body, "proxy-providers:"); got != wantProviders {
+			t.Errorf("UA %q: provider form = %v, want %v", ua, got, wantProviders)
+		}
+		if !wantProviders && !strings.Contains(body, "\nproxies:") {
+			t.Errorf("UA %q: inline form without a top-level proxies list:\n%s", ua, body)
+		}
 	}
 }
