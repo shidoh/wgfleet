@@ -6,7 +6,7 @@
 |---|---|---|---|---|
 | `off` | AmneziaWG 2.0 | AmneziaWG 2.0 | no | — |
 | `timers` | adds `RekeyAfterTime` and `KeepaliveTimeout` ranges | unchanged, byte for byte the same as `off` | no | yes |
-| `full` | adds the timers, `HeaderProtectionKey`, `RandomTrailers = on`, one padding size for S1–S4 and H1–H4 = 1–4 | the same shared values (mihomo: `version: 3`, `random-trailers: true`); no timers | **every client must re-import before it works again**; the new config cannot be delivered through the tunnel | **no** — reverting to `timers` breaks the config they just imported, in the same silent way |
+| `full` | adds the timers, `HeaderProtectionKey`, `RandomTrailers = on`, one padding size for S1–S4 and H1–H4 = 1–4 | the same shared values (mihomo: `version: 3`, `random-trailers: true`); no timers | subscriptions with a provider: no; `.conf` and lifeline: yes — see [The `full` rollout](#the-full-rollout) | **no** — reverting to `timers` breaks the configs devices just picked up, in the same silent way |
 
 The timers are per end: a client on the default timers works against a `wg0` with randomised ones, so client configs never carry them. Apps that refuse AmneziaWG 3.x settings (AmneziaWG 2.x apps, AmneziaVPN before 5.0.0.5, older mihomo cores) keep working under `timers`.
 
@@ -47,15 +47,23 @@ All keys: [configuration.md#3-fleet-fleet-wide-settings](configuration.md#3-flee
 
 ### The `full` rollout
 
-- Do not set `full` until you can reach every user.
-- The self-service portal cannot carry this one to `.conf` holders: it is reachable only from inside the tunnel, and a link fetched *before* the flip hands out the pre-3.x config.
-- Devices with a VLESS credential are the exception: the subscription refreshes over `<master>-vless` (within `Profile-Update-Interval: 24` h, or at once on a manual update) and brings the new AWG settings.
-- What it looks like from the user's side: the old client stops passing traffic within seconds, not at the next rekey, and nothing on the client says so. The interface stays **UP**, `awg show` keeps printing a "latest handshake" that just gets older, and on a phone the VPN toggle stays green. The report you will get is **"the VPN is connected but nothing loads"**.
-- There is no ordering that avoids the outage window: the file that works cannot exist until the flip that breaks the old one. A botched flip is two rounds of re-handout, not one.
+What a device needs to follow the switch:
 
-1. **Warn people first, and hand out nothing yet.** Tell them a new file is coming, that the tunnel will look connected and be dead until they import it, that the fix is to import the new file, and on what channel to expect it. Say it in those words. That channel must reach every one of them.
+| Device | Follows without re-import? | How |
+|---|---|---|
+| mihomo app on a subscription, profile with a provider (`controller.client_profile_providers: true`, device has VLESS) | **yes** | the core re-fetches the AmneziaWG provider every 15 minutes over VLESS or the other master; check `provider` in the Devices page "Last download" column |
+| mihomo app on a subscription, inline profile | yes, at the app's next profile update | Clash Verge Rev and FlClash: within a day, or "update" by hand |
+| mihomo core using the profile URL as its own proxy provider (a router) | yes, at its next provider refresh | the portal serves it the inline form; refresh by hand: `PUT /providers/proxies/<name>` on its API |
+| `.conf` (AmneziaWG app, awg-quick) | **no** | download the new `.conf` after the switch; the app must support AmneziaWG 3.1 |
+| lifeline config | **no** | download again after the base master's switch |
 
-2. **Set `full`, validate, restart.** The configs are rendered from the live spec, so anything downloaded before this moment will never connect.
+A device that has not followed sees its AmneziaWG proxy to that master stop: the tunnel stays up, no handshake completes. A subscription falls through to the next proxy in `auto`.
+
+**Several masters: one at a time.** A master on `full` goes first in every device's `auto` group. Switch the second master, wait for the subscribed devices to follow (`provider` downloads newer than the switch, handshakes on its `wg0`), then the base master. Devices that have not followed keep the base master on 2.0 meanwhile.
+
+1. **Before.** `controller.client_profile_providers: true` rolled out, and every subscribed device shows a `provider` download. `.conf` holders told a new file is coming.
+
+2. **Set `full` on one master, validate, restart.**
 
    ```yaml
            awg3: full
@@ -66,15 +74,19 @@ All keys: [configuration.md#3-fleet-fleet-wide-settings](configuration.md#3-flee
    systemctl restart wgfleet-controller
    ```
 
-3. **Wait for the master to converge**, then confirm header protection is live before handing anything out.
+3. **Confirm the interface switched** (seconds after the restart):
 
    ```bash
-   awg showconf wg0 | grep -c HeaderProtectionKey   # must print 1
+   awg show wg0 | grep -c "header protection key"   # 1
    ```
 
-4. **Download and send.** Download every client's `.conf` from the console and send them out.
+   Dashboard: "AmneziaWG generation per interface". Alert `WgfleetAWGGenerationSwitchNoHandshake` fires if no peer handshakes for 10 minutes after the switch.
 
-5. **Stay available.** From step 2 until each person imports, they are offline.
+4. **Watch the devices follow** within 15 minutes: handshakes on that master's `wg0`, new `provider` downloads.
+
+5. **Hand out `.conf` files** to the devices that need them.
+
+6. **Next master.** The base master last; its switch also switches every exit's `lifeline`.
 
 ---
 
@@ -83,7 +95,8 @@ All keys: [configuration.md#3-fleet-fleet-wide-settings](configuration.md#3-flee
 | Symptom | Cause |
 |---|---|
 | interface will not come up, log says 3.x refused | module is older than the config asks for |
-| "the VPN is connected but nothing loads" after `full` | the client still has a pre-`full` config — re-import |
+| "the VPN is connected but nothing loads" after `full` | the device still has a pre-`full` config: `.conf` — re-import; subscription — update the profile; router — refresh its provider |
+| a router on the subscription never follows | it uses the profile URL as a proxy provider and fetched the provider form; the controller serves a bare core (`User-Agent: clash.meta/…`) the inline form — refresh its provider once |
 | no `HeaderProtectionKey` in `awg showconf wg0` after `full` | the master has not converged yet — one reconcile pass |
 | `full` set, but `wg0` and the configs stay on `timers`; the controller logs `client_awg.awg3 is full, but this master's agent is too old` | the master's agent is below wire 15 — upgrade it |
 | clients on `full` connect but pages stall | the client app predates AmneziaWG 3.1 random trailers — update the app (AmneziaWG 3.1, or a mihomo core with `random-trailers`) |

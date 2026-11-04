@@ -154,7 +154,7 @@ first, see [upgrade.md](upgrade.md).
 | `fleet.masters[].client_awg.listen_port` | int | `443` | UDP port VPN clients connect to |
 | `fleet.masters[].client_awg.address_pool` | CIDR | — | Address pool handed to clients. Set ⇒ the agent raises the client interface `wg0`; unset ⇒ the master has no AmneziaWG clients, and `awg3`, `ipv6: block` and an exit `lifeline` are refused. Must not overlap any other pool in the fleet; the controller refuses to start on an overlap |
 | `fleet.masters[].client_awg.backend` | `kernel` \| `userspace` | `kernel` | What carries the client interface `wg0`. `userspace` is a fallback, not an override: on a node with a kernel module, the module carries the interface regardless. `userspace` with an AmneziaWG 3.x profile is refused unless the node has no usable module and the `amneziawg-go` daemon is installed |
-| `fleet.masters[].client_awg.awg3` | `off` \| `timers` \| `full` | `off` | AmneziaWG 3.x on the client leg. `timers` randomises `RekeyAfterTime` and `KeepaliveTimeout` on the master's `wg0` (and an exit's lifeline interface) only — client configs and mihomo profiles stay exactly as under `off`. `full` also puts `HeaderProtectionKey` into client configs; the timers stay server-only. `full` adds header protection — **every client must re-import**. Requires a 3.x kernel module on the master; without the module the agent keeps the last-good config |
+| `fleet.masters[].client_awg.awg3` | `off` \| `timers` \| `full` | `off` | AmneziaWG 3.x on the client leg. `timers` randomises `RekeyAfterTime` and `KeepaliveTimeout` on the master's `wg0` (and an exit's lifeline interface) only — client configs and mihomo profiles stay exactly as under `off`. `full` also puts header protection, random trailers, one padding size for S1–S4 and H1–H4 = 1–4 into client configs; the timers stay server-only. Devices on a subscription with a provider follow on their own; `.conf` holders and lifeline configs must download again — [client-migration.md](client-migration.md#the-full-rollout). Requires a 3.x kernel module on the master; without the module the agent keeps the last-good config |
 | `fleet.masters[].client_awg.ipv6` | `off` \| `block` | `off` | What a client is told about IPv6. `off` says nothing, so a dual-stack client keeps its own IPv6 route. `block` hands the client `::/0` and answers forwarded IPv6 with ICMPv6 administratively-prohibited, so the device falls back to IPv4. The data plane stays IPv4-only. Requires an agent on wire v9; the controller refuses to render the route for an older agent |
 | `fleet.masters[].client_awg.mtu` | int | derived | Override the client interface MTU. Unset derives it from the hop chain |
 | `fleet.masters[].client_awg.keepalive` | int or `min-max` | `25` | `PersistentKeepalive` in generated client configs. A bare number pins one interval; a band gives each credential its own stable value. Keep it under the shortest NAT UDP timeout on the path (commonly 30s). Range 5-120 |
@@ -475,8 +475,9 @@ or with `--backup` or `--certs`, it is refused.
 ## AmneziaWG 3.0
 
 `fleet.awg3` (and its per-exit override) switches the **master↔exit** tunnels to
-AmneziaWG 3.0: chacha20 header protection plus randomised `RekeyAfterTime` (120 s up to
-130–140 s) and `KeepaliveTimeout` (10 s up to 12–15 s). `RejectAfterTime`,
+AmneziaWG 3.1: chacha20 header protection, `RandomTrailers = on`, one padding size for
+S1–S4 (12–31, never 16, drawn from `fleet.awg3_key`), H1–H4 = 1–4, plus randomised
+`RekeyAfterTime` (120 s up to 130–140 s) and `KeepaliveTimeout` (10 s up to 12–15 s). `RejectAfterTime`,
 `RekeyTimeout` and `MaxHandshakeAttempts` stay at the WireGuard defaults. Off by
 default: enabling it changes the wire format of a live tunnel. The client leg has its
 own switch, `fleet.masters[].client_awg.awg3`; header protection on either needs
@@ -488,7 +489,7 @@ Two gates apply. A premature flip degrades to "stays on 2.0", not to a dead tunn
 
 | Gate | Requirement | When it fires |
 |---|---|---|
-| Controller | Both ends of the tunnel on wire **v7** or later — the master is the end that lags, since the rolling upgrade never touches masters | Renders 2.0 for that tunnel |
+| Controller | Both ends of the tunnel on wire **v15** or later — the master is the end that lags, since the rolling upgrade never touches masters | Renders 2.0 for that tunnel and logs which node holds it |
 | Agent | The node's own kernel module is 3.x and on the same generation as `amneziawg-tools` (a mismatch fails `awg setconf` with `attribute type 14 has an invalid length`) | Refuses the 3.x config, keeps the last good one. Fires on **any** 3.x field, so it also gates `client_awg.awg3: timers` on the master's module |
 
 Check what a node runs before flipping the key — the master too:
@@ -496,4 +497,7 @@ Check what a node runs before flipping the key — the master too:
 ```sh
 modinfo amneziawg | grep ^version   # kernel module generation
 awg --version                       # userspace tools generation
+dpkg-query -W amneziawg-dkms        # the build: random trailers need 3.1.20260906 or newer
 ```
+
+The build of every node is also in `wgfleet_node_awg_module_info` and the dashboard panel "AmneziaWG module build, per node": builds of one upstream version print the same `modinfo version`.
