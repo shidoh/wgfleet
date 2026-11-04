@@ -3,7 +3,6 @@ package wg
 import (
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -194,12 +193,8 @@ func TestDeriveSignaturesAlwaysGenerated(t *testing.T) {
 // at 20 bytes by RFC 5389 (8-byte header + 12-byte transaction ID), and the TID is
 // `<r 12>` — fresh content every handshake, but the shape cannot vary without
 // ceasing to be STUN. Per-end uniqueness is therefore carried by I2 (QUIC), whose
-// DCID/SCID/payload sizes are drawn from the per-end seed.
+// connection IDs, keys, server name and size are drawn from the per-end seed.
 func TestISlotsAreStunQuicCombo(t *testing.T) {
-	// QUIC Initial long header: 0xc3, version 00000001, DCID-len byte, DCID,
-	// SCID-len byte, SCID, token-len 0x00, payload. The two length bytes must equal
-	// the following random-run lengths for the packet to parse as QUIC.
-	quicRe := regexp.MustCompile(`^<b 0xc300000001([0-9a-f]{2})><r (\d+)><b 0x([0-9a-f]{2})><r (\d+)><b 0x00><r (\d+)>$`)
 	// STUN Binding Request by parts: message type, message length, magic cookie, TID run.
 	stunRe := regexp.MustCompile(`^<b 0x([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{8})><r (\d+)>$`)
 
@@ -229,21 +224,8 @@ func TestISlotsAreStunQuicCombo(t *testing.T) {
 				t.Errorf("seed %q I1: STUN transaction ID must be 12 bytes, got %q", seed, sm[4])
 			}
 
-			// I2: a QUIC long header whose length bytes match their runs.
-			m := quicRe.FindStringSubmatch(loc.I2)
-			if m == nil {
-				t.Fatalf("seed %q I2 is not a QUIC-shaped long header: %q", seed, loc.I2)
-			}
-			dcidByte, _ := strconv.ParseInt(m[1], 16, 0)
-			dcidRun, _ := strconv.Atoi(m[2])
-			scidByte, _ := strconv.ParseInt(m[3], 16, 0)
-			scidRun, _ := strconv.Atoi(m[4])
-			if int(dcidByte) != dcidRun {
-				t.Errorf("seed %q I2: DCID length byte %d != DCID run %d (invalid QUIC)", seed, dcidByte, dcidRun)
-			}
-			if int(scidByte) != scidRun {
-				t.Errorf("seed %q I2: SCID length byte %d != SCID run %d (invalid QUIC)", seed, scidByte, scidRun)
-			}
+			// I2: a full client Initial that a QUIC parser opens (quicinitial_test.go).
+			openClientInitial(t, decodeStaticTemplate(t, loc.I2))
 
 			// I3-I5 empty: the cover is exactly two packets.
 			for k, s := range []string{loc.I3, loc.I4, loc.I5} {
@@ -261,9 +243,9 @@ func TestISlotsAreStunQuicCombo(t *testing.T) {
 		}
 		fleetI2[DeriveAWGLocal(seed, true).I2] = true
 	}
-	// I2 carries the uniqueness: its size profile must vary widely across the fleet.
-	if len(fleetI2) < 40 {
-		t.Errorf("I2 (QUIC) barely varies across the fleet: only %d distinct of 300 seeds", len(fleetI2))
+	// I2 carries the uniqueness: every end has its own Initial.
+	if len(fleetI2) < 300 {
+		t.Errorf("I2 (QUIC) repeats across the fleet: only %d distinct of 300 seeds", len(fleetI2))
 	}
 }
 

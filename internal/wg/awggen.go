@@ -83,25 +83,6 @@ const (
 	// RFC 5389), so I1 is deliberately UNIFORM across every end; per-end uniqueness is
 	// carried by the QUIC packet in I2.
 	stunBindingI1 = "<b 0x000100002112a442><r 12>"
-
-	// QUIC Initial (I2) field-size bounds. The packet is a QUIC v1 long header
-	// (0xc3, version 0x00000001) followed by a DCID-length byte + DCID, an
-	// SCID-length byte + SCID, a zero token-length, and a payload run. RFC 9000
-	// allows connection IDs of 0-20 bytes; drawing DCID/SCID/payload per end from
-	// the seed gives every interface a distinct QUIC size profile, and each length
-	// BYTE is emitted from the same drawn value as its run so those fields are
-	// internally consistent.
-	//
-	// This is PREFIX-plausible, not RFC 9000-complete: it deliberately omits the
-	// Length varint and Packet Number that a full parser (or a stateful censor)
-	// needs, and stays well under the ~1200 B minimum for a genuine client Initial.
-	// The target is the mobile operators' first-packet prefix filter, which keys on
-	// byte0 / version / CID framing — field-measured to admit it (every attempt on two
-	// mobile carriers).
-	// A deep inspector still sees malformed QUIC; that case is the per-credential
-	// none/noise knob (ADR-0033 Open items), not this default.
-	quicCIDLow, quicCIDHigh = 4, 18   // DCID/SCID length
-	quicPayLow, quicPayHigh = 96, 180 // Initial payload run
 )
 
 // DeriveAWGLocal returns the local (per-end) AmneziaWG parameters for one end:
@@ -135,8 +116,8 @@ func deriveJunk(seed string) (jc, jmin, jmax int) {
 // deriveSignatures generates the I1-I5 CPS templates from seed. The I-packets go
 // out in order BEFORE the WireGuard handshake (kernel send.c, amneziawg-go
 // device/send.go send every filled slot, then the Jc junk, then the initiation).
-// We fill exactly two: I1 a canonical STUN Binding Request, I2 a QUIC v1 Initial;
-// I3-I5 stay empty.
+// We fill exactly two: I1 a canonical STUN Binding Request, I2 a full QUIC v1
+// client Initial; I3-I5 stay empty.
 //
 // This is an amendment to ADR-0033, decided by a field A/B across several RU
 // mobile carriers and a home ISP. The prior design filled all five slots
@@ -166,16 +147,16 @@ func deriveSignatures(seed string, kernel bool) [awgSignatureSlots]string {
 	// I1: canonical STUN Binding Request, uniform across ends (see stunBindingI1).
 	out[0] = stunBindingI1
 
-	// I2: QUIC v1 Initial long header with per-end DCID/SCID/payload sizes, so every
-	// end carries a distinct QUIC size profile. Each CID length byte is emitted from
-	// the same drawn value as its run, so those fields are internally consistent —
-	// prefix-plausible, not RFC 9000-complete (see the quicCID/quicPay constants).
-	d := newDetStream(seed + "|I2quic")
-	dcid := quicCIDLow + d.intn(quicCIDHigh-quicCIDLow+1)
-	scid := quicCIDLow + d.intn(quicCIDHigh-quicCIDLow+1)
-	pay := quicPayLow + d.intn(quicPayHigh-quicPayLow+1)
-	out[1] = fmt.Sprintf("<b 0xc300000001%02x><r %d><b 0x%02x><r %d><b 0x00><r %d>",
-		dcid, dcid, scid, scid, pay)
+	// I2: a full QUIC v1 client Initial (quicinitial.go) — padded to a client-typical
+	// size and sealed with the real Initial keys, so it passes the size and
+	// decryption checks a QUIC-aware filter runs. Every choice in it is per end.
+	i2, err := quicInitialCover(seed)
+	if err != nil {
+		// Unreachable: the builder fails only on a ClientHello that outgrows the
+		// smallest datagram, which the tests rule out for every choice.
+		panic(fmt.Sprintf("wg: QUIC cover for seed %q: %v", seed, err))
+	}
+	out[1] = i2
 
 	// I3-I5 stay empty: the field A/B showed two packets suffice, and more distinct
 	// protocols only add signal against a stateful censor.
