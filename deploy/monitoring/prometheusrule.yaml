@@ -771,6 +771,26 @@ spec:
         summary: No client has a live handshake on {{ $labels.node }}
         description: The client-facing interface on {{ $labels.node }} has had zero active peers for
           10m. Either every client is offline at once, or the interface is serving an empty peer set.
+    - alert: WgfleetAWGGenerationSwitchNoHandshake
+      # An interface switched AmneziaWG generation (header protection on or off)
+      # within the last half hour and has no peer with a live handshake since. A
+      # switch is the moment a peer on the old generation stops being able to
+      # handshake at all — a client that has not fetched the new profile, an end
+      # the other side has not reached yet — and this is the window to look before
+      # going on with the next step of a migration. Warning: the rest of the fleet
+      # carries traffic, and a quiet interface outside that window is someone
+      # else's alert. wgcf is the WARP uplink, never ours to switch.
+      expr: changes(wgfleet_awg_header_protection{iface!="wgcf"}[30m]) > 0
+        and on(node, iface) wgfleet_wg_peers_active == 0
+      for: 10m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: No handshake on {{ $labels.node }} {{ $labels.iface }} after an AmneziaWG generation switch
+        description: '{{ $labels.iface }} on {{ $labels.node }} switched AmneziaWG generation in the last
+          30m and has had no peer with a live handshake for 10m. Peers still on the old generation
+          cannot connect; check them before the next migration step.'
     - alert: WgfleetClientPathDead
       # The master's own client cannot get traffic through the path its users take.
       # This is the only alert that measures the whole sentence rather than a

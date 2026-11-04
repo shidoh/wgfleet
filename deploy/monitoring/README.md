@@ -226,6 +226,7 @@ per interface):
 | `wgfleet_wg_handshake_age_seconds` | `iface,peer` | seconds since that peer's last handshake |
 | `wgfleet_wg_peer_rx_bytes` / `_tx_bytes` | `iface,peer` | bytes from and to that peer, cumulative; they reset when the interface is re-created, so read them with `rate()`/`increase()` rather than as a running total |
 | `wgfleet_wg_peers_active` | `iface` | peers with a handshake inside the freshness window |
+| `wgfleet_awg_header_protection` | `iface` | 1 when the live AmneziaWG interface has a header-protection key (3.x), 0 when it has none; absent when the interface cannot be read |
 | `wgfleet_wg_collector_up` | `iface` | 1 when the peer dump could be read, 0 when it could not |
 
 **VLESS clients** (`wgfleet_vless_*`, master agent, `node` + `role`; only while the
@@ -341,6 +342,7 @@ What ships, by severity:
 | `WgfleetNodeError` | critical |
 | `WgfleetNodeReportStale` | critical |
 | `WgfleetWARPEgressBlocked` | critical |
+| `WgfleetAWGGenerationSwitchNoHandshake` | warning |
 | `WgfleetASBlacklistEmpty` | warning |
 | `WgfleetAgentFlapping` | warning |
 | `WgfleetAgentScrapeDown` | warning |

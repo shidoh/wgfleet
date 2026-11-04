@@ -629,6 +629,7 @@ one-off sweep; a step up that stays is a new persistent source.
 
 ```
 wgfleet_wg_peer_rx_bytes{iface,peer} / _tx_bytes   # WireGuard, per peer (8-character key)
+wgfleet_awg_header_protection{iface}                       # 1 = live interface has AmneziaWG 3.x header protection, 0 = 2.0
 wgfleet_vless_user_rx_bytes{user} / _tx_bytes      # VLESS, per client (stats id, not the UUID)
 wgfleet_vless_user_online_ips{user}                # VLESS source IPs connected now
 wgfleet_vless_collector_up                         # 1 = xray stats API answered

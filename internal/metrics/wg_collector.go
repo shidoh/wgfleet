@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -30,7 +31,10 @@ type DumpFunc func(ctx context.Context, iface string) (string, error)
 type WGCollector struct {
 	ifaces []string
 	dump   DumpFunc
-	now    func() time.Time
+	// show returns `awg show <iface>`: the one place the live interface says
+	// whether header protection is on. Injected for tests.
+	show DumpFunc
+	now  func() time.Time
 
 	handshakeAge *prometheus.Desc
 	rxBytes      *prometheus.Desc
@@ -40,6 +44,11 @@ type WGCollector struct {
 	// see the peers" and "there are no peers" are the same silence — and the alert
 	// that matters keys on a series that simply would not exist.
 	collectorUp *prometheus.Desc
+	// headerProtection is the interface's AmneziaWG generation as applied, not as
+	// specified: 1 when the live interface has a header-protection key (3.x), 0
+	// when it has none. A switch shows as a change of this series, which is how
+	// "no handshake since the switch" is told apart from an ordinary quiet hour.
+	headerProtection *prometheus.Desc
 }
 
 var _ prometheus.Collector = (*WGCollector)(nil)
@@ -56,6 +65,7 @@ func NewWGCollector(reg *prometheus.Registry, node, role string, ifaces []string
 	c := &WGCollector{
 		ifaces: ifaces,
 		dump:   dump,
+		show:   awgShow,
 		now:    time.Now,
 		handshakeAge: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "wg", "handshake_age_seconds"),
@@ -77,6 +87,10 @@ func NewWGCollector(reg *prometheus.Registry, node, role string, ifaces []string
 			prometheus.BuildFQName(namespace, "wg", "collector_up"),
 			"1 when this node's peer dump could be read, 0 when it could not. Absence of the peer series is otherwise indistinguishable from having no peers.",
 			[]string{"iface"}, cl),
+		headerProtection: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "awg", "header_protection"),
+			"1 when the live AmneziaWG interface has a header-protection key (AmneziaWG 3.x), 0 when it has none. Absent when the interface cannot be read.",
+			[]string{"iface"}, cl),
 	}
 	reg.MustRegister(c)
 	return c
@@ -89,6 +103,7 @@ func (c *WGCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.txBytes
 	ch <- c.peersActive
 	ch <- c.collectorUp
+	ch <- c.headerProtection
 }
 
 // Collect implements prometheus.Collector. Each interface is probed
@@ -123,7 +138,35 @@ func (c *WGCollector) Collect(ch chan<- prometheus.Metric) {
 			}
 		}
 		ch <- prometheus.MustNewConstMetric(c.peersActive, prometheus.GaugeValue, float64(active), iface)
+		c.collectHeaderProtection(ch, iface)
 	}
+}
+
+// collectHeaderProtection reads the live interface. `awg show` prints the key's
+// presence as a line (its value hidden); an unreadable interface emits nothing —
+// a guessed 0 would read as a switch back to 2.0.
+func (c *WGCollector) collectHeaderProtection(ch chan<- prometheus.Metric, iface string) {
+	ctx, cancel := context.WithTimeout(context.Background(), wgDumpTimeout)
+	out, err := c.show(ctx, iface)
+	cancel()
+	if err != nil {
+		return
+	}
+	on := 0.0
+	if strings.Contains(out, "header protection key:") {
+		on = 1
+	}
+	ch <- prometheus.MustNewConstMetric(c.headerProtection, prometheus.GaugeValue, on, iface)
+}
+
+// awgShow runs `awg show <iface>`. Only awg: plain wg knows no header protection,
+// and an interface it can show has none.
+func awgShow(ctx context.Context, iface string) (string, error) {
+	out, err := exec.CommandContext(ctx, "awg", "show", iface).Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // wgShowDump runs `awg show <iface> dump`, falling back to `wg show`.

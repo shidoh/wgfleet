@@ -108,3 +108,47 @@ func gatherValue(t *testing.T, reg *prometheus.Registry, name string, labels map
 	t.Fatalf("metric %s%v not found", name, labels)
 	return 0
 }
+
+// The generation is read off the live interface: `awg show` prints a
+// "header protection key:" line (value hidden) when 3.x header protection is on.
+// An interface that cannot be shown emits nothing — a guessed 0 would look like a
+// switch back to 2.0.
+func TestWGCollectorReportsHeaderProtectionFromTheLiveInterface(t *testing.T) {
+	dump := func(context.Context, string) (string, error) { return "priv\tpub\t51820\toff\n", nil }
+	for _, tc := range []struct {
+		name string
+		show string
+		err  error
+		want float64
+		has  bool
+	}{
+		{"3.x", "interface: awg0\n  public key: x\n  header protection key: (hidden)\n  random trailers: (hidden)\n", nil, 1, true},
+		{"2.0", "interface: wg0\n  public key: x\n  listening port: 443\n", nil, 0, true},
+		{"unreadable", "", errors.New("no such device"), 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := prometheus.NewRegistry()
+			c := NewWGCollector(reg, "exit-de-1", "exit", []string{"awg0"}, dump)
+			c.show = func(context.Context, string) (string, error) { return tc.show, tc.err }
+			mfs, err := reg.Gather()
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, mf := range mfs {
+				if mf.GetName() != "wgfleet_awg_header_protection" {
+					continue
+				}
+				for _, m := range mf.GetMetric() {
+					found = true
+					if m.GetGauge().GetValue() != tc.want {
+						t.Errorf("value = %v, want %v", m.GetGauge().GetValue(), tc.want)
+					}
+				}
+			}
+			if found != tc.has {
+				t.Errorf("series present = %v, want %v", found, tc.has)
+			}
+		})
+	}
+}
