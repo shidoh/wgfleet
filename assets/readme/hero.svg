@@ -72,7 +72,7 @@
         <text x="1130" y="140" font-size="15" fill="#5a6270" text-anchor="end">writes nothing</text>
 
         <g font-size="14.5">
-          <text y="190"><tspan x="636" fill="#3ddc84" font-weight="700">+ create</tspan><tspan x="724" fill="#8b93a1">awg0.conf — 378 bytes, mode 600</tspan></text>
+          <text y="190"><tspan x="636" fill="#3ddc84" font-weight="700">+ create</tspan><tspan x="724" fill="#8b93a1">awg0.conf — 2733 bytes, mode 600</tspan></text>
           <text x="660" y="213" fill="#5a6270">| <tspan fill="#8b93a1">[Interface]</tspan></text>
           <text x="660" y="236" fill="#5a6270">| PrivateKey = <tspan fill="#f5b14c">&lt;redacted&gt;</tspan></text>
           <text x="660" y="259" fill="#5a6270">| ListenPort = <tspan fill="#8b93a1">22891</tspan></text>
