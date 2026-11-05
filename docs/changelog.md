@@ -5,6 +5,10 @@ What changed for operators in each wgfleet release — behaviour, manifest keys,
 Every release archive carries this page as `CHANGELOG.md`.
 New releases are announced, with the archives attached, in the Telegram channel [t.me/wgfleet](https://t.me/wgfleet).
 
+## v0.3.6 — unreleased
+
+- Monitoring: when no controller answers its scrape, `WgfleetControllerDown` (critical) is now the only page. `WgfleetNoReadyExit`, `WgfleetNoExitInRotation`, `WgfleetConfigUnreadable` and `WgfleetLifelineCheckMissing` are held while it fires. They read the controller's metrics, so an unreachable controller made them report "no Ready exit" and "no exit in rotation" for masters whose exits were all live. With several controllers, they are held only while none answers. If the controller's scrape target is missing altogether, they fire as before. Apply the updated `deploy/monitoring/vmrule.yaml` or `prometheusrule.yaml`.
+
 ## v0.3.5 — 2026-11-04
 
 !!! tip "What stands out in this release"

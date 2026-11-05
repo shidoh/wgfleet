@@ -42,7 +42,11 @@ spec:
       annotations:
         summary: wgfleet controller /metrics is unreachable
         description: The controller at {{ $labels.instance }} has not been scrapeable for 3m. The whole
-          fleet is flying blind and no node can re-register.
+          fleet is flying blind and no node can re-register. If the agent on the same host is
+          unreachable too, the whole host is offline and its clients have lost that master. The
+          fleet-wide alerts that read the controller's metrics (WgfleetNoReadyExit,
+          WgfleetNoExitInRotation, WgfleetConfigUnreadable, WgfleetLifelineCheckMissing) are held
+          while this fires, so this is the one page for the outage.
     - alert: WgfleetAgentScrapeDown
       expr: up{job="wgfleet",component="agent"} == 0
       for: 10m
@@ -162,8 +166,15 @@ spec:
       # rather than merely quieten it — a deployment-order trap with no signal. This
       # form fails OPEN: no gauge means no suppression, and the alert behaves exactly
       # as it did before.
+      #
+      # Also held while no controller answers its scrape: every node series comes from
+      # the controller, so an unreachable one reads as "no Ready exit" while the exits
+      # run fine, and WgfleetControllerDown pages for it under its own name. `max` so
+      # one dead controller of several does not mute the fleet; no scrape target means
+      # no `up` series and the guard falls away (fails open).
       expr: ((count(wgfleet_node_info{role="exit",state="Ready"} == 1) or vector(0)) < 1)
         unless on() (wgfleet_controller_store_up == 0)
+        unless on() (max(up{job="wgfleet",component="controller"}) == 0)
       for: 5m
       labels:
         severity: critical
@@ -190,8 +201,10 @@ spec:
       # vanishing — an agent below wire v11, a spec that stopped rendering, a manifest
       # edit — reads exactly like health to WgfleetClientPathDown, which can only fire
       # on a series that exists. An absent series must be the loudest case, not the
-      # quietest. 30m, because restarts and rolling upgrades drop it briefly.
+      # quietest. 30m, because restarts and rolling upgrades drop it briefly. Held
+      # while no controller answers (WgfleetControllerDown pages for that).
       expr: absent(wgfleet_node_health_check{check="lifeline"})
+        unless on() (max(up{job="wgfleet",component="controller"}) == 0)
       for: 30m
       labels:
         severity: warning
@@ -414,12 +427,16 @@ spec:
       # tier at all (the held-out family has one series per active-tier exit), so a
       # controller or agent that does not yet export these series stays silent
       # instead of paging on an empty selector; the first `unless` drops the
-      # masters that still have a live exit, the second silences the rule while the
-      # controller's own store is down. WgfleetNoReadyExit covers the same outage
+      # masters that still have a live exit, the last two silence the rule while the
+      # controller's own store is down or no controller answers its scrape (held-out
+      # comes from the agents, liveness from the controller, so an unreachable
+      # controller would page this for every healthy master; WgfleetControllerDown
+      # pages for it instead). WgfleetNoReadyExit covers the same outage
       # from the node-state side.
       expr: (count by (node) (wgfleet_agent_exit_held_out) > 0)
         unless on(node) (count by (node) (wgfleet_exit_tunnel_alive == 1 and on(node, exit) wgfleet_agent_exit_held_out) > 0)
         unless on() (wgfleet_controller_store_up == 0)
+        unless on() (max(up{job="wgfleet",component="controller"}) == 0)
       for: 2m
       labels:
         severity: critical
@@ -893,8 +910,10 @@ spec:
       # Watch config_drift, not config_info: the collector emits config_info from
       # the digest it already holds in memory, BEFORE it tries to read the file, so
       # config_info survives exactly the failure this alert is named for. Only
-      # config_drift goes absent when the manifest cannot be read.
+      # config_drift goes absent when the manifest cannot be read. Held while no
+      # controller answers its scrape (WgfleetControllerDown pages for that).
       expr: absent(wgfleet_controller_config_drift)
+        unless on() (max(up{job="wgfleet",component="controller"}) == 0)
       for: 15m
       labels:
         severity: warning

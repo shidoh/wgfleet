@@ -396,6 +396,8 @@ What ships, by severity:
 
 With several masters, `WgfleetNoExitInRotation` is evaluated per master (label `node`); tunnel alerts join on master and exit. Re-apply the rules after upgrading: rules in the cluster do not update themselves.
 
+When no controller answers its scrape, `WgfleetControllerDown` is the one critical page. `WgfleetNoReadyExit`, `WgfleetNoExitInRotation`, `WgfleetConfigUnreadable` and `WgfleetLifelineCheckMissing` read the controller's metrics and are held until it answers again. If the agent on the same host is unreachable too (`WgfleetAgentScrapeDown`), the whole host is offline, not just the controller process.
+
 Two notes worth carrying in your head:
 
 - **`WgfleetWARPEgress{Blocked,Degraded}` only fire on an exit running WARP.** The
