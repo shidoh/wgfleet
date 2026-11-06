@@ -275,8 +275,7 @@
       "MihomoImage": "metacubex/mihomo:v1.19.30",
       "PublicIP": "203.0.113.1",
       "ClientDNS": [
-        "10.20.25.1",
-        "10.20.25.2"
+        "10.20.25.1"
       ],
       "ClientAllowedIPs": "",
       "NetnsHolderImage": ""
@@ -288,8 +287,7 @@
       "ServerAddress": "10.80.0.1",
       "MTU": 1360,
       "DNS": [
-        "10.20.25.1",
-        "10.20.25.2"
+        "10.20.25.1"
       ],
       "AllowedIPs": null,
       "AWG": {

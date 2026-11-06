@@ -820,7 +820,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 
 	// dnsUpstreams collects the active exit blockys (mgmt addrs) the master-tier
 	// resolver forwards public queries to (ADR-0024). Built from the same membership
-	// as the LB group — registered, non-decommissioned exits — so a new exit auto-joins
+	// as the LB group — registered, non-decommissioned exits with dns_filter on — so a new exit auto-joins
 	// the resolver set as soon as it registers (drain doesn't remove it: a drained
 	// exit's blocky still resolves, and keeping it avoids an empty upstream group).
 	var dnsUpstreams []string
@@ -1061,7 +1061,9 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 				Reserve: isReserve,
 			})
 		}
-		if exitNode.MgmtAddr != "" {
+		// Only an exit that runs blocky answers on its mgmt address; listing one
+		// that does not hands the resolver an upstream that times out every query.
+		if exit.DNSFilter && exitNode.MgmtAddr != "" {
 			dnsUpstreams = append(dnsUpstreams, exitNode.MgmtAddr)
 		}
 	}
@@ -1535,9 +1537,13 @@ func (b *Broker) clientResolvers(ctx context.Context, master config.MasterConfig
 		}
 		return nil
 	}
-	// Pre-ADR-0024 default: clients resolve directly against the exit blockys.
+	// Pre-ADR-0024 default: clients resolve directly against the exit blockys —
+	// those exits that run one (dns_filter); the rest have nothing on :53.
 	var dns []string
 	for _, exit := range b.fleet.Exits {
+		if !exit.DNSFilter {
+			continue
+		}
 		if node, _, err := b.lookupPubKey(ctx, exit.Name); err == nil && node.MgmtAddr != "" {
 			dns = append(dns, node.MgmtAddr)
 		}
