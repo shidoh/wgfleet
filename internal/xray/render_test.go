@@ -48,9 +48,10 @@ func TestRenderConfigStructure(t *testing.T) {
 	if len(names) != 1 || names[0] != "www.microsoft.com" {
 		t.Errorf("serverNames wrong: %v", names)
 	}
-	// shortIds carries "" plus the configured one.
+	// shortIds carries only the configured one: "" would admit a client that
+	// sends no short-id at all.
 	sids := rs["shortIds"].([]any)
-	if len(sids) != 2 || sids[0] != "" || sids[1] != "0badc0de" {
+	if len(sids) != 1 || sids[0] != "0badc0de" {
 		t.Errorf("shortIds wrong: %v", sids)
 	}
 	xs := ss["xhttpSettings"].(map[string]any)
@@ -95,7 +96,8 @@ func TestRenderConfigIPv4Pin(t *testing.T) {
 		t.Errorf("expected freedom domainStrategy UseIPv4, got %v", fs)
 	}
 
-	// AllowIPv6 true ⇒ no dns block, no freedom domainStrategy (AsIs).
+	// AllowIPv6 true ⇒ no dns block; freedom still resolves (UseIP) so its block
+	// list sees the address a name points at.
 	s := sampleSpec()
 	s.AllowIPv6 = true
 	out2, _ := RenderConfig(RenderInput{Spec: s, PrivateKey: "K"})
@@ -170,5 +172,51 @@ func TestRedactConfig(t *testing.T) {
 	}
 	if !strings.Contains(red, "REDACTED") {
 		t.Error("redaction marker missing")
+	}
+}
+
+// The exit's proxied egress may not reach its own loopback, private or other
+// special ranges: whoever holds the tunnel's credentials gets the internet
+// through the exit, not the exit's host and neighbours. Same list as the bridge.
+func TestRenderConfigFreedomBlocksSpecialRanges(t *testing.T) {
+	for _, allowIPv6 := range []bool{false, true} {
+		s := sampleSpec()
+		s.AllowIPv6 = allowIPv6
+		out, err := RenderConfig(RenderInput{Spec: s, PrivateKey: "K", EgressMark: EgressMark})
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		var c struct {
+			Outbounds []struct {
+				Protocol string `json:"protocol"`
+				Settings struct {
+					DomainStrategy string `json:"domainStrategy"`
+					FinalRules     []struct {
+						Action string   `json:"action"`
+						IP     []string `json:"ip"`
+					} `json:"finalRules"`
+				} `json:"settings"`
+			} `json:"outbounds"`
+		}
+		if err := json.Unmarshal([]byte(out), &c); err != nil {
+			t.Fatal(err)
+		}
+		f := c.Outbounds[0]
+		if f.Protocol != "freedom" {
+			t.Fatalf("first outbound is %q, want freedom", f.Protocol)
+		}
+		// A name must be resolved before the rules run, or it reaches 127.0.0.1 unseen.
+		if f.Settings.DomainStrategy == "" || f.Settings.DomainStrategy == "AsIs" {
+			t.Errorf("allowIPv6=%v: freedom domainStrategy %q lets names past the block list", allowIPv6, f.Settings.DomainStrategy)
+		}
+		rules := f.Settings.FinalRules
+		if len(rules) != 2 || rules[0].Action != "block" || rules[1].Action != "allow" {
+			t.Fatalf("allowIPv6=%v: finalRules = %+v, want block list then allow", allowIPv6, rules)
+		}
+		for _, cidr := range []string{"127.0.0.0/8", "10.0.0.0/8", "192.168.0.0/16", "169.254.0.0/16", "::1/128", "fc00::/7"} {
+			if !strings.Contains(strings.Join(rules[0].IP, " "), cidr) {
+				t.Errorf("allowIPv6=%v: %s is not blocked", allowIPv6, cidr)
+			}
+		}
 	}
 }

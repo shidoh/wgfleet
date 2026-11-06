@@ -250,26 +250,36 @@ func RenderConfig(in RenderInput) (string, error) {
 	case s.Dest == "":
 		return "", fmt.Errorf("xray render: REALITY camouflage dest is required")
 	}
-	// shortIds always carries "" (matches any client short-id) plus the configured
-	// one when set — mirrors the documented REALITY template.
+	// shortIds holds only the configured short-id: "" would admit a client that
+	// sends none, leaving the uuid as the only check. The empty entry stays only
+	// for a spec without a short-id, which every master's tunnel carries.
 	shortIDs := []string{""}
 	if s.ShortID != "" {
-		shortIDs = []string{"", s.ShortID}
+		shortIDs = []string{s.ShortID}
 	}
 	serverNames := serverNamesFor(s.ServerName, s.AllowEmptySNI)
 
-	out := outbound{Protocol: "freedom", Tag: "direct"}
-	if in.EgressMark > 0 {
-		out.StreamSettings = &outStreamSettings{Sockopt: sockopt{Mark: in.EgressMark}}
-	}
+	// The proxied egress reaches the internet, never the exit's own loopback,
+	// private or other special ranges — the bridge's block list, for the same
+	// reason. The name is resolved first (UseIP), or one pointing at 127.0.0.1
+	// would pass the list unseen.
+	//
 	// Pin xray to IPv4 unless the exit advertises real IPv6 egress: the data plane is
 	// IPv4-only, so an AAAA-only dest (e.g. some Fastly anycast) would
 	// black-hole the REALITY steal and the proxied egress. dns.queryStrategy covers
 	// resolution (incl. the steal); freedom domainStrategy covers the proxied egress.
+	freedom := &freedomFinal{
+		DomainStrategy: "UseIP",
+		FinalRules:     []finalRule{{Action: "block", IP: bridgeBlocked}, {Action: "allow"}},
+	}
 	var dnsCfg *dnsConfig
 	if !s.AllowIPv6 {
 		dnsCfg = &dnsConfig{QueryStrategy: "UseIPv4"}
-		out.Settings = &freedomSettings{DomainStrategy: "UseIPv4"}
+		freedom.DomainStrategy = "UseIPv4"
+	}
+	out := outbound{Protocol: "freedom", Tag: "direct", Settings: freedom}
+	if in.EgressMark > 0 {
+		out.StreamSettings = &outStreamSettings{Sockopt: sockopt{Mark: in.EgressMark}}
 	}
 
 	ss := realityStream(s.Dest, in.PrivateKey, serverNames, shortIDs, s.Mode, xhttpModeOr(s.XHTTPMode), pathOr(s.XHTTPPath))
