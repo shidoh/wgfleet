@@ -8,6 +8,12 @@ New releases are announced, with the archives attached, in the Telegram channel 
 ## v0.3.6 — unreleased
 
 - Monitoring: when no controller answers its scrape, `WgfleetControllerDown` (critical) is now the only page. `WgfleetNoReadyExit`, `WgfleetNoExitInRotation`, `WgfleetConfigUnreadable` and `WgfleetLifelineCheckMissing` are held while it fires. They read the controller's metrics, so an unreachable controller made them report "no Ready exit" and "no exit in rotation" for masters whose exits were all live. With several controllers, they are held only while none answers. If the controller's scrape target is missing altogether, they fire as before. Apply the updated `deploy/monitoring/vmrule.yaml` or `prometheusrule.yaml`.
+- DNS: masters and clients now resolve only through exits that run a resolver (`exits[].dns_filter: true`). On a fleet where some exits have it off, their addresses used to be listed too, and queries sent there timed out. If no exit runs a resolver, the master's resolver falls back to its built-in DoT/DoH upstreams, and clients of a master without `dns_filter` get no `DNS =` line.
+- Health: the `dns-filter` check now passes only when the resolver answers with an address. It used to pass on any reply, including SERVFAIL and NXDOMAIN.
+- Throughput watchdog: an HTTP error from the probe target (403, 404, 502…) no longer counts as a measurement; the probe moves on to the next target. A fast error page used to read as a fast link.
+- Auto-suspend: a degraded exit is taken out of the balancer only while another exit has reported a passing throughput measurement in the last two minutes. An exit that went quiet or never measured its throughput no longer counts as the healthy one that stays.
+- REALITY between master and exit: the exit no longer accepts a connection without the tunnel's short-id, and the exit's egress refuses loopback, private, link-local, CGNAT and other special-purpose addresses — the list the exit-initiated bridge already uses. xray on every exit with REALITY restarts once on upgrade.
+- `--plan` output now hides the VLESS `uuid`, the REALITY `short-id` and the mihomo API `secret`.
 
 ## v0.3.5 — 2026-11-04
 
