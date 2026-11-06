@@ -5,15 +5,42 @@ What changed for operators in each wgfleet release — behaviour, manifest keys,
 Every release archive carries this page as `CHANGELOG.md`.
 New releases are announced, with the archives attached, in the Telegram channel [t.me/wgfleet](https://t.me/wgfleet).
 
-## v0.3.6 — unreleased
+## v0.3.6 — 2026-11-06
 
-- Monitoring: when no controller answers its scrape, `WgfleetControllerDown` (critical) is now the only page. `WgfleetNoReadyExit`, `WgfleetNoExitInRotation`, `WgfleetConfigUnreadable` and `WgfleetLifelineCheckMissing` are held while it fires. They read the controller's metrics, so an unreachable controller made them report "no Ready exit" and "no exit in rotation" for masters whose exits were all live. With several controllers, they are held only while none answers. If the controller's scrape target is missing altogether, they fire as before. Apply the updated `deploy/monitoring/vmrule.yaml` or `prometheusrule.yaml`.
-- DNS: masters and clients now resolve only through exits that run a resolver (`exits[].dns_filter: true`). On a fleet where some exits have it off, their addresses used to be listed too, and queries sent there timed out. If no exit runs a resolver, the master's resolver falls back to its built-in DoT/DoH upstreams, and clients of a master without `dns_filter` get no `DNS =` line.
-- Health: the `dns-filter` check now passes only when the resolver answers with an address. It used to pass on any reply, including SERVFAIL and NXDOMAIN.
-- Throughput watchdog: an HTTP error from the probe target (403, 404, 502…) no longer counts as a measurement; the probe moves on to the next target. A fast error page used to read as a fast link.
-- Auto-suspend: a degraded exit is taken out of the balancer only while another exit has reported a passing throughput measurement in the last two minutes. An exit that went quiet or never measured its throughput no longer counts as the healthy one that stays.
-- REALITY between master and exit: the tunnel's VLESS id and short-id are now random and kept by the controller, one pair per master interface and exit. They used to be computed from the node names, so anyone who knew the names could compute them. The exit also no longer accepts a connection without the short-id, and its egress refuses loopback, private, link-local, CGNAT and other special-purpose addresses — the list the exit-initiated bridge already uses. **On upgrade**, every master↔exit REALITY tunnel switches to its new identity once: xray restarts on each exit with REALITY, mihomo restarts on each master with a REALITY tunnel (active or standby), and a tunnel whose ends have not both pulled the new spec is down until they have — about one reconcile pass. The ids are in the controller's state database and its backups; deleting an exit issues new ones when it returns.
-- `--plan` output now hides the VLESS `uuid`, the REALITY `short-id` and the mihomo API `secret`.
+!!! tip "What stands out in this release"
+
+    - **REALITY between master and exit can no longer be computed from the outside.** The tunnel's VLESS id and short-id are random and kept by the controller instead of being derived from node names, the exit refuses a connection without the short-id, and its egress no longer reaches loopback or private addresses.
+    - **DNS and health checks tell the truth.** Masters and clients resolve only through exits that run a resolver, a resolver that answers SERVFAIL is no longer reported healthy, and an error page no longer reads as a fast link.
+    - **A controller outage pages once.** While no controller answers its scrape, `WgfleetControllerDown` is the only alert instead of a burst of false "no Ready exit".
+
+    Full detail and upgrade steps are in the entries below.
+
+### Read before upgrading
+
+!!! warning "Upgrade steps"
+
+    1. **Controller first, then every agent** — the co-located master with `deploy-master.sh`, the rest from the node page or a rolling upgrade. The wire contract is unchanged (15).
+    2. **Expect one short drop on master-initiated REALITY tunnels** (`transports.reality` without `exit_initiated`). Each switches to its new identity once: xray restarts on the exit, mihomo restarts on every master with such a tunnel (active or standby), and the tunnel is down until both ends have pulled the new spec — about one reconcile pass. Exit-initiated REALITY and AmneziaWG tunnels are not affected.
+    3. **Keep a backup of the state database from before the upgrade.** The new identities live there, and the controller migrates the schema on start. Going back to v0.3.5 needs that pre-upgrade database (`deploy-master.sh` leaves it at `state.db.prev`); a restore from an older backup reissues the identities, with the same one-time drop.
+    4. **Re-apply monitoring:** `deploy/monitoring/vmrule.yaml` or `prometheusrule.yaml`.
+
+### Security
+
+- **REALITY between master and exit:** the tunnel's VLESS id and short-id are now random and kept by the controller, one pair per master interface and exit. They used to be computed from the node names, so anyone who knew the names could compute them. Deleting an exit issues new ones when it returns.
+- **The exit accepts no REALITY connection without the tunnel's short-id**, and its proxied egress refuses loopback, private, link-local, CGNAT and other special-purpose addresses — the list the exit-initiated bridge already uses.
+- **`--plan` output hides the VLESS `uuid`, the REALITY `short-id` and the mihomo API `secret`.**
+
+### Fixed
+
+- **DNS:** masters and clients resolve only through exits that run a resolver (`exits[].dns_filter: true`). On a fleet where some exits have it off, their addresses used to be listed too, and queries sent there timed out. If no exit runs a resolver, the master's resolver falls back to its built-in DoT/DoH upstreams, and clients of a master without `dns_filter` get no `DNS =` line.
+- **The `dns-filter` check passes only when the resolver answers with an address.** It used to pass on any reply, SERVFAIL and NXDOMAIN included.
+- **Throughput watchdog:** a probe target that answers with an HTTP error (403, 404, 502…) is skipped instead of measured; a fast error page used to read as a fast link.
+- **Auto-suspend:** a degraded exit is taken out of the balancer only while another exit has reported a passing throughput measurement in the last two minutes. An exit that went quiet or never measured its throughput no longer counts as the healthy one that stays.
+- **Monitoring:** when no controller answers its scrape, `WgfleetControllerDown` (critical) is the only page. `WgfleetNoReadyExit`, `WgfleetNoExitInRotation`, `WgfleetConfigUnreadable` and `WgfleetLifelineCheckMissing` are held while it fires: they read the controller's metrics, so an unreachable controller made them report "no Ready exit" and "no exit in rotation" for masters whose exits were all live. With several controllers, they are held only while none answers. If the controller's scrape target is missing altogether, they fire as before.
+
+### Changed
+
+- **The example manifest no longer pins blocky to `latest`**; without a tag the built-in pinned version is used.
 
 ## v0.3.5 — 2026-11-04
 

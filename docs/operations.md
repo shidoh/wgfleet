@@ -738,15 +738,15 @@ All keys: [configuration.md#2-controller-the-controller-process](configuration.m
 | Exit | `reality-bridge` | `transports.reality.exit_initiated` and the active transport is REALITY+XHTTP | Replaces `reality-inbound`: the bridge holds a connection to at least one master's portal. A freshly restarted bridge gets 5 s before it fails. One master unreachable shows only in `wgfleet_agent_reality_bridge_connected{master}` and `WgfleetRealityBridgeDown`. |
 | Exit | `egress-reachability` | always | Reports ok, degraded or blocked — the censorship signal. |
 | Exit | `egress-active` | always | The egress method actually in use (`warp`, `direct`), which is not always the configured one: a blocked WARP fails over on its own. |
-| Exit | `egress-throughput` | a throughput floor is set (`min_egress_throughput_kbytes`, or the fleet floor) | Three consecutive below-floor passes report **Degraded**, two at or above the floor clear it. A sustained collapse also fails the egress over to the next method, the same way a block does. |
+| Exit | `egress-throughput` | a throughput floor is set (`min_egress_throughput_kbytes`, or the fleet floor) | Three consecutive below-floor passes report **Degraded**, two at or above the floor clear it. A sustained collapse also fails the egress over to the next method, the same way a block does. A probe target that answers with an HTTP error is skipped, not measured. |
 | Exit | `warp-egress` | `egress: warp` | A dead endpoint is replaced on its own: see [WARP endpoint fallback](#warp-endpoint-fallback). |
-| Exit | `dns-filter` | `dns.enabled`, once the resolver has its listen address | — |
+| Exit | `dns-filter` | `dns.enabled`, once the resolver has its listen address | Passes only when the resolver answers with an address; SERVFAIL, NXDOMAIN or an empty answer fail it. |
 | Exit | `lifeline` | the exit has a `lifeline` | Red with a reason ⇒ `awgl0` serves its last good config, not the current spec. |
 | Master | `client-wg` | always | The client interface is up. |
 | Master | `client-wg-owned` | `client_awg.address_pool` set | The agent carries `wg0` from the current spec. Every deferral the planner can report (no key yet, spec rejected, 3.x refused) leaves the interface up on its last-good config and this check red. |
 | Master | `udp-return-path` | `client_awg.address_pool` set | No UDP port this node holds silently black-holes the replies to clients on it. |
 | Master | `mihomo-api` | always | The Clash API on `<mgmt_addr>:9090` answers `/version`. |
-| Master | `dns-filter` | `dns.enabled`, once the resolver has its listen address | The master is the clients' resolver: up-but-not-resolving must read Degraded. |
+| Master | `dns-filter` | `dns.enabled`, once the resolver has its listen address | The master is the clients' resolver: up-but-not-resolving must read Degraded. Passes only when the answer holds an address; SERVFAIL, NXDOMAIN or an empty answer fail it. |
 | Master | `client-vless` | `client_vless.enabled` | The VLESS+REALITY inbound is up; a down inbound shows **Degraded**. |
 | Master | `reality-portal` | an exit with `transports.reality.exit_initiated` dials this master | A socket listens on the portal port (`ss -ltn`). Says nothing about whether exits reach it — that is `WgfleetRealityBridgeDown`. |
 | Any | `spec-valid` | only when the agent rejects a spec | Red with the reason; the node keeps its last good configuration. |
