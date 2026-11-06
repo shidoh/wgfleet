@@ -476,7 +476,20 @@ func TestExitInitiatedDoesNotRotateAnAutoSuspendedExit(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	b, st, pub := eiFleet(t, &now)
 	start := now
-	report(t, st, eiExit, now, now, eiPinned)
+	// The exit measures its throughput as passing again — recovering, but still
+	// inside the suspension's release window. A one-exit fleet with no passing
+	// measurement would trip the last-exit guard, which keeps nothing suspended.
+	recovering := func(at, handshake time.Time) {
+		t.Helper()
+		if err := st.RecordStatus(context.Background(), domain.NodeStatus{
+			NodeID: eiExit, State: domain.StateReady, ReportedAt: at, LastHandshake: handshake,
+			AWGMasterEndpoint: eiPinned,
+			Checks:            []domain.HealthCheck{{Name: domain.CheckEgressThroughput, OK: true}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recovering(now, now)
 	report(t, st, eiMaster, now, now, "")
 	_ = masterTunnel(t, b)
 
@@ -484,7 +497,7 @@ func TestExitInitiatedDoesNotRotateAnAutoSuspendedExit(t *testing.T) {
 	b.suspend = map[string]*suspendTrack{eiExit: {suspended: true, degradedSince: start}}
 	b.suspendMu.Unlock()
 	now = start.Add(AWGRotateAfter + time.Minute)
-	report(t, st, eiExit, now, start, eiPinned)
+	recovering(now, start)
 	report(t, st, eiMaster, now, now, "")
 	if got := exitPeer(t, b, pub).Endpoint; got != eiPinned {
 		t.Fatalf("rotated the port of an auto-suspended exit: endpoint %q, want %q", got, eiPinned)

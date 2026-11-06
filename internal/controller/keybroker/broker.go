@@ -108,6 +108,10 @@ type suspendTrack struct {
 const (
 	AutoSuspendAfter = 5 * time.Minute
 	AutoReleaseAfter = 5 * time.Minute
+	// suspendGuardReportFresh is how recent an exit's passing throughput report
+	// must be to count as the healthy exit the last-exit guard leaves in place. An
+	// exit that went quiet may be the one that is down.
+	suspendGuardReportFresh = 2 * time.Minute
 )
 
 // New constructs a Broker over the given store and fleet manifest.
@@ -1194,7 +1198,7 @@ func deriveRealityIDs(seed string) (uuid, shortID string) {
 // throughputAutoSuspend returns the set of exit names to auto-suspend from the LB
 // group because the throughput watchdog reported their active egress sustained-
 // degraded (ADR-0021). It NEVER empties the group: an exit is auto-suspended only
-// if at least one PROVEN-healthy exit (reported, not degraded, not admin-drained)
+// if at least one PROVEN-healthy exit (a fresh, passing throughput report, not admin-drained)
 // would remain — a throttled exit still beats a black hole when every node is bad.
 // An exit with no status yet (Pending/Provisioning) is neither degraded nor counted
 // healthy: it must not satisfy the last-exit guard, or two limping-but-reporting
@@ -1241,7 +1245,8 @@ func (b *Broker) throughputAutoSuspend(ctx context.Context) (map[string]bool, er
 		switch {
 		case st.EgressThroughputDegraded():
 			degraded[exit.Name] = true
-		case !node.Drain && !exit.Drain:
+		case !node.Drain && !exit.Drain && st.EgressThroughputProven() &&
+			b.now().Sub(st.ReportedAt) <= suspendGuardReportFresh:
 			healthy++
 		}
 	}

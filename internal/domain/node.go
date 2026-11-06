@@ -284,6 +284,17 @@ func (s NodeStatus) EgressThroughputDegraded() bool {
 	return false
 }
 
+// EgressThroughputProven reports whether the node measured its active egress and
+// found it above the floor: the check is present and passing. Absent is not proof.
+func (s NodeStatus) EgressThroughputProven() bool {
+	for _, c := range s.Checks {
+		if c.Name == CheckEgressThroughput {
+			return c.OK
+		}
+	}
+	return false
+}
+
 // ActiveEgress returns the egress method the agent currently has active (from the
 // egress-active self-check, ADR-0017), or "" when not reported. It differs from
 // the preferred egress while the node is failed over.
