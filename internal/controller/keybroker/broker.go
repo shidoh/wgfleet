@@ -654,7 +654,7 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 
 	// REALITY/XHTTP inbound desired state (ADR-0025), set when the exit runs the
 	// reality transport. The shared identifiers (UUID/short-id) and camouflage match
-	// the master's vless proxy because both call realityFor with the same inputs; the
+	// the master's vless proxy because both call realityTunnelFor for the same pair; the
 	// exit generates its own x25519 keypair locally and publishes only the pubkey.
 	if spec.HasTransport(domain.TransportRealityXHTTP) && b.realityReverse(exit, exitNode) {
 		// Exit-initiated (ADR-0038): no inbound, no open port; the exit dials every
