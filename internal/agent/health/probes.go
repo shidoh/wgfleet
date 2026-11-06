@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"strconv"
@@ -226,19 +227,40 @@ func dnsListenAddr(spec domain.DNSFilterSpec) string {
 	return fmt.Sprintf("%s:%d", spec.MgmtAddr, port)
 }
 
-// dnsResolvesProbe checks the on-node DNS filter answers a query.
+// dnsResolvesProbe checks the on-node DNS filter answers a query with an address.
 func dnsResolvesProbe(listenAddr string) Probe {
+	return dnsResolvesProbeWith(listenAddr, runCmd)
+}
+
+// dnsResolvesProbeWith is dnsResolvesProbe over an injected command runner. dig
+// exits 0 on any reply — SERVFAIL and NXDOMAIN included — so the exit code only
+// proves something answered; the probe passes only when the answer holds an address.
+func dnsResolvesProbeWith(listenAddr string, run runner) Probe {
 	host := hostOf(listenAddr)
 	return func(ctx context.Context) Result {
 		if host == "" {
 			return fail("no DNS listen address")
 		}
 		start := now()
-		if _, err := runCmd(ctx, "dig", "+short", "+timeout=3", "@"+host, "cloudflare.com"); err != nil {
+		out, err := run(ctx, "dig", "+short", "+timeout=3", "@"+host, "cloudflare.com")
+		if err != nil {
 			return fail(fmt.Sprintf("dig @%s failed: %v", host, err))
+		}
+		if !hasAddress(out) {
+			return fail(fmt.Sprintf("dig @%s returned no address (SERVFAIL, NXDOMAIN or empty answer)", host))
 		}
 		return ok("resolves", since(start))
 	}
+}
+
+// hasAddress reports whether dig +short output carries at least one IP address.
+func hasAddress(out string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if _, err := netip.ParseAddr(strings.TrimSpace(line)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // ifaceUpProbe checks an interface exists and is up via `ip link show`.
