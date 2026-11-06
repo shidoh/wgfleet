@@ -1225,3 +1225,39 @@ func TestRenderRealityOffersMLKEM(t *testing.T) {
 		t.Errorf("reality-opts.support-x25519mlkem768 = %v, want true", ro["support-x25519mlkem768"])
 	}
 }
+
+// The VLESS uuid and REALITY short-id are a REALITY tunnel's credentials, and the
+// mihomo API secret is the dashboard's; the plan prints none of them, as the xray
+// renderer and the web UI already do not.
+func TestRedactConfigMasksVLESSCredentialsAndAPISecret(t *testing.T) {
+	const (
+		uuid    = "11111111-2222-4333-8444-555555555555"
+		shortID = "5ec2e7a1"
+		secret  = "API-SECRET-MARKER"
+	)
+	in := sampleInput()
+	in.Spec.ExitTunnels = append(in.Spec.ExitTunnels, domain.ExitTunnel{
+		Name: "exit-a-reality", Endpoint: "exit-a.example.net:443",
+		Transport: domain.TransportRealityXHTTP,
+		Reality: &domain.RealityTunnel{
+			UUID: uuid, PublicKey: "RPUBKEYbase64==", ShortID: shortID,
+			ServerName: "www.example.com", XHTTPPath: "/down",
+		},
+	})
+	in.Spec.Custom.Overrides = map[string]any{"secret": secret}
+	out, err := RenderConfig(in)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, v := range []string{uuid, shortID, secret} {
+		if !strings.Contains(out, v) {
+			t.Fatalf("fixture does not render %q, so the test proves nothing:\n%s", v, out)
+		}
+	}
+	red := RedactConfig(out)
+	for name, v := range map[string]string{"uuid": uuid, "short-id": shortID, "secret": secret} {
+		if strings.Contains(red, v) {
+			t.Errorf("redacted plan output still carries the %s", name)
+		}
+	}
+}

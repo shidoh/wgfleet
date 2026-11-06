@@ -891,7 +891,12 @@ func marshalYAML(v any) (string, error) {
 // secretKeys are the config keys whose VALUE must never reach plan output.
 // header-protection-key is one of them for the same reason as the other two: it
 // is a chacha20 key whose whole purpose is that an observer does not have it.
-var secretKeys = []string{"private-key:", "pre-shared-key:", "header-protection-key:", "password:"}
+// uuid and short-id are a REALITY tunnel's credentials, and secret is the mihomo
+// API's — the xray renderer and the web UI hide the same values.
+var secretKeys = []string{
+	"private-key:", "pre-shared-key:", "header-protection-key:", "password:",
+	"uuid:", "short-id:", "secret:",
+}
 
 // RedactConfig masks secret key lines for plan output.
 func RedactConfig(cfg string) string {
