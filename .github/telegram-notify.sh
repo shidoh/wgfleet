@@ -28,8 +28,6 @@ fi
 API="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN:-dry-run}"
 MAX_BYTES=$((50 * 1024 * 1024))   # Telegram bot upload ceiling, per file
 
-escape_html() { sed -E -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
-
 # anchor_for finds the release's heading in the changelog ("## vX.Y.Z — DATE")
 # and turns it into the slug mkdocs generates: lowercase, drop everything but
 # letters, digits, spaces and hyphens, collapse runs of spaces/hyphens into one
@@ -46,13 +44,20 @@ PAGE="${DOCS_URL%/}/docs/changelog/"
 ANCHOR="$(anchor_for)"
 LINK="$PAGE${ANCHOR:+#$ANCHOR}"
 
-# The link is written out in full rather than hidden behind a word. An album
-# caption keeps a <a href=…> entity — it is still there when the message is opened
-# for editing — but the channel view does not make it clickable, so the reader gets
-# dead text. A bare URL is auto-detected instead of parsed, and that entity does
-# render as a link.
-CAPTION="$(printf '🚀 <b>wgfleet %s</b>\n\nWhat changed:\n%s' \
-  "$(printf '%s' "$TAG" | escape_html)" "$(printf '%s' "$LINK" | escape_html)")"
+# The link is written out in full rather than hidden behind a word: an album
+# caption keeps a <a href=…> entity, but the channel view does not make it
+# clickable. A bare URL left to Telegram's auto-detection turned out unreliable
+# too — it can arrive as plain text. So the caption is plain text and its
+# formatting is sent explicitly as caption_entities: bold for the title, and the
+# same `url` entity auto-detection would produce, placed on the URL ourselves.
+# Offsets and lengths are in UTF-16 code units, as the Bot API counts them (the
+# rocket emoji is two).
+TITLE="wgfleet $TAG"
+CAPTION="$(printf '🚀 %s\n\nWhat changed:\n%s' "$TITLE" "$LINK")"
+ENTITIES="$(jq -cn --arg cap "$CAPTION" --arg title "$TITLE" --arg link "$LINK" '
+  def u16: explode | map(if . > 65535 then 2 else 1 end) | add // 0;
+  [ { type: "bold", offset: ("🚀 " | u16), length: ($title | u16) },
+    { type: "url", offset: (($cap | u16) - ($link | u16)), length: ($link | u16) } ]')"
 
 FILES=()
 for f in "$DIST_DIR"/*.tar.gz "$DIST_DIR"/SHA256SUMS; do
@@ -68,7 +73,7 @@ done
 if [ -n "$DRY_RUN" ]; then
   printf -- '----- album: %d file(s), caption on the LAST -----\nfiles:\n' "${#FILES[@]}"
   for f in "${FILES[@]}"; do printf '  %s\n' "$(basename "$f")"; done
-  printf 'caption:\n%s\n' "$CAPTION"
+  printf 'caption:\n%s\nentities: %s\n' "$CAPTION" "$ENTITIES"
   echo "Telegram announcement complete (dry run)."
   exit 0
 fi
@@ -99,7 +104,7 @@ if [ "${#FILES[@]}" -eq 1 ]; then
   curl -fsS -X POST "$API/sendDocument" \
     --form-string "chat_id=${TELEGRAM_CHAT_ID}" \
     --form-string "caption=${CAPTION}" \
-    --form-string "parse_mode=HTML" \
+    --form-string "caption_entities=${ENTITIES}" \
     -F "document=@${FILES[0]}" \
     >/dev/null
 else
@@ -107,10 +112,10 @@ else
   # with the file that carries it. On the FIRST file it lands between that file
   # and the rest ("file, text, more files"); on the LAST it follows every file.
   last=$(( ${#FILES[@]} - 1 ))
-  media_json="$(jq -cn --arg cap "$CAPTION" --argjson last "$last" '
+  media_json="$(jq -cn --arg cap "$CAPTION" --argjson ents "$ENTITIES" --argjson last "$last" '
     [ $ARGS.positional | to_entries[] as $e
       | { type: "document", media: ("attach://file" + ($e.key | tostring)) }
-        + ( if $e.key == $last then { caption: $cap, parse_mode: "HTML" } else {} end )
+        + ( if $e.key == $last then { caption: $cap, caption_entities: $ents } else {} end )
     ]
   ' --args "${FILES[@]}")"
   curl_args=(--form-string "chat_id=${TELEGRAM_CHAT_ID}" --form-string "media=${media_json}")
