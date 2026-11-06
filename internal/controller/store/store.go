@@ -109,6 +109,11 @@ type Store interface {
 	// master's portal, storing uuid and shortID first when the pair has none.
 	EnsureRealityPortalIDs(ctx context.Context, master, exit, uuid, shortID string) (string, string, error)
 
+	// EnsureRealityTunnelIDs returns the stored identity of the master-initiated
+	// REALITY tunnel from master to exit, storing uuid and shortID first when the
+	// pair has none.
+	EnsureRealityTunnelIDs(ctx context.Context, master, exit, uuid, shortID string) (string, string, error)
+
 	// ListVLESSClients returns a master's issued VLESS client credentials, ordered
 	// by name. An unknown master yields an empty slice, not ErrNotFound.
 	ListVLESSClients(ctx context.Context, masterID string) ([]domain.VLESSClient, error)

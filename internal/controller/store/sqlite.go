@@ -296,6 +296,14 @@ func (s *SQLiteStore) DeleteNode(ctx context.Context, id string) error {
 		`DELETE FROM reality_portal_ids WHERE master_id = ? OR exit_id = ?`, id, id); err != nil {
 		return fmt.Errorf("delete node %q: reality portal ids: %w", id, err)
 	}
+	// The tunnel ids go with the exit only. Their master_id is the exit
+	// interface's anchor label, which can name a master that has since left (the
+	// survivors keep the label): dropping them with that master would re-key
+	// REALITY for every master still serving the exit.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM reality_tunnel_ids WHERE exit_id = ?`, id); err != nil {
+		return fmt.Errorf("delete node %q: reality tunnel ids: %w", id, err)
+	}
 	// The tombstone, in the same transaction: a delete that succeeded without it
 	// is the bug this table exists to close.
 	if _, err := tx.ExecContext(ctx,
@@ -442,20 +450,31 @@ func (s *SQLiteStore) SetNodeRealityPortalKey(ctx context.Context, id, publicKey
 
 // EnsureRealityPortalIDs implements Store.
 func (s *SQLiteStore) EnsureRealityPortalIDs(ctx context.Context, master, exit, uuid, shortID string) (string, string, error) {
+	return s.ensurePairIDs(ctx, "reality_portal_ids", "reality portal ids", master, exit, uuid, shortID)
+}
+
+// EnsureRealityTunnelIDs implements Store.
+func (s *SQLiteStore) EnsureRealityTunnelIDs(ctx context.Context, master, exit, uuid, shortID string) (string, string, error) {
+	return s.ensurePairIDs(ctx, "reality_tunnel_ids", "reality tunnel ids", master, exit, uuid, shortID)
+}
+
+// ensurePairIDs keeps the first uuid/short-id written for a (master, exit) pair in
+// table and returns what is stored. table is one of two constants, never input.
+func (s *SQLiteStore) ensurePairIDs(ctx context.Context, table, what, master, exit, uuid, shortID string) (string, string, error) {
 	if master == "" || exit == "" || uuid == "" || shortID == "" {
 		return "", "", errors.New("store: master, exit, uuid and short-id are required")
 	}
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO reality_portal_ids (master_id, exit_id, uuid, short_id, created_at) VALUES (?,?,?,?,?)
+		`INSERT INTO `+table+` (master_id, exit_id, uuid, short_id, created_at) VALUES (?,?,?,?,?)
 		 ON CONFLICT(master_id, exit_id) DO NOTHING`,
 		master, exit, uuid, shortID, fmtTime(s.now().UTC())); err != nil {
-		return "", "", fmt.Errorf("store reality portal ids %q/%q: %w", master, exit, err)
+		return "", "", fmt.Errorf("store %s %q/%q: %w", what, master, exit, err)
 	}
 	var u, sid string
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT uuid, short_id FROM reality_portal_ids WHERE master_id = ? AND exit_id = ?`,
+		`SELECT uuid, short_id FROM `+table+` WHERE master_id = ? AND exit_id = ?`,
 		master, exit).Scan(&u, &sid); err != nil {
-		return "", "", fmt.Errorf("read reality portal ids %q/%q: %w", master, exit, err)
+		return "", "", fmt.Errorf("read %s %q/%q: %w", what, master, exit, err)
 	}
 	return u, sid, nil
 }

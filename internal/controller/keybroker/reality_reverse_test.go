@@ -212,7 +212,10 @@ func TestPortalIDsAreRandomStableAndPerPair(t *testing.T) {
 	if again, _ := ids(s.b, "exit-de-1", "master-xa-1"); again != u1 {
 		t.Error("portal ids are not stable")
 	}
-	fu, _ := deriveRealityIDs(realitySeed("exit-de-1", "master-xa-1"))
+	fu, _, err := s.b.tunnelIDs(ctx, "exit-de-1", "master-xa-1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if u1 == fu {
 		t.Error("portal id equals the forward REALITY id")
 	}

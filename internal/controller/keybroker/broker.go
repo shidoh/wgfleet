@@ -12,7 +12,6 @@ package keybroker
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -38,13 +37,6 @@ import (
 // The ONE parameter this reasoning does not cover is the 3.x header-protection
 // key, which is keyed on fleet.awg3_key instead — see wg.deriveHeaderProtectionKey.
 const awgSalt = "wgfleet-awg-v1"
-
-// realitySalt seeds the REALITY tunnel identities (UUID, short-id). It holds the
-// value awgSalt has always had and must keep it: the identities were derived
-// with it, and a change re-derives every exit's UUID and short-id and drops the
-// REALITY transport fleet-wide. Its own constant so the AmneziaWG derivation can
-// move on without taking REALITY with it.
-const realitySalt = "wgfleet-awg-v1"
 
 // Broker renders NodeSpecs from fleet config plus the inventory/pubkey registry.
 type Broker struct {
@@ -671,10 +663,13 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		if berr != nil {
 			return domain.NodeSpec{}, berr
 		}
-		rp := b.realityFor(exit, iface.anchor)
+		rp := b.realityFor(exit)
 		spec.Reality = &domain.RealityServerSpec{AllowIPv6: rp.AllowIPv6, Image: rp.Image, Bridge: bridge}
 	} else if spec.HasTransport(domain.TransportRealityXHTTP) {
-		rp := b.realityFor(exit, iface.anchor)
+		rp, err := b.realityTunnelFor(ctx, exit, iface.anchor)
+		if err != nil {
+			return domain.NodeSpec{}, err
+		}
 		spec.Reality = &domain.RealityServerSpec{
 			ListenPort: rp.Port, UUID: rp.UUID, ShortID: rp.ShortID,
 			ServerName: rp.ServerName, Dest: rp.Dest,
@@ -1044,7 +1039,10 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 				Reserve:   isReserve,
 			})
 		} else if realityRenderable {
-			rp := b.realityFor(exit, iface.anchor)
+			rp, rerr := b.realityTunnelFor(ctx, exit, iface.anchor)
+			if rerr != nil {
+				return domain.NodeSpec{}, rerr
+			}
 			ms.ExitTunnels = append(ms.ExitTunnels, domain.ExitTunnel{
 				Name:      exit.Name + "-reality",
 				Endpoint:  netip.AddrPortFrom(exitIP, uint16(rp.Port)).String(),
@@ -1123,19 +1121,15 @@ type realityParams struct {
 
 // realityFor resolves the REALITY parameters for an exit's master↔exit tunnel,
 // identical on both ends (the controller owns them). Camouflage fields come from
-// the manifest with safe fallbacks; UUID/short-id/path derive from the tunnel seed.
-func (b *Broker) realityFor(exit config.ExitConfig, masterName string) realityParams {
-	uuid, shortID := deriveRealityIDs(realitySeed(exit.Name, masterName))
+// the manifest with safe fallbacks. It carries no tunnel identity: realityTunnelFor
+// adds the stored UUID/short-id and the default path built from them.
+func (b *Broker) realityFor(exit config.ExitConfig) realityParams {
 	r := exit.Transports.Reality
 	// Camouflage SNI/dest: per-exit override → fleet-wide default → safe built-in.
 	// dest_domain+dest_port compose to "host:port" (config.DestHostPort); when unset
 	// fall back to the fleet default, then to the SNI on the default HTTPS port.
 	sni := firstNonEmpty(r.SNI, r.DestDomain, b.fleet.RealityDefaultSNI, DefaultRealitySNI)
 	dest := firstNonEmpty(r.DestHostPort(), b.fleet.RealityDefaultDest, sni+":443")
-	path := r.XHTTPPath
-	if path == "" {
-		path = "/" + shortID
-	}
 	port := r.ListenPort
 	if port == 0 {
 		port = DefaultRealityListenPort
@@ -1145,10 +1139,26 @@ func (b *Broker) realityFor(exit config.ExitConfig, masterName string) realityPa
 		image = compose.DefaultXrayImage
 	}
 	return realityParams{
-		Port: port, UUID: uuid, ShortID: shortID, ServerName: sni,
-		Dest: dest, Path: path, Mode: xray.DefaultXHTTPMode, RealityMode: r.Mode,
+		Port: port, ServerName: sni,
+		Dest: dest, Path: r.XHTTPPath, Mode: xray.DefaultXHTTPMode, RealityMode: r.Mode,
 		Fingerprint: r.Fingerprint, EmptySNI: r.EmptySNI, AllowIPv6: r.AllowIPv6, Mux: r.Mux, Image: image,
 	}
+}
+
+// realityTunnelFor is realityFor plus the identity of the master-initiated tunnel
+// from masterName to exit: the stored UUID and short-id, and the XHTTP path, which
+// defaults to "/<short-id>". Both ends call it, so both hold the same values.
+func (b *Broker) realityTunnelFor(ctx context.Context, exit config.ExitConfig, masterName string) (realityParams, error) {
+	rp := b.realityFor(exit)
+	uuid, shortID, err := b.tunnelIDs(ctx, exit.Name, masterName)
+	if err != nil {
+		return realityParams{}, err
+	}
+	rp.UUID, rp.ShortID = uuid, shortID
+	if rp.Path == "" {
+		rp.Path = "/" + shortID
+	}
+	return rp, nil
 }
 
 // resolveActiveTransport returns the exit's active master↔exit transport: the
@@ -1176,23 +1186,6 @@ func (b *Broker) ExitTransportInfo(node domain.Node) (active domain.MasterTransp
 		return "", nil, false
 	}
 	return resolveActiveTransport(exit, node).OrDefault(), exit.EnabledTransports(), true
-}
-
-func realitySeed(exitName, masterName string) string {
-	return fmt.Sprintf("%s|%s|%s|reality", realitySalt, masterName, exitName)
-}
-
-// deriveRealityIDs derives a stable VLESS UUID and REALITY short-id from a seed,
-// so both tunnel ends agree without the controller storing them.
-func deriveRealityIDs(seed string) (uuid, shortID string) {
-	sum := sha256.Sum256([]byte(seed))
-	var u [16]byte
-	copy(u[:], sum[:16])
-	u[6] = (u[6] & 0x0f) | 0x40 // version 4
-	u[8] = (u[8] & 0x3f) | 0x80 // variant 10
-	uuid = fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
-	shortID = hex.EncodeToString(sum[28:32]) // 8 hex chars
-	return uuid, shortID
 }
 
 // throughputAutoSuspend returns the set of exit names to auto-suspend from the LB

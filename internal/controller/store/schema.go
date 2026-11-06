@@ -261,6 +261,17 @@ var migrations = []string{
 	// parts are only ever read together, and the default '{}' is the unknown build
 	// every gate treats as too old.
 	`ALTER TABLE nodes ADD COLUMN awg_module_json TEXT NOT NULL DEFAULT '{}'`,
+	// v34: the VLESS id and short-id of the master-initiated REALITY tunnel from a
+	// master to an exit. Random and stored, like the portal's (v31): derived from
+	// node names, they were computable by anyone who knew the names.
+	`CREATE TABLE IF NOT EXISTS reality_tunnel_ids (
+		master_id  TEXT NOT NULL,
+		exit_id    TEXT NOT NULL,
+		uuid       TEXT NOT NULL,
+		short_id   TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		PRIMARY KEY (master_id, exit_id)
+	)`,
 }
 
 // MigrationCount is how many schema migrations this build knows. Exported so a

@@ -74,11 +74,22 @@ func TestExitSpecUnarmedIsByteIdenticalToFlagOff(t *testing.T) {
 		b, _ := json.Marshal(spec)
 		return b
 	}
+	// Two setups, two stores: give both the same tunnel identity, or the random
+	// ids alone would tell the specs apart.
+	sameIDs := func(s reverseSetup) {
+		t.Helper()
+		if _, _, err := s.st.EnsureRealityTunnelIDs(context.Background(), "master-xa-1", "exit-de-1",
+			"11111111-2222-4333-8444-555555555555", "0a1b2c3d4e5f6071"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	off := newReverseSetup(t)
+	sameIDs(off)
 	off.b.fleet.Exits[0].Transports.Reality.ExitInitiated = false
 	want := render(off)
 
 	old := newReverseSetup(t)
+	sameIDs(old)
 	setWireVersion(t, old.st, "exit-de-1", 13)
 	if got := render(old); string(got) != string(want) {
 		t.Errorf("exit on wire 13: spec differs from flag off\n got %s\nwant %s", got, want)

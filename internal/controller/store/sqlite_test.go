@@ -1107,3 +1107,46 @@ func TestDeleteNodeDropsRealityPortalIDs(t *testing.T) {
 		t.Errorf("m1/e2 after deleting m1: uuid %q, want reissued", u)
 	}
 }
+
+// The master↔exit REALITY tunnel's VLESS id and short-id are stored like the
+// portal's: the first pair written stays and each pair has its own. Deleting the
+// exit drops them so a re-admitted exit gets new ones; deleting the master does
+// not, because master_id is the exit interface's anchor label, which outlives the
+// master it names. They live apart from the portal ids — the two transports must
+// never share a credential.
+func TestEnsureRealityTunnelIDs(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	for _, id := range []string{"m1", "e1"} {
+		n := sampleNode()
+		n.ID = id
+		if err := s.UpsertNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	u, sid, err := s.EnsureRealityTunnelIDs(ctx, "m1", "e1", "uuid-1", "0a0b0c0d0e0f1011")
+	if err != nil || u != "uuid-1" || sid != "0a0b0c0d0e0f1011" {
+		t.Fatalf("first = %q %q %v", u, sid, err)
+	}
+	if u, _, _ = s.EnsureRealityTunnelIDs(ctx, "m1", "e1", "uuid-2", "ffff"); u != "uuid-1" {
+		t.Fatalf("second call replaced the ids: %q", u)
+	}
+	if pu, _, _ := s.EnsureRealityPortalIDs(ctx, "m1", "e1", "portal", "0c0d"); pu != "portal" {
+		t.Fatalf("the portal pair was filled from the tunnel table: %q", pu)
+	}
+	if _, _, err := s.EnsureRealityTunnelIDs(ctx, "m1", "", "u", "00"); err == nil {
+		t.Error("empty exit accepted")
+	}
+	if err := s.DeleteNode(ctx, "m1"); err != nil {
+		t.Fatal(err)
+	}
+	if u, _, _ = s.EnsureRealityTunnelIDs(ctx, "m1", "e1", "uuid-x", "0e0f"); u != "uuid-1" {
+		t.Errorf("after deleting m1: uuid %q, want uuid-1 kept for the anchor label", u)
+	}
+	if err := s.DeleteNode(ctx, "e1"); err != nil {
+		t.Fatal(err)
+	}
+	if u, _, _ = s.EnsureRealityTunnelIDs(ctx, "m1", "e1", "uuid-3", "0e0f"); u != "uuid-3" {
+		t.Errorf("after deleting e1: uuid %q, want reissued", u)
+	}
+}

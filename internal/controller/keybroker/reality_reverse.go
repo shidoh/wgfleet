@@ -106,16 +106,39 @@ func (b *Broker) portalTargets(ctx context.Context, exit config.ExitConfig) ([]p
 // names — an id any exit could compute would let it register under another
 // exit's reverse tag and receive that exit's client streams.
 func (b *Broker) portalIDs(ctx context.Context, exitName, masterName string) (uuid, shortID string, err error) {
+	uuid, shortID, err = mintPairIDs(ctx, exitName, masterName, b.store.EnsureRealityPortalIDs)
+	if err != nil {
+		return "", "", fmt.Errorf("reality portal ids: %w", err)
+	}
+	return uuid, shortID, nil
+}
+
+// tunnelIDs returns the VLESS UUID and short-id of the master-initiated REALITY
+// tunnel from master to exit, minted and kept like portalIDs. Derived from the
+// node names they could be computed by anyone who knew the names.
+func (b *Broker) tunnelIDs(ctx context.Context, exitName, masterName string) (uuid, shortID string, err error) {
+	uuid, shortID, err = mintPairIDs(ctx, exitName, masterName, b.store.EnsureRealityTunnelIDs)
+	if err != nil {
+		return "", "", fmt.Errorf("reality tunnel ids: %w", err)
+	}
+	return uuid, shortID, nil
+}
+
+// mintPairIDs draws a random v4 UUID and 8-byte short-id and hands them to
+// ensure, which keeps the pair's first ones; it returns what is stored.
+func mintPairIDs(ctx context.Context, exitName, masterName string,
+	ensure func(ctx context.Context, master, exit, uuid, shortID string) (string, string, error),
+) (uuid, shortID string, err error) {
 	var raw [24]byte
 	if _, err := rand.Read(raw[:]); err != nil {
-		return "", "", fmt.Errorf("reality portal ids: %w", err)
+		return "", "", err
 	}
 	u := raw[:16]
 	u[6] = (u[6] & 0x0f) | 0x40 // version 4
 	u[8] = (u[8] & 0x3f) | 0x80 // variant 10
 	candUUID := fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
 	candSID := hex.EncodeToString(raw[16:24])
-	uuid, shortID, err = b.store.EnsureRealityPortalIDs(ctx, masterName, exitName, candUUID, candSID)
+	uuid, shortID, err = ensure(ctx, masterName, exitName, candUUID, candSID)
 	if err != nil {
 		return "", "", fmt.Errorf("exit %q at master %q: %w: %w", exitName, masterName, store.ErrUnreadable, err)
 	}
