@@ -96,12 +96,17 @@ func TestParseThroughput(t *testing.T) {
 		rate float64
 		ok   bool
 	}{
-		"healthy":     {"262144 0.1", 2621440, true},
-		"throttled":   {"204800 8.0", 25600, true},
-		"zero time":   {"262144 0", 0, false},
-		"empty":       {"", 0, false},
-		"one field":   {"262144", 0, false},
-		"non-numeric": {"abc def", 0, false},
+		"healthy":           {"200 262144 0.1", 2621440, true},
+		"range honoured":    {"206 262144 0.1", 2621440, true},
+		"throttled":         {"200 204800 8.0", 25600, true},
+		"aborted pre-reply": {"000 0 10.0", 0, true}, // max-time hit before headers: a slow path, not an error
+		"forbidden page":    {"403 262144 0.1", 0, false},
+		"not found":         {"404 1024 0.05", 0, false},
+		"bad gateway":       {"502 512 0.05", 0, false},
+		"zero time":         {"200 262144 0", 0, false},
+		"empty":             {"", 0, false},
+		"two fields":        {"262144 0.1", 0, false},
+		"non-numeric":       {"200 abc def", 0, false},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

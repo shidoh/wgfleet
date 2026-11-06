@@ -127,7 +127,7 @@ func throughputProbe(iface, url string) ThroughputProbe {
 		url = DefaultThroughputProbeURL
 	}
 	return func(ctx context.Context) (float64, error) {
-		args := []string{"-s", "-o", "/dev/null", "-w", "%{size_download} %{time_total}",
+		args := []string{"-s", "-o", "/dev/null", "-w", "%{http_code} %{size_download} %{time_total}",
 			"--max-time", strconv.Itoa(int(probeTimeout.Seconds())),
 			// Same 256 KiB from every target; a server without Range support simply
 			// sends the whole file, which is what the Cloudflare URL already sizes.
@@ -154,15 +154,21 @@ func ifaceOrDefault(iface string) string {
 	return iface
 }
 
-// parseThroughput parses curl's "<size_download> <time_total>" write-out into a
-// bytes/sec rate. A zero or missing time yields no measurement (false).
+// parseThroughput parses curl's "<http_code> <size_download> <time_total>" write-out into a
+// bytes/sec rate. An error status or a zero or missing time yields no measurement (false).
 func parseThroughput(out string) (float64, bool) {
 	fields := strings.Fields(strings.TrimSpace(out))
-	if len(fields) != 2 {
+	if len(fields) != 3 {
 		return 0, false
 	}
-	size, err1 := strconv.ParseFloat(fields[0], 64)
-	secs, err2 := strconv.ParseFloat(fields[1], 64)
+	// A body that is an error page — a 403 from the target, a 502 from a proxy on
+	// the way — downloads fast and measures nothing about the path. 000 (aborted
+	// before any reply) stays a measurement: on a throttled path it is the result.
+	if code := fields[0]; code != "000" && !strings.HasPrefix(code, "2") {
+		return 0, false
+	}
+	size, err1 := strconv.ParseFloat(fields[1], 64)
+	secs, err2 := strconv.ParseFloat(fields[2], 64)
 	if err1 != nil || err2 != nil || secs <= 0 {
 		return 0, false
 	}
