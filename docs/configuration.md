@@ -231,7 +231,7 @@ Passthrough surface: [§9 third-party configuration](#9-third-party-configuratio
 |---|---|---|---|
 | `fleet.masters[].compose.mihomo_image` | string | `metacubex/mihomo` | Repository, optionally with a tag |
 | `fleet.masters[].compose.mihomo_tag` | string | pinned | Explicit tag. **Pin a specific version**, never `latest` or `Alpha` |
-| `fleet.masters[].compose.client_dns` | []string | exit mgmt addrs | DNS servers handed to clients |
+| `fleet.masters[].compose.client_dns` | []string | mgmt addrs of exits with `dns_filter` | DNS servers handed to clients |
 | `fleet.masters[].compose.client_allowed_ips` | string | `0.0.0.0/0` | `AllowedIPs` written into client configs. IPv4-only: `::/0` is rejected |
 | `fleet.masters[].compose.netns_holder_image` | string | built-in | Image for the container that owns mihomo's network namespace. It only has to exist and sleep |
 
@@ -351,7 +351,7 @@ a plain exit, three on a lifeline exit.
 |---|---|---|---|
 | `fleet.exits[].dns.image` / `fleet.masters[].dns.image` / `fleet.master_dns.image` | string | `spx01/blocky:v0.35.0` | Container repository |
 | `fleet.exits[].dns.tag` / `fleet.masters[].dns.tag` / `fleet.master_dns.tag` | string | — | Explicit tag, overriding any tag in the image |
-| `fleet.exits[].dns.upstreams` / `fleet.masters[].dns.upstreams` / `fleet.master_dns.upstreams` | []string | safe defaults | Default upstream resolver group. On a master these default to the active exit resolvers |
+| `fleet.exits[].dns.upstreams` / `fleet.masters[].dns.upstreams` / `fleet.master_dns.upstreams` | []string | safe defaults | Default upstream resolver group. On a master these default to the resolvers of exits with `dns_filter`; none ⇒ the safe defaults |
 | `fleet.exits[].dns.allowlist` / `fleet.masters[].dns.allowlist` / `fleet.master_dns.allowlist` | []string | — | Domains never blocked. Platform infrastructure is added automatically |
 | `fleet.exits[].dns.prometheus` / `fleet.masters[].dns.prometheus` / `fleet.master_dns.prometheus` | bool | `true` | Expose blocky's own `/metrics` |
 | `fleet.exits[].dns.ports.dns` / `fleet.masters[].dns.ports.dns` / `fleet.master_dns.ports.dns` | int | `53` | Plain DNS port |
