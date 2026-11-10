@@ -10,11 +10,10 @@ import (
 	"strings"
 	"time"
 
-	qrcode "github.com/skip2/go-qrcode"
-
 	"github.com/shidoh/wgfleet/internal/controller/clientcfg"
 	"github.com/shidoh/wgfleet/internal/controller/store"
 	"github.com/shidoh/wgfleet/internal/domain"
+	"github.com/shidoh/wgfleet/internal/wg"
 )
 
 // The client-facing WireGuard credential page: the operator half of the client
@@ -77,6 +76,11 @@ type wgClientsData struct {
 	// still shown, not swallowed: an operator told "no reserve" by a page that
 	// could not look is being told the fleet has no fallback.
 	ReservesErr string
+	// node, spec and clients are what the rows were built from, kept for the QR
+	// sizing on the full render (see sizeQRs).
+	node    domain.Node
+	spec    domain.NodeSpec
+	clients []domain.WGClient
 }
 
 // reserveExitView is one exit's reserve door as the page shows it. Ready decides
@@ -141,6 +145,12 @@ type wgClientRow struct {
 	// credential's own /c/{id} link is dead for good, whether or not it is
 	// currently attached to a device.
 	LinkRetired bool
+	// QR: the main config fits in a QR code. A profile that does not is handed
+	// out as a file only, and the card says so instead of offering an image that
+	// fails to load. ReserveQR is the same per reserve door, keyed by exit ID.
+	// Both are filled on the full page render only — see sizeQRs.
+	QR        bool
+	ReserveQR map[string]bool
 }
 
 // peerState resolves a credential's live state into the head chip. The two
@@ -178,6 +188,7 @@ func (h *Handler) handleWGClients(w http.ResponseWriter, r *http.Request) {
 	data.Flash = h.takeFlash(w, r)
 	data.FlashOK = h.takeFlashOK(w, r)
 	h.fillReserves(r, &data)
+	h.sizeQRs(r, &data)
 	h.render(w, h.wgClientsTmpl, "layout", data)
 }
 
@@ -204,6 +215,37 @@ func (h *Handler) fillReserves(r *http.Request, data *wgClientsData) {
 		data.Reserves = append(data.Reserves, reserveExitView{
 			ID: e.ID, Name: e.Name, Endpoint: e.Endpoint, Ready: e.Ready, Reason: e.Reason,
 		})
+	}
+}
+
+// sizeQRs marks, for every credential on the page, whether its main config and
+// each of its reserve configs fit in a QR code. Like fillReserves it runs on the
+// full render only: every QR sits inside the hand-out's hx-preserve subtree,
+// which the 10-second poll never re-renders. Each reserve door is resolved once,
+// not once per credential.
+func (h *Handler) sizeQRs(r *http.Request, data *wgClientsData) {
+	if !data.Ready || len(data.clients) != len(data.Clients) {
+		return
+	}
+	for i, c := range data.clients {
+		if in, err := clientcfg.ConfigInput(data.node, data.spec, c); err == nil {
+			data.Clients[i].QR = h.fitsQR(wg.RenderClientConfig(in))
+		}
+		data.Clients[i].ReserveQR = map[string]bool{}
+	}
+	for _, e := range data.Reserves {
+		if !e.Ready {
+			continue
+		}
+		door, err := clientcfg.PrepareLifeline(r.Context(), clientSource{h}, data.NodeID, e.ID)
+		if err != nil {
+			h.log.Warn("web: could not resolve a reserve door to size its QRs", "exit", e.ID, "error", err)
+			continue
+		}
+		for i, c := range data.clients {
+			res, err := door.Render(c)
+			data.Clients[i].ReserveQR[e.ID] = h.fitsQR(res.Config, err)
+		}
 	}
 }
 
@@ -319,7 +361,18 @@ func (h *Handler) wgClientsView(w http.ResponseWriter, r *http.Request) (wgClien
 		row.State, row.StateKind = peerState(reported, p.LastHandshake)
 		data.Clients = append(data.Clients, row)
 	}
+	data.node, data.spec, data.clients = node, spec, clients
 	return data, nil
+}
+
+// fitsQR decides whether the page offers a QR for a config. A config that does
+// not render gets no QR: the download beside it reports the fault when used.
+func (h *Handler) fitsQR(cfg string, err error) bool {
+	if err != nil {
+		h.log.Warn("web: could not render a client config to size its QR", "error", err)
+		return false
+	}
+	return clientcfg.FitsQR(cfg)
 }
 
 // awgCredentialDevices maps an AWG credential's ID (on masterID) to the device
@@ -559,9 +612,9 @@ func (h *Handler) handleWGClientQR(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "build client config", err)
 		return
 	}
-	png, err := qrPNG(cfg)
+	png, err := clientcfg.QRPNG(cfg)
 	if err != nil {
-		httpError(w, "render QR", err)
+		qrError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "image/png")
@@ -598,9 +651,9 @@ func (h *Handler) handleWGClientLifelineQR(w http.ResponseWriter, r *http.Reques
 		lifelineError(w, err)
 		return
 	}
-	png, err := qrPNG(res.Config)
+	png, err := clientcfg.QRPNG(res.Config)
 	if err != nil {
-		httpError(w, "render QR", err)
+		qrError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "image/png")
@@ -675,17 +728,15 @@ func (s clientSource) NodeChecks(ctx context.Context, nodeID string) ([]domain.H
 	return st.Checks, nil
 }
 
-// qrPNG encodes a client config as a QR image. The config is a credential, so it
-// is served from its own endpoint as bytes rather than embedded in the page as a
-// data: URL — a page the browser may cache should not carry a private key.
-func qrPNG(s string) ([]byte, error) {
-	// 1024, not 320. Measured on a real client config (867 bytes): 117x117
-	// modules at Medium recovery. At 320px that is 2.7 pixels per module and a
-	// phone camera cannot resolve it — the page used to shrink it further, to 168.
-	// The page now shows it at 512, an exact 2:1 downscale (pixel-for-pixel on a
-	// HiDPI screen), which puts 4.4 pixels on each module — above the ~4 that
-	// ordinary cameras need.
-	return qrcode.Encode(s, qrcode.Medium, 1024)
+// qrError answers a QR request whose config could not be encoded. A profile too
+// large for a QR is a fact about the profile, not a console failure, and the card
+// no longer links to it — so a stale link gets a plain 404 saying what to do.
+func qrError(w http.ResponseWriter, err error) {
+	if errors.Is(err, clientcfg.ErrTooLargeForQR) {
+		http.Error(w, "this config is too large for a QR code; download the .conf instead", http.StatusNotFound)
+		return
+	}
+	httpError(w, "render QR", err)
 }
 
 // clientActionError turns the failures an operator actually hits into sentences

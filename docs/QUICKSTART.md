@@ -199,7 +199,8 @@ interface `wg0`. Client keys:
 
 1. Restart the controller (`--check-config` first — see [CLI.md](cli.md)).
 2. Web UI → master → **AWG CLIENTS** → issue one. You get a `.conf` to
-   download and a QR to scan.
+   download. An AmneziaWG profile is too large for a QR code, so the card
+   offers the file only.
 3. Import it with the **AmneziaWG** app — iOS, Android or desktop, *not* the
    plain WireGuard app: it cannot read the obfuscation parameters.
 

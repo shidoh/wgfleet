@@ -108,7 +108,7 @@ All keys: [configuration.md#client_awg-the-client-facing-amneziawg-listener](con
 
 | Action | Effect |
 |---|---|
-| **Issue** | Create a credential and open its card: `.conf`, QR, and a **self-service link** (a page carrying only that profile, reached over the tunnel or the portal address). Hand out the link rather than the file. |
+| **Issue** | Create a credential and open its card: `.conf`, QR (only when the profile fits in one — an AmneziaWG profile does not), and a **self-service link** (a page carrying only that profile, reached over the tunnel or the portal address). Hand out the link rather than the file. |
 | **Pause** | Reversible. The peer is removed from the interface and the self-service page says so. The same config works again on resume. |
 | **Rename** | A label for you only. Nothing the person holds changes. |
 | **Revoke** | Permanent. The credential and its key are deleted, and the only way back is a new profile. The console confirms on its own page. |
@@ -148,7 +148,7 @@ Limits: one AWG and one VLESS credential per master per device. One AWG credenti
 | `<client_portal_url>/c/<token>` | Page: subscription link + QR, AmneziaWG `.conf`, `vless://`, reserve configs |
 | `<client_portal_url>/c/<token>/mihomo` | Profile, `text/yaml`, `Profile-Update-Interval: 24` |
 | `<client_portal_url>/c/<token>/mihomo/qr` | QR of the subscription link (not of the profile) |
-| `<client_portal_url>/c/<token>/config`, `/qr`, `/l/<exit>/…` | AmneziaWG `.conf`, its QR, reserve configs. `404` on a device without an AWG credential |
+| `<client_portal_url>/c/<token>/config`, `/qr`, `/l/<exit>/…` | AmneziaWG `.conf`, its QR, reserve configs. `404` on a device without an AWG credential. `/qr` answers `404` when the profile is too large for a QR code — an AmneziaWG profile with the QUIC cover is; hand out the file |
 
 Without `controller.client_portal_url` the link uses the portal's bind address.
 

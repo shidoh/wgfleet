@@ -5,6 +5,12 @@ What changed for operators in each wgfleet release — behaviour, manifest keys,
 Every release archive carries this page as `CHANGELOG.md`.
 New releases are announced, with the archives attached, in the Telegram channel [t.me/wgfleet](https://t.me/wgfleet).
 
+## Unreleased
+
+### Fixed
+
+- **AmneziaWG QR codes.** Since v0.3.5 an AmneziaWG profile carries a full-size QUIC cover and runs to about 3 KB — more than a QR code holds. The portal page and the console showed an image that never loaded, and the QR link answered "Something is wrong on our side". Now a profile that does not fit is offered as a file only, and the page says so; the QR link answers `404` with the same explanation. Profiles that fit keep their QR.
+
 ## v0.3.6 — 2026-11-06
 
 !!! tip "What stands out in this release"

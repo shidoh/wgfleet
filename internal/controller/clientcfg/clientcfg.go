@@ -98,26 +98,40 @@ func BuildInput(ctx context.Context, src Source, masterID, clientID string) (wg.
 	if err != nil {
 		return wg.ClientConfigInput{}, domain.Node{}, err
 	}
-	if spec.Master == nil || spec.Master.ClientWG == nil {
-		return wg.ClientConfigInput{}, domain.Node{}, ErrNotManaged
-	}
-	if node.ClientWGPublicKey == "" {
-		return wg.ClientConfigInput{}, domain.Node{}, notReady("the master has not published its client interface key yet")
-	}
-	host := EndpointHost(node, spec)
-	if host == "" {
-		return wg.ClientConfigInput{}, domain.Node{}, notReady("no public endpoint known for this master")
+	// Checked before the credential lookup, as it always was: a master that is not
+	// ready answers "not ready" whichever credential was asked for.
+	if _, err := ConfigInput(node, spec, domain.WGClient{}); err != nil {
+		return wg.ClientConfigInput{}, domain.Node{}, err
 	}
 	c, err := findClient(ctx, src, masterID, clientID)
 	if err != nil {
 		return wg.ClientConfigInput{}, domain.Node{}, err
+	}
+	in, err := ConfigInput(node, spec, c)
+	return in, node, err
+}
+
+// ConfigInput is the render input of credential c on a master whose node record
+// and spec the caller already holds — a page listing every credential reads
+// them once instead of once per credential. BuildInput goes through here, so the
+// two cannot drift.
+func ConfigInput(node domain.Node, spec domain.NodeSpec, c domain.WGClient) (wg.ClientConfigInput, error) {
+	if spec.Master == nil || spec.Master.ClientWG == nil {
+		return wg.ClientConfigInput{}, ErrNotManaged
+	}
+	if node.ClientWGPublicKey == "" {
+		return wg.ClientConfigInput{}, notReady("the master has not published its client interface key yet")
+	}
+	host := EndpointHost(node, spec)
+	if host == "" {
+		return wg.ClientConfigInput{}, notReady("no public endpoint known for this master")
 	}
 	return wg.ClientConfigInput{
 		Spec:            *spec.Master.ClientWG,
 		Client:          c,
 		ServerPublicKey: node.ClientWGPublicKey,
 		Endpoint:        net.JoinHostPort(host, strconv.Itoa(spec.Master.ClientWG.ListenPort)),
-	}, node, nil
+	}, nil
 }
 
 // Build renders the config for one credential on one master. Lookup is by
@@ -386,22 +400,50 @@ func lifelineState(ctx context.Context, src Source, exitID string) (LifelineExit
 // master that has lost its public address, or never published a key, is a master
 // whose clients need this config most.
 func BuildLifeline(ctx context.Context, src Source, masterID, clientID, exitID string) (Result, error) {
-	if ok, err := LifelineCarries(ctx, src, masterID); err != nil {
+	door, err := PrepareLifeline(ctx, src, masterID, exitID)
+	if err != nil {
 		return Result{}, err
+	}
+	c, err := findClient(ctx, src, masterID, clientID)
+	if err != nil {
+		return Result{}, err
+	}
+	return door.Render(c)
+}
+
+// LifelineDoor is one exit's reserve door, resolved once and rendered for any
+// number of the master's credentials. A page listing every credential against
+// every exit renders through one door per exit instead of re-reading both specs
+// for each pair.
+type LifelineDoor struct {
+	master, exit domain.Node
+	spec         domain.ClientWGSpec
+	endpoint     string
+	masterPool   netip.Prefix
+	lifelinePool netip.Prefix
+	exitID       string
+}
+
+// PrepareLifeline resolves one exit's reserve door for masterID's credentials,
+// with the same answers BuildLifeline gives: ErrNotFound for an exit or master
+// the lifeline does not carry, an error naming the reason for a door not ready.
+func PrepareLifeline(ctx context.Context, src Source, masterID, exitID string) (LifelineDoor, error) {
+	if ok, err := LifelineCarries(ctx, src, masterID); err != nil {
+		return LifelineDoor{}, err
 	} else if !ok {
 		// Same answer an unknown credential gets: the caller is a URL.
-		return Result{}, store.ErrNotFound
+		return LifelineDoor{}, store.ErrNotFound
 	}
 	master, err := src.GetNode(ctx, masterID)
 	if err != nil {
-		return Result{}, err
+		return LifelineDoor{}, err
 	}
 	spec, err := src.RenderNodeSpec(ctx, masterID)
 	if err != nil {
-		return Result{}, err
+		return LifelineDoor{}, err
 	}
 	if spec.Master == nil || spec.Master.ClientWG == nil {
-		return Result{}, ErrNotManaged
+		return LifelineDoor{}, ErrNotManaged
 	}
 
 	// An exit that carries no lifeline at all is ErrNotFound, not a bespoke error:
@@ -409,53 +451,60 @@ func BuildLifeline(ctx context.Context, src Source, masterID, clientID, exitID s
 	// credential gets rather than on a page explaining a feature this exit lacks.
 	exits, err := src.LifelineExits(ctx)
 	if err != nil {
-		return Result{}, fmt.Errorf("clientcfg: list the fleet's lifeline exits: %w", err)
+		return LifelineDoor{}, fmt.Errorf("clientcfg: list the fleet's lifeline exits: %w", err)
 	}
 	if !slices.Contains(exits, exitID) {
-		return Result{}, store.ErrNotFound
+		return LifelineDoor{}, store.ErrNotFound
 	}
 	state, lifeline, exitNode, err := lifelineState(ctx, src, exitID)
 	if err != nil {
-		return Result{}, err
+		return LifelineDoor{}, err
 	}
 	if !state.Ready {
-		return Result{}, fmt.Errorf("clientcfg: no reserve config from exit %q: %s", exitID, state.Reason)
+		return LifelineDoor{}, fmt.Errorf("clientcfg: no reserve config from exit %q: %s", exitID, state.Reason)
 	}
 
 	masterPool, err := netip.ParsePrefix(spec.Master.ClientWG.AddressPool)
 	if err != nil {
-		return Result{}, fmt.Errorf("clientcfg: master client pool %q: %w", spec.Master.ClientWG.AddressPool, err)
+		return LifelineDoor{}, fmt.Errorf("clientcfg: master client pool %q: %w", spec.Master.ClientWG.AddressPool, err)
 	}
 	lifelinePool, err := netip.ParsePrefix(lifeline.AddressPool)
 	if err != nil {
-		return Result{}, fmt.Errorf("clientcfg: lifeline pool %q on exit %q: %w", lifeline.AddressPool, exitID, err)
+		return LifelineDoor{}, fmt.Errorf("clientcfg: lifeline pool %q on exit %q: %w", lifeline.AddressPool, exitID, err)
 	}
+	return LifelineDoor{
+		master: master, exit: exitNode,
+		spec:         lifeline.ClientWGSpec,
+		endpoint:     state.Endpoint,
+		masterPool:   masterPool,
+		lifelinePool: lifelinePool,
+		exitID:       exitID,
+	}, nil
+}
 
-	c, err := findClient(ctx, src, masterID, clientID)
-	if err != nil {
-		return Result{}, err
-	}
-	// c is this function's own copy, so shifting it here cannot reach the store's
-	// record — the master-side address and PSK must survive untouched.
-	addr, err := domain.LifelineAddress(c.Address, masterPool, lifelinePool)
+// Render renders the reserve config of credential c, which must be one of the
+// master's own. c is a copy, so shifting it here cannot reach the store's record —
+// the master-side address and PSK must survive untouched.
+func (d LifelineDoor) Render(c domain.WGClient) (Result, error) {
+	addr, err := domain.LifelineAddress(c.Address, d.masterPool, d.lifelinePool)
 	if err != nil {
 		return Result{}, fmt.Errorf("clientcfg: reserve address for %q: %w", c.Name, err)
 	}
-	psk, err := domain.LifelinePSK(c.PresharedKey, exitID)
+	psk, err := domain.LifelinePSK(c.PresharedKey, d.exitID)
 	if err != nil {
 		return Result{}, fmt.Errorf("clientcfg: reserve preshared key for %q: %w", c.Name, err)
 	}
 	c.Address, c.PresharedKey = addr, psk
 	cfg, err := wg.RenderClientConfig(wg.ClientConfigInput{
-		Spec:            lifeline.ClientWGSpec,
+		Spec:            d.spec,
 		Client:          c,
-		ServerPublicKey: exitNode.LifelinePublicKey,
-		Endpoint:        state.Endpoint,
+		ServerPublicKey: d.exit.LifelinePublicKey,
+		Endpoint:        d.endpoint,
 	})
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Config: cfg, Client: c, Master: master, Exit: exitNode}, nil
+	return Result{Config: cfg, Client: c, Master: d.master, Exit: d.exit}, nil
 }
 
 // LifelineFileName is the filename a downloaded RESERVE config is offered under.

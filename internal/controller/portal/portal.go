@@ -134,6 +134,9 @@ type pageData struct {
 	SubscriptionURL string
 	// HasWG: there is an AmneziaWG .conf to offer as the fallback path.
 	HasWG bool
+	// WGQR: that .conf fits in a QR code. A profile that does not is offered as a
+	// file only — an image that fails to load tells the person nothing.
+	WGQR bool
 	// VLESSLinks hold the UUID, which is why the page is no-store like the rest.
 	VLESSLinks []string
 }
@@ -149,6 +152,8 @@ type reserveView struct {
 	ID       string
 	Name     string
 	Endpoint string
+	// QR: this door's config fits in a QR code; see pageData.WGQR.
+	QR bool
 }
 
 var errTooManyAttempts = errors.New("too many attempts; try again in a minute")
@@ -223,7 +228,8 @@ func (h *Handler) handlePage(w http.ResponseWriter, r *http.Request) {
 	if v.WG != nil {
 		data.Address = v.WG.Input.Client.Address
 		data.Endpoint = v.WG.Input.Endpoint
-		data.Reserves = h.reserves(r, v.WG.MasterID)
+		data.WGQR = h.fitsQR(wg.RenderClientConfig(v.WG.Input))
+		data.Reserves = h.reserves(r, v.WG.MasterID, v.WG.Input.Client)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -238,7 +244,7 @@ func (h *Handler) handlePage(w http.ResponseWriter, r *http.Request) {
 // the page nothing: the main profile is what the person came for and is still
 // valid, and a page that 503s because one exit's spec would not render would take
 // away the working config to report a fault only the operator can fix.
-func (h *Handler) reserves(r *http.Request, masterID string) []reserveView {
+func (h *Handler) reserves(r *http.Request, masterID string, client domain.WGClient) []reserveView {
 	exits, err := clientcfg.ListLifelineExits(r.Context(), h.src, masterID)
 	if err != nil {
 		h.log.Warn("portal: could not list the reserve exits", "err", err)
@@ -249,9 +255,34 @@ func (h *Handler) reserves(r *http.Request, masterID string) []reserveView {
 		if !e.Ready {
 			continue
 		}
-		out = append(out, reserveView{ID: e.ID, Name: e.Name, Endpoint: e.Endpoint})
+		out = append(out, reserveView{
+			ID: e.ID, Name: e.Name, Endpoint: e.Endpoint,
+			QR: h.fitsQR(h.renderReserve(r, masterID, e.ID, client)),
+		})
 	}
 	return out
+}
+
+// renderReserve renders one reserve config for the page's QR decision only.
+func (h *Handler) renderReserve(r *http.Request, masterID, exitID string, client domain.WGClient) (string, error) {
+	door, err := clientcfg.PrepareLifeline(r.Context(), h.src, masterID, exitID)
+	if err != nil {
+		return "", err
+	}
+	res, err := door.Render(client)
+	return res.Config, err
+}
+
+// fitsQR decides whether the page offers a QR for a config. A config that does
+// not render gets no QR rather than failing the page: the download beside it
+// reports the fault on its own, and the rest of the page is still what the
+// person came for.
+func (h *Handler) fitsQR(cfg string, err error) bool {
+	if err != nil {
+		h.log.Warn("portal: could not render a config to size its QR", "err", err)
+		return false
+	}
+	return clientcfg.FitsQR(cfg)
 }
 
 var errPaused = errors.New("this profile is paused")
@@ -342,7 +373,7 @@ func (h *Handler) handleLifelineQR(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
-	png, err := qrcode.Encode(res.Config, qrcode.Medium, 1024)
+	png, err := clientcfg.QRPNG(res.Config)
 	if err != nil {
 		h.fail(w, err)
 		return
@@ -389,11 +420,7 @@ func (h *Handler) handleQR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.limit.Reset(clientIP(r))
-	// Big enough that a phone camera can resolve the modules. Measured on a real
-	// config (867 bytes): 117x117 modules, so 320px put 2.7 pixels on each one.
-	// This is the surface actual people scan, so it matters more here than in the
-	// operator UI.
-	png, err := qrcode.Encode(cfg, qrcode.Medium, 1024)
+	png, err := clientcfg.QRPNG(cfg)
 	if err != nil {
 		h.fail(w, err)
 		return
@@ -426,6 +453,11 @@ func (h *Handler) fail(w http.ResponseWriter, err error) {
 			"This profile is paused",
 			"It has been switched off for now and will not connect. Nothing is wrong with your device and "+
 				"nothing needs deleting — ask whoever sent you this link to switch it back on."
+	case errors.Is(err, clientcfg.ErrTooLargeForQR):
+		// Reached by a bookmarked or shared QR link: the page itself no longer
+		// offers one for this profile.
+		heading, body = "This profile is too large for a QR code",
+			"Open your profile link again and use Download profile instead, then import the file into the app."
 	case errors.Is(err, errTooManyAttempts):
 		status, heading, body = http.StatusTooManyRequests,
 			"Too many tries",
@@ -736,7 +768,8 @@ const portalHTML = `<!doctype html>
   <p>Install <b>AmneziaWG</b>, not the ordinary WireGuard app: this profile is obfuscated and the plain app cannot read it.</p>
   <p>Use it <b>instead of</b> the mihomo app, never alongside: both share one key, and together they cut each other off.</p>
   <div class="actions"><a class="btn" href="/c/{{.Token}}/config">Download profile</a></div>
-  <img class="qr-img" src="/c/{{.Token}}/qr" alt="QR code for the AmneziaWG profile" loading="lazy">
+  {{if .WGQR}}<img class="qr-img" src="/c/{{.Token}}/qr" alt="QR code for the AmneziaWG profile" loading="lazy">
+  {{else}}<p class="sub">This profile is too large for a QR code — download the file and import it into the app.</p>{{end}}
 </details>
 {{end}}
 {{if .VLESSLinks}}
@@ -760,7 +793,8 @@ const portalHTML = `<!doctype html>
     <div class="actions">
       <a class="btn" href="/c/{{$.Token}}/l/{{.ID}}/config">Download reserve profile</a>
     </div>
-    <img class="qr-img" src="/c/{{$.Token}}/l/{{.ID}}/qr" alt="QR code for the {{.Name}} reserve profile" loading="lazy">
+    {{if .QR}}<img class="qr-img" src="/c/{{$.Token}}/l/{{.ID}}/qr" alt="QR code for the {{.Name}} reserve profile" loading="lazy">
+    {{else}}<p class="sub">Too large for a QR code — download the file.</p>{{end}}
   </div>
   {{end}}
 </section>
