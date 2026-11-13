@@ -78,7 +78,11 @@ func TestValidateCamouflageRejects(t *testing.T) {
 		{"no address", func(f *FleetSection) {
 			f.Exits[0].PublicIP = ""
 			f.Exits[0].SSH.Host = "exit.example.net"
-		}, "needs public_ip"},
+		}, "needs a public address"},
+		{"overlay address in ssh.host", func(f *FleetSection) {
+			f.Exits[0].PublicIP = ""
+			f.Exits[0].SSH.Host = "10.147.20.5"
+		}, "needs a public address"},
 		{"exit sni beside camouflage", func(f *FleetSection) { f.Exits[0].Transports.Reality.DestDomain = "www.example.org" },
 			"replaces transports.reality.sni/dest_domain"},
 		{"client vless sni beside camouflage", func(f *FleetSection) { f.Masters[0].ClientVLESS.SNI = "www.example.org" },

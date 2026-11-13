@@ -210,7 +210,7 @@ of any REALITY port then gets the node's own certificate. Steps and checks:
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fleet.masters[].camouflage.domain` | string | none (off) | The node's own DNS name. Create its A record pointing at the node's `public_ip` yourself; wgfleet never touches DNS. Opens TCP/80 world-facing (certificate issuance and a plain page). Needs `public_ip` or an IP in `ssh.host`. Unique across the fleet. Not together with `client_vless.sni`/`dest_domain` or `reality_portal.sni`/`dest_domain` |
+| `fleet.masters[].camouflage.domain` | string | none (off) | The node's own DNS name. Create its A record pointing at the node's `public_ip` yourself; wgfleet never touches DNS. Opens TCP/80 world-facing (certificate issuance and a plain page). Needs a public address in `public_ip`, or in `ssh.host` when that is one — a private or overlay address in `ssh.host` does not count; set `public_ip` then. Unique across the fleet. Not together with `client_vless.sni`/`dest_domain` or `reality_portal.sni`/`dest_domain` |
 | `fleet.masters[].camouflage.public_https` | bool | `false` | Also serve the site on TCP/443 world-facing. Rejected when a REALITY inbound on the node listens on 443 — that inbound already shows the site to probes |
 
 ### `routing` — geo-routing and exit selection

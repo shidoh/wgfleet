@@ -100,9 +100,9 @@ func (c ControllerConfig) validateCamouflage() []error {
 			errs = append(errs, fmt.Errorf("%s: camouflage.domain %q is already used by %s", n.where, d, prev))
 		}
 		seen[strings.ToLower(d)] = n.where
-		if !isIPLiteral(n.publicIP) && !isIPLiteral(n.sshHost) {
-			errs = append(errs, fmt.Errorf("%s: camouflage needs public_ip (or an IP in ssh.host): "+
-				"the switch gate checks that the domain resolves to it", n.where))
+		if CamouflagePublicIP(n.publicIP, n.sshHost) == "" {
+			errs = append(errs, fmt.Errorf("%s: camouflage needs a public address in public_ip (or ssh.host): "+
+				"the switch gate checks that the domain resolves to it; a private or overlay address never matches", n.where))
 		}
 		for _, k := range n.explicit {
 			errs = append(errs, fmt.Errorf("%s: camouflage replaces %s; remove one of the two", n.where, k))
@@ -152,6 +152,24 @@ func validateCamouflageDomain(d string) error {
 		return fmt.Errorf("%q is an IP address, not a name", d)
 	}
 	return nil
+}
+
+// CamouflagePublicIP is the address the node's domain must resolve to: the first
+// candidate that is a public unicast IP. A private, overlay (ZeroTier) or CGNAT
+// address in ssh.host is skipped — public DNS never points there.
+func CamouflagePublicIP(candidates ...string) string {
+	cgnat := netip.MustParsePrefix("100.64.0.0/10")
+	for _, c := range candidates {
+		a, err := netip.ParseAddr(c)
+		if err != nil {
+			continue
+		}
+		a = a.Unmap()
+		if a.IsGlobalUnicast() && !a.IsPrivate() && !cgnat.Contains(a) {
+			return a.String()
+		}
+	}
+	return ""
 }
 
 func isIPLiteral(s string) bool {

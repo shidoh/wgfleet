@@ -25,17 +25,17 @@ func (b *Broker) camouflageSpec(name string, cfg config.CamouflageConfig, public
 	if !cfg.Enabled() || node.WireVersion < api.WireCamouflage {
 		return nil
 	}
-	ip, ok := firstIPLiteral(publicIP, sshHost, node.PublicIP)
-	if !ok {
+	ip := config.CamouflagePublicIP(publicIP, sshHost, node.PublicIP)
+	if ip == "" {
 		b.warnOnce("camouflage-no-ip:"+name, publicIP+"|"+sshHost+"|"+node.PublicIP,
-			"camouflage needs the node's public IP as a literal; leaving it off", "node", name)
+			"camouflage needs the node's public IP; leaving it off", "node", name)
 		return nil
 	}
 	f := b.fleet.Camouflage
 	return &domain.CamouflageSpec{
 		Domain:      strings.ToLower(cfg.Domain),
 		PublicHTTPS: cfg.PublicHTTPS,
-		PublicIP:    ip.String(),
+		PublicIP:    ip,
 		ACMEEmail:   f.ACMEEmail,
 		ACMECA:      f.ACMECA,
 		Image:       f.Image,
