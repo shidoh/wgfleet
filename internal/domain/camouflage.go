@@ -51,7 +51,7 @@ func (c CamouflageSpec) LocalTarget() string {
 // Validate rejects a spec the agent cannot render safely. The controller has
 // validated the manifest already; this guards the wire.
 func (c CamouflageSpec) Validate() error {
-	if c.Domain == "" || strings.ContainsAny(c.Domain, "/: *{}\n\t") || !strings.Contains(c.Domain, ".") {
+	if !isHostname(c.Domain) {
 		return fmt.Errorf("camouflage: domain %q is not a hostname", c.Domain)
 	}
 	if _, err := netip.ParseAddr(c.PublicIP); err != nil {
@@ -60,14 +60,41 @@ func (c CamouflageSpec) Validate() error {
 	if p := c.LocalPort; p != 0 && (p < 1024 || p > 65535) {
 		return fmt.Errorf("camouflage: local port %d out of range", p)
 	}
-	if strings.ContainsAny(c.ACMEEmail, " \n\t{}") {
+	if !caddyWord(c.ACMEEmail) || (c.ACMEEmail != "" && !strings.Contains(c.ACMEEmail, "@")) {
 		return fmt.Errorf("camouflage: acme email %q is not an address", c.ACMEEmail)
 	}
-	if ca := c.ACMECA; ca != "" && ca != CamouflageCAInternal && !strings.HasPrefix(ca, "https://") {
+	if ca := c.ACMECA; !caddyWord(ca) || (ca != "" && ca != CamouflageCAInternal && !strings.HasPrefix(ca, "https://")) {
 		return fmt.Errorf("camouflage: acme ca %q", ca)
 	}
-	if strings.ContainsAny(c.ACMECA, " \n\t{}") {
-		return fmt.Errorf("camouflage: acme ca %q", c.ACMECA)
-	}
 	return nil
+}
+
+// isHostname accepts letters, digits, hyphens and dots, at least two labels,
+// none empty — nothing else reaches the Caddyfile as a site address.
+func isHostname(s string) bool {
+	if len(s) == 0 || len(s) > 253 || !strings.Contains(s, ".") {
+		return false
+	}
+	for _, l := range strings.Split(s, ".") {
+		if l == "" || len(l) > 63 || l[0] == '-' || l[len(l)-1] == '-' {
+			return false
+		}
+		for _, r := range l {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// caddyWord reports whether s is one Caddyfile token: printable ASCII with no
+// space, quote, backslash, brace or comment sign.
+func caddyWord(s string) bool {
+	for _, r := range s {
+		if r <= ' ' || r >= 0x7f || strings.ContainsRune("\"'`\\{}#", r) {
+			return false
+		}
+	}
+	return true
 }

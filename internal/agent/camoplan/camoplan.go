@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
@@ -200,7 +201,7 @@ func (p Planner) adoptAction(ctx context.Context) (reconcile.Action, bool) {
 		inspect = dockerInspect
 	}
 	cfgFile, dataDir, found := inspect(ctx)
-	if !found || cfgFile == p.Paths.compose() {
+	if !found || slices.Contains(strings.Split(cfgFile, ","), p.Paths.compose()) {
 		return reconcile.Action{}, false
 	}
 	copyData := dataDir != "" && dataDir != p.Paths.Data && storageEmpty(p.Paths.Data)
@@ -322,6 +323,9 @@ func realityOn443(spec domain.NodeSpec) bool {
 // XrayCamouflage is the switch the REALITY inbound renderers take from the gate:
 // nil when the node has no camouflage.
 func XrayCamouflage(g *camouflage.Gate, spec *domain.CamouflageSpec) *xray.Camouflage {
+	if spec == nil || spec.Validate() != nil {
+		return nil // a rejected spec changes no inbound
+	}
 	d, target := g.Target(spec)
 	if d == "" {
 		return nil

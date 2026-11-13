@@ -43,7 +43,9 @@ func expiryWarn(spec domain.CamouflageSpec) time.Duration {
 // a restarted agent reports what its inbounds actually serve from its first pass.
 type Gate struct {
 	mu        sync.Mutex
-	statePath string // "" ⇒ not persisted (dry runs, tests)
+	statePath string // "" ⇒ not persisted (tests)
+	readOnly  bool   // loaded from statePath but never written (dry runs)
+	dirty     bool   // the last persist failed; retried on the next Observe
 	active    string // the domain served as target; "" ⇒ the fleet default
 	failures  int
 	last      Result
@@ -58,6 +60,15 @@ func NewGate(statePath string) *Gate {
 			g.active = strings.TrimSpace(string(b))
 		}
 	}
+	return g
+}
+
+// NewReadOnlyGate loads the persisted decision like NewGate but never writes
+// it: a dry run starts from what the node actually serves and must not change
+// what the next real pass reports.
+func NewReadOnlyGate(statePath string) *Gate {
+	g := NewGate(statePath)
+	g.readOnly = true
 	return g
 }
 
@@ -86,14 +97,17 @@ func (g *Gate) Observe(spec *domain.CamouflageSpec, r Result) (bool, error) {
 			g.active = ""
 		}
 	}
-	if g.active == prev {
+	changed := g.active != prev
+	if !changed && !g.dirty {
 		return false, nil
 	}
-	return true, g.persist()
+	err := g.persist()
+	g.dirty = err != nil
+	return changed, err
 }
 
 func (g *Gate) persist() error {
-	if g.statePath == "" {
+	if g.statePath == "" || g.readOnly {
 		return nil
 	}
 	if g.active == "" {

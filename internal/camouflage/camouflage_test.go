@@ -293,3 +293,42 @@ func TestGateCheck(t *testing.T) {
 		t.Errorf("one failure: %+v", hc)
 	}
 }
+
+func TestReadOnlyGateLoadsButNeverWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "camouflage.active")
+	if err := os.WriteFile(path, []byte("e1.example.net\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := spec()
+	g := NewReadOnlyGate(path)
+	if g.ActiveDomain() != s.Domain {
+		t.Fatalf("dry-run gate starts from %q, want the persisted decision", g.ActiveDomain())
+	}
+	g.Observe(&s, down)
+	g.Observe(&s, down)
+	if b, _ := os.ReadFile(path); strings.TrimSpace(string(b)) != s.Domain {
+		t.Errorf("dry-run gate rewrote the state: %q", b)
+	}
+}
+
+func TestGateRetriesAFailedPersist(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := NewGate(filepath.Join(blocker, "camouflage.active")) // parent is a file: writes fail
+	s := spec()
+	if _, err := g.Observe(&s, ok); err == nil {
+		t.Fatal("persist into a file path succeeded")
+	}
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Observe(&s, ok); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if got := NewGate(filepath.Join(blocker, "camouflage.active")).ActiveDomain(); got != s.Domain {
+		t.Errorf("decision not persisted on retry: %q", got)
+	}
+}

@@ -226,3 +226,20 @@ func TestTeardownRemovesTheSite(t *testing.T) {
 		t.Errorf("teardown:\n%s", got)
 	}
 }
+
+func TestXrayCamouflageIgnoresARejectedSpec(t *testing.T) {
+	g := camouflage.NewGate("")
+	bad := &domain.CamouflageSpec{Domain: `e1.example.net"`, PublicIP: "198.51.100.20"}
+	if x := XrayCamouflage(g, bad); x != nil {
+		t.Errorf("a rejected spec reached the inbounds: %+v", x)
+	}
+}
+
+func TestPlanDoesNotAdoptOurContainerListedWithOthers(t *testing.T) {
+	f := &fakes{}
+	p := f.planner(t, camouflage.NewGate(""))
+	f.inspect = [3]any{"/x/override.yml," + p.Paths.compose(), p.Paths.Data, true}
+	if got := summaries(apply(t, p, camoSpec())); strings.Contains(got, "adopt") {
+		t.Errorf("adopted our own container:\n%s", got)
+	}
+}

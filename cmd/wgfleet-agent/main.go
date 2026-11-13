@@ -297,11 +297,11 @@ func run() error {
 	a.restarts = restart.New(a.log)
 	// A dry run decides in memory only: it must not move what the next real pass
 	// reports to the controller.
-	camoState := a.camoPaths().StatePath()
 	if *plan {
-		camoState = ""
+		a.camoGate = camouflage.NewReadOnlyGate(a.camoPaths().StatePath())
+	} else {
+		a.camoGate = camouflage.NewGate(a.camoPaths().StatePath())
 	}
-	a.camoGate = camouflage.NewGate(camoState)
 	if role == domain.RoleMaster {
 		a.tier = master.NewTierSelector(a.log)
 		// One per process, like the tier selector and for the same reason: it has to
@@ -500,8 +500,10 @@ type agent struct {
 	// camoGate decides whether the node's REALITY inbounds use its own site as
 	// target (ADR-0039). One per process, persisted, like the tier selector.
 	camoGate *camouflage.Gate
-	paths    exit.Paths
-	metrics  *metrics.AgentMetrics // nil when /metrics is disabled
+	// camoReported is the domain the last status report claimed; see camouflageReport.
+	camoReported string
+	paths        exit.Paths
+	metrics      *metrics.AgentMetrics // nil when /metrics is disabled
 	// mihomoLogCursor is how far into mihomo's log the error counter has read.
 	// Kept here rather than in a planner: planners are rebuilt every pass and would
 	// re-count the same window forever.
@@ -1238,6 +1240,20 @@ func (a *agent) camoPaths() camoplan.Paths {
 	return camoplan.DefaultPaths()
 }
 
+// camouflageReport is the domain to report as served. The gate decides during
+// the pass, before the REALITY inbounds are re-rendered; a pass that failed may
+// have left an inbound on its previous target, so a NEW claim of the domain waits
+// for a clean pass. Withdrawing it never waits: peers on the fleet-default name
+// connect with either target.
+func (a *agent) camouflageReport(reconcileErr error) string {
+	d := a.camoGate.ActiveDomain()
+	if reconcileErr != nil && d != a.camoReported {
+		d = ""
+	}
+	a.camoReported = d
+	return d
+}
+
 // observeCamouflage exports the own-domain site's state; nothing for a node
 // without one.
 func (a *agent) observeCamouflage(spec domain.NodeSpec) {
@@ -1550,7 +1566,7 @@ func (a *agent) readWARPProfile() *egress.WARPConfig {
 // (the WARP IP for warp egress, the node's own IP for direct) — surfaced in the UI.
 func (a *agent) reportStatus(ctx context.Context, state domain.NodeState, checks []domain.HealthCheck, reconcileErr error, egressIP string, exitHealth []domain.ExitTunnelHealth) error {
 	st := domain.NodeStatus{State: state, Checks: checks, EgressIP: egressIP, ExitHealth: exitHealth, LastHandshake: a.latestHandshake(ctx)}
-	st.CamouflageDomain = a.camoGate.ActiveDomain()
+	st.CamouflageDomain = a.camouflageReport(reconcileErr)
 	if a.role == domain.RoleExit {
 		st.AWGMasterEndpoint = a.awgMasterEndpoint
 		st.MasterPeers = a.masterPeers

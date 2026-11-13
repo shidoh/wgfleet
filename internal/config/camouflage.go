@@ -41,13 +41,12 @@ const CamouflageCAInternal = "internal"
 
 // camouflageNode is the slice of a master or an exit that camouflage validation reads.
 type camouflageNode struct {
-	where      string // "fleet.masters[0] (master-1)"
-	camo       CamouflageConfig
-	publicIP   string
-	sshHost    string
-	explicit   []string // set sni/dest_domain keys on the node's REALITY inbounds
-	holds443   bool     // a REALITY inbound on the node listens on TCP/443
-	hasInbound bool     // the node runs at least one listening REALITY inbound
+	where    string // "fleet.masters[0] (master-1)"
+	camo     CamouflageConfig
+	publicIP string
+	sshHost  string
+	explicit []string // set sni/dest_domain keys on the node's REALITY inbounds
+	holds443 bool     // a REALITY inbound on the node listens on TCP/443
 }
 
 func (c ControllerConfig) camouflageNodes() []camouflageNode {
@@ -55,7 +54,7 @@ func (c ControllerConfig) camouflageNodes() []camouflageNode {
 	for i, m := range c.Fleet.Masters {
 		n := camouflageNode{
 			where: fmt.Sprintf("fleet.masters[%d] (%s)", i, m.Name), camo: m.Camouflage,
-			publicIP: m.PublicIP, sshHost: m.SSH.Host, hasInbound: true,
+			publicIP: m.PublicIP, sshHost: m.SSH.Host,
 		}
 		if m.ClientVLESS.SNI != "" || m.ClientVLESS.DestDomain != "" {
 			n.explicit = append(n.explicit, "client_vless.sni/dest_domain")
@@ -71,7 +70,7 @@ func (c ControllerConfig) camouflageNodes() []camouflageNode {
 		listening := r.Enabled && !r.ExitInitiated
 		n := camouflageNode{
 			where: fmt.Sprintf("fleet.exits[%d] (%s)", i, e.Name), camo: e.Camouflage,
-			publicIP: e.PublicIP, sshHost: e.SSH.Host, hasInbound: listening,
+			publicIP: e.PublicIP, sshHost: e.SSH.Host,
 		}
 		if r.SNI != "" || r.DestDomain != "" {
 			n.explicit = append(n.explicit, "transports.reality.sni/dest_domain")

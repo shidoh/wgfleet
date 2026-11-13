@@ -169,11 +169,13 @@ func (b *Broker) bridgeFor(ctx context.Context, exit config.ExitConfig) (*domain
 			return nil, err
 		}
 		sni, _ := b.portalCamouflage(t.Master)
-		masterNode, _, err := b.lookupPubKey(ctx, t.Master.Name)
-		if err != nil {
-			return nil, err
+		if t.Master.Camouflage.Enabled() {
+			masterNode, _, err := b.lookupPubKey(ctx, t.Master.Name)
+			if err != nil {
+				return nil, err
+			}
+			sni = b.camouflageServerName(ctx, t.Master.Name, t.Master.Camouflage, masterNode, sni)
 		}
-		sni = b.camouflageServerName(ctx, t.Master.Name, t.Master.Camouflage, masterNode, sni)
 		bridge.Portals = append(bridge.Portals, domain.RealityPortalPeer{
 			Master:      t.Master.Name,
 			Address:     t.Addr.String(),
