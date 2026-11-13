@@ -751,6 +751,7 @@ All keys: [configuration.md#2-controller-the-controller-process](configuration.m
 | Master | `dns-filter` | `dns.enabled`, once the resolver has its listen address | The master is the clients' resolver: up-but-not-resolving must read Degraded. Passes only when the answer holds an address; SERVFAIL, NXDOMAIN or an empty answer fail it. |
 | Master | `client-vless` | `client_vless.enabled` | The VLESS+REALITY inbound is up; a down inbound shows **Degraded**. |
 | Master | `reality-portal` | an exit with `transports.reality.exit_initiated` dials this master | A socket listens on the portal port (`ss -ltn`). Says nothing about whether exits reach it — that is `WgfleetRealityBridgeDown`. |
+| Any | `camouflage` | the node has `camouflage.domain` | Green: the own-domain site is the REALITY target and its certificate has 14+ days left. Red names the reason (site down, DNS, TCP/80 held, certificate). **Never changes the node's state**: the REALITY inbounds keep working on the fleet-default target. See [Own-domain camouflage](#own-domain-camouflage). |
 | Any | `spec-valid` | only when the agent rejects a spec | Red with the reason; the node keeps its last good configuration. |
 
 | Condition | Reported state |

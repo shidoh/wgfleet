@@ -158,6 +158,9 @@ clients can connect to the master over VLESS as well as AmneziaWG.
   endpoint that stops answering is replaced on its own.
 - **Exit-initiated tunnels** — where connections the master opens are cut, the
   exit dials the master instead, for AmneziaWG and for REALITY.
+- **Own-domain camouflage** — a node can serve its own site with a certificate for
+  a domain you own and make it the target of its REALITY inbounds, so a probe of
+  the node gets your domain instead of a borrowed third-party site.
 - **DPI-resistant client transport** — clients can connect over VLESS + REALITY
   + XHTTP alongside client AmneziaWG; credentials, QR and a ready-to-import
   Clash config are issued from the Web UI.
@@ -316,7 +319,7 @@ build DKMS for you. Full walkthrough: [`docs/onboarding.md`](https://shidoh.gith
 - **Self-checks drive lifecycle state.** After each apply the agent runs
   role-specific checks — handshake freshness, WARP egress, DNS filter, the
   REALITY inbound or bridge, the lifeline interface, the UDP return path, the
-  mihomo API — and the derived state feeds
+  own-domain site, the mihomo API — and the derived state feeds
   the dashboard and metrics.
   If an agent goes silent, a staleness sweep demotes its node to `Degraded`.
 - **Customization without forking renderers.** Operators inject deep-merged
@@ -416,6 +419,7 @@ MVP, in active development.
 | Tiered exit selection, throughput watchdog with auto-suspend, drain by config | ✅ |
 | Several masters — every exit peers every master, per-master console view | ✅ |
 | Exit-initiated AmneziaWG and REALITY for paths that cut master-opened connections | ✅ |
+| Own-domain camouflage — an agent-run site as the REALITY target, per node | ✅ |
 | Console login, certificate self-renewal, node tombstones | ✅ |
 | AmneziaWG 3.1 — timers and header protection, **opt-in, off by default** | ✅ |
 

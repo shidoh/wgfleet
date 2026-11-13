@@ -59,6 +59,7 @@ Every file wgfleet manages that carries a secret:
 
 - `controller.yaml` and `agent.yaml`
 - the AmneziaWG/WARP tunnel configs and the reserve interface key (`lifeline.key`)
+- the own-domain site's certificates and keys (`/var/lib/wgfleet/camouflage`); its log tail is collected
 - mihomo/xray configs
 - this node's own private key
 - the fleet CA's private key

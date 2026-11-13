@@ -137,7 +137,7 @@ names any node the controller knows that this job is not scraping.
 | Now | what is firing; clients online and their traffic; synthetic-client failures; exits carrying traffic and reserve tier, per master; DNS SERVFAIL share |
 | Clients | client peers and traffic per master; the masters' DNS answers; DNS latency and failures per node |
 | Master → exit | exit × master matrix (carrying / ready / held out / OUT); only the pairs that left rotation in the range; traffic leaving each exit; tunnel delay; stale AWG tunnels, exits silent at the gate, failed reserve members — each empty while healthy |
-| Control plane & inventory | controller build, CA expiry, manifest drift, store; node table with agent build, cert days left and uptime |
+| Control plane & inventory | controller build, CA expiry, manifest drift, store; node table with agent build, cert days left and uptime; AmneziaWG module builds; own-domain sites (target, certificate days left) |
 | Health | checks failing now, by kind, and what failed in the range |
 | collapsed | client-path internals, transport, egress watchdog, VLESS, reconcile, scheduled probes, host |
 
@@ -174,7 +174,7 @@ ones — is documented at the top of that script.
 | `wgfleet_node_info` | `node,role,region,state` | inventory (=1) |
 | `wgfleet_node_last_report_age_seconds` | `node` | staleness of the last status report |
 | `wgfleet_node_reconcile_failed` | `node` | 1 if last reconcile errored |
-| `wgfleet_node_health_check` | `node,check` | 1 ok / 0 failing (incl. `egress-throughput`, `egress-reachability`, `client-vless`, `lifeline`) |
+| `wgfleet_node_health_check` | `node,check` | 1 ok / 0 failing (incl. `egress-throughput`, `egress-reachability`, `client-vless`, `lifeline`, `camouflage`) |
 | `wgfleet_node_egress_info` | `node,egress_ip` | observed egress IP (=1) |
 | `wgfleet_node_agent_info` | `node,agent_version,wire_version` | reported agent build (=1) |
 | `wgfleet_node_awg_module_info` | `node,build,srcversion` | AmneziaWG kernel module build the node runs (=1). `build` is the build timestamp from the `amneziawg-dkms` package version (`1.0.0-0~202609061402+4569c4c` → `202609061402`); `unknown` when the agent is older than v0.3.5, the package is not installed, or a newer package waits for a module reload. `srcversion` is the loaded module's hash. The module's own version string is the same for every build, so this is the only way to tell them apart |
@@ -271,6 +271,8 @@ refresh (`as_blacklist_feed`):
 | `wgfleet_agent_standby_tier_member_usable` | `exit` | 1 when the last warm probe reached the internet through this member of the INACTIVE tier, 0 when it did not (master-only). The tally above cannot be acted on — one dead reserve exit hides inside "2 of 3"; this names it. **Absent means never sampled** |
 | `wgfleet_agent_standby_transport_usable` | `exit,transport` | 1 when this exit's INACTIVE transport — the one an operator would switch it onto — reached the internet on the last probe, 0 when it did not (master-only). **Absent means never measured**, which is not the same as healthy |
 | `wgfleet_agent_reality_bridge_connected` | `master` | 1 when the exit's REALITY bridge holds a connection to this master's portal, 0 when it holds none (exit-only, exit-initiated REALITY). **Absent outside the mode** |
+| `wgfleet_agent_camouflage_target_own` | `domain` | 1 while the node's REALITY inbounds use its own-domain site as target and peers send the domain; 0 while they are on the fleet-default target. **Absent on a node without camouflage** |
+| `wgfleet_agent_camouflage_cert_expiry_timestamp_seconds` | `domain` | Unix time the own-domain site's certificate expires; 0 while it could not be read. **Absent on a node without camouflage** |
 | `wgfleet_agent_reality_bridge_kills_total` | `master` | bridge sockets to this master's portal the watchdog killed after 30 s without a received byte — one-way freezes on that path (exit-only) |
 | `wgfleet_fw_as_blacklist_size` | `family` | size of the scanner-ASN blacklist set actually loaded in nftables |
 | `wgfleet_agent_client_path_ok` | `probe` | 1 when the master's OWN client can send and receive over this protocol through the full client path (interface, firewall, proxy, exit); 0 when it cannot (master-only). Probes: `icmp/direct`, `icmp/gateway`, `icmp/mgmt`, `tcp/443`, `udp/53`. The one measurement that says whether a client works, as opposed to whether each component looks fine |
@@ -360,6 +362,8 @@ What ships, by severity:
 | `WgfleetExitFlapping` | warning |
 | `WgfleetAWGExitNotHeard` | warning |
 | `WgfleetLifelineCheckMissing` | warning |
+| `WgfleetCamouflageNotServing` | warning |
+| `WgfleetCamouflageCertExpiring` | warning |
 | `WgfleetMasterPathsDegrading` | warning |
 | `WgfleetExitPathDegrading` | warning |
 | `WgfleetExitDegradingFromAllMasters` | warning |

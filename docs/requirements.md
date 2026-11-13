@@ -40,6 +40,11 @@ promised.
   agent deletes stale flows with it after routing changes and on masters with
   `transports.awg.exit_initiated`. Without it those repairs are skipped with a
   warning in the agent journal.
+- **For `camouflage` only** (own-domain site): a domain whose A record points at the
+  node's `public_ip`, TCP/80 reachable from the internet for the certificate
+  authority's HTTP-01 check, outbound HTTPS to that authority, and nothing else on
+  the node listening on TCP/80 (or TCP/443 with `public_https`). The agent pulls
+  the Caddy image on first use.
 
 ## Sizing
 

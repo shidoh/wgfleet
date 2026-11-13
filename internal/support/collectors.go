@@ -80,6 +80,7 @@ func NodeCollectors(role string) []Collector {
 		{File: "containers.txt", Name: "mihomo log", Cmd: "docker logs --tail 100 mihomo 2>&1"},
 		{File: "containers.txt", Name: "xray log", Cmd: "docker logs --tail 100 xray 2>&1"},
 		{File: "containers.txt", Name: "blocky log", Cmd: "docker logs --tail 100 blocky 2>&1"},
+		{File: "containers.txt", Name: "camouflage site log", Cmd: "docker logs --tail 100 camouflage 2>&1"},
 	}
 
 	if role == "master" {
@@ -105,6 +106,7 @@ func NotCollected() []string {
 		"mihomo config.yaml — proxy credentials",
 		"xray config.json — REALITY/VLESS private keys",
 		"wg0.conf, client-wg.key — the master's client interface key and client preshared keys",
+		"/var/lib/wgfleet/camouflage — the own-domain site's certificates and their private keys",
 		"node.key — this node's private key",
 		"ca.key — fleet certificate authority private key",
 		"any file under a sops-encrypted path — sops age/PGP key material",

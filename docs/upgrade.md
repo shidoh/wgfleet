@@ -144,6 +144,10 @@ All keys: [configuration.md#3-fleet-fleet-wide-settings](configuration.md#3-flee
 
 Adding a master: [operations.md](operations.md#several-masters).
 
+### Own-domain camouflage
+
+`camouflage` needs the controller and the node's agent on wire 16. Order: controller, then agents, then the key. A node on an older agent gets no site and keeps the fleet-default target; its peers keep the fleet-default SNI. Going back to the previous controller needs the pre-upgrade state database: the store gains a column the older controller refuses. Client configs do not change. Procedure: [operations.md](operations.md#own-domain-camouflage).
+
 ### Exit-initiated REALITY
 
 `transports.reality.exit_initiated` needs the controller, the masters and the exit on wire 14. Order: controller, masters, exits, then the flag, set while AmneziaWG is the exit's active transport. A master on an older agent carries no REALITY tunnel to that exit; an exit with the flag and no master on wire 14 has no REALITY tunnel at all. Procedure: [operations.md](operations.md#exit-initiated-reality).
