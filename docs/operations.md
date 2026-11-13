@@ -1112,6 +1112,97 @@ Make AmneziaWG active, remove `exit_initiated`, restart the controller. The exit
 | Controller binary | Not possible past this release: the store gains a column the older controller refuses |
 | A master agent to wire 13 | `docker compose -f /etc/wgfleet/reality-portal/docker-compose.yml down` on that master first; the older agent does not know the container |
 
+## Own-domain camouflage
+
+A REALITY inbound answers anyone without its key with the certificate of its `target`. By default that is a third-party site (`fleet.reality_default_sni`), which some hosting providers treat as an acceptable-use violation. With `camouflage` the node runs its own site — Caddy with a certificate for a domain you own — and every REALITY inbound on the node uses it as `target`. A probe of the REALITY port, of TCP/80 and (with `public_https`) of TCP/443 then gets your domain's certificate and a plain page.
+
+### What changes
+
+| What | With `camouflage` |
+|---|---|
+| Node firewall | TCP/80 open world-facing; TCP/443 too with `public_https` |
+| Node containers | `camouflage` (Caddy, host network): public :80, `127.0.0.1:8444` (the REALITY target), public :443 with `public_https` |
+| REALITY inbounds on the node | accept the domain and the fleet-default name; `target` = the site once the switch gate opens |
+| What peers send | the master toward a listening exit and the exit toward a master's portal send the domain as SNI once that node reports serving it; before that, the fleet-default name |
+| Client profiles | unchanged: they keep the fleet-default SNI (or none with `empty_sni`), which the node accepts with either target. Nothing to reissue |
+
+### The switch gate
+
+| State | When | REALITY `target` | SNI peers send |
+|---|---|---|---|
+| closed | site not up, certificate not issued, or the domain does not resolve to `public_ip` | fleet default | fleet default |
+| open | the site answers TLS 1.3 for the domain with a valid certificate **and** the domain resolves to `public_ip` | `127.0.0.1:8444` | the domain |
+| closing | the site failed two passes in a row | fleet default again | fleet default after the peer's next pull |
+
+A wrong DNS answer keeps the gate from opening but never closes it. While the gate closes, a peer that still sends the domain cannot open new connections until its next pull (one reconcile interval); live connections survive.
+
+### Requirements
+
+| Requirement | Without it |
+|---|---|
+| Controller and node agent on wire 16 | The node gets no `camouflage` and keeps the fleet default |
+| A domain whose A record points at the node's `public_ip` | The gate stays closed; check `camouflage`: `… resolves to …, not to this node's …` |
+| TCP/80 reachable from the internet (provider firewall) | No certificate; check: `site … does not answer TLS` |
+| Nothing else on the node listening on TCP/80 (or 443 with `public_https`) | Caddy cannot start; the check names the holder: `TCP/80 is held by …` |
+
+### Switch on
+
+1. Create the A record `<domain> → <public_ip>` and wait until `dig +short <domain>` returns the address.
+2. Add the key and restart the controller:
+
+```yaml
+fleet:
+  camouflage:
+    acme_email: ops@example.net   # optional
+  exits:
+    - name: exit-de-1
+      camouflage:
+        domain: e1.example.net
+```
+
+```bash
+wgfleet-controller --check-config -config /etc/wgfleet/controller.yaml
+systemctl restart wgfleet-controller
+```
+
+The site comes up on the node's next pass; the gate opens on the pass after the certificate is issued (usually under a minute). The inbound restarts once when its target moves (~7 s for portal bridges).
+
+### Check
+
+| Where | Command | Expect |
+|---|---|---|
+| Node page | health check `camouflage` | `serving <domain>, certificate valid N more days` |
+| Node | `docker ps --filter name=camouflage` | running |
+| Node | `cat /etc/wgfleet/camouflage/active` | the domain |
+| Anywhere | `curl -sI http://<domain>/` | `200`, or `308` to `https://<domain>/` when TCP/443 shows the site |
+| Anywhere | `openssl s_client -connect <public_ip>:<reality port> -servername <domain> </dev/null 2>/dev/null \| openssl x509 -noout -subject -issuer` | your domain, a public CA |
+| Anywhere | `xray tls ping <domain>:<reality port>` | handshake ok, X25519MLKEM768 supported |
+| Peer master | mihomo config: the exit's `-reality` proxy | `servername: <domain>` |
+| Node metrics | `wgfleet_agent_camouflage_cert_expiry_timestamp_seconds` | the certificate's expiry |
+
+### Symptoms
+
+| Symptom | Look at | Do |
+|---|---|---|
+| Check `site down: … connection refused` | `docker logs camouflage --tail 50` | Caddy does not run: the reason is in its log |
+| Check `… TCP/80 is held by ((nginx …` | `ss -ltnp 'sport = :80'` | stop the other service; the agent starts Caddy on the next pass |
+| Check `… does not resolve` / `resolves to …` | `dig +short <domain>` on the node | fix the A record |
+| Check `site down: … certificate signed by unknown authority` | Caddy log: `obtaining certificate` errors | TCP/80 blocked from outside, or the CA's rate limit; Caddy retries on its own |
+| Check `certificate for … expires in …` | Caddy log: renewal errors | same as above; the check is red below 14 days |
+| Peers still send the fleet-default name | the node's check `camouflage` | green ⇒ wait for the peer's next pull |
+
+### A hand-built site
+
+A container named `camouflage` that the agent did not start is adopted on the first pass: its `/data` (certificates) is copied into `/var/lib/wgfleet/camouflage` if that is empty, and the container is removed before the managed one starts. Keep the same domain to keep the certificate.
+
+### Switch off
+
+Remove `camouflage` from the node and restart the controller. The gate closes, peers go back to the fleet-default name, the agent stops the site and closes TCP/80. The certificates stay in `/var/lib/wgfleet/camouflage` so turning it back on needs no new certificate; decommission removes them.
+
+### Test stands
+
+`fleet.camouflage.acme_ca: internal` issues from Caddy's own CA, and the gate trusts that CA. Put `<public_ip> <domain>` into the node's `/etc/hosts` for the DNS half.
+
 ## Client interception in mihomo's network namespace
 
 mihomo runs in its own network namespace so its transparent-proxy reply sockets

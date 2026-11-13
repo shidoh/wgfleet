@@ -987,6 +987,21 @@ spec:
         description: The egress_leak_guard chain on {{ $labels.node }} is dropping far more than the
           straggler baseline (~7/min). Something stopped being masqueraded — check the masquerade rule's
           scope against the client pool and the outgoing interface.
+    - alert: WgfleetCamouflageCertExpiring
+      # The own-domain site renews its certificate by itself about 30 days before
+      # expiry. Under 14 days left means renewal has been failing for two
+      # weeks: TCP/80 blocked from outside, the A record moved, or the CA refusing.
+      # The REALITY inbounds keep working on an expired certificate; what breaks is
+      # the provider's view of the node.
+      expr: wgfleet_agent_camouflage_cert_expiry_timestamp_seconds > 0 and (wgfleet_agent_camouflage_cert_expiry_timestamp_seconds - time()) < 14 * 86400
+      for: 1h
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: Camouflage certificate on {{ $labels.node }} expires in {{ $value | humanizeDuration }}
+        description: The node's own-domain site has not renewed its certificate. Check the node's
+          camouflage health check and `docker logs camouflage`.
     - alert: WgfleetNodeCertExpiring
       # Node certificates are issued for a year and the agent renews its own between
       # 70% and 90% of that, in place, over the control plane. So this rule no longer

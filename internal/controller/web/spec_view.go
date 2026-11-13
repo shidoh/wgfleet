@@ -87,7 +87,7 @@ func buildSpecView(s domain.NodeSpec) specView {
 	v := specView{Summary: summaryRows(s)}
 	for _, g := range []specGroup{
 		wgServerGroup(s), awgGroup(s), realityGroup(s.Reality), realityPortalGroup(s.Master), clientVLESSGroup(s.Master),
-		lifelineGroup(s.Lifeline), routingGroup(s.Routing), dnsGroup(s.DNS), firewallGroup(s.Firewall),
+		camouflageGroup(s.Camouflage), lifelineGroup(s.Lifeline), routingGroup(s.Routing), dnsGroup(s.DNS), firewallGroup(s.Firewall),
 		hardeningGroup(s), observabilityGroup(s),
 	} {
 		if len(g.Rows) > 0 {
@@ -375,6 +375,39 @@ func realityPortalGroup(m *domain.MasterSpec) specGroup {
 			Hint: "UUIDs are access credentials and are never rendered"})
 	}
 	return g
+}
+
+// camouflageGroup shows the own-domain site (ADR-0039) and the one thing the
+// operator has to do by hand: the DNS record. Whether the site is serving is
+// the node's `camouflage` health check, not desired state.
+func camouflageGroup(c *domain.CamouflageSpec) specGroup {
+	if c == nil {
+		return specGroup{}
+	}
+	ports := "80/tcp"
+	if c.PublicHTTPS {
+		ports = "80/tcp, 443/tcp"
+	}
+	ca := "public (Let's Encrypt, ZeroSSL)"
+	switch c.ACMECA {
+	case "":
+	case domain.CamouflageCAInternal:
+		ca = "Caddy's local CA (test stand)"
+	default:
+		ca = c.ACMECA
+	}
+	return specGroup{
+		Title: "Camouflage site",
+		Note:  "the REALITY inbounds on this node use the site as target once its health check `camouflage` is green.",
+		Rows: []specRow{
+			kv("Domain", c.Domain),
+			{Label: "DNS record", Value: fmt.Sprintf("%s A %s", c.Domain, c.PublicIP),
+				Hint: "create it at your DNS provider; wgfleet never touches DNS"},
+			kv("Open ports", ports),
+			kv("REALITY target", c.LocalTarget()),
+			kv("Certificate authority", ca),
+		},
+	}
 }
 
 func clientVLESSGroup(m *domain.MasterSpec) specGroup {

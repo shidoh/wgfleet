@@ -104,6 +104,9 @@ provisioning, so changing them requires re-provisioning the node.
 | `fleet.as_blacklist_interval` | duration | `24h` | **baked.** Feed refresh cadence. Valid `1m`–`168h`. A failed refresh keeps the last-good list |
 | `fleet.reality_default_sni` | string | `www.python.org` | Fleet-wide REALITY camouflage SNI. **The target must support X25519MLKEM768** or the handshake fails silently — verify with `xray tls ping <host>` |
 | `fleet.reality_default_dest` | string | = SNI | Fleet-wide camouflage `host:port` the REALITY inbound borrows its certificate from |
+| `fleet.camouflage.acme_email` | string | none | Contact address sent to the certificate authority by every node with [`camouflage`](#camouflage--own-domain-site) |
+| `fleet.camouflage.acme_ca` | string | public defaults | Certificate authority for `camouflage` sites: empty ⇒ Caddy's defaults (Let's Encrypt, then ZeroSSL); `internal` ⇒ Caddy's own local CA, trusted by the agent's check — for test stands without public DNS; otherwise an `https://` ACME directory URL |
+| `fleet.camouflage.image` | string | pinned Caddy | Container image of the `camouflage` site |
 | `fleet.hardening.sshd` | bool | `true` | **Fleet default.** Manage the sshd drop-in (`/etc/ssh/sshd_config.d/10-wgfleet-hardening.conf`: key-only auth, no root password, no X11 forwarding), reconciled every pass |
 | `fleet.hardening.fail2ban` | bool | `true` | **Fleet default.** Manage the fail2ban sshd jail (`/etc/fail2ban/jail.d/wgfleet.conf`) |
 | `fleet.awg3` | bool | `false` | **Fleet default.** Run the master↔exit AmneziaWG tunnels on **AmneziaWG 3.0** (header protection + randomised timers) — see [AmneziaWG 3.0](#amneziawg-30) |
@@ -196,6 +199,19 @@ Runs only when some exit has `transports.reality.exit_initiated`. The port is op
 | `fleet.masters[].reality_portal.dest_domain` | string | fleet default | Camouflage target host. **Must support X25519MLKEM768** — check with `xray tls ping <host>`. Prefer a host plausible for the master's country |
 | `fleet.masters[].reality_portal.dest_port` | int | `443` | Camouflage target port |
 | `fleet.masters[].reality_portal.sni` | string | = `dest_domain` | Camouflage SNI |
+
+### `camouflage` — own-domain site
+
+Same keys on masters and exits. The agent runs a Caddy site with a certificate for
+`domain` and makes it the REALITY target of every inbound on the node (client VLESS and
+portal on a master, the REALITY inbound on an exit) instead of the fleet default. A probe
+of any REALITY port then gets the node's own certificate. Steps and checks:
+[operations.md](operations.md#own-domain-camouflage).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `fleet.masters[].camouflage.domain` | string | none (off) | The node's own DNS name. Create its A record pointing at the node's `public_ip` yourself; wgfleet never touches DNS. Opens TCP/80 world-facing (certificate issuance and a plain page). Needs `public_ip` or an IP in `ssh.host`. Unique across the fleet. Not together with `client_vless.sni`/`dest_domain` or `reality_portal.sni`/`dest_domain` |
+| `fleet.masters[].camouflage.public_https` | bool | `false` | Also serve the site on TCP/443 world-facing. Rejected when a REALITY inbound on the node listens on 443 — that inbound already shows the site to probes |
 
 ### `routing` — geo-routing and exit selection
 
@@ -305,6 +321,17 @@ run warm and the live path can be switched instantly.
 | `fleet.exits[].firewall.whitelist` | []CIDR | mgmt scope | Additional sources always accepted. The management overlay is merged in automatically |
 | `fleet.exits[].firewall.public_tcp_ports` | []int | none | TCP ports opened to the whole internet |
 | `fleet.exits[].firewall.public_udp_ports` | []int | none | UDP ports opened to the whole internet |
+
+### Camouflage
+
+Same keys and behaviour as on masters ([own-domain site](#camouflage--own-domain-site)).
+On an exit in `exit_initiated` mode nothing listens for REALITY; the site alone answers
+on TCP/80, and on TCP/443 with `public_https`.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `fleet.exits[].camouflage.domain` | string | none (off) | The exit's own DNS name, A record → `public_ip`. Not together with `transports.reality.sni`/`dest_domain` |
+| `fleet.exits[].camouflage.public_https` | bool | `false` | Also serve the site on TCP/443. Rejected when the exit's REALITY inbound listens on 443 (`listen_port` unset or `443`, `exit_initiated` off) |
 
 ### Migration
 
