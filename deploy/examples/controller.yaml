@@ -32,6 +32,9 @@ fleet:
   # as_blacklist_v6_url: "https://raw.githubusercontent.com/C24Be/AS_Network_List/main/blacklists/blacklist-v6.txt" # v6 feed
   # reality_default_sni: "www.python.org" # fleet-wide REALITY camouflage SNI; must support X25519MLKEM768 (xray tls ping)
   # reality_default_dest: "www.python.org:443" # fleet-wide camouflage host:port (default: the SNI on 443)
+  # camouflage: # fleet part of the own-domain site (per node: masters[]/exits[].camouflage)
+    # acme_email: ops@example.net # contact for the certificate authority (default none)
+    # acme_ca: "" # "" = public CAs, internal = Caddy's local CA (test stands), or an https ACME directory URL
   # hardening:
   #   sshd: true # manage the sshd hardening drop-in (default true; false removes it)
   #   fail2ban: true # manage the fail2ban sshd jail (default true; false removes it)
@@ -68,6 +71,9 @@ fleet:
         # dest_domain: www.python.org # camouflage host; must support X25519MLKEM768
         # dest_port: 443 # camouflage target port (default 443)
         # sni: www.python.org # camouflage SNI (default: dest_domain / fleet default)
+      # camouflage: # own-domain site; every REALITY inbound here uses it as target. You create the A record → public_ip
+        # domain: m1.example.net # opens TCP/80; not together with client_vless/reality_portal sni or dest_domain
+        # public_https: false # also serve the site on TCP/443 (not when a REALITY inbound listens on 443)
       routing:
         direct_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] # destinations that never enter the tunnel
         direct_geo: [RU] # geo codes routed DIRECT
@@ -155,6 +161,9 @@ fleet:
           # xhttp_path: "/abc123" # XHTTP path (default /<short-id>)
           # image: ghcr.io/xtls/xray-core:26.6.22 # xray image (default: built-in pinned)
           # exit_initiated: false # the exit dials every master's reality_portal instead of listening (default false)
+      # camouflage: # own-domain site, the REALITY inbound's target. You create the A record → public_ip
+        # domain: e1.example.net # opens TCP/80; not together with transports.reality.sni/dest_domain
+        # public_https: false # also serve the site on TCP/443 (not while the inbound listens on 443)
       active_transport: awg # transport the master routes through: awg | reality-xhttp
       # per_tunnel_key: "off" # staged per-tunnel key migration: off (default) -> dual -> switch -> on, one exit at a time
       dns_filter: true # run blocky on this exit; binds loopback and mgmt_addr only (default false)

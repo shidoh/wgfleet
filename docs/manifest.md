@@ -135,6 +135,9 @@ fleet:
           empty_sni: false                  # true ⇒ no-SNI ClientHello
           allow_ipv6: false                 # false ⇒ pin xray resolution to IPv4 (IPv4-only data plane)
           # image: ghcr.io/xtls/xray-core:26.6.22   # unset ⇒ pinned default
+      # camouflage:                         # own-domain site as the REALITY target instead of dest_domain/sni
+      #   domain: e1.example.net            # you create the A record → public_ip; opens TCP/80
+      #   public_https: false               # also serve TCP/443 (not while reality listens on 443)
       active_transport: awg                 # awg (default/primary) | reality-xhttp (fallback); flip live in the Web UI
       dns_filter: true                      # blocky (Docker); binds loopback + mgmt_addr (+ the lifeline
                                             #   pool gateway on an exit that carries one)
