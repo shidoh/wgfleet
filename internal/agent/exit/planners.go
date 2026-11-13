@@ -10,10 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shidoh/wgfleet/internal/agent/camoplan"
 	"github.com/shidoh/wgfleet/internal/agent/dockerfw"
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/agent/tuning"
 	"github.com/shidoh/wgfleet/internal/awgmod"
+	"github.com/shidoh/wgfleet/internal/camouflage"
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/dnsfilter"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -58,6 +60,10 @@ type Input struct {
 	ASBlacklistV4URL    string
 	ASBlacklistV6URL    string
 	ASBlacklistInterval time.Duration
+	// Camouflage is the own-domain site (ADR-0039) and Gate its switch, owned by
+	// the caller and reused across passes. nil ⇒ decided pass by pass.
+	Camouflage camoplan.Paths
+	Gate       *camouflage.Gate
 }
 
 // Planners returns the ordered exit reconcilers: firewall first (so the box is
@@ -85,7 +91,9 @@ func Planners(in Input) []reconcile.Planner {
 		// REALITY/XHTTP inbound (ADR-0025): renders + runs the xray container when the
 		// exit's active transport set includes reality; a no-op otherwise. Its
 		// host-originated outbound is mark-routed to WARP by the routing planner.
-		xrayPlanner{configPath: in.Paths.XrayConfig, composePath: in.Paths.XrayCompose, privateKey: in.RealityPrivateKey},
+		// The own-domain site, before the REALITY inbound that may target it.
+		camoplan.Planner{Paths: in.Camouflage, Gate: in.Gate},
+		xrayPlanner{configPath: in.Paths.XrayConfig, composePath: in.Paths.XrayCompose, privateKey: in.RealityPrivateKey, gate: in.Gate},
 		// blocky runs in Docker, which sets the nft FORWARD policy to DROP and would
 		// silently black-hole client traffic forwarded awg0→wgcf (same as
 		// the master). Runs after dnsPlanner so the DOCKER-USER chain exists.

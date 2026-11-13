@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/shidoh/wgfleet/internal/agent/camoplan"
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
+	"github.com/shidoh/wgfleet/internal/camouflage"
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/mihomo"
@@ -29,6 +31,8 @@ type clientVlessPlanner struct {
 	// thing — the address of the SOCKS bridge it dials — and that one thing is
 	// every REALITY client's traffic.
 	netnsAttached func() bool
+	// gate says whether the node's own site is the REALITY target (ADR-0039).
+	gate *camouflage.Gate
 }
 
 func (clientVlessPlanner) Component() string { return "client vless inbound (xray)" }
@@ -69,6 +73,7 @@ func (p clientVlessPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]r
 		Spec:       *cv,
 		PrivateKey: p.privateKey,
 		SocksHost:  mihomo.ClientVLESSBridgeAddr(NetnsPeerIP(spec, attached)),
+		Camouflage: camoplan.XrayCamouflage(p.gate, spec.Camouflage),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("render client vless inbound: %w", err)

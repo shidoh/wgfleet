@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/shidoh/wgfleet/internal/agent/camoplan"
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
+	"github.com/shidoh/wgfleet/internal/camouflage"
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/xray"
@@ -17,6 +19,8 @@ type xrayPlanner struct {
 	composePath string
 	privateKey  string                 // REALITY x25519 private key (exit-local)
 	up          func(file string) bool // nil ⇒ real `docker compose ps` probe
+	// gate says whether the node's own site is the REALITY target (ADR-0039).
+	gate *camouflage.Gate
 }
 
 func (xrayPlanner) Component() string { return "reality inbound (xray)" }
@@ -71,6 +75,7 @@ func (p xrayPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]reconcil
 			Spec:       *spec.Reality,
 			PrivateKey: p.privateKey,
 			EgressMark: xray.EgressMark,
+			Camouflage: camoplan.XrayCamouflage(p.gate, spec.Camouflage),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("render reality inbound: %w", err)

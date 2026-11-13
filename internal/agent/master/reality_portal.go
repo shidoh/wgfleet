@@ -12,7 +12,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/shidoh/wgfleet/internal/agent/camoplan"
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
+	"github.com/shidoh/wgfleet/internal/camouflage"
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/domain"
 	"github.com/shidoh/wgfleet/internal/xray"
@@ -39,6 +41,8 @@ type realityPortalPlanner struct {
 	netnsAttached func() bool
 	// addrExists reports whether ip is on a host interface; nil ⇒ the real check.
 	addrExists func(ip string) bool
+	// gate says whether the node's own site is the REALITY target (ADR-0039).
+	gate *camouflage.Gate
 }
 
 func (realityPortalPlanner) Component() string { return "reality portal (xray)" }
@@ -99,6 +103,7 @@ func (p realityPortalPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([
 	_, passwords := portalSocksFor(spec, attached, p.privateKey)
 	cfg, err := xray.RenderPortalConfig(xray.PortalRenderInput{
 		Spec: *portal, PrivateKey: p.privateKey, SocksAddr: socks, SocksPasswords: passwords,
+		Camouflage: camoplan.XrayCamouflage(p.gate, spec.Camouflage),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("render reality portal: %w", err)

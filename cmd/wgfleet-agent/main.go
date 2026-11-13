@@ -36,6 +36,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/shidoh/wgfleet/internal/agent/camoplan"
 	"github.com/shidoh/wgfleet/internal/agent/certrenew"
 	"github.com/shidoh/wgfleet/internal/agent/client"
 	egressfo "github.com/shidoh/wgfleet/internal/agent/egress"
@@ -50,6 +51,7 @@ import (
 	"github.com/shidoh/wgfleet/internal/api"
 	"github.com/shidoh/wgfleet/internal/atomicfile"
 	"github.com/shidoh/wgfleet/internal/awgmod"
+	"github.com/shidoh/wgfleet/internal/camouflage"
 	"github.com/shidoh/wgfleet/internal/config"
 	"github.com/shidoh/wgfleet/internal/controller/pki"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -293,6 +295,13 @@ func run() error {
 	// Built ONCE for the process, not per reconcile pass — see agent.tier and
 	// agent.restarts. Role-agnostic: self-heal restarts exist on exits too.
 	a.restarts = restart.New(a.log)
+	// A dry run decides in memory only: it must not move what the next real pass
+	// reports to the controller.
+	camoState := a.camoPaths().StatePath()
+	if *plan {
+		camoState = ""
+	}
+	a.camoGate = camouflage.NewGate(camoState)
 	if role == domain.RoleMaster {
 		a.tier = master.NewTierSelector(a.log)
 		// One per process, like the tier selector and for the same reason: it has to
@@ -488,8 +497,11 @@ type agent struct {
 	publicIP  string
 	mgmtAddr  string
 	stateDir  string // non-empty roots managed files outside /etc (non-root/dev)
-	paths     exit.Paths
-	metrics   *metrics.AgentMetrics // nil when /metrics is disabled
+	// camoGate decides whether the node's REALITY inbounds use its own site as
+	// target (ADR-0039). One per process, persisted, like the tier selector.
+	camoGate *camouflage.Gate
+	paths    exit.Paths
+	metrics  *metrics.AgentMetrics // nil when /metrics is disabled
 	// mihomoLogCursor is how far into mihomo's log the error counter has read.
 	// Kept here rather than in a planner: planners are rebuilt every pass and would
 	// re-count the same window forever.
@@ -861,6 +873,11 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	// node moves to Ready/Degraded/Error rather than staying Reconciling.
 	checks := a.healthChecks(spec)
 	state, results := health.Evaluate(ctx, reconcileErr, checks)
+	// The camouflage site is reported but never degrades the node: the REALITY
+	// inbounds keep working on the fleet-default target while it is down.
+	if spec.Camouflage != nil {
+		results = append(results, a.camoGate.Check(*spec.Camouflage, time.Now()))
+	}
 	for _, r := range results {
 		a.log.Debug("self-check", "check", r.Name, "ok", r.OK, "detail", r.Detail)
 	}
@@ -964,6 +981,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	if a.metrics != nil {
 		a.metrics.ObserveReconcile(elapsed, report.ChangeCount(), state, results, reconcileErr)
 		a.metrics.ObserveDrift(drifted)
+		a.metrics.ObserveCamouflageExpiry(a.camouflageExpiry(spec))
 		if a.role == domain.RoleExit {
 			a.metrics.ObserveTransport(spec.ActiveTransport.OrDefault())
 		}
@@ -1205,10 +1223,29 @@ func (a *agent) teardown(ctx context.Context, plan bool) error {
 }
 
 func (a *agent) teardownPlanners() []reconcile.Planner {
+	site := camoplan.Teardown(a.camoPaths())
 	if a.role == domain.RoleMaster {
-		return master.TeardownPlanners(a.masterPaths())
+		return append(master.TeardownPlanners(a.masterPaths()), site)
 	}
-	return exit.TeardownPlanners(a.paths)
+	return append(exit.TeardownPlanners(a.paths), site)
+}
+
+// camoPaths is where the own-domain site lives (ADR-0039).
+func (a *agent) camoPaths() camoplan.Paths {
+	if a.stateDir != "" {
+		return camoplan.PathsUnder(a.stateDir)
+	}
+	return camoplan.DefaultPaths()
+}
+
+// camouflageExpiry is the site certificate's expiry for the metric; zero when the
+// node has no site or nothing was read.
+func (a *agent) camouflageExpiry(spec domain.NodeSpec) time.Time {
+	if spec.Camouflage == nil {
+		return time.Time{}
+	}
+	r, _ := a.camoGate.Last()
+	return r.NotAfter
 }
 
 // masterPaths returns the master-role on-node file locations, rooted under the
@@ -1242,6 +1279,8 @@ func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, life
 			ASBlacklistV4URL:    a.cfg.Agent.ASBlacklistV4URL,
 			ASBlacklistV6URL:    a.cfg.Agent.ASBlacklistV6URL,
 			ASBlacklistInterval: a.cfg.Agent.ASBlacklistInterval,
+			Camouflage:          a.camoPaths(),
+			Gate:                a.camoGate,
 		})
 	} else {
 		in := exit.Input{
@@ -1253,6 +1292,8 @@ func (a *agent) planners(privateKey, realityPrivateKey, clientWGPrivateKey, life
 			ASBlacklistV4URL:    a.cfg.Agent.ASBlacklistV4URL,
 			ASBlacklistV6URL:    a.cfg.Agent.ASBlacklistV6URL,
 			ASBlacklistInterval: a.cfg.Agent.ASBlacklistInterval,
+			Camouflage:          a.camoPaths(),
+			Gate:                a.camoGate,
 		}
 		in.WARP = a.readWARPProfile()
 		base = exit.Planners(in)
@@ -1507,6 +1548,7 @@ func (a *agent) readWARPProfile() *egress.WARPConfig {
 // (the WARP IP for warp egress, the node's own IP for direct) — surfaced in the UI.
 func (a *agent) reportStatus(ctx context.Context, state domain.NodeState, checks []domain.HealthCheck, reconcileErr error, egressIP string, exitHealth []domain.ExitTunnelHealth) error {
 	st := domain.NodeStatus{State: state, Checks: checks, EgressIP: egressIP, ExitHealth: exitHealth, LastHandshake: a.latestHandshake(ctx)}
+	st.CamouflageDomain = a.camoGate.ActiveDomain()
 	if a.role == domain.RoleExit {
 		st.AWGMasterEndpoint = a.awgMasterEndpoint
 		st.MasterPeers = a.masterPeers

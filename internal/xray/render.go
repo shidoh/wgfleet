@@ -41,6 +41,9 @@ type RenderInput struct {
 	Spec       domain.RealityServerSpec
 	PrivateKey string // REALITY x25519 private key (exit-local; redacted in plans)
 	EgressMark int    // SO_MARK for the freedom outbound (→ WARP); 0 = none
+	// Camouflage, when set, adds the node's domain and may move the target
+	// (ADR-0039); nil renders the spec as is.
+	Camouflage *Camouflage
 }
 
 // ClientRenderInput is everything needed to render the master's client-facing
@@ -54,6 +57,9 @@ type ClientRenderInput struct {
 	// namespace: xray stays on the host, so "127.0.0.1" then names a socket in a
 	// namespace xray cannot see, and every client is accepted and then dropped.
 	SocksHost string
+	// Camouflage, when set, adds the node's domain and may move the target
+	// (ADR-0039); nil renders the spec as is.
+	Camouflage *Camouflage
 }
 
 // config mirrors the subset of xray's config.json we emit. Typed structs keep the
@@ -257,7 +263,7 @@ func RenderConfig(in RenderInput) (string, error) {
 	if s.ShortID != "" {
 		shortIDs = []string{s.ShortID}
 	}
-	serverNames := serverNamesFor(s.ServerName, s.AllowEmptySNI)
+	dest, serverNames := in.Camouflage.apply(s.Dest, serverNamesFor(s.ServerName, s.AllowEmptySNI))
 
 	// The proxied egress reaches the internet, never the exit's own loopback,
 	// private or other special ranges — the bridge's block list, for the same
@@ -282,7 +288,7 @@ func RenderConfig(in RenderInput) (string, error) {
 		out.StreamSettings = &outStreamSettings{Sockopt: sockopt{Mark: in.EgressMark}}
 	}
 
-	ss := realityStream(s.Dest, in.PrivateKey, serverNames, shortIDs, s.Mode, xhttpModeOr(s.XHTTPMode), pathOr(s.XHTTPPath))
+	ss := realityStream(dest, in.PrivateKey, serverNames, shortIDs, s.Mode, xhttpModeOr(s.XHTTPMode), pathOr(s.XHTTPPath))
 	cfg := config{
 		Log: logCfg{Loglevel: "warning"},
 		DNS: dnsCfg,
@@ -357,7 +363,7 @@ func RenderClientConfig(in ClientRenderInput) (string, error) {
 	if len(shortIDs) == 0 {
 		shortIDs = []string{unissuedShortID(in.PrivateKey)}
 	}
-	serverNames := serverNamesFor(s.ServerName, s.AllowEmptySNI)
+	dest, serverNames := in.Camouflage.apply(s.Dest, serverNamesFor(s.ServerName, s.AllowEmptySNI))
 
 	// The outbound forwards to the master's mihomo mixed/socks inbound, which then
 	// applies the SAME geo/LB/exit routing as for AWG clients.
@@ -374,7 +380,7 @@ func RenderClientConfig(in ClientRenderInput) (string, error) {
 		dnsCfg = &dnsConfig{QueryStrategy: "UseIPv4"}
 	}
 
-	ss := realityStream(s.Dest, in.PrivateKey, serverNames, shortIDs, s.Mode, xhttpModeOr(s.XHTTPMode), pathOr(s.XHTTPPath))
+	ss := realityStream(dest, in.PrivateKey, serverNames, shortIDs, s.Mode, xhttpModeOr(s.XHTTPMode), pathOr(s.XHTTPPath))
 	cfg := config{
 		Log: logCfg{Loglevel: "warning"},
 		DNS: dnsCfg,

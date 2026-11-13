@@ -10,10 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shidoh/wgfleet/internal/agent/camoplan"
 	"github.com/shidoh/wgfleet/internal/agent/dockerfw"
 	"github.com/shidoh/wgfleet/internal/agent/reconcile"
 	"github.com/shidoh/wgfleet/internal/agent/restart"
 	"github.com/shidoh/wgfleet/internal/agent/tuning"
+	"github.com/shidoh/wgfleet/internal/camouflage"
 	"github.com/shidoh/wgfleet/internal/compose"
 	"github.com/shidoh/wgfleet/internal/dnsfilter"
 	"github.com/shidoh/wgfleet/internal/domain"
@@ -92,6 +94,11 @@ type Input struct {
 	ASBlacklistV4URL    string
 	ASBlacklistV6URL    string
 	ASBlacklistInterval time.Duration
+	// Camouflage is the own-domain site (ADR-0039) and Gate its switch; like Tier
+	// the gate is owned by the caller and reused across passes. nil ⇒ decided
+	// pass by pass, never persisted.
+	Camouflage camoplan.Paths
+	Gate       *camouflage.Gate
 }
 
 const defaultClientInterface = domain.ClientWGInterface
@@ -141,8 +148,11 @@ func Planners(in Input) []reconcile.Planner {
 		// After the namespace link exists (the SOCKS inbound may listen on its host
 		// end) and before mihomo, which dials that inbound for every exit in the
 		// exit-initiated REALITY mode (ADR-0038).
+		// The own-domain site, before every REALITY inbound: they render with the
+		// gate's verdict of this pass.
+		camoplan.Planner{Paths: in.Camouflage, Gate: in.Gate},
 		realityPortalPlanner{configPath: in.Paths.RealityPortal, composePath: in.Paths.RealityPortalYML,
-			privateKey: in.PortalPrivateKey, netnsAttached: in.NetnsAttached},
+			privateKey: in.PortalPrivateKey, netnsAttached: in.NetnsAttached, gate: in.Gate},
 		mihomoPlanner{paths: in.Paths, privateKey: in.PrivateKey, portalKey: in.PortalPrivateKey, tier: in.Tier,
 			netnsAttached: in.NetnsAttached, disturbed: in.OnMihomoDisturbed},
 		masterNATPlanner{path: in.Paths.NFT, v6Path: in.Paths.V6NFT, clientIface: in.ClientInterface,
@@ -170,6 +180,7 @@ func Planners(in Input) []reconcile.Planner {
 			composePath:   in.Paths.ClientVLESSYML,
 			privateKey:    in.RealityPrivateKey,
 			netnsAttached: in.NetnsAttached,
+			gate:          in.Gate,
 		},
 		// Last: ensure mihomo's redirect listener is actually bound. It runs after the
 		// stack is up and wg0 exists, and self-heals the case where mihomo silently

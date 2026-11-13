@@ -38,6 +38,7 @@ type AgentMetrics struct {
 	standbyMember    *prometheus.GaugeVec   // per exit of the INACTIVE tier: is it usable
 	standbyTransport *prometheus.GaugeVec   // per exit: is its INACTIVE transport usable
 	egressThroughput prometheus.Gauge       // last measured egress throughput, bytes/sec
+	camouflageExpiry prometheus.Gauge       // unix NotAfter of the own-domain site's certificate; 0 none
 	guardDrops       *prometheus.GaugeVec   // per nft guard chain: packets it has dropped
 	udpReturnSocket  *prometheus.GaugeVec   // per UDP port: can a TPROXY reply socket still be opened
 	udpReturnKnown   *prometheus.GaugeVec   // per UDP port: is a blocked port one we have decided about
@@ -109,6 +110,10 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 		egressThroughput: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "egress_throughput_bytes",
 			Help: "Last measured egress throughput in bytes/sec (ADR-0021). A sustained collapse below the configured floor auto-suspends the exit from the LB.", ConstLabels: cl,
+		}),
+		camouflageExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "camouflage_cert_expiry_timestamp_seconds",
+			Help: "Unix time the certificate of the own-domain camouflage site expires (ADR-0039); 0 when the node has no site or its certificate could not be read.", ConstLabels: cl,
 		}),
 		startTime: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "start_time_seconds",
@@ -220,7 +225,7 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 
 	reg.MustRegister(m.reconcileTotal, m.reconcileDuration, m.stateInfo, m.checkUp, m.checkLatency,
 		m.driftTotal, m.driftResources, m.reconcileChanges, m.egressReach, m.egressActive,
-		m.egressThroughput, m.startTime, m.udpReturnSocket, m.udpReturnKnown, m.mihomoErrors, m.clientPathOK,
+		m.egressThroughput, m.camouflageExpiry, m.startTime, m.udpReturnSocket, m.udpReturnKnown, m.mihomoErrors, m.clientPathOK,
 		m.certRenew, newCertReloadCollector(cl),
 		m.guardDrops,
 		m.netnsMoveState, m.netnsMoveTries)
@@ -382,6 +387,16 @@ func (m *AgentMetrics) ObserveStandbyTransports(usable map[StandbyTransport]bool
 // ObserveEgressThroughput records the last measured egress throughput (bytes/sec).
 func (m *AgentMetrics) ObserveEgressThroughput(bytesPerSec float64) {
 	m.egressThroughput.Set(bytesPerSec)
+}
+
+// ObserveCamouflageExpiry records when the camouflage site's certificate
+// expires; the zero time records 0 (no site, or nothing read).
+func (m *AgentMetrics) ObserveCamouflageExpiry(notAfter time.Time) {
+	if notAfter.IsZero() {
+		m.camouflageExpiry.Set(0)
+		return
+	}
+	m.camouflageExpiry.Set(float64(notAfter.Unix()))
 }
 
 // ObserveDrift records that, on an unchanged desired spec, the named components

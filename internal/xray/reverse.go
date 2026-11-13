@@ -132,6 +132,9 @@ type PortalRenderInput struct {
 	PrivateKey     string
 	SocksAddr      string
 	SocksPasswords map[string]string // exit → password
+	// Camouflage, when set, adds the master's domain and may move the target
+	// (ADR-0039); nil renders the spec as is.
+	Camouflage *Camouflage
 }
 
 // RenderPortalConfig renders the master's portal: a VLESS+REALITY inbound
@@ -166,6 +169,7 @@ func RenderPortalConfig(in PortalRenderInput) (string, error) {
 	if len(shortIDs) == 0 {
 		shortIDs = []string{unissuedShortID(in.PrivateKey)}
 	}
+	dest, serverNames := in.Camouflage.apply(s.Dest, []string{s.ServerName})
 	cfg := reverseConfig{
 		Log: logCfg{Loglevel: "warning"},
 		DNS: ipv4Only(s.AllowIPv6),
@@ -176,7 +180,7 @@ func RenderPortalConfig(in PortalRenderInput) (string, error) {
 				StreamSettings: &reverseStream{
 					Network: "raw", Security: "reality",
 					RealitySettings: portalReality{
-						Target: s.Dest, ServerNames: []string{s.ServerName},
+						Target: dest, ServerNames: serverNames,
 						PrivateKey: in.PrivateKey, ShortIDs: shortIDs,
 					},
 					Sockopt: keepAlive(),
