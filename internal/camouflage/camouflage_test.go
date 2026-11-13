@@ -280,6 +280,14 @@ func TestGateCheck(t *testing.T) {
 	if hc := g.Check(s, now); hc.OK || !strings.Contains(hc.Detail, "expires in") {
 		t.Errorf("expiring: %+v", hc)
 	}
+	// Caddy's local CA issues 12-hour certificates: hours left is normal there.
+	internal := s
+	internal.ACMECA = domain.CamouflageCAInternal
+	soon.NotAfter = now.Add(11 * time.Hour)
+	g.Observe(&internal, soon)
+	if hc := g.Check(internal, now); !hc.OK {
+		t.Errorf("internal CA, 11h left: %+v", hc)
+	}
 	g.Observe(&s, down)
 	if hc := g.Check(s, now); hc.OK || !strings.Contains(hc.Detail, "still the target") {
 		t.Errorf("one failure: %+v", hc)

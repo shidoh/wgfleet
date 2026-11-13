@@ -1201,7 +1201,7 @@ Remove `camouflage` from the node and restart the controller. The gate closes, p
 
 ### Test stands
 
-`fleet.camouflage.acme_ca: internal` issues from Caddy's own CA, and the gate trusts that CA. Put `<public_ip> <domain>` into the node's `/etc/hosts` for the DNS half.
+`fleet.camouflage.acme_ca: internal` issues from Caddy's own CA, and the gate trusts that CA. Put `<public_ip> <domain>` into the node's `/etc/hosts` for the DNS half. Its certificates live 12 hours: the `camouflage` check allows that, `WgfleetCamouflageCertExpiring` does not — silence it on a stand.
 
 ## Client interception in mihomo's network namespace
 

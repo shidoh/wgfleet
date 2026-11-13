@@ -21,6 +21,17 @@ const failuresToClose = 2
 // ExpiryWarn is how close to expiry the site's certificate turns the check red.
 const ExpiryWarn = 14 * 24 * time.Hour
 
+// internalExpiryWarn replaces ExpiryWarn for Caddy's local CA, whose
+// certificates live 12 hours and are renewed at about a third of that.
+const internalExpiryWarn = 2 * time.Hour
+
+func expiryWarn(spec domain.CamouflageSpec) time.Duration {
+	if spec.ACMECA == domain.CamouflageCAInternal {
+		return internalExpiryWarn
+	}
+	return ExpiryWarn
+}
+
 // Gate decides, pass by pass, whether the node's REALITY inbounds use the own
 // site as their target (ADR-0039). It opens once the site answers TLS for the
 // domain and the domain resolves to the node; it closes after failuresToClose
@@ -141,7 +152,7 @@ func (g *Gate) Check(spec domain.CamouflageSpec, now time.Time) domain.HealthChe
 		hc.Detail = r.Reason
 	case !active:
 		hc.Detail = "site ready; switching the target on the next pass"
-	case !r.NotAfter.IsZero() && left < ExpiryWarn:
+	case !r.NotAfter.IsZero() && left < expiryWarn(spec):
 		hc.Detail = fmt.Sprintf("certificate for %s expires in %s", spec.Domain, left.Round(time.Hour))
 	default:
 		hc.OK = true
