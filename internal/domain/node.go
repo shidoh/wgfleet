@@ -213,6 +213,12 @@ type ExitTunnelHealth struct {
 	// single-carrier group kind (url-test, fallback) exactly one exit is selected;
 	// under load-balance every live member of the active tier is (ADR-0029).
 	Selected bool
+	// InRotation reports that this exit is a member of the tier the group is
+	// routing through, carrying or not. It differs from Selected only for a member
+	// whose last url-test failed: it carries nothing until the next one passes, but
+	// it has not left the tier — the console keeps it in place and calls it stalled
+	// instead of filing it with the idle reserve.
+	InRotation bool
 	// HeldOut is the MASTER'S OWN verdict: its multi-destination probe judged this
 	// tunnel unusable and pulled it out of the load balancer. Distinct from Alive
 	// above, which is mihomo's single-URL check — the two write the same flag under

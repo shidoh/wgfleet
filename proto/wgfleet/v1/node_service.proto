@@ -155,6 +155,9 @@ message ExitTunnelHealth {
   int32 reachable = 7; // destinations the last probe reached
   int32 probed = 8; // destinations the last probe attempted (0 = not sampled)
   int64 held_since_unix = 9; // unix seconds the current hold began (0 = not held)
+  // Member of the tier the group routes through, carrying or not. Additive: an
+  // older agent leaves it false and the console falls back to `selected` alone.
+  bool in_rotation = 10;
 }
 
 message ReportStatusAck {

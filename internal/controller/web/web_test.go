@@ -1793,3 +1793,72 @@ func TestFleetIgnoresAMasterTheManifestDoesNotDeclare(t *testing.T) {
 		t.Errorf("the rendered trunk is not master-xa-1's:\n%s", trunk)
 	}
 }
+
+// A member of the carrying tier whose last url-test failed carries nothing for a
+// moment, but it has not left the tier. Filing it under NOT CARRYING next to the
+// idle reserve read as a failover nobody made; it must stay in its place, lose the
+// traffic animation and say why.
+func TestTopologyKeepsAStalledTierMemberInPlace(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+	for _, n := range []string{"vn1", "vn2", "anz3"} {
+		seed(t, st, domain.Node{ID: n, Name: n, Role: domain.RoleExit, State: domain.StateReady})
+	}
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "master-xa-1", State: domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{
+			{Name: "vn1", Alive: false, InRotation: true},
+			{Name: "vn2", Alive: true, Delay: 95 * time.Millisecond, Selected: true, InRotation: true},
+			{Name: "anz3", Alive: true, Delay: 201 * time.Millisecond},
+		},
+	})
+
+	rows, err := h.nodeRows(context.Background())
+	if err != nil {
+		t.Fatalf("nodeRows: %v", err)
+	}
+	m := h.buildTopology(context.Background(), rows).Masters[0]
+	names := func(es []topoExit) (out []string) {
+		for _, e := range es {
+			out = append(out, e.Name)
+		}
+		return out
+	}
+	if got := names(m.Carrying); !slices.Equal(got, []string{"vn2", "vn1"}) {
+		t.Fatalf("carrying group = %v, want the live member first, then the stalled one", got)
+	}
+	if got := names(m.Reserve); !slices.Equal(got, []string{"anz3"}) {
+		t.Fatalf("not-carrying group = %v, want only the idle reserve", got)
+	}
+	vn1 := m.Carrying[1]
+	if !vn1.Stalled || vn1.Carrying {
+		t.Errorf("vn1 must read as stalled and not carrying: %+v", vn1)
+	}
+
+	_, body := get(t, h, "/")
+	if !strings.Contains(body, "is-stalled") || !strings.Contains(body, "check failed") {
+		t.Error("the panel must render the stalled row and its badge")
+	}
+}
+
+// A held-out member is OUT of the rotation by our own verdict, so it still moves
+// to NOT CARRYING even if the mihomo group still lists it.
+func TestTopologyHeldOutMemberIsNotStalled(t *testing.T) {
+	h, st := newTestHandler(t, nil)
+	seed(t, st, domain.Node{ID: "master-xa-1", Name: "master-xa-1", Role: domain.RoleMaster, State: domain.StateReady})
+	seed(t, st, domain.Node{ID: "vn1", Name: "vn1", Role: domain.RoleExit, State: domain.StateReady})
+	_ = st.RecordStatus(context.Background(), domain.NodeStatus{
+		NodeID: "master-xa-1", State: domain.StateReady,
+		ExitHealth: []domain.ExitTunnelHealth{
+			{Name: "vn1", InRotation: true, HeldOut: true, Probed: 4},
+		},
+	})
+	rows, err := h.nodeRows(context.Background())
+	if err != nil {
+		t.Fatalf("nodeRows: %v", err)
+	}
+	m := h.buildTopology(context.Background(), rows).Masters[0]
+	if len(m.Carrying) != 0 || len(m.Reserve) != 1 || m.Reserve[0].Stalled {
+		t.Errorf("a held-out exit belongs to NOT CARRYING, unstalled: carrying=%+v reserve=%+v", m.Carrying, m.Reserve)
+	}
+}

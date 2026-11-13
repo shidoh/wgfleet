@@ -298,7 +298,7 @@ func TestStatusExitHealthRoundTrip(t *testing.T) {
 		NodeID: "master-xa-1",
 		State:  domain.StateReady,
 		ExitHealth: []domain.ExitTunnelHealth{
-			{Name: "exit-de-1", Alive: true, Delay: 42 * time.Millisecond, LastTest: time.Unix(1000, 0).UTC(), Selected: true},
+			{Name: "exit-de-1", Alive: true, Delay: 42 * time.Millisecond, LastTest: time.Unix(1000, 0).UTC(), Selected: true, InRotation: true},
 			{Name: "exit-nl-1", Alive: false},
 		},
 	}
@@ -312,6 +312,9 @@ func TestStatusExitHealthRoundTrip(t *testing.T) {
 	}
 	if out.ExitHealth[1].Alive {
 		t.Fatalf("exit-nl-1 should be down")
+	}
+	if !de.InRotation || out.ExitHealth[1].InRotation {
+		t.Fatalf("InRotation must survive the wire: %+v / %+v", de, out.ExitHealth[1])
 	}
 }
 

@@ -216,3 +216,28 @@ func TestFetchProxiesNon200(t *testing.T) {
 		t.Fatal("expected error on non-2xx")
 	}
 }
+
+// A dead member of the active tier is still IN the rotation: one failed url-test
+// stops its traffic until the next passes, it does not move it to another tier.
+// InRotation is what lets the console keep it in place instead of filing it with
+// the idle reserve.
+func TestParseProxyHealthKeepsDeadTierMemberInRotation(t *testing.T) {
+	const withDeadMember = `{"proxies":{
+      "wg-best":    {"alive":true,"type":"Fallback","now":"wg-primary","all":["wg-primary","wg-reserve"]},
+      "wg-primary": {"alive":true,"type":"LoadBalance","now":"","all":["vn1","vn2"]},
+      "wg-reserve": {"alive":true,"type":"LoadBalance","now":"","all":["anz3"]},
+      "vn1":  {"alive":true},
+      "vn2":  {"alive":false},
+      "anz3": {"alive":true}
+    }}`
+	got, err := ParseProxyHealth([]byte(withDeadMember), "wg-best", []string{"vn1", "vn2", "anz3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"vn1": true, "vn2": true, "anz3": false}
+	for _, h := range got {
+		if h.InRotation != want[h.Name] {
+			t.Errorf("%s: InRotation = %v, want %v", h.Name, h.InRotation, want[h.Name])
+		}
+	}
+}

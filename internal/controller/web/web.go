@@ -1108,6 +1108,11 @@ type topoExit struct {
 	// would not restore anything, which is worth knowing before the failover and
 	// not during it.
 	Unusable bool
+	// Stalled is a member of the carrying tier whose last url-test failed: it
+	// carries nothing until the next one passes, but it has not left the tier and
+	// no verdict of ours pulled it. It stays in the carrying group, without the
+	// traffic animation, instead of reading as a failover nobody made.
+	Stalled bool
 }
 
 // cardOf projects a fleet-list row into the inventory + status fields every
@@ -1656,6 +1661,7 @@ func (h *Handler) undeclaredMaster(name string) bool {
 // partitionExits splits the exits into carrying and reserve by one master's
 // health report, each sorted by lowercased name.
 func partitionExits(exits []nodeRow, health []domain.ExitTunnelHealth) (carrying, reserve []topoExit) {
+	var stalled []topoExit
 	for _, ex := range exits {
 		te := topoExit{
 			topoCard:      cardOf(ex),
@@ -1682,11 +1688,15 @@ func partitionExits(exits []nodeRow, health []domain.ExitTunnelHealth) (carrying
 			// under any threshold.
 			te.Unusable = !v.HeldOut && v.Probed > 0 && v.Reachable == 0
 		}
-		if te.Carrying {
+		te.Stalled = !te.Carrying && !te.HeldOut && inRotation(health, ex.Name)
+		switch {
+		case te.Carrying:
 			carrying = append(carrying, te)
-			continue
+		case te.Stalled:
+			stalled = append(stalled, te)
+		default:
+			reserve = append(reserve, te)
 		}
-		reserve = append(reserve, te)
 	}
 	byName := func(s []topoExit) {
 		sort.SliceStable(s, func(a, b int) bool {
@@ -1694,8 +1704,22 @@ func partitionExits(exits []nodeRow, health []domain.ExitTunnelHealth) (carrying
 		})
 	}
 	byName(carrying)
+	byName(stalled)
 	byName(reserve)
-	return carrying, reserve
+	// Stalled members follow the live ones: the group still reads top-down as
+	// "where traffic goes", and the first row decides whether its rail animates.
+	return append(carrying, stalled...), reserve
+}
+
+// inRotation reports whether any of the exit's tunnels (one per transport on a
+// dual-transport exit) is a member of the tier the master routes through.
+func inRotation(health []domain.ExitTunnelHealth, exitName string) bool {
+	for _, e := range health {
+		if (e.Name == exitName || strings.HasPrefix(e.Name, exitName+"-")) && e.InRotation {
+			return true
+		}
+	}
+	return false
 }
 
 // exitDelay picks the most representative ExitHealth entry for an exit node from

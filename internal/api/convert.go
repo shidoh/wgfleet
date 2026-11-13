@@ -829,13 +829,14 @@ func StatusFromProto(nodeID string, r *pb.StatusReport) domain.NodeStatus {
 	}
 	for _, e := range r.GetExitHealth() {
 		h := domain.ExitTunnelHealth{
-			Name:      e.GetName(),
-			Alive:     e.GetAlive(),
-			Delay:     time.Duration(e.GetDelayMs()) * time.Millisecond,
-			Selected:  e.GetSelected(),
-			HeldOut:   e.GetHeldOut(),
-			Reachable: int(e.GetReachable()),
-			Probed:    int(e.GetProbed()),
+			Name:       e.GetName(),
+			Alive:      e.GetAlive(),
+			Delay:      time.Duration(e.GetDelayMs()) * time.Millisecond,
+			Selected:   e.GetSelected(),
+			InRotation: e.GetInRotation(),
+			HeldOut:    e.GetHeldOut(),
+			Reachable:  int(e.GetReachable()),
+			Probed:     int(e.GetProbed()),
 		}
 		if t := e.GetLastTestUnix(); t > 0 {
 			h.LastTest = time.Unix(t, 0).UTC()
@@ -890,13 +891,14 @@ func StatusToProto(s domain.NodeStatus) *pb.StatusReport {
 	}
 	for _, h := range s.ExitHealth {
 		e := &pb.ExitTunnelHealth{
-			Name:      h.Name,
-			Alive:     h.Alive,
-			DelayMs:   h.Delay.Milliseconds(),
-			Selected:  h.Selected,
-			HeldOut:   h.HeldOut,
-			Reachable: int32(h.Reachable),
-			Probed:    int32(h.Probed),
+			Name:       h.Name,
+			Alive:      h.Alive,
+			DelayMs:    h.Delay.Milliseconds(),
+			Selected:   h.Selected,
+			InRotation: h.InRotation,
+			HeldOut:    h.HeldOut,
+			Reachable:  int32(h.Reachable),
+			Probed:     int32(h.Probed),
 		}
 		if !h.LastTest.IsZero() {
 			e.LastTestUnix = h.LastTest.Unix()

@@ -63,6 +63,7 @@ type exit struct {
 	pool                               string
 	delay                              time.Duration
 	carrying                           bool // Selected in the master's mihomo view
+	stalled                            bool // in the carrying tier, last url-test failed → "check failed · paused"
 	lowThroughput                      bool // egress-throughput check failing → Degraded, auto-suspended
 	drained                            bool // console drain flag
 	// heldFor, reachable and probed are the MASTER's verdict on the tunnel to this
@@ -76,7 +77,7 @@ type exit struct {
 
 var exits = []exit{
 	{name: "exit-de-1", region: "de", mgmt: "10.20.0.11", public: "203.0.113.11", warpIP: "192.0.2.41", pool: "10.81.1.0/24", delay: 48 * time.Millisecond, carrying: true},
-	{name: "exit-nl-1", region: "nl", mgmt: "10.20.0.12", public: "203.0.113.12", warpIP: "192.0.2.57", pool: "10.81.2.0/24", delay: 52 * time.Millisecond, carrying: true},
+	{name: "exit-nl-1", region: "nl", mgmt: "10.20.0.12", public: "203.0.113.12", warpIP: "192.0.2.57", pool: "10.81.2.0/24", delay: 52 * time.Millisecond, stalled: true},
 	{name: "exit-fi-1", region: "fi", mgmt: "10.20.0.13", public: "203.0.113.13", warpIP: "192.0.2.73", pool: "10.81.3.0/24", delay: 31 * time.Millisecond, carrying: true},
 	{name: "exit-fr-1", region: "fr", mgmt: "10.20.0.14", public: "203.0.113.14", warpIP: "192.0.2.88", pool: "10.81.4.0/24", delay: 61 * time.Millisecond, lowThroughput: true, heldFor: 12 * time.Minute, probed: 3},
 	{name: "exit-se-1", region: "se", mgmt: "10.20.0.15", public: "203.0.113.15", warpIP: "192.0.2.102", pool: "10.81.5.0/24", delay: 44 * time.Millisecond, drained: true},
@@ -405,7 +406,10 @@ func recordStatuses(ctx context.Context, st store.Store, clientKeys map[string]s
 	for _, e := range exits {
 		h := domain.ExitTunnelHealth{
 			Name: e.name, Alive: true, Delay: e.delay, LastTest: now.Add(-14 * time.Second), Selected: e.carrying,
-			Reachable: e.reachable, Probed: e.probed,
+			InRotation: e.carrying || e.stalled, Reachable: e.reachable, Probed: e.probed,
+		}
+		if e.stalled {
+			h.Alive, h.Delay = false, 0
 		}
 		if e.heldFor > 0 {
 			h.Alive, h.HeldOut, h.HeldSince = false, true, now.Add(-e.heldFor)

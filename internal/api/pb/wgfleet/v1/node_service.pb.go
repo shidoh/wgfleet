@@ -703,6 +703,9 @@ type ExitTunnelHealth struct {
 	Reachable     int32 `protobuf:"varint,7,opt,name=reachable,proto3" json:"reachable,omitempty"`                                // destinations the last probe reached
 	Probed        int32 `protobuf:"varint,8,opt,name=probed,proto3" json:"probed,omitempty"`                                      // destinations the last probe attempted (0 = not sampled)
 	HeldSinceUnix int64 `protobuf:"varint,9,opt,name=held_since_unix,json=heldSinceUnix,proto3" json:"held_since_unix,omitempty"` // unix seconds the current hold began (0 = not held)
+	// Member of the tier the group routes through, carrying or not. Additive: an
+	// older agent leaves it false and the console falls back to `selected` alone.
+	InRotation    bool `protobuf:"varint,10,opt,name=in_rotation,json=inRotation,proto3" json:"in_rotation,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -798,6 +801,13 @@ func (x *ExitTunnelHealth) GetHeldSinceUnix() int64 {
 		return x.HeldSinceUnix
 	}
 	return 0
+}
+
+func (x *ExitTunnelHealth) GetInRotation() bool {
+	if x != nil {
+		return x.InRotation
+	}
+	return false
 }
 
 type ReportStatusAck struct {
@@ -4067,7 +4077,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\x02ok\x18\x02 \x01(\bR\x02ok\x12\x16\n" +
 	"\x06detail\x18\x03 \x01(\tR\x06detail\x12\x1d\n" +
 	"\n" +
-	"latency_ms\x18\x04 \x01(\x03R\tlatencyMs\"\x92\x02\n" +
+	"latency_ms\x18\x04 \x01(\x03R\tlatencyMs\"\xb3\x02\n" +
 	"\x10ExitTunnelHealth\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05alive\x18\x02 \x01(\bR\x05alive\x12\x19\n" +
@@ -4077,7 +4087,10 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\bheld_out\x18\x06 \x01(\bR\aheldOut\x12\x1c\n" +
 	"\treachable\x18\a \x01(\x05R\treachable\x12\x16\n" +
 	"\x06probed\x18\b \x01(\x05R\x06probed\x12&\n" +
-	"\x0fheld_since_unix\x18\t \x01(\x03R\rheldSinceUnix\"-\n" +
+	"\x0fheld_since_unix\x18\t \x01(\x03R\rheldSinceUnix\x12\x1f\n" +
+	"\vin_rotation\x18\n" +
+	" \x01(\bR\n" +
+	"inRotation\"-\n" +
 	"\x0fReportStatusAck\x12\x1a\n" +
 	"\breceived\x18\x01 \x01(\rR\breceived\"\xaf\a\n" +
 	"\bNodeSpec\x12\x12\n" +

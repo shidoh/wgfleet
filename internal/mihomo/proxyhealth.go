@@ -52,7 +52,11 @@ const maxGroupDepth = 8
 // url-test/fallback are single-carrier by construction — the one active leaf
 // is definitionally the one carrying traffic, dead-vs-alive is not a fan-out
 // ambiguity there the way it is when multiple members could be live.
-func collectCarrying(proxies map[string]clashProxy, name string, depth int, seen, out map[string]struct{}) {
+//
+// skipDead=false walks the same graph without that check and so yields the
+// active tier's full membership — the rotation an exit belongs to even while its
+// last url-test failed.
+func collectCarrying(proxies map[string]clashProxy, name string, depth int, skipDead bool, seen, out map[string]struct{}) {
 	if depth > maxGroupDepth {
 		return
 	}
@@ -67,16 +71,16 @@ func collectCarrying(proxies map[string]clashProxy, name string, depth int, seen
 		// Not in the payload: treat as a leaf so an unknown name is still reported.
 		out[name] = struct{}{}
 	case p.Now != "":
-		collectCarrying(proxies, p.Now, depth+1, seen, out)
+		collectCarrying(proxies, p.Now, depth+1, skipDead, seen, out)
 	case len(p.All) > 0:
 		for _, member := range p.All {
-			if mp, mok := proxies[member]; mok && !mp.Alive {
+			if mp, mok := proxies[member]; skipDead && mok && !mp.Alive {
 				// Dead member: consistent-hashing has already rehashed its
 				// destinations onto live siblings, so it carries nothing even
 				// though it is still listed in `all`.
 				continue
 			}
-			collectCarrying(proxies, member, depth+1, seen, out)
+			collectCarrying(proxies, member, depth+1, skipDead, seen, out)
 		}
 	default:
 		out[name] = struct{}{}
@@ -95,13 +99,16 @@ func ParseProxyHealth(proxiesJSON []byte, groupName string, exitNames []string) 
 		return nil, fmt.Errorf("parse clash /proxies: %w", err)
 	}
 	carrying := make(map[string]struct{})
+	inRotation := make(map[string]struct{})
 	if _, ok := cp.Proxies[groupName]; ok {
-		collectCarrying(cp.Proxies, groupName, 0, make(map[string]struct{}), carrying)
+		collectCarrying(cp.Proxies, groupName, 0, true, make(map[string]struct{}), carrying)
+		collectCarrying(cp.Proxies, groupName, 0, false, make(map[string]struct{}), inRotation)
 	}
 	out := make([]domain.ExitTunnelHealth, 0, len(exitNames))
 	for _, name := range exitNames {
 		_, isCarrying := carrying[name]
-		h := domain.ExitTunnelHealth{Name: name, Selected: isCarrying}
+		_, isMember := inRotation[name]
+		h := domain.ExitTunnelHealth{Name: name, Selected: isCarrying, InRotation: isMember}
 		if p, ok := cp.Proxies[name]; ok {
 			h.Alive = p.Alive
 			if n := len(p.History); n > 0 {

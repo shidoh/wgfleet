@@ -46,7 +46,7 @@ All keys: [configuration.md#2-controller-the-controller-process](configuration.m
 | Surface | Shows |
 |---|---|
 | Fleet list | Per-state summary, live refresh, state badges. |
-| Topology | The master trunk, then exits split into **CARRYING** and **NOT CARRYING**, each not-carrying exit with the master's verdict on the tunnel to it (below). |
+| Topology | The master trunk, then exits split into **CARRYING** (members of the tier the master routes through) and **NOT CARRYING**, each not-carrying exit with the master's verdict on the tunnel to it (below). |
 | Node detail | Inventory, latest status + health checks, rendered `NodeSpec` preview (AWG params, peers, routing, firewall, DNS, master data plane), a version-skew badge when the agent's wire version is incompatible, and the same verdict badge beside the state pill. |
 
 Why an exit is not carrying — the badge on its card and on its node page:
@@ -54,6 +54,7 @@ Why an exit is not carrying — the badge on its card and on its node page:
 | Badge | Means |
 |---|---|
 | **out of rotation `12m` · probes `0/3`** | The master's own multi-destination probe judged this tunnel unusable and pulled the exit out of the load balancer `12m` ago; the last pass reached 0 of the 3 destinations it sampled. The first exit a pass samples is asked twice before it is pulled out; a pass that answers on the second ask logs `exit failed one probe and answered the re-ask` and keeps the exit. |
+| **check failed · paused** | Shown in **CARRYING**, not under NOT CARRYING: a member of the carrying tier whose last load-balancer health check failed. It carries no traffic until the next check passes, so its link stops animating, but it has not left the tier. Several failed probes in a row turn this into **out of rotation**. |
 | **no usable path · probes `0/3`** | A member of the idle reserve tier the last warm probe could not reach the internet through. It carries nothing today, so this is not an outage — it means failing over to it would restore nothing. |
 | no badge | Nobody judged this exit: it is carrying, or it sits behind the member the reserve scan stopped at. Absent evidence, not evidence of health. |
 

@@ -100,7 +100,9 @@
     <div class="topo-grp"><span class="topo-grp-lbl">CARRYING</span><span class="topo-grp-line"></span><span class="topo-grp-n">{{len .}}</span></div>
     <div class="topo-group">
       <div class="topo-rail" aria-hidden="true"></div>
-      <div class="topo-rail is-live" aria-hidden="true"></div>
+      {{/* Live members sort first, so the first row says whether anything in the
+           group carries at all; a group of stalled members has no flow to draw. */}}
+      {{if (index . 0).Carrying}}<div class="topo-rail is-live" aria-hidden="true"></div>{{end}}
       {{range .}}{{template "topo-row" .}}{{end}}
     </div>
     {{end}}
@@ -160,7 +162,7 @@
 {{/* topo-row — one exit in the vertical topology. Same fields the old exit card
      carried; only the layout changed. */}}
 {{define "topo-row"}}
-<a class="topo-row{{if .Carrying}} is-carrying{{end}}" href="/nodes/{{.ID}}">
+<a class="topo-row{{if .Carrying}} is-carrying{{end}}{{if .Stalled}} is-stalled{{end}}" href="/nodes/{{.ID}}">
   <span class="topo-row-name">{{.Name}}</span>
     <span class="topo-row-lines">
     <span class="addr">
@@ -185,6 +187,8 @@
        "nobody judged it", which is not the same as healthy. */}}
   {{if .HeldOut}}<span class="subbadge held-out" title="The master's multi-destination probe is holding this exit out of the load balancer. This is OUR verdict, stricter than mihomo's single-URL check: the exit's own health checks can all be green while the tunnel to it carries nothing.">
     <span class="led"></span>out of rotation{{if .HeldFor}} {{.HeldFor}}{{end}}{{if .Probes}} · probes {{.Probes}}{{end}}</span>
+  {{else if .Stalled}}<span class="subbadge stalled" title="Still a member of the carrying tier, but the load balancer's last health check through it failed, so it carries no traffic until the next check passes. Not a failover and not our probe's verdict: several failed checks in a row are what take an exit out of rotation.">
+    <span class="led"></span>check failed · paused</span>
   {{else if .Unusable}}<span class="subbadge held-out" title="The warm probe of the reserve tier reached none of its destinations through this exit. It carries no traffic today, so this is not an outage — it means failing over to it would not restore anything.">
     <span class="led"></span>no usable path{{if .Probes}} · probes {{.Probes}}{{end}}</span>{{end}}
   <span class="xport {{transportSlug .Transport}}" title="Active master↔exit transport{{if .DualTransport}} (switchable on the node page){{end}}">{{transportLabel .Transport}}{{if .DualTransport}} ⇄{{end}}</span>
