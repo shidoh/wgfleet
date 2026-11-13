@@ -3600,11 +3600,171 @@
       }
     },
     {
+      "type": "table",
+      "id": 244,
+      "title": "Own-domain sites (camouflage)",
+      "description": "Nodes with camouflage.domain. Target own = 1: the node's REALITY inbounds use the own site and peers send the domain; 0: they are on the fleet-default target (site not ready or down — the node's camouflage check says why). Certificate days left comes from the site itself; Caddy renews about 30 days before expiry.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Target own"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "fleet default",
+                        "color": "red",
+                        "index": 1
+                      },
+                      "1": {
+                        "text": "own site",
+                        "color": "green",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Certificate days left"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 14
+                    },
+                    {
+                      "color": "green",
+                      "value": 30
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "sortBy": [
+          {
+            "displayName": "node",
+            "desc": false
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (node, domain) (wgfleet_agent_camouflage_target_own{node=~\"$node\"})",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (node, domain) ((wgfleet_agent_camouflage_cert_expiry_timestamp_seconds{node=~\"$node\"} - time()) / 86400 and wgfleet_agent_camouflage_cert_expiry_timestamp_seconds > 0)",
+          "format": "table",
+          "instant": true,
+          "refId": "B"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "node": 0,
+              "domain": 1,
+              "Value #A": 2,
+              "Value #B": 3
+            },
+            "renameByName": {
+              "Value #A": "Target own",
+              "Value #B": "Certificate days left"
+            }
+          }
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 137,
+        "w": 24,
+        "h": 7
+      }
+    },
+    {
       "type": "row",
       "title": "Health",
       "gridPos": {
         "x": 0,
-        "y": 137,
+        "y": 144,
         "w": 24,
         "h": 1
       },
@@ -3623,7 +3783,7 @@
         "x": 0,
         "w": 4,
         "h": 8,
-        "y": 138
+        "y": 145
       },
       "id": 31,
       "fieldConfig": {
@@ -3699,7 +3859,7 @@
         "x": 4,
         "w": 20,
         "h": 8,
-        "y": 138
+        "y": 145
       },
       "id": 32,
       "fieldConfig": {
@@ -3791,7 +3951,7 @@
         "x": 0,
         "w": 24,
         "h": 6,
-        "y": 146
+        "y": 153
       },
       "id": 33,
       "fieldConfig": {
@@ -3913,7 +4073,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 152,
+        "y": 159,
         "w": 24,
         "h": 1
       },
@@ -3931,7 +4091,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 153
+            "y": 160
           },
           "id": 101,
           "fieldConfig": {
@@ -3992,7 +4152,7 @@
             "x": 4,
             "w": 12,
             "h": 8,
-            "y": 153
+            "y": 160
           },
           "id": 102,
           "fieldConfig": {
@@ -4067,7 +4227,7 @@
             "x": 16,
             "w": 4,
             "h": 8,
-            "y": 153
+            "y": 160
           },
           "id": 103,
           "fieldConfig": {
@@ -4172,7 +4332,7 @@
             "x": 20,
             "w": 4,
             "h": 8,
-            "y": 153
+            "y": 160
           },
           "id": 104,
           "fieldConfig": {
@@ -4233,7 +4393,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 161
+            "y": 168
           },
           "id": 96,
           "fieldConfig": {
@@ -4294,7 +4454,7 @@
             "x": 4,
             "w": 8,
             "h": 8,
-            "y": 161
+            "y": 168
           },
           "id": 97,
           "fieldConfig": {
@@ -4369,7 +4529,7 @@
             "x": 12,
             "w": 6,
             "h": 8,
-            "y": 161
+            "y": 168
           },
           "id": 106,
           "fieldConfig": {
@@ -4442,7 +4602,7 @@
             "x": 18,
             "w": 6,
             "h": 8,
-            "y": 161
+            "y": 168
           },
           "id": 107,
           "fieldConfig": {
@@ -4511,7 +4671,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 153,
+        "y": 160,
         "w": 24,
         "h": 1
       },
@@ -4529,7 +4689,7 @@
             "x": 0,
             "w": 12,
             "h": 8,
-            "y": 154
+            "y": 161
           },
           "id": 61,
           "fieldConfig": {
@@ -4634,7 +4794,7 @@
             "x": 12,
             "w": 12,
             "h": 8,
-            "y": 154
+            "y": 161
           },
           "id": 62,
           "fieldConfig": {
@@ -4706,7 +4866,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 154,
+        "y": 161,
         "w": 24,
         "h": 1
       },
@@ -4724,7 +4884,7 @@
             "x": 0,
             "w": 16,
             "h": 8,
-            "y": 155
+            "y": 162
           },
           "id": 41,
           "fieldConfig": {
@@ -4812,7 +4972,7 @@
             "x": 16,
             "w": 8,
             "h": 8,
-            "y": 155
+            "y": 162
           },
           "id": 42,
           "fieldConfig": {
@@ -4913,7 +5073,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 155,
+        "y": 162,
         "w": 24,
         "h": 1
       },
@@ -4931,7 +5091,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 156
+            "y": 163
           },
           "id": 71,
           "fieldConfig": {
@@ -4992,7 +5152,7 @@
             "x": 4,
             "w": 4,
             "h": 8,
-            "y": 156
+            "y": 163
           },
           "id": 72,
           "fieldConfig": {
@@ -5050,7 +5210,7 @@
             "x": 8,
             "w": 16,
             "h": 8,
-            "y": 156
+            "y": 163
           },
           "id": 73,
           "fieldConfig": {
@@ -5129,7 +5289,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 156,
+        "y": 163,
         "w": 24,
         "h": 1
       },
@@ -5146,7 +5306,7 @@
             "x": 0,
             "w": 6,
             "h": 8,
-            "y": 157
+            "y": 164
           },
           "id": 51,
           "fieldConfig": {
@@ -5223,7 +5383,7 @@
             "x": 6,
             "w": 6,
             "h": 8,
-            "y": 157
+            "y": 164
           },
           "id": 52,
           "fieldConfig": {
@@ -5282,7 +5442,7 @@
             "x": 12,
             "w": 6,
             "h": 8,
-            "y": 157
+            "y": 164
           },
           "id": 53,
           "fieldConfig": {
@@ -5339,7 +5499,7 @@
             "x": 18,
             "w": 6,
             "h": 8,
-            "y": 157
+            "y": 164
           },
           "id": 54,
           "fieldConfig": {
@@ -5417,7 +5577,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 157,
+        "y": 164,
         "w": 24,
         "h": 1
       },
@@ -5435,7 +5595,7 @@
             "x": 0,
             "w": 5,
             "h": 8,
-            "y": 158
+            "y": 165
           },
           "id": 81,
           "fieldConfig": {
@@ -5496,7 +5656,7 @@
             "x": 5,
             "w": 5,
             "h": 8,
-            "y": 158
+            "y": 165
           },
           "id": 82,
           "fieldConfig": {
@@ -5557,7 +5717,7 @@
             "x": 10,
             "w": 14,
             "h": 8,
-            "y": 158
+            "y": 165
           },
           "id": 83,
           "fieldConfig": {
@@ -5672,7 +5832,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 158,
+        "y": 165,
         "w": 24,
         "h": 1
       },
@@ -5690,7 +5850,7 @@
             "x": 0,
             "w": 4,
             "h": 8,
-            "y": 159
+            "y": 166
           },
           "id": 111,
           "fieldConfig": {
@@ -5751,7 +5911,7 @@
             "x": 4,
             "w": 10,
             "h": 8,
-            "y": 159
+            "y": 166
           },
           "id": 112,
           "fieldConfig": {
@@ -5828,7 +5988,7 @@
             "x": 14,
             "w": 10,
             "h": 8,
-            "y": 159
+            "y": 166
           },
           "id": 113,
           "fieldConfig": {
@@ -5905,7 +6065,7 @@
             "x": 0,
             "w": 8,
             "h": 8,
-            "y": 167
+            "y": 174
           },
           "id": 114,
           "fieldConfig": {
@@ -5982,7 +6142,7 @@
             "x": 8,
             "w": 8,
             "h": 8,
-            "y": 167
+            "y": 174
           },
           "id": 115,
           "fieldConfig": {
@@ -6067,7 +6227,7 @@
             "x": 16,
             "w": 8,
             "h": 8,
-            "y": 167
+            "y": 174
           },
           "id": 116,
           "fieldConfig": {

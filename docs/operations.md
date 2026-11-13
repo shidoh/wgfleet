@@ -597,6 +597,8 @@ wgfleet_agent_drift_total{component}               # count of unexpected config 
 wgfleet_agent_egress_active{method}                # current active egress method (e.g. warp, direct)
 wgfleet_agent_egress_reachability{state}           # ok | degraded | blocked (censorship signal)
 wgfleet_agent_start_time_seconds                   # for uptime
+wgfleet_agent_camouflage_target_own{domain}        # 1: REALITY inbounds use the own-domain site; 0: fleet default. Only with camouflage
+wgfleet_agent_camouflage_cert_expiry_timestamp_seconds{domain}  # the site certificate's expiry (0 = not read). Only with camouflage
 ```
 
 **Master uplink** (master agent; see [Path degradation alerts](#path-degradation-alerts)):
@@ -1178,7 +1180,9 @@ The site comes up on the node's next pass; the gate opens on the pass after the 
 | Anywhere | `openssl s_client -connect <public_ip>:<reality port> -servername <domain> </dev/null 2>/dev/null \| openssl x509 -noout -subject -issuer` | your domain, a public CA |
 | Anywhere | `xray tls ping <domain>:<reality port>` | handshake ok, X25519MLKEM768 supported |
 | Peer master | mihomo config: the exit's `-reality` proxy | `servername: <domain>` |
-| Node metrics | `wgfleet_agent_camouflage_cert_expiry_timestamp_seconds` | the certificate's expiry |
+| Node metrics | `wgfleet_agent_camouflage_target_own{domain}` | `1` |
+| Node metrics | `wgfleet_agent_camouflage_cert_expiry_timestamp_seconds{domain}` | the certificate's expiry |
+| Grafana | dashboard *wgfleet — Fleet*, panel *Own-domain sites (camouflage)* | `own site`, days left |
 
 ### Symptoms
 
@@ -1190,6 +1194,7 @@ The site comes up on the node's next pass; the gate opens on the pass after the 
 | Check `site down: … certificate signed by unknown authority` | Caddy log: `obtaining certificate` errors | TCP/80 blocked from outside, or the CA's rate limit; Caddy retries on its own |
 | Check `certificate for … expires in …` | Caddy log: renewal errors | same as above; the check is red below 14 days |
 | Peers still send the fleet-default name | the node's check `camouflage` | green ⇒ wait for the peer's next pull |
+| Alert `WgfleetCamouflageNotServing` | the node's check `camouflage` | the site has not been the target for 30 min: one of the rows above |
 
 ### A hand-built site
 

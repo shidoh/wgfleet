@@ -38,7 +38,8 @@ type AgentMetrics struct {
 	standbyMember    *prometheus.GaugeVec   // per exit of the INACTIVE tier: is it usable
 	standbyTransport *prometheus.GaugeVec   // per exit: is its INACTIVE transport usable
 	egressThroughput prometheus.Gauge       // last measured egress throughput, bytes/sec
-	camouflageExpiry prometheus.Gauge       // unix NotAfter of the own-domain site's certificate; 0 none
+	camouflageExpiry *prometheus.GaugeVec   // per domain: unix NotAfter of the own-domain site's certificate
+	camouflageOwn    *prometheus.GaugeVec   // per domain: 1 while the REALITY inbounds use the own site as target
 	guardDrops       *prometheus.GaugeVec   // per nft guard chain: packets it has dropped
 	udpReturnSocket  *prometheus.GaugeVec   // per UDP port: can a TPROXY reply socket still be opened
 	udpReturnKnown   *prometheus.GaugeVec   // per UDP port: is a blocked port one we have decided about
@@ -111,10 +112,14 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 			Namespace: namespace, Subsystem: "agent", Name: "egress_throughput_bytes",
 			Help: "Last measured egress throughput in bytes/sec (ADR-0021). A sustained collapse below the configured floor auto-suspends the exit from the LB.", ConstLabels: cl,
 		}),
-		camouflageExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
+		camouflageExpiry: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "camouflage_cert_expiry_timestamp_seconds",
-			Help: "Unix time the certificate of the own-domain camouflage site expires (ADR-0039); 0 when the node has no site or its certificate could not be read.", ConstLabels: cl,
-		}),
+			Help: "Unix time the certificate of the own-domain camouflage site expires; 0 while it could not be read. Absent on a node without camouflage.", ConstLabels: cl,
+		}, []string{"domain"}),
+		camouflageOwn: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Subsystem: "agent", Name: "camouflage_target_own",
+			Help: "1 while the node's REALITY inbounds use its own-domain site as target and peers are told the domain; 0 while they are on the fleet-default target (site not ready or down). Absent on a node without camouflage.", ConstLabels: cl,
+		}, []string{"domain"}),
 		startTime: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace, Subsystem: "agent", Name: "start_time_seconds",
 			Help: "Unix time the agent process started.", ConstLabels: cl,
@@ -225,7 +230,7 @@ func NewAgentMetrics(reg *prometheus.Registry, node string, role domain.Role, no
 
 	reg.MustRegister(m.reconcileTotal, m.reconcileDuration, m.stateInfo, m.checkUp, m.checkLatency,
 		m.driftTotal, m.driftResources, m.reconcileChanges, m.egressReach, m.egressActive,
-		m.egressThroughput, m.camouflageExpiry, m.startTime, m.udpReturnSocket, m.udpReturnKnown, m.mihomoErrors, m.clientPathOK,
+		m.egressThroughput, m.camouflageExpiry, m.camouflageOwn, m.startTime, m.udpReturnSocket, m.udpReturnKnown, m.mihomoErrors, m.clientPathOK,
 		m.certRenew, newCertReloadCollector(cl),
 		m.guardDrops,
 		m.netnsMoveState, m.netnsMoveTries)
@@ -389,14 +394,25 @@ func (m *AgentMetrics) ObserveEgressThroughput(bytesPerSec float64) {
 	m.egressThroughput.Set(bytesPerSec)
 }
 
-// ObserveCamouflageExpiry records when the camouflage site's certificate
-// expires; the zero time records 0 (no site, or nothing read).
-func (m *AgentMetrics) ObserveCamouflageExpiry(notAfter time.Time) {
-	if notAfter.IsZero() {
-		m.camouflageExpiry.Set(0)
+// ObserveCamouflage records the own-domain site of the pass: whether it is the
+// REALITY target and when its certificate expires (zero ⇒ not read). An empty
+// domain (no camouflage) removes both series.
+func (m *AgentMetrics) ObserveCamouflage(domainName string, ownTarget bool, notAfter time.Time) {
+	m.camouflageExpiry.Reset()
+	m.camouflageOwn.Reset()
+	if domainName == "" {
 		return
 	}
-	m.camouflageExpiry.Set(float64(notAfter.Unix()))
+	own := 0.0
+	if ownTarget {
+		own = 1
+	}
+	m.camouflageOwn.WithLabelValues(domainName).Set(own)
+	expiry := 0.0
+	if !notAfter.IsZero() {
+		expiry = float64(notAfter.Unix())
+	}
+	m.camouflageExpiry.WithLabelValues(domainName).Set(expiry)
 }
 
 // ObserveDrift records that, on an unchanged desired spec, the named components

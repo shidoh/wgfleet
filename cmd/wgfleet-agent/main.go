@@ -981,7 +981,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 	if a.metrics != nil {
 		a.metrics.ObserveReconcile(elapsed, report.ChangeCount(), state, results, reconcileErr)
 		a.metrics.ObserveDrift(drifted)
-		a.metrics.ObserveCamouflageExpiry(a.camouflageExpiry(spec))
+		a.observeCamouflage(spec)
 		if a.role == domain.RoleExit {
 			a.metrics.ObserveTransport(spec.ActiveTransport.OrDefault())
 		}
@@ -1238,14 +1238,16 @@ func (a *agent) camoPaths() camoplan.Paths {
 	return camoplan.DefaultPaths()
 }
 
-// camouflageExpiry is the site certificate's expiry for the metric; zero when the
-// node has no site or nothing was read.
-func (a *agent) camouflageExpiry(spec domain.NodeSpec) time.Time {
+// observeCamouflage exports the own-domain site's state; nothing for a node
+// without one.
+func (a *agent) observeCamouflage(spec domain.NodeSpec) {
 	if spec.Camouflage == nil {
-		return time.Time{}
+		a.metrics.ObserveCamouflage("", false, time.Time{})
+		return
 	}
 	r, _ := a.camoGate.Last()
-	return r.NotAfter
+	d := spec.Camouflage.Domain
+	a.metrics.ObserveCamouflage(d, a.camoGate.ActiveDomain() == d, r.NotAfter)
 }
 
 // masterPaths returns the master-role on-node file locations, rooted under the

@@ -4220,6 +4220,198 @@
           }
         }
       },
+      "panel-244": {
+        "kind": "Panel",
+        "spec": {
+          "id": 244,
+          "title": "Own-domain sites (camouflage)",
+          "description": "Nodes with camouflage.domain. Target own = 1: the node's REALITY inbounds use the own site and peers send the domain; 0: they are on the fleet-default target (site not ready or down — the node's camouflage check says why). Certificate days left comes from the site itself; Caddy renews about 30 days before expiry.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "max by (node, domain) (wgfleet_agent_camouflage_target_own{node=~\"$node\"})",
+                        "instant": true,
+                        "format": "table"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "B",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "max by (node, domain) ((wgfleet_agent_camouflage_cert_expiry_timestamp_seconds{node=~\"$node\"} - time()) / 86400 and wgfleet_agent_camouflage_cert_expiry_timestamp_seconds > 0)",
+                        "instant": true,
+                        "format": "table"
+                      }
+                    }
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": [
+                {
+                  "kind": "Transformation",
+                  "group": "merge",
+                  "spec": {
+                    "options": {}
+                  }
+                },
+                {
+                  "kind": "Transformation",
+                  "group": "organize",
+                  "spec": {
+                    "options": {
+                      "excludeByName": {
+                        "Time": true
+                      },
+                      "indexByName": {
+                        "node": 0,
+                        "domain": 1,
+                        "Value #A": 2,
+                        "Value #B": 3
+                      },
+                      "renameByName": {
+                        "Value #A": "Target own",
+                        "Value #B": "Certificate days left"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "table",
+            "version": "13.2.0",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "align": "auto",
+                    "cellOptions": {
+                      "type": "auto"
+                    },
+                    "inspect": false
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "Target own"
+                    },
+                    "properties": [
+                      {
+                        "id": "mappings",
+                        "value": [
+                          {
+                            "type": "value",
+                            "options": {
+                              "0": {
+                                "text": "fleet default",
+                                "color": "red",
+                                "index": 1
+                              },
+                              "1": {
+                                "text": "own site",
+                                "color": "green",
+                                "index": 0
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "id": "custom.cellOptions",
+                        "value": {
+                          "type": "color-text"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "Certificate days left"
+                    },
+                    "properties": [
+                      {
+                        "id": "decimals",
+                        "value": 0
+                      },
+                      {
+                        "id": "thresholds",
+                        "value": {
+                          "mode": "absolute",
+                          "steps": [
+                            {
+                              "color": "red",
+                              "value": 0
+                            },
+                            {
+                              "color": "orange",
+                              "value": 14
+                            },
+                            {
+                              "color": "green",
+                              "value": 30
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "id": "custom.cellOptions",
+                        "value": {
+                          "type": "color-text"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "options": {
+                "showHeader": true,
+                "cellHeight": "sm",
+                "footer": {
+                  "show": false
+                },
+                "sortBy": [
+                  {
+                    "displayName": "node",
+                    "desc": false
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
       "panel-31": {
         "kind": "Panel",
         "spec": {
@@ -7735,6 +7927,19 @@
                         "width": 24,
                         "x": 0,
                         "y": 21
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-244"
+                        },
+                        "height": 7,
+                        "width": 24,
+                        "x": 0,
+                        "y": 29
                       }
                     }
                   ]

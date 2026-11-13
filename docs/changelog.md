@@ -12,12 +12,12 @@ New releases are announced, with the archives attached, in the Telegram channel 
 !!! warning "Upgrade steps"
 
     1. **Controller first, then every agent.** The wire contract moves to 16. A node whose agent is still on 15 gets no `camouflage` and keeps the fleet-default REALITY target; nothing else changes for it.
-    2. **Re-apply monitoring:** `deploy/monitoring/vmrule.yaml` or `prometheusrule.yaml` (new alert `WgfleetCamouflageCertExpiring`).
+    2. **Re-apply monitoring:** `deploy/monitoring/vmrule.yaml` or `prometheusrule.yaml` (new alerts `WgfleetCamouflageNotServing`, `WgfleetCamouflageCertExpiring`), and the Grafana dashboard (new panel *Own-domain sites*).
     3. **Going back to the previous controller** needs the pre-upgrade state database: the store gains a column the older controller refuses.
 
 ### Added
 
-- **Own-domain camouflage** (`fleet.masters[].camouflage`, `fleet.exits[].camouflage`). A node with `camouflage.domain` runs its own site — Caddy with a certificate for a domain you own — and every REALITY inbound on the node uses it as its target instead of the fleet-default third-party site. A probe of the node's REALITY port, of TCP/80, and of TCP/443 with `public_https` gets your domain's certificate. The switch waits until the site answers with a valid certificate and the domain resolves to the node, and falls back to the fleet default if the site stops answering. Masters and exits send the domain as SNI to a node only while that node serves it. Client profiles do not change. New fleet keys: `fleet.camouflage.acme_email`, `acme_ca`, `image`. Node health check `camouflage`, metric `wgfleet_agent_camouflage_cert_expiry_timestamp_seconds`. Steps: [operations.md](operations.md#own-domain-camouflage).
+- **Own-domain camouflage** (`fleet.masters[].camouflage`, `fleet.exits[].camouflage`). A node with `camouflage.domain` runs its own site — Caddy with a certificate for a domain you own — and every REALITY inbound on the node uses it as its target instead of the fleet-default third-party site. A probe of the node's REALITY port, of TCP/80, and of TCP/443 with `public_https` gets your domain's certificate. The switch waits until the site answers with a valid certificate and the domain resolves to the node, and falls back to the fleet default if the site stops answering. Masters and exits send the domain as SNI to a node only while that node serves it. Client profiles do not change. New fleet keys: `fleet.camouflage.acme_email`, `acme_ca`, `image`. Node health check `camouflage`, metrics `wgfleet_agent_camouflage_target_own` and `wgfleet_agent_camouflage_cert_expiry_timestamp_seconds`. Steps: [operations.md](operations.md#own-domain-camouflage).
 
 ### Fixed
 

@@ -104,7 +104,7 @@ provisioning, so changing them requires re-provisioning the node.
 | `fleet.as_blacklist_interval` | duration | `24h` | **baked.** Feed refresh cadence. Valid `1m`–`168h`. A failed refresh keeps the last-good list |
 | `fleet.reality_default_sni` | string | `www.python.org` | Fleet-wide REALITY camouflage SNI. **The target must support X25519MLKEM768** or the handshake fails silently — verify with `xray tls ping <host>` |
 | `fleet.reality_default_dest` | string | = SNI | Fleet-wide camouflage `host:port` the REALITY inbound borrows its certificate from |
-| `fleet.camouflage.acme_email` | string | none | Contact address sent to the certificate authority by every node with [`camouflage`](#camouflage--own-domain-site) |
+| `fleet.camouflage.acme_email` | string | none | Contact address sent to the certificate authority by every node with [`camouflage`](#camouflage-own-domain-site) |
 | `fleet.camouflage.acme_ca` | string | public defaults | Certificate authority for `camouflage` sites: empty ⇒ Caddy's defaults (Let's Encrypt, then ZeroSSL); `internal` ⇒ Caddy's own local CA, trusted by the agent's check — for test stands without public DNS; otherwise an `https://` ACME directory URL |
 | `fleet.camouflage.image` | string | pinned Caddy | Container image of the `camouflage` site |
 | `fleet.hardening.sshd` | bool | `true` | **Fleet default.** Manage the sshd drop-in (`/etc/ssh/sshd_config.d/10-wgfleet-hardening.conf`: key-only auth, no root password, no X11 forwarding), reconciled every pass |
@@ -324,7 +324,7 @@ run warm and the live path can be switched instantly.
 
 ### Camouflage
 
-Same keys and behaviour as on masters ([own-domain site](#camouflage--own-domain-site)).
+Same keys and behaviour as on masters ([own-domain site](#camouflage-own-domain-site)).
 On an exit in `exit_initiated` mode nothing listens for REALITY; the site alone answers
 on TCP/80, and on TCP/443 with `public_https`.
 

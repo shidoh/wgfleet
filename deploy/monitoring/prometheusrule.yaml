@@ -987,6 +987,22 @@ spec:
         description: The egress_leak_guard chain on {{ $labels.node }} is dropping far more than the
           straggler baseline (~7/min). Something stopped being masqueraded — check the masquerade rule's
           scope against the client pool and the outgoing interface.
+    - alert: WgfleetCamouflageNotServing
+      # A node with an own-domain site that is not its REALITY target: the site has
+      # not come up yet, its certificate was never issued, the domain does not point
+      # at the node, or the site went down and the inbounds fell back. Peers still
+      # connect (on the fleet-default name), but a probe of the node gets the
+      # third-party certificate again — what hosting providers flag. 30m covers the
+      # first certificate on a new node.
+      expr: wgfleet_agent_camouflage_target_own == 0
+      for: 30m
+      labels:
+        severity: warning
+        service: wgfleet
+      annotations:
+        summary: 'Own-domain site {{ $labels.domain }} on {{ $labels.node }} is not the REALITY target'
+        description: The node's REALITY inbounds use the fleet-default target. The node's camouflage
+          health check names the reason (site down, certificate, DNS, port 80 held).
     - alert: WgfleetCamouflageCertExpiring
       # The own-domain site renews its certificate by itself about 30 days before
       # expiry. Under 14 days left means renewal has been failing for two
@@ -999,7 +1015,7 @@ spec:
         severity: warning
         service: wgfleet
       annotations:
-        summary: Camouflage certificate on {{ $labels.node }} expires in {{ $value | humanizeDuration }}
+        summary: Camouflage certificate for {{ $labels.domain }} on {{ $labels.node }} expires in {{ $value | humanizeDuration }}
         description: The node's own-domain site has not renewed its certificate. Check the node's
           camouflage health check and `docker logs camouflage`.
     - alert: WgfleetNodeCertExpiring
