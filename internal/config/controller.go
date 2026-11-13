@@ -218,6 +218,9 @@ type FleetSection struct {
 	// a starting point, but ASN-diverse exits SHOULD set it per-exit.
 	RealityDefaultSNI  string `koanf:"reality_default_sni"`
 	RealityDefaultDest string `koanf:"reality_default_dest"`
+	// Camouflage is the fleet-wide part of own-domain camouflage (ADR-0039); the
+	// per-node switch is masters[].camouflage / exits[].camouflage.
+	Camouflage CamouflageFleet `koanf:"camouflage"`
 	// Hardening is the FLEET-WIDE default host-hardening policy. Both subsystems
 	// default to ON, and an individual node overrides it with its own
 	// masters[].hardening / exits[].hardening. Resolve with HardeningFor.
@@ -483,10 +486,13 @@ type MasterConfig struct {
 	ClientVLESS ClientVLESSConfig `koanf:"client_vless"` // client-facing VLESS+REALITY+XHTTP (DPI-resistant alternative to client AWG)
 	// RealityPortal tunes the inbound exits in the exit-initiated REALITY mode dial.
 	RealityPortal RealityPortalConfig `koanf:"reality_portal"`
-	Routing       MasterRouting       `koanf:"routing"`
-	Mihomo        MihomoConfig        `koanf:"mihomo"`  // master data-plane (mihomo) tuning
-	Compose       ComposeConfig       `koanf:"compose"` // master container stack tuning
-	SSH           SSHConfig           `koanf:"ssh"`     // bootstrap target
+	// Camouflage serves an own-domain site and makes it the target of the master's
+	// REALITY inbounds (ADR-0039). Unset ⇒ the fleet-default target.
+	Camouflage CamouflageConfig `koanf:"camouflage"`
+	Routing    MasterRouting    `koanf:"routing"`
+	Mihomo     MihomoConfig     `koanf:"mihomo"`  // master data-plane (mihomo) tuning
+	Compose    ComposeConfig    `koanf:"compose"` // master container stack tuning
+	SSH        SSHConfig        `koanf:"ssh"`     // bootstrap target
 	// Hardening overrides fleet.hardening for this master. Unset keys inherit the
 	// fleet default. This is the node the override exists for: the master is where
 	// the controller lives and where the operator actually logs in, so it is the
@@ -990,6 +996,9 @@ type ExitConfig struct {
 	// nil ⇒ no reserve interface, exactly the pre-lifeline behaviour. See
 	// LifelineConfig.
 	Lifeline *LifelineConfig `koanf:"lifeline"`
+	// Camouflage serves an own-domain site and makes it the target of the exit's
+	// REALITY inbound (ADR-0039). Unset ⇒ the fleet-default target.
+	Camouflage CamouflageConfig `koanf:"camouflage"`
 }
 
 // PerTunnelKeyPhase returns the exit's ADR-0030 migration phase, defaulting to
@@ -1457,6 +1466,7 @@ func (c ControllerConfig) Validate() error {
 		errs = append(errs, validateRealityPortal(i, m)...)
 	}
 	errs = append(errs, c.validateMasterFanout()...)
+	errs = append(errs, c.validateCamouflage()...)
 	return errors.Join(errs...)
 }
 

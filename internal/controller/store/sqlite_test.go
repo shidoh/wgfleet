@@ -1150,3 +1150,35 @@ func TestEnsureRealityTunnelIDs(t *testing.T) {
 		t.Errorf("after deleting e1: uuid %q, want reissued", u)
 	}
 }
+
+// Peers get a node's own domain as SNI only while the node reports serving it
+// (ADR-0039), so the column follows every report — including an empty one, which
+// means the node went back to the fleet-default target.
+func TestStatusCamouflageDomainFollowsEveryReport(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if err := st.UpsertNode(ctx, domain.Node{ID: "exit-a", Name: "exit-a", Role: domain.RoleExit, State: domain.StateReady}); err != nil {
+		t.Fatal(err)
+	}
+	record := func(d string) string {
+		t.Helper()
+		if err := st.RecordStatus(ctx, domain.NodeStatus{NodeID: "exit-a", State: domain.StateReady, CamouflageDomain: d}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := st.GetStatus(ctx, "exit-a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.CamouflageDomain
+	}
+	if got := record("e1.example.net"); got != "e1.example.net" {
+		t.Fatalf("first report: %q", got)
+	}
+	if got := record(""); got != "" {
+		t.Fatalf("an empty report must clear the domain, got %q", got)
+	}
+}

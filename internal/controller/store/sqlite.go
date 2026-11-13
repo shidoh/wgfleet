@@ -612,8 +612,8 @@ func (s *SQLiteStore) RecordStatus(ctx context.Context, st domain.NodeStatus) er
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO node_status (node_id, state, reported_at, last_handshake,
 			egress_ip, reconcile_error, checks_json, exit_health_json, client_peers_json,
-			awg_master_endpoint, master_peers_json)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+			awg_master_endpoint, master_peers_json, camouflage_domain)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(node_id) DO UPDATE SET
 			state=excluded.state, reported_at=excluded.reported_at,
 			last_handshake=excluded.last_handshake, egress_ip=excluded.egress_ip,
@@ -623,13 +623,14 @@ func (s *SQLiteStore) RecordStatus(ctx context.Context, st domain.NodeStatus) er
 			-- Overwritten on every report, never sticky: a peer list that outlived
 			-- its report would read as live handshakes.
 			master_peers_json=excluded.master_peers_json,
+			camouflage_domain=excluded.camouflage_domain,
 			-- An empty report means "could not read", not "holds none": keep what
 			-- the exit last confirmed, since the master's gate is armed from it.
 			awg_master_endpoint=CASE WHEN excluded.awg_master_endpoint = ''
 				THEN node_status.awg_master_endpoint ELSE excluded.awg_master_endpoint END`,
 		st.NodeID, string(st.State), fmtTime(orDefault(st.ReportedAt, s.now().UTC())),
 		fmtTime(st.LastHandshake), st.EgressIP, st.ReconcileError, string(checks), string(exitHealth),
-		string(clientPeers), st.AWGMasterEndpoint, string(masterPeers),
+		string(clientPeers), st.AWGMasterEndpoint, string(masterPeers), st.CamouflageDomain,
 	); err != nil {
 		return fmt.Errorf("record status for %q: %w", st.NodeID, err)
 	}
@@ -645,8 +646,8 @@ func (s *SQLiteStore) RecordStatus(ctx context.Context, st domain.NodeStatus) er
 // GetStatus implements Store.
 func (s *SQLiteStore) GetStatus(ctx context.Context, id string) (domain.NodeStatus, error) {
 	const q = `SELECT node_id, state, reported_at, last_handshake, egress_ip,
-		reconcile_error, checks_json, exit_health_json, client_peers_json, awg_master_endpoint, master_peers_json
-		FROM node_status WHERE node_id = ?`
+		reconcile_error, checks_json, exit_health_json, client_peers_json, awg_master_endpoint, master_peers_json,
+		camouflage_domain FROM node_status WHERE node_id = ?`
 	var (
 		st                                domain.NodeStatus
 		stateS, reportedAt, lastHandshake string
@@ -658,7 +659,7 @@ func (s *SQLiteStore) GetStatus(ctx context.Context, id string) (domain.NodeStat
 	err := s.db.QueryRowContext(ctx, q, id).Scan(
 		&st.NodeID, &stateS, &reportedAt, &lastHandshake,
 		&st.EgressIP, &st.ReconcileError, &checksJSON, &exitHealthJSON, &clientPeersJSON,
-		&st.AWGMasterEndpoint, &masterPeersJSON)
+		&st.AWGMasterEndpoint, &masterPeersJSON, &st.CamouflageDomain)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.NodeStatus{}, ErrNotFound
 	}

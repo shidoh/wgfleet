@@ -105,6 +105,10 @@ message StatusReport {
   // peer and cannot tell several masters apart. Additive; an older controller
   // ignores it and an older exit sends none.
   repeated MasterPeerStatus master_peers = 9;
+  // camouflage_domain is the own domain whose local site the node's REALITY
+  // inbounds use as target right now (ADR-0039); empty while they use the fleet
+  // default. Peers get the domain as SNI only while it is reported. Wire 16.
+  string camouflage_domain = 10;
 }
 
 // MasterPeerStatus is one master peer on an exit's master-facing interface.
@@ -191,6 +195,21 @@ message NodeSpec {
   // unreachable (product.md boundary 3). Unset ⇒ the exit carries no lifeline.
   // Requires wire v11 — see WireLifeline in internal/api/wire.go.
   LifelineSpec lifeline = 19;
+  // Own-domain camouflage (ADR-0039); unset ⇒ fleet-default REALITY target.
+  // Requires wire 16: an older agent would drop it while the controller waited
+  // for a report it can never send.
+  CamouflageSpec camouflage = 20;
+}
+
+// CamouflageSpec is a node's own-domain site, the target of its REALITY inbounds.
+message CamouflageSpec {
+  string domain = 1;
+  bool public_https = 2;  // also serve the site on public TCP/443
+  string public_ip = 3;   // the address the domain must resolve to
+  string acme_email = 4;
+  string acme_ca = 5;     // "" = public defaults, "internal" = local CA, else a directory URL
+  string image = 6;
+  int32 local_port = 7;   // loopback TLS port; 0 = 8444
 }
 
 // LifelineSpec is the desired state of an exit's reserve client-facing

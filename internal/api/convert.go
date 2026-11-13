@@ -42,7 +42,30 @@ func SpecToProto(s domain.NodeSpec) *pb.NodeSpec {
 	out.Reality = realityServerToProto(s.Reality)
 	out.Hardening = hardeningToProto(s.Hardening)
 	out.Lifeline = lifelineToProto(s.Lifeline)
+	out.Camouflage = camouflageToProto(s.Camouflage)
 	return out
+}
+
+// camouflageToProto carries a node's own-domain camouflage (ADR-0039); nil stays nil.
+func camouflageToProto(c *domain.CamouflageSpec) *pb.CamouflageSpec {
+	if c == nil {
+		return nil
+	}
+	return &pb.CamouflageSpec{
+		Domain: c.Domain, PublicHttps: c.PublicHTTPS, PublicIp: c.PublicIP,
+		AcmeEmail: c.ACMEEmail, AcmeCa: c.ACMECA, Image: c.Image, LocalPort: int32(c.LocalPort),
+	}
+}
+
+// camouflageFromProto is camouflageToProto's inverse.
+func camouflageFromProto(p *pb.CamouflageSpec) *domain.CamouflageSpec {
+	if p == nil {
+		return nil
+	}
+	return &domain.CamouflageSpec{
+		Domain: p.GetDomain(), PublicHTTPS: p.GetPublicHttps(), PublicIP: p.GetPublicIp(),
+		ACMEEmail: p.GetAcmeEmail(), ACMECA: p.GetAcmeCa(), Image: p.GetImage(), LocalPort: int(p.GetLocalPort()),
+	}
 }
 
 // lifelineToProto carries the exit's reserve client-facing interface onto the
@@ -124,6 +147,7 @@ func SpecFromProto(p *pb.NodeSpec) domain.NodeSpec {
 	s.Reality = realityServerFromProto(p.GetReality())
 	s.Hardening = hardeningFromProto(p.GetHardening())
 	s.Lifeline = lifelineFromProto(p.GetLifeline())
+	s.Camouflage = camouflageFromProto(p.GetCamouflage())
 	return s
 }
 
@@ -833,6 +857,7 @@ func StatusFromProto(nodeID string, r *pb.StatusReport) domain.NodeStatus {
 		st.ClientPeers = append(st.ClientPeers, cp)
 	}
 	st.AWGMasterEndpoint = r.GetAwgMasterEndpoint()
+	st.CamouflageDomain = r.GetCamouflageDomain()
 	for _, p := range r.GetMasterPeers() {
 		mp := domain.MasterPeerStatus{PublicKey: p.GetPublicKey(), Endpoint: p.GetEndpoint()}
 		if t := p.GetLastHandshakeUnix(); t > 0 {
@@ -850,6 +875,7 @@ func StatusToProto(s domain.NodeStatus) *pb.StatusReport {
 		EgressIp:          s.EgressIP,
 		ReconcileError:    s.ReconcileError,
 		AwgMasterEndpoint: s.AWGMasterEndpoint,
+		CamouflageDomain:  s.CamouflageDomain,
 	}
 	if !s.LastHandshake.IsZero() {
 		r.LastHandshakeUnix = s.LastHandshake.Unix()

@@ -64,6 +64,9 @@ type NodeSpec struct {
 	// being blocked or unreachable (product.md boundary 3). nil ⇒ the exit carries
 	// no lifeline, which is the default until an exit is designated to hold one.
 	Lifeline *LifelineSpec
+	// Camouflage is the node's own-domain camouflage (ADR-0039); nil ⇒ the REALITY
+	// inbounds use the fleet-default target. Requires wire 16.
+	Camouflage *CamouflageSpec `json:",omitempty"`
 	// Hardening is the host-hardening policy: which of the managed hardening
 	// subsystems (sshd drop-in, fail2ban jail) the agent reconciles. nil ⇒ not
 	// configured, which every reader treats as BOTH ENABLED — the fail-safe default

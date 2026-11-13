@@ -95,7 +95,11 @@ const (
 	// MasterSpec.reality_portal — the exit-initiated REALITY mode. A v13 exit drops
 	// the bridge and opens no flow to any master; a v13 master drops the portal and
 	// keeps dialling an exit whose inbound is gone. Deploy the controller FIRST.
-	WireContractVersion uint32 = 15
+	// v16 adds NodeSpec.camouflage and StatusReport.camouflage_domain (ADR-0039,
+	// own-domain camouflage). A v15 agent would drop the spec and never report the
+	// domain; the controller gives such a node no camouflage and its peers keep the
+	// fleet-default SNI, exactly as before.
+	WireContractVersion uint32 = 16
 
 	// WireClientWG is the wire version that introduced MasterSpec.client_wg. The
 	// controller refuses to render the client interface for a master below it: such
@@ -172,6 +176,11 @@ const (
 	// device configs the controller renders — sends them. So every AmneziaWG 3.x
 	// decision gates on this rather than on WireAWG3.
 	WireAWG3TrackB uint32 = 15
+
+	// WireCamouflage is the wire version that carries NodeSpec.camouflage and
+	// StatusReport.camouflage_domain (ADR-0039). The controller sends camouflage
+	// only to a node at or above it.
+	WireCamouflage uint32 = 16
 
 	// MinSupportedWire is the oldest agent wire version the controller will serve
 	// a spec to. Agents below it are refused (fail-safe) and, where possible,

@@ -574,6 +574,10 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		spec.Lifeline = lifeline
 		spec.Firewall.LifelinePort = lifeline.ListenPort
 	}
+	// Own-domain camouflage (ADR-0039), also before the early returns: the site is
+	// what a probe of the node's address sees, master or not.
+	spec.Camouflage = b.camouflageSpec(exit.Name, exit.Camouflage, exit.PublicIP, exit.SSH.Host, exitNode)
+	withCamouflagePorts(&spec)
 
 	if len(b.fleet.Masters) == 0 {
 		b.log.Warn("exit has no master to peer with", "exit", exit.Name)
@@ -757,6 +761,8 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 	if err != nil {
 		return domain.NodeSpec{}, err
 	}
+	spec.Camouflage = b.camouflageSpec(master.Name, master.Camouflage, master.PublicIP, master.SSH.Host, masterNode)
+	withCamouflagePorts(&spec)
 	// Where this master lives in every exit's pool; see the loop over exits below.
 	legacyHost, perTunnelHost := domain.MasterTunnelHostIndex(master.Slot)
 
@@ -1051,7 +1057,7 @@ func (b *Broker) renderMasterSpec(ctx context.Context, master config.MasterConfi
 					UUID:        rp.UUID,
 					PublicKey:   exitNode.RealityPublicKey,
 					ShortID:     rp.ShortID,
-					ServerName:  rp.ServerName,
+					ServerName:  b.camouflageServerName(ctx, exit.Name, exit.Camouflage, exitNode, rp.ServerName),
 					Fingerprint: rp.Fingerprint,
 					Mux:         rp.Mux,
 					XHTTPPath:   rp.Path,

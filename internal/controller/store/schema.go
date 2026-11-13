@@ -272,6 +272,10 @@ var migrations = []string{
 		created_at TEXT NOT NULL,
 		PRIMARY KEY (master_id, exit_id)
 	)`,
+	// v35: the own domain a node reports serving as its REALITY target
+	// (StatusReport.camouflage_domain, wire 16, ADR-0039). Overwritten on every
+	// report: peers get the domain as SNI only while the node says it serves it.
+	`ALTER TABLE node_status ADD COLUMN camouflage_domain TEXT NOT NULL DEFAULT ''`,
 }
 
 // MigrationCount is how many schema migrations this build knows. Exported so a

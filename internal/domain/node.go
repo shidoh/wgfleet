@@ -153,6 +153,10 @@ type NodeStatus struct {
 	// which is why the controller decides how to read a status by the exit's wire
 	// version, never by whether this is empty.
 	MasterPeers []MasterPeerStatus
+	// CamouflageDomain is the own domain whose local site the node's REALITY
+	// inbounds use as target right now (ADR-0039); empty while they use the fleet
+	// default. The controller gives peers the domain as SNI only while it is set.
+	CamouflageDomain string `json:",omitempty"`
 }
 
 // MasterPeer finds the reported peer carrying publicKey.
