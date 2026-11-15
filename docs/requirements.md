@@ -69,7 +69,7 @@ build is refused rather than downgraded.
 |---|---|---|
 | mihomo | `v1.19.33` | `compose.DefaultMihomoImage` |
 | xray-core (REALITY) | `26.6.22` | `compose.DefaultXrayImage` |
-| blocky | `v0.35.0` (override with `dns.tag`) | `compose.DefaultBlockyImage` |
+| blocky | `v0.36.0` (override with `dns.tag`) | `compose.DefaultBlockyImage` |
 | wgcf (WARP egress, exits only) | `2.3.1`, stamped on the node at provisioning | `provisioner` bootstrap |
 | AmneziaWG module / tools | whatever `ppa:amnezia/ppa` ships at prep time, then held | `prepare-node.sh` |
 

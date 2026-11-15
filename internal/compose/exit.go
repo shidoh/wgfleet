@@ -21,7 +21,12 @@ import (
 // new "refused" block type is NOT for us — blockType stays nxDomain, because a
 // non-answer is what keeps mihomo's health checks honest (zeroIP once poisoned
 // them with 8400 false failures).
-const DefaultBlockyImage = "spx01/blocky:v0.35.0"
+//
+// Bumped v0.35.0 -> v0.36.0 (upstream released 2026-11-09). What we care about:
+// DoT upstreams — two of the three defaults — pipeline queries over one connection
+// instead of dialing per query, a DoH response body is bounded to a DNS message,
+// and customDNS no longer fails record types it cannot answer.
+const DefaultBlockyImage = "spx01/blocky:v0.36.0"
 
 // BlockyInput is everything needed to render the exit node's DNS-filter stack.
 type BlockyInput struct {

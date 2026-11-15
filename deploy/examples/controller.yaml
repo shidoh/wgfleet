@@ -168,8 +168,8 @@ fleet:
       # per_tunnel_key: "off" # staged per-tunnel key migration: off (default) -> dual -> switch -> on, one exit at a time
       dns_filter: true # run blocky on this exit; binds loopback and mgmt_addr only (default false)
       dns: # blocky tuning
-        image: spx01/blocky # repository (default spx01/blocky:v0.35.0)
-        # tag: v0.35.0 # explicit tag, overrides any tag in the image; pin one, never latest
+        image: spx01/blocky # repository (default spx01/blocky:v0.36.0)
+        # tag: v0.36.0 # explicit tag, overrides any tag in the image; pin one, never latest
         # upstreams: [] # upstream resolvers (default: Quad9/Mullvad DoT + digitale-gesellschaft DoH)
         allowlist: ["*.example.com", "*.example.net"] # never-blocked domains
         # ports: { dns: 53, tls: 853, http: 4000, https: 443 } # listener ports (defaults 53/853/4000; https off unless set)

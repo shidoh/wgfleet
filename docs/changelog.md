@@ -19,8 +19,13 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 - **Own-domain camouflage** (`fleet.masters[].camouflage`, `fleet.exits[].camouflage`). A node with `camouflage.domain` runs its own site — Caddy with a certificate for a domain you own — and every REALITY inbound on the node uses it as its target instead of the fleet-default third-party site. A probe of the node's REALITY port, of TCP/80, and of TCP/443 with `public_https` gets your domain's certificate. The switch waits until the site answers with a valid certificate and the domain resolves to the node, and falls back to the fleet default if the site stops answering. Masters and exits send the domain as SNI to a node only while that node serves it. Client profiles do not change. New fleet keys: `fleet.camouflage.acme_email`, `acme_ca`, `image`. Node health check `camouflage`, metrics `wgfleet_agent_camouflage_target_own` and `wgfleet_agent_camouflage_cert_expiry_timestamp_seconds`. Steps: [operations.md](operations.md#own-domain-camouflage).
 
+### Security
+
+- **Built with Go 1.27.4** (was 1.27.3), with its security fixes to `net/http`, cgo, the go command, the compiler and the linker. Upgrade the controller and every agent.
+
 ### Changed
 
+- **blocky 0.36.0** (was 0.35.0) on every node that runs the resolver. DNS-over-TLS upstreams reuse one connection for many queries instead of opening one per query, and a DNS-over-HTTPS answer is capped at DNS message size. The agent recreates the resolver container once after the upgrade; a pinned `dns.tag` keeps its version.
 - **Console topology: a paused exit stays in CARRYING.** An exit of the carrying tier whose last health check failed used to jump to NOT CARRYING for that minute, next to the idle reserve, and read as a failover. It now stays in its place with the badge **check failed · paused** and a stopped link animation. A master whose agent is older than the controller reports no tier membership; its exits are grouped as before.
 
 ### Fixed

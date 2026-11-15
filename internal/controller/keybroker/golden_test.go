@@ -44,6 +44,8 @@ func goldenFleet(phase domain.PerTunnelKeyPhase) config.FleetSection {
 	// its own schedule, and that bump is not the regression these files guard.
 	f.Masters[0].Compose.MihomoImage = "metacubex/mihomo"
 	f.Masters[0].Compose.MihomoTag = "v1.19.30"
+	f.Exits[0].DNS.Image = "spx01/blocky"
+	f.Exits[0].DNS.Tag = "v0.35.0"
 	f.Exits[0].PublicIP = "198.51.100.1"
 	f.Exits[0].PerTunnelKey = string(phase)
 	f.Exits[0].Transports.AWG.Enabled = true

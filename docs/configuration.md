@@ -376,7 +376,7 @@ a plain exit, three on a lifeline exit.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fleet.exits[].dns.image` / `fleet.masters[].dns.image` / `fleet.master_dns.image` | string | `spx01/blocky:v0.35.0` | Container repository |
+| `fleet.exits[].dns.image` / `fleet.masters[].dns.image` / `fleet.master_dns.image` | string | `spx01/blocky:v0.36.0` | Container repository |
 | `fleet.exits[].dns.tag` / `fleet.masters[].dns.tag` / `fleet.master_dns.tag` | string | — | Explicit tag, overriding any tag in the image |
 | `fleet.exits[].dns.upstreams` / `fleet.masters[].dns.upstreams` / `fleet.master_dns.upstreams` | []string | safe defaults | Default upstream resolver group. On a master these default to the resolvers of exits with `dns_filter`; none ⇒ the safe defaults |
 | `fleet.exits[].dns.allowlist` / `fleet.masters[].dns.allowlist` / `fleet.master_dns.allowlist` | []string | — | Domains never blocked. Platform infrastructure is added automatically |

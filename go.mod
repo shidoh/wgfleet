@@ -2,7 +2,7 @@ module github.com/shidoh/wgfleet
 
 go 1.26.0
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 // Plain TCP listeners: Go 1.24+ defaults to MPTCP, which CVE-2026-98432 exploits.
 godebug multipathtcp=0
