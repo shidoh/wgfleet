@@ -87,6 +87,22 @@ log "target: linux/$ARCH, wgfleet version: $VERSION"
 
 export DEBIAN_FRONTEND=noninteractive
 
+# A Docker already on the host is kept as is, so check the one thing the agent
+# needs from it before changing anything: every container stack is driven with
+# `docker compose` (Compose v2). The standalone docker-compose v1 is not enough.
+compose_v2_missing() {
+  command -v docker >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1
+}
+COMPOSE_V2_HINT="Docker is installed but the Compose v2 plugin is not ('docker compose version' fails). \
+Install docker-compose-v2 (Ubuntu docker.io) or docker-compose-plugin (Docker's repository), then re-run."
+if compose_v2_missing; then
+  if [ "$SKIP_DEPS" = "1" ]; then
+    warn "$COMPOSE_V2_HINT"
+  else
+    die "$COMPOSE_V2_HINT"
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # 1. host dependencies
 # ---------------------------------------------------------------------------

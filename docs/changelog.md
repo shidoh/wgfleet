@@ -25,7 +25,7 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 ### Fixed
 
-- **Provisioning stops on a Docker without Compose v2.** A node that already had Docker, but not the Compose v2 plugin (for example Ubuntu's `docker.io` with the standalone `docker-compose` v1), passed provisioning and then failed every container action of the agent. The provisioner now refuses it before changing anything and names the package to install: `docker-compose-v2` or `docker-compose-plugin`. See [requirements.md](requirements.md).
+- **Provisioning stops on a Docker without Compose v2.** A node that already had Docker, but not the Compose v2 plugin (for example Ubuntu's `docker.io` with the standalone `docker-compose` v1), passed provisioning and then failed every container action of the agent. The provisioner and `install.sh` now refuse it before changing anything and name the package to install: `docker-compose-v2` or `docker-compose-plugin`. With `SKIP_DEPS=1`, `install.sh` only warns. See [requirements.md](requirements.md).
 
 ### Changed
 
