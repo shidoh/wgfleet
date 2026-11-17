@@ -23,6 +23,10 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
 - **Built with Go 1.27.4** (was 1.27.3), with its security fixes to `net/http`, cgo, the go command, the compiler and the linker. Upgrade the controller and every agent.
 
+### Fixed
+
+- **Provisioning stops on a Docker without Compose v2.** A node that already had Docker, but not the Compose v2 plugin (for example Ubuntu's `docker.io` with the standalone `docker-compose` v1), passed provisioning and then failed every container action of the agent. The provisioner now refuses it before changing anything and names the package to install: `docker-compose-v2` or `docker-compose-plugin`. See [requirements.md](requirements.md).
+
 ### Changed
 
 - **blocky 0.36.0** (was 0.35.0) on every node that runs the resolver. DNS-over-TLS upstreams reuse one connection for many queries instead of opening one per query, and a DNS-over-HTTPS answer is capped at DNS message size. The agent recreates the resolver container once after the upgrade; a pinned `dns.tag` keeps its version.

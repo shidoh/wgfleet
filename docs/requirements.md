@@ -31,7 +31,10 @@ promised.
   only through `prepare-node.sh --upgrade-awg`.
 - **Docker Engine with the Compose v2 plugin** (installed by the provisioner from
   get.docker.com). Client interception inside mihomo's network namespace uses
-  `network_mode: container:…`, which needs Compose v2.
+  `network_mode: container:…`, which needs Compose v2. If Docker is already on the
+  node, the provisioner keeps it and refuses to continue while `docker compose version`
+  fails; the standalone `docker-compose` v1 is not enough. Install `docker-compose-v2`
+  (Ubuntu's `docker.io`) or `docker-compose-plugin` (Docker's repository).
 - **ZeroTier** for the management overlay (installed by `prepare-node.sh`; the
   node must be authorised in ZeroTier Central).
 - **nftables** owns the firewall; `nftables.service` is masked by the scripts

@@ -35,6 +35,7 @@ func readyMock() *provisioner.MockRunner {
 	r.Responses["uname -m"] = "x86_64"
 	r.Responses["uname -r"] = "6.8.0"
 	r.PrefixResponses["command -v "] = "yes"
+	r.PrefixResponses["docker compose version"] = "COMPOSE=yes"
 	r.PrefixResponses["k=$(uname -r)"] = "AWGKMOD=yes (loaded, test)"
 	return r
 }

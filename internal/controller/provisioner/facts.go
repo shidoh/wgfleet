@@ -29,6 +29,10 @@ type Facts struct {
 	HasTracepath bool // tracepath present (WARP path-MTU auto-probe)
 	HasZeroTier  bool // zerotier-cli present
 	HasDocker    bool // docker engine present (needed for blocky/mihomo/xray)
+	// HasComposeV2 reports that `docker compose` works. The agent drives every
+	// container stack through it; a distro Docker can lack the plugin. Probed
+	// only when docker is present — a fresh get.docker.com install brings it.
+	HasComposeV2 bool
 	HasFail2ban  bool // fail2ban present (SSH brute-force protection)
 	HasAge       bool // age present (controller backup/restore archive encryption)
 	// HasNodeExporter reports the host-metrics exporter (prometheus-node-exporter).
@@ -77,6 +81,9 @@ func CollectFacts(ctx context.Context, r Runner, mgmtAddr string) (Facts, error)
 	f.HasTracepath = commandExists(ctx, r, "tracepath")
 	f.HasZeroTier = commandExists(ctx, r, "zerotier-cli")
 	f.HasDocker = commandExists(ctx, r, "docker")
+	if f.HasDocker {
+		f.HasComposeV2 = composeV2Present(ctx, r)
+	}
 	f.HasFail2ban = commandExists(ctx, r, "fail2ban-client")
 	f.HasAge = commandExists(ctx, r, "age")
 	f.HasNodeExporter = commandExists(ctx, r, "prometheus-node-exporter")
@@ -105,6 +112,14 @@ func hostMetricsBind(ctx context.Context, r Runner, mgmtAddr string) nodeexporte
 		addrs = append(addrs, nodeexporter.ListenAddrsFrom(strings.NewReader(out), nodeexporter.Port, src.v6)...)
 	}
 	return nodeexporter.ClassifyBind(addrs, mgmtAddr)
+}
+
+// composeV2Present reports whether the Compose v2 plugin answers. The verdict is
+// an explicit marker matched with Contains, for the same reason as awgKmodDiag:
+// the Runner merges stderr into stdout.
+func composeV2Present(ctx context.Context, r Runner) bool {
+	out, err := r.Run(ctx, "docker compose version >/dev/null 2>&1 && echo COMPOSE=yes || echo COMPOSE=no")
+	return err == nil && strings.Contains(out, "COMPOSE=yes")
 }
 
 // commandExists reports whether a binary is on the target's PATH.
@@ -150,6 +165,13 @@ func (f Facts) Preflight() error {
 	if !f.HasAWGKmod {
 		return fmt.Errorf("preflight: AmneziaWG kernel module not present " +
 			"(load it or install via DKMS first — this is a pre-flight requirement, not auto-built)")
+	}
+	if f.HasDocker && !f.HasComposeV2 {
+		// Not installed for the operator: which Docker packaging the machine
+		// uses is its own policy, and mixing repositories breaks upgrades.
+		return fmt.Errorf("preflight: Docker is installed but the Compose v2 plugin is not " +
+			"(`docker compose version` fails; the standalone docker-compose v1 is not enough) — " +
+			"install docker-compose-v2 (Ubuntu docker.io) or docker-compose-plugin (Docker's repository)")
 	}
 	return nil
 }

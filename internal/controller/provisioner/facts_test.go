@@ -17,6 +17,8 @@ func readyRunner() *MockRunner {
 	r.Responses[". /etc/os-release 2>/dev/null; printf %s \"$ID\""] = "ubuntu"
 	// All tools present.
 	r.PrefixResponses["command -v "] = "yes"
+	// Docker ships the Compose v2 plugin.
+	r.PrefixResponses["docker compose version"] = "COMPOSE=yes"
 	// AWG kernel module present.
 	r.PrefixResponses["k=$(uname -r)"] = "AWGKMOD=yes (loaded, test)"
 	return r
@@ -96,5 +98,61 @@ func TestMissingPackages(t *testing.T) {
 		if strings.Contains(missing, never) {
 			t.Errorf("%q must not be an apt package in MissingPackages: %v", never, f.MissingPackages())
 		}
+	}
+}
+
+// The agent drives every container stack with `docker compose`. A node with a
+// distro Docker but without the Compose v2 plugin used to pass provisioning
+// (docker is present, so the install step is skipped) and then fail on every
+// compose action. Preflight must stop it before any change, naming the fix.
+func TestPreflightFailsWhenDockerLacksComposeV2(t *testing.T) {
+	r := readyRunner()
+	// A stray stderr line must not flip the verdict either way.
+	r.PrefixResponses["docker compose version"] = "docker: 'compose' is not a docker command.\nCOMPOSE=no"
+	f, err := CollectFacts(context.Background(), r, testMgmtAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = f.Preflight()
+	if err == nil {
+		t.Fatal("docker without the Compose v2 plugin must fail preflight")
+	}
+	for _, want := range []string{"Compose v2", "docker-compose-v2", "docker-compose-plugin"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q: %v", want, err)
+		}
+	}
+}
+
+func TestPreflightPassesWithDockerAndComposeV2(t *testing.T) {
+	r := readyRunner()
+	r.PrefixResponses["docker compose version"] = "WARNING: noise on stderr\nCOMPOSE=yes"
+	f, err := CollectFacts(context.Background(), r, testMgmtAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Preflight(); err != nil {
+		t.Errorf("docker with Compose v2 must pass preflight: %v", err)
+	}
+}
+
+// Without docker the bootstrap installs it from get.docker.com, which brings the
+// Compose plugin along — nothing to refuse, and nothing to probe.
+func TestPreflightPassesWithoutDocker(t *testing.T) {
+	r := readyRunner()
+	r.Responses["command -v docker >/dev/null 2>&1 && echo yes || echo no"] = "no"
+	r.PrefixResponses["docker compose version"] = "COMPOSE=no"
+	f, err := CollectFacts(context.Background(), r, testMgmtAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.HasDocker {
+		t.Fatal("docker should be reported absent")
+	}
+	if err := f.Preflight(); err != nil {
+		t.Errorf("absent docker is installed by bootstrap, preflight must pass: %v", err)
+	}
+	if r.RanCommand("docker compose version") {
+		t.Error("compose probe must not run when docker is absent")
 	}
 }
