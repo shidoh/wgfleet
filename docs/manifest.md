@@ -112,6 +112,7 @@ fleet:
       egress: warp                          # preferred egress method: warp | direct
       egress_fallback: [direct]             # ordered fallbacks for censorship-adaptive failover
       warp_mtu: 0                           # WARP interface MTU; 0 ⇒ default 1380 + auto-probe (only lowers)
+      # warp_ip_family: auto               # WARP address family: auto (IPv4, then IPv6) | ipv4 | ipv6; default: fleet value
       address_pool: 10.81.0.0/24
       mgmt_addr: 10.20.0.5                 # ZeroTier address (admin/metrics/DNS bind)
       # public_ip: 198.51.100.7             # THE ENDPOINT THE MASTER DIALS. Unset ⇒ ssh.host,

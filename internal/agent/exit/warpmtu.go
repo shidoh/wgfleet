@@ -59,15 +59,21 @@ func effectiveWARPMTU(spec domain.NodeSpec, cachePath string) int {
 // non-fatal and leaves the default in force.
 type warpMTUPlanner struct {
 	cachePath string
-	endpoint  string
-	interval  time.Duration
-	now       func() time.Time
+	// endpoint is probed when there is no WARP endpoint pick to follow.
+	endpoint string
+	// warp and endpointState locate the endpoint wgcf actually dials, so the
+	// probe measures that path and family.
+	warp          *egress.WARPConfig
+	endpointState string
+	interval      time.Duration
+	now           func() time.Time
 	// probe measures the wgcf MTU; nil ⇒ the real egress.ProbeWARPMTU (tests stub it).
 	probe func(ctx context.Context, endpoint string) (int, error)
 }
 
 func newWARPMTUPlanner(in Input) warpMTUPlanner {
-	return warpMTUPlanner{cachePath: in.Paths.WARPMTUCache, endpoint: egress.DefaultWARPEndpoint, interval: warpMTUProbeInterval}
+	return warpMTUPlanner{cachePath: in.Paths.WARPMTUCache, endpoint: egress.DefaultWARPEndpoint,
+		warp: in.WARP, endpointState: in.Paths.WARPEndpointState, interval: warpMTUProbeInterval}
 }
 
 func (warpMTUPlanner) Component() string { return "warp path-mtu probe" }
@@ -108,6 +114,10 @@ func (p warpMTUPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 	if ai, err := os.Stat(p.attemptPath()); err == nil && now.Sub(ai.ModTime()) < p.retryFloor() {
 		return []reconcile.Action{reconcile.NoChangeAction(p.cachePath, "probe stale; awaiting retry window")}, nil
 	}
+	endpoint := p.endpoint
+	if p.warp != nil && p.endpointState != "" {
+		endpoint = pickedWARPEndpoint(p.warp.Endpoint, spec.WARPIPFamily, p.endpointState)
+	}
 	apply := func(ctx context.Context) error {
 		_ = os.WriteFile(p.attemptPath(), []byte(now.UTC().Format(time.RFC3339)+"\n"), 0o644)
 		probe := p.probe
@@ -116,11 +126,11 @@ func (p warpMTUPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 		}
 		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		mtu, err := probe(cctx, p.endpoint)
+		mtu, err := probe(cctx, endpoint)
 		if err != nil {
 			// Non-fatal, never silent: the default/last-good value stays in force.
 			slog.Warn("WARP path-mtu probe failed (non-fatal; using default/last-good)",
-				"endpoint", p.endpoint, "default", wg.DefaultWARPMTU, "err", err)
+				"endpoint", endpoint, "default", wg.DefaultWARPMTU, "err", err)
 			return nil
 		}
 		if err := atomicWriteFile(p.cachePath, []byte(strconv.Itoa(mtu)+"\n"), 0o644); err != nil {
@@ -131,6 +141,6 @@ func (p warpMTUPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconci
 	}
 	return []reconcile.Action{reconcile.CustomAction(
 		reconcile.ActionUpdate, p.cachePath, "auto-probe WARP path MTU (tracepath)",
-		fmt.Sprintf("tracepath %s", p.endpoint), apply,
+		fmt.Sprintf("tracepath %s", endpoint), apply,
 	)}, nil
 }

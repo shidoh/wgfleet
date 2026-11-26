@@ -483,7 +483,7 @@ func (p warpPlanner) Plan(_ context.Context, spec domain.NodeSpec) ([]reconcile.
 		)}, nil
 	}
 	cfg := *p.warp
-	cfg.Endpoint = pickedWARPEndpoint(cfg.Endpoint, p.endpointState)
+	cfg.Endpoint = pickedWARPEndpoint(cfg.Endpoint, spec.WARPIPFamily, p.endpointState)
 	if cfg.MTU == 0 {
 		// WARP rides the exit's own physical link to Cloudflare (sequential model,
 		// ADR-0014): the master↔exit tunnel terminates here and the bare payload is

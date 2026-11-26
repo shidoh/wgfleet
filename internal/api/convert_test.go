@@ -62,6 +62,7 @@ func TestNodeSpecRoundTrip(t *testing.T) {
 		},
 		Exporters:                domain.ExportersSpec{Node: true, WG: true, WARP: true},
 		WARPMTU:                  1380,
+		WARPIPFamily:             domain.WARPIPFamilyIPv6,
 		EgressChain:              []domain.EgressMethod{domain.EgressWARP, domain.EgressDirect},
 		EgressThroughputMinBps:   256000,
 		EgressThroughputProbeURL: "https://speed.cloudflare.com/__down?bytes=262144",

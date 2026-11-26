@@ -541,7 +541,8 @@ func (b *Broker) renderExitSpec(ctx context.Context, exit config.ExitConfig) (do
 		// it, 0 ⇒ the agent auto-probes the path MTU (tracepath) and falls back to
 		// wg.DefaultWARPMTU. The controller's own MTU math below uses exitWARPMTU
 		// (operator value or the conservative default) since it can't see the probe.
-		WARPMTU: exit.WARPMTU,
+		WARPMTU:      exit.WARPMTU,
+		WARPIPFamily: wireWARPIPFamily(b.fleet.WARPIPFamilyFor(exit)),
 		// Egress throughput watchdog (ADR-0021): the agent measures real throughput on
 		// the active egress and reports it; a sustained collapse fails over to a
 		// fallback (if any) and/or the controller auto-suspends the exit from the LB.
@@ -1871,4 +1872,13 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// wireWARPIPFamily leaves auto off the wire: an empty family already means auto
+// to the agent, and a fleet that never sets the knob renders exactly as before.
+func wireWARPIPFamily(f domain.WARPIPFamily) domain.WARPIPFamily {
+	if f == domain.WARPIPFamilyAuto {
+		return ""
+	}
+	return f
 }

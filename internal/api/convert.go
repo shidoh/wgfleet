@@ -30,6 +30,7 @@ func SpecToProto(s domain.NodeSpec) *pb.NodeSpec {
 	out.Master = masterToProto(s.Master)
 	out.Decommission = s.Decommission
 	out.WarpMtu = int32(s.WARPMTU)
+	out.WarpIpFamily = string(s.WARPIPFamily)
 	out.EgressThroughputMinBps = int32(s.EgressThroughputMinBps)
 	out.EgressThroughputProbeUrl = s.EgressThroughputProbeURL
 	for _, m := range s.EgressChain {
@@ -135,6 +136,7 @@ func SpecFromProto(p *pb.NodeSpec) domain.NodeSpec {
 	s.Master = masterFromProto(p.GetMaster())
 	s.Decommission = p.GetDecommission()
 	s.WARPMTU = int(p.GetWarpMtu())
+	s.WARPIPFamily = domain.WARPIPFamily(p.GetWarpIpFamily())
 	s.EgressThroughputMinBps = int(p.GetEgressThroughputMinBps())
 	s.EgressThroughputProbeURL = p.GetEgressThroughputProbeUrl()
 	for _, m := range p.GetEgressChain() {

@@ -890,7 +890,11 @@ type NodeSpec struct {
 	// Own-domain camouflage (ADR-0039); unset ⇒ fleet-default REALITY target.
 	// Requires wire 16: an older agent would drop it while the controller waited
 	// for a report it can never send.
-	Camouflage    *CamouflageSpec `protobuf:"bytes,20,opt,name=camouflage,proto3" json:"camouflage,omitempty"`
+	Camouflage *CamouflageSpec `protobuf:"bytes,20,opt,name=camouflage,proto3" json:"camouflage,omitempty"`
+	// Address family the exit's WARP tunnel dials Cloudflare over: "auto"
+	// (or empty), "ipv4", "ipv6". Additive: an older agent ignores it and keeps
+	// handing the endpoint name to wg-quick, as before.
+	WarpIpFamily  string `protobuf:"bytes,21,opt,name=warp_ip_family,json=warpIpFamily,proto3" json:"warp_ip_family,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1063,6 +1067,13 @@ func (x *NodeSpec) GetCamouflage() *CamouflageSpec {
 		return x.Camouflage
 	}
 	return nil
+}
+
+func (x *NodeSpec) GetWarpIpFamily() string {
+	if x != nil {
+		return x.WarpIpFamily
+	}
+	return ""
 }
 
 // CamouflageSpec is a node's own-domain site, the target of its REALITY inbounds.
@@ -4092,7 +4103,7 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	" \x01(\bR\n" +
 	"inRotation\"-\n" +
 	"\x0fReportStatusAck\x12\x1a\n" +
-	"\breceived\x18\x01 \x01(\rR\breceived\"\xaf\a\n" +
+	"\breceived\x18\x01 \x01(\rR\breceived\"\xd5\a\n" +
 	"\bNodeSpec\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12\x16\n" +
 	"\x06egress\x18\x02 \x01(\tR\x06egress\x125\n" +
@@ -4116,7 +4127,8 @@ const file_wgfleet_v1_node_service_proto_rawDesc = "" +
 	"\blifeline\x18\x13 \x01(\v2\x18.wgfleet.v1.LifelineSpecR\blifeline\x12:\n" +
 	"\n" +
 	"camouflage\x18\x14 \x01(\v2\x1a.wgfleet.v1.CamouflageSpecR\n" +
-	"camouflage\"\xd5\x01\n" +
+	"camouflage\x12$\n" +
+	"\x0ewarp_ip_family\x18\x15 \x01(\tR\fwarpIpFamily\"\xd5\x01\n" +
 	"\x0eCamouflageSpec\x12\x16\n" +
 	"\x06domain\x18\x01 \x01(\tR\x06domain\x12!\n" +
 	"\fpublic_https\x18\x02 \x01(\bR\vpublicHttps\x12\x1b\n" +

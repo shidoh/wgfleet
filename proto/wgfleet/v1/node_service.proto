@@ -202,6 +202,10 @@ message NodeSpec {
   // Requires wire 16: an older agent would drop it while the controller waited
   // for a report it can never send.
   CamouflageSpec camouflage = 20;
+  // Address family the exit's WARP tunnel dials Cloudflare over: "auto"
+  // (or empty), "ipv4", "ipv6". Additive: an older agent ignores it and keeps
+  // handing the endpoint name to wg-quick, as before.
+  string warp_ip_family = 21;
 }
 
 // CamouflageSpec is a node's own-domain site, the target of its REALITY inbounds.

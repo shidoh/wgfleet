@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"slices"
@@ -42,13 +43,20 @@ const warpEndpointMaxDwell = 30 * time.Minute
 // draw ICMP port-unreachable while :500, :1701, :4500 answer.
 var warpEndpointPorts = []string{"2408", "500", "1701", "4500"}
 
+// warpResolveTimeout bounds one lookup of the endpoint host.
+const warpResolveTimeout = 5 * time.Second
+
 const bootIDPath = "/proc/sys/kernel/random/boot_id"
 
 // warpEndpointState is the fallback's memory, kept on disk because planners are
-// rebuilt every pass. Endpoint is the pick (empty: the profile's). SilentSince is
+// rebuilt every pass. Candidate is the picked candidate's key and Endpoint what
+// wgcf.conf carries for it: an address literal resolved when the candidate was
+// picked, or the name itself for a by-name candidate. A state without a
+// candidate (none yet, or written by an older agent) is no pick. SilentSince is
 // the first pass that saw silence on it, valid only within BootID's boot. Rounds
 // counts full passes over the candidates without a handshake (the back-off).
 type warpEndpointState struct {
+	Candidate   string    `json:"candidate,omitempty"`
 	Endpoint    string    `json:"endpoint,omitempty"`
 	Since       time.Time `json:"since,omitzero"`
 	SilentSince time.Time `json:"silent_since,omitzero"`
@@ -88,34 +96,150 @@ func writeWARPEndpointState(path string, st warpEndpointState) error {
 	return nil
 }
 
-// warpEndpointCandidates lists the endpoints to try, the profile's own first,
-// then Cloudflare's default host on each WARP port.
-func warpEndpointCandidates(profile string) []string {
+// warpCandidate is one way to reach Cloudflare's WARP endpoint: an address
+// family and a port on the endpoint host, or (Family empty) a name handed to
+// wg-quick as is, which resolves it itself.
+type warpCandidate struct {
+	Family domain.WARPIPFamily
+	Host   string
+	Port   string
+}
+
+func (c warpCandidate) hostPort() string { return net.JoinHostPort(c.Host, c.Port) }
+
+// key names the candidate in the state file and the log.
+func (c warpCandidate) key() string {
+	if c.Family == "" {
+		return c.hostPort()
+	}
+	return string(c.Family) + " " + c.hostPort()
+}
+
+// network is the resolver network for the candidate's family.
+func (c warpCandidate) network() string {
+	if c.Family == domain.WARPIPFamilyIPv6 {
+		return "ip6"
+	}
+	return "ip4"
+}
+
+// accepts reports whether endpoint is what wgcf.conf may carry for c: the name
+// itself for a by-name candidate, else an address of c's family on c's port.
+// It guards the render against a state file that says anything else.
+func (c warpCandidate) accepts(endpoint string) bool {
+	if c.Family == "" {
+		return endpoint == c.hostPort()
+	}
+	ap, err := netip.ParseAddrPort(endpoint)
+	if err != nil || strconv.Itoa(int(ap.Port())) != c.Port {
+		return false
+	}
+	if c.Family == domain.WARPIPFamilyIPv6 {
+		return ap.Addr().Is6() && !ap.Addr().Is4In6()
+	}
+	return ap.Addr().Is4()
+}
+
+// warpEndpointCandidates lists the ways to reach WARP in the order they are
+// tried. Each family gets every WARP port on Cloudflare's endpoint host, the
+// profile's port first; auto tries IPv4, then IPv6, and ends with the profile's
+// endpoint by name. A profile endpoint off Cloudflare's host goes first in auto.
+func warpEndpointCandidates(profile string, family domain.WARPIPFamily) []warpCandidate {
 	if profile == "" {
 		profile = egress.DefaultWARPEndpoint
 	}
-	out := []string{profile}
-	host, _, err := net.SplitHostPort(egress.DefaultWARPEndpoint)
+	host, defPort, err := net.SplitHostPort(egress.DefaultWARPEndpoint)
 	if err != nil {
-		return out
+		return nil
+	}
+	ports := []string{defPort}
+	pHost, pPort, perr := net.SplitHostPort(profile)
+	if perr == nil && pHost == host {
+		ports = []string{pPort}
 	}
 	for _, port := range warpEndpointPorts {
-		if ep := net.JoinHostPort(host, port); !slices.Contains(out, ep) {
-			out = append(out, ep)
+		if !slices.Contains(ports, port) {
+			ports = append(ports, port)
 		}
+	}
+	var families []domain.WARPIPFamily
+	switch family.OrAuto() {
+	case domain.WARPIPFamilyIPv4:
+		families = []domain.WARPIPFamily{domain.WARPIPFamilyIPv4}
+	case domain.WARPIPFamilyIPv6:
+		families = []domain.WARPIPFamily{domain.WARPIPFamilyIPv6}
+	default:
+		families = []domain.WARPIPFamily{domain.WARPIPFamilyIPv4, domain.WARPIPFamilyIPv6}
+	}
+
+	var out []warpCandidate
+	byName := warpCandidate{Host: pHost, Port: pPort}
+	auto := family.OrAuto() == domain.WARPIPFamilyAuto
+	if auto && perr == nil && pHost != host {
+		out = append(out, byName)
+	}
+	for _, f := range families {
+		for _, port := range ports {
+			out = append(out, warpCandidate{Family: f, Host: host, Port: port})
+		}
+	}
+	if auto && perr == nil && pHost == host {
+		out = append(out, byName)
 	}
 	return out
 }
 
+// pickedWARPCandidate returns the index of the state's pick among candidates and
+// the endpoint it renders, or -1 when the state holds no valid pick.
+func pickedWARPCandidate(candidates []warpCandidate, st warpEndpointState) (int, string) {
+	if st.Candidate == "" {
+		return -1, ""
+	}
+	for i, c := range candidates {
+		if c.key() == st.Candidate && c.accepts(st.Endpoint) {
+			if c.Family == "" {
+				return i, st.Endpoint
+			}
+			return i, netip.MustParseAddrPort(st.Endpoint).String()
+		}
+	}
+	return -1, ""
+}
+
 // pickedWARPEndpoint is the endpoint wgcf.conf should carry: the fallback's pick
-// when it is one of the candidates, else the profile's. With no pick on disk the
-// rendered file is byte-for-byte what it was before the fallback existed.
-func pickedWARPEndpoint(profile, statePath string) string {
-	st, ok := readWARPEndpointState(statePath)
-	if ok && st.Endpoint != "" && slices.Contains(warpEndpointCandidates(profile), st.Endpoint) {
-		return st.Endpoint
+// when it is a valid one for this family, else the profile's (until the
+// fallback planner makes its first pick).
+func pickedWARPEndpoint(profile string, family domain.WARPIPFamily, statePath string) string {
+	st, _ := readWARPEndpointState(statePath)
+	if i, ep := pickedWARPCandidate(warpEndpointCandidates(profile, family), st); i >= 0 {
+		return ep
+	}
+	if profile == "" {
+		return egress.DefaultWARPEndpoint
 	}
 	return profile
+}
+
+// resolveWARPCandidate turns a candidate into the endpoint wgcf.conf carries:
+// the name as is for a by-name candidate, else the first address of the
+// candidate's family.
+func resolveWARPCandidate(ctx context.Context, c warpCandidate, lookup func(ctx context.Context, network, host string) ([]netip.Addr, error)) (string, error) {
+	if c.Family == "" {
+		return c.hostPort(), nil
+	}
+	cctx, cancel := context.WithTimeout(ctx, warpResolveTimeout)
+	defer cancel()
+	addrs, err := lookup(cctx, c.network(), c.Host)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s (%s): %w", c.Host, c.Family, err)
+	}
+	for _, a := range addrs {
+		cand := net.JoinHostPort(a.Unmap().String(), c.Port)
+		if c.accepts(cand) {
+			return cand, nil
+		}
+	}
+	return "", fmt.Errorf("resolve %s: no %s address", c.Host, c.Family)
 }
 
 // warpEndpointDwell is how long silence is watched in the given round.
@@ -140,6 +264,8 @@ type warpEndpointPlanner struct {
 	bootID func() string
 	// handshake reads wgcf's latest handshake (zero: none yet); nil ⇒ `wg show`.
 	handshake func(ctx context.Context, iface string) (time.Time, error)
+	// lookup resolves the endpoint host; nil ⇒ the system resolver.
+	lookup func(ctx context.Context, network, host string) ([]netip.Addr, error)
 }
 
 func newWARPEndpointPlanner(in Input) warpEndpointPlanner {
@@ -167,6 +293,14 @@ func (p warpEndpointPlanner) boot() string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+func (p warpEndpointPlanner) resolve(ctx context.Context, c warpCandidate) (string, error) {
+	lookup := p.lookup
+	if lookup == nil {
+		lookup = net.DefaultResolver.LookupNetIP
+	}
+	return resolveWARPCandidate(ctx, c, lookup)
 }
 
 func (p warpEndpointPlanner) readHandshake(ctx context.Context) (time.Time, error) {
@@ -201,10 +335,15 @@ func (p warpEndpointPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]
 	if st.SilentSince.After(now) {
 		st.SilentSince = time.Time{} // stamped in the future (clock stepped back): watch afresh
 	}
-	candidates := warpEndpointCandidates(p.warp.Endpoint)
-	current := pickedWARPEndpoint(p.warp.Endpoint, p.statePath)
-	if !slices.Contains(candidates, current) {
-		current = candidates[0]
+	candidates := warpEndpointCandidates(p.warp.Endpoint, spec.WARPIPFamily)
+	idx, current := pickedWARPCandidate(candidates, st)
+	if idx < 0 {
+		// No pick yet (a fresh node, or state from an agent that dialled the name):
+		// take the first candidate that resolves. On a node that was handshaking by
+		// name this costs one wgcf restart, the price of not leaving the family to
+		// the resolver's AAAA-first order.
+		return []reconcile.Action{p.pick(candidates, 0, warpEndpointState{BootID: boot}, now,
+			"no WARP endpoint picked yet: take the first that resolves", false).BestEffort()}, nil
 	}
 
 	lastHS, err := p.readHandshake(ctx)
@@ -229,7 +368,7 @@ func (p warpEndpointPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]
 	}
 
 	if !st.watching() {
-		st.Endpoint, st.SilentSince, st.BootID = current, now, boot
+		st.SilentSince, st.BootID = now, boot
 		return []reconcile.Action{p.write(st, "no WARP handshake on "+current+": start watching", nil)}, nil
 	}
 	silent, dwell := now.Sub(st.SilentSince), warpEndpointDwell(st.Rounds)
@@ -238,18 +377,8 @@ func (p warpEndpointPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]
 			fmt.Sprintf("no handshake on %s for %s of %s", current, silent.Round(time.Second), dwell))}, nil
 	}
 
-	nextIdx := (slices.Index(candidates, current) + 1) % len(candidates)
-	rounds := st.Rounds
-	if nextIdx == 0 {
-		rounds++
-	}
-	next := warpEndpointState{Endpoint: candidates[nextIdx], Since: now, SilentSince: now, Rounds: rounds, BootID: boot}
-	summary := fmt.Sprintf("no WARP handshake on %s for %s: switch to %s", current, silent.Round(time.Second), next.Endpoint)
-	move := p.write(next, summary, func() {
-		slog.Warn("WARP endpoint gives no handshake; switching to the next one",
-			"from", current, "to", next.Endpoint, "silent_for", silent.Round(time.Second).String(),
-			"failed_rounds", rounds, "next_window", warpEndpointDwell(rounds).String())
-	})
+	summary := fmt.Sprintf("no WARP handshake on %s for %s: switch to the next endpoint", current, silent.Round(time.Second))
+	move := p.pick(candidates, idx+1, warpEndpointState{Rounds: st.Rounds, BootID: boot}, now, summary, true)
 	// Ask once more right before the write: a handshake that arrived since Plan
 	// read it cancels the move. Best-effort, so a cancelled move is a warning in
 	// the log, not a failed pass that would mark the node Degraded.
@@ -257,6 +386,46 @@ func (p warpEndpointPlanner) Plan(ctx context.Context, spec domain.NodeSpec) ([]
 		hs, err := p.readHandshake(ctx)
 		return err == nil && !warpHandshakeLive(hs, p.nowTime())
 	}).BestEffort()}, nil
+}
+
+// pick writes the first candidate from index from on (wrapping) that resolves.
+// Wrapping past the end counts a round of the back-off. watch starts the
+// silence watch on the new pick, so a dead one is left a window later even if
+// it never handshakes.
+func (p warpEndpointPlanner) pick(candidates []warpCandidate, from int, base warpEndpointState, now time.Time, summary string, watch bool) reconcile.Action {
+	return reconcile.CustomAction(reconcile.ActionUpdate, p.statePath, summary, candidates[from%len(candidates)].key(),
+		func(ctx context.Context) error {
+			var errs []error
+			for n := range len(candidates) {
+				i := (from + n) % len(candidates)
+				c := candidates[i]
+				ep, err := p.resolve(ctx, c)
+				if err != nil {
+					errs = append(errs, err)
+					continue
+				}
+				st := base
+				st.Candidate, st.Endpoint, st.Since = c.key(), ep, now
+				if from+n >= len(candidates) && watch {
+					st.Rounds++
+				}
+				if watch {
+					st.SilentSince = now
+				}
+				if err := writeWARPEndpointState(p.statePath, st); err != nil {
+					return err
+				}
+				if watch {
+					slog.Warn("WARP endpoint gives no handshake; switching to the next one",
+						"to", ep, "candidate", st.Candidate, "failed_rounds", st.Rounds,
+						"next_window", warpEndpointDwell(st.Rounds).String())
+				} else {
+					slog.Info("WARP endpoint picked", "endpoint", ep, "candidate", st.Candidate)
+				}
+				return nil
+			}
+			return fmt.Errorf("no WARP endpoint candidate resolves: %w", errors.Join(errs...))
+		})
 }
 
 func (p warpEndpointPlanner) write(st warpEndpointState, summary string, logIt func()) reconcile.Action {

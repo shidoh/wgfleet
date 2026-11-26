@@ -64,7 +64,7 @@ func (e *EgressClassifier) Classify(ctx context.Context, checks []domain.HealthC
 			"egress failing but WARP path reachable ("+conf.Detail+") — downstream, not a block")
 	}
 	return domain.EgressReachBlocked, reachCheck(domain.EgressReachBlocked,
-		"WARP path unreachable ("+conf.Detail+") — likely ISP/DPI block")
+		"WARP path unreachable ("+conf.Detail+") — blocked on the way to Cloudflare, or the host's own network does not reach it")
 }
 
 // findCheck returns the named check from a result set.

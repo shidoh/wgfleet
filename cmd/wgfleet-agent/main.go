@@ -896,7 +896,7 @@ func (a *agent) reconcile(base context.Context, plan bool) error {
 			egressClass = class
 			results = append(results, *chk)
 			if class == domain.EgressReachBlocked {
-				a.log.Warn("egress classified blocked (likely ISP/DPI block)", "detail", chk.Detail)
+				a.log.Warn("egress classified blocked (no WARP handshake: a block on the path or the host's own network)", "detail", chk.Detail)
 			}
 			if a.metrics != nil {
 				a.metrics.ObserveEgress(class)

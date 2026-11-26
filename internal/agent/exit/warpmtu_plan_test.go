@@ -182,3 +182,38 @@ func (stubPlanner) Component() string { return "warp path-mtu probe" }
 func (s stubPlanner) Plan(context.Context, domain.NodeSpec) ([]reconcile.Action, error) {
 	return s.acts, nil
 }
+
+// The probe measures the path wgcf actually rides: when the endpoint fallback
+// picked an IPv6 address, that address is probed, not the name.
+func TestWARPMTUProbesThePickedEndpoint(t *testing.T) {
+	cases := []struct {
+		name  string
+		state *warpEndpointState
+		want  string
+	}{
+		{"no pick: the default endpoint", nil, "engage.cloudflareclient.com:2408"},
+		{"IPv6 pick", &warpEndpointState{Candidate: v6Key2408, Endpoint: v6Ep2408}, v6Ep2408},
+		{"IPv4 pick", &warpEndpointState{Candidate: v4Key500, Endpoint: v4Ep500}, v4Ep500},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var probed string
+			p := newWARPTestPlanner(t, time.Now(), func(_ context.Context, ep string) (int, error) {
+				probed = ep
+				return 1380, nil
+			})
+			p.warp = testWARPConfig()
+			p.endpointState = filepath.Join(t.TempDir(), "warp-endpoint.json")
+			if c.state != nil {
+				writeState(t, p.endpointState, *c.state)
+			}
+			acts := planWARP(t, p, warpSpec())
+			if _, err := reconcile.NewEngine(nil, stubPlanner{acts}).Reconcile(context.Background(), warpSpec(), reconcile.ModeApply); err != nil {
+				t.Fatalf("apply: %v", err)
+			}
+			if probed != c.want {
+				t.Errorf("probed %q, want %q", probed, c.want)
+			}
+		})
+	}
+}

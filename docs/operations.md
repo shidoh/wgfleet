@@ -772,12 +772,22 @@ agent recovers, its next report restores the state.
 | Item | Value |
 |---|---|
 | Trigger | no `wgcf` handshake younger than 5 m, seen on every pass for 3 m |
-| Candidates, in order | the profile's endpoint, then `engage.cloudflareclient.com` on 2408, 500, 1701, 4500 |
+| Address family | `warp_ip_family` (fleet default, exit override): `auto` (default), `ipv4`, `ipv6` |
+| Candidates, in order (`auto`) | an IPv4 address of `engage.cloudflareclient.com` on 2408, 500, 1701, 4500; then an IPv6 address on the same ports; then the profile's endpoint by name |
+| Candidates (`ipv4` / `ipv6`) | an address of that family on 2408, 500, 1701, 4500 |
+| First pick | on the first pass after the upgrade or a fresh install, before any silence. A node that handshook by name restarts `wgcf` once |
+| Addresses | resolved when a candidate is picked, not on every pass. A candidate whose family does not resolve is skipped |
 | After a full round without a handshake | the 3 m window doubles each round, up to 30 m |
 | Kept | the first endpoint that handshakes, across reboots |
 | Pick | `/var/lib/wgfleet/warp-endpoint.json` |
-| Journal | `WARP endpoint gives no handshake; switching to the next one` |
-| Back to the profile's endpoint | `rm /var/lib/wgfleet/warp-endpoint.json` |
+| Journal | `WARP endpoint picked`, `WARP endpoint gives no handshake; switching to the next one` |
+| Changing `warp_ip_family` | a pick outside the new family is replaced on the next pass. A pick that stays valid is kept: going from `ipv6` back to `auto` keeps the IPv6 address until it stops handshaking |
+| Start over from the first candidate | `rm /var/lib/wgfleet/warp-endpoint.json` |
+
+A host with a global IPv6 address and a default route whose IPv6 does not reach the internet
+resolves `engage.cloudflareclient.com` to its IPv6 address first. By name, WARP gets no handshake
+there on any port. `auto` dials IPv4 first and avoids it. Pin `ipv6` only where IPv4 to Cloudflare is
+cut and IPv6 works: on a host without working IPv6, the pin leaves WARP down.
 
 ## Kernel upgrades (your call, not ours)
 

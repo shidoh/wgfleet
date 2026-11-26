@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -41,16 +42,24 @@ func ProbeWARPMTU(ctx context.Context, endpoint string) (int, error) {
 	// silently dead fleet-wide while the default masked it. Pinning v4 probes the same
 	// 162.159.192.1 the wgcf peer endpoint actually uses, which is the path we mean to
 	// measure. (iputils tracepath has supported -4 for well over a decade.)
+	//
+	// The exception is an IPv6 literal: the exit's WARP fallback picked an IPv6
+	// endpoint, so that is the path wgcf rides and the one to measure, with the
+	// larger IPv6 overhead.
 	args := tracepathArgs(host)
 	out, err := exec.CommandContext(ctx, "tracepath", args...).CombinedOutput()
 	if err != nil && len(out) == 0 {
-		return 0, fmt.Errorf("tracepath -4 %s: %w", host, err)
+		return 0, fmt.Errorf("tracepath %s %s: %w", args[0], host, err)
 	}
 	pmtu := lastPMTU(string(out))
 	if pmtu <= 0 {
 		return 0, fmt.Errorf("tracepath %s: no pmtu in output", host)
 	}
-	mtu := pmtu - wg.WGOverheadIPv4
+	overhead := wg.WGOverheadIPv4
+	if isIPv6Literal(host) {
+		overhead = wg.WGOverheadIPv6
+	}
+	mtu := pmtu - overhead
 	if mtu < wg.MinTunnelMTU {
 		mtu = wg.MinTunnelMTU
 	}
@@ -83,10 +92,20 @@ func ProbeWARPMTU(ctx context.Context, endpoint string) (int, error) {
 const maxProbeHops = 10
 
 // tracepathArgs builds the tracepath invocation for host. Split out from the exec
-// call so the -4 pin and the hop cap are covered by tests rather than only by
-// comments.
+// call so the family pin and the hop cap are covered by tests rather than only by
+// comments. -4 unless host is an IPv6 literal.
 func tracepathArgs(host string) []string {
-	return []string{"-4", "-n", "-m", strconv.Itoa(maxProbeHops), host}
+	family := "-4"
+	if isIPv6Literal(host) {
+		family = "-6"
+	}
+	return []string{family, "-n", "-m", strconv.Itoa(maxProbeHops), host}
+}
+
+// isIPv6Literal reports whether host is an IPv6 address (not a name, not IPv4).
+func isIPv6Literal(host string) bool {
+	a, err := netip.ParseAddr(host)
+	return err == nil && a.Is6() && !a.Is4In6()
 }
 
 // lastPMTU returns the last pmtu value in tracepath output, or 0 if none.

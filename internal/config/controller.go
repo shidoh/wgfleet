@@ -192,6 +192,10 @@ type FleetSection struct {
 	// fleet-wide. Default applied when unset is DefaultMinEgressThroughputKBytes.
 	// A healthy WARP exit does tens of MB/s, so 250 cleanly separates broken nodes.
 	MinEgressThroughputKBytes int `koanf:"min_egress_throughput_kbytes"`
+	// WARPIPFamily is the fleet default for the address family WARP exits dial
+	// Cloudflare over: auto (default: IPv4 first, then IPv6), ipv4 or ipv6. An
+	// exit overrides it with exits[].warp_ip_family.
+	WARPIPFamily string `koanf:"warp_ip_family"`
 	// EgressThroughputProbeURL overrides the URL each exit downloads to measure its
 	// egress throughput. Empty ⇒ the agent default (health.DefaultThroughputProbeURL).
 	EgressThroughputProbeURL string `koanf:"egress_throughput_probe_url"`
@@ -415,6 +419,15 @@ func (f FleetSection) EgressThroughputFloorKBytes(e ExitConfig) int {
 		return f.MinEgressThroughputKBytes
 	}
 	return DefaultMinEgressThroughputKBytes
+}
+
+// WARPIPFamilyFor resolves the WARP address family for one exit: the exit's own
+// value when set, else the fleet default, else auto.
+func (f FleetSection) WARPIPFamilyFor(e ExitConfig) domain.WARPIPFamily {
+	if e.WARPIPFamily != "" {
+		return domain.WARPIPFamily(e.WARPIPFamily)
+	}
+	return domain.WARPIPFamily(f.WARPIPFamily).OrAuto()
 }
 
 // MgmtCIDRs returns the management-overlay address scope the platform trusts for
@@ -937,6 +950,10 @@ type ExitConfig struct {
 	Drain          bool     `koanf:"drain"`
 	EgressFallback []string `koanf:"egress_fallback"` // ordered fallbacks for censorship-adaptive failover (ADR-0017), e.g. [direct]; empty ⇒ no failover
 	WARPMTU        int      `koanf:"warp_mtu"`        // WARP interface MTU; 0 ⇒ computed (1440). Set when the real WARP path is smaller (1320-1420)
+	// WARPIPFamily overrides fleet.warp_ip_family for this exit: auto, ipv4 or
+	// ipv6. Pin ipv4 on a host whose IPv6 does not reach the internet, ipv6 on one
+	// whose IPv4 to Cloudflare is cut. Empty ⇒ the fleet default.
+	WARPIPFamily string `koanf:"warp_ip_family"`
 	// LinkMTU is the physical/path MTU of the master↔exit link — the largest packet
 	// that reaches this exit without fragmentation. Measure it with `ping -M do -s N
 	// <exit-ip>` from the master (path MTU = largest passing N + 28) and set the
@@ -1393,6 +1410,9 @@ func (c ControllerConfig) Validate() error {
 			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): link_mtu %d out of range (0 to assume %d, else %d..%d)",
 				i, e.Name, m, wg.DefaultPhysicalMTU, wg.MinTunnelMTU, wg.DefaultPhysicalMTU))
 		}
+		if !domain.WARPIPFamily(e.WARPIPFamily).Valid() {
+			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): invalid warp_ip_family %q (want auto, ipv4 or ipv6)", i, e.Name, e.WARPIPFamily))
+		}
 		if m := e.WARPMTU; m != 0 && (m < wg.MinTunnelMTU || m > wg.DefaultPhysicalMTU) {
 			errs = append(errs, fmt.Errorf("fleet.exits[%d] (%s): warp_mtu %d out of range (0 to compute, else %d..%d)",
 				i, e.Name, m, wg.MinTunnelMTU, wg.DefaultPhysicalMTU))
@@ -1449,6 +1469,9 @@ func (c ControllerConfig) Validate() error {
 				i, e.Name, e.PerTunnelKey, domain.PerTunnelKeyOff, domain.PerTunnelKeyDual,
 				domain.PerTunnelKeySwitch, domain.PerTunnelKeyOn))
 		}
+	}
+	if !domain.WARPIPFamily(c.Fleet.WARPIPFamily).Valid() {
+		errs = append(errs, fmt.Errorf("fleet.warp_ip_family: invalid value %q (want auto, ipv4 or ipv6)", c.Fleet.WARPIPFamily))
 	}
 	if err := validateProbeURL(c.Fleet.EgressThroughputProbeURL); err != nil {
 		errs = append(errs, err)

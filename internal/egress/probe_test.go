@@ -19,6 +19,22 @@ func TestTracepathArgsForceIPv4(t *testing.T) {
 	}
 }
 
+// An IPv6 literal is the endpoint the WARP fallback picked for an IPv6 path:
+// probe it over IPv6, and only then.
+func TestTracepathArgsFollowAnIPv6Literal(t *testing.T) {
+	cases := map[string]string{
+		"engage.cloudflareclient.com": "-4",
+		"162.159.192.1":               "-4",
+		"2606:4700:d0::a29f:c001":     "-6",
+		"::ffff:162.159.192.1":        "-4",
+	}
+	for host, want := range cases {
+		if got := tracepathArgs(host)[0]; got != want {
+			t.Errorf("tracepathArgs(%q) family = %s, want %s", host, got, want)
+		}
+	}
+}
+
 // The probe must cap the hop count. tracepath decides it has arrived when the
 // destination answers ICMP port-unreachable; Cloudflare's anycast edge never does,
 // and stops answering at all a few hops in, so an uncapped run walks its full

@@ -98,6 +98,7 @@ provisioning, so changing them requires re-provisioning the node.
 | `fleet.mgmt_overlay_mss` | int | `0` (off) | **baked.** TCP MSS clamp on the ZeroTier interface, both directions. Recommended `1240` (a 1280 overlay); valid `536`–`1460` |
 | `fleet.reconcile_interval` | duration | `30s` | **baked.** How often every agent reconciles. Valid `5s`–`1h`. A node's own `agent.reconcile_interval` still wins |
 | `fleet.min_egress_throughput_kbytes` | int | `250` | Egress throughput floor in KiB/s below which an exit is pulled from the load balancer — only while another exit has reported a passing measurement in the last 2 minutes. Negative disables the watchdog fleet-wide |
+| `fleet.warp_ip_family` | `auto` \| `ipv4` \| `ipv6` | `auto` | Address family WARP exits dial Cloudflare over. `auto`: IPv4 first, then IPv6, then the profile's endpoint by name. See [WARP endpoint fallback](operations.md#warp-endpoint-fallback) |
 | `fleet.egress_throughput_probe_url` | URL | three targets | What each exit downloads to measure its own throughput. Unset, the agent tries three independent targets in order — Cloudflare's speed endpoint, then CacheFly, then OVH — and stops at the first that clears the floor. A target answering with an HTTP error is skipped. Setting the key **replaces** that list with the single URL you name |
 | `fleet.as_blacklist_v4_url` | URL | C24Be AS_Network_List v4 | **baked.** Source feed of scanner ASNs the firewall drops. Fetched together with the built-in sngvy/AntiScanner list. Per-node enable is `fleet.exits[].firewall.as_blacklist` and `fleet.masters[].as_blacklist` |
 | `fleet.as_blacklist_v6_url` | URL | C24Be AS_Network_List v6 | **baked.** IPv6 half of the same feed |
@@ -285,6 +286,7 @@ Both keys accept `1280`–`1500`.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `fleet.exits[].warp_mtu` | int | `1380` | MTU of the WARP interface. Set it when the real WARP path is smaller (typically 1320–1420). Unset, the agent probes the path daily |
+| `fleet.exits[].warp_ip_family` | `auto` \| `ipv4` \| `ipv6` | fleet value | WARP address family for this exit. `ipv4` for a host whose IPv6 does not reach the internet, `ipv6` for one whose IPv4 to Cloudflare is cut |
 | `fleet.exits[].link_mtu` | int | `1500` | Physical path MTU of the master↔exit link. Measure with `ping -M do -s N <exit-ip>` from the master: path MTU = largest passing N + 28. Lowers **both** tunnel ends and the client interface |
 
 ### `transports` — master↔exit transport selection

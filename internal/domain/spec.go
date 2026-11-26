@@ -35,6 +35,9 @@ type NodeSpec struct {
 	// folds the smallest exit WARP MTU into the client-facing MTU so client
 	// packets never fragment at egress.
 	WARPMTU int
+	// WARPIPFamily is the address family the WARP tunnel dials Cloudflare over
+	// (warp egress only). Empty ⇒ auto: IPv4 first, then IPv6.
+	WARPIPFamily WARPIPFamily `json:",omitempty"`
 	// EgressThroughputMinBps is the egress throughput floor in bytes/sec below which
 	// the exit's active egress is considered throughput-degraded (a slow/throttled
 	// path that small-packet health checks — and mihomo's latency-only url-test —
