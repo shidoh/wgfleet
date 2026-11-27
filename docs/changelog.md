@@ -5,7 +5,15 @@ What changed for operators in each wgfleet release — behaviour, manifest keys,
 Every release archive carries this page as `CHANGELOG.md`.
 New releases are announced, with the archives attached, in the Telegram channel [t.me/wgfleet](https://t.me/wgfleet).
 
-## Unreleased
+## v0.3.7 — 2026-11-27
+
+!!! tip "What stands out in this release"
+
+    - **Own-domain camouflage.** A node can serve its own site under a domain you own and make it the REALITY target, so a probe of the node gets your domain instead of a borrowed third-party site.
+    - **WARP comes up on hosts with broken IPv6.** An exit now dials an IPv4 address of Cloudflare first instead of the name, and `warp_ip_family` pins a family per fleet or exit.
+    - **Provisioning refuses a Docker without Compose v2** instead of failing later.
+
+    Full detail and upgrade steps are in the entries below.
 
 ### Read before upgrading
 
@@ -13,7 +21,8 @@ New releases are announced, with the archives attached, in the Telegram channel 
 
     1. **Controller first, then every agent.** The wire contract moves to 16. A node whose agent is still on 15 gets no `camouflage` and keeps the fleet-default REALITY target; nothing else changes for it.
     2. **Re-apply monitoring:** `deploy/monitoring/vmrule.yaml` or `prometheusrule.yaml` (new alerts `WgfleetCamouflageNotServing`, `WgfleetCamouflageCertExpiring`), and the Grafana dashboard (new panel *Own-domain sites*).
-    3. **Going back to the previous controller** needs the pre-upgrade state database: the store gains a column the older controller refuses.
+    3. **Expect two one-time restarts on the first pass:** `wgcf` on every WARP exit (a few seconds without WARP) and the resolver container on every node that runs blocky.
+    4. **Going back to the previous controller** needs the pre-upgrade state database: the store gains a column the older controller refuses.
 
 ### Added
 
@@ -28,15 +37,12 @@ New releases are announced, with the archives attached, in the Telegram channel 
 ### Fixed
 
 - **Provisioning stops on a Docker without Compose v2.** A node that already had Docker, but not the Compose v2 plugin (for example Ubuntu's `docker.io` with the standalone `docker-compose` v1), passed provisioning and then failed every container action of the agent. The provisioner and `install.sh` now refuse it before changing anything and name the package to install: `docker-compose-v2` or `docker-compose-plugin`. With `SKIP_DEPS=1`, `install.sh` only warns. See [requirements.md](requirements.md).
+- **AmneziaWG QR codes.** Since v0.3.5 an AmneziaWG profile carries a full-size QUIC cover and runs to about 3 KB — more than a QR code holds. The portal page and the console showed an image that never loaded, and the QR link answered "Something is wrong on our side". Now a profile that does not fit is offered as a file only, and the page says so; the QR link answers `404` with the same explanation. Profiles that fit keep their QR.
 
 ### Changed
 
 - **blocky 0.36.0** (was 0.35.0) on every node that runs the resolver. DNS-over-TLS upstreams reuse one connection for many queries instead of opening one per query, and a DNS-over-HTTPS answer is capped at DNS message size. The agent recreates the resolver container once after the upgrade; a pinned `dns.tag` keeps its version.
 - **Console topology: a paused exit stays in CARRYING.** An exit of the carrying tier whose last health check failed used to jump to NOT CARRYING for that minute, next to the idle reserve, and read as a failover. It now stays in its place with the badge **check failed · paused** and a stopped link animation. A master whose agent is older than the controller reports no tier membership; its exits are grouped as before.
-
-### Fixed
-
-- **AmneziaWG QR codes.** Since v0.3.5 an AmneziaWG profile carries a full-size QUIC cover and runs to about 3 KB — more than a QR code holds. The portal page and the console showed an image that never loaded, and the QR link answered "Something is wrong on our side". Now a profile that does not fit is offered as a file only, and the page says so; the QR link answers `404` with the same explanation. Profiles that fit keep their QR.
 
 ## v0.3.6 — 2026-11-06
 
